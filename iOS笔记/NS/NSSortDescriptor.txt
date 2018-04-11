@@ -1,0 +1,99 @@
+@interface People : NSObject
+
+@property (nonatomic, copy) NSString *name;
+@property (nonatomic, assign) BOOL sex;
+@property (nonatomic, assign) double height;
+@property (nonatomic, assign) int age;
+@end
+
++ (instancetype)sortDescriptorWithKey:(nullable NSString *)key ascending:(BOOL)ascending selector:(nullable SEL)selector
+
+参数:
+key : 排序key, 某个对象的属性名称
+ascending : 是否升序, YES-升序, NO-降序
+selector : 自定义排序规则, 如果需要自己定义排序规则, 可传递此方法, 这个使用相对比较复杂; 如果待比较的属性是字符串(NSString)类型, 可使用其默认的方法: localizedStandardCompare:
+即:
+NSSortDescriptor *sort = [NSSortDescriptor sortDescriptorWithKey:@"name" ascending:YES selector:@selector(localizedStandardCompare:)];
+
+如果是其他的类型, 比如int, double等, 就需要对其类别(基本类型要对NSNumber)进行扩展;
+
+按年龄进行排序, 只不过我想修改其排序方法: ascending 为YES时, 让其降序排列(本应该是升序排列)
+
+
+@interface NSNumber (mySort)
+
+- (NSComparisonResult)mySort:(NSNumber *)num;
+@end
+
+// NSNumber+mySort.m
+@implementation NSNumber (mySort)
+- (NSComparisonResult)mySort:(NSNumber *)num {
+    
+    if (self == num) {
+        return NSOrderedSame;
+    } else if (self > num) {
+        // 当自身大于num时, 本应该返回 NSOrderedDescending , 这里反转其结果, 使返回 NSOrderedAscending
+        return NSOrderedAscending;
+    }else {
+        return NSOrderedDescending;
+    }
+}
+@end
+
+
+NSSortDescriptor *sort = [NSSortDescriptor sortDescriptorWithKey:@"age" ascending:YES selector:@selector(mySort:)];
+[peoples sortUsingDescriptors:@[sort]];
+
+age: 67
+age: 55
+
+如果是其他类型的属性, 可以分别进行扩展, 自定义排序规则, 需要注意的是, 自定义方法的返回值一定要是NSComparisonResult.
+================================
+
++ (instancetype)sortDescriptorWithKey:(nullable NSString *)key ascending:(BOOL)ascending comparator:(NSComparator)cmptr
+
+参数:
+key : 排序key, 某个对象的属性名称
+ascending : 是否升序, YES-升序, NO-降序
+cmptr: 一个block, 可以在其中指定比较规则
+
+
+NSSortDescriptor *sort = [NSSortDescriptor sortDescriptorWithKey:@"age" ascending:YES comparator:^NSComparisonResult(id  _Nonnull obj1, id  _Nonnull obj2) {
+        
+        if (obj1 == obj2) {
+            return NSOrderedSame;
+        } else if (obj1 > obj2){
+            // 当obj1大于obj2时, 本应该返回 NSOrderedDescending , 这里反转其结果, 使返回 NSOrderedAscending
+            return NSOrderedAscending;
+        } else {
+            return NSOrderedDescending;
+        }
+    }];
+    
+    [peoples sortUsingDescriptors:@[sort]];
+
+// 降序
+age: 67
+age: 55
+
+
+
+如果想得到相反的结果, 达到和上面相同的效果, 还有一个方法, 就是自定义MYSortDescriptor继承自NSSortDescriptor, 重写方法:
+- (NSComparisonResult)compareObject:(id)object1 toObject:(id)object2;
+
+// MYSortDescriptor.h
+@interface MYSortDescriptor : NSSortDescriptor
+
+@end
+
+// MYSortDescriptor.m
+@implementation MYSortDescriptor
+
+- (NSComparisonResult)compareObject:(id)object1 toObject:(id)object2 {
+    // 这里反转其比较顺序
+    return [super compareObject:object2 toObject:object1];
+}
+@end
+
+MYSortDescriptor *sort = [MYSortDescriptor sortDescriptorWithKey:@"age" ascending:YES];
+[peoples sortUsingDescriptors:@[sort]];

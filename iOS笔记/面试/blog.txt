@@ -1,0 +1,375 @@
+1.Runloop
+一个runloop就是一个事件处理的循环,用来不停的调度工作以及处理输入事件
+使用runloop的目的是让你的线程在有工作的时候忙于工作,而没工作的时候处于休眠状态。
+Runloop还可以在loop在循环中的同时响应其他输入源，比如界面控件的按钮，手势等
+
+Run loop接收输入事件来自两种不同的来源:
+输入源(input source)和定时源 (timer source)。
+
+输入源传递异步事件,通常消息来自于其他线程或程序。输入源的种类:基于端口的输入源和自定义输入源。
+定时源则传递同步事件,发生在特定时间或者重复的时间间隔。
+
+Run loop 观察者和以下事件关联:
+Run loop 入口
+Run loop 何时处理一个定时器
+Run loop 何时处理一个输入源
+Run loop 何时进入睡眠状态
+Run loop 何时被唤醒,但在唤醒之前要处理的事件
+Run loop 终止
+
+BOOL StopFlag =NO;
+- (void)viewDidLoad
+{
+    [superviewDidLoad];
+     // Doany additional setup after loading the view, typically from a nib.
+    
+    StopFlag =NO;
+    NSLog(@"Start a new thread.");
+    [NSThreaddetachNewThreadSelector: @selector(newThreadProc)
+                             toTarget: self
+                           withObject: nil];
+    while (!StopFlag) {
+        NSLog(@"Beginrunloop");
+        [[NSRunLoopcurrentRunLoop] runMode:NSDefaultRunLoopMode
+                                 beforeDate: [NSDatedistantFuture]];
+        NSLog(@"Endrunloop.");
+    }
+    
+    NSLog(@"OK");
+}
+ 
+ 
+-(void)newThreadProc{   
+    NSLog(@"Enter newThreadProc.");
+    
+    for (int i=0; i<10; i++) {
+        NSLog(@"InnewThreadProc count = %d.", i);
+        sleep(1);
+    }
+    [self performSelectorOnMainThread: @selector(setEnd)
+                          withObject: nil
+                        waitUntilDone: NO];
+    
+    NSLog(@"Exit newThreadProc.");
+}
+-(void)setEnd{
+    StopFlag = YES;
+}
+把直接设置变量，改为向主线程发送消息，唤醒runloop，延时问题解决
+
+2.应用程序的状态
+Not running  未运行  程序没启动
+Inactive     未激活  程序在前台运行，不过没有接收到事件。在没有事件处理情况下程序通常停留在这个状态
+Active       激活    程序在前台运行而且接收到了事件。这也是前台的一个正常的模式
+Backgroud    后台    程序在后台而且能执行代码，大多数程序进入这个状态后会在在这个状态上停留一会。时间到之后会进入挂起状态(Suspended)。有的程序经过特殊的请求后可以长期处于Backgroud状态
+Suspended    挂起    程序在后台不能执行代码。系统会自动把程序变成这个状态而且不会发出通知。当挂起时，程序还是停留在内存中的，当系统内存低时，系统就把挂起的程序清除掉，为前台程序提供更多的内存
+
+启动程序
+lifeCycle[40428:11303] willFinishLaunchingWithOptions
+lifeCycle[40428:11303] didFinishLaunchingWithOptions
+lifeCycle[40428:11303] applicationDidBecomeActive
+按下home键
+lifeCycle[40428:11303] applicationWillResignActive
+lifeCycle[40428:11303] applicationDidEnterBackground
+双击home键，再打开程序
+lifeCycle[40428:11303] applicationWillEnterForeground
+lifeCycle[40428:11303] applicationDidBecomeActive
+
+有电话打进来了，程序会临时进入inactive状态，这用户可以选择如何处理这个中断
+
+Main Run Loop负责处理用户相关的事件。
+UIApplication对象在程序启动时启动main run Loop，它处理事件和更新视图的界面
+它是运行在程序的主线程上的。这样保证了接收到用户相关操作的事件是按顺序处理的
+
+用户操作设备，相关的操作事件被系统生成并通过UIKit的指定端口分发。
+事件在内部排成队列，一个个的分发到Main run loop 去做处理。
+UIApplication对象是第一个接收到时间的对象，它决定事件如何被处理。
+触摸事件分发到主窗口，窗口再分发到对应出发触摸事件的View。
+其他的事件通过其他途径分发给其他对象变量做处理
+
+3.loadView:方法
+这是当没有正在使用nib视图页面，子类将会创建自己的自定义视图层。绝不能直接调用。
+如果手工维护views，必须重写该方法。
+当view需要被展示而它却是nil时，viewController会调用该方法。
+
+4.读取图片
+从资源(resource)读取
+UIImage* image=[UIImage imageNamed:@"1.jpg"];  
+
+从网络读取
+NSURL *url=[NSURL URLWithString:@"http://www.sinaimg.cn/qc/photo_auto/chezhan/2012/50/00/15/80046_950.jpg"];  
+UIImage *imgFromUrl =[[UIImage alloc]initWithData:[NSData dataWithContentsOfURL:url]];  
+
+从手机本地读取
+//读取本地图片非resource  
+NSString *aPath3=[NSString stringWithFormat:@"%@/Documents/%@.jpg",NSHomeDirectory(),@"test"];  
+UIImage *imgFromUrl3=[[UIImage alloc]initWithContentsOfFile:aPath3];  
+UIImageView* imageView3=[[UIImageView alloc]initWithImage:imgFromUrl3];  
+
+
+用Quartz的CGImageSourceRef来读取图片
+CGImageSourceRef source = CGImageSourceCreateWithURL((CFURLRef)url, NULL);  
+CGImageRef img= CGImageSourceCreateImageAtIndex(source,0,NULL);  
+
+5.保存图片
+//保存图片 2种获取路径都可以  
+//NSArray*paths=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);  
+//NSString*documentsDirectory=[paths objectAtIndex:0];    
+//NSString*aPath=[documentsDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.jpg",@"test"]];   
+NSString *aPath=[NSString stringWithFormat:@"%@/Documents/%@.jpg",NSHomeDirectory(),@"test"];  
+NSData *imgData = UIImageJPEGRepresentation(imgFromUrl,0);      //imgFromUrl是UIImage
+[imgData writeToFile:aPath atomically:YES];     
+
+6.IOS6 AutoLayout
+类似Android的相对布局属性
+autosizing mask决定了一个view会发生什么当它的superview 改变大小的时候。
+autolayout 不仅可以设置superview改变时view所做的变化，还支持当相邻view变化时自己所做的变化
+
+7.事件的响应链
+当事件发生的时候，响应链首先被发送给第一个响应者(往往是事件发生的视图，也就是用户触摸屏幕的地方)
+事件将沿着响应者链一直向下传递，直到被接受并作出处理
+
+第一响应是个视图对象或者其子类，当其被触摸后事件就交由它处理，
+如果他不处理，事件就会被传递给视图控制器对象UIViewController（如果存在），
+然后是它的父视图对象（superview），以此类推直到顶层视图。
+接下来会沿着顶层视图（top view）到窗口(UIwindow 对象) 再到程序的（UIApplication对象），
+如果整个过程都没有响应这个事件，则该事件被丢弃，
+一般情况下，在响应链中只要有对象处理事件，事件就会被传递
+
+事件的响应（responder chain）
+只有继承了UIResponder的类才能响应touch事件，优先是最上层的view响应事件，
+如果该view有视图控制器的话会是下一个响应者，否者就是该view的父视图，
+这样至上而下传递事件。直到单例UIWindow对象，最后是单例UIApplication对象以终止，
+UIApplication的下一个响应者是nil，已结束整个响应循环。
+事件在传递过程中视图可以决定是否需要对该事件进行响应。
+
+事件分发（Event Delivery） 
+第一响应者（First responder）指的是当前接受触摸的响应者对象（通常是一个UIView对象），
+即表示当前该对象正在与用户交互，它是响应者链的开端。
+整个响应者链和事件分发的使命都是找出第一响应者。
+UIWindow对象以消息的形式将事件发送给第一响应者，使其有机会首先处理事件。
+如果第一响应者没有进行处理，系统就将事件（通过消息）传递给响应者链中的下一个响应者，看看它是否可以进行处理。
+
+iOS系统检测到手指触摸(Touch)操作时会将其打包成一个UIEvent对象，并放入当前活动Application的事件队列，
+单例的UIApplication会从事件队列中取出触摸事件并传递给单例的UIWindow来处理，
+UIWindow对象首先会使用hitTest:withEvent:方法寻找此次Touch操作初始点所在的视图(View)，
+即需要将触摸事件传递给其处理的视图，这个过程称之为hit-test view。
+
+UIWindow实例对象会首先在它的内容视图上调用hitTest:withEvent:，
+此方法会在其视图层级结构中的每个视图上调用pointInside:withEvent:
+（该方法用来判断点击事件发生的位置是否处于当前视图范围内，以确定用户是不是点击了当前视图）
+如果pointInside:withEvent:返回YES，则继续逐级调用，直到找到touch操作发生的位置，这个视图也就是要找的hit-test view。
+
+hitTest:withEvent:方法的处理流程如下:
+首先调用当前视图的pointInside:withEvent:方法判断触摸点是否在当前视图内；
+若返回NO,则hitTest:withEvent:返回nil;
+若返回YES,则向当前视图的所有子视图(subviews)发送hitTest:withEvent:消息，所有子视图的遍历顺序是从最顶层视图一直到到最底层视图，即从subviews数组的末尾向前遍历，直到有子视图返回非空对象或者全部子视图遍历完毕；
+若第一次有子视图返回非空对象，则hitTest:withEvent:方法返回此对象，处理结束；
+如所有子视图都返回非，则hitTest:withEvent:方法返回自身(self)。
+
+
+8.
+nil是指向obj－c中对象的空指针，是一个对象，在o－c中nil对象调用方法不会引起crash。
+Nil是指向obj－c中的类的空指针，表示的是一个空类。
+NULL是指向任何类型的空指针（如c／c++中的空指针），在objective－c中是一个数值。
+NSNULL用于集合操作，在集合对象中，表示一个空值的集合对象。
+
+9.fame，bounds，center，alpha,opaque,hidden
+frame是描述该view在其父视图中的一块区域。其坐标系是在其父视图中的坐标。我们在进行view的初始化时会经常使用到frame
+bounds也是描述该view的大小，是其在自身的坐标系中的位置大小
+center是描述其在父视图的中心位置坐标。我们在进行view的位置改变而不改变view的大小的时，会使用center。
+alpha是用来描述改view的透明度从0到1，0表示的是透明，1表示不透明。
+alpha支持动画（animation），alpha = 0 与 hidden ＝ YES 效果一样都是看不到view，但是后者相比开销大。
+在alpha等于0时view接受touch事件，但是hidden则不接受。
+并且hidden和apaque 不支持动画。
+alpha并不影响镶嵌在其内部view行为，而hidden会影响。
+当把view设置为透明背景时，一般把opaque设置为NO，可以减少开销，优化内存.opaque影响图形绘制系统。设置为YES，会优化view的绘制。
+
+10.
+UIView相比CALayer最大区别是UIView可以响应用户事件，而CALayer不可以。
+UIView侧重于对显示内容的管理，CALayer侧重于对内容的绘制。
+
+11.
+KVC是一种间接访问对象属性的机制，而不是直接通过设置器和访问器或者点语法来访问对象属性
+
+12.XML&JSON
+DOM是把一个数据交换格式XML看成一个DOM对象，需要把XML文件整个读入内存，这一点上JSON和XML的原理是一样的
+XML要考虑 父节点和子节点，这一点上JSON的解析难度要小很多，
+因为JSON构建于两种结构：key/value，键值对的集合。值的有序集合，可理解为数组；
+
+SAX不需要整个读入文档就可以对解析出的内容进行处理，是一种逐步解析的方法。
+程序也可以随时终止解析。一个大的文档就可以逐步的、一点一点的展现出来，
+所以SAX适合于大规模的解析。这一点，JSON目前是做不到得。
+
+
+JSON和XML的轻/重量级的区别在于
+JSON只提供整体解析方案，而这种方法只在解析较少的数据时才能起到良好的效果；
+而XML提供了对大规模数据的逐步解析方案，这种方案很适合于对大量数据的处理。
+
+
+12.
+对于每一个RunLoop，系统会隐含创建一个AutoReleasePool，
+所有的release pool会构成一个栈式结构，每一个RunLoop结束，当前栈顶的pool会被销毁
+
+ARC和非ARC混编。可在在编译ARC时使用－fno－objc－arc，-fobjc-arc标签
+
+13.
+xib和storyboard主要用于界面中的元素位置固定和清楚里面有哪些元素。
+但是如果需要动态变化界面还是手动编写代码比较好。一般还是各种方式混合使用
+
+14.mrc
+- (void) setOldValue: (NSString*) newValue {
+    if (newValue !=oldValue) {
+        [oldValue release];
+        oldValue = [newValue retain];
+    }
+}
+
+15.commitAnimations方式使用UIView动画
+UIView Animations 动画: 
+[UIView beginAnimations:@"animationID" context:nil]; 
+[UIView setAnimationDuration:0.5f]; 
+[UIView setAnimationCurve:UIViewAnimationCurveEaseInOut]; 
+[UIView setAnimationRepeatAutoreverses:NO]; 
+//以下四种效果 
+/* 
+[UIView setAnimationTransition:UIViewAnimationTransitionFlipFromLeft forView:self.view cache:YES];//oglFlip, fromLeft 
+[UIView setAnimationTransition:UIViewAnimationTransitionFlipFromRight forView:self.view cache:YES];//oglFlip, fromRight  
+[UIView setAnimationTransition:UIViewAnimationTransitionCurlUp forView:self.view cache:YES]; 
+[UIView setAnimationTransition:UIViewAnimationTransitionCurlDown forView:self.view cache:YES]; 
+*/ 
+//你自己的操作
+[UIView commitAnimations];
+
+16.CATransition
+
+CATransition *animation = [CATransitionanimation];
+animation.duration = 0.5f;
+animation.timingFunction =UIViewAnimationCurveEaseInOut;
+animation.fillMode = kCAFillModeForwards;
+animation.type = kCATransitionMoveIn;
+animation.subtype = kCATransitionFromTop;
+[self.window.layer addAnimation:animation forKey:@"animation"];
+
+17.
+iphone 3.5和4英寸。分辨率为：320*480,480*960（retina）。
+IPad   7.9和9.7英寸。分辨率为：1024*768，2048*1536（retina）。
+
+18.
+NSArray 只能存放objective－c对象数据模型，
+这些基本数据类型需要先转化为NSNumber对象再存放进数组中
+
+19.常见的语言编码有：
+GB2312:简体中文编码，一个汉字占用2字节，在大陆是主要编码方式。
+BIG5:繁体中文编码。主要在台湾地区采用。 
+GBK:支持简体及繁体中文，但对他国非拉丁字母语言还是有问题。 
+UTF-8:Unicode编码的一种。
+Unicode用一些基本的保留字符制定了三套编码方式，它们分别UTF-8,UTF-16和UTF-32。
+在UTF－8中，字符是以8位序列来编码的，用一个或几个字节来表示一个字符。
+这种方式的最大好处，是UTF－8保留了ASCII字符的编码做为它的一部分。
+UTF-8俗称“万国码”，可以同屏显示多语种，一个汉字占用3字节。
+为了做到国际化，网页应尽可能采用UTF-8编码。
+
+处理中文时http头也要改成UTF-8编码的-----加上<meta http-equiv="Content-Type" content="text/html; charset=utf-8">。
+
+语言                             字符集                                正式名称
+英语、西欧语                ASCII，ISO-8859-1        MBCS多字节
+简体中文                      GB2312                          MBCS多字节
+繁体中文                      BIG5                               MBCS多字节
+简繁中文                      GBK                                MBCS多字节
+中文、日文及朝鲜语       GB18030                        MBCS多字节
+各国语言                      UNICODE，UCS              DBCS宽字节
+
+20.常见的加解密方式有：
+RSA：基于公钥和私钥的非对称加密算法。适用范围广。
+AES：是一种对称加密的流行方式。加密涉及矩阵运算。
+MD5:将任意长度的“字节串”变换成一个128bit的大整数，并且它是一个不可逆的字符串变换算法
+
+21.
+isMemberOfClass方法是来确定对象是否是某一个类的成员
+isKindOfClass来确定一个对象是否是一个类的成员，或者是派生自该类的成员
+
+22.如何测试启动时间
+使用NSLog
+CFAbsoluteTime StartTime;
+int main(int argc, char **argv) {
+     StartTime = CFAbsoluteTimeGetCurrent();
+     // ...
+}
+
+- (void)applicationDidFinishLaunching:(UIApplication *)app {
+      dispatch_async(dispatch_get_main_queue(), ^{
+         NSLog(@"Launched in %f sec", CFAbsoluteTimeGetCurrent() - StartTime);
+      });
+      // ...
+}
+
+
+iOS App启动过程：
+链接并加载Framework和static lib
+UIKit初始化
+应用程序callback
+第一个Core Animation transaction
+
+滚动（Scrolling）不是一个动画，而是在Main Run Loop中不断接收事件并且处理
+
+23.
+layoutSubviews在以下情况下会被调用：
+1、init初始化不会触发layoutSubviews。
+2、addSubview会触发layoutSubviews。
+3、设置view的Frame会触发layoutSubviews，当然前提是frame的值设置前后发生了变化。
+4、滚动一个UIScrollView会触发layoutSubviews。
+5、旋转Screen会触发父UIView上的layoutSubviews事件。
+6、改变一个UIView大小的时候也会触发父UIView上的layoutSubviews事件。
+7、直接调用setLayoutSubviews。
+
+drawRect：方法不能手动显示调用，
+必须通过调用setNeedsDisplay 或者 setNeedsDisplayInRect，让系统自动调该方法
+
+drawRect该方法在调用sizeToFit后被调用，
+所以可以先调用sizeToFit计算出size。然后系统自动调用drawRect:方法
+
+24.
+TCP---传输控制协议,提供的是面向连接、可靠的字节流服务。
+当客户和服务器彼此交换数据前，必须先在双方之间建立一个TCP连接，之后才能传输数据。
+TCP提供超时重发，丢弃重复数据，检验数据，流量控制等功能，保证数据能从一端传到另一端。
+
+为确保正确地接收数据，TCP要求在目标计算机成功收到数据时发回一个确认（即 ACK）。
+如果在某个时限内未收到相应的 ACK，将重新传送数据包。
+如果网络拥塞，这种重新传送将导致发送的数据包重复。
+但是，接收计算机可使用数据包的序号来确定它是否为重复数据包，并在必要时丢弃它。
+
+UDP---用户数据报协议，是一个简单的面向数据报的运输层协议。
+UDP不提供可靠性，它只是把应用程序传给IP层的数据报发送出去，但是并不能保证它们能到达目的地。
+由于UDP在传输数据报前不用在客户和服务器之间建立一个连接，且没有超时重发等机制，故而传输速度很快
+
+25.
+本地化应用程序名称：
+InfoPlish.strings
+InfoPlish.strings(english)文件中加入：
+CFBundleDisplayName ="Program";   
+其中“Program”为英文应用程序名称，
+在InfoPlish.strings(chinese)文件中加入：
+CFBundleDisplayName ="应用程序";  
+其中“应用程序”为中文名称，注意：CFBundleDisplayName加不加双引号都行
+编辑Info.plist，添加一个新的属性Application has localized display name, 设置其类型为boolean，并将其value设置为YES即可
+
+本地化字符串：
+本地化图片：
+Localizable.strings
+在Localizable.strings(english)文件中加入：
+"welcome"="Click on the screen to continue...";  
+在Localizable.strings(chinese)文件中加入：
+"welcome"="点击屏幕继续...";  
+
+在代码中使用NSLocalizedString(<#key#>, <#comment#>)来读取本地化字符串，
+CCLabelTTF *label = [CCLabelTTF labelWithString:NSLocalizedString(@"welcome", nil) fontName:@"Marker Felt" fontSize:18];  
+CGSize size = [[CCDirector sharedDirector] winSize];   
+label.position =  ccp( size.width /2 , size.height/2+30 );   
+[self addChild: label];  
+
+
+本地化其他文件：
+先在Localization中添加语言，
+然后把对应版本拷贝到en.lproj和zh-Hans.lproj文件夹中，最后引用就行了
+

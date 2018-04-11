@@ -1,0 +1,711 @@
+1.kvc
+一个类有实例变量 NSString *_foo ，调用setValue:forKey:时
+可以以foo或_foo 作为key
+
+KVC的keyPath中的集合运算符如何使用？
+必须用在集合对象上或普通对象的集合属性上
+简单集合运算符有@avg， @count ， @max ， @min ，@sum，
+格式 @"@sum.age"或 @"集合属性.@max.age"
+
+KVC 支持实例变量
+
+
+KVO 只能手动设定实例变量的KVO实现监听
+如果将一个对象设定成属性,这个属性是自动支持KVO的
+如果这个对象是一个实例变量,那么,这个KVO是需要我们自己来实现的.
+@interface Student : NSObject
+
+{
+    NSString  *_age;
+}
+- (void)setAge:(NSString *)age;
+- (NSString *)age;
+@property (nonatomic, strong) NSString  *name;
+
+@implementation Student
+@synthesize name = _name;
+- (void)setName:(NSString *)name
+{
+    _name = name;
+}
+- (NSString *)name
+{
+    return _name;
+}
+
+
+// 手动设定KVO
+- (void)setAge:(NSString *)age
+{
+    [self willChangeValueForKey:@"age"];
+    _age = age;
+    [self didChangeValueForKey:@"age"];
+}
+- (NSString *)age
+{
+    return _age;
+}
++ (BOOL)automaticallyNotifiesObserversForKey:(NSString *)key
+{
+    // 如果监测到键值为age,则指定为非自动监听对象
+    if ([key isEqualToString:@"age"])
+    {
+        return NO;
+    }
+    
+    return [super automaticallyNotifiesObserversForKey:key];
+}
+
+@implementation RootViewController
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+
+    // 创建学生对象
+    _student = [Student new];
+    
+    // 监听属性name
+    [_student addObserver:self
+               forKeyPath:@"name"  // 属性
+                  options:NSKeyValueObservingOptionNew | NSKeyValueObservingOptionOld
+                  context:nil];
+    
+    // 监听实例变量age
+    [_student addObserver:self
+               forKeyPath:@"age"   // 实例变量
+                  options:NSKeyValueObservingOptionNew | NSKeyValueObservingOptionOld
+                  context:nil];
+    
+    _student.name = @"YouXianMing"; // 改变名字
+    _student.age  = @"18";          // 改变年龄
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary *)change
+                       context:(void *)context
+{
+    NSLog(@"%@", change);
+}
+
+
+
+
+
+
+2.kvo
+// 添加键值观察
+/*
+1 观察者，负责处理监听事件的对象
+2 观察的属性
+3 观察的选项
+4 上下文
+*/
+[self.person addObserver:self forKeyPath:@"name" options:NSKeyValueObservingOptionNew | NSKeyValueObservingOptionOld context:@"Person Name"];
+
+// 所有的 kvo 监听到事件，都会调用此方法
+/*
+ 1. 观察的属性
+ 2. 观察的对象
+ 3. change 属性变化字典（新／旧）
+ 4. 上下文，与监听的时候传递的一致
+ */
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context;
+
+
+
+KVO 的实现：
+当你观察一个对象时，一个新的类会动态被创建。
+这个类继承自该对象的原本的类，并重写了被观察属性的 setter 方法。
+重写的 setter 方法会负责在调用原 setter 方法之前和之后，通知所有观察对象值的更改。
+最后把这个对象的 isa 指针 ( isa 指针告诉 Runtime 系统这个对象的类是什么 ) 指向这个新创建的子类，
+对象就神奇的变成了新创建的子类的实例。
+
+
+3.GCD
+若干个url异步加载多张图片，然后在都下载完成后合成一张整图：
+dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
+dispatch_group_t group = dispatch_group_create();
+dispatch_group_async(group, queue, ^{ /*加载图片1 */ });
+dispatch_group_async(group, queue, ^{ /*加载图片2 */ });
+dispatch_group_async(group, queue, ^{ /*加载图片3 */ }); 
+dispatch_group_notify(group, dispatch_get_main_queue(), ^{
+        // 合并图片
+});
+
+4.BAD_ACCESS在什么情况下出现？
+访问了野指针
+
+5.
+不能向编译后得到的类中增加实例变量；
+能向运行时创建的类中添加实例变量；
+解释下：
+因为编译后的类已经注册在 runtime 中
+类结构体中的 objc_ivar_list 实例变量的链表 和 instance_size 实例变量的内存大小已经确定
+同时runtime 会调用 class_setIvarLayout 或 class_setWeakIvarLayout 来处理 strong weak 引用。
+所以不能向存在的类中添加实例变量
+
+运行时创建的类是可以添加实例变量
+调用 class_addIvar 函数
+但是得在调用 objc_allocateClassPair 之后，objc_registerClassPair 之前
+
+6.runloop和线程有什么关系？
+主线程的run loop默认是启动的。
+应用可以在无人操作的时候休息，需要让它干活的时候又能立马响应
+对其它线程来说，run loop默认是没有启动的
+
+在任何一个 Cocoa 程序的线程中，都可以通过以下代码来获取到当前线程的 run loop 。
+NSRunLoop *runloop = [NSRunLoop currentRunLoop];
+
+NSRunLoop类并不是线程安全，不能再一个线程中去操作另外一个线程的run loop对象
+CFRunLoopRef是线程安全
+
+每当一个运行循环结束的时候，它都会释放一次autorelease pool
+
+Run loop在你要和线程有更多的交互时才需要
+
+一个run loop就是一个事件处理循环
+用来不停的监听和处理输入事件并将其分配到对应的目标上进行处理
+
+输入源（input source）：
+传递异步事件，通常消息来自于其他线程或程序
+（1）基于端口的输入源由内核自动发送：
+在Cocoa里面你从来不需要直接创建输入源。
+你只要简单的创建端口对象，并使用NSPort的方法把该端口添加到run loop。
+端口对象会自己处理创建和配置输入源
+在Core Foundation，你必须人工创建端口和它的run loop源
+创建一个基于端口的输入源，将其添加到run loop并启动
+voidcreatePortSource()
+{
+    CFMessagePortRef port = CFMessagePortCreateLocal(kCFAllocatorDefault,CFSTR("com.someport"),myCallbackFunc, NULL,NULL);
+    CFRunLoopSourceRef source = CFMessagePortCreateRunLoopSource(kCFAllocatorDefault, port,0);
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), source,kCFRunLoopCommonModes);
+    while (pageStillLoading) {
+        NSAutoreleasePool *pool = [[NSAutoreleasePoolalloc] init];
+        CFRunLoopRun();
+        [pool release];
+    }
+    CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source,kCFRunLoopDefaultMode);
+    CFRelease(source);
+}
+
+（2）自定义的输入源需要人工从其他线程发送
+voidcreateCustomSource()
+{
+    CFRunLoopSourceContext context = {0,NULL, NULL,NULL, NULL,NULL, NULL,NULL, NULL,NULL};
+    CFRunLoopSourceRef source =CFRunLoopSourceCreate(kCFAllocatorDefault,0, &context);
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), source,kCFRunLoopDefaultMode);
+    while (pageStillLoading) {
+        NSAutoreleasePool *pool = [[NSAutoreleasePoolalloc] init];
+        CFRunLoopRun();
+        [pool release];
+    }
+    CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source,kCFRunLoopDefaultMode);
+    CFRelease(source);
+}
+
+（3）Cocoa上的Selector源
+Cocoa定义了自定义输入源，允许你在任何线程执行selector方法
+eg：
+- (void)performSelectorOnMainThread:(SEL)aSelector withObject:(id)argwaitUntilDone:(BOOL)wait modes:(NSArray *)array;
+
+定时源（timer source）：
+定时源在预设的时间点同步方式传递消息，这些消息都会发生在特定时间或者重复的时间间隔
+
+和输入源一样，定时器也和你的run loop的特定模式相关。
+如果定时器所在的模式当前未被run loop监视，
+那么定时器将不会开始直到run loop运行在相应的模式下
+方法一：
+NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:4.0
+                                                     target:self
+                                                   selector:@selector(backgroundThreadFire:) userInfo:nil
+                                                    repeats:YES];
+    [[NSRunLoop currentRunLoop] addTimer:timerforMode:NSDefaultRunLoopMode];
+ 
+方法二：
+[NSTimer scheduledTimerWithTimeInterval:10
+                                        target:self
+                                       selector:@selector(backgroundThreadFire:)
+                                       userInfo:nil
+                                       repeats:YES];
+
+
+
+RunLoop观察者：
+run loop观察者和以下事件关联：
+1.  Runloop入口
+2.  Runloop何时处理一个定时器
+3.  Runloop何时处理一个输入源
+4.  Runloop何时进入睡眠状态
+5.  Runloop何时被唤醒，但在唤醒之前要处理的事件
+6.  Runloop终止
+
+和定时器类似，在创建的时候你可以指定run loop观察者可以只用一次或循环使用。
+若只用一次，那么在它启动后，会把它自己从run loop里面移除，而循环的观察者则不会。
+定义观察者并把它添加到run loop，只能使用Core Fundation。
+如何创建run loop的观察者：
+- (void)addObserverToCurrentRunloop
+{
+    // The application uses garbage collection, so noautorelease pool is needed.
+    NSRunLoop*myRunLoop = [NSRunLoop currentRunLoop];
+    
+    // Create a run loop observer and attach it to the runloop.
+    CFRunLoopObserverContext  context = {0,self, NULL,NULL, NULL};
+   CFRunLoopObserverRef    observer =CFRunLoopObserverCreate(kCFAllocatorDefault,
+                                                              kCFRunLoopBeforeTimers,YES, 0, &myRunLoopObserver, &context);
+    
+    if (observer)
+    {
+        CFRunLoopRef    cfLoop = [myRunLoop getCFRunLoop];
+       CFRunLoopAddObserver(cfLoop, observer, kCFRunLoopDefaultMode);
+    }
+}
+其中，kCFRunLoopBeforeTimers表示选择监听定时器触发前处理事件，后面的YES表示循环监听
+
+
+
+RunLoop的事件队列：
+每次运行run loop，你线程的run loop对会自动处理之前未处理的消息，并通知相关的观察者：
+1.通知观察者run loop已经启动 
+2.通知观察者任何即将要开始的定时器 
+3.通知观察者任何即将启动的非基于端口的源 
+4.启动任何准备好的非基于端口的源 
+5.如果基于端口的源准备好并处于等待状态，立即启动；并进入步骤9。 
+6.通知观察者线程进入休眠 
+7.将线程置于休眠直到任一下面的事件发生： 
+某一事件到达基于端口的源 
+定时器启动 
+Run loop设置的时间已经超时 
+run loop被显式唤醒 
+8.通知观察者线程将被唤醒。 
+9.处理未处理的事件 
+如果用户定义的定时器启动，处理定时器事件并重启run loop。进入步骤2 
+如果输入源启动，传递相应的消息 
+如果run loop被显式唤醒而且时间还没超时，重启run loop。进入步骤2 
+10.通知观察者run loop结束。
+
+因为定时器和输入源的观察者是在相应的事件发生之前传递消息
+Run loop可以由run loop对象显式唤醒。其它消息也可以唤醒run loop
+
+7.
+UIResponder有一个nextResponder属性
+通过该属性可以组成一个响应者链
+事件或消息在其路径上进行传递
+
+如果UIResponder没有处理传给它的事件，会将未处理的消息转发给自己的nextResponder
+
+8.
+通过一个selector可以找到方法地址，进而调用一个方法
+
+9.
+延迟加载：比如控制器的view，在第一次用到view时才会调用loadView方法进行创建
+
+10.
+imageNamed  优点在于可以缓存已经加载的图片
+在高分辨率屏幕设备上要加载名称为button的图片，该方法会自动使用名称为button@2x的图片；
+如果找不到该名称图片再去加载名称为button的图片
+
+11.
+const int *a;
+int const *a;
+a 是一个指向常整型数的指针(整型数是不可修改的，但指针可以)
+
+int * const a;
+a 是一个指向整型数的常指针(指针指向的整型数是可以修改的，但指针是不可修改的)
+
+int const * const a;
+a 是一个指向常整型数的常指针(指针指向的整型数是不可修改的，同时指针也是不可修改的)
+
+12.
+static修饰的函数是一个内部函数，只能在本文件中调用，其他文件不能调用
+static修饰的全部变量是一个内部变量，只能在本文件中使用，其他文件不能使用
+static修饰的局部变量只会初始化一次，并且在程序退出时才会回收内存
+
+13.
+self.是调用get方法或者set放
+self是当前本身，是一个指向当前对象的指针
+self->是直接访问成员变量
+
+14.
+id类型的指针可以指向任何OC对象
+nil代表空值（空指针的值， 0）
+
+15.runloop的mode
+NSDefaultRunLoopMode（kCFRunLoopDefaultMode）：默认，空闲状态
+UITrackingRunLoopMode：ScrollView滑动时
+UIInitializationRunLoopMode：启动时
+NSRunLoopCommonModes（kCFRunLoopCommonModes）：Mode集合
+
+
+
+RunLoop只能运行在一种mode下，如果要换mode，当前的loop也需要停下重启成新的。
+利用这个机制，ScrollView滚动过程中NSDefaultRunLoopMode（kCFRunLoopDefaultMode）的mode会切换到UITrackingRunLoopMode来保证ScrollView的流畅滑动：
+只能在NSDefaultRunLoopMode模式下处理的事件会影响ScrollView的滑动。
+
+如果我们把一个NSTimer对象以NSDefaultRunLoopMode（kCFRunLoopDefaultMode）添加到主运行循环中的时候,
+ScrollView滚动过程中会因为mode的切换，而导致NSTimer将不再被调度。
+同时因为mode还是可定制的，所以：
+Timer计时会被scrollView的滑动影响的问题可以通过将timer添加到NSRunLoopCommonModes（kCFRunLoopCommonModes）来解决
+
+//这个默认添加到runloop的NSDefaultRunLoopMode中
+[NSTimer scheduledTimerWithTimeInterval:1.0
+     target:self
+     selector:@selector(timerTick:)
+     userInfo:nil
+     repeats:YES];
+
+	
+//###	
+NSTimer *timer = [NSTimer timerWithTimeInterval:1.0
+     target:self
+     selector:@selector(timerTick:)
+     userInfo:nil
+     repeats:YES];
+[[NSRunLoop currentRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
+
+
+16.runloop内部实现
+int main(int argc, char * argv[]) {
+ //程序一直运行状态
+ while (AppIsRunning) {
+      //睡眠状态，等待唤醒事件
+      id whoWakesMe = SleepForWakingUp();
+      //得到唤醒事件
+      id event = GetEvent(whoWakesMe);
+      //开始处理事件
+      HandleEvent(event);
+ }
+ return 0;
+}
+
+17.循环引用
+使用 Facebook 开源的一个检测工具 FBRetainCycleDetector 检测代码中是否存在循环引用问题
+
+18.block
+__block int a = 0;
+   NSLog(@"定义前：%p", &a);         //栈区
+   void (^foo)(void) = ^{
+       a = 1;
+       NSLog(@"block内部：%p", &a);    //堆区
+   };
+   NSLog(@"定义后：%p", &a);         //堆区
+   foo();
+
+
+
+但如果你使用一些参数中可能含有 ivar 的系统 api ，如 GCD 、NSNotificationCenter就要小心一点：比如GCD 内部如果引用了 self，而且 GCD 的其他参数是 ivar，则要考虑到循环引用：
+__weak __typeof__(self) weakSelf = self;
+dispatch_group_async(_operationsGroup, _operationsQueue, ^
+{
+__typeof__(self) strongSelf = weakSelf;
+[strongSelf doSomething];
+[strongSelf doSomethingElse];
+} );
+
+19.
+使用 dispatch_barrier_async ，该函数只能搭配自定义并行队列 dispatch_queue_t 使用。
+不能使用： dispatch_get_global_queue ，否则 dispatch_barrier_async 的作用会和 dispatch_async 的作用一模一样
+
+20.runtime如何实现weak变量的自动置nil？
+runtime 对注册的类， 会进行布局，对于 weak 对象会放入一个 hash 表中。 
+用 weak 指向的对象内存地址作为 key，当此对象的引用计数为0的时候会 dealloc，
+假如 weak 指向的对象内存地址是a，那么就会以a为键， 在这个 weak 表中搜索，
+找到所有以a为键的 weak 对象，从而设置为 nil。
+
+21.runtime
+调用 [super class]时，会转换成objc_msgSendSuper函数
+最后内部是使用 objc_msgSend(objc_super->receiver, @selector(class))去调用
+id objc_msgSend(id self, SEL op, ...)
+
+id objc_msgSendSuper(struct objc_super *super, SEL op, ...)
+struct objc_super {
+      __unsafe_unretained id receiver;
+      __unsafe_unretained Class super_class;
+};
+第一步先构造 objc_super 结构体，结构体第一个成员就是 self 。 
+第二个成员是 (id)class_getSuperclass(objc_getClass(“Son”)) , 实际该函数输出结果为 Father
+- (Class)class {
+   return object_getClass(self);
+}
+
+
+SEL setterSelector = NSSelectorFromString(setterForGetter(key));
+setterForGetter() 方法获得相应的 setter 的名字（SEL）。
+也就是把 key 的首字母大写，然后前面加上 set 后面加上 :，
+这样 key 就变成了 setKey:。
+
+Method setterMethod = class_getInstanceMethod([self class], setterSelector);
+if (!setterMethod) {
+        // throw invalid argument exception
+    }
+	
+Class clazz = object_getClass(self);
+NSString *clazzName = NSStringFromClass(clazz);
+
+动态创建新的类需要用 objc/runtime.h 中定义的 objc_allocateClassPair() 函数
+传一个父类，类名，然后额外的空间（通常为 0），它返回给你一个类
+最后 objc_registerClassPair() 告诉 Runtime 这个类的存在
+
+- (Class)makeKvoClassWithOriginalClassName:(NSString *)originalClazzName
+{
+    NSString *kvoClazzName = [kPGKVOClassPrefix stringByAppendingString:originalClazzName];
+    Class clazz = NSClassFromString(kvoClazzName);
+
+    if (clazz) {
+        return clazz;
+    }
+
+    // class doesn't exist yet, make it
+    Class originalClazz = object_getClass(self);
+    Class kvoClazz = objc_allocateClassPair(originalClazz, kvoClazzName.UTF8String, 0);
+
+    // grab class method's signature so we can borrow it
+    Method clazzMethod = class_getInstanceMethod(originalClazz, @selector(class));
+    const char *types = method_getTypeEncoding(clazzMethod);
+    class_addMethod(kvoClazz, @selector(class), (IMP)kvo_class, types);
+
+    objc_registerClassPair(kvoClazz);
+
+    return kvoClazz;
+}
+
+并通过 object_setClass() 修改 isa 指针。
+
+
+22.实现对一个对象的KVO
+当你观察一个对象时，一个新的类会被动态创建。
+这个类继承自该对象的原本的类，并重写了被观察属性的 setter 方法。
+重写的 setter 方法会负责在调用原 setter 方法之前和之后，
+通知所有观察对象：值的更改。
+最后通过 isa 混写（isa-swizzling） 把这个对象的 isa 指针 ( isa 指针告诉 Runtime 系统这个对象的类是什么 ) 指向这个新创建的子类，
+对象就神奇的变成了新创建的子类的实例
+被监听的对象”的类对象是 MYClass ，有时候我们能看到对 NSKVONotifying_MYClass 的引用而不是对 MYClass 的引用
+
+observeValueForKeyPath:ofObject:change:context: 是在 didChangeValueForKey: 内部触发的操作
+
+23._objc_msgForward函数是做什么的？
+_objc_msgForward是 IMP 类型，用于消息转发的：当向一个对象发送一条消息，
+但它并没有实现的时候，_objc_msgForward会尝试做消息转发
+
+objc_msgSend的动作比较清晰：首先在 Class 中的缓存查找 IMP （没缓存则初始化缓存），
+如果没找到，则向父类的 Class 查找。
+如果一直查找到根类仍旧没有实现，则用_objc_msgForward函数指针代替 IMP 。
+最后，执行这个 IMP
+
+_objc_msgForward是一个函数指针（和 IMP 的类型一样），
+是用于消息转发的：当向一个对象发送一条消息，
+但它并没有实现的时候，_objc_msgForward会尝试做消息转发
+
+lldb：
+call (void)instrumentObjcMessageSends(YES)
+之后，运行时发送的所有消息都会打印到/tmp/msgSend-xxxx文件里了。
+终端中输入命令前往：
+open /private/tmp
+
+_objc_msgForward消息转发做的几件事：
+调用resolveInstanceMethod:方法 (或 resolveClassMethod:)。允许用户在此时为该 Class 动态添加实现。如果有实现了，则调用并返回YES，那么重新开始objc_msgSend流程。这一次对象会响应这个选择器，一般是因为它已经调用过class_addMethod。如果仍没实现，继续下面的动作。
+调用forwardingTargetForSelector:方法，尝试找到一个能响应该消息的对象。如果获取到，则直接把消息转发给它，返回非 nil 对象。否则返回 nil ，继续下面的动作。注意，这里不要返回 self ，否则会形成死循环。
+调用methodSignatureForSelector:方法，尝试获得一个方法签名。如果获取不到，则直接调用doesNotRecognizeSelector抛出异常。如果能获取，则返回非nil：创建一个 NSlnvocation 并传给forwardInvocation:。
+调用forwardInvocation:方法，将第3步获取到的方法签名包装成 Invocation 传入，如何处理就在这里面了，并返回非ni。
+调用doesNotRecognizeSelector: ，默认的实现是抛出异常。如果第3步没能获得一个方法签名，执行该步骤
+resolveInstanceMethod:方法 (或 resolveClassMethod:)。
+forwardingTargetForSelector:方法
+methodSignatureForSelector:方法
+forwardInvocation:方法
+doesNotRecognizeSelector: 方法
+
+_objc_msgForward隶属 C 语言，有三个参数 ：
+_objc_msgForward参数  类型
+所属对象 | id类型
+方法名 | SEL类型
+可变参数 |可变参数类型
+
+为了直观，我们可以通过如下方式定义一个 IMP类型 ：
+typedef void (*voidIMP)(id, SEL, ...)
+
+一旦调用_objc_msgForward，将跳过查找 IMP 的过程，直接触发“消息转发”，
+如果调用了_objc_msgForward，即使这个对象确实已经实现了这个方法，你也会告诉objc_msgSend：
+“我没有在这个对象里找到这个方法的实现”
+
+_objc_msgForward？最常见的场景是：你想获取某方法所对应的NSInvocation对象
+
+24.
+JSPatch 以小巧的体积做到了让JS调用/替换任意OC方法，让iOS APP具备热更新的能力
+
+25.
+objc是动态语言，每个方法在运行时会被动态转为消息发送，即：objc_msgSend(receiver, selector)。
+如果向一个nil对象发送消息，首先在寻找对象的isa指针时就是0地址返回了，所以不会出现任何错误
+方法编译之后就是objc_msgSend()函数调用.
+[obj foo];在objc动态编译时，会被转意为：objc_msgSend(obj, @selector(foo));
+
+26.runtime如何通过selector找到对应的IMP地址？（分别考虑类方法和实例方法）
+每一个类对象中都一个方法列表,方法列表中记录着方法的名称,方法实现,以及参数类型,
+其实selector本质就是方法名称,通过这个方法名称就可以在方法列表中找到对应的方法实现.
+
+27.什么时候会报unrecognized selector的异常？
+当调用该对象上某个方法,而该对象上没有实现这个方法的时候， 可以通过“消息转发”进行解决。
+
+objc在向一个对象发送消息时，runtime库会根据对象的isa指针找到该对象实际所属的类，然后在该类中的方法列表以及其父类方法列表中寻找方法运行，
+如果，在最顶层的父类中依然找不到相应的方法时，程序在运行时会挂掉并抛出异常unrecognized selector sent to XXX 。
+但是在这之前，objc的运行时会给出三次拯救程序崩溃的机会：
+1.Method resolution
+objc运行时会调用+resolveInstanceMethod:或者 +resolveClassMethod:，让你有机会提供一个函数实现。
+如果你添加了函数，那运行时系统就会重新启动一次消息发送的过程，否则 ，运行时就会移到下一步，
+消息转发（Message Forwarding）。
+2.Fast forwarding
+如果目标对象实现了-forwardingTargetForSelector:，Runtime 这时就会调用这个方法，
+给你把这个消息转发给其他对象的机会。 只要这个方法返回的不是nil和self，整个消息发送的过程就会被重启，
+当然发送的对象会变成你返回的那个对象。否则，就会继续Normal Fowarding。 
+这里叫Fast，只是为了区别下一步的转发机制。因为这一步不会创建任何新的对象，
+但下一步转发会创建一个NSInvocation对象，所以相对更快点。 
+3. Normal forwarding
+这一步是Runtime最后一次给你挽救的机会。
+首先它会发送-methodSignatureForSelector:消息获得函数的参数和返回值类型。
+如果-methodSignatureForSelector:返回nil，Runtime则会发出-doesNotRecognizeSelector:消息，
+程序这时也就挂掉了。
+如果返回了一个函数签名，Runtime就会创建一个NSInvocation对象并发送-forwardInvocation:消息给目标对象。
+
+28.NSNotification
+需要被观察者先主动发出通知，
+然后观察者注册监听后再来进行响应，
+比KVO多了发送通知的一步，
+但是其优点是监听不局限于属性的变化，
+还可以对多种多样的状态变化进行监听，监听范围广，使用也更灵活
+
+29.NSURLSession
+NSURLSessionConfiguration 
+NSURLSessionTask 的 3 个子类：NSURLSessionDataTask，NSURLSessionUploadTask，NSURLSessionDownloadTask。
+这3个子类封装了现代程序三个最基本的网络任务：获取数据，比如 JSON 或者 XML，上传文件和下载文件
+
+所有的 task 都是可以取消，暂停或者恢复的。
+当一个 download task 取消时，可以通过选项来创建一个恢复数据（resume data），
+然后可以传递给下一次新创建的 download task，以便继续之前的下载
+
+每个 NSURLSession 对象都由一个 NSURLSessionConfiguration 对象来进行初始化，
+后者指定了刚才提到的那些策略以及一些用来增强移动设备上性能的新选项
+
+不会立即运行 task，而是将该 task 对象先返回，
+允许我们进一步的配置，然后可以使用 resume 方法来让它开始运行。
+ NSURL *URL = [NSURL URLWithString:@"http://example.com"];
+ NSURLRequest *request = [NSURLRequest requestWithURL:URL];
+
+ NSURLSession *session = [NSURLSession sharedSession];
+ NSURLSessionDataTask *task = [session dataTaskWithRequest:request
+                                         completionHandler:
+     ^(NSData *data, NSURLResponse *response, NSError *error) {
+         // ...
+     }];
+
+ [task resume];
+
+ 
+ Download task 也需要一个 request，不同之处在于 completionHandler 这个 block。Data task 和 upload task 会在任务完成时一次性返回，但是 Download task 是将数据一点点地写入本地的临时文件。所以在 completionHandler 这个 block 里，我们需要把文件从一个临时地址移动到一个永久的地址保存起来：
+ NSURL *URL = [NSURL URLWithString:@"http://example.com/file.zip"];
+ NSURLRequest *request = [NSURLRequest requestWithURL:URL];
+
+ NSURLSession *session = [NSURLSession sharedSession];
+ NSURLSessionDownloadTask *downloadTask = [session downloadTaskWithRequest:request
+                                                         completionHandler:
+    ^(NSURL *location, NSURLResponse *response, NSError *error) {
+        NSString *documentsPath = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+        NSURL *documentsDirectoryURL = [NSURL fileURLWithPath:documentsPath];
+        NSURL *newFileLocation = [documentsDirectoryURL URLByAppendingPathComponent:[[response URL] lastPathComponent]];
+        [[NSFileManager defaultManager] copyItemAtURL:location toURL:newFileLocation error:nil];
+    }];
+
+ [downloadTask resume];
+
+30.苹果的安全机制
+1.没经过用户同意，你不能随便获取用户信息。
+2.所有的程序都在沙盒里运行，B程序不能进入A程序的运行范围。
+3.如果跟钱有关，比如说支付宝，这些底层的实现都是保密的
+只提供接口供开发者调用
+这样的话安全性得到保障。
+4.如果要防止代码被反编译
+可以将自己的代码中的.m文件封装成静态库（.a文件）或者是framework文件
+只提供给其它人.h文件。这样就保证了个人代码的安全性。
+5.网络登录的话跟用户名跟密码相关要发送POST请求
+如果是GET请求的话密码会直接在URL中显示。
+然后同时要对帐号密码采用加密技术，加一句：我们公司用的是MD5，
+但是现在MD5有一个专门的网站来破解，为了防止这个，可以采用加盐技术。
+
+31.
+数据库文件放在沙盒里documents文件夹下。
+
+32.多线程
+队列：是管理线程的
+
+主队列添加的同步操作永远不会执行，会死锁
+全局队列是系统的，直接get就可以用
+
+并行队列：队列中的线程会并发执行，队列是先进先出，如果后面的任务执行完了，
+怎么出去的呢？任务执行完毕了，不一定出队列。
+只有前面的任务执行完了，才会出队列，
+也就是说你即使执行完毕了，也必须等前面的任务执行完毕出队列，才可以出去
+
+主线程队列和GCD创建的队列是不同的。
+在GCD中创建的队列优先级没有主队列高，
+所以在GCD中的串行队列开启同步任务里面没有嵌套任务是不会阻塞主线程，
+只有一种可能导致死锁，就是串行队列里，嵌套开启任务，有可能会导致死锁。
+
+主线程是不会执行完毕的，因为他是无限循环的
+主线程队列中不能开启同步，会阻塞主线程。
+只能开启异步任务，开启异步任务也不会开启新的线程，
+只是降低异步任务的优先级，让cpu空闲的时候才去调用。
+而同步任务，会抢占主线程的资源，会造成死锁。
+
+串行队列开启异步任务后嵌套同步任务造成死锁
+dispatch_queue_t q = dispatch_queue_create("cn.itcast.gcddemo", DISPATCH_QUEUE_SERIAL);
+    dispatch_async(q, ^{
+        NSLog(@"异步任务 %@", [NSThread currentThread]);
+        // 下面开启同步造成死锁：因为串行队列中线程是有执行顺序的，
+需要等上面开启的异步任务执行完毕，才会执行下面开启的同步任务。
+而上面的异步任务还没执行完，要到下面的大括号才算执行完毕，
+而下面的同步任务已经在抢占资源了，就会发生死锁。
+        dispatch_sync(q, ^{
+            NSLog(@"同步任务 %@", [NSThread currentThread]);
+        });
+});
+串行队列开启同步任务后嵌套同步任务造成死锁
+
+同步任务优先级高
+异步任务优先级低
+
+并行队列添加的同步操作不会死锁都在主线程执行
+
+并行队列的任务嵌套
+    dispatch_queue_t q = dispatch_queue_create("test", DISPATCH_QUEUE_CONCURRENT);
+   
+    // 任务嵌套
+        dispatch_sync(q, ^{
+          NSLog(@"1 %@", [NSThread currentThread]);
+           
+            dispatch_sync(q, ^{
+                NSLog(@"2 %@", [NSThread currentThread]);
+               
+                dispatch_sync(q, ^{
+
+                    NSLog(@"3 %@", [NSThread currentThread]);
+                });
+            });
+           
+            dispatch_async(q, ^{
+
+                NSLog(@"4 %@", [NSThread currentThread]);
+            });
+
+        NSLog(@"5 %@", [NSThread currentThread]);
+
+        });
+
+// 运行结果是: 12345 或12354  
+
+串行队列，同步操作，不会新建线程，操作顺序执行；
+
+串行队列，异步操作，会新建线程，操作顺序进行
+
+并行队列，同步操作，不会新建县城，操作顺序执行；
+
+并行队列，异步操作，会新建线程，操作无序进行，
+队列前如果有其他任务，会等待其他任务执行完毕再执行

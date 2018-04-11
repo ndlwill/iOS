@@ -1,0 +1,68 @@
+1> 用户使用 APP 客户端，选择商品下单。
+2> APP 客户端将用户的商品数据传给商户服务器，请求生成支付订单。
+3> 商户后台调用统一下单 API 向微信的服务器发送请求，微信服务器生成预付单，并生成一个 prepay_id 返回给商户后台。
+4> 商户后台将这个 prepay_id 返回给商户客户端。
+5> 用户点击确认支付，这时候商户客户端调用 SDK 打开微信客户端，进行微信支付。
+6> 微信客户端向微信服务器发起支付请求并返回支付结果（他们之间交互用的就是prepay_id这个参数，微信的服务器要验证微信客户端传过去的参数是否跟第三步中生成的那个id一致）。
+7> 用户输入支付密码后，微信客户端提交支付授权，跟微信服务器交互，完成支付
+8> 微信服务器给微信客户端发送支付结果提示，并异步给商户服务器发送支付结果通知。
+9> 商户客户端通过支付结果回调接口查询支付结果，并向后台检查支付结果是否正确，后台返回支付结果。
+10> 商户客户端显示支付结果，完成订单，发货
+
+
+为了提高数据安全性，下单、签名等操作一般都是在后台完成
+// 发起微信支付，设置参数
+PayReq *request   = [[PayReq alloc] init];  // 创建支付对象
+request.openID = @""; // 由用户微信号和AppID组成的唯一标识
+request.partnerId = @""; // 商家ID
+request.prepayId  = @""; // 预支付订单ID
+request.package   = @"Sign=WXPay"; // 数据和签名
+request.nonceStr  = @""; // 随机编码
+NSDate *date = [NSDate date];
+NSString * timeSp = [NSString stringWithFormat:@"%ld", (long)[date timeIntervalSince1970]];
+UInt32 timeStamp = [timeSp intValue];
+request.timeStamp = timeStamp; // 时间戳
+request.sign = @""; // 签名，签名一般都会加密
+
+//发送请求到微信，等待微信返回 onResp
+[WXApi sendReq:request];
+
+// 判断发起的请求是否为微信支付，如果是就回调
+- (BOOL)application:(UIApplication *)app openURL:(NSURL *)url options:(NSDictionary<NSString *,id> *)options {
+    return [WXApi handleOpenURL:url delegate:self];
+}
+
+#pragma mark - WXApiDelegate
+// 微信支付结果回调方法
+- (void)onResp:(BaseResp *)resp {
+    NSString *payResoult = [NSString stringWithFormat:@"%d", resp.errCode];
+    
+    if([resp isKindOfClass:[PayResp class]]){
+
+        /**
+         WXSuccess           = 0,    成功
+        WXErrCodeCommon     = -1,    普通错误类型
+        WXErrCodeUserCancel = -2,    用户点击取消并返回
+        WXErrCodeSentFail   = -3,    发送失败
+        WXErrCodeAuthDeny   = -4,    授权失败
+        WXErrCodeUnsupport  = -5,    微信不支持
+         */
+        //支付返回结果，实际支付结果需要去微信服务器端查询
+        switch (resp.errCode) {
+            case WXSuccess:
+                payResoult = @"支付成功";
+                break;
+            case WXErrCodeCommon:
+                payResoult = @"支付失败";
+                break;
+            case WXErrCodeUserCancel:
+                payResoult = @"用户点击取消并返回";
+                break;
+            default:
+                // 错误码 以及 错误提示字符串
+                payResoult = [NSString stringWithFormat:@"支付结果：失败！retcode = %d, retstr = %@", resp.errCode,resp.errStr];
+                break;
+        }
+    }
+}
+

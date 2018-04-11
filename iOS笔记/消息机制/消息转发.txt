@@ -1,0 +1,66 @@
+[person run];
+这实际上这是在给person这个对象发送run这个消息。
+当run这个方法只有定义没有实现会怎么样->报错unrecognized selector sent to instance
+
+
+
+首先，该方法在调用时，系统会查看这个对象能否接收这个消息（查看这个类有没有这个方法，或者有没有实现这个方法。），如果不能并且只在不能的情况下，就会调用下面这几个方法，给你“补救”的机会，你可以先理解为几套防止程序crash的备选方案，我们就是利用这几个方案进行消息转发，注意一点，前一套方案实现后一套方法就不会执行。如果这几套方案你都没有做处理，那么程序就会报错crash。
+
+方案一：
++ (BOOL)resolveInstanceMethod:(SEL)sel
++ (BOOL)resolveClassMethod:(SEL)sel
+
+动态增加了一个run方法的实现
+void run(id self, SEL _cmd){
+	NSLog(@"%@ %s", self, sel_getName(_cmd));
+}
+
++ (BOOL)resolveInstanceMethod:(SEL)sel{
+	if(sel == @selector(run)){
+		class_addMethod(self, sel, (IMP)run, "v@:");
+		return YES:
+	}
+	return [super resolveInstanceMethod:sel];
+}
+
+
+方案二：
+- (id)forwardingTargetForSelector:(SEL)aSelector
+
+新建了一个汽车类Car，并且实现了Car的run方法
+- (id)forwardingTargetForSelector:(SEL)aSelector
+{
+	return [[Car alloc] init];
+}
+
+方案三：
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector;
+- (void)forwardInvocation:(NSInvocation *)anInvocation;
+
+methodSignatureForSelector用来生成方法签名，这个签名就是给forwardInvocation中的参数NSInvocation调用的
+
+unrecognized selector sent to instance原因，原来就是因为methodSignatureForSelector这个方法中，由于没有找到run对应的实现方法，所以返回了一个空的方法签名，最终导致程序报错崩溃
+
+所以我们需要做的是自己新建方法签名，再在forwardInvocation中用你要转发的那个对象调用这个对应的签名，这样也实现了消息转发
+
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector
+{
+	NSString *sel = NSStringFromSelector(aSelector);
+	if([sel isEqualToString:@"run"]){
+		return [NSMethodSignature signatureWithObjCTypes:"v@:"];
+	}
+	return [super methodSignatureForSelector:aSelector];
+}
+
+- (void)forwardInvocation:(NSInvocation *)anInvocation
+{
+	SEL selector = [anInvocation selector];
+
+	Car *car = [[Car alloc] init];
+	if([car responseToSelector:selector]){
+		[anInvocation invokeWithTarget:car];
+	}
+}
+
+
+关于生成签名的类型"v@:"。每一个方法会默认隐藏两个参数，self、_cmd，self代表方法调用者，_cmd代表这个方法的SEL，签名类型就是用来描述这个方法的返回值、参数的，v代表返回值为void，@表示self，:表示_cmd

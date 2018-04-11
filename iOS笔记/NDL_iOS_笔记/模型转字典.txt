@@ -1,0 +1,59 @@
+
+
+static NSSet *classes;
+
+- (NSMutableDictionary *)getParameterDictionary {
+
+    NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+
+    Class c = self.class;
+
+    while (c) {
+        unsigned count;
+        objc_property_t *properties = class_copyPropertyList([c class], &count);
+
+        for (int i = 0; i < count; i++) {
+            NSString *key = [NSString stringWithUTF8String:property_getName(properties[i])];
+            dict[key] = [self valueForKey:key];
+        }
+        free(properties);
+
+        // 获得父类
+        c = class_getSuperclass(c);
+
+        if ([self isClassFromFoundation:c]) break;
+    }
+    return dict;
+}
+
+- (BOOL)isClassFromFoundation:(Class)c
+{
+    if (c == [NSObject class] || c == [NSManagedObject class]) return YES;
+
+    __block BOOL result = NO;
+    [[self foundationClasses] enumerateObjectsUsingBlock:^(Class foundationClass, BOOL *stop) {
+        if ([c isSubclassOfClass:foundationClass]) {
+            result = YES;
+            *stop = YES;
+        }
+    }];
+    return result;
+}
+
+- (NSSet *)foundationClasses
+{
+    if (classes == nil) {
+        // 集合中没有NSObject，因为几乎所有的类都是继承自NSObject，具体是不是NSObject需要特殊判断
+        classes = [NSSet setWithObjects:
+                              [NSURL class],
+                              [NSDate class],
+                              [NSValue class],
+                              [NSData class],
+                              [NSError class],
+                              [NSArray class],
+                              [NSDictionary class],
+                              [NSString class],
+                              [NSAttributedString class], nil];
+    }
+    return classes;
+}

@@ -1,0 +1,2761 @@
+第三方框架:AFNetworking KILabel SDWebImage SnapKit SVProgressHUD fmdb
+QRCode
+RefreshControl
+4.PhotoBrowser
+UICollectionView实现图片浏览器
+UICollectionViewCell中添加UIScrollView实现图片的缩放
+
+Popover
+OAuth
+发送微博
+--------------------------------------自定义LOG
+/*
+自定义LOG的目的:
+在开发阶段自动显示LOG
+在发布阶段自动屏蔽LOG
+*/
+func NJLog<T>(message: T, method: String = __FUNCTION__, line: Int = __LINE__)
+{
+    #if DEBUG
+    print("\(method)[\(line)]: \(message)")
+    #endif
+}
+--------------------------------------AppDelegate
+class AppDelegate: UIResponder, UIApplicationDelegate { 
+
+    var window: UIWindow?
+    
+    func application(application: UIApplication, didFinishLaunchingWithOptions launchOptions: [NSObject: AnyObject]?) -> Bool {
+
+        // 1.设置全局外观
+        UITabBar.appearance().tintColor = UIColor.orangeColor()
+        UINavigationBar.appearance().tintColor = UIColor.orangeColor()
+        
+        // 2.注册通知, 监听根控制器的改变
+        NSNotificationCenter.defaultCenter().addObserver(self, selector: Selector("switchRootViewController:"), name: XMGRootViewControllerChnage, object: nil)
+        
+        // 3.创建keywindow
+        window = UIWindow(frame: UIScreen.mainScreen().bounds)
+        window?.backgroundColor  = UIColor.whiteColor()
+        window?.rootViewController = defaultViewController()
+        window?.makeKeyAndVisible()
+        
+        // 4.连接打开数据库
+        SQLiteManager.shareIntance.openDB("status.sqlite")
+        
+        // 5.用户启动程序后,判断是有有缓存三天的数据.如果有,则删除三天的缓存的数据
+        StatusViewModelList.clearData()
+        
+        return true
+    }
+    
+    deinit
+    {
+        NSNotificationCenter.defaultCenter().removeObserver(self)
+    }
+    
+}
+
+--------------------------------------数据库
+SQLite_bridge.h   #import "FMDB.h"
+
+class SQLiteManager: NSObject {
+    // 1.将类设计成单例
+    static let shareIntance : SQLiteManager = SQLiteManager()
+    
+    // 保存数据库队列对象
+    var dbQueue : FMDatabaseQueue?
+    
+    // 2.打开数据库
+    func openDB(dbName : String) {
+        // 2.1.获取数据库文件存放的路径
+        let path = NSSearchPathForDirectoriesInDomains(NSSearchPathDirectory.DocumentDirectory, NSSearchPathDomainMask.UserDomainMask, true).first
+        let filePath = path?.stringByAppendingString("/" + dbName)
+        print(filePath)
+        
+        // 2.2.创建数据库
+        dbQueue = FMDatabaseQueue(path: filePath)
+        
+        // 2.3.创建表
+        createTable()
+    }
+    
+    // 3.创建表
+    private func createTable() {
+        // 3.1.拼接创建表的SQL语句
+        let createTableSQL = "CREATE TABLE IF NOT EXISTS t_status ('statusID' INTEGER NOT NULL PRIMARY KEY,'statusText' TEXT,'userID' INTEGER, 'createTime' TEXT DEFAULT (datetime('now', 'localtime')));"
+        
+        // 3.2.执行SQL语句
+        dbQueue?.inDatabase({ (db) -> Void in
+            if db.executeUpdate(createTableSQL, withArgumentsInArray: nil) {
+                print("创建表成功")
+            }
+        })
+    }
+}
+
+--------------------------------------SB
+/// 根据一个SB的名称创建一个控制器
+private func createViewController(viewControllerName: String) -> UIViewController
+{
+    let sb = UIStoryboard(name: viewControllerName, bundle: nil)
+    return sb.instantiateInitialViewController()!
+}
+
+--------------------------------------判断是否有新版本
+/// 判断是否有新版本
+private func isNewVersion() -> Bool
+{
+    // 1.从info.plist中获取当前软件的版本号
+    let currentVersion = NSBundle.mainBundle().infoDictionary!["CFBundleShortVersionString"] as! String
+    
+    // 2.从沙盒中获取以前的软件版本号
+    let userDefaults = NSUserDefaults.standardUserDefaults()
+    let sanboxVersion = (userDefaults.objectForKey("CFBundleShortVersionString") as? String) ?? "0.0"
+    
+    // 3.利用"当前的"和"沙盒的"进行比较
+    // 如果当前的 > 沙盒的, 有新版本
+    // 1.0 0.0
+    if currentVersion.compare(sanboxVersion) == NSComparisonResult.OrderedDescending
+    {
+        // 有新版本
+        // 4.存储当前的软件版本号到沙盒中
+        userDefaults.setObject(currentVersion, forKey: "CFBundleShortVersionString")
+        userDefaults.synchronize() // iOS7以前需要这样做, iOS7以后不需要了
+        return true
+    }
+    
+    // 5.返回结果
+    return false
+    
+}
+
+--------------------------------------guard  &  可选绑定
+/// 切换根控制器器
+@objc private func switchRootViewController(notify: NSNotification)
+{
+    guard let _ = notify.userInfo else
+    {
+        // 切换到首页
+        window?.rootViewController = createViewController("Main")
+        return
+    }
+    // 切换到欢迎界面
+    window?.rootViewController = createViewController("WelcomeViewController")
+    
+}
+
+/// 返回默认控制器
+private func defaultViewController() -> UIViewController
+{
+    if let _ = UserAccount.loadUserAccount()
+    {
+        return isNewVersion() ? createViewController("NewfeatureViewController") : createViewController("WelcomeViewController")
+    }
+    return createViewController("Main")
+}
+
+@IBOutlet weak var iconView: UIImageView!
+func setupVisitorInfo(imageName: String?, title: String)
+    {
+        // 首页  name : String
+        guard let name = imageName else
+        {
+            startAnimation()
+            return
+        }
+        // 其他界面
+        iconView.image = UIImage(named: name)
+        titleView.text = title
+        rotationView.hidden = true
+    }
+--------------------------------------闭包
+UIView.animateWithDuration(2.0, delay: 0.0, usingSpringWithDamping: 0.5, initialSpringVelocity: 10.0, options: UIViewAnimationOptions(rawValue: 0), animations: { () -> Void in
+                    cell.startButton.transform = CGAffineTransformIdentity
+                }, completion: { (_) -> Void in
+                    cell.startButton.userInteractionEnabled = true
+            })
+
+override func viewDidAppear(animated: Bool) {
+        super.viewDidAppear(animated)
+        
+        // 1.计算移动的距离
+        let offset = view.bounds.height - iconBottomCons.constant
+        iconBottomCons.constant =  offset
+        
+        // 2.执行头像动画
+        UIView.animateWithDuration(1.0, animations: { () -> Void in
+            self.view.layoutIfNeeded()
+            }) { (_) -> Void in
+               
+                UIView.animateWithDuration(1.0, animations: { () -> Void in
+                    self.tipLabel.alpha = 1.0
+                    }, completion: { (_) -> Void in
+                        // 发送通知, 通知AppDelegate切换根控制器
+                        NSNotificationCenter.defaultCenter().postNotificationName(XMGRootViewControllerChnage, object: self, userInfo: nil)
+                })
+            }
+    }
+--------------------------------------snp
+class XMGCollectionViewCell: UICollectionViewCell {
+    
+    /// 保存图片索引
+    var index: Int = 0
+        {
+        didSet{
+            iconView.image = UIImage(named: "new_feature_\(index + 1)")
+        }
+    }
+    
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        // 初始化UI
+        setupUI()
+    }
+  
+    required init?(coder aDecoder: NSCoder) {
+        super.init(coder: aDecoder)
+        // 初始化UI
+        setupUI()
+    }
+    
+    // MARK: - 内部控制方法
+    private func setupUI()
+    {
+        // 添加子控件
+        contentView.addSubview(iconView)
+        contentView.addSubview(startButton)
+        
+        // 布局子控件
+        iconView.snp_makeConstraints { (make) -> Void in
+            make.edges.equalTo(0)
+        }
+        startButton.snp_makeConstraints { (make) -> Void in
+            make.centerX.equalTo(contentView)
+            make.bottom.equalTo(contentView.snp_bottom).offset(-160)
+        }
+    }
+    
+    @objc private func startBtnClick()
+    {
+        // 发送通知, 通知AppDelegate切换根控制器
+        NSNotificationCenter.defaultCenter().postNotificationName(XMGRootViewControllerChnage, object: self, userInfo: nil)
+    }
+
+  
+    // MARK: - 懒加载
+    /// 大图容器
+    private lazy var iconView = UIImageView()
+    /// 开始按钮
+    private lazy var startButton: UIButton = {
+       let btn = UIButton(backgroundImage: "new_feature_button")
+        btn.addTarget(self, action: Selector("startBtnClick"), forControlEvents: UIControlEvents.TouchUpInside)
+        btn.sizeToFit()
+        return btn
+    }()
+}
+
+--------------------------------------UICollectionView
+class NewfeatureViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegate {
+    /// 新特性界面总数
+    let maxImageCount = 4
+    
+    // MARK: - UICollectionViewDataSource
+    // 告诉系统当前组有多少行
+    func collectionView(collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        return maxImageCount
+    }
+    
+    // 告诉系统当前行显示什么内容
+    func collectionView(collectionView: UICollectionView, cellForItemAtIndexPath indexPath: NSIndexPath) -> UICollectionViewCell {
+        // 1.取出cell
+        let cell = collectionView.dequeueReusableCellWithReuseIdentifier("newfeatureCell", forIndexPath: indexPath) as! XMGCollectionViewCell
+        
+        // 2.设置数据
+        cell.index = indexPath.item
+        // 以下代码, 主要为了避免重用问题
+        cell.startButton.hidden = true
+        
+        // 3.返回cell
+        return cell
+    }
+    
+    // MAKR: - UICollectionViewDelegate
+    // 注意: 该方法传递给我们的是上一页的索引
+    // 当一个cell完全显示之后就会调用
+    func collectionView(collectionView: UICollectionView, didEndDisplayingCell cell: UICollectionViewCell, forItemAtIndexPath indexPath: NSIndexPath) {
+        
+        // 1.获取当前展现在眼前的cell对应的索引
+       let path = collectionView.indexPathsForVisibleItems().last!
+        
+        // 2.根据索引获取当前展现在眼前cell
+        let cell = collectionView.cellForItemAtIndexPath(path) as! XMGCollectionViewCell
+        
+        // 3.判断是否是最后一页
+        if path.item == maxImageCount - 1
+        {
+            cell.startButton.hidden = false
+            // 禁用按钮交互
+            // usingSpringWithDamping 的范围为 0.0f 到 1.0f ，数值越小「弹簧」的振动效果越明显。
+            // initialSpringVelocity 则表示初始的速度，数值越大一开始移动越快, 值得注意的是，初始速度取值较高而时间较短时，也会出现反弹情况。
+            cell.startButton.userInteractionEnabled = false
+            cell.startButton.transform = CGAffineTransformMakeScale(0.0, 0.0)
+            
+            UIView.animateWithDuration(2.0, delay: 0.0, usingSpringWithDamping: 0.5, initialSpringVelocity: 10.0, options: UIViewAnimationOptions(rawValue: 0), animations: { () -> Void in
+                    cell.startButton.transform = CGAffineTransformIdentity
+                }, completion: { (_) -> Void in
+                    cell.startButton.userInteractionEnabled = true
+            })
+        }
+    }
+    
+}
+
+// 注意: Swift中一个文件中是可以定义多个类
+class XMGFlowLayout: UICollectionViewFlowLayout {
+    // 准备布局
+    override func prepareLayout() {
+        super.prepareLayout()
+        itemSize = collectionView!.bounds.size
+        minimumInteritemSpacing = 0
+        minimumLineSpacing = 0
+        scrollDirection = UICollectionViewScrollDirection.Horizontal
+        
+        collectionView?.bounces = false
+        collectionView?.showsHorizontalScrollIndicator = false
+        collectionView?.showsVerticalScrollIndicator = false
+        collectionView?.pagingEnabled = true
+        
+    }
+}
+
+--------------------------------------归档
+class UserAccount: NSObject, NSCoding {
+    /// 用于调用access_token，接口获取授权后的access token。
+    var access_token: String?
+    /// access_token的生命周期，单位是秒数。
+    var expires_in: NSNumber?
+        {
+        didSet{
+            expires_Date = NSDate(timeIntervalSinceNow: expires_in!.doubleValue)
+        }
+    }
+    
+    /// 过期时间(年月日时分秒)
+    var expires_Date: NSDate?
+    
+    /// 当前授权用户的UID。
+    var uid: String?
+    
+    /// 用户昵称
+    var screen_name: String?
+    
+    /// 用户头像地址（大图），180×180像素
+    var avatar_large: String?
+    
+    static var userAccount: UserAccount?
+    
+    init(dict: [String: AnyObject])
+    {
+        super.init()
+        setValuesForKeysWithDictionary(dict)
+    }
+    override func setValue(value: AnyObject?, forUndefinedKey key: String) {
+    }
+    override var description: String {
+        let property = ["access_token", "expires_in", "uid"]
+        let dict = dictionaryWithValuesForKeys(property)
+        return "\(dict)"
+    }
+    
+
+    // MARK: - 外部控制方法
+    static let filePath = "userAccount.plist".cacheDir()
+    /// 保存授权模型到文件中
+    func saveAccount()
+    {
+        NSKeyedArchiver.archiveRootObject(self, toFile: UserAccount.filePath)
+    }
+    /// 从文件中读取保存的授权模型
+    class func loadUserAccount() -> UserAccount?
+    {
+        // 1.判断是否已经加载过了
+        if userAccount != nil
+        {
+            return userAccount
+        }
+        
+        // 2.如果没有加载过, 就从文件中加载
+        userAccount = NSKeyedUnarchiver.unarchiveObjectWithFile(UserAccount.filePath) as? UserAccount
+        
+        // 3.判断是否过期
+        // 2015  2014
+        guard let date = userAccount?.expires_Date where date.compare(NSDate()) == NSComparisonResult.OrderedDescending  else
+        {
+            userAccount = nil
+            return userAccount
+        }
+        
+        return userAccount
+    }
+    /// 判断是否已经登录
+    class func login() -> Bool {
+        return UserAccount.loadUserAccount() != nil
+    }
+
+    // MARK: - NSCoding
+    // 解档
+    required init?(coder aDecoder: NSCoder) {
+        access_token = aDecoder.decodeObjectForKey("access_token") as? String
+        expires_in = aDecoder.decodeObjectForKey("expires_in") as? NSNumber
+        uid = aDecoder.decodeObjectForKey("uid") as? String
+        expires_Date = aDecoder.decodeObjectForKey("expires_Date") as? NSDate
+        screen_name = aDecoder.decodeObjectForKey("screen_name") as? String
+        avatar_large = aDecoder.decodeObjectForKey("avatar_large") as? String
+    }
+    
+    // 归档
+     func encodeWithCoder(aCoder: NSCoder)
+    {
+        aCoder.encodeObject(access_token, forKey: "access_token")
+        aCoder.encodeObject(expires_in, forKey: "expires_in")
+        aCoder.encodeObject(uid, forKey: "uid")
+        aCoder.encodeObject(expires_Date, forKey: "expires_Date")
+        aCoder.encodeObject(screen_name, forKey: "screen_name")
+        aCoder.encodeObject(avatar_large, forKey: "avatar_large")
+    }
+    
+    
+}
+
+--------------------------------------String
+extension String
+{
+    /// 快速返回一个文档目录路径
+    func docDir() -> String
+    {
+        let docPath = NSSearchPathForDirectoriesInDomains(NSSearchPathDirectory.DocumentDirectory, NSSearchPathDomainMask.UserDomainMask, true).last!
+        return (docPath as NSString).stringByAppendingPathComponent((self as NSString).pathComponents.last!)
+    }
+    
+    /// 快速返回一个缓存目录的路径
+    func cacheDir() -> String
+    {
+        let cachePath = NSSearchPathForDirectoriesInDomains(NSSearchPathDirectory.CachesDirectory, NSSearchPathDomainMask.UserDomainMask, true).last!
+        return (cachePath as NSString).stringByAppendingPathComponent((self as NSString).pathComponents.last!)
+    }
+    
+    /// 快速返回一个临时目录的路径
+    func tmpDir() -> String
+    {
+        let tmpPath = NSTemporaryDirectory()
+        return (tmpPath as NSString).stringByAppendingPathComponent((self as NSString).pathComponents.last!)
+    }
+}
+
+--------------------------------------UITextField & UITextView
+/*
+        UITextField
+        不可以换行
+        不可以滚动
+        可以显示占位提示文本  placeholder
+        
+        UITextView
+        可以换行
+        可以滚动
+        不可以显示占位提示文本
+        */
+--------------------------------------xib
+/**
+快速创建方法
+*/
+class func visitorView() -> VisitorView
+{
+    return NSBundle.mainBundle().loadNibNamed("VisitorView", owner: nil, options: nil).last as! VisitorView
+}
+
+--------------------------------------mvvm
+/*
+M: 模型
+V: 视图
+VM: 视图模型
+1.用于给控制器以及模型瘦身
+2.处理网络/数据库相关操作
+*/
+
+/*
+Swift中一个类可以有父类也可以没有父类
+如果一个类没有父类, 那么这个类更加轻量级, 那么他们性能会更优于有父类的
+
+有父类和没有父类有什么区别?
+1.如果想使用KVC, 那么必须继承于NSObject
+2.如果想实现description属性, 那么如果没有父类必须遵守CustomStringConvertible, 如果有父类可以直接重写属性即可
+*/
+//class StatusViewModel: NSObject {
+class StatusViewModel {
+
+    /// 模型对象
+    var status: Status
+    
+    init(status: Status)
+    {
+        self.status = status
+        
+        /*
+        想要性能比较好, 就将固定不变的数据放在init方法中处理, 如果代码较多, 那么就为每个逻辑创建一个方法, 将对应的代码放到方法中去
+        如果不在乎性能, 可以直接通过get方法处理数据
+        */
+        
+        // 2.处理图片
+        guard let urls = (status.retweeted_status != nil) ? status.retweeted_status?.pic_urls : status.pic_urls else
+        {
+            return
+        }
+        
+        thumbnail_pics = [NSURL]()
+        bmiddle_pics = [NSURL]()
+        for dict in urls
+        {
+            // 1.处理缩略图
+            var urlStr = dict["thumbnail_pic"] as? String
+            let url = NSURL(string: urlStr ?? "")!
+            thumbnail_pics?.append(url)
+            
+            // 2.处理大图
+            guard let temp = urlStr where temp != ""  else
+            {
+                return
+            }
+            urlStr = temp.stringByReplacingOccurrencesOfString("thumbnail", withString: "bmiddle")
+            let url2 = NSURL(string: urlStr!)!
+            bmiddle_pics?.append(url2)
+
+        }
+    }
+    
+    // MARK: - 数据处理
+    
+    /// 来源字符串
+    var sourceText: String
+        {
+            // 1.处理来源
+            // 1.1.安全校验
+            guard let temp = status.source where temp != "" else
+            {
+                return ""
+            }
+            // 1.2.找到开始的位置
+            let startIndex = (temp as NSString).rangeOfString(">").location + 1
+            
+            // 1.3.找到需要截取的字符串的长度
+            let length = (temp as NSString).rangeOfString("<", options: NSStringCompareOptions.BackwardsSearch).location - startIndex
+            
+            // 1.4.截取字符串
+            let res = (temp as NSString).substringWithRange(NSMakeRange(startIndex, length))
+             return "来自 " + res
+    }
+    
+    /**
+     刚刚(一分钟内)
+     X分钟前(一小时内)
+     X小时前(当天)
+     
+     昨天 HH:mm(昨天)
+     
+     MM-dd HH:mm(一年内)
+     yyyy-MM-dd HH:mm(更早期)
+     */
+    var createdText: String{
+        
+        // 0.安全校验
+        // 先检查created_at是否有值, 如果没有就进入else
+        // 并且temp 不能是 "", 如果是""就进入else
+        guard let temp = status.created_at where temp != "" else
+        {
+            return ""
+        }
+        
+        // 1.将发布微博的时间字符串转换为NSDate
+        guard let createDate = NSDate.dataWithString(temp) else
+        {
+            return ""
+        }
+        
+        // 2.利用微博发布的时间和当前本机的时间进行比较
+        return createDate.desc
+        
+    }
+    
+    /// 存储所有配图URL
+    var thumbnail_pics: [NSURL]?
+    
+    /// 存储所有配图大图URL
+    var bmiddle_pics: [NSURL]?
+    
+    /// 用户头像URL
+    var avatarURL: NSURL
+        {
+            // 3.处理头像
+           return NSURL(string: status.user?.profile_image_url ?? "")!
+    }
+    
+    /// 认证图片
+    var verifiedImage: UIImage?
+        {
+            //  4.处理认证图片
+            switch status.user?.verified_type ?? -1
+            {
+            case 0:
+                // 个人认证
+                return UIImage(named: "avatar_vip")
+            case 2, 3, 5:
+                // 企业认证
+                return UIImage(named: "avatar_enterprise_vip")
+            case 220:
+                // 微博达人
+                return UIImage(named: "avatar_grassroot")
+            default:
+                // 没有认证
+                return nil
+            }
+    }
+    
+    /// 会员图片
+    var mbrankImage: UIImage?
+        {
+            // 5.处理会员图标
+            if status.user?.mbrank >= 1 && status.user?.mbrank <= 6
+            {
+                return  UIImage(named: "common_icon_membership_level\(status.user!.mbrank)")
+            }
+            return nil
+    }
+}
+
+
+
+// 专门用户获取数据
+class StatusViewModelList {
+    
+    /// 保存所有微博数据
+    var statuses: [StatusViewModel]?
+    
+    /// 获取微博数据
+    func loadStatus(since_id: String, max_id: String,finished: (models: [StatusViewModel]?, error: NSError?)->())
+    {
+        // 1.获取用户的ID
+        guard let userID = UserAccount.loadUserAccount()?.uid else {
+            print("用户没有登录")
+            return
+        }
+        
+        // 2.拼接查询的SQL
+        var querySQL = "SELECT * FROM t_status WHERE userID = \(userID)"
+        if since_id != "0"
+        {
+            querySQL += " AND statusID > \(since_id)"
+        } else if max_id != "0"
+        {
+            let temp = Int(max_id)! - 1
+            querySQL += " AND statusID <= \(temp)"
+        }
+        
+        querySQL += " ORDER BY statusID DESC LIMIT 20;"
+        
+        // 3.执行查询的SQL语句
+        SQLiteManager.shareIntance.dbQueue?.inDatabase({ (db) -> Void in
+            // 3.1.获取查询结果
+            let result = db.executeQuery(querySQL, withArgumentsInArray: nil)
+            
+            // 3.2.遍历所有的查询结果
+            var models = [StatusViewModel]()
+            while result.next() {
+                // 3.2.1.获取微博的字符串
+                let statusText = result.stringForColumn("statusText")
+                
+                // 3.2.2.将字符串转成字典
+                guard let data = statusText.dataUsingEncoding(NSUTF8StringEncoding) else {
+                    continue
+                }
+                guard let dict = try? NSJSONSerialization.JSONObjectWithData(data, options: NSJSONReadingOptions.MutableContainers) else {
+                    print("没有获取到微博数据")
+                    continue
+                }
+                
+                models.append(StatusViewModel(status: Status(dict: dict as! [String : AnyObject])))
+            }
+            
+            // 3.3.判断数组中是否有值
+            if models.count != 0 {
+                
+                print("从本地读取到数据")
+                // 3.3.1.将获取到的数据拼接到原来的数组中
+                if since_id != "0"
+                {
+                    // 将新的数据凭借到旧数据前面
+                    self.statuses = models + self.statuses!
+                    
+                }else if max_id != "0"
+                {
+                    // 将新的数据拼接到旧数据后面
+                    self.statuses = self.statuses! + models
+                }else{
+                    self.statuses = models
+                }
+                
+                // 3.3.2.回调告知外面现在获取到了数据
+                finished(models: models, error: nil)
+                
+                return
+            }
+            
+            // 3.4.没有从本地读取到数据,那么从网络中加载数据
+            self.loadDataFromNetwork(since_id, max_id: max_id, finished: finished)
+        })
+    }
+    
+    /// 从网络中获取数据
+    private func loadDataFromNetwork(since_id: String,  max_id: String,finished: (models: [StatusViewModel]?, error: NSError?)->()) {
+        
+        print("从网络中获取数据")
+        
+        // 1.获取微博数据
+        NetworkTools.shareInstance.loadStatus(since_id, max_id: max_id) { (dicts, error) -> () in
+            
+            // 1.安全校验
+            if error != nil
+            {
+                finished(models: nil, error: error)
+                return
+            }
+            
+            guard let array = dicts else
+            {
+                finished(models: nil, error: NSError(domain: "com.520it.lnj", code: 1002, userInfo: ["message": "没有获取到微博数据"]))
+                return
+            }
+            
+            // 2.遍历字典数组, 处理微博数据
+            var models = [StatusViewModel]()
+            for dict in array
+            {
+                models.append(StatusViewModel(status:Status(dict: dict)))
+            }
+            
+            // 3.处理下拉刷新的数据
+            if since_id != "0"
+            {
+                // 将新的数据凭借到旧数据前面
+                self.statuses = models + self.statuses!
+                
+            }else if max_id != "0"
+            {
+                // 将新的数据拼接到旧数据后面
+                self.statuses = self.statuses! + models
+            }else{
+                self.statuses = models
+            }
+            
+            // 4.缓存配图
+            self.cacheImage(models, finished: finished)
+            
+            // 5.本地缓存数据
+            self.cacheData(array)
+        }
+    }
+    
+    /// 缓存微博的数据
+    private func cacheData(list : [[String : AnyObject]]) {
+        // 1.拿到用户的UID
+        guard let userID = UserAccount.loadUserAccount()?.uid else {
+            print("用户ID没有值")
+            return
+        }
+        
+        // 2.遍历字典数据,拿到每一条微博数据
+        for dict in list {
+            // 2.1.获取微博的ID
+            guard let statusID = dict["idstr"] else {
+                print("微博ID没有值")
+                continue
+            }
+            
+            // 2.2.获取微博的内容
+            // 2.2.1.将字典转成NSData
+            guard let data = try? NSJSONSerialization.dataWithJSONObject(dict, options: NSJSONWritingOptions.PrettyPrinted) else {
+                print("没有转化成功")
+                continue
+            }
+            
+            // 2.2.2.将NSData转成字符串
+            guard let statusText = String(data: data, encoding: NSUTF8StringEncoding) else {
+                print("没有获取数据")
+                continue
+            }
+            
+            // 3.拼接插入SQL语句
+            let insertSQL = "INSERT INTO t_status (statusID, statusText, userID) VALUES (?, ?, ?);"
+            
+            // 4.执行sql语句
+            SQLiteManager.shareIntance.dbQueue?.inDatabase({ (db) -> Void in
+                db.executeUpdate(insertSQL, withArgumentsInArray: [statusID, statusText, userID])
+            })
+        }
+    }
+    
+    /// 缓存配图
+    private func cacheImage(list: [StatusViewModel], finished: (models: [StatusViewModel]?, error: NSError?)->())
+    {
+        
+        // 0.创建一个组
+        let group = dispatch_group_create()
+        
+        // 1.取出所有微博模型
+        for viewModel in list
+        {
+            // 2.安全校验
+            guard let urls = viewModel.thumbnail_pics else
+            {
+                continue
+            }
+            
+            // 3.从微博模型中取出所有的配图字典
+            for url in urls
+            {
+                // 将当前操作添加到组中
+                dispatch_group_enter(group)
+                
+                // 4.下载图片
+                // 注意:downloadImageWithURL方法下载图片是在子线程下载的, 而回调是在主线程回调
+                SDWebImageManager.sharedManager().downloadImageWithURL(url, options: SDWebImageOptions(rawValue: 0), progress: nil, completed: { (_, error, _, _, _) -> Void in
+                    
+                    // 将当前操作从组中移除
+                    dispatch_group_leave(group)
+                })
+            }
+            
+        }
+        
+        dispatch_group_notify(group, dispatch_get_main_queue()) { () -> Void in
+            // 执行回调
+            finished(models: list, error: nil)
+        }
+    }
+    
+    /// 清除数据缓存
+    class func clearData() {
+        // 1.获取三天前的时间
+        let threeDate = NSDate(timeIntervalSinceNow: -3 * 24 * 60 * 60)
+        let fmt = NSDateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd HH:mm:ss" // 2015-12-21 11:31:25
+        let dateString = fmt.stringFromDate(threeDate)
+        
+        // 2.拼接删除数据的SQL
+        let deleteSQL = "DELETE FROM t_status WHERE createTime < '\(dateString)';"
+        
+        // 3.执行SQL语句
+        SQLiteManager.shareIntance.dbQueue?.inDatabase({ (db) -> Void in
+            db.executeUpdate(deleteSQL, withArgumentsInArray: nil)
+        })
+    }
+}
+--------------------------------------kvc
+class Status: NSObject {
+    
+    /// 当前这条微博的发布时间
+    var created_at: String?
+    
+    /// 来源
+    var source: String?
+    
+    /// 字符串型的微博ID
+    var idstr: String?
+    
+    /// 微博信息内容
+    var text: String?
+    
+    /// 当前微博对应的用户
+    var user: User?
+
+    /// 存储所有配图字典
+    var pic_urls: [[String: AnyObject]]?
+    
+    /// 转发微博
+    var retweeted_status: Status?
+
+    init(dict: [String: AnyObject])
+    {
+        super.init()
+        setValuesForKeysWithDictionary(dict)
+    }
+    
+    // KVC的setValuesForKeysWithDictionary方法内部会调用下面这个方法
+    override func setValue(value: AnyObject?, forKey key: String) {
+        // 1.判断是否是用户
+        if key == "user"
+        {
+            user = User(dict: value as! [String: AnyObject])
+            return // 注意: 如果自己处理了, 那么就不需要父类处理了, 所以一定要写上return
+        }
+        // 2.判断是否是转发微博
+        if key == "retweeted_status"
+        {
+            retweeted_status = Status(dict: value as! [String: AnyObject])
+            return
+        }
+        super.setValue(value, forKey: key)
+    }
+    
+    override func setValue(value: AnyObject?, forUndefinedKey key: String) {
+    }
+    
+    override var description: String {
+        let property = ["created_at", "source", "idstr", "text"]
+        let dict = dictionaryWithValuesForKeys(property)
+        return "\(dict)"
+    }
+
+}
+
+--------------------------------------动画
+extension QRCodeViewController: UITabBarDelegate
+{
+    func tabBar(tabBar: UITabBar, didSelectItem item: UITabBarItem) {
+        // 1.修改容器的高度
+        containerHeightCons.constant = (item.tag == 0) ? 300 : 150
+        view.layoutIfNeeded()
+        
+        // 2.停止动画
+        scanLine.layer.removeAllAnimations()
+        
+        // 3.重新开启动画
+        startAnimation()
+    }
+}
+
+
+/// 开始冲击波动画
+    private func startAnimation()
+    {
+        // 2.1让冲击波初始化到顶部
+        scanLineTopCons.constant = -containerHeightCons.constant
+        view.layoutIfNeeded()
+        
+        // 2.2重复执行扫描动画
+        UIView.animateWithDuration(1.0) { () -> Void in
+            UIView.setAnimationRepeatCount(MAXFLOAT)
+            self.scanLineTopCons.constant = self.containerHeightCons.constant
+            self.view.layoutIfNeeded()
+        }
+    }
+--------------------------------------生成QRCode
+class QRCodeCreateViewController: UIViewController {
+
+    @IBOutlet weak var QRCodeImageView: UIImageView!
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        
+        // 1.创建滤镜对象
+        let filter = CIFilter(name: "CIQRCodeGenerator")!
+        // 2.恢复默认设置
+        filter.setDefaults()
+        // 3.设置二维码数据
+        let data = "极客江南".dataUsingEncoding(NSUTF8StringEncoding)
+        filter.setValue(data, forKey: "inputMessage")
+        // 4.从滤镜中刚取出二维码
+        let ciImage = filter.outputImage!
+//        let image = UIImage(CIImage: ciImage)
+        
+        // 5.设置二维码图片到容器上
+        QRCodeImageView.image = createNonInterpolatedUIImageFormCIImage(ciImage, size: 200)
+    }
+    
+    /**
+     生成高清二维码
+     
+     - parameter image: 需要生成原始图片
+     - parameter size:  生成的二维码的宽高
+     */
+    private func createNonInterpolatedUIImageFormCIImage(image: CIImage, size: CGFloat) -> UIImage {
+        
+        let extent: CGRect = CGRectIntegral(image.extent)
+        let scale: CGFloat = min(size/CGRectGetWidth(extent), size/CGRectGetHeight(extent))
+        
+        // 1.创建bitmap;
+        let width = CGRectGetWidth(extent) * scale
+        let height = CGRectGetHeight(extent) * scale
+        let cs: CGColorSpaceRef = CGColorSpaceCreateDeviceGray()!
+        let bitmapRef = CGBitmapContextCreate(nil, Int(width), Int(height), 8, 0, cs, 0)!
+        
+        let context = CIContext(options: nil)
+        let bitmapImage: CGImageRef = context.createCGImage(image, fromRect: extent)
+        
+        CGContextSetInterpolationQuality(bitmapRef,  CGInterpolationQuality.None)
+        CGContextScaleCTM(bitmapRef, scale, scale);
+        CGContextDrawImage(bitmapRef, extent, bitmapImage);
+        
+        // 2.保存bitmap到图片
+        let scaledImage: CGImageRef = CGBitmapContextCreateImage(bitmapRef)!
+        
+        return UIImage(CGImage: scaledImage)
+    }
+    
+
+}
+
+
+
+
+/// 开始扫描二维码
+    private func startScan()
+    {
+        
+       
+        
+        // 1.判断输入能否添加到会话中
+        if !session.canAddInput(input)
+        {
+            return
+        }
+        // 2.判断输出能否添加到会话中
+        if !session.canAddOutput(output)
+        {
+            return
+        }
+        // 3.添加输入和输出
+        session.addInput(input)
+        session.addOutput(output)
+        
+        // 4.告诉系统输出可以解析的数据类型
+        // 注意点:设置可以解析数据类型一定要在输出对象添加到会话之后设置, 否则就会报错
+        output.metadataObjectTypes =  output.availableMetadataObjectTypes
+        
+        // 5.设置代理监听解析结果
+        output.setMetadataObjectsDelegate(self, queue: dispatch_get_main_queue())
+        
+        // 6.添加预览图层
+        view.layer.insertSublayer(previewLayer, atIndex: 0)
+        view.layer.insertSublayer(drawLayer, above: previewLayer)
+        
+        
+        // 7.开始扫描
+        session.startRunning()
+    }
+    
+    // MARK: - 懒加载
+    /// 创建输入
+    private lazy var input: AVCaptureDeviceInput? = {
+       let device = AVCaptureDevice.defaultDeviceWithMediaType(AVMediaTypeVideo)
+       let deviceInput = try? AVCaptureDeviceInput(device: device)
+        return deviceInput
+    }()
+    /// 创建输出
+    private lazy var output: AVCaptureMetadataOutput = {
+        let out = AVCaptureMetadataOutput()
+        // 注意: 该属性接收的不是坐标, 而是比例
+        // 注意: 该属性并不是以竖屏的左上角作为参照, 而是以横屏的左上角作为参照
+        // 所以计算时, x就变成了y, y就变成了x, width就变成了height, height就变成了width
+//        out.rectOfInterest = CGRect(x: 0, y: 0, width: 0.5, height: 0.5)
+        
+        // 1.屏幕的frame
+        let rect = self.view.frame
+        // 2.容器视图的frame
+        let containerRect = self.customContainerView.frame
+        out.rectOfInterest = CGRect(x: containerRect.origin.y / rect.size.height, y: containerRect.origin.x / rect.size.width , width: containerRect.size.height / rect.size.height , height: containerRect.size.width / rect.size.width)
+        
+        return out
+    }()
+    
+    /// 创建会话
+    private lazy var session: AVCaptureSession = AVCaptureSession()
+    
+    /// 创建预览图层
+    private lazy var previewLayer: AVCaptureVideoPreviewLayer = {
+       let layer = AVCaptureVideoPreviewLayer(session: self.session)
+        layer.frame = self.view.bounds
+        return layer
+    }()
+    
+    /// 创建保存二维码边线的图层
+    private lazy var drawLayer: CALayer = {
+       let layer = CALayer()
+        layer.frame = self.view.bounds
+        return layer
+    }()
+
+// 2.从图片中识别二维码数据
+extension QRCodeViewController: UIImagePickerControllerDelegate, UINavigationControllerDelegate
+{
+    
+    /// 只要选中一张图片, 就会调用这个代理方法
+    func imagePickerController(picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [String : AnyObject]) {
+
+        // 1.取出当前选中的图片
+        guard let image = info[UIImagePickerControllerOriginalImage] as? UIImage else
+        {
+            return
+        }
+        // 2.从图片中识别二维码数据
+        // 2.1创建一个CIImage
+        let ciImage = CIImage(image: image)!
+        
+        // 2.2创建一个探测器
+        let dict = [CIDetectorAccuracy : CIDetectorAccuracyHigh]
+        let detector = CIDetector(ofType: CIDetectorTypeQRCode, context: nil, options: dict)
+        
+        // 2.3利用探测器检测结果
+        let features = detector.featuresInImage(ciImage)
+        
+        for objc in features
+        {
+            resultLabel.text = (objc as! CIQRCodeFeature).messageString
+        }
+    
+        // 3.关闭图片选择器
+        picker.dismissViewControllerAnimated(true, completion: nil)
+    }
+}
+
+extension QRCodeViewController: AVCaptureMetadataOutputObjectsDelegate
+{
+    /// AVCaptureMetadataOutputObjectsDelegate
+    func captureOutput(captureOutput: AVCaptureOutput!, didOutputMetadataObjects metadataObjects: [AnyObject]!, fromConnection connection: AVCaptureConnection!)
+    {
+       
+        // ?? 的含义: 如果前面的值是nil, 那么就返回后面的值, 如果前面不为nil, 那么??后面不执行
+        resultLabel.text = metadataObjects.last?.stringValue ?? "将二维码/条形码放入框中即可扫描"
+        
+        
+        clearLines()
+        
+        // 1.遍历结果集
+        for objc in metadataObjects as! [AVMetadataMachineReadableCodeObject]
+        {
+            // 2.将结果集中的对象中保存的corners坐标, 转换为我们能够识别的坐标
+            let res = previewLayer.transformedMetadataObjectForMetadataObject(objc)
+            
+            // 3.绘制二维码边线
+            drawLines(res as! AVMetadataMachineReadableCodeObject)
+        }
+    }
+    
+    // MARK: - 绘制二维码边线
+    private func drawLines(cornersObjc: AVMetadataMachineReadableCodeObject)
+    {
+        // 0.进行安全校验
+        guard let corners = cornersObjc.corners else
+        {
+            return
+        }
+        
+        // 1.创建CAShapeLayer
+        let shapeLayer = CAShapeLayer()
+        shapeLayer.strokeColor = UIColor.greenColor().CGColor
+        shapeLayer.fillColor = UIColor.clearColor().CGColor
+        shapeLayer.lineWidth = 4
+        
+        // 2.创建路径
+        let path = UIBezierPath()
+        
+        // 定义变量保存从corners取出来得结果
+        var point: CGPoint = CGPointZero
+        // 定义变量记录索引
+        var index = 0
+        
+
+        // 2.1移动到起点
+        CGPointMakeWithDictionaryRepresentation((corners[index++] as! CFDictionary), &point)
+        path.moveToPoint(point)
+        
+        // 2.2连接其它的点
+        while index < corners.count
+        {
+            CGPointMakeWithDictionaryRepresentation((corners[index++] as! CFDictionary), &point)
+            path.addLineToPoint(point)
+        }
+        path.closePath()
+        
+        shapeLayer.path = path.CGPath
+        
+        // 3.将绘制好得图层添加到drawLayer
+        drawLayer.addSublayer(shapeLayer)
+    }
+    /// 清空二维码边线
+    private func clearLines()
+    {
+        // 1.检查有没有子图层
+        guard let subLayers = drawLayer.sublayers else
+        {
+            return
+        }
+        
+        // 2.删除子图层
+        for layer in subLayers
+        {
+            layer.removeFromSuperlayer()
+        }
+    }
+}
+--------------------------------------选择相册图片
+// MARK: - 内部控制方法
+    @IBAction func photoBtnClick(sender: UIBarButtonItem) {
+        
+        // 0. 判断是否可以打开相册
+        guard UIImagePickerController.isSourceTypeAvailable(UIImagePickerControllerSourceType.PhotoLibrary) else
+        {
+            return
+        }
+        
+        // 1.创建图片选择器
+        let pickerVc = UIImagePickerController()
+        pickerVc.delegate = self
+        // 2.弹出图片选择器
+        presentViewController(pickerVc, animated: true, completion: nil)
+    }
+
+--------------------------------------??
+?? 的含义: 如果前面的值是nil, 那么就返回后面的值, 如果前面不为nil, 那么??后面不执行
+
+--------------------------------------刷新控件  继承UIControl
+class XMGRefreshControl: UIRefreshControl {
+
+    override init() {
+        
+        super.init()
+        
+        // 1.添加子控件
+        addSubview(refreshView)
+        
+        // 2.布局子控件
+        refreshView.snp_makeConstraints { (make) -> Void in
+            make.center.equalTo(self)
+            make.size.equalTo(CGSize(width: 150, height: 60))
+        }
+
+        // 3.注册监听, 监听frame的改变
+        addObserver(self, forKeyPath: "frame", options: NSKeyValueObservingOptions.New, context: nil)
+    }
+    
+    required init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    deinit
+    {
+        removeObserver(self, forKeyPath: "frame")
+    }
+    
+    override func endRefreshing() {
+        super.endRefreshing()
+        refreshView.endAnimation()
+    }
+    
+
+    override func observeValueForKeyPath(keyPath: String?, ofObject object: AnyObject?, change: [String : AnyObject]?, context: UnsafeMutablePointer<Void>) {
+        // 下拉刷新控件的frame一旦改变就会调用
+        
+        /*
+        规律: 越往下拉Y越小, 越往上推Y越大
+        */
+        // 1.过滤垃圾数据
+        if frame.origin.y == 0 || frame.origin.y == -64
+        {
+            return
+        }
+        
+        // 2.检查是否已经触发下拉刷新
+        if refreshing
+        {
+            refreshView.startAnimation()
+            return
+        }
+        
+        // 3.控制箭头旋转
+        if frame.origin.y < -50 && !refreshView.showRotationFlag
+        {
+            refreshView.showRotationFlag = true
+            refreshView.rotationArrow()
+        }else if frame.origin.y > -50 && refreshView.showRotationFlag
+        {
+            refreshView.showRotationFlag  = false
+            refreshView.rotationArrow()
+        }
+    }
+
+    // MARK: - 懒加载
+    private lazy var refreshView = XMGRefreshView.refreshView()
+}
+
+class XMGRefreshView: UIView {
+    
+    /// 提示视图
+    @IBOutlet weak var tipsView: UIView!
+    /// 箭头视图
+    @IBOutlet weak var arrowImageView: UIImageView!
+    /// 菊花视图
+    @IBOutlet weak var loadingImageVIew: UIImageView!
+    
+    // 记录是否需要旋转
+    var showRotationFlag = false
+    
+    /// 快速创建提示视图
+    class func refreshView() -> XMGRefreshView  {
+        return NSBundle.mainBundle().loadNibNamed("XMGRefreshView", owner: nil, options: nil).last as! XMGRefreshView
+    }
+    
+    private func rotationArrow()
+    {
+        /*
+        规律: 1.默认是顺时针 2.就近原则
+        */
+        var angle = CGFloat(M_PI)
+        angle = showRotationFlag ? angle - 0.01 : angle + 0.01
+        UIView.animateWithDuration(0.5) { () -> Void in
+            self.arrowImageView.transform = CGAffineTransformRotate(self.arrowImageView.transform, angle)
+        }
+    }
+    // MARK: - 内部控制方法
+    /// 开始菊花旋转动画
+    private func startAnimation()
+    {
+        // 0.隐藏提示视图
+        tipsView.hidden = true
+        
+        let key = "transform.rotation"
+        if let _  = loadingImageVIew.layer.animationForKey(key)
+        {
+            return
+        }
+        
+        // 1.创建动画对象
+        let anim = CABasicAnimation(keyPath: "transform.rotation")
+        
+        // 2.设置动画属性
+        anim.toValue = 2 * M_PI
+        anim.duration = 10.0
+        anim.repeatCount = MAXFLOAT
+        anim.removedOnCompletion = false
+
+        // 3.将动画添加到图层
+        loadingImageVIew.layer.addAnimation(anim, forKey: key)
+    }
+    
+    /// 停止菊花旋转动画
+    private func endAnimation()
+    {
+        // 0.显示提示视图
+        tipsView.hidden = false
+        
+        // 1.移除动画
+        loadingImageVIew.layer.removeAllAnimations()
+    }
+}
+
+--------------------------------------UITableView
+
+--------------------------------------UITableViewCell
+
+--------------------------------------自定义Button
+class TitleButton: UIButton {
+
+    /// 通过代码创建会调用
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        
+        adjustsImageWhenHighlighted = false
+        setTitleColor(UIColor.darkGrayColor(), forState: UIControlState.Normal)
+        setImage(UIImage(named: "navigationbar_arrow_down"), forState: UIControlState.Normal)
+        setImage(UIImage(named: "navigationbar_arrow_up"), forState: UIControlState.Selected)
+        sizeToFit()
+    }
+    
+    /// 通过SB/XIB创建会调用
+    required init?(coder aDecoder: NSCoder) {
+        // 致命错误
+        fatalError("init(coder:) has not been implemented")
+//        super.init(coder: aDecoder)
+        // 写自己的实现
+    }
+    
+    
+    /*
+    override func imageRectForContentRect(contentRect: CGRect) -> CGRect {
+        
+    }
+    override func titleRectForContentRect(contentRect: CGRect) -> CGRect {
+        
+    }
+    */
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        /*
+        NJLog("")
+        titleLabel?.frame.offsetInPlace(dx: -imageView!.frame.width * 0.5, dy: 0)
+        imageView?.frame.offsetInPlace(dx: titleLabel!.frame.width * 0.5, dy: 0)
+        */
+        titleLabel?.frame.origin.x = 0
+        imageView?.frame.origin.x = titleLabel!.frame.width
+    }
+    
+}
+
+
+
+extension UIButton
+{
+
+    // 只要在构造方法前面加上convenience单词, 那么这就是一个便利构造方法
+    // 便利构造方法: 仅仅是对原有构造方法的扩充, 主要是为了方便创建对象
+    /*
+    指定构造方法: init(xxx:xxx)
+                1.必须调用"父类"super.init()初始化
+                2.默认情况下系统会自动帮调用(编译器隐式的帮我们自动添加了一行super.init())
+    便利构造方法: convenience init(xxx:xxx)
+                1.必须调用"当前类"的指定构造方法
+                2.不能调用super.init()
+                3.也可以调用其他的便利构造方法, 但是其它构造方法中必须调用本类的指定构造方法
+    */
+    convenience init(imageName: String, backgroundImage: String)
+    {
+        self.init(backgroundImage: backgroundImage)
+        setImage(UIImage(named: imageName), forState: UIControlState.Normal)
+        setImage(UIImage(named: imageName + "_highlighted"), forState: UIControlState.Highlighted)
+        sizeToFit()
+    }
+    
+    /// 根据背景图片创建按钮
+    convenience init(backgroundImage: String) {
+        self.init()
+        setBackgroundImage(UIImage(named: backgroundImage), forState: UIControlState.Normal)
+        setBackgroundImage(UIImage(named: backgroundImage + "_highlighted"), forState: UIControlState.Highlighted)
+        sizeToFit()
+    }
+}
+
+
+--------------------------------------AFNetworking
+class NetworkTools: AFHTTPSessionManager {
+    
+    /// 单例
+    static let shareInstance: NetworkTools = {
+        // 注意: 指定BaseURL时一定要包含/
+        let url = NSURL(string: "https://api.weibo.com/")
+        let instance = NetworkTools(baseURL: url, sessionConfiguration: NSURLSessionConfiguration.defaultSessionConfiguration())
+        instance.responseSerializer.acceptableContentTypes = NSSet(objects: "application/json", "text/json", "text/javascript", "text/plain") as Set<NSObject>
+        return instance
+    }()
+
+    // MARK: - 外部控制方法
+    // 根据RequestToken换取AccessToken
+    func loadAccessToken(codeStr: String, finished: (dict: [String: AnyObject]?, error: NSError?)->())
+    {
+        let path = "oauth2/access_token"
+        
+        let parameters = ["client_id": WB_App_Key, "client_secret": WB_App_Secret, "grant_type": "authorization_code", "code": codeStr, "redirect_uri": WB_Redirect_URI]
+        
+        NetworkTools.shareInstance.POST(path, parameters: parameters, success: { (task, objc) -> Void in
+                // 执行回调
+                finished(dict: objc as? [String : AnyObject], error: nil)
+            }) { (task, error) -> Void in
+                // 执行回调
+                finished(dict: nil, error: error)
+        }
+    }
+    
+    /// 获取用户信息
+    func loadUserInfo(account: UserAccount, finished: (dict: [String: AnyObject]?, error: NSError?)->())
+    {
+        let path = "2/users/show.json"
+        
+        let parameters = ["access_token": account.access_token!, "uid": account.uid!]
+        
+        NetworkTools.shareInstance.GET(path, parameters: parameters, success: { (task, objc) -> Void in
+            
+            // 1.执行回调
+            finished(dict: objc as? [String : AnyObject], error: nil)
+            
+            }) { (task, error) -> Void in
+                // 1.执行回调
+                finished(dict: nil, error: error)
+        }
+    }
+    
+    /// 获取微博数据
+    func loadStatus(since_id: String,  max_id: String,finished: (dicts: [[String: AnyObject]]?, error: NSError?)->())
+    {
+        let path = "2/statuses/home_timeline.json"
+        
+        assert(UserAccount.loadUserAccount() != nil, "必须授权之后才能获取微博数据")
+        
+        var parameters = ["access_token": UserAccount.loadUserAccount()!.access_token!]
+        if since_id != "0"
+        {
+            parameters["since_id"] = since_id
+        }else if max_id != "0"
+        {
+           let temp = Int(max_id)! - 1
+           parameters["max_id"] = "\(temp)"
+        }
+        
+        NetworkTools.shareInstance.GET(path, parameters: parameters, success: { (task, objc) -> Void in
+            
+            // 1.从服务器返回的字典中取出字典数组
+            guard let array = (objc as! [String : AnyObject])["statuses"] else
+            {
+                finished(dicts: nil, error: NSError(domain: "com.520it.lnj", code: 1001, userInfo: ["message": "没有找到statuses这个key"]))
+                return
+            }
+                finished(dicts: array as? [[String : AnyObject]], error: nil)
+            }) { (task, error) -> Void in
+                finished(dicts: nil, error: error)
+        }
+    }
+    
+    
+    /// 发送微博方法
+    func sendStatus(statusText : String, image : UIImage?, finished: (dict : [String : AnyObject]?, error : NSError?) -> ()) {
+        // 1.获取路径
+        var path = "2/statuses/"
+        
+        // 2.拼接参数
+        let parameters = ["access_token": UserAccount.loadUserAccount()!.access_token!, "status" : statusText]
+        
+        // 3.调用post方法,发布微博
+        if let tempImage = image {
+            path += "upload.json"
+            
+            POST(path, parameters: parameters, constructingBodyWithBlock: { (formData) -> Void in
+                    // 1.将图片转成NSData类型
+                    let imageData = UIImagePNGRepresentation(tempImage)!
+                
+                    // 2.拼接上传的图片
+                    formData.appendPartWithFileData(imageData, name: "pic", fileName: "123.png", mimeType: "image/png")
+                }, success: { (task, objc) -> Void in
+                    finished(dict: objc as? [String : AnyObject], error: nil)
+                }, failure: { (task, error) -> Void in
+                    finished(dict: nil, error: error)
+            })
+        } else {
+            path += "update.json"
+            POST(path, parameters: parameters, success: { (task, objc) -> Void in
+                finished(dict: objc as? [String : AnyObject], error: nil)
+                }) { (task, error) -> Void in
+                    finished(dict: nil, error: error)
+            }
+        }
+        
+    }
+}
+--------------------------------------微博首页VC
+class HomeTableViewController: BaseTableViewController
+
+/// 缓存行高 key微博的ID, value对应的行高
+var rowHeightCache = [String: CGFloat]()
+
+--------------------------------------图片浏览器
+class PhotoBrowserViewController: UIViewController {
+
+    /// 所有需要显示的图片
+    var urls: [NSURL]
+    /// 当前点击的图片索引
+    var path: NSIndexPath
+    
+    init(urls: [NSURL], path: NSIndexPath)
+    {
+        self.urls = urls
+        self.path = path
+        
+        // 自定义构造方法需要调用的是designated对应的构造方法
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        
+        view.backgroundColor = UIColor.greenColor()
+        
+        // 1.添加子控件
+        view.addSubview(collectionView)
+        view.addSubview(closeButton)
+        view.addSubview(saveButton)
+        
+        // 2.布局子控件
+        closeButton.snp_makeConstraints { (make) -> Void in
+            make.left.equalTo(view).offset(20)
+            make.bottom.equalTo(view.snp_bottom).offset(-20)
+            make.size.equalTo(CGSize(width: 100, height: 30))
+        }
+        
+        saveButton.snp_makeConstraints { (make) -> Void in
+            make.right.equalTo(view).offset(-20)
+            make.bottom.equalTo(view.snp_bottom).offset(-20)
+            make.size.equalTo(CGSize(width: 100, height: 30))
+        }
+        
+        collectionView.snp_makeConstraints { (make) -> Void in
+            make.edges.equalTo(view)
+        }
+        
+    }
+    
+    override func viewWillLayoutSubviews() {
+        super.viewWillLayoutSubviews()
+        // 滚动到指定位置
+        collectionView.scrollToItemAtIndexPath(path, atScrollPosition: UICollectionViewScrollPosition.Left, animated: false)
+    }
+    
+    // MARK: - 内部控制方法
+    @objc private func closeBtnClick()
+    {
+        dismissViewControllerAnimated(true, completion: nil)
+    }
+    @objc private func saveBtnClick()
+    {
+        // 1.获取当前显示的索引
+        let path = collectionView.indexPathsForVisibleItems().first!
+        // 2.获取当前显示的cell
+        let cell = collectionView.cellForItemAtIndexPath(path) as! XMGBrowserCollectionViewCell
+        // 3.获取当前显示的image
+        guard let image = cell.iconImageView.image else
+        {
+            // 没有图片
+            SVProgressHUD.showErrorWithStatus("没有图片", maskType: SVProgressHUDMaskType.Black)
+            return
+        }
+        
+        // 保存图片
+        /*
+        第一个参数: 需要保存的图片
+        第二个参数: 谁来监听是否保存成功
+        第三个参数: 监听是否保存成功的方法名称
+        第四个参数: 给监听方法传递的参数
+        注意; 监听是否保存成功的方法必须是系统指定的方法
+        - (void)image:(UIImage *)image didFinishSavingWithError:(NSError *)error contextInfo:(void *)contextInfo;
+        */
+        UIImageWriteToSavedPhotosAlbum(image, self, Selector("image:didFinishSavingWithError:contextInfo:"), nil)
+    }
+    
+    func image(image: UIImage, didFinishSavingWithError error: NSError?, contextInfo: AnyObject?)
+    {
+        if error != nil
+        {
+            SVProgressHUD.showErrorWithStatus("保存图片失败", maskType: SVProgressHUDMaskType.Black)
+            return
+        }
+        
+        SVProgressHUD.showSuccessWithStatus("保存图片成功", maskType: SVProgressHUDMaskType.Black)
+        
+        
+    }
+    
+    // MARK: - 懒加载
+    private lazy var closeButton: UIButton = {
+        let btn = UIButton()
+        btn.setTitle("关闭", forState: UIControlState.Normal)
+        btn.backgroundColor = UIColor(white: 0.8, alpha: 0.5)
+        btn.addTarget(self, action: Selector("closeBtnClick"), forControlEvents: UIControlEvents.TouchUpInside)
+        return btn
+    }()
+    private lazy var saveButton: UIButton = {
+        let btn = UIButton()
+        btn.setTitle("保存", forState: UIControlState.Normal)
+        btn.backgroundColor = UIColor(white: 0.8, alpha: 0.5)
+        btn.addTarget(self, action: Selector("saveBtnClick"), forControlEvents: UIControlEvents.TouchUpInside)
+        return btn
+    }()
+    
+    private lazy var layout: XMGPhotoBrowserLayout =  XMGPhotoBrowserLayout()
+    
+    private lazy var collectionView: UICollectionView = {
+       let clv = UICollectionView(frame: CGRectZero, collectionViewLayout: self.layout)
+        clv.registerClass(XMGBrowserCollectionViewCell.self, forCellWithReuseIdentifier: "browserCell")
+        clv.dataSource = self
+        clv.backgroundColor = UIColor.redColor()
+        return clv
+    }()
+
+}
+
+extension PhotoBrowserViewController: UICollectionViewDataSource, XMGBrowserCollectionViewCellDelegate
+{
+    // MARK: - UICollectionViewDataSource
+    func collectionView(collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        return urls.count
+    }
+    
+    func collectionView(collectionView: UICollectionView, cellForItemAtIndexPath indexPath: NSIndexPath) -> UICollectionViewCell {
+        
+        // 1.获取cell
+        let cell = collectionView.dequeueReusableCellWithReuseIdentifier("browserCell", forIndexPath: indexPath) as! XMGBrowserCollectionViewCell
+        
+        // 2.设置图片
+        cell.url = urls[indexPath.item]
+        
+        // 3.设置代理
+        cell.delegate = self
+
+        // 4.返回cell
+        return cell
+    }
+    
+    // MARK: - XMGBrowserCollectionViewCellDelegate
+    func browserCollectionViewCellDidClick(cell: XMGBrowserCollectionViewCell) {
+        dismissViewControllerAnimated(true, completion: nil)
+    }
+}
+
+class XMGPhotoBrowserLayout: UICollectionViewFlowLayout {
+    override func prepareLayout() {
+        itemSize = UIScreen.mainScreen().bounds.size
+        scrollDirection = UICollectionViewScrollDirection.Horizontal
+        minimumInteritemSpacing = 0
+        minimumLineSpacing = 0
+        
+        collectionView?.bounces = false
+        collectionView?.showsHorizontalScrollIndicator = false
+        collectionView?.showsVerticalScrollIndicator = false
+        collectionView?.pagingEnabled = true
+    }
+}
+
+
+
+
+
+
+
+
+// Swift中定义代理协议需要继承于NSObjectProtocol
+// 并且默认情况下所有的代理方法都是必须实现的
+
+protocol XMGBrowserCollectionViewCellDelegate: NSObjectProtocol
+{
+    func browserCollectionViewCellDidClick(cell: XMGBrowserCollectionViewCell)
+}
+
+class XMGBrowserCollectionViewCell: UICollectionViewCell {
+  
+    /// 代理
+    // 注意: 代理属性前面一定要写weak
+    weak var delegate: XMGBrowserCollectionViewCellDelegate?
+    
+    var url: NSURL?
+        {
+        didSet{
+            
+            // 1.重置
+            reset()
+            
+            // 2.显示提醒视图
+            activityIndicatorView.startAnimating()
+            
+            // 3.设置图片
+            iconImageView.sd_setImageWithURL(url) { (image, error, _, _) -> Void in
+                
+                // 0.隐藏提醒视图
+                self.activityIndicatorView.stopAnimating()
+                
+                // 屏幕宽高
+                let screenWidth = UIScreen.mainScreen().bounds.width
+                let screenHeight = UIScreen.mainScreen().bounds.height
+                
+                // 1.按照宽高比缩放图片
+                let scale = image.size.height / image.size.width
+                let height = scale * screenWidth
+                self.iconImageView.frame = CGRect(origin: CGPointZero, size: CGSize(width: screenWidth, height: height))
+                
+
+
+                // 2.判断是长图还是短图
+                if height < screenHeight
+                {
+                    // 短图, 需要居中
+                    //1.1计算偏移位
+                    let offsetY = (screenHeight - height) * 0.5
+                    
+                    // 1.2设置偏移位
+                    self.scrollview.contentInset = UIEdgeInsets(top: offsetY, left: 0, bottom: offsetY, right: 0)
+                }else
+                {
+                    // 长图, 不需要居中
+                    self.scrollview.contentSize = self.iconImageView.frame.size
+                }
+                
+            }
+        }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        
+        // 1.添加子控件
+        contentView.addSubview(scrollview)
+        scrollview.addSubview(iconImageView)
+        contentView.addSubview(activityIndicatorView)
+        
+        // 2.布局子控件
+        scrollview.snp_makeConstraints { (make) -> Void in
+            make.edges.equalTo(contentView)
+        }
+        activityIndicatorView.snp_makeConstraints { (make) -> Void in
+            make.center.equalTo(contentView)
+        }
+    }
+    
+
+    required init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    
+    // 重置所有属性
+    private func reset()
+    {
+        scrollview.contentSize = CGSizeZero
+        scrollview.contentOffset = CGPointZero
+        scrollview.contentInset = UIEdgeInsetsZero
+        iconImageView.transform = CGAffineTransformIdentity
+    }
+    
+    @objc private func imageClick()
+    {
+        // 通知代理关闭图片浏览器
+        // 和OC中不太一样, Swift中调用代理方法不用先判断
+        delegate?.browserCollectionViewCellDidClick(self)
+    }
+    
+    // MARK: - 懒加载
+    private lazy var scrollview: UIScrollView = {
+       let sl = UIScrollView()
+        
+        // 和缩放相关的设置
+        sl.minimumZoomScale = 0.5
+        sl.maximumZoomScale = 3.0
+        sl.delegate = self
+
+        return sl
+    }()
+    lazy var iconImageView: UIImageView =  {
+       let iv = UIImageView()
+        iv.userInteractionEnabled = true
+        let tap = UITapGestureRecognizer(target: self, action: Selector("imageClick"))
+        iv.addGestureRecognizer(tap)
+        return iv
+    }()
+    
+    private lazy var activityIndicatorView = UIActivityIndicatorView(activityIndicatorStyle: UIActivityIndicatorViewStyle.WhiteLarge)
+}
+
+extension XMGBrowserCollectionViewCell: UIScrollViewDelegate
+{
+    // 告诉系统需要缩放谁
+    func viewForZoomingInScrollView(scrollView: UIScrollView) -> UIView? {
+        return iconImageView
+    }
+    
+    func scrollViewDidZoom(scrollView: UIScrollView) {
+        // 调整图片的位置, 让图片居中
+        let screenWidth = UIScreen.mainScreen().bounds.width
+        let screenHeight = UIScreen.mainScreen().bounds.height
+        
+        // scrollView被缩放的view, 它的frame和bounds是有一定的区别的
+        // bounds是的值是固定的, 而frame的值是变化的
+        // 所以被缩放的控件的frame就是scrollView的contentSize
+        // 也就是说frame的值和contentSize一样的
+        
+        var offsetY = (screenHeight - iconImageView.frame.height) * 0.5
+        // 注意: 当偏移位小于0时会导致图片无法拖拽查看完整图片, 所以当偏移位小于0时需要复位为0
+        offsetY = (offsetY < 0) ? 0 : offsetY
+        var offsetX = (screenWidth - iconImageView.frame.width) * 0.5
+        offsetX = (offsetX < 0) ? 0 : offsetX
+        
+        scrollView.contentInset = UIEdgeInsets(top: offsetY, left: offsetX, bottom: offsetY, right: offsetX)
+    }
+}
+
+--------------------------------------内存警告
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        // 接收到内存警告, 将所有缓存移除
+        rowHeightCache.removeAll()
+    }
+
+--------------------------------------Popover  自定义转场动画
+/// 监听标题按钮的点击
+    @objc private func titleBtnClick(titleButton: UIButton)
+    {
+        // 1.创建菜单
+        let sb = UIStoryboard(name: "PopoverController", bundle: nil)
+        let popoverVC = sb.instantiateInitialViewController()!
+        
+        // 1.1设置转场的代理
+        popoverVC.transitioningDelegate = popoverManager
+        // 1.2设置转场样式
+        popoverVC.modalPresentationStyle = UIModalPresentationStyle.Custom
+        
+        // 2.显示菜单
+        presentViewController(popoverVC, animated: true, completion: nil)
+        
+    }
+
+/// 负责自定义转场的对象
+    private lazy var popoverManager: PopoverAnimationManager = {
+       let manager = PopoverAnimationManager()
+        manager.presentedFrame = CGRect(x: 100, y: 56, width: 200, height: 400)
+        return manager
+    }()
+
+class PopoverAnimationManager: UIPresentationController, UIViewControllerTransitioningDelegate, UIViewControllerAnimatedTransitioning {
+    
+    /// 记录当前是否是展现
+    private var isPresent = false
+    /// 记录菜单的尺寸
+    var presentedFrame = CGRectZero
+    
+    // MARK: - UIViewControllerTransitioningDelegate
+    /*
+    该方法用于告诉系统谁来负责自定义转场
+    第一个参数: 被展现的控制
+    第二个参数: 发起的控制器
+    */
+    func presentationControllerForPresentedViewController(presented: UIViewController, presentingViewController presenting: UIViewController, sourceViewController source: UIViewController) -> UIPresentationController?
+    {
+        let pc = XMGPresentationController(presentedViewController: presented, presentingViewController: presenting)
+        pc.presentedFrame = presentedFrame
+        return pc
+    }
+    
+    /// 告诉系统谁来负责展现的样式
+    func animationControllerForPresentedController(presented: UIViewController, presentingController presenting: UIViewController, sourceController source: UIViewController) -> UIViewControllerAnimatedTransitioning?
+    {
+        isPresent = true
+        NSNotificationCenter.defaultCenter().postNotificationName(XMGPopoverViewControllerShowClick, object: self)
+        return self
+    }
+    
+    /// 告诉系统谁来负责消失的样式
+    func animationControllerForDismissedController(dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning?
+    {
+        isPresent = false
+        NSNotificationCenter.defaultCenter().postNotificationName(XMGPopoverViewControllerDismissClick, object: self)
+        return self
+    }
+    
+    // MARK: - UIViewControllerAnimatedTransitioning
+    /// 该方法用于告诉系统展现或者消失动画的时长
+    func transitionDuration(transitionContext: UIViewControllerContextTransitioning?) -> NSTimeInterval
+    {
+        return 0.5
+    }
+    /// 无论是展现还是消失都会调用这个方法
+    /// 我们需要在这个方法中告诉系统, 菜单如何展现
+    /// 注意点: 只要实现了这个方法, 那么系统就不会再管控制器如何弹出和消失了, 所有的操作都需要我们自己做
+    // transitionContext: 里面就包含了我们所有需要的参数
+    func animateTransition(transitionContext: UIViewControllerContextTransitioning)
+    {
+        // 1.拿到菜单, 将菜单添加到容器视图上
+        if isPresent
+        {
+            // 展现
+            let toView = transitionContext.viewForKey(UITransitionContextToViewKey)
+            transitionContext.containerView()?.addSubview(toView!)
+            
+            // 2.执行动画
+            toView?.transform = CGAffineTransformMakeScale(1.0, 0.0)
+            toView?.layer.anchorPoint = CGPoint(x: 0.5, y: 0.0)
+            UIView.animateWithDuration(transitionDuration(transitionContext), animations: { () -> Void in
+                toView?.transform = CGAffineTransformIdentity
+                }) { (_) -> Void in
+                    // 注意: 如果自定义转场动画, 那么必须告诉系统动画是否完成
+                    transitionContext.completeTransition(true)
+            }
+        }else
+        {
+            // 消失
+            let fromView = transitionContext.viewForKey(UITransitionContextFromViewKey)
+            // 注意: 以后如果使用CGFloat之后发现运行的结果和我们预期的结果不一致, 那么可以尝试修改CGFloat的值为一个很小的值
+            UIView.animateWithDuration(transitionDuration(transitionContext), animations: { () -> Void in
+                fromView?.transform = CGAffineTransformMakeScale(1.0, 0.0000001)
+                }, completion: { (_) -> Void in
+                    // 注意: 如果自定义转场动画, 那么必须告诉系统动画是否完成
+                    transitionContext.completeTransition(true)
+            })
+            
+        }
+    }
+}
+
+
+class XMGPresentationController: UIPresentationController {
+
+    /// 记录菜单的尺寸
+    var presentedFrame = CGRectZero
+    
+    /// 布局被弹出的控制器
+    override func containerViewWillLayoutSubviews()
+    {
+        super.containerViewWillLayoutSubviews()
+        // containerView 容器视图 (所有被展现的内容都再容器视图上)
+        // presentedView() 被展现的视图(当前就是弹出菜单控制器的view)
+        
+        // 1.添加蒙版
+        containerView?.insertSubview(cover, atIndex: 0)
+        cover.frame = containerView!.bounds
+        
+        // 2.修改被展现视图尺寸
+        presentedView()?.frame = presentedFrame // CGRect(x: 100, y: 56, width: 200, height: 200)
+    }
+    
+    // MARK: - 内部控制方法
+    @objc private func coverClick()
+    {
+        // 关闭菜单
+        presentedViewController.dismissViewControllerAnimated(true, completion: nil)
+    }
+    
+    // MARK: - 懒加载
+    private lazy var cover: UIView = {
+        // 1.创建蒙版
+       let otherView = UIView()
+        otherView.backgroundColor = UIColor(white: 0.8, alpha: 0.5)
+        // 2.添加手势识别器
+        let tap = UITapGestureRecognizer(target: self, action: Selector("coverClick"))
+        otherView.addGestureRecognizer(tap)
+        return otherView
+    }()
+}
+
+--------------------------------------枚举
+// Swift中的枚举比OC强大很多, 可以赋值任意类型的数据, 以及可以定义方法
+enum XMGTableViewCellIdentifier: String
+{
+    case NormalCellIdentifier = "originalCell"
+    case ForwardCellIdentifier = "forwardCell"
+    
+    /// 根据模型获取cell的重用标识
+    static func identifierWithViewModel(viewModel: StatusViewModel) -> String
+    {
+        // rawValue 代表获取枚举的原始值
+        return (viewModel.status.retweeted_status != nil) ? ForwardCellIdentifier.rawValue : NormalCellIdentifier.rawValue
+    }
+}
+
+--------------------------------------SDWebImage
+func collectionView(collectionView: UICollectionView, didSelectItemAtIndexPath indexPath: NSIndexPath) {
+    
+    guard let url = viewModel?.bmiddle_pics![indexPath.item] else
+    {
+        // 没有图片
+        return
+    }
+    
+    let cell = collectionView.cellForItemAtIndexPath(indexPath) as! XMGPictureCollectionViewCell
+    
+    // 1.下载图片显示进度
+    SDWebImageManager.sharedManager().downloadImageWithURL(url, options: SDWebImageOptions(rawValue: 0), progress: { (current, total) -> Void in
+//            NJLog(CGFloat(current) / CGFloat(total))
+        cell.iconImageView.progregss = CGFloat(current) / CGFloat(total)
+        }) { (_, error, _, _, _) -> Void in
+            // 2.发送通知, 通知控制器弹出图片浏览器, 并且传递当前collectionView所有配图以及被点击的索引
+            NSNotificationCenter.defaultCenter().postNotificationName(XMGPhotoBrowserShow, object: self, userInfo: ["urls": self.viewModel!.bmiddle_pics!, "indexPath": indexPath])
+    }
+        
+    }
+
+--------------------------------------VF
+private func setupUI()
+    {
+        // 1.清空进度背景
+        progressView.backgroundColor = UIColor.clearColor()
+        
+        // 2.添加进度视图
+        addSubview(progressView)
+        
+        //3.添加约束
+        progressView.translatesAutoresizingMaskIntoConstraints = false
+        var cons = NSLayoutConstraint.constraintsWithVisualFormat("H:|-0-[progressView]-0-|", options: NSLayoutFormatOptions(rawValue: 0), metrics: nil, views: ["progressView": progressView])
+        cons += NSLayoutConstraint.constraintsWithVisualFormat("V:|-0-[progressView]-0-|", options: NSLayoutFormatOptions(rawValue: 0), metrics: nil, views: ["progressView": progressView])
+        addConstraints(cons)
+
+    }
+
+--------------------------------------ProgressView
+class ProgressView: UIView {
+
+    /// 进度 0~1
+    var progregss: CGFloat = 0.0
+        {
+        didSet{
+            // 只要接收到新的数据就绘制圆形
+            setNeedsDisplay()
+        }
+    }
+    
+    override func drawRect(rect: CGRect) {
+        
+        // 控制下载进度, 如果完成就消失
+        if progregss >= 1.0
+        {
+            return
+        }
+        
+        // 画圆
+//        圆心
+        let center = CGPoint(x: bounds.width * 0.5, y: bounds.height * 0.5)
+//        半径
+        let radius = min(bounds.width * 0.5, bounds.height * 0.5)
+//        开始位置
+        let start = -CGFloat(M_PI_2)
+//        结束位置
+        let end = CGFloat(2 * M_PI) * progregss + start
+        
+        // 设置圆形参数
+        let path = UIBezierPath(arcCenter: center, radius: radius, startAngle: start, endAngle: end, clockwise: true)
+        
+        // 连接到圆心
+        path.addLineToPoint(center)
+        
+        // 关闭路径
+        path.closePath()
+        
+        UIColor(white: 0.5, alpha: 0.8).setFill()
+        
+        path.fill()
+    }
+
+}
+
+--------------------------------------OAuthViewController
+class OAuthViewController: UIViewController {
+
+    @IBOutlet weak var webView: UIWebView!
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        // 1.加载登录界面
+        loadPage()
+    }
+    
+    // MARK: - 内部控制方法
+    @IBAction func leftBtnClick(sender: AnyObject) {
+        dismissViewControllerAnimated(true, completion: nil)
+    }
+    
+    /// 自定义填充账号密码
+    @IBAction func rightBtnClick(sender: AnyObject) {
+         let js = "document.getElementById('userId').value = '1606020376@qq.com';"  +
+            "document.getElementById('passwd').value = 'haomage';"
+        webView.stringByEvaluatingJavaScriptFromString(js)
+    }
+    
+    /// 加载登录界面
+    private func loadPage()
+    {
+        let str = "https://api.weibo.com/oauth2/authorize?client_id=\(WB_App_Key)&redirect_uri=\(WB_Redirect_URI)"
+        guard let url = NSURL(string: str) else
+        {
+            return
+        }
+        let request = NSURLRequest(URL: url)
+        webView.loadRequest(request)
+    }
+
+}
+extension OAuthViewController: UIWebViewDelegate
+{
+    func webViewDidStartLoad(webView: UIWebView) {
+        // 显示提醒, 提醒用户正在加载登陆界面
+        SVProgressHUD.showInfoWithStatus("正在加载...", maskType: SVProgressHUDMaskType.Black)
+    }
+    
+    func webViewDidFinishLoad(webView: UIWebView) {
+        // 关闭提醒
+        SVProgressHUD.dismiss()
+    }
+    
+    /// webview每次请求一个新的地址都会调用该方法, 返回true代表允许访问, 返回flase代表不允许方法
+    func webView(webView: UIWebView, shouldStartLoadWithRequest request: NSURLRequest, navigationType: UIWebViewNavigationType) -> Bool
+    {
+        // 1.判断是否是授权回调地址, 如果不是就允许继续跳转
+        guard let urlStr = request.URL?.absoluteString where urlStr.hasPrefix(WB_Redirect_URI)  else
+        {
+            // : https://api.weibo.com/
+            return true
+        }
+        
+        // 2.判断是否授权成功
+        let code = "code="
+        guard urlStr.containsString(code) else
+        {
+            // 授权失败
+            return false
+        }
+        
+        // 3.授权成功
+        if let temp = request.URL?.query
+        {
+            // 3.1截取code=后面的字符串
+            let codeStr = temp.substringFromIndex(code.endIndex)
+            
+            // 3.2利用RequestToken换取AccessToken
+            loadAccessToken(codeStr)
+        }
+        
+        
+        return false
+    }
+    
+    /// 根据RequestToken换取AccessToken
+    private func loadAccessToken(codeStr: String)
+    {
+        NetworkTools.shareInstance.loadAccessToken(codeStr) { (dict, error) -> () in
+            
+            // 0.进行安全校验
+            if let _ = error
+            {
+                SVProgressHUD.showErrorWithStatus("换取AccessToken错误", maskType: SVProgressHUDMaskType.Black)
+                return
+            }
+            
+            guard let res = dict else
+            {
+                SVProgressHUD.showErrorWithStatus("服务器返回的数据是nil", maskType: SVProgressHUDMaskType.Black)
+                return
+            }
+            
+            
+            // 1.将授权信息转换为模型
+            let userAccount = UserAccount(dict: res)
+            
+            // 2.根据授权信息获取用户信息
+            self.loadUserInfo(userAccount)
+            
+        }
+    }
+    
+    /// 获取用户信息
+    private func loadUserInfo(account: UserAccount)
+    {
+        
+        NetworkTools.shareInstance.loadUserInfo(account) { (dict, error) -> () in
+            // 0.进行安全校验
+            if let _ = error
+            {
+                SVProgressHUD.showErrorWithStatus("获取用户信息失败", maskType: SVProgressHUDMaskType.Black)
+                return
+            }
+            
+            guard let res = dict else
+            {
+                SVProgressHUD.showErrorWithStatus("服务器返回的数据是nil", maskType: SVProgressHUDMaskType.Black)
+                return
+            }
+            
+            // 1.取出获取到的用户信息
+            account.screen_name = res["screen_name"] as? String
+            account.avatar_large = res["avatar_large"] as? String
+            
+            // 2.保存授权信息
+            account.saveAccount()
+            
+            // 3.切换到欢迎界面
+            // 发送通知, 通知AppDelegate切换根控制器
+            NSNotificationCenter.defaultCenter().postNotificationName(XMGRootViewControllerChnage, object: self, userInfo: ["message": true])
+        }
+    }
+
+}
+
+--------------------------------------专门用户获取数据
+class StatusViewModelList {
+    
+    /// 保存所有微博数据
+    var statuses: [StatusViewModel]?
+    
+    /// 获取微博数据
+    func loadStatus(since_id: String, max_id: String,finished: (models: [StatusViewModel]?, error: NSError?)->())
+    {
+        // 1.获取用户的ID
+        guard let userID = UserAccount.loadUserAccount()?.uid else {
+            print("用户没有登录")
+            return
+        }
+        
+        // 2.拼接查询的SQL
+        var querySQL = "SELECT * FROM t_status WHERE userID = \(userID)"
+        if since_id != "0"
+        {
+            querySQL += " AND statusID > \(since_id)"
+        } else if max_id != "0"
+        {
+            let temp = Int(max_id)! - 1
+            querySQL += " AND statusID <= \(temp)"
+        }
+        
+        querySQL += " ORDER BY statusID DESC LIMIT 20;"
+        
+        // 3.执行查询的SQL语句
+        SQLiteManager.shareIntance.dbQueue?.inDatabase({ (db) -> Void in
+            // 3.1.获取查询结果
+            let result = db.executeQuery(querySQL, withArgumentsInArray: nil)
+            
+            // 3.2.遍历所有的查询结果
+            var models = [StatusViewModel]()
+            while result.next() {
+                // 3.2.1.获取微博的字符串
+                let statusText = result.stringForColumn("statusText")
+                
+                // 3.2.2.将字符串转成字典
+                guard let data = statusText.dataUsingEncoding(NSUTF8StringEncoding) else {
+                    continue
+                }
+                guard let dict = try? NSJSONSerialization.JSONObjectWithData(data, options: NSJSONReadingOptions.MutableContainers) else {
+                    print("没有获取到微博数据")
+                    continue
+                }
+                
+                models.append(StatusViewModel(status: Status(dict: dict as! [String : AnyObject])))
+            }
+            
+            // 3.3.判断数组中是否有值
+            if models.count != 0 {
+                
+                print("从本地读取到数据")
+                // 3.3.1.将获取到的数据拼接到原来的数组中
+                if since_id != "0"
+                {
+                    // 将新的数据凭借到旧数据前面
+                    self.statuses = models + self.statuses!
+                    
+                }else if max_id != "0"
+                {
+                    // 将新的数据拼接到旧数据后面
+                    self.statuses = self.statuses! + models
+                }else{
+                    self.statuses = models
+                }
+                
+                // 3.3.2.回调告知外面现在获取到了数据
+                finished(models: models, error: nil)
+                
+                return
+            }
+            
+            // 3.4.没有从本地读取到数据,那么从网络中加载数据
+            self.loadDataFromNetwork(since_id, max_id: max_id, finished: finished)
+        })
+    }
+    
+    /// 从网络中获取数据
+    private func loadDataFromNetwork(since_id: String,  max_id: String,finished: (models: [StatusViewModel]?, error: NSError?)->()) {
+        
+        print("从网络中获取数据")
+        
+        // 1.获取微博数据
+        NetworkTools.shareInstance.loadStatus(since_id, max_id: max_id) { (dicts, error) -> () in
+            
+            // 1.安全校验
+            if error != nil
+            {
+                finished(models: nil, error: error)
+                return
+            }
+            
+            guard let array = dicts else
+            {
+                finished(models: nil, error: NSError(domain: "com.520it.lnj", code: 1002, userInfo: ["message": "没有获取到微博数据"]))
+                return
+            }
+            
+            // 2.遍历字典数组, 处理微博数据
+            var models = [StatusViewModel]()
+            for dict in array
+            {
+                models.append(StatusViewModel(status:Status(dict: dict)))
+            }
+            
+            // 3.处理下拉刷新的数据
+            if since_id != "0"
+            {
+                // 将新的数据凭借到旧数据前面
+                self.statuses = models + self.statuses!
+                
+            }else if max_id != "0"
+            {
+                // 将新的数据拼接到旧数据后面
+                self.statuses = self.statuses! + models
+            }else{
+                self.statuses = models
+            }
+            
+            // 4.缓存配图
+            self.cacheImage(models, finished: finished)
+            
+            // 5.本地缓存数据
+            self.cacheData(array)
+        }
+    }
+    
+    /// 缓存微博的数据
+    private func cacheData(list : [[String : AnyObject]]) {
+        // 1.拿到用户的UID
+        guard let userID = UserAccount.loadUserAccount()?.uid else {
+            print("用户ID没有值")
+            return
+        }
+        
+        // 2.遍历字典数据,拿到每一条微博数据
+        for dict in list {
+            // 2.1.获取微博的ID
+            guard let statusID = dict["idstr"] else {
+                print("微博ID没有值")
+                continue
+            }
+            
+            // 2.2.获取微博的内容
+            // 2.2.1.将字典转成NSData
+            guard let data = try? NSJSONSerialization.dataWithJSONObject(dict, options: NSJSONWritingOptions.PrettyPrinted) else {
+                print("没有转化成功")
+                continue
+            }
+            
+            // 2.2.2.将NSData转成字符串
+            guard let statusText = String(data: data, encoding: NSUTF8StringEncoding) else {
+                print("没有获取数据")
+                continue
+            }
+            
+            // 3.拼接插入SQL语句
+            let insertSQL = "INSERT INTO t_status (statusID, statusText, userID) VALUES (?, ?, ?);"
+            
+            // 4.执行sql语句
+            SQLiteManager.shareIntance.dbQueue?.inDatabase({ (db) -> Void in
+                db.executeUpdate(insertSQL, withArgumentsInArray: [statusID, statusText, userID])
+            })
+        }
+    }
+    
+    /// 缓存配图
+    private func cacheImage(list: [StatusViewModel], finished: (models: [StatusViewModel]?, error: NSError?)->())
+    {
+        
+        // 0.创建一个组
+        let group = dispatch_group_create()
+        
+        // 1.取出所有微博模型
+        for viewModel in list
+        {
+            // 2.安全校验
+            guard let urls = viewModel.thumbnail_pics else
+            {
+                continue
+            }
+            
+            // 3.从微博模型中取出所有的配图字典
+            for url in urls
+            {
+                // 将当前操作添加到组中
+                dispatch_group_enter(group)
+                
+                // 4.下载图片
+                // 注意:downloadImageWithURL方法下载图片是在子线程下载的, 而回调是在主线程回调
+                SDWebImageManager.sharedManager().downloadImageWithURL(url, options: SDWebImageOptions(rawValue: 0), progress: nil, completed: { (_, error, _, _, _) -> Void in
+                    
+                    // 将当前操作从组中移除
+                    dispatch_group_leave(group)
+                })
+            }
+            
+        }
+        
+        dispatch_group_notify(group, dispatch_get_main_queue()) { () -> Void in
+            // 执行回调
+            finished(models: list, error: nil)
+        }
+    }
+    
+    /// 清除数据缓存
+    class func clearData() {
+        // 1.获取三天前的时间
+        let threeDate = NSDate(timeIntervalSinceNow: -3 * 24 * 60 * 60)
+        let fmt = NSDateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd HH:mm:ss" // 2015-12-21 11:31:25
+        let dateString = fmt.stringFromDate(threeDate)
+        
+        // 2.拼接删除数据的SQL
+        let deleteSQL = "DELETE FROM t_status WHERE createTime < '\(dateString)';"
+        
+        // 3.执行SQL语句
+        SQLiteManager.shareIntance.dbQueue?.inDatabase({ (db) -> Void in
+            db.executeUpdate(deleteSQL, withArgumentsInArray: nil)
+        })
+    }
+}
+
+
+--------------------------------------发送微博TextView
+class ComposeTextView: XMGKeyboardTextView, UITextViewDelegate {
+    
+    init()
+    {
+        super.init(frame: CGRectZero, textContainer: nil)
+        setupUI()
+    }
+    
+    required init?(coder aDecoder: NSCoder) {
+        super.init(coder: aDecoder)
+        setupUI()
+    }
+    
+    // MARK: - 内部控制方法
+    private func setupUI()
+    {
+        // 1.添加子控件
+        addSubview(placeholderLabel)
+        
+        // 2.布局子控件
+        placeholderLabel.snp_makeConstraints { (make) -> Void in
+            make.left.equalTo(5)
+            make.top.equalTo(8)
+        }
+    }
+    
+    // 监听UITextView内容改变
+    @objc private func textChange()
+    {
+        placeholderLabel.hidden = hasText()
+    }
+        
+    // MARK: - 懒加载
+    lazy var placeholderLabel: UILabel = {
+       let lb = UILabel()
+        lb.text = "分享新鲜事..."
+        lb.textColor = UIColor.lightGrayColor()
+        lb.font = self.font
+        return lb
+    }()
+}
+
+
+--------------------------------------发送微博 图片选择
+class PhotoPickerViewController: UICollectionViewController {
+    
+    // 存放所有照片的数组
+    var images : [UIImage] = [UIImage]()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+    }
+
+    override func collectionView(collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        
+        return images.count + 1
+    }
+
+    override func collectionView(collectionView: UICollectionView, cellForItemAtIndexPath indexPath: NSIndexPath) -> UICollectionViewCell {
+        // 1.创建cell
+        let cell = collectionView.dequeueReusableCellWithReuseIdentifier("cell", forIndexPath: indexPath) as! PhotoPickerCell
+        cell.delegate = self
+        
+        // 2.给cell设置数据
+        cell.image = indexPath.item >= images.count ? nil : images[indexPath.item]
+        
+        // 3.返回cell
+        return cell
+    }
+}
+
+extension PhotoPickerViewController : PhotoPickerCellDelegate{
+    func photoPickerCellAddBtnClick(cell: PhotoPickerCell) {
+        // 1.判断数据源是否可用
+        if !UIImagePickerController.isSourceTypeAvailable(UIImagePickerControllerSourceType.PhotoLibrary) {
+            print("图片库不可用")
+            return
+        }
+        
+        // 2.创建照片选择控制器
+        let ipc = UIImagePickerController()
+        
+        // 3.设置照片源
+        ipc.sourceType = .PhotoLibrary
+        
+        // 4.设置代理
+        ipc.delegate = self
+        
+        // 5.弹出控制器
+        self.presentViewController(ipc, animated: true, completion: nil)
+    }
+    
+    func photoPickerCellremoveBtnClick(cell: PhotoPickerCell) {
+        let indexPath = collectionView?.indexPathForCell(cell)!
+        
+        // 移除图片
+        images.removeAtIndex(indexPath!.item)
+        
+        // 刷新表格
+        collectionView?.reloadData()
+    }
+}
+
+extension PhotoPickerViewController : UIImagePickerControllerDelegate, UINavigationControllerDelegate
+{
+    func imagePickerController(picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [String : AnyObject]) {
+        // 获取照片
+        var image = info[UIImagePickerControllerOriginalImage] as! UIImage
+        
+        // 压缩图片
+        image = scaleImage(image, width: 300)
+        
+        // 将照片放入数组中
+        images.append(image)
+        
+        // 退出控制器
+        picker.dismissViewControllerAnimated(true, completion: nil)
+        
+        // 刷新表格
+        collectionView?.reloadData()
+    }
+    
+    func scaleImage(image : UIImage, width : CGFloat) -> UIImage {
+        // 0.计算Size
+        let height = width * image.size.height / image.size.width
+        let size = CGSize(width: width, height: height)
+        
+        // 1.获取图片上下文
+        UIGraphicsBeginImageContext(size)
+        
+        // 2.将图片画在上下文中,并且保持宽高比
+        image.drawInRect(CGRect(origin: CGPointZero, size: size))
+        
+        // 3.从上下文中获取最新的图片
+        let newImage = UIGraphicsGetImageFromCurrentImageContext()
+        
+        // 4.关闭图形上下文
+        UIGraphicsEndImageContext()
+        
+        // 5.返回图片
+        return newImage
+    }
+}
+
+@objc
+protocol PhotoPickerCellDelegate : NSObjectProtocol {
+    optional func photoPickerCellAddBtnClick(cell : PhotoPickerCell)
+    optional func photoPickerCellremoveBtnClick(cell : PhotoPickerCell)
+}
+
+class PhotoPickerCell : UICollectionViewCell {
+    
+    // 代理属性
+    var delegate : PhotoPickerCellDelegate?
+    
+    // 添加照片的按钮
+    @IBOutlet weak var addBtn: UIButton!
+    
+    // 删除按钮
+    @IBOutlet weak var removeBtn: UIButton!
+    
+    // 添加图片的属性
+    var image : UIImage? {
+        didSet {
+            if image == nil {
+                addBtn.setBackgroundImage(UIImage(named: "compose_pic_add"), forState: UIControlState.Normal)
+                addBtn.setBackgroundImage(UIImage(named: "compose_pic_add_highlighted"), forState: UIControlState.Highlighted)
+                addBtn.userInteractionEnabled = true
+                removeBtn.hidden = true
+            } else {
+                addBtn.setBackgroundImage(image, forState: UIControlState.Normal)
+                addBtn.userInteractionEnabled = false
+                removeBtn.hidden = false
+            }
+        }
+    }
+    
+    @IBAction func addBtnClick() {
+        if let tempDelegate = delegate {
+            if tempDelegate.respondsToSelector("photoPickerCellAddBtnClick:") {
+                tempDelegate.photoPickerCellAddBtnClick!(self)
+            }
+        }
+    }
+    
+    @IBAction func removeBtnClick() {
+        if let tempDelegate = delegate {
+            if tempDelegate.respondsToSelector("photoPickerCellremoveBtnClick:") {
+                tempDelegate.photoPickerCellremoveBtnClick!(self)
+            }
+        }
+    }
+}
+
+class PhotoPickerCollectionViewLayout : UICollectionViewFlowLayout {
+    override func prepareLayout() {
+        super.prepareLayout()
+        
+        // 0.定义常量
+        let margin : CGFloat = 20
+        let col : CGFloat = 3
+        
+        // 1.计算cell的宽度
+        let width = (collectionView!.bounds.size.width - (col + 1) * margin) / col
+        
+        // 2.设置item的size
+        itemSize = CGSize(width: width, height: width)
+        
+        // 3.设置间距
+        minimumInteritemSpacing = margin
+        minimumLineSpacing = margin
+        
+        // 4.设置collectionView的内边距
+        sectionInset = UIEdgeInsets(top: margin, left: margin, bottom: margin, right: margin)
+    }
+}
+
+--------------------------------------protocol
+@objc
+protocol PhotoPickerCellDelegate : NSObjectProtocol {
+    optional func photoPickerCellAddBtnClick(cell : PhotoPickerCell)
+    optional func photoPickerCellremoveBtnClick(cell : PhotoPickerCell)
+}
+
+--------------------------------------闭包循环引用
+// 懒加载表情控制器
+    lazy var keyboardEmoticonVc : XMGKeyboardEmoticonViewController = XMGKeyboardEmoticonViewController {[unowned self] (emoticon) -> () in
+        self.statusTextView.insertEmoticon(emoticon)
+        
+        // 当插入表情时,主动出发文字改变的代理
+        self.textViewDidChange(self.statusTextView)
+    }
+
+--------------------------------------键盘通知
+// MARK: - 内部控制方法
+    @objc private func keyboardWillChange(note: NSNotification)
+    {
+        // 获取键盘弹出和退出的时间
+        let durationTime = note.userInfo![UIKeyboardAnimationDurationUserInfoKey] as! Double
+        
+        // 获取和底部的差距
+        let endFrame = note.userInfo![UIKeyboardFrameEndUserInfoKey]!.CGRectValue;
+        let margin = view.frame.size.height - endFrame.origin.y
+        
+        // 改变约束,并且执行动画
+        toolbarBottomCons.constant = margin
+        UIView.animateWithDuration(durationTime) { () -> Void in
+            // 如果执行多次动画,则忽略上一次已经未完成的动画,直接进入下一次
+            UIView.setAnimationCurve(UIViewAnimationCurve(rawValue: 7)!)
+            self.view.layoutIfNeeded()
+        }
+    }
+
+--------------------------------------segue
+override func prepareForSegue(segue: UIStoryboardSegue, sender: AnyObject?) {
+        segue.destinationViewController
+        if segue.identifier == "compose2photopicker" {
+            photoPickerVc = segue.destinationViewController as? PhotoPickerViewController
+        }
+    }

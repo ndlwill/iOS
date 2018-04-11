@@ -1,0 +1,1689 @@
+------------------------------------------Log
+#ifdef DEBUG
+#define NDLLog(...) NSLog(__VA_ARGS__)
+#else
+#define NDLLog(...)
+#endif
+
+------------------------------------------属性
+属性自动生成set get 和 _pictureViewFrame
+------------------------------------------UITabBarItem
+NDLMainTabBarController:
+// 通过appearance统一设置所有UITabBarItem的文字属性
++ (void)initialize{
+	// setTitleTextAttributes: .....   后面有UI_APPEARANCE_SELECTOR宏的方法都可以通过appearance统一设置所有的UITabBarItem
+	UITabBarItem *item = [UITabBarItem appearance];
+	[item setTitleTextAttributes:normalAttrs forState:UIControlStateNormal];
+}
+
+//tabBar : 49
+------------------------------------------UIViewController
+// 设置背景色 vc的view是懒加载的
+    /*vc的view的背景颜色要在viewDidLoad里面设置，这样tabbar上面button点击后，vc的viewDidLoad才会被执行(表示1个view被加载好了,view才要被创建)
+    如果在创建vc的时候，设置view的背景颜色，那么tabbar上面所对应的vc的viewDidLoad都会被执行(表示所有view都被加载好了,view提前被创建)*/
+
+NDLMainTabBarController:
+- (void)setupChildVc:(UIViewController *)vc title:(NSString *)title image:(NSString *)image selectedImage:(NSString *)selectedImage
+{
+    /*
+    （vc被nvc管理,nvc被tvc管理）
+     在ViewController中写
+     self.title = @"cc";//相当于调用下面两行
+     
+     self.tabBarItem.title = @"cc";
+     self.navigationItem.title = @"cc";
+     */
+    
+    // 设置文字和图片
+    //navItem
+    vc.navigationItem.title = title;
+    //tabbarItem
+    vc.tabBarItem.title = title;
+    vc.tabBarItem.image = [UIImage imageNamed:image];
+    vc.tabBarItem.selectedImage = [UIImage imageNamed:selectedImage];
+    
+    // 包装一个导航控制器, 添加导航控制器为tabbarcontroller的子控制器
+    NDLNavigationController *nav = [[NDLNavigationController alloc] initWithRootViewController:vc];
+    [self addChildViewController:nav];//###
+}
+
+
+------------------------------------------UIView
+// 取出当前的导航控制器
+    UITabBarController *tabBarVc = (UITabBarController *)[UIApplication sharedApplication].keyWindow.rootViewController;
+    UINavigationController *nav = (UINavigationController *)tabBarVc.selectedViewController;
+    [nav pushViewController:webVC animated:YES];
+
+------------------------------------------NDLMainTabBar : UITabBar
+NDLMainTabBarController:
+//自定义tabbar  self.tabBar是readonly的不能赋值，通过kvc访问成员变量_tabbar
+[self setValue:[[NDLMainTabBar alloc] init] forKeyPath:@"tabBar"];
+
+init会调用NDLMainTabBar  - (instancetype)initWithFrame:(CGRect)frame
+
+NDLMainTabBar:
+-(void)layoutSubviews
+{
+    NSLog(@"layoutSubviews");
+    [super layoutSubviews];
+
+    //这边才能得到self.frame.size  initWithFrame还拿不到frame
+    for (UIControl *button in self.subviews) {}
+}
+------------------------------------------Class
+//(Class)class  传  [UIViewController class]
+
+------------------------------------------不在vc中presentViewController
+//vc加载在window上面  tabBarVC暂时移开
+[[UIApplication sharedApplication].keyWindow.rootViewController presentViewController:vc animated:NO completion:nil];
+
+------------------------------------------UIButton
+self.publishButton.currentBackgroundImage.size
+
+//    addButton.size = [UIImage imageNamed:@"tag_add_icon"].size;
+//    addButton.size = [addButton imageForState:UIControlStateNormal].size;
+addButton.size = addButton.currentImage.size;
+
+NDLTagButton : UIButton
+- (void)setTitle:(NSString *)title forState:(UIControlState)state
+{
+    [super setTitle:title forState:state];
+    
+    [self sizeToFit];
+    
+    self.width += 3 * 5;//算宽度 ＝ 原来宽度 ＋ 间距
+}
+self.titleLabel
+self.imageView
+
+    //代码修改btn圆角  可在xib的kvc解决
+//    self.loginBtn.layer.cornerRadius = 5;
+//    self.loginBtn.layer.masksToBounds = YES;
+
+
+#import <UIButton+WebCache.h>
+// 利用SDWebImage给按钮设置image
+    [self sd_setImageWithURL:[NSURL URLWithString:square.icon] forState:UIControlStateNormal];
+------------------------------------------UILabel
+//让label根据文字内容来计算尺寸
+//不调用下面这个可以调[titles[i] sizeWithAttributes:@{NSFontAttributeName : btn.titleLabel.font}].width;计算label的宽度
+[btn.titleLabel sizeToFit];
+------------------------------------------UIWindow
+//window.windowLevel  级别normal < StatusBar < Alert
+
+//UIWindow *window;   写在方法的外面
+
+    //独立创建一个窗口并显示
+//    window = [[UIWindow alloc] init];
+//    window.frame = CGRectMake(100, 100, 200, 200);
+//    window.backgroundColor = [UIColor redColor];
+//    window.hidden = NO;
+    
+    //window = nil;//销毁窗口
+
+
+
+@interface NDLTopWindow : NSObject
+
++ (void)show;
++ (void)hide;
+
+@end
+
+@implementation NDLTopWindow
+
+//static 不让别人访问
+static UIWindow *window_;
+
+
+// 使用window盖住状态栏   bug解决  info.plist：View controller-based status bar appearance  NO 状态栏不由控制器控制
++(void)initialize
+{
+    window_ = [[UIWindow alloc] init];
+    window_.frame = CGRectMake(0, 0, NDLScreenW, 20);
+    window_.windowLevel = UIWindowLevelAlert;
+    UIViewController *rootVC = [[UIViewController alloc] init];
+    window_.rootViewController = rootVC;
+    window_.backgroundColor = [UIColor clearColor];
+    [window_ addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(windowClicked)]];
+}
+
+//类方法不能用成员变量（eg:属性） 所以用static
++ (void)show
+{
+    window_.hidden = NO;
+}
+
++ (void)hide{
+    window_.hidden = YES;
+}
+
+//要写类方法
++ (void)windowClicked
+{
+    /**
+     *  1.scrollview  2.keyWindow上面的
+     */
+    
+    UIWindow *window = [UIApplication sharedApplication].keyWindow;
+    
+    //递归遍历
+    [self searchScrollViewInView:window];
+}
+
+//递归
++ (void)searchScrollViewInView:(UIView *)superView
+{
+    for (UIScrollView *subView in superView.subviews) {
+        //转换坐标系
+        //从superview的rect转到keyWindow的rect   toView:nil 写nil默认以屏幕左上角为原点
+        CGRect frame = [subView.superview convertRect:subView.frame toView:[UIApplication sharedApplication].keyWindow];
+        CGRect windowBounds = [UIApplication sharedApplication].keyWindow.bounds;
+        
+        //判断控件是否显示在window  tabBarController只会将对应的控制器加载在window上
+        BOOL isShowInWindow = subView.window == [UIApplication sharedApplication].keyWindow && !subView.isHidden && subView.alpha > 0.01 && CGRectIntersectsRect(frame, windowBounds);
+        
+        //用户能在window上面看到的scrollview
+        if ([subView isKindOfClass:[UIScrollView class]] && isShowInWindow) {
+            CGPoint offset = subView.contentOffset;
+            offset.y = - subView.contentInset.top;
+            [subView setContentOffset:offset animated:YES];
+        }
+        
+        [self searchScrollViewInView:subView];
+    }
+    
+    
+}
+
+------------------------------------------block
+//@property (nonatomic, copy) void (^block)();//属性block这么写
+
+//变量block
+//    void (^block)() = ^{
+//    
+//    };
+//    block();
+
+------------------------------------------view.userInteractionEnabled
+(父控件不接受事件，子控件也是接受不了的)
+
+------------------------------------------动画
+/*
+ pop & Core Animation区别
+ 1.Core Animation的动画只能添加到layer上
+ 2.pop的动画能添加到任何对象
+ 3.pop底层不是基于Core Animation，是基于CADisplayLink
+ 4.CA 的动画是表象，并不会真正修改对象的frame size等值。
+ 5.pop的动画会实时修改对象的属性，真正的修改了对象的属性
+ */
+
+//将CGPoint包装成对象NSValue valueWithCGPoint:
+//spring 弹簧动画
+//k开头表示常量
+POPSpringAnimation *anim = [POPSpringAnimation animationWithPropertyNamed:kPOPViewFrame];
+anim.beginTime = CACurrentMediaTime() + NDLAnimDelay * i;
+anim.fromValue = [NSValue valueWithCGRect:CGRectMake(btnX, btnBeginY, btnW, btnH)];
+anim.toValue = [NSValue valueWithCGRect:CGRectMake(btnX, btnEndY, btnW, btnH)];
+anim.springBounciness = NDLSpringFactor;
+anim.springSpeed = NDLSpringFactor;
+[btn pop_addAnimation:anim forKey:nil];
+
+
+
+//不要用约束做动画，通过改变frame来实现
+POPSpringAnimation *anim = [POPSpringAnimation animationWithPropertyNamed:kPOPViewCenter];
+CGFloat centerX = NDLScreenW * 0.5;
+CGFloat centerEndY = NDLScreenH * 0.2;
+CGFloat centerBeginY = centerEndY - NDLScreenH;
+sloganIV.centerY = centerBeginY;
+anim.fromValue = [NSValue valueWithCGPoint:CGPointMake(centerX, centerBeginY)];
+anim.toValue = [NSValue valueWithCGPoint:CGPointMake(centerX, centerEndY)];
+anim.beginTime = CACurrentMediaTime() + images.count * NDLAnimDelay;
+anim.springBounciness = NDLSpringFactor;
+anim.springSpeed = NDLSpringFactor;
+[anim setCompletionBlock:^(POPAnimation *anim, BOOL finished) {
+    self.view.userInteractionEnabled = YES;
+}];
+[self.sloganIV pop_addAnimation:anim forKey:nil];
+
+
+POPBasicAnimation *anim = [POPBasicAnimation animationWithPropertyNamed:kPOPViewCenter];
+//一开始慢，后面快
+anim.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseIn];
+CGFloat centerY = subview.centerY + NDLScreenH;
+anim.toValue = [NSValue valueWithCGPoint:CGPointMake(subview.centerX, centerY)];
+anim.beginTime = CACurrentMediaTime() + (i - 2) * NDLAnimDelay;
+[subview pop_addAnimation:anim forKey:nil];
+------------------------------------------自定义控件
+NDLVerticalButton : UIButton  
+
+//代码创建
+- (instancetype)initWithFrame:(CGRect)frame
+{
+    NDLLogFunc;
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.titleLabel.textAlignment = NSTextAlignmentCenter;
+    }
+    return self;
+}
+
+
+//xib创建 xib用到了这个Custom class(这个控件被用到了xib)
+- (void)awakeFromNib
+{
+    NDLLogFunc;
+    self.titleLabel.textAlignment = NSTextAlignmentCenter;
+}
+
+- (void)layoutSubviews
+{
+    [super layoutSubviews];
+    //调整图片
+    self.imageView.x = 0;
+    self.imageView.y = 0;
+    self.imageView.width = self.width;//
+    self.imageView.height = self.imageView.width;//
+    //调整文字
+    self.titleLabel.x = 0;
+    self.titleLabel.y = self.imageView.height;
+    self.titleLabel.width = self.width;
+    self.titleLabel.height = self.height - self.titleLabel.y;
+    
+}
+
+------------------------------------------九宫格
+//看图片的button宽高
+CGFloat btnW = 72;
+int maxCols = 3;//3列
+for (int i = 0; i < images.count; i++) {
+
+	int row = i / maxCols;
+    int col = i % maxCols;
+}
+
+------------------------------------------NDLNavigationController : UINavigationController
++ (void)initialize
+{
+    // 当导航栏用在NDLNavigationController中, appearance设置才会生效
+    //    UINavigationBar *bar = [UINavigationBar appearanceWhenContainedIn:[self class], nil];
+    UINavigationBar *bar = [UINavigationBar appearance];
+    [bar setBackgroundImage:[UIImage imageNamed:@"navigationbarBackgroundWhite"] forBarMetrics:UIBarMetricsDefault];
+    [bar setTitleTextAttributes:@{NSFontAttributeName : [UIFont boldSystemFontOfSize:20]}];
+    
+    
+    // 设置item
+    UIBarButtonItem *item = [UIBarButtonItem appearance];
+    // UIControlStateNormal
+    NSMutableDictionary *itemAttrs = [NSMutableDictionary dictionary];
+    itemAttrs[NSForegroundColorAttributeName] = [UIColor blackColor];
+    itemAttrs[NSFontAttributeName] = [UIFont systemFontOfSize:17];
+    [item setTitleTextAttributes:itemAttrs forState:UIControlStateNormal];
+    // UIControlStateDisabled
+    NSMutableDictionary *itemDisabledAttrs = [NSMutableDictionary dictionary];
+    itemDisabledAttrs[NSForegroundColorAttributeName] = [UIColor lightGrayColor];
+    [item setTitleTextAttributes:itemDisabledAttrs forState:UIControlStateDisabled];
+}
+
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    //    [self.navigationBar setBackgroundImage:[UIImage imageNamed:@"navigationbarBackgroundWhite"] forBarMetrics:UIBarMetricsDefault];
+    
+    //如果滑动移除控制器的功能失效，清空代理(让导航控制器重新设置这个功能)
+    self.interactivePopGestureRecognizer.delegate = nil;
+}
+
+/**
+ * 可以在这个方法中拦截所有push进来的控制器
+ */
+//自定义navc，重写pushViewController方法，使得所有被push的vc的backbarbutton都一致
+//navc的rootvc也是被push进去的
+- (void)pushViewController:(UIViewController *)viewController animated:(BOOL)animated
+{
+    //如果push进来的第一个controller就不需要修改viewController.navigationItem.leftBarButtonItem
+    if (self.childViewControllers.count > 0) { // 如果push进来的不是第一个控制器
+        UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
+        [button setTitle:@"返回" forState:UIControlStateNormal];
+        [button setImage:[UIImage imageNamed:@"navigationButtonReturn"] forState:UIControlStateNormal];
+        [button setImage:[UIImage imageNamed:@"navigationButtonReturnClick"] forState:UIControlStateHighlighted];
+        button.size = CGSizeMake(70, 30);
+        //button.backgroundColor = [UIColor redColor];
+        // 让按钮内部的所有内容左对齐
+        button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+        
+        //        [button sizeToFit];
+        // 让按钮的内容往左边偏移10  内边距
+        button.contentEdgeInsets = UIEdgeInsetsMake(0, -10, 0, 0);//tlbr
+        [button setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+        [button setTitleColor:[UIColor redColor] forState:UIControlStateHighlighted];
+        [button addTarget:self action:@selector(backBarBtnItemClicked) forControlEvents:UIControlEventTouchUpInside];
+        
+        
+        // 修改导航栏左边的item  一旦换了左边的item，就不能点左边拖拽到右边返回
+        viewController.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithCustomView:button];
+        
+        // 隐藏tabbar
+        viewController.hidesBottomBarWhenPushed = YES;
+    }
+    
+    // 这句super的push要放在后面, 让viewController可以覆盖上面设置的leftBarButtonItem(在viewController的viewDidLoad里面设置)
+    [super pushViewController:viewController animated:animated];
+    
+}
+
+- (void)backBarBtnItemClicked
+{
+    [self popViewControllerAnimated:YES];
+}
+
+------------------------------------------ + (void)initialize
+/**
+ * 当第一次使用这个类的时候会调用一次,只会被调用一次
+ */
+
+------------------------------------------键盘
+ - (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:YES];
+    NDLLogFunc;
+    
+    //先退出之前键盘
+    //[self.textView resignFirstResponder];
+    [self.view endEditing:YES];
+    [self.textView becomeFirstResponder];//再弹键盘
+}
+
+
+//监听键盘通知
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillChangeFrame:) name:UIKeyboardWillChangeFrameNotification object:nil];
+
+- (void)keyboardWillChangeFrame:(NSNotification *)notification
+{
+    CGRect keyboardFrame = [notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
+    
+    CGFloat duration = [notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    [UIView animateWithDuration:duration animations:^{
+        self.toolBar.transform = CGAffineTransformMakeTranslation(0, keyboardFrame.origin.y - NDLScreenH);
+    }];
+}
+ ------------------------------------------自定义TextField
+ - (instancetype)initWithFrame:(CGRect)frame
+{
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.height = 25;
+        self.placeholder = @"多个标签用逗号或者换行隔开";
+        // 设置了占位文字内容以后, 才能设置占位文字的颜色
+        [self setValue:[UIColor grayColor] forKeyPath:@"_placeholderLabel.textColor"];
+    }
+    return self;
+}
+
+//- (void)insertText:(NSString *)text
+//{
+//
+//}
+
+- (void)deleteBackward
+{
+    !self.deleteBlock ? : self.deleteBlock();//先调block再删除文字
+    [super deleteBackward];
+    
+}
+
+
+UIViewController:
+/**
+ * textField的文字宽度
+ */
+- (CGFloat)textFieldTextWidth
+{
+    //计算一行
+    CGFloat textW = [self.textField.text sizeWithAttributes:@{NSFontAttributeName : self.textField.font}].width;
+    return MAX(100, textW);
+}
+
+//textField监听字符改变 不建议用代理 不严谨  中文监听不到
+    [textField addTarget:self action:@selector(textDidChange) forControlEvents:UIControlEventEditingChanged];
+
+/**
+ * 监听文字改变
+ */
+- (void)textDidChange
+{
+    // 更新文本框的frame
+    [self updateTextFieldFrame];
+    
+    if (self.textField.hasText) { // 有文字
+        // 显示"添加标签"的按钮
+        self.addButton.hidden = NO;
+        self.addButton.y = CGRectGetMaxY(self.textField.frame) + 5;
+        [self.addButton setTitle:[NSString stringWithFormat:@"添加标签: %@", self.textField.text] forState:UIControlStateNormal];
+        
+        //获得最后一个字符
+        NSString *text = self.textField.text;
+        NSUInteger len = text.length;
+        NSString *lastChar = [self.textField.text substringFromIndex:len - 1];
+        
+        if (([lastChar isEqualToString:@","] || [lastChar isEqualToString:@"，"]) && len > 1) {
+            //去除逗号
+            self.textField.text = [text substringToIndex:len - 1];
+            [self addButtonClick];
+        }
+    } else { // 没有文字
+        // 隐藏"添加标签"的按钮
+        self.addButton.hidden = YES;
+    }
+}
+
+
+//delegate
+//监听键盘最右下角按钮的点击（return key）   //也可以自定义UITextField 重写insertText:  换行符\n
+- (BOOL)textFieldShouldReturn:(UITextField *)textField
+{
+    if (textField.hasText) {
+        [self addButtonClick];
+    }
+    return YES;
+}
+
+
+自定义:
+//tintColor 一般设置光标颜色，导航颜色等
+//这个方法会被调两次
+- (void)awakeFromNib
+{
+    //3.运用运行时，查看成员变量，然后用kvc
+    //修改占位文字颜色
+//    UILabel *placeholderLabel = [self valueForKeyPath:@"_placeholderLabel"];//kvc
+//    placeholderLabel.textColor = [UIColor redColor];
+    //或者
+    //[self setValue:[UIColor grayColor] forKeyPath:@"_placeholderLabel.textColor"];
+    
+    //设置光标颜色
+    self.tintColor = self.textColor;
+    
+    [self resignFirstResponder];
+}
+
+//一旦聚焦会被调用
+//- (void)setHighlighted:(BOOL)highlighted
+//{
+//    NDLLog(@"----------");
+//}
+
+//当前文本框聚焦时就会调用
+- (BOOL)becomeFirstResponder
+{
+    [self setValue:self.textColor forKeyPath:NDLPlaceholderColorKeyPath];
+    return [super becomeFirstResponder];
+}
+//失去焦点时就会调用
+- (BOOL)resignFirstResponder
+{
+    [self setValue:[UIColor grayColor] forKeyPath:NDLPlaceholderColorKeyPath];
+    return [super resignFirstResponder];
+}
+
+//set & get
+//- (void)setPlaceholderColor:(UIColor *)placeholderColor
+//{
+//    _placeholderColor = placeholderColor;
+//
+//    // 修改占位文字颜色
+//    [self setValue:placeholderColor forKeyPath:NDLPlacerholderColorKeyPath];
+//}
+
+
+//2.自定义
+//- (void)drawPlaceholderInRect:(CGRect)rect
+//{
+//    [self.placeholder drawInRect:rect withAttributes:@{NSForegroundColorAttributeName : [UIColor grayColor]}];
+//}
+
+ ------------------------------------------自定义TextView
+ @interface NDLPlaceholderTextView : UITextView
+
+/** 占位文字 */
+@property (nonatomic, copy) NSString *placeholder;
+/** 占位文字的颜色 */
+@property (nonatomic, strong) UIColor *placeholderColor;
+
+
+@end
+
+
+@interface NDLPlaceholderTextView ()
+
+/** 占位文字label */
+@property (nonatomic, weak) UILabel *placeholderLabel;//label的文字默认垂直居中
+
+@end
+
+
+@implementation NDLPlaceholderTextView
+
+- (UILabel *)placeholderLabel
+{
+    if (!_placeholderLabel) {
+        // 添加一个用来显示占位文字的label
+        UILabel *placeholderLabel = [[UILabel alloc] init];
+        placeholderLabel.numberOfLines = 0;
+        placeholderLabel.x = 4;
+        placeholderLabel.y = 7;
+        [self addSubview:placeholderLabel];
+        _placeholderLabel = placeholderLabel;
+    }
+    return _placeholderLabel;
+}
+
+- (instancetype)initWithFrame:(CGRect)frame
+{
+    NDLLogFunc;
+    if (self = [super initWithFrame:frame]) {
+        // 垂直方向上永远有弹簧效果
+        self.alwaysBounceVertical = YES;
+        
+        // 默认字体
+        self.font = [UIFont systemFontOfSize:15];
+        
+        // 默认的占位文字颜色
+        self.placeholderColor = [UIColor grayColor];
+        
+        // 监听文字改变
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(textDidChange) name:UITextViewTextDidChangeNotification object:nil];
+    }
+    return self;
+}
+
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+/**
+ * 监听文字改变
+ */
+- (void)textDidChange
+{
+    // 只要有文字, 就隐藏占位文字label
+    self.placeholderLabel.hidden = self.hasText;
+}
+
+/**
+ * 更新占位文字的尺寸
+ */
+- (void)updatePlaceholderLabelSize
+{
+    CGSize maxSize = CGSizeMake(NDLScreenW - 2 * self.placeholderLabel.x, MAXFLOAT);
+    self.placeholderLabel.size = [self.placeholder boundingRectWithSize:maxSize options:NSStringDrawingUsesLineFragmentOrigin attributes:@{NSFontAttributeName : self.font} context:nil].size;
+//    self.placeholderLabel.width = NDLScreenW - 2 * self.placeholderLabel.x;
+//    [self.placeholderLabel sizeToFit];
+}
+
+
+//能走这个方法 说明能拿到这个控件真正的宽高  self.width
+- (void)layoutSubviews
+{
+    [super layoutSubviews];
+    self.placeholderLabel.width = self.width - 2 * self.placeholderLabel.x;
+    [self.placeholderLabel sizeToFit];
+}
+
+
+#pragma mark - 重写setter
+- (void)setPlaceholderColor:(UIColor *)placeholderColor
+{
+    _placeholderColor = placeholderColor;
+    
+    self.placeholderLabel.textColor = placeholderColor;
+}
+
+- (void)setPlaceholder:(NSString *)placeholder
+{
+    _placeholder = [placeholder copy];
+    
+    self.placeholderLabel.text = placeholder;
+    
+    //[self updatePlaceholderLabelSize];
+    [self setNeedsLayout];//在恰当的时候调  layoutSubviews
+}
+
+- (void)setFont:(UIFont *)font
+{
+    [super setFont:font];
+    
+    self.placeholderLabel.font = font;
+    
+    [self updatePlaceholderLabelSize];
+}
+
+- (void)setText:(NSString *)text
+{
+    [super setText:text];
+    
+    [self textDidChange];
+}
+
+- (void)setAttributedText:(NSAttributedString *)attributedText
+{
+    [super setAttributedText:attributedText];
+    
+    [self textDidChange];
+}
+
+
+
+UIViewController:
+- (void)setupTextView
+{
+    //self.automaticallyAdjustsScrollViewInsets = NO;
+    //因为TextView继承UIScrollView 系统会自动给他设置64的内边距
+    NDLPlaceholderTextView *textView = [[NDLPlaceholderTextView alloc] init];
+    textView.frame = self.view.bounds;
+    textView.placeholder = @"把好玩的图片，好笑的段子或糗事发到这里，接受千万网友膜拜吧！发布违反国家法律内容的，我们将依法提交给有关部门处理。";
+    //textView.inputAccessoryView = [NDLTagToolBar viewFromXib];
+    textView.delegate = self;
+    [self.view addSubview:textView];
+    self.textView = textView;
+    NDLLogFunc;
+}
+
+------------------------------------------setNeedsXXX
+/**
+ * setNeedsDisplay方法 : 会在恰当的时刻自动调用drawRect:方法
+ * setNeedsLayout方法 : 会在恰当的时刻调用layoutSubviews方法
+ */
+
+------------------------------------------xib
+NDLTagToolBar:
+
++ (instancetype)tagToolBar
+{
+    return [[NSBundle mainBundle] loadNibNamed:NSStringFromClass(self) owner:nil options:nil].lastObject;
+}
+
+
+//viewController:  xib的 Files Owner设置这个类    右击Files Owner将view连线view
+//imageView 约束的宽高为图片的大小
+//label   label的text换行显示（option+回车）
+
+//xib tableView右击将委托拖线到files owner
+
+//xib label不设置宽高 就会包裹内容  label默认垂直居中(根据label的大小)
+//xib   button 不提供高亮图片 也会默认变暗 xib有个HighLighted Adjusts Image属性
+//xib   button如果要用自己的高亮图片 type设置为custom不然system的高亮图片会取代自己的高亮图片   用了自定义btn，Custom Class改为NDLVerticalButton
+
+//xib 自身的约束能拷贝过来，相对别人的约束会被删除
+
+
+NDLShowPictureViewController *vc = [[NDLShowPictureViewController alloc] init];//自动加载xib
+------------------------------------------modal
+/*
+ a modal b
+ a.presentedViewController -> b
+ b.presentingViewController -> a
+ */
+
+
+------------------------------------------viewDidLayoutSubviews
+//这边拿到self.view的大小是真正的大小 不管代码创建还是xib创建
+- (void)viewDidLayoutSubviews
+{
+    [super viewDidLayoutSubviews];
+    NDLLogFunc;
+    //self.view.width;
+}
+
+------------------------------------------SVProgressHUD
+[SVProgressHUD showErrorWithStatus:@"最多添加5个标签" maskType:SVProgressHUDMaskTypeBlack];
+
+[SVProgressHUD showWithMaskType:SVProgressHUDMaskTypeBlack];
+
+[SVProgressHUD dismiss];
+
+[SVProgressHUD showErrorWithStatus:@"加载推荐信息失败!"];
+------------------------------------------UIView Category
+/** 在分类中声明@property, 只会生成方法的声明, 不会生成方法的实现和带有_下划线的成员变量*/
+//- (CGFloat)x;
+//- (void)setX:(CGFloat)x;
+
++ (instancetype)viewFromXib
+{
+    return [[[NSBundle mainBundle] loadNibNamed:NSStringFromClass(self) owner:nil options:nil] lastObject];
+}
+
+//判断一个控件是否真正显示在主窗口
+- (BOOL)isShowInKeyWindow
+{
+    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+    
+    CGRect frame = [keyWindow convertRect:self.frame fromView:self.superview];
+    CGRect windowFrame = keyWindow.bounds;
+    
+    return !self.isHidden && self.alpha > 0.01 && self.window == keyWindow && CGRectIntersectsRect(frame, windowFrame);
+}
+
+------------------------------------------换肤
+1.用plist
+//2.把不同皮肤的资源（图片 plist） 相同资源名 放到不同的文件夹下
++ (UIColor *)colorWithKey:(NSString *)key
+{
+    //    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:[[NSBundle mainBundle] pathForResource:@"colors" ofType:@"plist"]];
+    //
+    //    NSString *colorString = dict[@"normal"][key];//normal沙盒获取
+    //
+    //    return NDLRGBColor(<#r#>, <#g#>, <#b#>)
+    return nil;
+}
+
+------------------------------------------AppDelegate
+- (void)applicationDidBecomeActive:(UIApplication *)application {
+    // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
+    
+    //添加window 处理scrollView回滚
+    [NDLTopWindow show];
+}
+
+- (void)tabBarController:(UITabBarController *)tabBarController didSelectViewController:(UIViewController *)viewController
+{
+    //发通知
+    [[NSNotificationCenter defaultCenter] postNotificationName:NDLTabBarDidSelectedNotification object:nil userInfo:nil];
+}
+------------------------------------------UITableViewController
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    //设置内边距
+    CGFloat top = NDLTitlesViewHeight + NDLTitlesViewY;
+    CGFloat bottom = self.tabBarController.tabBar.height;
+    self.tableView.contentInset = UIEdgeInsetsMake(top, 0, bottom, 0);
+    self.tableView.scrollIndicatorInsets = self.tableView.contentInset;//设置tableView的滚动条的inset
+    self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
+    self.tableView.backgroundColor = [UIColor clearColor];
+    [self.tableView registerNib:[UINib nibWithNibName:NSStringFromClass([NDLTopicTableViewCell class]) bundle:nil] forCellReuseIdentifier:topicID];
+    
+    //监听通知
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(tabBarSelected) name:NDLTabBarDidSelectedNotification object:nil];
+    
+    [self buildRefreshView];
+    
+    [self loadNewTopics];
+}
+
+- (void)tabBarSelected
+{
+    NDLLogFunc;
+    //如果连续选中2次  //如果选中的是当前导航控制器
+    if (self.lastSelectedIndex == self.tabBarController.selectedIndex
+        //&& self.tabBarController.selectedViewController == self.navigationController
+        && self.view.isShowInKeyWindow) {
+        [self.tableView.header beginRefreshing];
+    }
+    
+    self.lastSelectedIndex = self.tabBarController.selectedIndex;
+}
+
+自动计算cell高度:
+//xib里面所有东西都确定 不需要动态加入一些控件 可以用下面的自动计算
+//ios8 自动计算cell高度   contentLabel与父控件底部约束10
+//并且设置
+/*
+ self.tableView.estimatedRowHeight = 44;
+ self.tableView.rowHeight = UITableViewAutomaticDimension;
+ */
+------------------------------------------TableView
+UITableViewController:
+// 设置背景色
+self.tableView.backgroundColor = NDLGlobalBgColor;
+
+//self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
+[self.tableView registerClass:[NDLMeCell class] forCellReuseIdentifier:NDLMeCellID];
+
+//调整header footer
+self.tableView.sectionHeaderHeight = 0;
+self.tableView.sectionFooterHeight = NDLTopicCellMargin;//10
+
+//调整inset
+self.tableView.contentInset = UIEdgeInsetsMake(NDLTopicCellMargin - 35, 0, 0, 0);
+
+//设置footerView
+self.tableView.tableFooterView = [[NDLMeFooterView alloc] init];
+
+
+
+[self.navigationController pushViewController:[[NDLSettingTableViewController alloc] initWithStyle:UITableViewStyleGrouped] animated:YES];
+
+
+UIViewController:
+//默认选中第一行
+[self.typeTV selectRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0] animated:NO scrollPosition:UITableViewScrollPositionTop];
+
+//刷新tv 会走这个方法
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
+------------------------------------------TableViewCell
+cell.imageView.image 
+ell.textLabel.text 
+
+UIViewController:
+[self.typeTV registerNib:[UINib nibWithNibName:NSStringFromClass([NDLRecommendTypeCell class]) bundle:nil] forCellReuseIdentifier:TypeID];
+
+//xib RecommendTypeCell的Selection选为None,不然当cell被选中时，会出现一个有颜色的view，会挡住下面的view
+// 当cell的selection为None时, 即使cell被选中了, 内部的子控件也不会进入高亮状态
+
+UITableViewCell:
+/**
+ * 可以在这个方法中监听cell的选中和取消选中
+ */
+//一开始selected为NO
+- (void)setSelected:(BOOL)selected animated:(BOOL)animated {
+    [super setSelected:selected animated:animated];
+
+    self.leftView.hidden = !selected;
+    self.textLabel.textColor = selected ? self.leftView.backgroundColor : NDLRGBColor(78, 78, 78);
+}
+
+//默认cell 44
+self.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+
+自定义cell:
+//重写setFrame  不管别人怎么设置(没有效果)，都会使用下面的设置的值
+-(void)setFrame:(CGRect)frame
+{
+    frame.origin.x = 5;
+    frame.size.width -= 2 * frame.origin.x;
+    frame.size.height -= 1;
+    //然后传给父类设置
+    [super setFrame:frame];
+}
+
+- (void)setSelected:(BOOL)selected animated:(BOOL)animated {
+    [super setSelected:selected animated:animated];
+
+    // Configure the view for the selected state
+}
+
+
+
+
+------------------------------------------SDWebImage
+#import <SDImageCache.h>
+
+- (void)getSize2
+{
+    // 图片缓存
+    NSUInteger size = [SDImageCache sharedImageCache].getSize;
+    
+    
+    NSFileManager *manager = [NSFileManager defaultManager];
+    
+    // 文件夹
+    NSString *caches = [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES) lastObject];
+    NSString *cachePath = [caches stringByAppendingPathComponent:@"default/com.hackemist.SDWebImageCache.default"];
+    
+    // 获得文件夹内部的所有内容
+    //    NSArray *contents = [manager contentsOfDirectoryAtPath:cachePath error:nil];//子路径
+    NSArray *subpaths = [manager subpathsAtPath:cachePath];//包括子路径和子路径的子路径
+}
+
+- (void)getSize
+{
+    NSFileManager *manager = [NSFileManager defaultManager];
+    
+    NSString *caches = [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES) lastObject];
+    NSString *cachePath = [caches stringByAppendingPathComponent:@"default/com.hackemist.SDWebImageCache.default"];
+    
+    NSDirectoryEnumerator *fileEnumerator = [manager enumeratorAtPath:cachePath];
+    NSInteger totalSize = 0;
+    for (NSString *fileName in fileEnumerator) {
+        NSString *filepath = [cachePath stringByAppendingPathComponent:fileName];
+        
+        //        BOOL dir = NO;
+        // 判断文件的类型：文件\文件夹
+        //        [manager fileExistsAtPath:filepath isDirectory:&dir];
+        //        if (dir) continue;
+        NSDictionary *attrs = [manager attributesOfItemAtPath:filepath error:nil];
+        if ([attrs[NSFileType] isEqualToString:NSFileTypeDirectory]) continue;
+        
+        totalSize += [attrs[NSFileSize] integerValue];
+    }
+    
+}
+
+CGFloat size = [SDImageCache sharedImageCache].getSize / 1000.0 / 1000;
+    cell.textLabel.text = [NSString stringWithFormat:@"清除缓存（已使用%.2fMB）", size];
+    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    [[SDImageCache sharedImageCache] clearDisk];
+    
+    //    [[NSFileManager defaultManager] removeItemAtPath:<#(NSString *)#> error:<#(NSError *__autoreleasing *)#>];
+}
+
+
+
+[self.headerIV sd_setImageWithURL:[NSURL URLWithString:userModel.header] placeholderImage:[UIImage imageNamed:@"defaultUserIcon"]];
+
+
+- (void)setTopicModel:(NDLTopicModel *)topicModel
+{
+    _topicModel = topicModel;
+    
+    //立马显示最新的进度值（防止网速慢，导致显示的是其他cell的图片下载进度）
+    [self.progressView setProgress:topicModel.pictureProgress animated:NO];
+    //取出图片数据的第一个字节，就可以判断出图片的真实类型＃＃＃
+    
+    //sd库   ImageIO -> GIF -> N个UIImage
+    [self.mainIV sd_setImageWithURL:[NSURL URLWithString:topicModel.large_image] placeholderImage:nil options:0 progress:^(NSInteger receivedSize, NSInteger expectedSize) {
+        //只有进来了block才会跟新进度值
+        self.progressView.hidden = NO;
+        CGFloat progress = 1.0 * receivedSize / expectedSize;
+        //progress = progress < 0 ? 0 : progress;
+        [self.progressView setProgress:progress animated:NO];
+        
+        topicModel.pictureProgress = progress;
+    } completed:^(UIImage *image, NSError *error, SDImageCacheType cacheType, NSURL *imageURL) {
+        self.progressView.hidden = YES;
+        
+        if (topicModel.isLongImage) {
+            //开启图片上下文
+            UIGraphicsBeginImageContextWithOptions(topicModel.pictureViewFrame.size, YES, 0.0);//YES不透明
+            //将下载完的image绘制到图形下上文
+            //[image drawAtPoint:CGPointZero];
+            CGFloat width = topicModel.pictureViewFrame.size.width;
+            CGFloat height = width * image.size.height / image.size.width;
+            [image drawInRect:CGRectMake(0, 0, width, height)];
+            //获得图片
+            self.mainIV.image = UIGraphicsGetImageFromCurrentImageContext();
+            //结束图形上下文
+            UIGraphicsEndImageContext();
+        }
+    }];
+    
+    //判断是否是gif
+    NSString *extension = topicModel.large_image.pathExtension;
+    self.gifIV.hidden = ![extension.lowercaseString isEqualToString:@"gif"];
+    //判断是否显示点击查看大图
+    if (topicModel.isLongImage) {
+        self.seeBigBtn.hidden = NO;
+        
+    } else {
+        self.seeBigBtn.hidden = YES;
+        //self.mainIV.contentMode = UIViewContentModeScaleToFill;
+    }
+}
+------------------------------------------NJKWebViewProgress
+@interface NDLWebViewController () <UIWebViewDelegate>
+@property (weak, nonatomic) IBOutlet UIWebView *webView;
+@property (weak, nonatomic) IBOutlet UIBarButtonItem *goBackItem;
+@property (weak, nonatomic) IBOutlet UIBarButtonItem *goForwardItem;
+@property (weak, nonatomic) IBOutlet UIBarButtonItem *refreshItem;
+@property (weak, nonatomic) IBOutlet UIProgressView *progressView;
+
+@property (nonatomic, strong) NJKWebViewProgress *progress;
+
+@end
+
+@implementation NDLWebViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    self.progress = [[NJKWebViewProgress alloc] init];
+    self.webView.delegate = self.progress;
+    
+    __weak typeof(self) weakSelf = self;
+    self.progress.progressBlock = ^(float progress) {
+        weakSelf.progressView.progress = progress;
+        
+        weakSelf.progressView.hidden = (progress == 1.0);
+    };
+    self.progress.webViewProxyDelegate = self;
+    
+    //xib里面webView层级放在最开始  因为webView内部有scrollView
+    [self.webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:self.url]]];
+}
+- (IBAction)refreshItemClicked:(id)sender {
+    [self.webView reload];
+}
+- (IBAction)backItemClicked:(id)sender {
+    [self.webView goBack];
+}
+- (IBAction)forwardItemClicked:(id)sender {
+    [self.webView goForward];
+}
+
+- (void)didReceiveMemoryWarning {
+    [super didReceiveMemoryWarning];
+    // Dispose of any resources that can be recreated.
+}
+
+- (void)webViewDidFinishLoad:(UIWebView *)webView
+{
+    self.goBackItem.enabled = webView.canGoBack;
+    self.goForwardItem.enabled = webView.canGoForward;
+}
+
+------------------------------------------StatusBar
+//ios7 以前
+[UIApplication sharedApplication].statusBarStyle = UIStatusBarStyleLightContent;    
+
+//可以恢复ios7 以前的做法  info.plist：View controller-based status bar appearance  NO 状态栏不由控制器控制
+//ios7开始通过controller控制状态栏，以前是UIApplication控制
+//- (UIStatusBarStyle)preferredStatusBarStyle
+//{
+//    return UIStatusBarStyleLightContent;
+//}
+
+------------------------------------------约束
+- (IBAction)showRegisterOrLoginView:(id)sender {
+    //退出键盘
+    [self.view endEditing:YES];
+    
+    UIButton *btn = sender;
+    
+    //利用约束，注册框的leading靠着登录框的trailing
+    if (self.loginViewLeftMargin.constant == 0) {
+        self.loginViewLeftMargin.constant = -self.view.width;
+        [btn setTitle:@"已有账号?" forState:UIControlStateNormal];
+    } else {
+        self.loginViewLeftMargin.constant = 0;
+        [btn setTitle:@"注册账号" forState:UIControlStateNormal];
+    }
+    
+    [UIView animateWithDuration:0.25 animations:^{
+        [self.view layoutIfNeeded];
+    }];
+}
+
+------------------------------------------AFNetworking
+//AFN请求管理者  用同一个manager会把所有请求放到self.manager.operationQueue里面
+@property (nonatomic, strong) AFHTTPSessionManager *manager
+-(AFHTTPSessionManager *)manager
+{
+    if (!_manager) {
+        _manager = [AFHTTPSessionManager manager];
+    }
+    return _manager;
+}
+
+//控制器销毁
+- (void)dealloc
+{
+    //停止所有操作  不管请求成功或失败 不会进入block
+    [self.manager.operationQueue cancelAllOperations];
+}
+
+[self.manager GET:@"http://api.budejie.com/api/api_open.php" parameters:params success:^(NSURLSessionDataTask *task, id responseObject) {
+        
+        //responseObject是dic
+        
+        // 隐藏指示器
+        [SVProgressHUD dismiss];
+        
+        //返回的json数据  字典数组 -> 模型数组
+        self.types = [NDLRecommendType objectArrayWithKeyValuesArray:responseObject[@"list"]];
+        
+        //刷新tv
+        [self.typeTV reloadData];
+        
+        //默认选中第一行
+        [self.typeTV selectRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0] animated:NO scrollPosition:UITableViewScrollPositionTop];
+        
+        [self.userTV.header beginRefreshing];
+    } failure:^(NSURLSessionDataTask *task, NSError *error) {//AF task取消（cancel）会走failure
+        // 显示失败信息
+        [SVProgressHUD showErrorWithStatus:@"加载推荐信息失败!"];
+    }];
+
+
+
+
+vc:
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    
+    //恢复top_cmt
+    if (self.saved_top_cmt.count) {
+        self.topicModel.top_cmt = self.saved_top_cmt;
+        [self.topicModel setValue:@0 forKeyPath:@"cellH"];//重新计算cellH
+    }
+    
+    //控制器销毁的时候
+    //[self.manager.tasks makeObjectsPerformSelector:@selector(cancel)];
+    [self.manager invalidateSessionCancelingTasks:YES];//session死了 就不能重新开启任务了
+}
+------------------------------------------runtime
+#import <objc/runtime.h>
++ (void)getProperties
+{
+    unsigned int count = 0;
+    
+    objc_property_t *properties = class_copyPropertyList([UITextField class], &count);
+    
+    for (int i = 0; i<count; i++) {
+        // 取出属性
+        objc_property_t property = properties[i];
+        
+        // 打印属性名字
+        NDLLog(@"%s   <---->   %s", property_getName(property), property_getAttributes(property));
+    }
+    
+    free(properties);
+}
+
+//+ (void)initialize
+//{
+//    unsigned int count = 0;
+//    //传self是查看当前类 传UITextField查看UITextField
+//    Ivar *vars = class_copyIvarList([UITextField class], &count);//拷贝出所有成员变量的列表
+//    for (int i = 0; i < count; i++) {
+//        //取出成员变量
+//        //Ivar var = *(vars + i);
+//        //或者
+//        Ivar var = vars[i];
+//        //打印
+//        NDLLog(@"%s %s", ivar_getName(var), ivar_getTypeEncoding(var));
+//    }
+//
+//    //释放内存
+//    free(vars);
+//}
+
+
+
+------------------------------------------MJExtension
+@property (nonatomic, strong) NSArray *types;
+//返回的json数据  字典数组 -> 模型数组
+self.types = [NDLRecommendType objectArrayWithKeyValuesArray:responseObject[@"list"]];
+
+
+
+
+
+@interface NDLTopicModel : NSObject
+//id
+@property (nonatomic, copy) NSString *ID;
+
+/** 名称 */
+@property (nonatomic, copy) NSString *name;
+/** 头像 */
+@property (nonatomic, copy) NSString *profile_image;
+/** 发帖时间 */
+@property (nonatomic, copy) NSString *create_time;
+/** 文字内容 */
+@property (nonatomic, copy) NSString *text;
+/** 顶的数量 */
+@property (nonatomic, assign) NSInteger ding;
+/** 踩的数量 */
+@property (nonatomic, assign) NSInteger cai;
+/** 转发的数量 */
+@property (nonatomic, assign) NSInteger repost;
+/** 评论的数量 */
+@property (nonatomic, assign) NSInteger comment;
+
+/** 是否为新浪加V用户 */
+@property (nonatomic, assign, getter=isSina_v) BOOL sina_v;
+
+
+/** 图片宽度 */
+@property (nonatomic, assign) CGFloat width;
+/** 图片高度 */
+@property (nonatomic, assign) CGFloat height;
+/** 小图片的URL */
+@property (nonatomic, copy) NSString *small_image;
+/** 中图片的URL */
+@property (nonatomic, copy) NSString *middle_image;
+/** 大图片的URL */
+@property (nonatomic, copy) NSString *large_image;
+
+/** 帖子的类型 */
+@property (nonatomic, assign) NDLTopicType type;
+
+//最热评论  (期望里面放的是NDLComment模型)   通过重写+ (NSDictionary *)objectClassInArray来实现
+@property (nonatomic, strong) NSArray *top_cmt;
+
+
+//额外的属性
+//cell高度
+@property (nonatomic, assign, readonly) CGFloat cellH;
+
+/***********************picture***********************/
+//图片控件的frame
+@property (nonatomic, assign, readonly) CGRect pictureViewFrame;
+//是否是长图
+@property (nonatomic, assign, getter=isLongImage) BOOL longImage;
+//图片下载进度
+@property (nonatomic, assign) CGFloat pictureProgress;
+
+/***********************audio***********************/
+/*音频时长*/
+@property (nonatomic, assign) NSInteger voicetime;
+/*音频 视频 播放次数*/
+@property (nonatomic, assign) NSInteger playcount;
+
+//声音控件xib的frame
+@property (nonatomic, assign, readonly) CGRect audioViewFrame;
+
+/***********************video***********************/
+/*视频时长*/
+@property (nonatomic, assign) NSInteger videotime;
+
+@property (nonatomic, assign, readonly) CGRect videoViewFrame;
+
+
+
+@end
+//做映射
+/* eg
+@"top_cmt" : @"top_cmt[0]"
+@"qzone_uid" : @"top_cmt[0].user.qzone_uid"
+ */
++ (NSDictionary *)replacedKeyFromPropertyName
+{
+    return @{
+             @"small_image" : @"image0",
+             @"large_image" : @"image1",
+             @"middle_image" : @"image2",
+             @"ID" : @"id"
+             };
+}
+
++ (NSDictionary *)objectClassInArray
+{
+    return @{@"top_cmt" : @"NDLComment"};
+}
+
+- (CGFloat)cellH
+{
+    //只计算一次
+    if (!_cellH) {
+        //自己算
+        CGFloat textLabelY = NDLTopicCellTextY;
+        //文字的最大尺寸
+        CGSize maxSize = CGSizeMake([UIScreen mainScreen].bounds.size.width - 4 * NDLTopicCellMargin, MAXFLOAT);
+        //CGFloat textHeight = [model.text sizeWithFont:[UIFont systemFontOfSize:14] constrainedToSize:maxSize].height;//过期了
+        CGFloat textHeight = [self.text boundingRectWithSize:maxSize options:NSStringDrawingUsesLineFragmentOrigin attributes:@{NSFontAttributeName : [UIFont systemFontOfSize:14]} context:nil].size.height;
+        _cellH = textLabelY + textHeight + NDLTopicCellMargin;
+        
+        //根据段子类型来计算cell高度
+        if (self.type == NDLTopicTypePicture) {
+            if (self.width != 0 && self.height != 0) {
+                CGFloat pictureViewW = maxSize.width;
+                CGFloat pictureViewH = pictureViewW * self.height / self.width;
+                
+                if (pictureViewH >= NDLTopicCellMaxPictureH) {
+                    pictureViewH = NDLTopicCellClippedPictureH;
+                    self.longImage = YES;
+                }
+                
+                //计算图片控件的frame
+                CGFloat pictureViewY = NDLTopicCellTextY + textHeight + NDLTopicCellMargin;
+                _pictureViewFrame = CGRectMake(NDLTopicCellMargin, pictureViewY, pictureViewW, pictureViewH);
+                
+                _cellH += pictureViewH + NDLTopicCellMargin;
+            }
+        } else if (self.type == NDLTopicTypeAudio) {
+            CGFloat audioViewX = NDLTopicCellMargin;
+            CGFloat audioViewY = NDLTopicCellTextY + textHeight + NDLTopicCellMargin;
+            CGFloat audioViewW = maxSize.width;
+            CGFloat audioViewH = audioViewW * self.height / self.width;
+            _audioViewFrame = CGRectMake(audioViewX, audioViewY, audioViewW, audioViewH);
+            
+            _cellH += audioViewH + NDLTopicCellMargin;
+        } else if (self.type == NDLTopicTypeVideo) {
+            CGFloat videoViewX = NDLTopicCellMargin;
+            CGFloat videoViewY = NDLTopicCellTextY + textHeight + NDLTopicCellMargin;
+            CGFloat videoViewW = maxSize.width;
+            CGFloat videoViewH = videoViewW * self.height / self.width;
+            _videoViewFrame = CGRectMake(videoViewX, videoViewY, videoViewW, videoViewH);
+            
+            _cellH += videoViewH + NDLTopicCellMargin;
+        }
+        
+        
+        NDLComment *cmt = [self.top_cmt firstObject];
+        if (cmt) {
+            NSString *content = [NSString stringWithFormat:@"%@ : %@",cmt.user.username, cmt.content];
+            CGFloat contentH = [content boundingRectWithSize:maxSize options:NSStringDrawingUsesLineFragmentOrigin attributes:@{NSFontAttributeName : [UIFont systemFontOfSize:13]} context:nil].size.height;
+            _cellH += NDLTopicCellTopCmtTitleH + contentH + NDLTopicCellMargin;
+        }
+        
+        _cellH += NDLTopicCellBottomBarH + NDLTopicCellMargin;
+    }
+    
+    return _cellH;
+}
+------------------------------------------MJRefresh
+- (void)buildRefresh
+{
+    self.userTV.header = [MJRefreshNormalHeader headerWithRefreshingTarget:self refreshingAction:@selector(loadLatestDatas)];
+    
+    //上拉刷新
+    self.userTV.footer = [MJRefreshAutoNormalFooter footerWithRefreshingTarget:self refreshingAction:@selector(loadMoreUserDatas)];
+    self.userTV.footer.hidden = YES;
+}
+
+
+[self.userTV.header beginRefreshing];
+
+
+//header执行beginRefreshing会进入这个方法  下拉刷新，就是加载第一页的数据(加载最新的数据)
+- (void)loadLatestDatas
+{
+    NDLRecommendType *model = NDLSelectedTypeItemModel;
+    //设置当前页码为1
+    model.curPage = 1;
+    
+    // 发送请求给服务器, 加载右侧的数据
+    NSMutableDictionary *params = [NSMutableDictionary dictionary];
+    params[@"a"] = @"list";
+    params[@"c"] = @"subscribe";
+    params[@"category_id"] = @(model.id);//必须是对象
+    params[@"page"] = @(model.curPage);
+    
+    self.params = params;
+    
+    
+    /*
+     点击一个类别A params是A的params  self.params = A的params 请求回来success走block
+     
+     如果请求回来之前，点击了类别B  params是B的params  self.params = B的params  如果A请求回来 self.params(B的params) 和A的params不同，return了,不处理A的请求
+     */
+    [self.manager GET:@"http://api.budejie.com/api/api_open.php" parameters:params success:^(NSURLSessionDataTask *task, id responseObject) {
+        
+        NSArray* array = [NDLRecommendUserModel objectArrayWithKeyValuesArray:responseObject[@"list"]];
+        
+        //清除所有旧数据
+        [model.userModelArray removeAllObjects];
+        
+        //添加到当前类别对应的用户数组中
+        [model.userModelArray addObjectsFromArray:array];
+        
+        //保存总数
+        model.total = [responseObject[@"total"] integerValue];
+        
+        
+        //涉及到block的生命周期
+        //只处理最后次请求
+        if (self.params != params) {
+            return;
+        }
+        
+        
+        // 刷新右边的表格
+        [self.userTV reloadData];
+        
+        
+        //结束下拉刷新
+        [self.userTV.header endRefreshing];
+        
+        //footer结束刷新
+        if (model.userModelArray.count == model.total) {//全加载完了
+            [self.userTV.footer noticeNoMoreData];
+        } else {
+            //让底部footer控件停止刷新,等待下次刷新
+            [self.userTV.footer endRefreshing];
+        }
+    } failure:^(NSURLSessionDataTask *task, NSError *error) {
+        if (self.params != params) {
+            return;
+        }
+        
+        [SVProgressHUD showErrorWithStatus:@"加载用户数据失败!"];
+        
+        [self.userTV.header endRefreshing];
+    }];
+
+}
+
+
+vc:
+- (void)buildRefreshView
+{
+    self.tableView.header = [MJRefreshNormalHeader headerWithRefreshingTarget:self refreshingAction:@selector(loadNewComments)];
+    [self.tableView.header beginRefreshing];
+    
+    
+    self.tableView.footer = [MJRefreshAutoNormalFooter footerWithRefreshingTarget:self refreshingAction:@selector(loadMoreComments)];
+    //隐藏尾部控件
+    self.tableView.footer.hidden = YES;
+}
+------------------------------------------kvc
+static NSString* const NDLPlaceholderColorKeyPath = @"_placeholderLabel.textColor";
+
+------------------------------------------自定义View
+//设置背景图片 填充view  重写这个方法   默认只调一次，第一次显示的时候调
+//- (void)drawRect:(CGRect)rect
+//{
+//    NDLLogFunc;
+//    [[UIImage imageNamed:@"mainCellBackground"] drawInRect:rect];
+//}
+
+
+//可能出现问题 用下面的
+- (void)awakeFromNib
+{
+    //xib 
+    self.autoresizingMask = UIViewAutoresizingNone;
+}
+------------------------------------------UIScrollVIew
+UIViewController:   embed in vc
+self.automaticallyAdjustsScrollViewInsets = NO;
+UIScrollView *scrollView = [[UIScrollView alloc] init];
+scrollView.frame = self.view.bounds;
+scrollView.delegate = self;
+scrollView.pagingEnabled = YES;//配合delegate-2
+/*
+//设置内边距  使得内容在中间空白的地方显示 //有穿透效果,并且内容能看完整
+CGFloat top = CGRectGetMaxY(self.titlesView.frame);
+CGFloat bottom = self.tabBarController.tabBar.height;
+scrollView.contentInset = UIEdgeInsetsMake(top, 0, bottom, 0);
+ */
+[self.view insertSubview:scrollView atIndex:0];
+scrollView.contentSize = CGSizeMake(scrollView.width * self.childViewControllers.count, 0);//不需要上下滚动
+self.scrollView = scrollView;
+//NDLLog(@"%.2f %.2f",scrollView.contentOffset.x, scrollView.contentOffset.y);//0  -99
+
+//添加第一个view
+[self scrollViewDidEndScrollingAnimation:scrollView];
+
+------------------------------------------ProgressView
+@interface NDLProgressView : DALabeledCircularProgressView
+
+@end
+
+// 用在了vc的xib里面
+- (void)awakeFromNib
+{
+    self.roundedCorners = 2;
+    self.progressLabel.textColor = [UIColor whiteColor];
+}
+
+- (void)setProgress:(CGFloat)progress animated:(BOOL)animated
+{
+    [super setProgress:progress animated:animated];
+    
+    NSString *labelText = [NSString stringWithFormat:@"%.0f%%", progress * 100];
+    self.progressLabel.text = [labelText stringByReplacingOccurrencesOfString:@"-" withString:@""];;
+}
+
+vc:
+//比如前面下载了10%，查看大图的时候，进度条应该显示10%，而不是0%
+[self.progressView setProgress:self.topicModel.pictureProgress animated:YES];
+
+//进度不一致问题 相同的url会有缓存
+[imageView sd_setImageWithURL:[NSURL URLWithString:self.topicModel.large_image] placeholderImage:nil options:0 progress:^(NSInteger receivedSize, NSInteger expectedSize) {
+    [self.progressView setProgress:1.0 * receivedSize / expectedSize animated:NO];
+} completed:^(UIImage *image, NSError *error, SDImageCacheType cacheType, NSURL *imageURL) {
+    self.progressView.hidden = YES;
+}];
+
+------------------------------------------将图片写入相册
+- (IBAction)save {
+    if (self.imageView.image == nil) {
+        [SVProgressHUD showErrorWithStatus:@"图片未下载完毕!"];
+        return;
+    }
+    
+    //将图片写入相册
+    UIImageWriteToSavedPhotosAlbum(self.imageView.image, self, @selector(image:didFinishSavingWithError:contextInfo:), nil);
+}
+
+- (void)image:(UIImage *)image didFinishSavingWithError:(NSError *)error contextInfo:(void *)contextInfo
+{
+    if (error) {
+        [SVProgressHUD showErrorWithStatus:@"保存失败!"];
+    } else {
+        [SVProgressHUD showSuccessWithStatus:@"保存成功!"];
+    }
+}
+
+------------------------------------------UIView autoresizingMask
+label.autoresizingMask = UIViewAutoresizingFlexibleHeight;
+
+------------------------------------------UIView translatesAutoresizingMaskIntoConstraints
+self.translatesAutoresizingMaskIntoConstraints = NO;
+//手动代码添加约束
+
+------------------------------------------UITableViewHeaderFooterView  可循环利用
+@interface NDLCommentHeaderView : UITableViewHeaderFooterView
+
+@property (nonatomic, copy) NSString *labelText;
+
+@end
+
+@interface NDLCommentHeaderView ()
+@property (nonatomic, weak) UILabel *label;
+@end
+
+@implementation NDLCommentHeaderView
+
+- (instancetype)initWithReuseIdentifier:(NSString *)reuseIdentifier
+{
+    if (self = [super initWithReuseIdentifier:reuseIdentifier]) {
+        self.contentView.backgroundColor = NDLGlobalBgColor;
+        
+        UILabel *label = [[UILabel alloc] init];
+        label.textColor = NDLRGBColor(67, 67, 67);
+        label.width = 200;
+        label.x = NDLTopicCellMargin;
+        label.autoresizingMask = UIViewAutoresizingFlexibleHeight;
+        [self.contentView addSubview:label];
+        self.label = label;
+    }
+    
+    return self;
+}
+
+
+- (void)setLabelText:(NSString *)labelText
+{
+    _labelText = [labelText copy];
+    self.label.text = labelText;
+}
+
+@end
+
+
+
+
+VC:
+//封装HeaderView
+- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
+{
+    static NSString *ID = @"header";
+    //先从缓存池找header
+    NDLCommentHeaderView *header = [tableView dequeueReusableHeaderFooterViewWithIdentifier:ID];
+    
+    if (header == nil) {
+        header = [[NDLCommentHeaderView alloc] initWithReuseIdentifier:ID];
+    }
+    
+    NSInteger hotCount = self.hotComments.count;
+    if (section == 0) {
+        header.labelText =  hotCount ? @"最热评论" : @"最新评论";
+    } else {
+        header.labelText =  @"最新评论";
+    }
+    
+    return header;
+}
+
+
+- (void)buildHeader
+{
+    //tableHeaderView特殊： 当拖动tv，会一直改变HeaderView的frame
+    //用view包装cell解决bug
+    UIView *header = [[UIView alloc] init];
+    
+    //清空top_cmt
+    if (self.topicModel.top_cmt.count) {
+        self.saved_top_cmt = self.topicModel.top_cmt;
+        self.topicModel.top_cmt = nil;
+        [self.topicModel setValue:@0 forKeyPath:@"cellH"];//kvc会自动先找属性cellH在找_cellH   //重新计算cellH
+    }
+    
+    
+    
+    NDLTopicTableViewCell *cell = [NDLTopicTableViewCell cell];
+    cell.topicModel = self.topicModel;
+    cell.size = CGSizeMake(NDLScreenW, self.topicModel.cellH);//设置cell的frame会调 重写的setFrame方法  ,所以包装一层view
+    [header addSubview:cell];
+    
+    header.height = self.topicModel.cellH + NDLTopicCellMargin;
+    
+    //header.backgroundColor = [UIColor redColor];
+    self.tableView.tableHeaderView = header;
+}
+------------------------------------------UIMenuController
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    //依赖第一响应者
+    UIMenuController *menu = [UIMenuController sharedMenuController];
+    if (menu.isMenuVisible) {
+        [menu setMenuVisible:NO animated:YES];
+    } else {
+        //被点击的cell
+        NDLCommentCell *cell = (NDLCommentCell *)[tableView cellForRowAtIndexPath:indexPath];
+        //出现一个第一响应者
+        [cell becomeFirstResponder];
+        
+        
+        
+        UIMenuItem *ding = [[UIMenuItem alloc] initWithTitle:@"顶" action:@selector(ding:)];//找到控件所在控制器的方法
+        UIMenuItem *replay = [[UIMenuItem alloc] initWithTitle:@"回复" action:@selector(replay:)];
+        UIMenuItem *report = [[UIMenuItem alloc] initWithTitle:@"举报" action:@selector(report:)];
+        menu.menuItems = @[ding, replay, report];
+        
+        //[menu setTargetRect:cell.bounds inView:cell];
+        CGRect rect = CGRectMake(0, cell.height * 0.5, cell.width, cell.height * 0.5);
+        [menu setTargetRect:rect inView:cell];
+        [menu setMenuVisible:YES animated:YES];
+    }
+}
+
+- (void)ding:(UIMenuController *)menu
+{
+    NSIndexPath *indexPath = [self.tableView indexPathForSelectedRow];
+    NDLLog(@"%@", [self commentInIndexPath:indexPath].content);
+}
+
+- (void)replay:(UIMenuController *)menu
+{
+    NSIndexPath *indexPath = [self.tableView indexPathForSelectedRow];
+    NDLLog(@"%@", [self commentInIndexPath:indexPath].content);
+}
+
+- (void)report:(UIMenuController *)menu
+{
+    NSIndexPath *indexPath = [self.tableView indexPathForSelectedRow];
+    NDLLog(@"%@", [self commentInIndexPath:indexPath].content);
+}

@@ -1,0 +1,56 @@
+把三个16进制的内存地址转成10进制就是：
+
+定义后前：6171559672
+block内部：5732708296
+定义后后：5732708296
+中间相差438851376个字节，也就是 418.5M 的空间，因为堆地址要小于栈地址，又因为iOS中一个进程的栈区内存只有1M，Mac也只有8M，显然a已经是在堆区了
+
+
+block 内部的变量会被 copy 到堆区
+
+Block不允许修改外部变量的值，这里所说的外部变量的值，指的是栈中指针的内存地址。__block 所起到的作用就是只要观察到该变量被 block 所持有，就将“外部变量”在栈中的内存地址放到了堆中。进而在block内部也可以修改外部变量的值
+
+__block 关键字修饰后，int类型也从4字节变成了32字节，这是 Foundation 框架 malloc 出来的。这也同样能证实上面的结论。（PS：居然比 NSObject alloc 出来的 16 字节要多一倍）
+
+
+block会对对象类型的指针进行copy，copy到堆中，但并不会改变该指针所指向的堆中的地址
+
+Block不允许修改外部变量的值，这里所说的外部变量的值，指的是栈中指针的内存地址。栈区是红灯区，堆区才是绿灯区
+
+
+NSMutableString *a = [NSMutableString stringWithString:@"Tom"];
+   NSLog(@"\n 定以前：------------------------------------\n\
+         a指向的堆中地址：%p；a在栈中的指针地址：%p", a, &a);               //a在栈区
+   void (^foo)(void) = ^{
+       a.string = @"Jerry";
+       NSLog(@"\n block内部：------------------------------------\n\
+        a指向的堆中地址：%p；a在栈中的指针地址：%p", a, &a);               //a在栈区
+       a = [NSMutableString stringWithString:@"William"];// error
+   };
+   foo();
+   NSLog(@"\n 定以后：------------------------------------\n\
+         a指向的堆中地址：%p；a在栈中的指针地址：%p", a, &a);               //a在栈区      
+         这里的a已经由基本数据类型，变成了对象类型。block会对对象类型的指针进行copy，copy到堆中，但并不会改变该指针所指向的堆中的地址，所以在上面的示例代码中，block体内修改的实际是a指向的堆中的内容       
+
+         但如果我们尝试像上面图片中的65行那样做，结果会编译不通过，那是因为此时你在修改的就不是堆中的内容，而是栈中的内容
+
+
+比如GCD 内部如果引用了 self，而且 GCD 的其他参数是 ivar，则要考虑到循环引用：
+__weak __typeof__(self) weakSelf = self;
+dispatch_group_async(_operationsGroup, _operationsQueue, ^
+{
+__typeof__(self) strongSelf = weakSelf;
+[strongSelf doSomething];
+[strongSelf doSomethingElse];
+} );
+
+
+__weak __typeof__(self) weakSelf = self;
+ _observer = [[NSNotificationCenter defaultCenter] addObserverForName:@"testKey"
+                                                               object:nil
+                                                                queue:nil
+                                                           usingBlock:^(NSNotification *note) {
+     __typeof__(self) strongSelf = weakSelf;
+     [strongSelf dismissModalViewControllerAnimated:YES];
+ }];
+self --> _observer --> block --> self 显然这也是一个循环引用

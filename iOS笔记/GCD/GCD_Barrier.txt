@@ -1,0 +1,112 @@
+//参数1：将barrier添加到的队列
+//参数2：barrier执行的block
+void dispatch_barrier_async(dispatch_queue_t queue, dispatch_block_t block);
+void dispatch_barrier_sync(dispatch_queue_t queue, dispatch_block_t block);
+
+共同点：
+1、等待在它前面插入队列的任务先执行完
+2、等待他们自己的任务执行完再执行后面的任务
+
+不同点：
+1、dispatch_barrier_sync将自己的任务插入到队列的时候，需要等待自己的任务结束之后才会继续插入被写在它后面的任务，然后执行它们
+2、dispatch_barrier_async将自己的任务插入到队列之后，不会等待自己的任务结束，它会继续把后面的任务插入到队列，然后等待自己的任务结束后才执行后面任务。
+
+- (void)concurrentQueueBarrier{
+    //1 创建并发队列
+    dispatch_queue_t concurrentQueue = dispatch_queue_create("concurrentQueue", DISPATCH_QUEUE_CONCURRENT);
+    
+    //2 向队列中添加任务
+    dispatch_async(concurrentQueue, ^{
+        NSLog(@"任务1,%@",[NSThread currentThread]);
+    });
+    dispatch_async(concurrentQueue, ^{
+        NSLog(@"任务2,%@",[NSThread currentThread]);
+    });
+    dispatch_async(concurrentQueue, ^{
+        NSLog(@"任务3,%@",[NSThread currentThread]);
+    });
+    dispatch_barrier_async(concurrentQueue, ^{
+        [NSThread sleepForTimeInterval:1.0];
+        NSLog(@"我是barrier");
+    });
+    NSLog(@"aa");
+
+    dispatch_async(concurrentQueue, ^{
+        NSLog(@"任务4,%@",[NSThread currentThread]);
+    });
+    NSLog(@"bb");
+    dispatch_async(concurrentQueue, ^{
+        NSLog(@"任务5,%@",[NSThread currentThread]);
+    });
+    
+}
+执行结果：
+任务3,<NSThread: 0x600000078640>{number = 5, name = (null)}
+aa
+任务1,<NSThread: 0x600000078600>{number = 3, name = (null)}
+任务2,<NSThread: 0x60800007cd00>{number = 4, name = (null)}
+bb
+我是barrier
+任务4,<NSThread: 0x60800007cd00>{number = 4, name = (null)}
+任务5,<NSThread: 0x600000078600>{number = 3, name = (null)}
+
+
+
+
+
+
+- (void)concurrentQueueBarrier{
+    //1 创建并发队列
+    dispatch_queue_t concurrentQueue = dispatch_queue_create("concurrentQueue", DISPATCH_QUEUE_CONCURRENT);
+    
+    //2 向队列中添加任务
+    dispatch_async(concurrentQueue, ^{
+        NSLog(@"任务1,%@",[NSThread currentThread]);
+    });
+    dispatch_async(concurrentQueue, ^{
+        NSLog(@"任务2,%@",[NSThread currentThread]);
+    });
+    dispatch_async(concurrentQueue, ^{
+        NSLog(@"任务3,%@",[NSThread currentThread]);
+    });
+    dispatch_barrier_sync(concurrentQueue, ^{
+        [NSThread sleepForTimeInterval:1.0];
+        NSLog(@"我是barrier");
+    });
+    NSLog(@"aa");
+
+    dispatch_async(concurrentQueue, ^{
+        NSLog(@"任务4,%@",[NSThread currentThread]);
+    });
+    NSLog(@"bb");
+    dispatch_async(concurrentQueue, ^{
+        NSLog(@"任务5,%@",[NSThread currentThread]);
+    });
+    
+}
+执行结果：
+任务3,<NSThread: 0x600000078640>{number = 5, name = (null)}
+
+任务1,<NSThread: 0x600000078600>{number = 3, name = (null)}
+任务2,<NSThread: 0x60800007cd00>{number = 4, name = (null)}
+
+我是barrier
+aa
+bb
+任务4,<NSThread: 0x60800007cd00>{number = 4, name = (null)}
+任务5,<NSThread: 0x600000078600>{number = 3, name = (null)}
+
+
+
+
+// 自定义串行队列
+dispatch_queue_t Se_Q = dispatch_queue_create("serialQ", DISPATCH_QUEUE_SERIAL);
+// 自定义并行队列
+dispatch_queue_t Con_Q = dispatch_queue_create("ConcurrentQ", DISPATCH_QUEUE_CONCURRENT);
+// 主队列
+dispatch_queue_t MainQ = dispatch_get_main_queue();
+// 全局队列
+dispatch_queue_t globalQueue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
+
+队列必须是自行创建的串行/并行队列，才可以达到顺序执行的效果。注意，用主队列(get_main_queue)还是会阻塞主线程
+除了全局队列以外，剩余三种方式，都可以实现队列内的代码顺序执行

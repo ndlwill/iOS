@@ -1,0 +1,86 @@
+class返回对象的类；
+isKindOfClass:和isMemberOfClass:则检查对象是否在指定的类继承体系中；
+respondsToSelector:检查对象能否响应指定的消息；
+conformsToProtocol:检查对象是否实现了指定协议类的方法；
+methodForSelector:则返回指定方法实现的地址。
+
+利用NSObject类中的methodForSelector:方法，您可以获得一个指向方法实现的指针，
+并可以使用该指针直接调用方法实现
+
+在Objective-C中，消息是直到运行的时候才和方法实现绑定的
+
+消息接收者和消息对应的方法名字——也就是方法选标：
+objc_msgSend(receiver, selector)
+该消息函数做了动态绑定所需要的一切：
+1.它首先找到选标所对应的方法实现。因为不同的类对同一方法可能会有不同的实现，
+所以找到的方法实现依赖于消息接收者的类型。
+2.然后将消息接收者对象（指向消息接收者对象的指针）以及方法中指定的参数传给找到的方法实现。
+3.最后，将方法实现的返回值作为该函数的返回值返回。
+
+消息机制的关键在于编译器为类和对象生成的结构。
+每个类的结构中至少包括两个基本元素：
+1.指向父类的指针。
+2.类的方法表。方法表将方法选标和该类的方法实现的地址关联起来。
+
+当新的对象被创建时，其内存同时被分配，实例变量也同时被初始化。
+对象的第一个实例变量是一个指向该对象的类结构的指针，叫做isa。
+通过该指针，对象可以访问它对应的类以及相应的父类。
+
+当对象收到消息时，消息函数首先根据该对象的isa指针找到该对象所对应的类的方法表，
+并从表中寻找该消息对应的方法选标。
+如果找不到，objc_msgSend将继续从父类中寻找，直到NSObject类。
+一旦找到了方法选标， objc_msgSend则以消息接收者对象为参数调用，
+调用该选标对应的方法实现。
+
+为了加快消息的处理过程，运行时系统通常会将使用过的方法选标和方法实现的地址放入缓存中
+消息函数会首先检查消息接收者对象对应的类的缓存
+
+通过实现resolveInstanceMethod:和resolveClassMethod:
+来动态地实现给定选标的对象方法或者类方法
+
+class_addMethod方法将一个函数加入到类的方法中
+
++ (BOOL)resolveInstanceMethod:(SEL)aSEL
+{
+if (aSEL == @selector(resolveThisMethodDynamically)) {
+class_addMethod([self class], aSEL, (IMP) dynamicMethodIMP, "v@:");
+return YES;
+}
+return [super resolveInstanceMethod:aSEL];
+}
+在进入消息转发机制之前，respondsToSelector:和instancesRespondToSelector: 会被首先调用。
+您可以在这两个方法中为传进来的选标提供一个IMP。
+如果您实现了resolveInstanceMethod:方法但是仍然希望正常的消息转发机制进行
+只需要返回NO就可以了
+
+消息转发：
+通常，给一个对象发送它不能处理的消息会得到出错提示，
+然而，Objective-C运行时系统在抛出错误之前，会给消息接收对象发送一条特别的消息来通知该对象
+
+如果一个对象收到一条无法处理的消息，
+运行时系统会在抛出错误前，给该对象发送一条forwardInvocation:消息，
+该消息的唯一参数是个NSInvocation类型的对象——该对象封装了原始的消息和消息的参数。
+您可以实现forwardInvocation:方法来对不能处理的消息做一些默认的处理，
+也可以以其它的某种方式来避免错误被抛出。
+如forwardInvocation:的名字所示，它通常用来将消息转发给其它的对象
+
+当一个对象由于没有相应的方法实现而无法响应某消息时，
+运行时系统将通过forwardInvocation:消息通知该对象。
+每个对象都从NSObject类中继承了forwardInvocation:方法。
+然而，NSObject中的方法实现只是简单地调用了doesNotRecognizeSelector:。
+通过实现您自己的forwardInvocation:方法，您可以在该方法实现中将消息转发给其它对象。
+
+
+要转发消息给其它对象，forwardInvocation:方法所必须做的有：
+1.决定将消息转发给谁
+2.将消息和原来的参数一块转发出去
+消息可以通过invokeWithTarget:方法来转发：
+- (void)forwardInvocation:(NSInvocation *)anInvocation
+{
+if ([someOtherObject respondsToSelector:
+[anInvocation selector]])
+[anInvocation invokeWithTarget:someOtherObject];
+else
+[super forwardInvocation:anInvocation];
+}
+转发消息后的返回值将返回给原来的消息发送者。

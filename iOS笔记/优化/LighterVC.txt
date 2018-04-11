@@ -1,0 +1,129 @@
+1.Separate Out Data Source and Other Protocols
+typedef void (^TableViewCellConfigureBlock)(id cell, id item);
+
+
+@interface ArrayDataSource : NSObject <UITableViewDataSource>
+
+- (id)initWithItems:(NSArray *)anItems
+     cellIdentifier:(NSString *)aCellIdentifier
+ configureCellBlock:(TableViewCellConfigureBlock)aConfigureCellBlock;
+
+- (id)itemAtIndexPath:(NSIndexPath *)indexPath;
+
+@end
+
+#import "ArrayDataSource.h"
+
+
+@interface ArrayDataSource ()
+
+@property (nonatomic, strong) NSArray *items;
+@property (nonatomic, copy) NSString *cellIdentifier;
+@property (nonatomic, copy) TableViewCellConfigureBlock configureCellBlock;
+
+@end
+
+
+@implementation ArrayDataSource
+
+- (id)init
+{
+    return nil;
+}
+
+- (id)initWithItems:(NSArray *)anItems
+     cellIdentifier:(NSString *)aCellIdentifier
+ configureCellBlock:(TableViewCellConfigureBlock)aConfigureCellBlock
+{
+    self = [super init];
+    if (self) {
+        self.items = anItems;
+        self.cellIdentifier = aCellIdentifier;
+        self.configureCellBlock = [aConfigureCellBlock copy];
+    }
+    return self;
+}
+
+- (id)itemAtIndexPath:(NSIndexPath *)indexPath
+{
+    return self.items[(NSUInteger) indexPath.row];
+}
+
+
+#pragma mark UITableViewDataSource
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
+{
+    return self.items.count;
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:self.cellIdentifier
+                                                            forIndexPath:indexPath];
+    id item = [self itemAtIndexPath:indexPath];
+    self.configureCellBlock(cell, item);
+    return cell;
+}
+
+@end
+
+----------VC
+static NSString * const PhotoCellIdentifier = @"PhotoCell";
+
+
+@interface PhotosViewController () <UITableViewDataSource, UITableViewDelegate>
+
+@property (nonatomic, strong) ArrayDataSource *photosArrayDataSource;
+
+@end
+
+
+@implementation PhotosViewController
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    self.navigationItem.title = @"Photos";
+    [self setupTableView];
+}
+
+- (void)setupTableView
+{
+    TableViewCellConfigureBlock configureCell = ^(PhotoCell *cell, Photo *photo) {
+        [cell configureForPhoto:photo];
+    };
+    NSArray *photos = [AppDelegate sharedDelegate].store.sortedPhotos;
+    self.photosArrayDataSource = [[ArrayDataSource alloc] initWithItems:photos
+                                                         cellIdentifier:PhotoCellIdentifier
+                                                     configureCellBlock:configureCell];
+    self.tableView.dataSource = self.photosArrayDataSource;
+    [self.tableView registerNib:[PhotoCell nib] forCellReuseIdentifier:PhotoCellIdentifier];
+}
+
+#pragma mark UITableViewDelegate
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    PhotoViewController *photoViewController = [[PhotoViewController alloc] initWithNibName:@"PhotoViewController"
+                                                                                     bundle:nil];
+    photoViewController.photo = [self.photosArrayDataSource itemAtIndexPath:indexPath];
+    [self.navigationController pushViewController:photoViewController animated:YES];
+}
+
+@end
+
+
+----------
+@implementation PhotoCell
+
++ (UINib *)nib
+{
+    return [UINib nibWithNibName:@"PhotoCell" bundle:nil];
+}
+
+- (void)configureForPhoto:(Photo *)photo
+{
+    self.photoTitleLabel.text = photo.name;
+    self.photoDateLabel.text = [self.dateFormatter stringFromDate:photo.creationDate];
+}

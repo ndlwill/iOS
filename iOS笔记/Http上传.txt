@@ -1,0 +1,102 @@
+1.纯的二进制文件上传，对应的HTTP Content-Type可以是application/octet-stream等application开头的MIME-Type，即HTTP报文的Body的内容就是文件的二进制内容，其他的文件名、鉴权等附加信息则放在cookie或HTTP Header里
+
+let request = NSMutableURLRequest(URL: url, cachePolicy: .UseProtocolCachePolicy, timeoutInterval: 10)
+request.HTTPMethod = "POST"
+request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+
+
+设置HTTP Body的内容有两种方式
+request.HTTPBodyStream = NSInputStream()
+request.HTTPBody = NSData()
+这两者设置其中任何一个都会使得另一个失效。
+
+大文件处理:
+对于小文件，我们可以任意选择其中任何一种方式进行设置
+对于沙箱内的文件，推荐使用NSInputStream(fileAtPath: fileUrl)初始化为文件流，不占内存。也可以使用NSData(contentsOfFile: String>, options: NSDataReadingOptions.DataReadingMappedAlways)，使用内存映射的方式获取NSData
+
+
+
+2.HTML表单传输，对应的HTTP Content-Type是multipart/form-data，HTTP报文的 Body内容除了文件的二进制内容，还多了附加的表单字段信息和分割符等。表单上传文件浏览器有原生的支持，如果iOS端需要使用这种方式就需要按照报文格式去拼装你的HTTP Body
+
+multipart/from-data是一种进行表单提交时的消息格式。
+表单提交数据的时候，默认类型是application/x-www-form-urlencoded，也就是key=value的键值对格式
+提交文件的时候使用multipart/from-data。
+因为是表单提交，所以http请求方式是POST。然后在请求头里设置Content-Type为multipart/from-data指定请求的格式
+
+NSURL *URL = [[NSURL alloc]initWithString:urlString];
+request = [[NSMutableURLRequest alloc]initWithURL:URL cachePolicy:(NSURLRequestUseProtocolCachePolicy) timeoutInterval:30];
+request.HTTPMethod = @"POST";
+
+NSString *boundary = @"wfWiEWrgEFA9A78512weF7106A";
+
+request.allHTTPHeaderFields = @{
+                                @"Content-Type":[NSString stringWithFormat:@"multipart/form-data; boundary=%@",boundary]
+                                };
+boundary，这个东西是用来做分隔的字符串
+POST请求，参数都放在请求体里面，而请求体是这里的关键，multipart/form-data就是一种格式，约定请求体的数据如何存放
+
+
+--wfWiEWrgEFA9A78512weF7106A //部分1
+Content-Disposition: form-data; name="status" //部分2
+
+哈哈哈 //部分3
+--wfWiEWrgEFA9A78512weF7106A
+Content-Disposition: form-data; name="source"
+
+2582981980
+--wfWiEWrgEFA9A78512weF7106A
+Content-Disposition: form-data; name="access_token"
+
+2.00nVEJoBgbvnoCc54e19c4c4NksmWC
+--wfWiEWrgEFA9A78512weF7106A
+Content-Disposition: form-data; name="pic"; filename="卡车.png";Content-Type=image/png
+
+...这里是文件的二进制数据... //部分4
+--wfWiEWrgEFA9A78512weF7106A-- //部分5
+
+上面的“//部分X”是注释哈。
+（1）部分1是“--”+boundary，即双减号加分隔符，然后换行，注意换行是使用“\r\n”，因为这些标准开始都是在html中使用的。测试了微博接口，换行也不能出错。
+（2）部分2的格式是：Content-Disposition: form-data; name="xxx"，这里的xxx是接口的参数，比如微博测试接口有一个参数是“status”，那status写在这里。然后是两个换行，即“\r\n\r\n”。
+（3）有key就有value,上面说了key的位置，这里就是value的位置。“status”字段代表的是微博的正文内容，所以就把微博正文内容放在部分3位置，即“哈哈哈”。然后换行。
+（4）然后就是部分1、2、3这个结构重复，每一个重复结构对应着接口里的一个字段的数据。直到你要上传的文件，部分4。部分4这一节多出了“ilename="卡车.png";Content-Type=image/png”这些内容，其实这里可以还有其他的内容可以设置，charset和content-transfer-encoding，都是用于描述这一部分数据。具体参考[rfc标准](http://www.ietf.org/rfc/rfc2388.txt)。需要注意的是，name\filename是带引号的
+这里的Content-Type值是这里要上传文件的格式，也不能错。
+（5）部分4这里是需要上传的文件的二进制数据，当然其他部分也是同样是要转成NSData的。
+（6）最后部分5是结束标识，--wfWiEWrgEFA9A78512weF7106A这部分是和前面的分割符一样，但接下来不是换行，而是继续“--”，整个请求体结束。这也是个坑啊，之前以为没有“--”
+
+
+NSMutableData *postData = [[NSMutableData alloc]init];//请求体数据
+for (NSString *key in params) {
+//循环参数按照部分1、2、3那样循环构建每部分数据
+NSString *pair = [NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name="%@"\r\n\r\n",boundary,key];
+[postData appendData:[pair dataUsingEncoding:NSUTF8StringEncoding]];
+
+    id value = [params objectForKey:key];
+    if ([value isKindOfClass:[NSString class]]) {
+        [postData appendData:[value dataUsingEncoding:NSUTF8StringEncoding]];
+    }else if ([value isKindOfClass:[NSData class]]){
+        [postData appendData:value];
+    }
+    [postData appendData:[@"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+}
+
+//文件部分
+NSString *filename = [filePath lastPathComponent];
+//根据文件后缀名可以获取对应的Content-Type
+NSString *contentType = AFContentTypeForPathExtension([filePath pathExtension]);
+
+NSString *filePair = [NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"%@\"; filename=\"%@\";Content-Type=%@\r\n\r\n",boundary,fileKey,filename,contentType];
+[postData appendData:[filePair dataUsingEncoding:NSUTF8StringEncoding]];
+[postData appendData:fileData]; //加入文件的数据
+
+//设置请求体
+[postData appendData:[[NSString stringWithFormat:@"\r\n--%@--\r\n",boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+    request.HTTPBody = postData;
+//设置请求头总数据长度
+[request setValue:[NSString stringWithFormat:@"%lu",(unsigned long)postData.length] forHTTPHeaderField:@"Content-Length"];
+
+
+AFNetworking的AFHTTPSessionManager类可以不用我们自己编码生成multipart/form-data格式，直接把参数Dictionary传递给parameters就可以了
+
+
+
+

@@ -1,0 +1,281 @@
+[self.navigationController viewControllers] indexOfObject:self];// self = vc
+
+[self.navigationController.viewControllers objectAtIndex:index];
+
+=======================================自定义转场动画 （POP手势动画）
+@interface NavigationInteractiveTransition : NSObject <UINavigationControllerDelegate>
+一个是负责动画，一个是负责交互过程
+拖动返回过程属于导航控制器的动画，所以我们需要重写UINavigationController的两个代理方法
+- (id<UIViewControllerAnimatedTransitioning>)navigationController:animationControllerForOperation:fromViewController:toViewController:(名字很长下面就称为方法1)和
+方法1是苹果提供给我们用来重写控制器之间转场动画的
+
+
+NS_CLASS_AVAILABLE_IOS(7_0) @interface UIPercentDrivenInteractiveTransition : NSObject <UIViewControllerInteractiveTransitioning>
+苹果已经有一个类专门处理这个功能
+- (id<UIViewControllerInteractiveTransitioning>)navigationController:interactionControllerForAnimationController:(方法2)。
+方法2苹果让我们返回一个交互的对象，用来实时管理控制器之间转场动画的完成度，通过它我们可以让控制器的转场动画与用户交互（注意一点，如果方法1返回是nil，方法2是不会调用的，也就是说，只有我们自定义的动画才可以与控制器交互）
+
+
+@interface PopAnimation : NSObject <UIViewControllerAnimatedTransitioning>
+
+@interface PopAnimation ()
+@property (nonatomic, strong) id <UIViewControllerContextTransitioning> transitionContext;
+@end
+
+@implementation PopAnimation
+
+- (NSTimeInterval)transitionDuration:(id <UIViewControllerContextTransitioning>)transitionContext {
+    //这个方法返回动画执行的时间
+    return 0.25;
+}
+
+/**
+ *  transitionContext你可以看作是一个工具，用来获取一系列动画执行相关的对象，并且通知系统动画是否完成等功能。
+ */
+- (void)animateTransition:(id <UIViewControllerContextTransitioning>)transitionContext {
+    /**
+     *  获取动画来自的那个控制器
+     */
+    UIViewController *fromViewController = [transitionContext viewControllerForKey:UITransitionContextFromViewControllerKey];
+    /**
+     *  获取转场到的那个控制器
+     */
+    UIViewController *toViewController = [transitionContext viewControllerForKey:UITransitionContextToViewControllerKey];
+    
+    /**
+     *  转场动画是两个控制器视图时间的动画，需要一个containerView来作为一个“舞台”，让动画执行。
+     */
+    UIView *containerView = [transitionContext containerView];
+    [containerView insertSubview:toViewController.view belowSubview:fromViewController.view];
+    
+    NSTimeInterval duration = [self transitionDuration:transitionContext];
+
+    /**
+     *  执行动画，我们让fromVC的视图移动到屏幕最右侧
+     */
+    [UIView animateWithDuration:duration animations:^{
+        fromViewController.view.transform = CGAffineTransformMakeTranslation([UIScreen mainScreen].bounds.size.width, 0);
+    }completion:^(BOOL finished) {
+        /**
+         *  当你的动画执行完成，这个方法必须要调用，否则系统会认为你的其余任何操作都在动画执行过程中。
+         */
+        [transitionContext completeTransition:!transitionContext.transitionWasCancelled];
+    }];
+    
+//    _transitionContext = transitionContext;
+    //----------------pop动画一-------------------------//
+    /*
+    [UIView beginAnimations:@"View Flip" context:nil];
+    [UIView setAnimationDuration:duration];
+    [UIView setAnimationDelegate:self];
+    [UIView setAnimationTransition:UIViewAnimationTransitionFlipFromLeft forView:containerView cache:YES];
+    [UIView setAnimationDidStopSelector:@selector(animationDidStop:finished:)];
+    [UIView commitAnimations];//提交UIView动画
+    [containerView exchangeSubviewAtIndex:0 withSubviewAtIndex:1];
+    */
+    //----------------pop动画二-------------------------//
+    /*
+    CATransition *tr = [CATransition animation];
+    tr.type = @"cube";
+    tr.subtype = @"fromLeft";
+    tr.duration = duration;
+    tr.removedOnCompletion = NO;
+    tr.fillMode = kCAFillModeForwards;
+    tr.delegate = self;
+    [containerView.layer addAnimation:tr forKey:nil];
+    [containerView exchangeSubviewAtIndex:0 withSubviewAtIndex:1];
+     */
+}
+
+- (void)animationDidStop:(CATransition *)anim finished:(BOOL)flag {
+    [_transitionContext completeTransition:!_transitionContext.transitionWasCancelled];
+}
+@end
+
+
+
+@class UIViewController, UIPercentDrivenInteractiveTransition;
+@interface NavigationInteractiveTransition : NSObject <UINavigationControllerDelegate>
+- (instancetype)initWithViewController:(UIViewController *)vc;
+
+- (UIPercentDrivenInteractiveTransition *)interactivePopTransition;
+
+- (void)handleControllerPop:(UIPanGestureRecognizer *)recognizer;//
+@end
+
+@interface NavigationInteractiveTransition ()
+@property (nonatomic, weak) UINavigationController *vc;
+@property (nonatomic, strong) UIPercentDrivenInteractiveTransition *interactivePopTransition;
+@end
+
+@implementation NavigationInteractiveTransition
+
+- (instancetype)initWithViewController:(UIViewController *)vc
+{
+    self = [super init];
+    if (self) {
+        self.vc = (UINavigationController *)vc;
+        self.vc.delegate = self;
+    }
+    return self;
+}
+
+/**
+ *  我们把用户的每次Pan手势操作作为一次pop动画的执行
+ */
+- (void)handleControllerPop:(UIPanGestureRecognizer *)recognizer {
+    /**
+     *  interactivePopTransition就是我们说的方法2返回的对象，我们需要更新它的进度来控制Pop动画的流程，我们用手指在视图中的位置与视图宽度比例作为它的进度。
+     */
+    CGFloat progress = [recognizer translationInView:recognizer.view].x / recognizer.view.bounds.size.width;
+    /**
+     *  稳定进度区间，让它在0.0（未完成）～1.0（已完成）之间
+     */
+    progress = MIN(1.0, MAX(0.0, progress));
+    if (recognizer.state == UIGestureRecognizerStateBegan) {
+        /**
+         *  手势开始，新建一个监控对象
+         */
+        self.interactivePopTransition = [[UIPercentDrivenInteractiveTransition alloc] init];
+        /**
+         *  告诉控制器开始执行pop的动画
+         */
+        [self.vc popViewControllerAnimated:YES];
+    }
+    else if (recognizer.state == UIGestureRecognizerStateChanged) {
+        
+        /**
+         *  更新手势的完成进度
+         */
+        [self.interactivePopTransition updateInteractiveTransition:progress];
+    }
+    else if (recognizer.state == UIGestureRecognizerStateEnded || recognizer.state == UIGestureRecognizerStateCancelled) {
+        
+        /**
+         *  手势结束时如果进度大于一半，那么就完成pop操作，否则重新来过。
+         */
+        if (progress > 0.5) {
+            [self.interactivePopTransition finishInteractiveTransition];
+        }
+        else {
+            [self.interactivePopTransition cancelInteractiveTransition];
+        }
+
+        self.interactivePopTransition = nil;
+    }
+    
+}
+
+- (id<UIViewControllerAnimatedTransitioning>)navigationController:(UINavigationController *)navigationController
+                                  animationControllerForOperation:(UINavigationControllerOperation)operation
+                                               fromViewController:(UIViewController *)fromVC
+                                                 toViewController:(UIViewController *)toVC {
+    /**
+     *  方法1中判断如果当前执行的是Pop操作，就返回我们自定义的Pop动画对象。
+     */
+    if (operation == UINavigationControllerOperationPop)
+        return [[PopAnimation alloc] init];
+
+    return nil;
+}
+
+- (id<UIViewControllerInteractiveTransitioning>)navigationController:(UINavigationController *)navigationController
+                         interactionControllerForAnimationController:(id<UIViewControllerAnimatedTransitioning>)animationController {
+
+    /**
+     *  方法2会传给你当前的动画对象animationController，判断如果是我们自定义的Pop动画对象，那么就返回interactivePopTransition来监控动画完成度。
+     */
+    if ([animationController isKindOfClass:[PopAnimation class]])
+        return self.interactivePopTransition;
+
+    return nil;
+}
+
+@end
+
+----------
+- (void)viewDidLoad {
+    [super viewDidLoad];
+
+    UIGestureRecognizer *gesture = self.interactivePopGestureRecognizer;
+    gesture.enabled = NO;
+    UIView *gestureView = gesture.view;
+    
+    UIPanGestureRecognizer *popRecognizer = [[UIPanGestureRecognizer alloc] init];
+    popRecognizer.delegate = self;
+    popRecognizer.maximumNumberOfTouches = 1;
+    [gestureView addGestureRecognizer:popRecognizer];
+    
+    
+    _navT = [[NavigationInteractiveTransition alloc] initWithViewController:self];
+    [popRecognizer addTarget:_navT action:@selector(handleControllerPop:)];
+
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer {
+    /**
+     *  这里有两个条件不允许手势执行，1、当前控制器为根控制器；2、如果这个push、pop动画正在执行（私有属性）
+     */
+    return self.viewControllers.count != 1 && ![[self valueForKey:@"_isTransitioning"] boolValue];
+}
+
+=====================runtime+kvc
+这个手势属于UINavigationController
+手势叫做interactivePopGestureRecognizer。属性为readonly，就是说我们不能给他换成自定义的手势，但是可以设置enable=NO
+他属于UIScreenEdgePanGestureRecognizer这个类，它继承自UIPanGestureRecognizer
+
+target:_UINavigationInteractiveTransition（这是一个私有类，看来是专门用来做导航控制器交互动画的），和action:handleNavigationTransition（这是它的一个私有方法），我们要做的就是新建一个UIPanGestureRecognizer，让它的触发和系统的这个手势相同，这就需要利用runtime获取系统手势的target和action
+
+著作权归作者所有。商业转载请联系作者获得授权，非商业转载请注明出处。
+
+UIGestureRecognizer有一个叫_targets的属性，它的类型为NSMutableArray
+
+由于系统重写了它的description方法，所以我们没办法通过打印获取这个对象是什么类型。既然不能打印，那么我们就用断点调试，来看它的真实类型
+原来每一个target-action是用UIGestureRecognizerTarget这样一个类来存储的，它也是一个私有类
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+
+    UIGestureRecognizer *gesture = self.interactivePopGestureRecognizer;
+    gesture.enabled = NO;
+    UIView *gestureView = gesture.view;
+    
+    UIPanGestureRecognizer *popRecognizer = [[UIPanGestureRecognizer alloc] init];
+    popRecognizer.delegate = self;
+    popRecognizer.maximumNumberOfTouches = 1;
+    [gestureView addGestureRecognizer:popRecognizer];
+    
+    
+#if USE_方案一
+
+    
+#elif USE_方案二
+
+    /**
+     *  获取系统手势的target数组
+     */
+    NSMutableArray *_targets = [gesture valueForKey:@"_targets"];
+    /**
+     *  获取它的唯一对象，我们知道它是一个叫UIGestureRecognizerTarget的私有类，它有一个属性叫_target
+     */
+    id gestureRecognizerTarget = [_targets firstObject];
+    /**
+     *  获取_target:_UINavigationInteractiveTransition，它有一个方法叫handleNavigationTransition:
+     */
+    id navigationInteractiveTransition = [gestureRecognizerTarget valueForKey:@"_target"];
+    /**
+     *  通过前面的打印，我们从控制台获取出来它的方法签名。
+     */
+    SEL handleTransition = NSSelectorFromString(@"handleNavigationTransition:");
+    /**
+     *  创建一个与系统一模一样的手势，我们只把它的类改为UIPanGestureRecognizer
+     */
+    [popRecognizer addTarget:navigationInteractiveTransition action:handleTransition];
+#endif
+}
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer {
+    /**
+     *  这里有两个条件不允许手势执行，1、当前控制器为根控制器；2、如果这个push、pop动画正在执行（私有属性）
+     */
+    return self.viewControllers.count != 1 && ![[self valueForKey:@"_isTransitioning"] boolValue];
+}

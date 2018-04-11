@@ -1,0 +1,323 @@
+=======================================plist
+图片的权限：
+<iOS 11
+/// 图片读写权限
+Privacy - Photo Library Usage Description
+
+iOS 11
+/// 读
+Privacy - Photo Library Usage Description
+/// 写
+Privacy - Photo Library Additions Usage Description
+=======================================
+1.UITableView：默认开启Self-Sizing
+
+设置以下属性
+self.tableView.rowHeight = UITableViewAutomaticDimension;
+self.tableView.estimatedRowHeight = 200;
+不再需要自己去计算cell的高度 包括Headers, footers
+
+如果项目中没使用estimatedRowHeight属性，在IOS11下会有奇奇怪怪的现象，因为IOS11之前，estimatedRowHeight默认为0
+
+滚动条高度跳动、上下拉刷新问题：  关闭估算行高
+self.tableView.estimatedRowHeight = 0;
+self.tableView.estimatedSectionHeaderHeight = 0;
+self.tableView.estimatedSectionFooterHeight = 0;
+
+if #available(iOS 11.0, *) {
+       tableView.contentInsetAdjustmentBehavior = .never
+       tableView.estimatedRowHeight = 0
+       tableView.estimatedSectionFooterHeight = 0
+       tableView.estimatedSectionHeaderHeight = 0
+    } else {
+        automaticallyAdjustsScrollViewInsets = false
+    }
+
+
+2.
+判断当前iOS系统是否满足需求
+@available(iOS 11, *)  // >= 11
+
+
+3.
+UIScrollView.appearance.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+
+IOS11 之前，不想让scrollView偏移64px，设置automaticallyAdjustsScrollViewInsets=NO就可以了。
+IOS11以后就废弃了，使用scrollView的属性contentInsetAdjustmentBehavior来防止偏移。
+
+UIScrollViewContentInsetAdjustmentAutomatic 
+UIScrollViewContentInsetAdjustmentScrollableAxes 
+UIScrollViewContentInsetAdjustmentNever 
+UIScrollViewContentInsetAdjustmentAlways
+
+这里我们直接选Never就可以了
+
+if (@available(iOS 11.0, *)) {
+    self.tableView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+} else {
+    self.automaticallyAdjustsScrollViewInsets = NO;
+}
+
+#define adjustsScrollViewInsets(scrollView)\
+do {\
+_Pragma("clang diagnostic push")\
+_Pragma("clang diagnostic ignored \"-Warc-performSelector-leaks\"")\
+if ([scrollView respondsToSelector:NSSelectorFromString(@"setContentInsetAdjustmentBehavior:")]) {\
+    NSMethodSignature *signature = [UIScrollView instanceMethodSignatureForSelector:@selector(setContentInsetAdjustmentBehavior:)];\
+    NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];\
+    NSInteger argument = 2;\
+    invocation.target = scrollView;\
+    invocation.selector = @selector(setContentInsetAdjustmentBehavior:);\
+    [invocation setArgument:&argument atIndex:2];\
+    [invocation retainArguments];\
+    [invocation invoke];\
+}\
+_Pragma("clang diagnostic pop")\
+} while (0)
+
+4.
+SearchBar in NavigationBar:
+if #available(iOS 11.0, *) {
+     navigationItem.searchController = searchController
+     //searchController.isActive = YES;
+} else {
+     // Fallback on earlier versions
+     navigationItem.titleView = searchController?.searchBar
+}
+
+-----
+Navigation Bar 
+
+1、导航栏新增了一种大标题样式，默认设置是不开启，所以不需要修改。
+2、navigation bar 的titleView支持了autolayout，这要求titleView必须是能够自撑开的或实现了- intrinsicContentSize
+intrinsicContentSize顾名思义，固定大小的意思，主要是解决一些模糊约束的问题。
+
+titleView对应的View大小和预期不一致。 
+titleView对应的View有点击事件会无法触发 
+
+解决方法是直接重写titleView对应View的intrinsicContentSize方法 
+
+- (CGSize)intrinsicContentSize { 
+return UILayoutFittingExpandedSize; 
+}
+
+
+5.
+加载webView的时候
+
+if (@available(iOS 11.0, *)) {
+webView.scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+} else {
+}
+
+6.放在导航栏上面的searchBar消失不见：(searchBarH = 44)
+
+之前的代码:
+// 创建搜索框
+UIView *titleView = [[UIView alloc] init];
+titleView.py_x = PYSEARCH_MARGIN * 0.5;
+titleView.py_y = 7;
+titleView.py_width = self.view.py_width - 64 - titleView.py_x * 2;
+titleView.py_height = 30;
+UISearchBar *searchBar = [[UISearchBar alloc] initWithFrame:titleView.bounds];
+[titleView addSubview:searchBar];
+self.navigationItem.titleView = titleView;
+
+
+
+新建一个TUIView类，在该类的.m里面实现以下方法：
+
+#import "TUIView.h"
+
+@implementation TUIView
+
+-(CGSize)intrinsicContentSize
+{
+return UILayoutFittingExpandedSize;
+}
+
+@end
+
+// 创建搜索框
+
+UIView *titleView = [[TUIView alloc] init];
+
+titleView.py_x = PYSEARCH_MARGIN * 0.5;
+
+titleView.py_y = 7;
+
+titleView.py_width = self.view.py_width - 64 - titleView.py_x * 2;
+
+titleView.py_height = 30;
+
+UISearchBar *searchBar = [[UISearchBar alloc] initWithFrame:titleView.bounds];
+
+[titleView addSubview:searchBar];
+
+self.navigationItem.titleView = titleView;
+
+==============================UIToolbar
+UIToolbar *toolbar = [UIToolbar new];
+    [self addSubview: toolbar];
+    [toolbar layoutIfNeeded];
+
+    <here one can add all subviews needed>
+==============================UINavigation bar
+大标题的显示:
+UINavigation bar中新增了一个BOOL属性prefersLargeTitles,将该属性设置为ture,navigation bar就会在整个APP中显示大标题
+如果想要在控制不同页面大标题的显示，可以通过设置当前页面的navigationItem的largeTitleDisplayMode属性
+
+UINavigaBar 做了新的自动布局扩展支持，自定义的bar button items、自定义的title都可以通过layout来表示尺寸
+你的constraints需要在view内部设置，所以如果你有一个自定义的标题视图，你需要确保任何约束只依赖于标题视图及其任何子视图
+开发者则必须提供视图的size，有三种方式：
+对宽度和高度的约束；
+实现 intrinsicContentSize；
+通过约束关联你的子视图
+
+
+==============================navigationItem
+把你的UISearchController赋值给navigationItem
+navigationItem.searchController  //iOS 11 新增属性
+navigationItem.hidesSearchBarWhenScrolling //决定滑动的时候是否隐藏搜索框；iOS 11 新增属性
+
+
+Avoiding Zero-Sized Custom Views:
+必须提供视图的size，有三种方式：
+对宽度和高度的约束；
+实现intrinsicContentSize；
+通过约束关联你的子视图；
+
+
+==============================layout margins
+Auto Layout为每一个view都定义了margin
+margin指的是控件显示内容部分的边缘和控件边缘的距离。
+可以用layoutMargins或者layoutMarginsGuide属性获得view的margin
+margin是视图内部的一部分
+layoutMargins允许获取或者设置UIEdgeInsets结构的margin。
+layoutMarginsGuide则获取到只读的UILayoutGuide对象
+
+在iOS11新增了一个属性：directional layout margins，该属性是NSDirectionalEdgeInsets结构体类型的属性：
+typedef struct NSDirectionalEdgeInsets {  
+    CGFloat top, leading, bottom, trailing;
+} NSDirectionalEdgeInsets API_AVAILABLE(ios(11.0),tvos(11.0),watchos(4.0));
+
+layoutMargins是UIEdgeInsets结构体类型的属性：
+typedef struct UIEdgeInsets {  
+CGFloat top, left, bottom, right;
+} UIEdgeInsets;
+
+从上面两种结构体的对比可以看出，NSDirectionalEdgeInsets 属性用leading 和 trailing 取代了之前的 left 和 right
+
+==============================safeArea
+安全区域帮助我们将view放置在整个屏幕的可视的部分
+即使把navigationbar设置为透明的，系统也认为安全区域是从navigationbar的bottom开始的。
+安全区域定义了view中可视区域的部分，保证不被系统的状态栏、或父视图提供的view如导航栏覆盖
+
+iOS 7 开始，在 UIViewController中引入的 topLayoutGuide 和 bottomLayoutGuide 
+在 iOS 11 中被废弃了！取而代之的就是safeArea的概念
+
+它提供两种方式：safeAreaInsets或safeAreaLayoutGuide来提供给你safeArea的参照值
+即 insets 或者 layout guide
+
+增加safeAreaInsets的值，可以通过一个新的属性：addtionalSafeAreaInsets来改变safeAreaInsets的值，当你的viewController改变了它的safeAreaInsets值时，有两种方式获取到回调：
+UIView.safeAreaInsetsDidChange()
+UIViewController.viewSafeAreaInsetsDidChange()
+
+
+新增的contentInsetAdjustmentBehavior属性用来配置adjustedContentInset的行为
+typedef NS_ENUM(NSInteger, UIScrollViewContentInsetAdjustmentBehavior) {  
+    UIScrollViewContentInsetAdjustmentAutomatic, 
+    UIScrollViewContentInsetAdjustmentScrollableAxes,
+    UIScrollViewContentInsetAdjustmentNever,
+    UIScrollViewContentInsetAdjustmentAlways,
+}
+
+Debug:
+通过tableview.safeAreaInsets的值来确认
+
+一般navigationContollers会传入一个contentInset给其最顶层的viewController的scrollView，
+在iOS11中进行了一个很大的改变，不再通过scrollView的contentInset属性了，而是新增了一个属性：adjustedContentInset
+新增的contentInsetAdjustmentBehavior属性用来配置adjustedContentInset的行为
+
+#不推荐
+想从Controller级别解决问题，那么可以通过设置Controller的additionalSafeAreaInsets属性
+
+========================================adjustedContentInset
+Controller的automaticallyAdjustsScrollViewInsets属性被废弃了
+所以当tableView超出安全区域时系统自动调整了SafeAreaInsets值，进而影响adjustedContentInset值
+在iOS 11中决定tableView的内容与边缘距离的是adjustedContentInset属性，而不是contentInset
+
+adjustContentInset表示contentView.frame.origin偏移了scrollview.frame.origin多少；
+是系统计算得来的，计算方式由contentInsetAdjustmentBehavior决定
+
+//adjustedContentInset值被改变的delegate
+- (void)adjustedContentInsetDidChange; 
+- (void)scrollViewDidChangeAdjustedContentInset:(UIScrollView *)scrollView;
+
+========================================SafeAreaInsets
+safeAreaInsets属性反映了一个view距离该view的安全区域的边距
+
+对于一个Controller的根视图而言，SafeAreaInsets值包括了被statusbar和其他可视的bars覆盖的区域和其他通过additionalSafeAreaInsets自定义的insets值。
+对于view层次中得其他view，SafeAreaInsets值反映了view被覆盖的部分。如果一个view全部在它父视图的安全区域内，则SafeAreaInsets值为(0,0,0,0)
+
+如果你的APP中使用的是自定义的navigationbar，隐藏掉系统的navigationbar，并且tableView的frame为(0,0,SCREEN_WIDTH, SCREEN_HEIGHT)那么系统会自动调整SafeAreaInsets值为(20,0,0,0)
+如果使用了系统的navigationbar，那么SafeAreaInsets值为(64,0,0,0)如果也使用了系统的tabbar，那么SafeAreaInsets值为(64,0,49,0)
+
+=======================================contentInsetAdjustmentBehavior
+scrollView在iOS11新增的两个属性：adjustContentInset 和 contentInsetAdjustmentBehavior
+
+UIScrollViewContentInsetAdjustmentNever: 
+adjustedContentInset = contentInset
+adjustContentInset值不受SafeAreaInset值的影响
+
+UIScrollViewContentInsetAdjustmentAlways: 
+adjustedContentInset = safeAreaInset + contentInset
+
+UIScrollViewContentInsetAdjustmentAutomatic：
+如果scrollview在一个automaticallyAdjustsScrollViewInsets = YES的controller上，并且这个Controller包含在一个navigation controller中，这种情况下会设置在top & bottom上 adjustedContentInset = safeAreaInset + contentInset不管是否滚动。其他情况下与UIScrollViewContentInsetAdjustmentScrollableAxes相同
+
+UIScrollViewContentInsetAdjustmentScrollableAxes: 
+在可滚动方向上adjustedContentInset = safeAreaInset + contentInset，在不可滚动方向上adjustedContentInset = contentInset；依赖于scrollEnabled和alwaysBounceHorizontal / vertical = YES，scrollEnabled默认为yes，所以大多数情况下，计算方式还是adjustedContentInset = safeAreaInset + contentInset
+
+
+=======================================Table Views：separatorInset 扩展
+separatorInsetReference属性来设置separatorInset属性的参照值。
+
+typedef NS_ENUM(NSInteger, UITableViewSeparatorInsetReference) {  
+    UITableViewSeparatorInsetFromCellEdges,   //默认值，表示separatorInset是从cell的边缘的偏移量
+    UITableViewSeparatorInsetFromAutomaticInsets  //表示separatorInset属性值是从一个insets的偏移量
+}
+
+separatorInset 被自动地关联到 safe area insets
+
+
+=======================================滑动操作（Swipe Actions）
+在iOS8之后，苹果官方增加了UITableVIew的右滑操作接口，即新增了一个代理方法(tableView: editActionsForRowAtIndexPath:)和一个类(UITableViewRowAction)，代理方法返回的是一个数组，我们可以在这个代理方法中定义所需要的操作按钮(删除、置顶等)，这些按钮的类就是UITableViewRowAction
+这个类只能定义按钮的显示文字、背景色、和按钮事件。并且返回数组的第一个元素在UITableViewCell的最右侧显示，最后一个元素在最左侧显示
+
+从iOS 11开始有了一些改变，首先是可以给这些按钮添加图片了，然后是如果实现了以下两个iOS 11新增的代理方法，将会取代(tableView: editActionsForRowAtIndexPath:)代理方法：
+- (nullable UISwipeActionsConfiguration *)tableView:(UITableView *)tableView leadingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath
+- (nullable UISwipeActionsConfiguration *)tableView:(UITableView *)tableView trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath
+这两个代理方法返回的是UISwipeActionsConfiguration类型的对象，创建该对象及赋值可看下面的代码片段：
+
+- ( UISwipeActionsConfiguration *)tableView:(UITableView *)tableView trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
+    //删除
+    UIContextualAction *deleteRowAction = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive title:@"delete" handler:^(UIContextualAction * _Nonnull action, __kindof UIView * _Nonnull sourceView, void (^ _Nonnull completionHandler)(BOOL)) {
+        [self.titleArr removeObjectAtIndex:indexPath.row];
+        completionHandler (YES);
+    }];
+    deleteRowAction.image = [UIImage imageNamed:@"icon_del"];
+    deleteRowAction.backgroundColor = [UIColor blueColor];
+
+    UISwipeActionsConfiguration *config = [UISwipeActionsConfiguration configurationWithActions:@[deleteRowAction]];
+    return config;
+}
+
+创建UIContextualAction对象时，UIContextualActionStyle有两种类型，如果是置顶、已读等按钮就使用UIContextualActionStyleNormal类型，delete操作按钮可使用UIContextualActionStyleDestructive类型，当使用该类型时，如果是右滑操作，一直向右滑动某个cell，会直接执行删除操作，不用再点击删除按钮，这也是一个好玩的更新。
+
+typedef NS_ENUM(NSInteger, UIContextualActionStyle) {
+    UIContextualActionStyleNormal,
+    UIContextualActionStyleDestructive
+} NS_SWIFT_NAME(UIContextualAction.Style)
+
+

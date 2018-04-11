@@ -1,0 +1,469 @@
+--------------------------------------------------AssetsLibrary
+AssetsLibrary: 代表整个设备中的资源库（照片库），通过 AssetsLibrary 可以获取和包括设备中的照片和视频
+
+ALAssetsGroup: 映射照片库中的一个相册，通过 ALAssetsGroup 可以获取某个相册的信息，相册下的资源，同时也可以对某个相册添加资源
+
+ALAsset: 映射照片库中的一个照片或视频，通过 ALAsset 可以获取某个照片或视频的详细信息，或者保存照片和视频
+
+ALAssetRepresentation: ALAssetRepresentation 是对 ALAsset 的封装（但不是其子类），可以更方便地获取 ALAsset 中的资源信息，每个 ALAsset 都有至少有一个 ALAssetRepresentation 对象，可以通过 defaultRepresentation 获取。而例如使用系统相机应用拍摄的 RAW + JPEG 照片，则会有两个 ALAssetRepresentation，一个封装了照片的 RAW 信息，另一个则封装了照片的 JPEG 信息
+
+1.检查 App 是否有照片操作授权：
+NSString *tipTextWhenNoPhotosAuthorization; // 提示语
+// 获取当前应用对照片的访问授权状态
+ALAuthorizationStatus authorizationStatus = [ALAssetsLibrary authorizationStatus];
+// 如果没有获取访问授权，或者访问授权状态已经被明确禁止，则显示提示语，引导用户开启授权
+if (authorizationStatus == ALAuthorizationStatusRestricted || authorizationStatus == ALAuthorizationStatusDenied) {
+    NSDictionary *mainInfoDictionary = [[NSBundle mainBundle] infoDictionary];
+    NSString *appName = [mainInfoDictionary objectForKey:@"CFBundleDisplayName"];
+    tipTextWhenNoPhotosAuthorization = [NSString stringWithFormat:@"请在设备的\"设置-隐私-照片\"选项中，允许%@访问你的手机相册", appName];
+    // 展示提示语
+}
+
+2.获取相册列表：
+_assetsLibrary = [[ALAssetsLibrary alloc] init];
+_albumsArray = [[NSMutableArray alloc] init];
+[_assetsLibrary enumerateGroupsWithTypes:ALAssetsGroupAll usingBlock:^(ALAssetsGroup *group, BOOL *stop) {
+    if (group) {
+        [group setAssetsFilter:[ALAssetsFilter allPhotos]];
+        if (group.numberOfAssets > 0) {
+            // 把相册储存到数组中，方便后面展示相册时使用
+            [_albumsArray addObject:group];
+        }
+    } else {
+        if ([_albumsArray count] > 0) {
+            // 把所有的相册储存完毕，可以展示相册列表
+        } else {
+            // 没有任何有资源的相册，输出提示
+        }
+    }
+} failureBlock:^(NSError *error) {
+    NSLog(@"Asset group not found!\n");
+}];
+
+ALAssetsGroup有一个setAssetsFilter的方法，可以传入一个过滤器，控制只获取相册中的照片或只获取视频。
+一旦设置过滤，ALAssetsGroup 中资源列表和资源数量的获取也会被自动更新
+
+整个 AssetsLibrary 中对相册、资源的获取和保存都是使用异步处理（Asynchronous），这是考虑到资源文件体积相当比较大（还可能很大）。例如上面的遍历相册操作，相册的结果使用 block 输出，如果相册遍历完毕，则最后一次输出的 block 中的 group 参数值为 nil。而 stop 参数则是用于手工停止遍历，只要把 *stop 置 YES，则会停止下一次的遍历
+
+
+3.获取相册中的资源：
+_imagesAssetArray = [[NSMutableArray alloc] init];
+[assetsGroup enumerateAssetsWithOptions:NSEnumerationReverse usingBlock:^(ALAsset *result, NSUInteger index, BOOL *stop) {
+    if (result) {
+        [_imagesAssetArray addObject:result];
+    } else {
+        // result 为 nil，即遍历相片或视频完毕，可以展示资源列表
+    }
+}];
+ index 参数，这个参数表示资源的索引
+一般来说，展示资源列表都会使用缩略图（result.thumbnail）
+
+
+可以利用上面的 index 参数和 stop 参数做一个分段拉取资源。例如：
+NSUInteger _targetIndex; // index 目标值，拉取资源直到这个值就手工停止拉取
+NSUInteger _currentIndex; // 当前 index，每次拉取资源时从这个值开始
+ 
+_targetIndex = 50;
+_currentIndex = 0;
+ 
+- (void)loadAssetWithAssetsGroup:(assetsGroup *)assetsGroup {
+    [assetsGroup enumerateAssetsAtIndexes:[NSIndexSet indexSetWithIndex:_currentIndex] options:NSEnumerationReverse usingBlock:^(ALAsset *result, NSUInteger index, BOOL *stop) {
+        _currentIndex = index;
+        if (index > _targetIndex) {
+            // 拉取资源的索引如果比目标值大，则停止拉取
+            *stop = YES;
+        } else {
+            if (result) {
+                [_imagesAssetArray addObject:result];
+            } else {
+                // result 为 nil，即遍历相片或视频完毕
+            }
+        }
+    }];
+}
+// 之前拉取的数据已经显示完毕，需要展示新数据，重新调用 loadAssetWithAssetsGroup 方法，并根据需要更新 _targetIndex 的值
+
+
+4.获取图片详细信息，例如：
+// 获取资源图片的详细资源信息，其中 imageAsset 是某个资源的 ALAsset 对象
+ALAssetRepresentation *representation = [imageAsset defaultRepresentation];
+// 获取资源图片的 fullScreenImage
+UIImage *contentImage = [UIImage imageWithCGImage:[representation fullScreenImage]];
+
+fullResolutionImage 是图片的原图
+fullScreenImage，它是图片的全屏图版本，同时也是一张缩略图，但图片的失真很少，缺点是图片的尺寸是一个适应屏幕大小的版本
+建议使用 fullScreenImage
+
+
+--------------------------------------------------PhotoKit
+PHAsset: 代表照片库中的一个资源，跟 ALAsset 类似，通过 PHAsset 可以获取和保存资源
+PHFetchOptions: 获取资源时的参数，可以传 nil，即使用系统默认值
+PHFetchResult: 表示一系列的资源集合，也可以是相册的集合
+PHAssetCollection: 
+PHCollection 的子类表示一个相册或者一个时刻，或者是一个「智能相册（系统提供的特定的一系列相册，例如：最近删除，视频列表，收藏等等，如下图所示）
+PHImageManager: 用于处理资源的加载，加载图片的过程带有缓存处理，可以通过传入一个 PHImageRequestOptions 控制资源的输出尺寸等规格
+PHImageRequestOptions: 如上面所说，控制加载图片时的一系列参数
+
+
+// 列出所有相册智能相册
+PHFetchResult *smartAlbums = [PHAssetCollection fetchAssetCollectionsWithType:PHAssetCollectionTypeSmartAlbum subtype:PHAssetCollectionSubtypeAlbumRegular options:nil];
+// 这时 smartAlbums 中保存的应该是各个智能相册对应的 PHAssetCollection
+for (NSInteger i = 0; i < fetchResult.count; i++) {
+    // 获取一个相册（PHAssetCollection）
+    PHCollection *collection = fetchResult[i];
+    if ([collection isKindOfClass:[PHAssetCollection class]]) {
+        PHAssetCollection *assetCollection = (PHAssetCollection *)collection;
+        // 从每一个智能相册中获取到的 PHFetchResult 中包含的才是真正的资源（PHAsset）
+        PHFetchResult *fetchResult = [PHAsset fetchAssetsInAssetCollection:assetCollection options:fetchOptions];
+    else {
+        NSAssert(NO, @"Fetch collection not PHCollection: %@", collection);
+    }
+}
+
+ 
+// 列出所有用户创建的相册
+PHFetchResult *topLevelUserCollections = [PHCollectionList fetchTopLevelUserCollectionsWithOptions:nil];
+ 
+// 获取所有资源的集合，并按资源的创建时间排序
+PHFetchOptions *options = [[PHFetchOptions alloc] init];
+options.sortDescriptors = @[[NSSortDescriptor sortDescriptorWithKey:@"creationDate" ascending:YES]];
+PHFetchResult *assetsFetchResults = [PHAsset fetchAssetsWithOptions:options];
+// 这时 assetsFetchResults 中包含的，应该就是各个资源（PHAsset）
+for (NSInteger i = 0; i < fetchResult.count; i++) {
+    // 获取一个资源（PHAsset）
+    PHAsset *asset = fetchResult[i];
+}
+
+PHImageManager 是通过请求的方式拉取图像，并可以控制请求得到的图像的尺寸、剪裁方式、质量，缓存以及请求本身的管理（发出请求、取消请求）等
+- (PHImageRequestID)requestImageForAsset:(PHAsset *)asset 
+                              targetSize:(CGSize)targetSize 
+                             contentMode:(PHImageContentMode)contentMode 
+                                 options:(nullable PHImageRequestOptions *)options 
+                           resultHandler:(void (^)(UIImage *__nullable result, NSDictionary *__nullable info))resultHandler;
+targetSize:需要获取的图像的尺寸，如果输入的尺寸大于资源原图的尺寸，则只返回原图 所有的尺寸都是用 Pixel 作为单位
+如果需要返回原图尺寸，可以传入 PhotoKit 中预先定义好的常量PHImageManagerMaximumSize
+contentMode:图像的剪裁方式
+如果 targetSize 传入PHImageManagerMaximumSize，则 contentMode 无论传入什么值都会被视为PHImageContentModeDefault
+resultHandler:请求结束后被调用的 block,resultHandler 可能会被多次调用，这种情况就是图像需要从 iCloud 中下载的情况
+通过 block 返回的 NSDictionary info 中获知，PHImageResultIsDegradedKey 表示当前返回的 UIImage 是低清图。
+如果需要判断是否已经获得高清图，可以这样判断：
+// 排除取消，错误，低清图三种情况，即已经获取到了高清图
+BOOL downloadFinined = ![[info objectForKey:PHImageCancelledKey] boolValue] && ![info objectForKey:PHImageErrorKey] && ![[info objectForKey:PHImageResultIsDegradedKey] boolValue];
+
+PHImageRequestOptions:
+可以控制的内容相当丰富，包括图像的质量、版本，也会有参数控制图像的剪裁,resizeMode 属性控制图像的剪裁
+requestImageForAsset中已经有控制图像剪裁的参数后（contentMode）,如果两个地方所控制的剪裁结果有所冲突，PhotoKit 会以 resizeMode 的结果为准
+在 PhotoKit 中，对 iCloud 照片库有很好的支持
+
+PHImageRequestOptions 的属性 versions，这个属性是指获取的图像是否需要包含系统相册“编辑”功能处理过的信息（如滤镜，旋转等）
+
+requestImageForAsset 发出对图像的请求时，如果在同一个 PHImageManager 中同时对同一个资源发出图像请求，请求的进度是可以共享的，因此我们可以利用这个特性，把 PHImageManager 以单例的形式使用，这样在切换界面时也不用担心无法传递图像的下载进度。例如，在图像的列表页面触发了下载图像，当我们离开列表页面进入预览大图界面时，并不用担心会重新图像会重新下载，只要没有手工取消图像下载，进入预览大图界面下载图像会自动继续从上次的进度下载图像
+
+希望取消下载图像，则可以使用PHImageManager 的cancelImageRequest 方法，它传入的是请求图像的请求 ID，这个 ID 可以从requestImageForAsset 的返回值中获得，也可以从前面提到的包含图像信息的?NSDictionary info 中获得，当然前提是这个这个接收取消请求的 PHImageManager 与刚刚发出请求的 PHImageManager 是同一个实例
+
+
+// 在资源的集合中获取第一个集合，并获取其中的图片
+PHCachingImageManager *imageManager = [[PHCachingImageManager alloc] init];
+PHAsset *asset = assetsFetchResults[0];
+[imageManager requestImageForAsset:asset
+                         targetSize:SomeSize
+                        contentMode:PHImageContentModeAspectFill
+                            options:nil
+                      resultHandler:^(UIImage *result, NSDictionary *info) {
+                           
+                          // 得到一张 UIImage，展示到界面上
+                           
+                      }];
+
+
+PhotoKit 则是通过传入参数，直接获取相应的数据
+PHFetchResult 这个可以统一储存相册或资源的对象
+PhotoKit 返回资源结果时，同时返回了资源的元数据
+同时通过 PHAsset，开发者还能直接获取资源是否被收藏（favorite）和隐藏（hidden），拍摄图片时是否开启了 HDR 或全景模式，甚至能通过一张连拍图片获取到连拍图片中的其他图片
+
+
+
+获取图像的优化:
+PHImageManager 提供了一个子类PHCachingManager 用于处理图像的缓存，但是这个子类并不只是图像本身的缓存，而是更加实用——处理图像的整个加载过程的缓存
+- (void)startCachingImagesForAssets:(NSArray<PHAsset *> *)assets targetSize:(CGSize)targetSize contentMode:(PHImageContentMode)contentMode options:(nullable PHImageRequestOptions *)options;
+
+1.获取图片时尽量获取预览图，不要直接显示原件，建议获取与设备屏幕同样大小的图像即可，实际上系统相册预览大图时使用的也是预览图，这也是系统相册加载速度快的原因。
+2.获取图片使用异步请求，如上面所述，当请求为异步时返回图像的 block 会被多次调用，先返回低清图，再返回高清图，这样一来可以大大减少 UI 的等待时间。
+3.获取到高清图后可以缓存下来，简单地使用变量缓存即可，尽量在获取到高清图后避免再次发起请求获取图像。因为即使图像原件已经下载下来，重新请求高清图时因为图片的尺寸比较大，因此系统生成图像和剪裁图像也会花费一些时间。
+4.预先加载图像，如像预览大图这类情景中，用户同时只会看到一张大图，因此在观看某一张图片时，预先请求其邻近两张图片，对于加快 UI 的响应很有帮助
+
+如果请求的是缩略图（即尺寸小的图像），那么即使请求的图像很多，仍不会产生任何不流畅的表现，但如果请求的是高清大图，那么即使只是同时请求几张图都会产生不流畅的状况
+
+
+
+===============================原图
+/// Asset 的原图（包含系统相册“编辑”功能处理后的效果）
+- (UIImage *)originImage;
+ 
+/**
+ *  异步请求 Asset 的原图，包含了系统照片“编辑”功能处理后的效果（剪裁，旋转和滤镜等），可能会有网络请求
+ *
+ *  @param completion        完成请求后调用的 block，参数中包含了请求的原图以及图片信息，在 iOS 8.0 或以上版本中，
+ *                           这个 block 会被多次调用，其中第一次调用获取到的尺寸很小的低清图，然后不断调用，直接获取到高清图，
+ *                           获取到高清图后 QMUIAsset 会缓存起这张高清图，这时 block 中的第二个参数（图片信息）返回的为 nil。
+ *  @param phProgressHandler 处理请求进度的 handler，不在主线程上执行，在 block 中修改 UI 时注意需要手工放到主线程处理。
+ *
+ *  @wraning iOS 8.0 以下中并没有异步请求预览图的接口，因此实际上为同步请求，这时 block 中的第二个参数（图片信息）返回的为 nil。
+ *
+ *  @return 返回请求图片的请求 id
+ */
+- (NSInteger)requestOriginImageWithCompletion:(void (^)(UIImage *, NSDictionary *))completion withProgressHandler:(PHAssetImageProgressHandler)phProgressHandler;
+ 
+ .m 文件
+- (UIImage *)originImage {
+    if (_originImage) {
+        return _originImage;
+    }
+    __block UIImage *resultImage;
+    if (_usePhotoKit) {
+        PHImageRequestOptions *phImageRequestOptions = [[PHImageRequestOptions alloc] init];
+        phImageRequestOptions.synchronous = YES;
+        [[[QMUIAssetsManager sharedInstance] phCachingImageManager] requestImageForAsset:_phAsset
+                                                                              targetSize:PHImageManagerMaximumSize
+                                                                             contentMode:PHImageContentModeDefault
+                                                                                 options:phImageRequestOptions
+                                                                           resultHandler:^(UIImage *result, NSDictionary *info) {
+                                                                               resultImage = result;
+                                                                           }];
+    } else {
+        CGImageRef fullResolutionImageRef = [_alAssetRepresentation fullResolutionImage];
+        // 通过 fullResolutionImage 获取到的的高清图实际上并不带上在照片应用中使用“编辑”处理的效果，需要额外在 AlAssetRepresentation 中获取这些信息
+        NSString *adjustment = [[_alAssetRepresentation metadata] objectForKey:@"AdjustmentXMP"];
+        if (adjustment) {
+            // 如果有在照片应用中使用“编辑”效果，则需要获取这些编辑后的滤镜，手工叠加到原图中
+            NSData *xmpData = [adjustment dataUsingEncoding:NSUTF8StringEncoding];
+            CIImage *tempImage = [CIImage imageWithCGImage:fullResolutionImageRef];
+             
+            NSError *error;
+            NSArray *filterArray = [CIFilter filterArrayFromSerializedXMP:xmpData
+                                                         inputImageExtent:tempImage.extent
+                                                                    error:&error];
+            CIContext *context = [CIContext contextWithOptions:nil];
+            if (filterArray && !error) {
+                for (CIFilter *filter in filterArray) {
+                    [filter setValue:tempImage forKey:kCIInputImageKey];
+                    tempImage = [filter outputImage];
+                }
+                fullResolutionImageRef = [context createCGImage:tempImage fromRect:[tempImage extent]];
+            }   
+        }
+        // 生成最终返回的 UIImage，同时把图片的 orientation 也补充上去
+        resultImage = [UIImage imageWithCGImage:fullResolutionImageRef scale:[_alAssetRepresentation scale] orientation:(UIImageOrientation)[_alAssetRepresentation orientation]];
+    }
+    _originImage = resultImage;
+    return resultImage;
+}
+ 
+- (NSInteger)requestOriginImageWithCompletion:(void (^)(UIImage *, NSDictionary *))completion withProgressHandler:(PHAssetImageProgressHandler)phProgressHandler {
+    if (_usePhotoKit) {
+        if (_originImage) {
+            // 如果已经有缓存的图片则直接拿缓存的图片
+            if (completion) {
+                completion(_originImage, nil);
+            }
+            return 0;
+        } else {
+            PHImageRequestOptions *imageRequestOptions = [[PHImageRequestOptions alloc] init];
+            imageRequestOptions.networkAccessAllowed = YES; // 允许访问网络
+            imageRequestOptions.progressHandler = phProgressHandler;
+            return [[[QMUIAssetsManager sharedInstance] phCachingImageManager] requestImageForAsset:_phAsset targetSize:PHImageManagerMaximumSize contentMode:PHImageContentModeDefault options:imageRequestOptions resultHandler:^(UIImage *result, NSDictionary *info) {
+                // 排除取消，错误，低清图三种情况，即已经获取到了高清图时，把这张高清图缓存到 _originImage 中
+                BOOL downloadFinined = ![[info objectForKey:PHImageCancelledKey] boolValue] && ![info objectForKey:PHImageErrorKey] && ![[info objectForKey:PHImageResultIsDegradedKey] boolValue];
+                if (downloadFinined) {
+                    _originImage = result;
+                }
+                if (completion) {
+                    completion(result, info);
+                }
+            }];
+        }
+    } else {
+        if (completion) {
+            completion([self originImage], nil);
+        }
+        return 0;
+    }
+}
+
+
+===============================缩略图
+.h 文件
+/**
+ *  Asset 的缩略图
+ *
+ *  @param size 指定返回的缩略图的大小，仅在 iOS 8.0 及以上的版本有效，其他版本则调用 ALAsset 的接口由系统返回一个合适当前平台的图片
+ *
+ *  @return Asset 的缩略图
+ */
+- (UIImage *)thumbnailWithSize:(CGSize)size;
+ 
+/**
+ *  异步请求 Asset 的缩略图，不会产生网络请求
+ *
+ *  @param size       指定返回的缩略图的大小，仅在 iOS 8.0 及以上的版本有效，其他版本则调用 ALAsset 的接口由系统返回一个合适当前平台的图片
+ *  @param completion 完成请求后调用的 block，参数中包含了请求的缩略图以及图片信息，在 iOS 8.0 或以上版本中，这个 block 会被多次调用，
+ *                    其中第一次调用获取到的尺寸很小的低清图，然后不断调用，直接获取到高清图，获取到高清图后 QMUIAsset 会缓存起这张高清图，
+ *                    这时 block 中的第二个参数（图片信息）返回的为 nil。
+ *
+ *  @return 返回请求图片的请求 id
+ */
+- (NSInteger)requestThumbnailImageWithSize:(CGSize)size completion:(void (^)(UIImage *, NSDictionary *))completion;
+.m 文件
+- (UIImage *)thumbnailWithSize:(CGSize)size {
+    if (_thumbnailImage) {
+        return _thumbnailImage;
+    }
+    __block UIImage *resultImage;
+    if (_usePhotoKit) {
+        PHImageRequestOptions *phImageRequestOptions = [[PHImageRequestOptions alloc] init];
+        phImageRequestOptions.resizeMode = PHImageRequestOptionsResizeModeExact;
+            // 在 PHImageManager 中，targetSize 等 size 都是使用 px 作为单位，因此需要对targetSize 中对传入的 Size 进行处理，宽高各自乘以 ScreenScale，从而得到正确的图片
+        [[[QMUIAssetsManager sharedInstance] phCachingImageManager] requestImageForAsset:_phAsset
+                                                                              targetSize:CGSizeMake(size.width * ScreenScale, size.height * ScreenScale)
+                                                                             contentMode:PHImageContentModeAspectFill options:phImageRequestOptions
+                                                                           resultHandler:^(UIImage *result, NSDictionary *info) {
+                                                                               resultImage = result;
+                                                                           }];
+    } else {
+        CGImageRef thumbnailImageRef = [_alAsset thumbnail];
+        if (thumbnailImageRef) {
+            resultImage = [UIImage imageWithCGImage:thumbnailImageRef];
+        }
+    }
+    _thumbnailImage = resultImage;
+    return resultImage;
+}
+ 
+- (NSInteger)requestThumbnailImageWithSize:(CGSize)size completion:(void (^)(UIImage *, NSDictionary *))completion {
+    if (_usePhotoKit) {
+        if (_thumbnailImage) {
+            if (completion) {
+                completion(_thumbnailImage, nil);
+            }
+            return 0;
+        } else {
+            PHImageRequestOptions *imageRequestOptions = [[PHImageRequestOptions alloc] init];
+            imageRequestOptions.resizeMode = PHImageRequestOptionsResizeModeExact;
+            // 在 PHImageManager 中，targetSize 等 size 都是使用 px 作为单位，因此需要对targetSize 中对传入的 Size 进行处理，宽高各自乘以 ScreenScale，从而得到正确的图片
+            return [[[QMUIAssetsManager sharedInstance] phCachingImageManager] requestImageForAsset:_phAsset targetSize:CGSizeMake(size.width * ScreenScale, size.height * ScreenScale) contentMode:PHImageContentModeAspectFill options:imageRequestOptions resultHandler:^(UIImage *result, NSDictionary *info) {
+                // 排除取消，错误，低清图三种情况，即已经获取到了高清图时，把这张高清图缓存到 _thumbnailImage 中
+                  BOOL downloadFinined = ![[info objectForKey:PHImageCancelledKey] boolValue] && ![info objectForKey:PHImageErrorKey] && ![[info objectForKey:PHImageResultIsDegradedKey] boolValue];
+                  if (downloadFinined) {
+                      _thumbnailImage = result;
+                  }
+                  if (completion) {
+                      completion(result, info);
+                  }
+            }];
+        }
+    } else {
+        if (completion) {
+            completion([self thumbnailWithSize:size], nil);
+        }
+        return 0;
+    }
+}
+
+===============================预览图
+.h 文件
+/**
+ *  Asset 的预览图
+ *
+ *  @warning 仿照 ALAssetsLibrary 的做法输出与当前设备屏幕大小相同尺寸的图片，如果图片原图小于当前设备屏幕的尺寸，则只输出原图大小的图片
+ *  @return Asset 的全屏图
+ */
+- (UIImage *)previewImage;
+ 
+/**
+ *  异步请求 Asset 的预览图，可能会有网络请求
+ *
+ *  @param completion        完成请求后调用的 block，参数中包含了请求的预览图以及图片信息，在 iOS 8.0 或以上版本中，
+ *                           这个 block 会被多次调用，其中第一次调用获取到的尺寸很小的低清图，然后不断调用，直接获取到高清图，
+ *                           获取到高清图后 QMUIAsset 会缓存起这张高清图，这时 block 中的第二个参数（图片信息）返回的为 nil。
+ *  @param phProgressHandler 处理请求进度的 handler，不在主线程上执行，在 block 中修改 UI 时注意需要手工放到主线程处理。
+ *
+ *  @wraning iOS 8.0 以下中并没有异步请求预览图的接口，因此实际上为同步请求，这时 block 中的第二个参数（图片信息）返回的为 nil。
+ *
+ *  @return 返回请求图片的请求 id
+ */
+- (NSInteger)requestPreviewImageWithCompletion:(void (^)(UIImage *, NSDictionary *))completion withProgressHandler:(PHAssetImageProgressHandler)phProgressHandler;
+ .m 文件
+
+- (UIImage *)previewImage {
+    if (_previewImage) {
+        return _previewImage;
+    }
+    __block UIImage *resultImage;
+    if (_usePhotoKit) {
+        PHImageRequestOptions *imageRequestOptions = [[PHImageRequestOptions alloc] init];
+        imageRequestOptions.synchronous = YES;
+        [[[QMUIAssetsManager sharedInstance] phCachingImageManager] requestImageForAsset:_phAsset
+                                                                            targetSize:CGSizeMake(SCREEN_WIDTH, SCREEN_HEIGHT)
+                                                                           contentMode:PHImageContentModeAspectFill
+                                                                               options:imageRequestOptions
+                                                                         resultHandler:^(UIImage *result, NSDictionary *info) {
+                                                                             resultImage = result;
+                                                                         }];
+    } else {
+        CGImageRef fullScreenImageRef = [_alAssetRepresentation fullScreenImage];
+        resultImage = [UIImage imageWithCGImage:fullScreenImageRef];
+    }
+    _previewImage = resultImage;
+    return resultImage;
+}
+ 
+- (NSInteger)requestPreviewImageWithCompletion:(void (^)(UIImage *, NSDictionary *))completion withProgressHandler:(PHAssetImageProgressHandler)phProgressHandler {
+    if (_usePhotoKit) {
+        if (_previewImage) {
+            // 如果已经有缓存的图片则直接拿缓存的图片
+            if (completion) {
+                completion(_previewImage, nil);
+            }
+            return 0;
+        } else {
+            PHImageRequestOptions *imageRequestOptions = [[PHImageRequestOptions alloc] init];
+            imageRequestOptions.networkAccessAllowed = YES; // 允许访问网络
+            imageRequestOptions.progressHandler = phProgressHandler;
+            return [[[QMUIAssetsManager sharedInstance] phCachingImageManager] requestImageForAsset:_phAsset targetSize:CGSizeMake(SCREEN_WIDTH, SCREEN_HEIGHT) contentMode:PHImageContentModeAspectFill options:imageRequestOptions resultHandler:^(UIImage *result, NSDictionary *info) {
+                // 排除取消，错误，低清图三种情况，即已经获取到了高清图时，把这张高清图缓存到 _previewImage 中
+                BOOL downloadFinined = ![[info objectForKey:PHImageCancelledKey] boolValue] && ![info objectForKey:PHImageErrorKey] && ![[info objectForKey:PHImageResultIsDegradedKey] boolValue];
+                if (downloadFinined) {
+                    _previewImage = result;
+                }
+                if (completion) {
+                    completion(result, info);
+                }
+            }];
+        }
+    } else {
+        if (completion) {
+            completion([self previewImage], nil);
+        }
+        return 0;
+    }
+}
+
+
+===============================方向（imageOrientation）
+.h 文件
+- (UIImageOrientation)imageOrientation;
+.m 文件
+- (UIImageOrientation)imageOrientation {
+    UIImageOrientation orientation;
+    if (_usePhotoKit) {
+        if (!_phAssetInfo) {
+            // PHAsset 的 UIImageOrientation 需要调用过 requestImageDataForAsset 才能获取
+            [self requestPhAssetInfo];
+        }
+        // 从 PhAssetInfo 中获取 UIImageOrientation 对应的字段
+        orientation = (UIImageOrientation)[_phAssetInfo[@"orientation"] integerValue];
+    } else {
+        orientation = (UIImageOrientation)[[_alAsset valueForProperty:@"ALAssetPropertyOrientation"] integerValue];
+    }
+    return orientation;
+}

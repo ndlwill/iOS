@@ -1,0 +1,40 @@
+NSTimer是会强引用它的target的，像其他的delegate一般都是weak的，所以这里比较特殊
+Runloop会强引用timer，因为如果一个timer是循环的，如果没被强引用，那么在函数返回后，则会被销毁，就不能循环地通知持有的target。所以NSTimer是被放到Runloop中执行的
+如果我们不调用invalidate timer,runloop就会一直持有timer,而timer也一直持有ViewController，这样就会造成内存泄露
+在不需要NSTimer的时候，及时调用[self.timer invalidate]。千万不要在dealloc方法中调用，因为NSTimer强引用self，所以不会执行dealloc方法
+
+
+
+================解决保留环
+.h文件：
+
+@interface NSTimer (NNBlocksSupport)
++ (NSTimer *)nn_scheduledTimerWithTimeInterval:(NSTimeInterval)interval
+                                          block:(void(^)(void))block
+                                       repeats:(BOOL)repeats;
+@end
+.m文件：
+
+#import "NSTimer+NNBlocksSupport.h"
+
+@implementation NSTimer (NNBlocksSupport)
+
++ (NSTimer *)nn_scheduledTimerWithTimeInterval:(NSTimeInterval)interval
+                                         block:(void(^)(void))block
+                                       repeats:(BOOL)repeats {
+    return [self scheduledTimerWithTimeInterval:interval
+                                         target:self
+                                       selector:@selector(nn_blockInvoke:)
+                                       userInfo:[block copy]
+                                        repeats:repeats];
+    
+}
+
++ (void)nn_blockInvoke:(NSTimer *)timer {
+    void (^block)(void) = timer.userInfo;
+    if (block) {
+        block();
+    }
+}
+
+@end

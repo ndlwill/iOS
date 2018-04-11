@@ -1,0 +1,54 @@
+R表示结果，S表示包含alpha的原色，D表示包含alpha的目标色，Ra，Sa和Da分别是三个的alpha
+
+kCGBlendModeDestinationIn
+R = D*Sa
+结果 = 目标色和原色透明度的加成
+
+kCGBlendModeOverlay可以保持背景色的明暗，也就是灰度信息
+
+@interface UIImage (Tint)
+
+- (UIImage *) imageWithTintColor:(UIColor *)tintColor;
+- (UIImage *) imageWithGradientTintColor:(UIColor *)tintColor;
+
+@end
+
+@implementation UIImage (Tint)
+- (UIImage *) imageWithTintColor:(UIColor *)tintColor
+{
+    return [self imageWithTintColor:tintColor blendMode:kCGBlendModeDestinationIn];
+}
+
+- (UIImage *) imageWithGradientTintColor:(UIColor *)tintColor
+{
+    return [self imageWithTintColor:tintColor blendMode:kCGBlendModeOverlay];
+}
+
+- (UIImage *) imageWithTintColor:(UIColor *)tintColor blendMode:(CGBlendMode)blendMode
+{
+    //We want to keep alpha, set opaque to NO; Use 0.0f for scale to use the scale factor of the device’s main screen.
+    UIGraphicsBeginImageContextWithOptions(self.size, NO, 0.0f);
+    [tintColor setFill];
+    CGRect bounds = CGRectMake(0, 0, self.size.width, self.size.height);
+    UIRectFill(bounds);
+    
+    //Draw the tinted image in context
+    [self drawInRect:bounds blendMode:blendMode alpha:1.0f];
+    
+    if (blendMode != kCGBlendModeDestinationIn) {
+        [self drawInRect:bounds blendMode:kCGBlendModeDestinationIn alpha:1.0f];
+    }
+    
+    UIImage *tintedImage = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    
+    return tintedImage;
+}
+
+@end
+
+
+
+使用了CG的绘制方法，这就意味着每次调用都会是用到CPU的Offscreen drawing，大量使用的话可能导致性能的问题
+
+对于这里的UIImage+Tint的实现，可以写一套缓存的机制，来确保大量重复的元素只在load的时候blend一次，之后将其缓存在内存中以快速读取。当然这是一个权衡的问题，在时间和空间中做出正确的平衡和选择

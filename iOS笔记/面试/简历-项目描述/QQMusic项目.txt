@@ -1,0 +1,577 @@
+本地
+主界面UI搭建，监听播放按钮点击的逻辑实现，slider事件监听
+lrc文件解析，添加歌词列表，滚动歌词，主界面歌词的处理
+后台播放，添加锁屏界面信息，监听远程事件
+
+
+网络
+AVAssetResourceLoader
+<AVAssetResourceLoaderDelegate>
+/*
+ 这个AVAssetResourceLoader是负责数据加载的
+ 最重要的是我们只要遵守了AVAssetResourceLoaderDelegate，就可以成为它的代理，成为它的代理以后，数据加载都会通过代理方法询问我们。
+ 这样，我们就找到切入口干预数据的加载了
+ 
+ 这个功能是把task缓存到本地的临时数据根据播放器需要的offset和length去取数据并返回给播放器
+ 如果视频文件比较小，就没有必要存到本地，直接用一个变量存储即可
+
+ */
+
+
+ //视频边下边播--缓存播放数据流
+/*
+1.支持正常播放器的一切功能   包括暂停、播放和拖拽
+2.如果视频加载完成且完整，将视频文件保存到本地cache，下一次播放本地cache中的视频，不再请求网络数据
+3.如果视频没有加载完（半路关闭或者拖拽）就不用保存到本地cache
+ */
+
+/*
+ 实现方案:
+ 需要在视频播放器和服务器之间添加一层类似代理的机制，视频播放器不再直接访问服务器，而是访问代理对象，代理对象去访问服务器获得数据，之后返回给视频播放器，同时代理对象根据一定的策略缓存数据。
+ 
+ AVURLAsset中的resourceLoader可以实现这个机制，resourceLoader的delegate就是上述的代理对象。
+ 
+ 视频播放器在开始播放之前首先检测是本地cache中是否有此视频，如果没有才通过代理获得数据，如果有，则直接播放本地cache中的视频即可。
+ */
+---------------------------------------第三方库
+Masonry
+MJExtension
+
+---------------------------------------音频后台模式
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+    // 1.获取音频会话
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    
+    // 2.设置为后台类型
+    [session setCategory:AVAudioSessionCategoryPlayback error:nil];
+    
+    // 3.激活会话
+    [session setActive:YES error:nil];
+    return YES;
+}
+
+- (void)applicationDidEnterBackground:(UIApplication *)application {
+    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"iconViewAnimate"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+- (void)applicationDidBecomeActive:(UIApplication *)application {
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"iconViewAnimate"])
+    {
+        return;
+    }
+    
+    
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"NDLIconViewNotification" object:nil];
+}
+
+---------------------------------------UIToolbar实现毛玻璃效果
+- (void)setupBlur
+{
+    UIToolbar *toolbar = [[UIToolbar alloc] init];
+    [self.bgIV addSubview:toolbar];
+    toolbar.barStyle = UIBarStyleBlack;
+    
+    //添加约束
+    /*
+     When you elect to position the view using auto layout by adding your own constraints,
+     you must set this property to NO
+     */
+    toolbar.translatesAutoresizingMaskIntoConstraints = NO;
+    [toolbar mas_makeConstraints:^(MASConstraintMaker *make) {
+        make.edges.equalTo(self.bgIV);
+    }];
+    
+}
+
+---------------------------------------lrc转成歌词模型数组
++ (NSArray *)lrcToolWithLrcName:(NSString *)lrcName
+{
+    // 1.获取路径
+    NSString *path = [[NSBundle mainBundle] pathForResource:lrcName ofType:nil];
+    
+    // 2.获取歌词
+    NSString *lrcString = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    
+    // 3.转化成歌词数组
+    NSArray *lrcArray = [lrcString componentsSeparatedByString:@"\n"];
+    NSMutableArray *tempArray = [NSMutableArray array];
+    for (NSString *lrcLineString in lrcArray) {
+        
+        /*
+         [ti:简单爱]
+         [ar:周杰伦]
+         [al:范特西]
+         
+         */
+        // 4.过滤不需要的字符串
+        if ([lrcLineString hasPrefix:@"[ti:"] ||
+            [lrcLineString hasPrefix:@"[ar:"] ||
+            [lrcLineString hasPrefix:@"[al:"] ||
+            ![lrcLineString hasPrefix:@"["]) {
+            continue;
+        }
+        
+        // 5.将歌词转化成模型
+        NDLLrcLine *lrcLine = [NDLLrcLine lrcLineString:lrcLineString];
+        [tempArray addObject:lrcLine];
+    }
+    
+    return tempArray;
+}
+
+---------------------------------------自定义Label 歌词Label
+- (void)setProgress:(CGFloat)progress
+{
+    _progress = progress;
+    [self setNeedsDisplay];
+}
+
+- (void)drawRect:(CGRect)rect {
+    [super drawRect:rect];
+    
+    CGRect fillRect = CGRectMake(0, 0, self.bounds.size.width * self.progress, self.bounds.size.height);
+    [[UIColor greenColor] set];
+    //    UIRectFill(fillRect);//全部填充
+    UIRectFillUsingBlendMode(fillRect, kCGBlendModeSourceIn);
+}
+
+---------------------------------------自定义TableViewCell
++ (instancetype)lrcCellWithTableView:(UITableView *)tableView;
+
++ (instancetype)lrcCellWithTableView:(UITableView *)tableView
+{
+    static NSString *ID = @"cell";
+    NDLLrcCell *cell = [tableView dequeueReusableCellWithIdentifier:ID];
+    if (!cell) {//没有注册cell需判断是否为nil
+        cell = [[NDLLrcCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:ID];
+    }
+    return cell;
+}
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier
+{
+    if (self = [super initWithStyle:style reuseIdentifier:reuseIdentifier]) {
+        
+        // 1.初始化Label
+        NDLLrcLabel *lrcLabel = [[NDLLrcLabel alloc] init];
+        [self.contentView addSubview:lrcLabel];
+        self.lrcLabel = lrcLabel;
+        
+        // 2.添加约束
+        [lrcLabel mas_makeConstraints:^(MASConstraintMaker *make) {
+            make.centerX.equalTo(self.contentView);
+        }];
+        
+        // 3.设置基本数据
+        self.selectionStyle = UITableViewCellSelectionStyleNone;
+        self.backgroundColor = [UIColor clearColor];
+        lrcLabel.textColor = [UIColor whiteColor];
+        lrcLabel.textAlignment = NSTextAlignmentCenter;
+        lrcLabel.font = [UIFont systemFontOfSize:14];
+    }
+    return self;
+}
+
+---------------------------------------播放音效
++ (void)playSoundWithSoundName:(NSString *)soundName
+{
+    // 1.创建soundID = 0
+    SystemSoundID soundID = 0;
+    
+    // 2.从字典中取出soundID
+    soundID = [_soudIDs[soundName] unsignedIntValue];;
+    
+    // 3.判断soundID是否为0
+    if (soundID == 0) {
+        // 3.1生成soundID
+        CFURLRef url = (__bridge CFURLRef)[[NSBundle mainBundle] URLForResource:soundName withExtension:nil];
+        if (url == nil) return;
+        
+        AudioServicesCreateSystemSoundID(url, &soundID);
+        
+        // 3.2将soundID保存到字典中
+        [_soudIDs setObject:@(soundID) forKey:soundName];
+        
+    }
+    
+    // 4.播放音效
+    AudioServicesPlaySystemSound(soundID);
+}
+
+---------------------------------------CALayer Category
+@interface CALayer (PauseAimate)
+
+// 暂停动画
+- (void)pauseAnimate;
+
+// 恢复动画
+- (void)resumeAnimate;
+
+@end
+
+- (void)pauseAnimate
+{
+    CFTimeInterval pausedTime = [self convertTime:CACurrentMediaTime() fromLayer:nil];
+    self.speed = 0.0;
+    self.timeOffset = pausedTime;
+}
+
+- (void)resumeAnimate
+{
+    CFTimeInterval pausedTime = [self timeOffset];
+    self.speed = 1.0;
+    self.timeOffset = 0.0;
+    self.beginTime = 0.0;
+    CFTimeInterval timeSincePause = [self convertTime:CACurrentMediaTime() fromLayer:nil] - pausedTime;
+    self.beginTime = timeSincePause;
+}
+
+---------------------------------------NSString Category
++ (NSString *)stringWithTime:(NSTimeInterval)time
+{
+    NSInteger min = time / 60;
+    NSInteger sec = (int)round(time) % 60;//round 四舍五入
+    return [NSString stringWithFormat:@"%02ld:%02ld",min,sec];
+}
+
+---------------------------------------从storyboard加载
+- (instancetype)initWithCoder:(NSCoder *)aDecoder
+{
+    NSLog(@"%s", __func__);
+    if (self = [super initWithCoder:aDecoder]) {
+        
+        // 初始化TableView
+        [self setupTableView];
+    }
+    return self;
+}
+
+---------------------------------------Masonry
+// 1.添加约束
+    self.tableView.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.tableView mas_makeConstraints:^(MASConstraintMaker *make) {
+        make.top.equalTo(self.mas_top);
+        make.bottom.equalTo(self.mas_bottom);
+        make.height.equalTo(self.mas_height);
+        make.right.equalTo(self.mas_right);
+        make.left.equalTo(self.mas_left).offset(self.bounds.size.width);
+        make.width.equalTo(self.mas_width);
+    }];
+
+---------------------------------------Core Animation
+CABasicAnimation *rotateAnimate = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
+    rotateAnimate.fromValue = @(0);
+    rotateAnimate.toValue = @(M_PI * 2);
+    rotateAnimate.repeatCount = NSIntegerMax;
+    rotateAnimate.duration = 35;
+    [self.iconIV.layer addAnimation:rotateAnimate forKey:nil];
+
+---------------------------------------CADisplayLink
+/** 歌词的定时器 */
+@property (nonatomic, strong) CADisplayLink *lrcTimer;
+
+
+#pragma mark - 对歌词定时器的处理
+- (void)addLrcTimer
+{
+    //每秒走60次
+    self.lrcTimer = [CADisplayLink displayLinkWithTarget:self selector:@selector(updateLrcInfo)];
+    [self.lrcTimer addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+}
+
+- (void)removeLrcTimer
+{
+    [self.lrcTimer invalidate];
+    self.lrcTimer = nil;
+}
+
+#pragma mark 更新歌词进度    根据player的currentTime更新歌词进度
+- (void)updateLrcInfo
+{
+    self.lrcScrollView.currentTime = self.currentPlayer.currentTime;//获取当前播放的时间 eg:  01:25.893  精确到毫秒
+}
+
+---------------------------------------Timer
+#pragma mark - 对进度条时间的处理
+- (void)addProgressTimer
+{
+    [self updateProgressInfo];
+    self.progressTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(updateProgressInfo) userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:self.progressTimer  forMode:NSRunLoopCommonModes];
+}
+
+#pragma mark - 更新进度条
+- (void)updateProgressInfo
+{
+    // 1.更新播放的时间
+    self.curTimeLabel.text = [NSString stringWithTime:self.currentPlayer.currentTime];
+    
+    // 2.更新滑动条  value 0-1
+    self.slider.value = self.currentPlayer.currentTime / self.currentPlayer.duration;
+    
+}
+
+- (void)removeProgressTimer
+{
+    [self.progressTimer invalidate];
+    self.progressTimer = nil;
+}
+
+#pragma mark - slider 事件处理
+- (IBAction)onSliderTouchDown {
+    //移除定时器
+    [self removeProgressTimer];
+}
+- (IBAction)onSliderTouchUpInside {
+    // 1.更新播放的时间
+    self.currentPlayer.currentTime = self.slider.value * self.currentPlayer.duration;
+    
+    // 2.添加定时器
+    [self addProgressTimer];
+}
+- (IBAction)onSliderValueChanged {
+    self.curTimeLabel.text = [NSString stringWithTime:self.slider.value * self.currentPlayer.duration];
+}
+- (IBAction)onSliderTapped:(UITapGestureRecognizer *)sender {
+    // 1.获取点击到的点
+    CGPoint point = [sender locationInView:sender.view];
+    
+    // 2.获取点击的比例
+    CGFloat ratio = point.x / self.slider.bounds.size.width;
+    
+    // 3.更新播放的时间
+    self.currentPlayer.currentTime = self.currentPlayer.duration * ratio;
+    
+    // 4.更新时间和滑块的位置
+    [self updateProgressInfo];
+}
+---------------------------------------生命周期
+//viewWillAppear -> viewWillLayoutSubviews -> viewDidLayoutSubviews -> viewDidAppear
+- (void)viewWillLayoutSubviews
+{
+    [super viewWillLayoutSubviews];
+    NSLog(@"%s", __func__);
+    //添加圆角
+    self.iconIV.layer.cornerRadius = self.iconIV.bounds.size.width * 0.5;
+    self.iconIV.layer.masksToBounds = YES;
+    self.iconIV.layer.borderColor = NDLColor(36, 36, 36, 1.0).CGColor;
+    self.iconIV.layer.borderWidth = 8;
+}
+
+---------------------------------------状态栏
+#pragma mark - 改变状态栏的文字颜色
+- (UIStatusBarStyle)preferredStatusBarStyle
+{
+    return UIStatusBarStyleLightContent;
+}
+
+---------------------------------------UIScrollView
+#pragma mark UIScrollView 代理
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView
+{
+    // 1.获取滑动的偏移量
+    CGPoint point =  scrollView.contentOffset;
+    
+    // 2.获取滑动比例
+    CGFloat alpha = 1 - point.x / scrollView.bounds.size.width;
+    
+    // 3.设置alpha
+    self.iconIV.alpha = alpha;
+    self.lrcLabel.alpha = alpha;
+}
+
+---------------------------------------UIResponder   远程事件
+vc:
+- (void)remoteControlReceivedWithEvent:(UIEvent *)event
+{
+    /*
+     UIEventSubtypeRemoteControlPlay                 = 100,
+     UIEventSubtypeRemoteControlPause                = 101,
+     UIEventSubtypeRemoteControlStop                 = 102,
+     UIEventSubtypeRemoteControlTogglePlayPause      = 103,
+     UIEventSubtypeRemoteControlNextTrack            = 104,
+     UIEventSubtypeRemoteControlPreviousTrack        = 105,
+     UIEventSubtypeRemoteControlBeginSeekingBackward = 106,
+     UIEventSubtypeRemoteControlEndSeekingBackward   = 107,
+     UIEventSubtypeRemoteControlBeginSeekingForward  = 108,
+     UIEventSubtypeRemoteControlEndSeekingForward    = 109,
+     */
+    switch (event.subtype) {
+        case UIEventSubtypeRemoteControlPlay:
+        case UIEventSubtypeRemoteControlPause:
+            [self playOrPauseBtnClicked:nil];
+            break;
+            
+        case UIEventSubtypeRemoteControlNextTrack:
+            [self nextBtnClicked:nil];
+            break;
+            
+        case UIEventSubtypeRemoteControlPreviousTrack:
+            [self previousbtnClicked:nil];
+            break;
+            
+        default:
+            break;
+    }
+}
+
+---------------------------------------根据当前currentTime更新歌词进度
+- (void)setCurrentTime:(NSTimeInterval)currentTime
+{
+    // 1.记录当前的播放时间
+    _currentTime = currentTime;
+    
+    // 2.判断显示哪句歌词
+    NSInteger count = self.lrcList.count;
+    for (NSInteger i = 0; i<count; i++) {
+        // 2.1取出当前的歌词
+        NDLLrcLine *currentLrcLine = self.lrcList[i];
+        
+        // 2.2取出下一句歌词
+        NSInteger nextIndex = i + 1;
+        NDLLrcLine *nextLrcLine = nil;
+        if (nextIndex < self.lrcList.count) {
+            nextLrcLine = self.lrcList[nextIndex];
+        }
+        
+        // 2.3用当前播放器的时间,跟当前这句歌词的时间和下一句歌词的时间进行比对,如果大于等于当前歌词的时间,并且小于下一句歌词的时间,就显示当前的歌词
+        if (self.currentIndex != i && currentTime >= currentLrcLine.time && currentTime < nextLrcLine.time) {
+            
+            // 1.获取当前这句歌词和上一句歌词的IndexPath
+            NSIndexPath *indexPath = [NSIndexPath indexPathForRow:i inSection:0];
+            NSIndexPath *previousIndexPath = [NSIndexPath indexPathForRow:self.currentIndex inSection:0];
+            
+            // 2.记录当前刷新的某行
+            self.currentIndex = i;
+            
+            // 3.刷新当前这句歌词,并且刷新上一句歌词
+            [self.tableView reloadRowsAtIndexPaths:@[indexPath,previousIndexPath] withRowAnimation:UITableViewRowAnimationNone];
+            
+            // 4.将当前的这句歌词滚动到中间
+            [self.tableView scrollToRowAtIndexPath:indexPath atScrollPosition:UITableViewScrollPositionTop animated:YES];
+            
+            // 5.设置主界面歌词的文字
+            self.lrcLabel.text = currentLrcLine.text;
+            
+            // 6.生成锁屏图片
+            [self generateLockImage];
+        }
+        
+        if (self.currentIndex == i) { // 当前这句歌词
+            
+            // 1.用当前播放器的时间减去当前歌词的时间除以(下一句歌词的时间-当前歌词的时间)
+            CGFloat value = (currentTime - currentLrcLine.time) / (nextLrcLine.time - currentLrcLine.time);
+            
+            // 2.设置当前歌词播放的进度
+            NSIndexPath *indexPath = [NSIndexPath indexPathForRow:self.currentIndex inSection:0];
+            NDLLrcCell *lrcCell = [self.tableView cellForRowAtIndexPath:indexPath];
+            lrcCell.lrcLabel.progress = value;
+            self.lrcLabel.progress = value;
+        }
+    }
+}
+
+
+#pragma mark - 生成锁屏图片
+- (void)generateLockImage
+{
+    // 1.获取当前音乐的图片
+    NDLMusicModel *playingMusic = [NDLMusicTool currentPlayingMusic];
+    UIImage *currentImage = [UIImage imageNamed:playingMusic.icon];
+    
+    // 2.取出歌词
+    // 2.1取出当前的歌词
+    NDLLrcLine *currentLrcLine = self.lrcList[self.currentIndex];
+    
+    // 2.2取出上一句歌词
+    NSInteger previousIndex = self.currentIndex - 1;
+    NDLLrcLine *previousLrcLine = nil;
+    if (previousIndex >= 0) {
+        previousLrcLine = self.lrcList[previousIndex];
+    }
+    
+    // 2.3取出下一句歌词
+    NSInteger nextIndex = self.currentIndex + 1;
+    NDLLrcLine *nextLrcLine = nil;
+    if (nextIndex < self.lrcList.count) {
+        nextLrcLine = self.lrcList[nextIndex];
+    }
+    
+    // 3.生成水印图片
+    // 3.1获取上下文
+    UIGraphicsBeginImageContext(currentImage.size);
+    
+    // 3.2将图片画上去
+    [currentImage drawInRect:CGRectMake(0, 0, currentImage.size.width, currentImage.size.height)];
+    
+    // 3.3将文字画上去
+    CGFloat titleH = 25;
+    NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
+    paragraphStyle.alignment =  NSTextAlignmentCenter;
+    NSDictionary *attributes1 = @{NSFontAttributeName : [UIFont systemFontOfSize:14],
+                                  NSForegroundColorAttributeName : [UIColor lightGrayColor],
+                                  NSParagraphStyleAttributeName : paragraphStyle};
+    [previousLrcLine.text drawInRect:CGRectMake(0, currentImage.size.height - titleH * 3, currentImage.size.width, titleH) withAttributes:attributes1];
+    [nextLrcLine.text drawInRect:CGRectMake(0, currentImage.size.height - titleH, currentImage.size.width, titleH) withAttributes:attributes1];
+    
+    NSDictionary *attributes2 =  @{NSFontAttributeName : [UIFont systemFontOfSize:20],
+                                   NSForegroundColorAttributeName : [UIColor whiteColor],
+                                   NSParagraphStyleAttributeName : paragraphStyle};
+    [currentLrcLine.text drawInRect:CGRectMake(0, currentImage.size.height - titleH *2, currentImage.size.width, titleH) withAttributes:attributes2];
+    
+    // 3.4获取画好的图片
+    UIImage *lockImage = UIGraphicsGetImageFromCurrentImageContext();
+    
+    // 3.5关闭上下文
+    UIGraphicsEndImageContext();
+    
+    // 3.6设置锁屏界面的图片
+    [self setupLockScreenInfoWithLockImage:lockImage];
+    
+}
+
+#pragma mark - 设置锁屏信息
+- (void)setupLockScreenInfoWithLockImage:(UIImage *)lockImage
+{
+    /*
+     // MPMediaItemPropertyAlbumTitle
+     // MPMediaItemPropertyAlbumTrackCount
+     // MPMediaItemPropertyAlbumTrackNumber
+     // MPMediaItemPropertyArtist
+     // MPMediaItemPropertyArtwork
+     // MPMediaItemPropertyComposer
+     // MPMediaItemPropertyDiscCount
+     // MPMediaItemPropertyDiscNumber
+     // MPMediaItemPropertyGenre
+     // MPMediaItemPropertyPersistentID
+     // MPMediaItemPropertyPlaybackDuration
+     // MPMediaItemPropertyTitle
+     */
+    
+    // 0.获取当前播放的歌曲
+    NDLMusicModel *playingMusic = [NDLMusicTool currentPlayingMusic];
+    
+    // 1.获取锁屏中心
+    MPNowPlayingInfoCenter *playingInfoCenter = [MPNowPlayingInfoCenter defaultCenter];
+    
+    // 2.设置锁屏参数
+    NSMutableDictionary *playingInfoDict = [NSMutableDictionary dictionary];
+    // 2.1设置歌曲名
+    [playingInfoDict setObject:playingMusic.name forKey:MPMediaItemPropertyAlbumTitle];
+    // 2.2设置歌手名
+    [playingInfoDict setObject:playingMusic.singer forKey:MPMediaItemPropertyArtist];
+    // 2.3设置封面的图片
+    MPMediaItemArtwork *artwork = [[MPMediaItemArtwork alloc] initWithImage:lockImage];
+    [playingInfoDict setObject:artwork forKey:MPMediaItemPropertyArtwork];
+    // 2.4设置歌曲的总时长
+    [playingInfoDict setObject:@(self.duration) forKey:MPMediaItemPropertyPlaybackDuration];
+    
+    // 2.4设置歌曲当前的播放时间
+    [playingInfoDict setObject:@(self.currentTime) forKey:MPNowPlayingInfoPropertyElapsedPlaybackTime];
+    
+    playingInfoCenter.nowPlayingInfo = playingInfoDict;
+    
+    // 3.开启远程交互
+    [[UIApplication sharedApplication] beginReceivingRemoteControlEvents];
+}
