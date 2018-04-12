@@ -200,8 +200,10 @@ NSLog(@"viewDidLoad 22");
     
     
     TestView *tview = [[TestView alloc] initWithFrame:CGRectMake(0, 20, self.view.width, 200)];
-    tview.backgroundColor = [UIColor redColor];
+    tview.backgroundColor = [UIColor whiteColor];
     [self.view addSubview:tview];
+    NSLog(@"layer = %@", tview.layer);
+//    tview.layer.backgroundColor = [UIColor cyanColor].CGColor;
     
     // subLayer
     self.subLayer = [ArcToCircleLayer layer];
@@ -211,9 +213,10 @@ NSLog(@"viewDidLoad 22");
     self.subLayer.position = CGPointMake(self.view.width / 2,100);//锚点中心点
     NSLog(@"scale = %f", self.subLayer.contentsScale);//default 1.0
 
-    [tview.layer addSublayer:self.subLayer];
+#warning TODO
+//    [tview.layer addSublayer:self.subLayer];
     self.subLayer.progress = 1.0;
-    self.subLayer.presentationLayer
+//    self.subLayer.presentationLayer
     
     CGFloat lengths[] = {3, 3, 4};
 //    CGFloat *lengths = {3, 3, 4};//error
@@ -630,6 +633,7 @@ NSLog(@"viewDidLoad 22");
     NSLog(@"===%@===",ar);
     */
     
+    self.view.backgroundColor = [UIColor whiteColor];
     NSLog(@"view did load end");
 }
 

@@ -7,6 +7,7 @@
 //
 
 #import <UIKit/UIKit.h>
+#import "NDLConstants.h"
 
 @interface DrawUtils : NSObject
 
@@ -42,6 +43,21 @@
                fillColor:(CGColorRef)fillColor
              centerPoint:(CGPoint)centerPoint
                   radius:(CGFloat)radius;
+
+// 绘制气泡框(三角)
++ (void)drawBubbleFrameWithTriangleInContext:(CGContextRef)context
+                                        rect:(CGRect)rect
+                                   lineWidth:(CGFloat)lineWidth
+                             lineStrokeColor:(CGColorRef)lineStrokeColor
+                                   fillColor:(CGColorRef)fillColor
+                                cornerRadius:(CGFloat)cornerRadius
+                              arrowDirection:(BubbleFrameArrowDirection)arrowDirection
+                                 arrowHeight:(CGFloat)arrowHeight
+                                controlPoint:(CGPoint)controlPoint
+                      controlPointOffsetLeft:(CGFloat)controlPointOffsetLeft
+                     controlPointOffsetRight:(CGFloat)controlPointOffsetRight;
+
+
 
 
 @end

@@ -105,6 +105,76 @@
     CGContextFillPath(context);
 }
 
++ (void)drawBubbleFrameWithTriangleInContext:(CGContextRef)context
+                                        rect:(CGRect)rect
+                                   lineWidth:(CGFloat)lineWidth
+                             lineStrokeColor:(CGColorRef)lineStrokeColor
+                                   fillColor:(CGColorRef)fillColor
+                                cornerRadius:(CGFloat)cornerRadius
+                              arrowDirection:(BubbleFrameArrowDirection)arrowDirection
+                                 arrowHeight:(CGFloat)arrowHeight
+                                controlPoint:(CGPoint)controlPoint
+                      controlPointOffsetLeft:(CGFloat)controlPointOffsetLeft
+                     controlPointOffsetRight:(CGFloat)controlPointOffsetRight
+{
+    CGContextSetLineWidth(context, lineWidth);
+    CGContextSetStrokeColorWithColor(context, lineStrokeColor);
+    if (fillColor == NULL) {
+        CGContextSetFillColorWithColor(context, [UIColor whiteColor].CGColor);// 默认
+    } else {
+        CGContextSetFillColorWithColor(context, fillColor);
+    }
+    
+    CGContextBeginPath(context);
+    
+    CGFloat minX = 0.0, maxX = 0.0;
+    CGFloat minY = 0.0, maxY = 0.0;
+    
+    CGPoint startPoint = CGPointZero;
+    CGPoint endPoint = CGPointZero;
+    
+    switch (arrowDirection) {
+        case BubbleFrameArrowDirection_Top:
+        {
+            
+        }
+            break;
+        case BubbleFrameArrowDirection_Left:
+        {
+            startPoint = CGPointMake(arrowHeight, controlPoint.y - controlPointOffsetLeft);
+            endPoint = CGPointMake(arrowHeight, controlPoint.y + controlPointOffsetRight);
+            CGContextMoveToPoint(context, startPoint.x, startPoint.y);
+            CGContextAddLineToPoint(context, controlPoint.x, controlPoint.y);
+            CGContextAddLineToPoint(context, endPoint.x, endPoint.y);
+            
+            minX = arrowHeight;
+            maxX = CGRectGetMaxX(rect) - lineWidth / 2;
+            minY = CGRectGetMinY(rect) + lineWidth / 2;
+            maxY = CGRectGetMaxY(rect) - lineWidth / 2;
+            
+            CGContextAddArcToPoint(context, minX, maxY, maxX, maxY, cornerRadius);
+            CGContextAddArcToPoint(context, maxX, maxY, maxX, minY, cornerRadius);
+            CGContextAddArcToPoint(context, maxX, minY, minX, minY, cornerRadius);
+            CGContextAddArcToPoint(context, minX, minY, minX, maxY, cornerRadius);
+        }
+            break;
+        case BubbleFrameArrowDirection_Bottom:
+        {
+            
+        }
+            break;
+        case BubbleFrameArrowDirection_Right:
+        {
+            
+        }
+            break;
+        default:
+            break;
+    }
+    CGContextClosePath(context);// 连接起点和当前点
+    CGContextDrawPath(context, kCGPathFillStroke);
+}
+
 #pragma mark - Private Methods
 // 线段长度以中心点为起点
 + (CGPoint)pointWithCenterPoint:(CGPoint)centerPoint radian:(CGFloat)radian segmentLength:(CGFloat)segmentLength
