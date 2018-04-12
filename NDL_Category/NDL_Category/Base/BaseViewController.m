@@ -16,7 +16,9 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    // Do any additional setup after loading the view.
+    
+//    id object = [[NSUserDefaults standardUserDefaults] objectForKey:@"KEY"];// object == nil
+//    NSString *objStr = [NSString stringWithFormat:@"%@", object];// objStr == (null)
 }
 
 - (void)didReceiveMemoryWarning {
