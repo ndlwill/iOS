@@ -203,6 +203,8 @@ NSLog(@"viewDidLoad 22");
     tview.backgroundColor = [UIColor whiteColor];
     [self.view addSubview:tview];
     NSLog(@"layer = %@", tview.layer);
+    NSLog(@"===%@ dele = %@", tview, tview.layer.delegate);
+    NSLog(@"here = %@  tt = %@", nil, [NSNull null]);
 //    tview.layer.backgroundColor = [UIColor cyanColor].CGColor;
     
     // subLayer
