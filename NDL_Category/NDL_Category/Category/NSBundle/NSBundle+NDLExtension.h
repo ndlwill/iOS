@@ -20,3 +20,5 @@
 + (NSString *)ndl_localizedStringForKey:(NSString *)key bundleName:(NSString *)bundleName;
 
 @end
+
+// NSString *bundleIdentifier = [[NSBundle mainBundle] bundleIdentifier];

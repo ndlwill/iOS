@@ -199,8 +199,8 @@ NSLog(@"viewDidLoad 22");
 //    [CommonUtils logIvarListForClass:NSClassFromString(@"_UIBarBackground")];
     
     
-    TestView *tview = [[TestView alloc] initWithFrame:CGRectMake(0, 20, self.view.width, 200)];
-    tview.backgroundColor = [UIColor whiteColor];
+    TestView *tview = [[TestView alloc] initWithFrame:CGRectMake(20, 20, self.view.width - 40, 200)];
+    tview.backgroundColor = [UIColor redColor];
     [self.view addSubview:tview];
     NSLog(@"layer = %@", tview.layer);
     NSLog(@"===%@ dele = %@", tview, tview.layer.delegate);
