@@ -154,6 +154,13 @@
 - (void)viewDidLoad {
     NSLog(@"here = %ld", [@"" integerValue]);
     
+    NSArray<NSString *> *arrrr = @[@"1", @"2", @"3"];
+    if ([arrrr containsObject:@"1"]) {
+        NSLog(@"===---");
+    } else {
+        NSLog(@"###@@@");
+    }
+    
     NSLog(@"dic = %@", [[NSBundle mainBundle] infoDictionary]);
     NSLog(@"viewDidLoad 11");
     [super viewDidLoad];
