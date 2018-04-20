@@ -13,7 +13,7 @@
 - (instancetype)init
 {
     if (self = [super init]) {
-        self.backgroundColor = [UIColor cyanColor].CGColor;
+
     }
     return self;
 }

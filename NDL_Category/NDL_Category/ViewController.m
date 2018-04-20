@@ -70,7 +70,7 @@
 @property (nonatomic, strong) UIView *bottomViewLeft;
 @property (nonatomic, strong) NSMutableArray *bottomViews;
 
-@property (nonatomic, weak) LoadingView *loadingView;
+@property (nonatomic, strong) LoadingView *loadingView;
 
 @end
 
@@ -640,6 +640,10 @@ NSLog(@"viewDidLoad 22");
     
     self.view.backgroundColor = [UIColor whiteColor];
     NSLog(@"view did load end");
+    
+//    [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer * _Nonnull timer) {
+//        NSLog(@"NSTimer = %@", self.loadingView);
+//    }];
 }
 
 
@@ -649,17 +653,14 @@ NSLog(@"viewDidLoad 22");
     NSLog(@"===touchesBegan===");
     
     [self.loadingView removeFromSuperview];
+    self.loadingView = nil;
     
-    if (self.loadingView == nil) {
-        NSLog(@"loadingView = nil create###");
-        
-        LoadingView *loadingView = [[LoadingView alloc] initWithFrame:CGRectMake(0, 0, 200, 200)];
-        loadingView.backgroundColor = [UIColor blackColor];
-        loadingView.loadingStatus = LoadingStatus_Success;
-        [self.view addSubview:loadingView];
-        self.loadingView = loadingView;
-        [self.loadingView startAnimation];
-    }
+    NSLog(@"loadingView = nil create###");
+    self.loadingView = [[LoadingView alloc] initWithFrame:CGRectMake(0, 0, 200, 200)];
+    self.loadingView.backgroundColor = [UIColor yellowColor];
+    self.loadingView.loadingStatus = LoadingStatus_Success;
+    [self.view addSubview:self.loadingView];
+    [self.loadingView startAnimation];
 }
 
 - (void)viewTapped:(UIGestureRecognizer *)gesture

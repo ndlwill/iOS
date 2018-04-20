@@ -31,13 +31,14 @@ static CGFloat const kRadius = 100;
 #pragma mark - Public Methods
 - (void)startAnimation
 {
+    [self reset];
     [self startStep1Animation];
 }
 
 #pragma mark - Private Methods
 - (void)reset
 {
-    
+    [self.step1Layer removeFromSuperlayer];
 }
 
 // execute执行
@@ -48,6 +49,18 @@ static CGFloat const kRadius = 100;
     
     CGFloat wh = 2 * kRadius + kLineWidth;
     self.step1Layer.bounds = CGRectMake(0, 0, wh, wh);
+    self.step1Layer.position = CGPointMake(self.width / 2, self.height / 2);
+    
+    self.step1Layer.progress = 1.0;// modelLayer status
+    
+    CABasicAnimation *animation = [CABasicAnimation animationWithKeyPath:@"progress"];
+    animation.duration = 1.0;
+    animation.fromValue = @0.0;
+    animation.toValue = @1.0;
+    animation.delegate = self;
+    animation.removedOnCompletion = YES;
+//    [animation setValue:@"step1Animation" forKey:@"name"];
+    [self.step1Layer addAnimation:animation forKey:@"step1Animation"];
 }
 
 #pragma mark - CAAnimationDelegate
