@@ -1,0 +1,61 @@
+==============================处理Socket数据粘包问题：
+假设数据是由一个一个的字典组成的，字典与字典之前用\n(换行符)区分
+其中一条数据为： {"key","value"}\n
+收到的数据也可能为：
+{"key","value"}\n
+{"key","value"}\n
+{"key",
+
+会出现不完整的现象，因为socket发数据是按次区分的，每次发送的数据大小可能是20KB超过的部分自然会被去掉，然后在下一次发送
+下一次收到的数据一定是：
+
+"value"}\n
+{"key","value"}\n
+{"key","value"}\n
+只要在下一次接收数据时和上一次接收的数据拼接到一块就能获得完整的数据;
+
+
+定义两个数据组分别保存二进制文件和处理好数据
+@interface DataControl ()  
+{  
+    //保存二级制文件数据  
+    NSMutableData *_currentData;  
+    //保存有用的字符串数据  
+    NSMutableArray *_lastMessages;  
+}  
+@end  
+
+添加并返回处理好的新数据方法
+-(void)appendingData:(id)data newData:(SocketDataBlock)block  
+{  
+    //1、拼接二进制数据  
+    [_currentData appendData:data];  
+      
+    //2、转化成字符串  
+    NSString *string = [[NSString alloc] initWithData:_currentData encoding:NSUTF8StringEncoding];  
+      
+    NSLog(@"socket 收到的数据data = %@",string);  
+      
+    //3、分割字符串  
+    NSArray *stringArr = [string componentsSeparatedByString:@"\n"];  
+    NSMutableArray *usefulStringArr = [NSMutableArray new];  
+      
+    //4、获取有用的字符串  
+    for (NSString *str in stringArr) {  
+        if ([str hasPrefix:@"{"] && [str hasSuffix:@"}"]) {  
+            [usefulStringArr addObject:str];  
+        }  
+    }  
+      
+    //5、判断有没有新的字符串  
+    NSMutableArray *newStringArr = [NSMutableArray new];  
+    for (NSString *str in usefulStringArr) {  
+        if (![_lastMessages containsObject:str]) {  
+            [newStringArr addObject:str];  
+        }  
+    }  
+    //6、返回新的字符串 保存老的数组  
+    _lastMessages = usefulStringArr;  
+    block([self modelArrFrom:newStringArr]);  
+    _currentData = data;  
+}  

@@ -43,6 +43,8 @@
 
 #import "UIImage+NDLExtension.h"
 
+#import "LoadingView.h"
+
 @interface ViewController () <UITextViewDelegate>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
 
@@ -68,7 +70,7 @@
 @property (nonatomic, strong) UIView *bottomViewLeft;
 @property (nonatomic, strong) NSMutableArray *bottomViews;
 
-@property (nonatomic, strong) ArcToCircleLayer *subLayer;
+@property (nonatomic, weak) LoadingView *loadingView;
 
 @end
 
@@ -214,18 +216,12 @@ NSLog(@"viewDidLoad 22");
     NSLog(@"here = %@  tt = %@", nil, [NSNull null]);
 //    tview.layer.backgroundColor = [UIColor cyanColor].CGColor;
     
-    // subLayer
-    self.subLayer = [ArcToCircleLayer layer];
-//        self.subLayer.contentsScale = [UIScreen mainScreen].scale;
-    self.subLayer.bounds = CGRectMake(0, 0, 200, 200);
-//    self.subLayer.contentsScale = [UIScreen mainScreen].scale;
-    self.subLayer.position = CGPointMake(self.view.width / 2,100);//锚点中心点
-    NSLog(@"scale = %f", self.subLayer.contentsScale);//default 1.0
 
-#warning TODO
-//    [tview.layer addSublayer:self.subLayer];
-    self.subLayer.progress = 1.0;
-//    self.subLayer.presentationLayer
+
+
+
+
+
     
     CGFloat lengths[] = {3, 3, 4};
 //    CGFloat *lengths = {3, 3, 4};//error
@@ -647,17 +643,23 @@ NSLog(@"viewDidLoad 22");
 }
 
 
-// TODO:
+#warning TODO...
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
 {
-    NSLog(@"===###^^^***(((((");
-    CABasicAnimation *animation = [CABasicAnimation animationWithKeyPath:@"progress"];
-    animation.duration = 3.0;
-    animation.fromValue = @0.0;
-    animation.toValue = @1.0;
-    [self.subLayer addAnimation:animation forKey:nil];
+    NSLog(@"===touchesBegan===");
     
+    [self.loadingView removeFromSuperview];
     
+    if (self.loadingView == nil) {
+        NSLog(@"loadingView = nil create###");
+        
+        LoadingView *loadingView = [[LoadingView alloc] initWithFrame:CGRectMake(0, 0, 200, 200)];
+        loadingView.backgroundColor = [UIColor blackColor];
+        loadingView.loadingStatus = LoadingStatus_Success;
+        [self.view addSubview:loadingView];
+        self.loadingView = loadingView;
+        [self.loadingView startAnimation];
+    }
 }
 
 - (void)viewTapped:(UIGestureRecognizer *)gesture

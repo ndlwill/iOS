@@ -1,0 +1,85 @@
+动画：从蓝->黄
+
+duration设为1.5秒
+开始时间(beginTime)设为当前时间（CACurrentMediaTime()）加上1秒所以动画将在2.5秒后结束
+相当于动画延迟时间为1秒
+
+
+fillMode
+如果要让动画在开始之前（延迟的这段时间内）显示fromValue的状态，你可以设置动画向后填充：设置fillMode为kCAFillModeBackwards
+
+autoreverses
+如果正常的是先快后慢，则反过来后变成先慢后快
+
+
+如果repeatDuration比动画持续时间小，那么动画将提前结束（repeatDuration到达后就结束）
+
+把动画的duration设置为3秒，而speed设置为2，动画将会在1.5秒结束，因为它以两倍速在执行
+动画速度的分层表示：
+一个动画的speed为1.5，它同时是一个speed为2的动画组的一个动画成员，则它将以3倍速度被执行 (1.5 * 2 = 3)
+比如你把一个speed为3的动画加到一个speed为0.5的layer上，则这个动画将以1.5倍速度执行
+控制动画和layer的速度同样可以用来暂停动画,你只需要把speed设为0就行了
+
+
+持续时间为3秒，动画时间偏移量为1秒的动画
+duration = 3 timeOffset = 1
+你可以偏移整个动画但是动画还是会走完全部过程
+这个动画将从正常动画（timeOffset为0的状态）的第一秒开始执行，直到两秒后它完全变蓝，然后它一下子跳回最开始的状态（橙色）再执行一秒。就像是我们把正常动画的第一秒给剪下来粘贴到动画最后一样
+
+self.myLayer.speed = 0.0; // Pause the animation
+
+
+==========================CAMediaTimingFunction
+t0表示动画被加到layer上的一刻；t1表示动画开始的一刻；t2表示动画结束的一刻；t3表示动画从layer上移除的一刻（这四个时间点也可以叫做动画的生命周期）
+如果没有延迟，那么t0和t1确实是同一个时刻
+默认情况下，动画一旦结束就会从layer上自动移除，也就是默认情况下t2和t3也是同一时刻
+但是如果我们设置了removedOnCompletion = false，那么t3就会无限向前延伸直到我们手动调用layer的removeAnimation方法
+
+
+modelLayer的属性一开始是0.5，然后我们写一个动画把透明度从0修改为1，持续时间1秒并设置一个1秒的延迟（t0-t1、t1到t2都相差1秒），动画结束后不立即移除动画。 
+如果你想在视图一出现就开始动画，请把动画写到viewDidAppear里面，不要写到viewDidLoad里面。
+
+- (void)viewDidAppear:(BOOL)animated
+{
+    CALayer * layer = [CALayer layer];
+layer.frame = CGRectMake(100, 100, 200, 200);
+layer.opacity = 0.5;
+    layer.backgroundColor = [UIColor yellowColor].CGColor;
+    [self.view.layer addSublayer:layer];
+
+
+    CABasicAnimation * animation = [CABasicAnimation animation];
+    animation.keyPath = @"opacity";
+    animation.fromValue = @0;
+    animation.toValue = @1;
+    animation.duration = 1;
+animation.beginTime = CACurrentMediaTime() + 1;
+    animation.removedOnCompletion = false;
+    [layer addAnimation:animation forKey:@"opacity"];
+}
+
+根据P和M的规则，M肯定在整个过程中的值都是0.5
+而P在t0到t1由于动画并没有被告知如何影响P，所以会保持M的状态也就是0.5，然后在t1到t2（动画开始到动画结束）从0到1进行插值，到了t2动画结束，此时动画不知道如何影响P，所以P保持M的状态也就是回到0.5
+
+animation.fillMode = kCAFillModeForwards;//向前就是朝着时间的正方向
+因为t2到t3这段时间动画并不知道如何影响P，所以对于这段时间来讲，P的状态应该是“空”的，如果是空，那么P就会保持M的状态。而填充，就是把P的这些“空”的状态用具体的值填起来。由于我们的动画的keypath是opacity，所以就会对P的opacity在t2-t3这段时间进行填充，而填充的规则是“向前”，也就是“t2向t3填充”，说直白一点，就是t2到t3这个时间段P的opacity的值就一直保持t2的时候P的opacity的值，实际上就是动画的toValue的值
+
+这样的话，直到动画被移除，P都会保持toValue也就是透明度为1的状态，效果就是动画结束后不会闪回动画开始之前的那个状态而保持结束值的状态
+
+
+
+
+向后填充是t0到t1，由于向后是时间的负方向，所以就是P的状态在t0到t1这段时间由t1向t0填充，也就是t0到t1的时间段P保持t1时刻的状态也就是fromValue的状态。这样设置的效果就是在延迟的时间里面P保持fromValue的状态，就避免了动画一开始P从M的状态就闪到fromValue的状态：
+animation.fillMode = kCAFillModeBackwards;
+
+
+关于ease效果，在CAAnimation中表现为timingFunction这个属性，它需要设置一个CAMediaTimingFunction对象，实际上是指定了一个曲线，作为s-t函数图像，s是竖轴，代表动画的进程，0表示动画开始，1表示动画结束；t是横轴，代表动画当前的时间，0表示开始的时候，1表示结束的时候。曲线上一点的切线斜率表示这一时刻的动画速度。可以高中物理的直线运动的位移-时间图像
+
+
+那么Linear就表示线性的，也就是s-t图像是一条直线，明显就是匀速运动了；EaseIn表示淡入，也就是匀加速启动，或者理解为先慢后快；EaseOut表示淡出，也就是匀减速停止，或者理解为先快后慢。EaseInEaseOut就是既有淡入效果也有淡出效果。Default是一种平滑启动平滑结束的过程，类似EaseInEaseOut，但是效果没那么显著。
+
+除了functionWithName，系统允许我们使用一条贝塞尔曲线作为函数图像：
+
++(instancetype)functionWithControlPoints:(float)c1x :(float)c1y :(float)c2x :(float)c2y;
+1
+这个方法有四个参数，前两个参数表示贝塞尔曲线的第一个控制点，后两个参数表示贝塞尔曲线的第二个控制点。起点是(0,0)而终点是(1,1)，所以是一条三阶贝塞尔曲线。注意到函数的定义域和值域都是[0,1]，所以控制点的x和y的值要计算好

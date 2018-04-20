@@ -8,6 +8,12 @@
 
 #import <UIKit/UIKit.h>
 
+// 写字动效
+// https://github.com/ole/Animated-Paths
+
+// 绘制的线宽
+static CGFloat const kLineWidth = 6;
+
 // 圆弧到圆
 @interface ArcToCircleLayer : CALayer
 

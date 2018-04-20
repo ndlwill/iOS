@@ -8,9 +8,6 @@
 
 #import "ArcToCircleLayer.h"
 
-// 绘制的线宽
-static CGFloat const kLineWidth = 6;
-
 @implementation ArcToCircleLayer
 
 - (instancetype)init
@@ -31,6 +28,7 @@ static CGFloat const kLineWidth = 6;
     return [super needsDisplayForKey:key];
 }
 
+// 重绘弧的方案可以理解为:我们不停的创建新的path，每条path的起点和终点不一样，来形成动画
 - (void)drawInContext:(CGContextRef)ctx
 {
     NSLog(@"=====ArcToCircleLayer Redraw=====");
