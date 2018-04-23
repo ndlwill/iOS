@@ -29,7 +29,23 @@
 //    CGContextAddArc(context, 20, 20, 10, 0, M_PI, 1);
 //    CGContextFillPath(context);
     
-    [DrawUtils drawBubbleFrameWithTriangleInContext:UIGraphicsGetCurrentContext() rect:rect lineWidth:6.0 lineStrokeColor:[UIColor orangeColor].CGColor fillColor:NULL cornerRadius:2.0 arrowDirection:BubbleFrameArrowDirection_Left arrowHeight:10.0 controlPoint:CGPointMake(0, CGRectGetMaxY(rect) - 10.0) controlPointOffsetLeft:12.0 controlPointOffsetRight:0.0];
+    //绘制气泡
+//    [DrawUtils drawBubbleFrameWithTriangleInContext:UIGraphicsGetCurrentContext() rect:rect lineWidth:6.0 lineStrokeColor:[UIColor orangeColor].CGColor fillColor:NULL cornerRadius:2.0 arrowDirection:BubbleFrameArrowDirection_Left arrowHeight:10.0 controlPoint:CGPointMake(0, CGRectGetMaxY(rect) - 10.0) controlPointOffsetLeft:12.0 controlPointOffsetRight:0.0];
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    
+    
+//    UIBezierPath *path = [UIBezierPath bezierPathWithOvalInRect:rect];
+    
+    UIBezierPath *path = [UIBezierPath bezierPath];
+    [path addArcWithCenter:CGPointMake(50, 50) radius:40 startAngle:(3.0 / 2 * M_PI) endAngle:(M_PI) clockwise:NO];
+    
+    CGContextBeginPath(ctx);
+    CGContextAddPath(ctx, path.CGPath);
+    
+    CGContextSetLineWidth(ctx, 3);
+    CGContextSetStrokeColorWithColor(ctx, [UIColor greenColor].CGColor);
+    
+    CGContextStrokePath(ctx);
 }
 
 

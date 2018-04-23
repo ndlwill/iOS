@@ -214,10 +214,6 @@ NSLog(@"viewDidLoad 22");
     NSLog(@"layer = %@", tview.layer);
     NSLog(@"===%@ dele = %@", tview, tview.layer.delegate);
     NSLog(@"here = %@  tt = %@", nil, [NSNull null]);
-//    tview.layer.backgroundColor = [UIColor cyanColor].CGColor;
-    
-
-
 
 
 
@@ -656,7 +652,7 @@ NSLog(@"viewDidLoad 22");
     self.loadingView = nil;
     
     NSLog(@"loadingView = nil create###");
-    self.loadingView = [[LoadingView alloc] initWithFrame:CGRectMake(0, 0, 200, 200)];
+    self.loadingView = [[LoadingView alloc] initWithFrame:CGRectMake(0, 0, 250, 250)];
     self.loadingView.backgroundColor = [UIColor yellowColor];
     self.loadingView.loadingStatus = LoadingStatus_Success;
     [self.view addSubview:self.loadingView];

@@ -18,6 +18,7 @@ static CGFloat const kLineWidth = 6;
 @interface ArcToCircleLayer : CALayer
 
 @property (nonatomic, assign) CGFloat progress;// 0-1
+@property (nonatomic, strong) UIColor *color;
 
 @end
 
