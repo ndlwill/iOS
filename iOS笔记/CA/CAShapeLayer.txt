@@ -1,1 +1,37 @@
-CAShapeLayer使用了硬件加速，绘制图像比用Core Graphics快,渲染速度快
+渲染快速。CAShapeLayer使用了硬件加速，绘制同一图形会比用Core Graphics快很多。
+高效使用内存。一个CAShapeLayer不需要像普通CALayer一样创建一个寄宿图形（backing image），所以无论有多大，都不会占用太多的内存。
+不会被图层边界剪裁掉。一个CAShapeLayer可以在边界之外绘制。你的图层路径不会像在使用Core Graphics的普通CALayer一样被剪裁掉。
+不会出现像素化。当你给CAShapeLayer做3D变换时，它不像一个有寄宿图的普通图层一样变得像素化。
+
+
+在图形世界中有两种图形：位图(bitmap)和矢量图(vector)
+CAShapeLayer是一个通过矢量图形而不是bitmap（位图）来绘制的CALayer子类
+
+位图是通过排列像素点来构造的，像素点的信息包括颜色+透明度(ARGB)，颜色通过RGB来表示，所以一个像素一共有4个信息(透明度、R、G、B)，每个信息的取值范围是0-255，也就是一共256个数，刚好可以用8位二进制来表示，所以每个像素点的信息通常通过32位（4字节）编码来表示，这种位图叫做32位位图，而一些位图没有Alpha通道，这样的位图每个像素点只有RGB信息，只需要24位就可以表示一个像素点的信息
+位图在进行变形（缩放、3D旋转等）时会重新绘制每个像素点的信息，所以会造成图形的模糊。
+值得一提的是，对于GPU而言，它绘制位图的效率是相当高的，所以如果你要提高绘制效率，可以想办法把复杂的绘制内容转换成位图数据，然后丢给GPU进行渲染，比如使用CoreText来绘制文字
+
+
+矢量图是通过对多个点进行布局然后按照一定规则进行连线后形成的图形。矢量图的信息总共只有两个：点属性和线属性。点属性包括点的坐标、连线顺序等；线属性包括线宽、描线颜色等。
+每当矢量图进行变形的时候，只会把所有的点进行重新布局，然后重新按点属性和线属性进行连线。所以每次变形都不会影响线宽，也不会让图变得模糊
+如何重新布局是通过把所有点坐标转换成矩阵信息，然后通过矩阵乘法重新计算新的矩阵，再把矩阵转换回点信息
+比如要对一个矢量图进行旋转，就先把这个矢量图所有的点转换成一个矩阵（x,y,0），然后乘以旋转矩阵：
+( 
+cosa sina 0
+-sina cosa 0
+0 0 1)
+得到新的矩阵（x·cosa-y·sina, x·sina+y·cosa, 0） 
+然后把这个矩阵转换成点坐标（x·cosa-y·sina, x·sina+y·cosa）这就是新的点了。对矢量图所有的点进行这样的操作后，然后重新连线，出现的新的图形就是旋转后的矢量图了
+
+
+// 直接构造一个圆出来
+UIBezierPath * path = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(30, 30, 200, 200)];
+// 构造一个子路径
+UIBezierPath * subpath = [UIBezierPath bezierPath];
+// 画一条横线
+[subpath moveToPoint:CGPointMake(30, 130)];
+[subpath addLineToPoint:CGPointMake(230, 130)];
+// 拼接路径
+// 把subpath拼接到path上
+[path appendPath:subpath];
+shapeLayer.path = path.CGPath;

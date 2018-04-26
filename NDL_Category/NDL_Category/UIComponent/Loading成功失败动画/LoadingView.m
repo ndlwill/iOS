@@ -334,7 +334,7 @@ static NSString * const kStep4_1AnimationKey = @"step4_1Animation";
     //[self.step1Layer animationForKey:kStep1AnimationKey];// 这边获取为nil
 
     if ([[anim valueForKey:@"name"] isEqualToString:kStep1AnimationKey]) {
-        NSLog(@"Step1 Did Stop  后面还会执行一次Redraw (progress的值)");
+        NSLog(@"Step1 Did Stop  后面还会执行一次Redraw (progress设置的值)");
         [self startStep2Animation];
     } else if ([[anim valueForKey:@"name"] isEqualToString:kStep2AnimationKey]) {
         [self startStep3Animation];
