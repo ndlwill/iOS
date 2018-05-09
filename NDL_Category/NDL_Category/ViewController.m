@@ -44,8 +44,13 @@
 #import "UIImage+NDLExtension.h"
 
 #import "LoadingView.h"
+#import "PhotoCell.h"
+#import "HorizontalLinearMiddleScaleLayout.h"
 
-@interface ViewController () <UITextViewDelegate>
+#import "TestXibView.h"
+
+// TODO: Import
+@interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
 
 @property (weak, nonatomic) UIView *touchView;
@@ -71,6 +76,10 @@
 @property (nonatomic, strong) NSMutableArray *bottomViews;
 
 @property (nonatomic, strong) LoadingView *loadingView;
+
+@property (nonatomic, weak) UICollectionView *collectionView;
+
+@property (nonatomic, strong) TestXibView *xibView;
 
 @end
 
@@ -144,17 +153,22 @@
     return modifiedString;
 }
 
+// TODO:viewWillLayoutSubviews
 - (void)viewWillLayoutSubviews
 {
     [super viewWillLayoutSubviews];
     
-    NSLog(@"viewWillLayoutSubviews button Frame = %@", NSStringFromCGRect(self.rightButton.frame));
+//    NSLog(@"viewWillLayoutSubviews button Frame = %@", NSStringFromCGRect(self.rightButton.frame));
+//    self.xibView.width = NDLScreenW;
 }
 
 
 
 - (void)viewDidLoad {
     NSLog(@"here = %ld", [@"" integerValue]);
+    
+    NSInteger ttt = 10;
+    NSAssert(ttt != 9, @"=====");
     
     NSArray<NSString *> *arrrr = @[@"1", @"2", @"3"];
     if ([arrrr containsObject:@"1"]) {
@@ -640,13 +654,82 @@ NSLog(@"viewDidLoad 22");
 //    [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer * _Nonnull timer) {
 //        NSLog(@"NSTimer = %@", self.loadingView);
 //    }];
+    
+    // TODO: test collectionView
+    
+    HorizontalLinearMiddleScaleLayout *layout = [[HorizontalLinearMiddleScaleLayout alloc] init];
+    layout.itemSize = CGSizeMake(100, 160);
+//    layout.itemSize = CGSizeMake(60, 80);
+//    layout.minimumInteritemSpacing = 100;
+    layout.minimumLineSpacing = 40;
+//    layout.scrollDirection = UICollectionViewScrollDirectionHorizontal;//上下布局
+     
+    
+    /*
+     //UICollectionViewFlowLayout
+    UICollectionViewFlowLayout *layout = [[UICollectionViewFlowLayout alloc] init];
+    layout.itemSize = CGSizeMake(100, 160);
+    layout.minimumLineSpacing = 40;
+    layout.scrollDirection = UICollectionViewScrollDirectionHorizontal;
+    layout.sectionInset = UIEdgeInsetsMake(0, 100, 0, 0);
+     */
+    
+    // 200
+    UICollectionView *collectionView = [[UICollectionView alloc] initWithFrame:CGRectMake(0, 200, NDLScreenW, 200) collectionViewLayout:layout];
+    NSLog(@"===collectionView-1===");
+    collectionView.backgroundColor = [UIColor yellowColor];
+//    collectionView.showsHorizontalScrollIndicator = NO;
+    collectionView.delegate = self;
+    collectionView.dataSource = self;
+//    collectionView.contentInset = UIEdgeInsetsMake(0, 100, 0, 0);
+//    collectionView.contentOffset = CGPointMake(-100, 0);
+    [self.view addSubview:collectionView];
+    self.collectionView = collectionView;
+    NSLog(@"===collectionView-2===");
+    
+    [collectionView registerNib:[UINib nibWithNibName:NSStringFromClass([PhotoCell class]) bundle:nil] forCellWithReuseIdentifier:@"PhotoCell"];
+    
+    
+    // TestXibView
+    self.xibView = [TestXibView viewFromXib];
+    [self.view addSubview:self.xibView];
+//    [self.xibView mas_makeConstraints:^(MASConstraintMaker *make) {
+//        make.top.left.right.equalTo(self).offset(10);
+////        make.bottom.equalTo(self).offset(50).priorityLow(250);
+//    }];
+    self.xibView.x = 0;
+    self.xibView.y = 0;
+    self.xibView.width = NDLScreenW;
+    self.xibView.height = 170;
+}
+
+- (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section
+{
+    return 10;
+}
+
+- (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath
+{
+    PhotoCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"PhotoCell" forIndexPath:indexPath];
+    cell.text = [NSString stringWithFormat:@"%ld", indexPath.item];
+    
+    if (indexPath.item == 0) {
+        cell.backgroundColor = [UIColor cyanColor];
+    }
+    
+    if (indexPath.item == 1) {
+        cell.backgroundColor = [UIColor greenColor];
+    }
+    
+    return cell;
 }
 
 
-#warning TODO...
+#warning TODO touchesBegan...
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
 {
     NSLog(@"===touchesBegan===");
+    self.xibView.height += 10;
     
     [self.loadingView removeFromSuperview];
     self.loadingView = nil;
@@ -739,6 +822,9 @@ NSLog(@"viewDidLoad 22");
     NSLog(@"hitButton clcked");
 }
 
+
+
+// TODO: viewDidLayoutSubviews
 - (void)viewDidLayoutSubviews
 {
     NSLog(@"=====viewDidLayoutSubviews=====");
@@ -751,6 +837,8 @@ NSLog(@"viewDidLoad 22");
     self.floatView.frame = CGRectMake(24, 200, contentWidth, floatLayoutViewSize.height);
     
     NSLog(@"viewDidLayoutSubviews button Frame = %@", NSStringFromCGRect(self.rightButton.frame));NSLog(@"viewDidLayoutSubviews button Frame = %@", NSStringFromCGRect(self.rightButton.frame));
+    
+    NSLog(@"###collection view offset = %@ contentSize = %@", NSStringFromCGPoint(self.collectionView.contentOffset), NSStringFromCGSize(self.collectionView.contentSize));
 }
 
 - (void)viewDidDisappear:(BOOL)animated
