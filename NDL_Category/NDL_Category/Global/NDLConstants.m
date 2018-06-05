@@ -9,3 +9,11 @@
 #import "NDLConstants.h"
 
 
+
+
+// label: font = 15
+CGFloat const kSystemBadgeViewWH = 18.0;
+
+CGFloat const kBigTitleHeight = 60.0;
+CGFloat const kBigTitleMaxY = 52.0;
+CGFloat const kBigTitleMiddleY = 28.0;

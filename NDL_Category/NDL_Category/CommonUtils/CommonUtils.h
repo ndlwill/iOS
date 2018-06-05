@@ -24,4 +24,7 @@
 // 打印某个类所有的属性
 + (void)logPropertyListForClass:(Class)className;
 
+// 打开app setting
++ (void)openAppSettingURL;
+
 @end

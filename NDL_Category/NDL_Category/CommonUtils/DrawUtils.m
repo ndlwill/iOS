@@ -36,7 +36,7 @@
     // 设置虚线的起点
     CGContextMoveToPoint(context, lineBeginPoint.x, lineBeginPoint.y);
     // 绘制虚线的终点
-    CGContextAddLineToPoint(context, lineBeginPoint.x, lineEndPoint.y);
+    CGContextAddLineToPoint(context, lineEndPoint.x, lineEndPoint.y);
     // 绘制路径
     CGContextStrokePath(context);
 }
@@ -173,6 +173,84 @@
     }
     CGContextClosePath(context);// 连接起点和当前点
     CGContextDrawPath(context, kCGPathFillStroke);
+}
+
++ (void)drawCouponBackgroundInContext:(CGContextRef)context
+                                 rect:(CGRect)rect
+                         cornerRadius:(CGFloat)cornerRadius
+                        separateShape:(CouponBackgroundSeparateShape)separateShape
+                  separateShapeCenterXRatio:(CGFloat)separateShapeCenterXRatio
+          separateShapeVerticalHeight:(CGFloat)separateShapeVerticalHeight
+         separateShapeHorizontalWidth:(CGFloat)separateShapeHorizontalWidth
+                            lineWidth:(CGFloat)lineWidth
+                      lineStrokeColor:(CGColorRef)lineStrokeColor
+                            fillColor:(CGColorRef)fillColor
+                           shadowBlur:(CGFloat)shadowBlur
+                          shadowColor:(CGColorRef)shadowColor
+                         shadowOffset:(CGSize)shadowOffset
+{
+    // 有分隔形状
+    if (separateShape != CouponBackgroundSeparateShape_None) {
+        // set
+        
+        CGFloat realLineWidth = 0.0;
+        CGFloat minX = 0.0, minY = 0.0, maxX = 0.0, maxY = 0.0;
+        CGFloat realSeparateShapeCenterX = 0.0;
+        // 表示有阴影，忽略border(LineWidth,stroke)
+        if (shadowBlur > 0) {
+            CGContextSetStrokeColorWithColor(context, [UIColor whiteColor].CGColor);
+            CGContextSetShadowWithColor(context, shadowOffset, shadowBlur, shadowColor);
+            
+            minX = shadowBlur;
+            minY = minX;
+            maxX = CGRectGetMaxX(rect) - shadowBlur;
+            maxY = CGRectGetMaxY(rect) - shadowBlur;
+            
+            realSeparateShapeCenterX = (rect.size.width - 2 * shadowBlur) * separateShapeCenterXRatio;
+        } else {
+            realLineWidth = lineWidth;
+            CGContextSetStrokeColorWithColor(context, lineStrokeColor);
+            
+            minX = realLineWidth / 2;
+            minY = minX;
+            maxX = CGRectGetMaxX(rect) - realLineWidth / 2;
+            maxY = CGRectGetMaxY(rect) - realLineWidth / 2;
+            
+            realSeparateShapeCenterX = (rect.size.width - realLineWidth) * separateShapeCenterXRatio;
+        }
+        CGContextSetLineWidth(context, realLineWidth);
+        if (fillColor == NULL) {
+            CGContextSetFillColorWithColor(context, [UIColor whiteColor].CGColor);// 默认白色
+        } else {
+            CGContextSetFillColorWithColor(context, fillColor);
+        }
+        
+        // 描述路径
+        CGContextBeginPath(context);
+        if (CouponBackgroundSeparateShape_SemiCircle == separateShape) {// 半圆
+            // 绘制上边的半圆
+            CGContextAddArc(context, realSeparateShapeCenterX, minY, separateShapeVerticalHeight, 0.0, M_PI, 0);// 顺时针绘制半圆
+            // 逆时针绘制全部
+            CGContextAddArcToPoint(context, minX, minY, minX, maxY, cornerRadius);// minX, maxY其实y只绘制到cornerRadius的长度
+            CGContextAddArcToPoint(context, minX, maxY, maxX, maxY, cornerRadius);
+            // 绘制下边的半圆
+            CGContextAddArc(context, realSeparateShapeCenterX, maxY, separateShapeVerticalHeight, M_PI, 0.0, 0);
+            CGContextAddArcToPoint(context, maxX, maxY, maxX, minY, cornerRadius);
+            CGContextAddArcToPoint(context, maxX, minY, minX, minY, cornerRadius);
+            CGContextClosePath(context);
+        } else if (CouponBackgroundSeparateShape_Triangle == separateShape) {
+            // TODO:
+        }
+        
+        // 渲染上下文
+        if (shadowBlur > 0) {
+            CGContextDrawPath(context, kCGPathFill);
+        } else {
+            CGContextDrawPath(context, kCGPathFillStroke);
+        }
+    } else {
+        // TODO:
+    }
 }
 
 #pragma mark - Private Methods

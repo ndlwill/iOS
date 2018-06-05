@@ -8,11 +8,76 @@
 
 #import <UIKit/UIKit.h>
 
+#pragma mark - 内联静态函数
+// 方法交换
+CG_INLINE BOOL
+ReplaceMethod(Class _class, SEL _originSelector, SEL _newSelector) {
+    Method oriMethod = class_getInstanceMethod(_class, _originSelector);
+    Method newMethod = class_getInstanceMethod(_class, _newSelector);
+    if (!newMethod) {
+        // class 里不存在该方法的实现
+        return NO;
+    }
+    BOOL isAddedMethod = class_addMethod(_class, _originSelector, method_getImplementation(newMethod), method_getTypeEncoding(newMethod));
+    if (isAddedMethod) {
+        class_replaceMethod(_class, _newSelector, method_getImplementation(oriMethod), method_getTypeEncoding(oriMethod));
+    } else {
+        method_exchangeImplementations(oriMethod, newMethod);
+    }
+    return YES;
+}
+
+#pragma mark - UIEdgeInsets
+
+// UIKIT_STATIC_INLINE
+/// 获取UIEdgeInsets在水平方向上的值
+CG_INLINE CGFloat
+UIEdgeInsetsGetHorizontalValue(UIEdgeInsets insets) {
+    return insets.left + insets.right;
+}
+
+/// 获取UIEdgeInsets在垂直方向上的值
+CG_INLINE CGFloat
+UIEdgeInsetsGetVerticalValue(UIEdgeInsets insets) {
+    return insets.top + insets.bottom;
+}
 
 
+// 气泡框箭头方向
 typedef NS_ENUM(NSInteger, BubbleFrameArrowDirection) {
     BubbleFrameArrowDirection_Top = 0,
     BubbleFrameArrowDirection_Left,
     BubbleFrameArrowDirection_Bottom,
     BubbleFrameArrowDirection_Right
 };
+
+// 优惠券背景分隔形状
+typedef NS_ENUM(NSInteger, CouponBackgroundSeparateShape) {
+    CouponBackgroundSeparateShape_None = 0,
+    CouponBackgroundSeparateShape_SemiCircle,// 半圆
+    CouponBackgroundSeparateShape_Triangle
+};
+
+// 权限类型
+typedef NS_ENUM(NSInteger, AuthorityType) {
+    AuthorityType_Location,
+    AuthorityType_Camera,
+    AuthorityType_Photo,
+    AuthorityType_Contacts,
+    AuthorityType_Calendar,
+    AuthorityType_Reminder,// 备忘录
+    AuthorityType_Microphone,
+    AuthorityType_Health,
+    AuthorityType_DataNetwork
+};
+
+
+//
+FOUNDATION_EXTERN CGFloat const kSystemBadgeViewWH;
+
+// 大标题高度 = 60
+FOUNDATION_EXTERN CGFloat const kBigTitleHeight;
+// 大标题maxY = 4 + 48
+FOUNDATION_EXTERN CGFloat const kBigTitleMaxY;
+// 大标题middleY = 4 + 24 for自动滚动
+FOUNDATION_EXTERN CGFloat const kBigTitleMiddleY;

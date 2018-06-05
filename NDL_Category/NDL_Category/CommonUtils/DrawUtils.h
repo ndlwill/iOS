@@ -57,6 +57,21 @@
                       controlPointOffsetLeft:(CGFloat)controlPointOffsetLeft
                      controlPointOffsetRight:(CGFloat)controlPointOffsetRight;
 
+// 绘制优惠券背景
++ (void)drawCouponBackgroundInContext:(CGContextRef)context
+                                 rect:(CGRect)rect
+//                         marginToEdgeInsets:(UIEdgeInsets)marginToEdgeInsets// 优惠券背景 MarginTo Rect(Edge)//
+                         cornerRadius:(CGFloat)cornerRadius
+                        separateShape:(CouponBackgroundSeparateShape)separateShape// 位于上下边
+                  separateShapeCenterXRatio:(CGFloat)separateShapeCenterXRatio// x相对于rect宽度的比例 (生成center中心点 y位于rect的上下边)
+                  separateShapeVerticalHeight:(CGFloat)separateShapeVerticalHeight// 以center为参照
+         separateShapeHorizontalWidth:(CGFloat)separateShapeHorizontalWidth // 以center为参照
+                            lineWidth:(CGFloat)lineWidth
+                      lineStrokeColor:(CGColorRef)lineStrokeColor
+                            fillColor:(CGColorRef)fillColor
+                           shadowBlur:(CGFloat)shadowBlur
+                          shadowColor:(CGColorRef)shadowColor
+                         shadowOffset:(CGSize)shadowOffset;// UIOffset
 
 
 

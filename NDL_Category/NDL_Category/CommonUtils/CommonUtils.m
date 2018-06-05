@@ -92,4 +92,17 @@
     NSLog(@"==========end==========");
 }
 
++ (void)openAppSettingURL
+{
+    if (@available(iOS 8.0, *)) {
+        NSURL *settingURL = [NSURL URLWithString:UIApplicationOpenSettingsURLString];
+        
+        if (@available(iOS 10.0, *)) {
+            [Application openURL:settingURL options:@{} completionHandler:nil];
+        } else {
+            [Application openURL:settingURL];
+        }
+    }
+}
+
 @end

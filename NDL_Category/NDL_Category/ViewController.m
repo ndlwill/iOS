@@ -48,6 +48,7 @@
 #import "HorizontalLinearMiddleScaleLayout.h"
 
 #import "TestXibView.h"
+#import "TextStrokeLabel.h"
 
 // TODO: Import
 @interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource>
@@ -162,10 +163,43 @@
 //    self.xibView.width = NDLScreenW;
 }
 
+- (void)createBaseDirectoryAtPath:(NSString *)path {
+    NSError *error = nil;
+    [[NSFileManager defaultManager] createDirectoryAtPath:path withIntermediateDirectories:YES
+                                               attributes:nil error:&error];
+}
 
+- (void)timeCallback
+{
+    NSLog(@"===timeCallback===");
+}
 
 - (void)viewDidLoad {
-    NSLog(@"here = %ld", [@"" integerValue]);
+    
+    NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:5.0 target:self selector:@selector(timeCallback) userInfo:nil repeats:YES];
+    /*
+     Causes the receiver’s message to be sent to its target
+     If the timer is non-repeating, it is automatically invalidated after firing
+     */
+    [timer fire];// 立即执行 
+//    [NSArray arrayWithObject:@""];
+    NSArray *arrr = [NSArray arrayWithObject:@""];
+    if ([arrr isEqual:@""]) {
+        NSLog(@" arr 123");
+    } else {
+        NSLog(@" arr 234");
+    }
+    
+    
+    Person *p = [[Person alloc] init];
+    p.name = @"nick";
+    p.age = 20;
+    NSLog(@"dic = %@", [p ndl_model2Dictionary]);
+    
+    NSLog(@"---date = %@---", [[NSDate alloc] initWithTimeIntervalSince1970:1524535958000]);
+    NSLog(@"---date = %@---", [[NSDate alloc] initWithTimeIntervalSince1970:1524535958000 / 1000]);
+    
+    NSLog(@"%@", [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES) firstObject]);
     
     NSInteger ttt = 10;
     NSAssert(ttt != 9, @"=====");
@@ -176,7 +210,6 @@
     } else {
         NSLog(@"###@@@");
     }
-    
     NSLog(@"dic = %@", [[NSBundle mainBundle] infoDictionary]);
     NSLog(@"viewDidLoad 11");
     [super viewDidLoad];
@@ -222,9 +255,16 @@ NSLog(@"viewDidLoad 22");
 //    [CommonUtils logIvarListForClass:NSClassFromString(@"_UIBarBackground")];
     
     
-    TestView *tview = [[TestView alloc] initWithFrame:CGRectMake(20, 20, self.view.width - 40, 200)];
-    tview.backgroundColor = [UIColor redColor];
+    TestView *tview = [[TestView alloc] initWithFrame:CGRectMake(20, 20, self.view.width - 40, 100)];
+    tview.backgroundColor = [UIColor whiteColor];
     [self.view addSubview:tview];
+    
+    tview.layer.borderColor = [UIColor greenColor].CGColor;
+    tview.layer.borderWidth = 2.0;
+//    tview.layer.shadowColor = [UIColor blackColor].CGColor;
+//    tview.layer.shadowOpacity = 1.0;
+//    tview.layer.shadowRadius = 8;
+//    tview.layer.shadowOffset = CGSizeZero;//CGSizeMake(0, 5);
     NSLog(@"layer = %@", tview.layer);
     NSLog(@"===%@ dele = %@", tview, tview.layer.delegate);
     NSLog(@"here = %@  tt = %@", nil, [NSNull null]);
@@ -701,6 +741,27 @@ NSLog(@"viewDidLoad 22");
     self.xibView.y = 0;
     self.xibView.width = NDLScreenW;
     self.xibView.height = 170;
+    
+    
+    [self.view bringSubviewToFront:tview];
+    tview.clipsToBounds = NO;
+    
+    
+//    TextStrokeLabel *sLabel = [[TextStrokeLabel alloc] init];
+//    sLabel.text = @"我们是中国";
+//    sLabel.textColor = [UIColor blackColor];
+//    sLabel.font = [UIFont boldSystemFontOfSize:14.0];
+//    sLabel.textStrokeWidth = 5.0;
+//    sLabel.textStrokeColor = [UIColor whiteColor];
+//    [self.view addSubview:sLabel];
+//    [sLabel sizeToFit];
+//    sLabel.y = 100;
+    
+//    UIImageView *imageV = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"couponBG"]];
+////    UIImageView *imageV = [[UIImageView alloc] initWithImage:[[UIImage imageNamed:@"couponBG"] ndl_stretchedImage]];
+//    imageV.frame = CGRectMake(30, 150, 280, 200);
+//
+//    [self.view addSubview:imageV];
 }
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section

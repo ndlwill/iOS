@@ -12,4 +12,8 @@
 
 @property (nonatomic, assign) BOOL isNetworkReachable;
 
+- (void)showAlertViewForAppSettingWithTitle:(NSString *)titleStr msg:(NSString *)msgStr cancel:(NSString *)cancelStr setting:(NSString *)settingStr;
+
+//- (void)scrollAdjustWithScrollView:(UIScrollView *)scrollView;
+
 @end

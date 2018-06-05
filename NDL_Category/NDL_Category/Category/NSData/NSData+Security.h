@@ -8,6 +8,7 @@
 
 #import <Foundation/Foundation.h>
 
+// 元数据是指数据的数据
 @interface NSData (Security)
 
 

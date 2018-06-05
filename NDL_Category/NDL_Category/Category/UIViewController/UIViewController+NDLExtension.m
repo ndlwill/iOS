@@ -20,4 +20,23 @@
     }
 }
 
++ (instancetype)ndl_curTopViewController
+{
+    UIViewController *curTopVC = RootViewController;
+//    [curTopVC presentingViewController]// present curTopVC的vc
+    while ([curTopVC presentedViewController]) {// 被curTopVC present的vc
+        curTopVC = [curTopVC presentedViewController];
+    }
+    
+    if ([curTopVC isKindOfClass:[UITabBarController class]] && ((UITabBarController *)curTopVC).selectedViewController != nil) {
+        curTopVC = ((UITabBarController *)curTopVC).selectedViewController;
+    }
+    
+    while ([curTopVC isKindOfClass:[UINavigationController class]] && [(UINavigationController*)curTopVC topViewController]) {
+        curTopVC = ((UINavigationController*)curTopVC).topViewController;
+    }
+    
+    return curTopVC;
+}
+
 @end

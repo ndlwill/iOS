@@ -11,6 +11,7 @@
 @interface Person : NSObject
 
 @property (nonatomic, copy) NSString *name;
+@property (nonatomic, copy) NSString *sex;
 @property (nonatomic, assign) NSInteger age;
 
 + (instancetype)personWithName:(NSString *)name age:(NSInteger)age;

@@ -32,4 +32,10 @@
 // 去除字符串中的emoji表情
 - (instancetype)ndl_stringWithoutEmoji;
 
+// json(dic)->string
+- (instancetype)ndl_json2string:(NSDictionary *)jsonDic;
+
+// 设置字符串的一段富文本
+- (NSAttributedString *)ndl_attrStrWithAttrDic:(NSDictionary *)attrDic range:(NSRange)range;
+
 @end
