@@ -171,7 +171,7 @@
 
 - (void)timeCallback
 {
-    NSLog(@"===timeCallback===");
+    NSLog(@"###===timeCallback===##########");
 }
 
 - (void)viewDidLoad {
@@ -181,7 +181,10 @@
      Causes the receiver’s message to be sent to its target
      If the timer is non-repeating, it is automatically invalidated after firing
      */
-    [timer fire];// 立即执行 
+    [timer fire];// 立即执行
+    
+    
+    
 //    [NSArray arrayWithObject:@""];
     NSArray *arrr = [NSArray arrayWithObject:@""];
     if ([arrr isEqual:@""]) {
