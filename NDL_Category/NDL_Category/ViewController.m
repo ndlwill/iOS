@@ -50,6 +50,12 @@
 #import "TestXibView.h"
 #import "TextStrokeLabel.h"
 
+#import "RedEnvelopeLoadingView.h"
+#import "AlipayPaymentAnimationView.h"
+
+#import "SpeechRecognitionAnimationView.h"
+#import "AlipayPaymentSuccessAnimationView.h"
+
 // TODO: Import
 @interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
@@ -82,8 +88,13 @@
 
 @property (nonatomic, strong) TestXibView *xibView;
 
+@property (nonatomic, strong) NSTimer *timer;
+
+@property (nonatomic, weak) RedEnvelopeLoadingView *redView;
+@property (nonatomic, weak) AlipayPaymentAnimationView *alipayView;
 @end
 
+static NSInteger cc = 0;
 @implementation ViewController
 
 - (PopoverView *)popoverView
@@ -171,18 +182,59 @@
 
 - (void)timeCallback
 {
-    NSLog(@"###===timeCallback===##########");
+    
+    cc++;
+    NSLog(@"###===timeCallback=%ld==##########", cc);
+}
+
+//
+- (NSString *)convertSimpleUnicodeStr:(NSString *)str{
+    NSString *strUrl = [str stringByReplacingOccurrencesOfString:@"U+" withString:@""];
+    unsigned long  unicodeIntValue= strtoul([strUrl UTF8String],0,16);
+//       UTF32Char inputChar = unicodeIntValue ;// 变成utf32
+    unsigned long inputChar = unicodeIntValue ;// 变成utf32
+    //    inputChar = NSSwapHostIntToLittle(inputChar); // 转换成Little 如果需要
+    inputChar = NSSwapHostLongToLittle(inputChar); // 转换成Little 如果需要
+    NSString *sendStr = [[NSString alloc] initWithBytes:&inputChar length:4 encoding:NSUTF32LittleEndianStringEncoding];
+    return sendStr;
+}
+// TODO:right button clicked
+- (IBAction)rightButtonClicked:(UIButton *)sender {
+    [self.redView startAnimation];
+    
+    sender.selected = !sender.selected;
+    if (sender.selected) {
+        // pause
+        [self.timer setFireDate:[NSDate distantFuture]];
+        
+        [self.alipayView pauseAnimation];
+    } else {
+        [self.timer setFireDate:[NSDate distantPast]];
+//        [self.timer setFireDate:[NSDate date]];
+        
+        [self.alipayView resumeAnimation];
+    }
 }
 
 - (void)viewDidLoad {
-    
-    NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:5.0 target:self selector:@selector(timeCallback) userInfo:nil repeats:YES];
     /*
-     Causes the receiver’s message to be sent to its target
+    🤨
+Unicode: U+1F928，UTF-8: F0 9F A4 A8
+     \ud83e\udd28
+     */
+    
+//    NSLog(@"%@", [self convertSimpleUnicodeStr:@"U+6211"]);
+
+//    NSLog(@"%@", [@"我门" ndl_emojiStringEncoding]);// \u6211\u95e8
+    NSLog(@"%.2f", 11.2345);
+    
+    self.timer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(timeCallback) userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:self.timer forMode:NSRunLoopCommonModes];
+    /*
+     Causes the receiver’s message to be sent to its target// 立即执行
      If the timer is non-repeating, it is automatically invalidated after firing
      */
-    [timer fire];// 立即执行
-    
+//    [timer fire];// 立即执行
     
     
 //    [NSArray arrayWithObject:@""];
@@ -236,13 +288,11 @@ NSLog(@"viewDidLoad 22");
     WEAK_REF(self)
 //    weak_self.view
     
+    
     NSNumber *v = [NSNumber numberWithBool:[@"😄" canBeConvertedToEncoding:NSASCIIStringEncoding]];
     NSLog(@"v = %ld", [v boolValue]);
     
     NSLog(@"range = %@", NSStringFromRange([@"我们是😄" rangeOfComposedCharacterSequenceAtIndex:3]));
-    
-    NSLog(@"length = %ld", [@"我" length]);//1
-    
     
     NSLog(@"byte = %ld", sizeof(NSInteger));
     
@@ -760,11 +810,41 @@ NSLog(@"viewDidLoad 22");
 //    [sLabel sizeToFit];
 //    sLabel.y = 100;
     
-//    UIImageView *imageV = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"couponBG"]];
+//    UIImageView *imageV = [[UIImageView alloc] initWithImage:nil];
+//    imageV.backgroundColor = [UIColor blackColor];
 ////    UIImageView *imageV = [[UIImageView alloc] initWithImage:[[UIImage imageNamed:@"couponBG"] ndl_stretchedImage]];
-//    imageV.frame = CGRectMake(30, 150, 280, 200);
-//
+//    imageV.frame = CGRectMake(0, 0, 80, 80);
+//    imageV.center = self.view.center;
 //    [self.view addSubview:imageV];
+//    
+//    [UIView animateWithDuration:5.0 delay:0.0 options:UIViewAnimationOptionRepeat animations:^{
+//        imageV.layer.transform = CATransform3DMakeRotation(M_PI, 0, 1, 0);
+//    } completion:nil];
+    
+    NSURL *url = [NSURL URLWithString:nil];
+    NSLog(@"url = %@", url);
+    
+    // 红包动画
+//    RedEnvelopeLoadingView *redView = [[RedEnvelopeLoadingView alloc] initWithFrame:CGRectMake(0, 0, 120, 50) dotsSpace:20];
+//    redView.backgroundColor = [UIColor whiteColor];
+//    [self.view addSubview:redView];
+//    redView.center = self.view.center;
+//    [redView startAnimation];
+//    self.redView = redView;
+    
+    // TODO:alipay动画
+//    AlipayPaymentAnimationView *alipayView = [AlipayPaymentAnimationView showInView:self.view];
+//    self.alipayView = alipayView;
+    
+    // TODO:语音识别动画
+//    SpeechRecognitionAnimationView *srView = [[SpeechRecognitionAnimationView alloc] initWithFrame:CGRectMake(0, 0, 88, 88)];
+//    [self.view addSubview:srView];
+//    srView.center = self.view.center;
+    
+    AlipayPaymentSuccessAnimationView *successView = [[AlipayPaymentSuccessAnimationView alloc] initWithFrame:CGRectMake(0, 0, 80, 80)];
+    successView.backgroundColor = [UIColor purpleColor];
+    [self.view addSubview:successView];
+    successView.center = self.view.center;
 }
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section
