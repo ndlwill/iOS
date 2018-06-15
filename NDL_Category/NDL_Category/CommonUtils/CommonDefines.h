@@ -10,6 +10,9 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
+//CGRectOffset(CGRectMake(0, 0, 100, 100), 0, 10) // {0, 10, 100, 100}
+//CGRectInset(CGRectMake(0, 0, 100, 100), 0, 10) // {0, 10, 100, 80}
+
 //#define NSLog(format, ...) printf("\n[%s] %s [第%d行] %s\n", __TIME__, __FUNCTION__, __LINE__, [[NSString stringWithFormat:format, ## __VA_ARGS__] UTF8String]);
 
 #ifdef DEBUG
@@ -80,7 +83,7 @@ __weak typeof(obj) weak_##obj = obj; \
 #define IS_LESS_THAN_OR_EQUAL_TO_4INCH (NDLScreenW < 375.0)
 
 // 适配iphoneX
-#define iPhoneX (kScreenWidth == 375.f && kScreenHeight == 812.f ? YES : NO)
+#define iPhoneX (NDLScreenW == 375.f && NDLScreenH == 812.f ? YES : NO)
 
 // 视频通话statusBarH会有变化,所以写死20或者44
 //#define NDLStatusBarH [UIApplication sharedApplication].statusBarFrame.size.height

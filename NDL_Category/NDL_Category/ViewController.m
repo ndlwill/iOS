@@ -56,6 +56,8 @@
 #import "SpeechRecognitionAnimationView.h"
 #import "AlipayPaymentSuccessAnimationView.h"
 
+#import "FirstViewController.h"
+
 // TODO: Import
 @interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
@@ -92,6 +94,9 @@
 
 @property (nonatomic, weak) RedEnvelopeLoadingView *redView;
 @property (nonatomic, weak) AlipayPaymentAnimationView *alipayView;
+
+@property (nonatomic, weak) Person *testPerson;
+
 @end
 
 static NSInteger cc = 0;
@@ -184,7 +189,7 @@ static NSInteger cc = 0;
 {
     
     cc++;
-    NSLog(@"###===timeCallback=%ld==##########", cc);
+//    NSLog(@"###===timeCallback=%ld==##########", cc);
 }
 
 //
@@ -200,6 +205,8 @@ static NSInteger cc = 0;
 }
 // TODO:right button clicked
 - (IBAction)rightButtonClicked:(UIButton *)sender {
+    NSLog(@"===person = %@", self.testPerson);
+    
     [self.redView startAnimation];
     
     sender.selected = !sender.selected;
@@ -214,9 +221,21 @@ static NSInteger cc = 0;
         
         [self.alipayView resumeAnimation];
     }
+    
+    [self presentViewController:[FirstViewController new] animated:YES completion:nil];
 }
 
 - (void)viewDidLoad {
+    NSLog(@"===view controller view did load %@===", NSStringFromUIEdgeInsets(self.view.extraTouchInset));
+    
+    
+    
+    
+    NSLog(@"%@", NSStringFromCGRect(CGRectInset(CGRectMake(0, 0, 100, 100), 0, 10)));
+
+    self.testPerson = [Person personWithName:@"ndl" age:20];
+    NSLog(@"person = %@", self.testPerson);
+    
     /*
     🤨
 Unicode: U+1F928，UTF-8: F0 9F A4 A8
@@ -309,10 +328,10 @@ NSLog(@"viewDidLoad 22");
     
     
     TestView *tview = [[TestView alloc] initWithFrame:CGRectMake(20, 20, self.view.width - 40, 100)];
-    tview.backgroundColor = [UIColor whiteColor];
+    tview.backgroundColor = [UIColor purpleColor];
     [self.view addSubview:tview];
     
-    tview.layer.borderColor = [UIColor greenColor].CGColor;
+    tview.layer.borderColor = [UIColor blueColor].CGColor;
     tview.layer.borderWidth = 2.0;
 //    tview.layer.shadowColor = [UIColor blackColor].CGColor;
 //    tview.layer.shadowOpacity = 1.0;
@@ -845,7 +864,14 @@ NSLog(@"viewDidLoad 22");
     successView.backgroundColor = [UIColor purpleColor];
     [self.view addSubview:successView];
     successView.center = self.view.center;
+    
+    
+    [self.view addGestureRecognizer:[UITapGestureRecognizer ndl_gestureRecognizerWithActionBlock:^(UIGestureRecognizer *gesture) {
+        NSLog(@"123===");
+    }]];
 }
+
+
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section
 {
@@ -872,18 +898,19 @@ NSLog(@"viewDidLoad 22");
 #warning TODO touchesBegan...
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
 {
+//    [super touchesBegan:touches withEvent:event];
     NSLog(@"===touchesBegan===");
-    self.xibView.height += 10;
-    
-    [self.loadingView removeFromSuperview];
-    self.loadingView = nil;
-    
-    NSLog(@"loadingView = nil create###");
-    self.loadingView = [[LoadingView alloc] initWithFrame:CGRectMake(0, 0, 250, 250)];
-    self.loadingView.backgroundColor = [UIColor yellowColor];
-    self.loadingView.loadingStatus = LoadingStatus_Success;
-    [self.view addSubview:self.loadingView];
-    [self.loadingView startAnimation];
+//    self.xibView.height += 10;
+//
+//    [self.loadingView removeFromSuperview];
+//    self.loadingView = nil;
+//
+//    NSLog(@"loadingView = nil create###");
+//    self.loadingView = [[LoadingView alloc] initWithFrame:CGRectMake(0, 0, 250, 250)];
+//    self.loadingView.backgroundColor = [UIColor yellowColor];
+//    self.loadingView.loadingStatus = LoadingStatus_Success;
+//    [self.view addSubview:self.loadingView];
+//    [self.loadingView startAnimation];
 }
 
 - (void)viewTapped:(UIGestureRecognizer *)gesture
@@ -1030,9 +1057,19 @@ NSLog(@"viewDidLoad 22");
 }
 
 
+- (void)viewWillDisappear:(BOOL)animated
+{
+    [super viewWillDisappear:animated];
+    
+    [self.timer invalidate];
+    self.timer = nil;
+}
+
 - (void)dealloc
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self name:UIDeviceOrientationDidChangeNotification object:nil];
+    
+    NSLog(@"===ViewController dealloc===");
 }
 
 - (void)deviceOrientationDidChanged:(NSNotification *)notification

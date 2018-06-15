@@ -27,19 +27,21 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     
+    self.view.backgroundColor = [UIColor purpleColor];
+    
 //    self.view.backgroundColor = [UIColor colorWithPatternImage:[UIImage imageNamed:@"AppIcon60x60"]];
 //    self.title = @"Four";
     
-    self.webView = [[WKWebView alloc] initWithFrame:self.view.bounds];
-    self.webView.navigationDelegate = self;
-    [self.webView addObserver:self forKeyPath:@"estimatedProgress" options:NSKeyValueObservingOptionNew context:nil];
-    [self.webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://www.baidu.com"]]];
-    [self.view addSubview:self.webView];
-    
-    self.progressView = [[UIProgressView alloc] initWithFrame:CGRectMake(0, 64, self.view.bounds.size.width, 2)];
-    self.progressView.progressTintColor = [UIColor cyanColor];
-    self.progressView.trackTintColor = [UIColor greenColor];
-    [self.view addSubview:self.progressView];
+//    self.webView = [[WKWebView alloc] initWithFrame:self.view.bounds];
+//    self.webView.navigationDelegate = self;
+//    [self.webView addObserver:self forKeyPath:@"estimatedProgress" options:NSKeyValueObservingOptionNew context:nil];
+//    [self.webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://www.baidu.com"]]];
+//    [self.view addSubview:self.webView];
+//
+//    self.progressView = [[UIProgressView alloc] initWithFrame:CGRectMake(0, 64, self.view.bounds.size.width, 2)];
+//    self.progressView.progressTintColor = [UIColor cyanColor];
+//    self.progressView.trackTintColor = [UIColor greenColor];
+//    [self.view addSubview:self.progressView];
     
 //    WKUserContentController *userContentController =[[WKUserContentController alloc]init];
 //    userContentController addScriptMessageHandler:<#(nonnull id<WKScriptMessageHandler>)#> name:<#(nonnull NSString *)#>

@@ -11,6 +11,9 @@
 
 #import "Aspects.h"
 
+#import <UserNotifications/UserNotifications.h>
+
+
 @interface AppDelegate ()
 
 @end
@@ -32,7 +35,7 @@
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
     [UIViewController aspect_hookSelector:@selector(viewDidLoad) withOptions:AspectPositionAfter usingBlock:^(id<AspectInfo> aspectInfo){
-        NSLog(@"===123456===");
+//        NSLog(@"===123456===");
     } error:nil];
     
 #if DEBUG
@@ -61,6 +64,13 @@
      */
     [IQKeyboardManager sharedManager].toolbarManageBehaviour = IQAutoToolbarBySubviews;
     
+    // =====推送=====
+    UIUserNotificationSettings *userNotificationSettings = [UIApplication sharedApplication].currentUserNotificationSettings;
+    UIUserNotificationType userNotificationType = userNotificationSettings.types;
+    
+    [[UNUserNotificationCenter currentNotificationCenter] getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings * _Nonnull settings) {
+        UNAuthorizationStatus authorizationStatus = settings.authorizationStatus;
+    }];
     
     //[[UIApplication sharedApplication] registerForRemoteNotifications];
     return YES;

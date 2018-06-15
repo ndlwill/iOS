@@ -11,6 +11,15 @@
 
 @implementation TestView
 
+- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event
+{
+    BOOL flag = [super pointInside:point withEvent:event];
+    NSLog(@"===TestView pointInside point = %@", NSStringFromCGPoint(point));
+    NSLog(@"===TestView pointInside flag = %ld===", [[NSNumber numberWithBool:flag] integerValue]);
+    
+    return flag;
+}
+
 
 // Only override drawRect: if you perform custom drawing.
 // An empty implementation adversely affects performance during animation.
@@ -86,7 +95,7 @@
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
 {
     //[super touchesBegan:touches withEvent:event];
-    NSLog(@"MyTestView");
+    NSLog(@"===MyTestView===");
 }
 
 @end

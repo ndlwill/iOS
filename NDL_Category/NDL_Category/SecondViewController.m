@@ -10,19 +10,73 @@
 #import "Masonry.h"
 #import "CommonUtils.h"
 
+#import "NavigationControllerDelegate.h"
+#import "PanGestureTransitionNavController.h"
+
+#import "ThirdViewController.h"
+#import "FourViewController.h"
+
 @interface SecondViewController () <CAAnimationDelegate>
 
 @property (nonatomic, strong) UISearchBar *searchBar;
+
+@property (nonatomic, strong) NavigationControllerDelegate *navigationControllerDelegate;
 
 @end
 
 @implementation SecondViewController
 
+- (void)navControllerPanGesture:(UIPanGestureRecognizer *)panGesture
+{
+//    CGPoint translationOffset = [panGesture translationInView:self.navigationController.view];
+//    CGFloat progress = fabs(translationOffset.x) / self.view.width;
+//    
+//    switch (panGesture.state) {
+//        case UIGestureRecognizerStateBegan:
+//            self.interactiveTransition = [[UIPercentDrivenInteractiveTransition alloc] init];
+//            if (self.viewControllers.count > 1) {
+//                [self popViewControllerAnimated:YES];
+//            } else {
+//                
+//            }
+//            
+//            break;
+//        case UIGestureRecognizerStateChanged:
+//            [self.interactiveTransition updateInteractiveTransition:progress];
+//            break;
+//        case UIGestureRecognizerStateEnded:
+//            
+//            break;
+//            
+//        default:
+//            [self.interactiveTransition cancelInteractiveTransition];
+//            self.interactiveTransition = nil;
+//            break;
+//    }
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
+    
+//    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(navControllerPanGesture:)];
+//    [self.navigationController.view addGestureRecognizer:pan];
+    
+    PanGestureTransitionNavController *navVC = (PanGestureTransitionNavController *)(self.navigationController);
+    navVC.pushVC = [[FourViewController alloc] init];
+    
+    self.navigationControllerDelegate = [[NavigationControllerDelegate alloc] init];
+    self.navigationControllerDelegate.interactiveTransition = navVC.interactiveTransition;
+    
+    
+    navVC.delegate = self.navigationControllerDelegate;
+    
     self.view.backgroundColor = [UIColor yellowColor];
     
-    //[self.navigationController setNavigationBarHidden:YES animated:NO];
+    
+    
+    
+    
+    [self.navigationController setNavigationBarHidden:YES animated:NO];
 
     UIView *titleView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width - 80, 44)];
     titleView.backgroundColor = [UIColor cyanColor];

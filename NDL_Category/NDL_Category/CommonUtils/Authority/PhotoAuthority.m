@@ -7,12 +7,33 @@
 //
 
 #import "PhotoAuthority.h"
+#import <Photos/Photos.h>
+#import <AssetsLibrary/AssetsLibrary.h>
 
 @implementation PhotoAuthority
 
-//+ (BOOL)authorized
-//{
-//    
-//}
++ (BOOL)authorized
+{
+    // NotDetermined
+//    [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) {
+//
+//    }];
+    return ([self authorizationStatus] == 3);
+}
+
+/*
+ 0 :NotDetermined
+ 1 :Restricted
+ 2 :Denied
+ 3 :Authorized
+ */
++ (NSInteger)authorizationStatus
+{
+    if (@available(iOS 8.0, *)) {
+        return [PHPhotoLibrary authorizationStatus];
+    } else {
+        return [ALAssetsLibrary authorizationStatus];
+    }
+}
 
 @end
