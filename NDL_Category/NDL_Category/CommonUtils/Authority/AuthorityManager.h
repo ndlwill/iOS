@@ -8,6 +8,11 @@
 
 #import <Foundation/Foundation.h>
 
+/* http://www.jb51.net/article/132642.htm */
 @interface AuthorityManager : NSObject
+
++ (BOOL)authorizedWithType:(AuthorityType)type;
+
++ (void)authorizedWithType:(AuthorityType)type completion:(void (^)(BOOL granted))completion;
 
 @end

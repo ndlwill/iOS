@@ -8,6 +8,7 @@
 
 #import <Foundation/Foundation.h>
 
+// 抽屉转场动画 (UIViewControllerTransitioningDelegate for presentVC)
 @interface DrawerTransitionAnimator : NSObject <UIViewControllerTransitioningDelegate, UIViewControllerAnimatedTransitioning>
 
 @property (nonatomic, strong) UIPercentDrivenInteractiveTransition *interactiveTransition;

@@ -226,6 +226,10 @@ static NSInteger cc = 0;
 }
 
 - (void)viewDidLoad {
+//    [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) {
+//        NSLog(@"thread = %@", [NSThread currentThread]);
+//    }];
+    
     NSLog(@"===view controller view did load %@===", NSStringFromUIEdgeInsets(self.view.extraTouchInset));
     
     
@@ -869,6 +873,16 @@ NSLog(@"viewDidLoad 22");
     [self.view addGestureRecognizer:[UITapGestureRecognizer ndl_gestureRecognizerWithActionBlock:^(UIGestureRecognizer *gesture) {
         NSLog(@"123===");
     }]];
+    
+    
+    
+    UIButton *bottomBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    bottomBtn.frame = CGRectMake(0, NDLScreenH - 50, 80, 50);
+    bottomBtn.backgroundColor = [UIColor redColor];
+    [bottomBtn addActionBlock:^(UIButton *pSender) {
+        NSLog(@"bottomBtn clicked");
+    }];
+    [self.view addSubview:bottomBtn];
 }
 
 

@@ -36,4 +36,42 @@
     }
 }
 
+// 只考虑iOS8.0
++ (void)authorizeWithCompletion:(void (^)(BOOL granted))completion
+{
+    PHAuthorizationStatus status = [PHPhotoLibrary authorizationStatus];
+    
+    switch (status) {
+        case PHAuthorizationStatusAuthorized:
+        {
+            if (completion) {
+                completion(YES);
+            }
+        }
+            break;
+        case PHAuthorizationStatusDenied:
+        case PHAuthorizationStatusRestricted:
+        {
+            if (completion) {
+                completion(NO);
+            }
+        }
+            break;
+        case PHAuthorizationStatusNotDetermined:
+        {
+            [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) {
+                // 回调不在主线程
+                if (completion) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        completion(status == PHAuthorizationStatusAuthorized);
+                    });
+                }
+            }];
+        }
+            break;
+        default:
+            break;
+    }
+}
+
 @end

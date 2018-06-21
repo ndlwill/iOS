@@ -16,4 +16,14 @@
 
 + (instancetype)ndl_curTopViewController;
 
+- (void)showAlertWithTitle:(NSString *)title
+                   message:(NSString *)message
+               cancelTitle:(NSString *)cancelTitle
+              cancelAction:(void (^)())cancelAction
+          destructiveTitle:(NSString *)destructiveTitle
+         destructiveAction:(void (^)())destructiveAction
+           otherTitleArray:(NSArray<NSString *> *)otherTitleArray
+               otherAction:(void (^)(NSInteger index))otherAction;
+
+
 @end

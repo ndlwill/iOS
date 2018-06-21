@@ -12,8 +12,13 @@
 
 @property (nonatomic, assign) BOOL isNetworkReachable;
 
+@property (nonatomic, strong) UITableView *tableView;// plain
+@property (nonatomic, assign) UIStatusBarStyle statusBarStyle;
+
+// 显示AppSetting AlertView
 - (void)showAlertViewForAppSettingWithTitle:(NSString *)titleStr msg:(NSString *)msgStr cancel:(NSString *)cancelStr setting:(NSString *)settingStr;
 
+// 大标题滚动调整
 //- (void)scrollAdjustWithScrollView:(UIScrollView *)scrollView;
 
 @end

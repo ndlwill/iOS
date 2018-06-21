@@ -18,8 +18,23 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     
+    self.view.backgroundColor = WhiteColor;
+//    self.statusBarStyle = UIStatusBarStyleDefault;
+    if ([self respondsToSelector:@selector(setAutomaticallyAdjustsScrollViewInsets:)]) {
+        self.automaticallyAdjustsScrollViewInsets = NO;
+    }
+    
 //    id object = [[NSUserDefaults standardUserDefaults] objectForKey:@"KEY"];// object == nil
 //    NSString *objStr = [NSString stringWithFormat:@"%@", object];// objStr == (null)
+}
+
+#pragma mark - Lazy Load
+- (UITableView *)tableView
+{
+    if (!_tableView) {
+        _tableView = [[UITableView alloc] init];
+    }
+    return _tableView;
 }
 
 #pragma mark - Public Methods
@@ -39,6 +54,37 @@
         [self presentViewController:vc animated:YES completion:nil];
     }
 }
+
+#pragma mark - Setter
+- (void)setStatusBarStyle:(UIStatusBarStyle)statusBarStyle
+{
+    _statusBarStyle = statusBarStyle;
+    [self setNeedsStatusBarAppearanceUpdate];
+}
+
+#pragma mark - Overrides
+- (UIStatusBarStyle)preferredStatusBarStyle
+{
+    return _statusBarStyle;
+}
+
+/*
+ // 屏幕旋转
+- (BOOL)shouldAutorotate
+{
+    return NO;
+}
+
+- (UIInterfaceOrientation)preferredInterfaceOrientationForPresentation
+{
+    return UIInterfaceOrientationPortrait;
+}
+
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations
+{
+    return UIInterfaceOrientationMaskPortrait;
+}
+ */
 
 // 滚动调整
 //- (void)scrollAdjustWithScrollView:(UIScrollView *)scrollView

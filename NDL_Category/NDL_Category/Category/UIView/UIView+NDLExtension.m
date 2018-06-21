@@ -24,7 +24,7 @@
 {
     id value = objc_getAssociatedObject(self, _cmd);
     if (!value) {
-        NSLog(@"objc_getAssociatedObject is nil");
+//        NSLog(@"objc_getAssociatedObject extraTouchInset is nil");
         value = [NSValue valueWithUIEdgeInsets:UIEdgeInsetsZero];
     }
     

@@ -42,6 +42,12 @@
     
 #endif
     
+    if (@available(iOS 11.0, *)) {
+        UIScrollView.appearance.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+    }
+    
+    
+    
     // 是否启用自动键盘处理事件响应，默认为 YES
     [IQKeyboardManager sharedManager].enable = YES;
     // 键盘到 textfield 的距离，前提是 enable 属性为 YES，如果为 NO，该属性失效 不能小于0，默认为10.0
@@ -67,12 +73,27 @@
     // =====推送=====
     UIUserNotificationSettings *userNotificationSettings = [UIApplication sharedApplication].currentUserNotificationSettings;
     UIUserNotificationType userNotificationType = userNotificationSettings.types;
+    if (userNotificationType != UIUserNotificationTypeNone) {
+        // 允许推送
+    }
+    
+    // 8.0 DEPRECATED
+    UIRemoteNotificationType remoteNotificationType = Application.enabledRemoteNotificationTypes;
+    if (remoteNotificationType != UIRemoteNotificationTypeNone) {
+        // 允许远程推送
+    }
     
     [[UNUserNotificationCenter currentNotificationCenter] getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings * _Nonnull settings) {
         UNAuthorizationStatus authorizationStatus = settings.authorizationStatus;
+        if (authorizationStatus == UNAuthorizationStatusAuthorized) {
+            // 被授权
+        }
     }];
     
-    //[[UIApplication sharedApplication] registerForRemoteNotifications];
+//    [Application isRegisteredForRemoteNotifications];// 8.0
+    
+//    [[UIApplication sharedApplication] registerForRemoteNotifications];
+    
     return YES;
 }
 

@@ -28,4 +28,42 @@
     }
 }
 
++ (void)authorizeWithCompletion:(void (^)(BOOL granted))completion
+{
+    // iOS 7.0
+    if ([AVCaptureDevice respondsToSelector:@selector(authorizationStatusForMediaType:)]) {
+        AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+        switch (status) {
+            case AVAuthorizationStatusAuthorized:
+            {
+                if (completion) {
+                    completion(YES);
+                }
+            }
+                break;
+            case AVAuthorizationStatusDenied:
+            case AVAuthorizationStatusRestricted:
+            {
+                if (completion) {
+                    completion(NO);
+                }
+            }
+                break;
+            case AVAuthorizationStatusNotDetermined:
+            {
+                [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted) {
+                    if (completion) {
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            completion(granted);
+                        });
+                    }
+                }];
+            }
+                break;
+            default:
+                break;
+        }
+    }
+}
+
 @end

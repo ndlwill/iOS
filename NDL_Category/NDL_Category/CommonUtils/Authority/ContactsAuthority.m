@@ -39,4 +39,74 @@
     }
 }
 
++ (void)authorizeWithCompletion:(void (^)(BOOL granted))completion
+{
+    if (@available(iOS 9.0, *)) {
+        CNAuthorizationStatus status = [CNContactStore authorizationStatusForEntityType:CNEntityTypeContacts];
+        switch (status) {
+            case CNAuthorizationStatusAuthorized:
+            {
+                if (completion) {
+                    completion(YES);
+                }
+            }
+                break;
+            case CNAuthorizationStatusDenied:
+            case CNAuthorizationStatusRestricted:
+            {
+                if (completion) {
+                    completion(NO);
+                }
+            }
+                break;
+            case CNAuthorizationStatusNotDetermined:
+            {
+                [[[CNContactStore alloc] init] requestAccessForEntityType:CNEntityTypeContacts completionHandler:^(BOOL granted, NSError * _Nullable error) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        if (completion) {
+                            completion(granted);
+                        }
+                    });
+                }];
+            }
+                break;
+            default:
+                break;
+        }
+    } else {
+        ABAuthorizationStatus status = ABAddressBookGetAuthorizationStatus();
+        switch (status) {
+            case kABAuthorizationStatusAuthorized:
+            {
+                if (completion) {
+                    completion(YES);
+                }
+            }
+                break;
+            case kABAuthorizationStatusDenied:
+            case kABAuthorizationStatusRestricted:
+            {
+                if (completion) {
+                    completion(NO);
+                }
+            }
+                break;
+            case kABAuthorizationStatusNotDetermined:
+            {
+                ABAddressBookRef addressBook = ABAddressBookCreateWithOptions(NULL, NULL);
+                ABAddressBookRequestAccessWithCompletion(addressBook, ^(bool granted, CFErrorRef error) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        if (completion) {
+                            completion(granted);
+                        }
+                    });
+                });
+            }
+                break;
+            default:
+                break;
+        }
+    }
+}
+
 @end

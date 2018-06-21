@@ -15,4 +15,6 @@
 
 + (AVAuthorizationStatus)authorizationStatus;
 
++ (void)authorizeWithCompletion:(void (^)(BOOL granted))completion;
+
 @end

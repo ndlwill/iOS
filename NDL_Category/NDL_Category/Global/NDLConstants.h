@@ -66,7 +66,7 @@ typedef NS_ENUM(NSInteger, AuthorityType) {
     AuthorityType_Contacts,
     AuthorityType_Calendar,
     AuthorityType_Reminder,// 备忘录
-    AuthorityType_Microphone,
+    AuthorityType_Microphone,// 录音
     AuthorityType_Health,
     AuthorityType_DataNetwork
 };
@@ -81,3 +81,6 @@ FOUNDATION_EXTERN CGFloat const kBigTitleHeight;
 FOUNDATION_EXTERN CGFloat const kBigTitleMaxY;
 // 大标题middleY = 4 + 24 for自动滚动
 FOUNDATION_EXTERN CGFloat const kBigTitleMiddleY;
+
+
+FOUNDATION_EXTERN NSInteger const kTransitionAnimationViewTag;

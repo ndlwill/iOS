@@ -10,4 +10,12 @@
 
 @interface HealthAuthority : NSObject
 
++ (BOOL)authorized;
+
++ (BOOL)isHealthDataAvailable;
+
++ (NSInteger)authorizationStatus;
+
++ (void)authorizeWithCompletion:(void (^)(BOOL granted))completion;
+
 @end

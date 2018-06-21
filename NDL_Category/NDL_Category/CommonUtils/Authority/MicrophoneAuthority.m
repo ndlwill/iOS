@@ -40,4 +40,42 @@
     return [[AVAudioSession sharedInstance] recordPermission];
 }
 
++ (void)authorizeWithCompletion:(void (^)(BOOL granted))completion
+{
+    AVAudioSessionRecordPermission status = [[AVAudioSession sharedInstance] recordPermission];
+    
+    switch (status) {
+        case AVAudioSessionRecordPermissionGranted:
+        {
+            if (completion) {
+                completion(YES);
+            }
+        }
+            break;
+        case AVAudioSessionRecordPermissionDenied:
+        {
+            if (completion) {
+                completion(NO);
+            }
+        }
+            break;
+        case AVAudioSessionRecordPermissionUndetermined:
+        {
+            AVAudioSession *session = [AVAudioSession sharedInstance];//[[AVAudioSession alloc] init];
+            NSError *error = nil;
+            [session setCategory:AVAudioSessionCategoryPlayAndRecord error:&error];
+            [session requestRecordPermission:^(BOOL granted) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (completion) {
+                        completion(granted);
+                    }
+                });
+            }];
+        }
+            break;
+        default:
+            break;
+    }
+}
+
 @end
