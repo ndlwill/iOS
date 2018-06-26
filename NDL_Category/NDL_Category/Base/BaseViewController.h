@@ -18,6 +18,9 @@
 // 显示AppSetting AlertView
 - (void)showAlertViewForAppSettingWithTitle:(NSString *)titleStr msg:(NSString *)msgStr cancel:(NSString *)cancelStr setting:(NSString *)settingStr;
 
+// 取消所有网络请求
+- (void)cancelAllRequests;
+
 // 大标题滚动调整
 //- (void)scrollAdjustWithScrollView:(UIScrollView *)scrollView;
 

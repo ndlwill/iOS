@@ -13,4 +13,7 @@
 // 只针对只有图片的
 + (instancetype)itemWithNormalImage:(NSString *)normalImage highlightedImage:(NSString *)highlightedImage target:(id)target action:(SEL)action;
 
+// 只针对只有文字的
++ (instancetype)itemWithTitle:(NSString *)title titleColor:(UIColor *)titleColor titleFont:(UIFont *)titleFont target:(id)target action:(SEL)action;
+
 @end

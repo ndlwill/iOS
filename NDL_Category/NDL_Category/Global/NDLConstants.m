@@ -18,5 +18,10 @@ CGFloat const kBigTitleHeight = 60.0;
 CGFloat const kBigTitleMaxY = 52.0;
 CGFloat const kBigTitleMiddleY = 28.0;
 
+// NavigationItemBarButton Tags
+NSInteger const kNavigationItemLeftBarButtonTag = 2000;
 // Transition Tags
 NSInteger const kTransitionAnimationViewTag = 3000;
+
+NSString * const kAES_Key = @"1234567812345678";
+NSString * const kAES_IV = @"AES_IV";

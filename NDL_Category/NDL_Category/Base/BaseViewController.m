@@ -55,6 +55,11 @@
     }
 }
 
+- (void)cancelAllRequests
+{
+    
+}
+
 #pragma mark - Setter
 - (void)setStatusBarStyle:(UIStatusBarStyle)statusBarStyle
 {

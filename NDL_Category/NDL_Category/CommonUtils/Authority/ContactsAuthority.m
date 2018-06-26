@@ -99,6 +99,7 @@
                         if (completion) {
                             completion(granted);
                         }
+                        CFRelease(addressBook);
                     });
                 });
             }

@@ -8,6 +8,7 @@
 
 #import <Foundation/Foundation.h>
 
+// 导航控制器代理
 @interface UINavigationControllerAgent : NSObject <UINavigationControllerDelegate>
 
 @end

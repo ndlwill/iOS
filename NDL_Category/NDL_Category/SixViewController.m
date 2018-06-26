@@ -47,6 +47,28 @@
     [self.view addGestureRecognizer:edgePan];
     
     
+
+    
+    /*
+    // leftBarButtons 图片44*44 @2x
+    NSMutableArray<UIBarButtonItem *> *items = [NSMutableArray array];
+    
+    UIButton *leftBtn1 = [UIButton buttonWithType:UIButtonTypeCustom];
+    [leftBtn1 setImage:[UIImage imageNamed:@"back_icon"] forState:UIControlStateNormal];
+    UIBarButtonItem *leftItem1 = [[UIBarButtonItem alloc] initWithCustomView:leftBtn1];
+    [items addObject:leftItem1];
+    
+    UIButton *leftBtn2 = [UIButton buttonWithType:UIButtonTypeCustom];
+    [leftBtn2 setImage:[UIImage imageNamed:@"close_icon"] forState:UIControlStateNormal];
+    UIBarButtonItem *leftItem2 = [[UIBarButtonItem alloc] initWithCustomView:leftBtn2];
+    [items addObject:leftItem2];
+    
+    // 52 * 44  gap = 8
+    self.navigationItem.leftBarButtonItems = items;
+    */
+    
+    
+    
     // 设置了viewController.navigationItem.leftBarButtonItem需要设置这个
 //    self.navigationController.interactivePopGestureRecognizer.delegate = self;
     

@@ -82,5 +82,12 @@ FOUNDATION_EXTERN CGFloat const kBigTitleMaxY;
 // 大标题middleY = 4 + 24 for自动滚动
 FOUNDATION_EXTERN CGFloat const kBigTitleMiddleY;
 
-
+// Tags
+// 2000+
+FOUNDATION_EXTERN NSInteger const kNavigationItemLeftBarButtonTag;
+// 3000+
 FOUNDATION_EXTERN NSInteger const kTransitionAnimationViewTag;
+
+// 加密
+FOUNDATION_EXTERN NSString * const kAES_Key;
+FOUNDATION_EXTERN NSString * const kAES_IV;

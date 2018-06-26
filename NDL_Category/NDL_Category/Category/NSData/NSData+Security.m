@@ -7,7 +7,9 @@
 //
 
 #import "NSData+Security.h"
+#import "GTMBase64.h"
 
 @implementation NSData (Security)
+
 
 @end

@@ -67,7 +67,7 @@
 //        // 让按钮内部的所有内容左对齐
 //        button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
 //        // 让按钮的内容往左边偏移10  内边距
-//        button.contentEdgeInsets = UIEdgeInsetsMake(0, -10, 0, 0);//tlbr
+//        button.contentEdgeInsets = UIEdgeInsetsMake(0, -10, 0, 0);//tlbr  设置这个，同时需要设置button.frame使content在frame的范围内，不然pop返回的时候，超出frame的backBarBtn做渐变动画会有bug
          */
         [button setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
         [button setTitleColor:[UIColor redColor] forState:UIControlStateHighlighted];
@@ -76,6 +76,8 @@
         
         // 修改导航栏左边的item  一旦换了左边的item，就不能点左边拖拽到右边返回
         viewController.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithCustomView:button];
+        //    self.navigationItem.leftBarButtonItem = nil;// 表示使用系统默认的返回
+        //    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithCustomView:[[UIView alloc] init]];// 表示没有返回按钮
         
         // 隐藏tabbar
         viewController.hidesBottomBarWhenPushed = YES;

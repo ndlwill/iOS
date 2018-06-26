@@ -58,8 +58,15 @@
 
 #import "FirstViewController.h"
 
+#import <AddressBookUI/AddressBookUI.h>
+#import <ContactsUI/ContactsUI.h>
+
+#import <CommonCrypto/CommonCryptor.h>
+
+#import "NSString+NDLSecurity.h"
+
 // TODO: Import
-@interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource>
+@interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
 
 @property (weak, nonatomic) UIView *touchView;
@@ -101,6 +108,101 @@
 
 static NSInteger cc = 0;
 @implementation ViewController
+
+#pragma mark - ABPeoplePickerNavigationControllerDelegate
+- (void)peoplePickerNavigationController:(ABPeoplePickerNavigationController *)peoplePicker didSelectPerson:(ABRecordRef)person
+{
+    // CFTypeRef : Base "type" of all "CF objects"
+    
+//    如果是多重属性，那么ABRecordCopyValue函数返回的就是ABMultiValueRef类型的数据
+    
+//    ABRecordCopyValue(<#ABRecordRef record#>, <#ABPropertyID property#>)
+    
+    /*
+     // 取电话号码
+     ABMultiValueRef phones = ABRecordCopyValue(person, kABPersonPhoneProperty);
+     // 取记录数量
+     NSInteger phoneCount = ABMultiValueGetCount(phones);
+     // 遍历所有的电话号码
+     for (NSInteger i = 0; i < phoneCount; i++) {...}
+     获取多重属性的方法
+     // 电话标签
+     CFStringRef phoneLabel = ABMultiValueCopyLabelAtIndex(phones, i);
+     // 本地化电话标签
+     CFStringRef phoneLocalLabel = ABAddressBookCopyLocalizedLabel(phoneLabel);
+     // 电话号码
+     CFStringRef phoneNumber = ABMultiValueCopyValueAtIndex(phones, i);
+     */
+    
+    /*
+     CFStringRef lastName = ABRecordCopyValue(person, kABPersonLastNameProperty);
+     NSString *lastNameStr = (__bridge NSString *)(lastName);
+     CFRelease(lastName); // 使用__bridge type 方法记得释放！
+     */
+    
+    /*
+     // 获取电话，电话是多数据类型
+     ABMultiValueRef phones = ABRecordCopyValue(person, kABPersonPhoneProperty);
+     // 获取电话的个数
+     CFIndex count = ABMultiValueGetCount(phones);
+     // 遍历联系人，取出每个电话标签和电话号码，CF框架必须用for i循环
+     for (CFIndex i = 0 ; i < count; i++) {
+     // 获取联系电话的标签，使用__bridge_transfer方法不用释放  CF->Foundation
+     NSString *label = (__bridge_transfer NSString *)ABMultiValueCopyLabelAtIndex(phones,  i);
+     NSLog(@"label: %@",label);
+     // 获取联系电话，使用CFBridgingRelease方法和上面功能一样也不需要释放
+     NSString *value = CFBridgingRelease(ABMultiValueCopyValueAtIndex(phones,  i));
+     NSLog(@"value: %@",value);
+     }
+     //phones 对象需要被释放
+     CFRelease(phones);
+     */
+}
+/*
+ 该方法可以获取具体的哪个电话号码，例如使用充值话费时不能使用上面方法，因为无法确定具体充值哪个号码
+ - (void)peoplePickerNavigationController:(ABPeoplePickerNavigationController*)peoplePicker didSelectPerson:(ABRecordRef)person property:(ABPropertyID)property identifier:(ABMultiValueIdentifier)identifier NS_AVAILABLE_IOS(8_0);
+ */
+
+/*
+ 不需要弹出联系人控制器就可以获取联系人信息的方法
+ #pragma mark - 点击屏幕获取所有联系人信息，记得授权
+ - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+ //1. 判断是否授权成功, 授权成功才能获取数据
+ if ( ABAddressBookGetAuthorizationStatus() == kABAuthorizationStatusAuthorized) {
+ //2. 创建通讯录
+ ABAddressBookRef addressBook = ABAddressBookCreateWithOptions(NULL, NULL);
+ //3. 获取所有联系人
+ CFArrayRef peosons = ABAddressBookCopyArrayOfAllPeople(addressBook);
+ //4. 遍历所有联系人来获取数据(姓名和电话)
+ CFIndex count = CFArrayGetCount(peosons);
+ for (CFIndex i = 0 ; i < count; i++) {
+ //5. 获取单个联系人
+ ABRecordRef person = CFArrayGetValueAtIndex(peosons, i);
+ //6. 获取姓名
+ NSString *lastName = CFBridgingRelease(ABRecordCopyValue(person, kABPersonLastNameProperty));
+ NSString *firstName  = CFBridgingRelease(ABRecordCopyValue(person, kABPersonFirstNameProperty));
+ NSLog(@"lastName: %@, firstName: %@", lastName, firstName);
+ //7. 获取电话
+ ABMultiValueRef phones = ABRecordCopyValue(person, kABPersonPhoneProperty);
+ //7.1 获取电话的count数
+ CFIndex phoneCount = ABMultiValueGetCount(phones);
+ //7.2 遍历所有电话号码
+ for (CFIndex i = 0; i < phoneCount; i++) {
+ NSString *label = CFBridgingRelease(ABMultiValueCopyLabelAtIndex(phones, i));
+ NSString *value = CFBridgingRelease(ABMultiValueCopyValueAtIndex(phones, i));
+ // 打印标签和电话号
+ NSLog(@"label: %@, value: %@",label, value);
+ }
+ NSLog(@"\\n\\n");
+ //8.1 释放 CF 对象
+ CFRelease(phones);
+ }
+ //8.1 释放 CF 对象
+ CFRelease(peosons);
+ CFRelease(addressBook);
+ }
+ }
+ */
 
 - (PopoverView *)popoverView
 {
@@ -226,13 +328,56 @@ static NSInteger cc = 0;
 }
 
 - (void)viewDidLoad {
+    [@"wohgei76s1" ndl_aesEncrypt];
+    
 //    [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) {
 //        NSLog(@"thread = %@", [NSThread currentThread]);
 //    }];
     
+//    CCCryptorStatus
+//    char pKey[kCCKeySizeAES128 + 1];// 使用 null 字符 '\0' 终止
+//    bzero(pKey, sizeof(pKey));
+//    NSString *key = @"1234567812345678";
+//
+//    NSLog(@"key bytes = %ld value = %s", sizeof(key.UTF8String), key.UTF8String);
+//    NSLog(@"key bytes utf8= %ld", sizeof([key cStringUsingEncoding:NSUTF8StringEncoding]));
+//    NSLog(@"key bytes ascii= %ld", sizeof([key cStringUsingEncoding:NSASCIIStringEncoding]));
+//
+//    if ([key getCString:pKey maxLength:sizeof(pKey) encoding:NSUTF8StringEncoding]) {//
+//        NSLog(@"YES leng = %ld key = %s", sizeof(pKey), pKey);
+//    } else {
+//        NSLog(@"NO leng = %ld key = %s", sizeof(pKey), pKey);
+//    }
+    
+//    char greeting[13] = "Hello";
+//    NSLog(@"bytes = %ld len = %ld", sizeof(greeting), strlen(greeting));// 13 , 5
+    
+//    char greeting[13];
+//    greeting[0] = 's';
+//    NSLog(@"grre = %s", greeting);
+
+    
+    
+    
     NSLog(@"===view controller view did load %@===", NSStringFromUIEdgeInsets(self.view.extraTouchInset));
     
+    // https://www.jianshu.com/p/e6b7cb1eca9e
+    // 通讯录
+//    ABPeoplePickerNavigationController *peoplePickerNavVC = [[ABPeoplePickerNavigationController alloc] init];
+//    peoplePickerNavVC.peoplePickerDelegate = self;
+//    peoplePickerNavVC.predicateForSelectionOfPerson = [NSPredicate predicateWithValue:NO];// 不自动dismiss选择控制器
     
+    CNContactPickerViewController *contactPickerVC = [[CNContactPickerViewController alloc] init];
+    /*
+     // 2. 设置代理
+     picker.delegate = self;
+     // 3. 设置相关属性，谓词筛选email地址是@mac.com的联系人
+     picker.predicateForSelectionOfProperty = [NSPredicate predicateWithFormat:@"(key == 'emailAddresses') AND (value LIKE '*@mac.com')"];
+     / / 谓词筛选email地址数等于1的联系人
+     picker.predicateForSelectionOfContact = [NSPredicate predicateWithFormat:@"emailAddresses.@count == 1"];
+     // 4. 弹出
+     [self presentViewController: picker  animated:YES completion:nil];
+     */
     
     
     NSLog(@"%@", NSStringFromCGRect(CGRectInset(CGRectMake(0, 0, 100, 100), 0, 10)));
