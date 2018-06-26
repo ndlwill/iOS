@@ -23,5 +23,5 @@ NSInteger const kNavigationItemLeftBarButtonTag = 2000;
 // Transition Tags
 NSInteger const kTransitionAnimationViewTag = 3000;
 
-NSString * const kAES_Key = @"1234567812345678";
-NSString * const kAES_IV = @"AES_IV";
+NSString * const kAES_Key = @"1234567812345678";// 最多16bytes
+NSString * const kAES_IV = @"AES_IV";// 最多16bytes

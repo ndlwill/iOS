@@ -7,12 +7,12 @@
 //
 
 #import "PPNetworkCache.h"
-#import "YYCache.h"
 
 static NSString *const kPPNetworkResponseCache = @"kPPNetworkResponseCache";
 
+static YYCache *_dataCache = nil;
+
 @implementation PPNetworkCache
-static YYCache *_dataCache;
 
 + (void)initialize {
     _dataCache = [YYCache cacheWithName:kPPNetworkResponseCache];

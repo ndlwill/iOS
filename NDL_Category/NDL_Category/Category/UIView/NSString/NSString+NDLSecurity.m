@@ -12,7 +12,7 @@
 
 @implementation NSString (NDLSecurity)
 
-- (instancetype)ndl_aesEncrypt
+- (instancetype)ndl_aes128Encrypt
 {
     NSData *data = [self dataUsingEncoding:NSUTF8StringEncoding];
     NSData *aesData = [self _aes128WithOperation:kCCEncrypt data:data key:kAES_Key iv:kAES_IV];
@@ -26,7 +26,7 @@
     
 }
 
-- (instancetype)ndl_aesDecrypt
+- (instancetype)ndl_aes128Decrypt
 {
     // 解码base64
     NSData *base64DecodedData = [[NSData alloc] initWithBase64EncodedString:self options:NSDataBase64DecodingIgnoreUnknownCharacters];// 解码后的data = aesData
@@ -49,14 +49,15 @@
     NSData *ivData = [iv dataUsingEncoding:NSUTF8StringEncoding];
     char cIV[kCCBlockSizeAES128];
     bzero(cIV, sizeof(cIV));
-    // 默认CBC mode
+    
     // 若选择非ECB模式 kCCOptionPKCS7Padding
     int option = kCCOptionPKCS7Padding | kCCOptionECBMode;
     if (ivData) {
         [ivData getBytes:cIV length:kCCBlockSizeAES128];
-        option = kCCOptionPKCS7Padding;
+        option = kCCOptionPKCS7Padding;// 系统默认使用 CBC mode，然后指明使用 PKCS7Padding
     }
     
+    // 密文长度 <= 明文长度 + BlockSize
     size_t bufferSize = [data length] + kCCBlockSizeAES128;// bytes
     void *buffer = malloc(bufferSize);
     

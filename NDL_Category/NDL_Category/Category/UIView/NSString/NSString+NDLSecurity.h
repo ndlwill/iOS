@@ -10,8 +10,18 @@
 
 @interface NSString (NDLSecurity)
 // AES
-- (instancetype)ndl_aesEncrypt;
-- (instancetype)ndl_aesDecrypt;
+/*
+ 参数统一
+ 密钥长度（Key Size）
+ 加密模式（Cipher Mode） AES属于块加密（Block Cipher），块加密中有CBC、ECB、CTR、OFB、CFB等几种工作模式
+ 填充方式（Padding） 由于块加密只能对特定长度的数据块进行加密，因此CBC、ECB模式需要在最后一数据块加密前进行数据填充
+ （CFB，OFB和CTR模式由于与key进行加密操作的是上一块加密后的密文，因此不需要对最后一段明文进行填充）
+ 
+ // 1byte=8bits
+ 初始向量（Initialization Vector）使用除ECB以外的其他加密模式均需要传入一个初始向量，其大小与Block Size相等（AES的Block Size为128 bits）
+ */
+- (instancetype)ndl_aes128Encrypt;
+- (instancetype)ndl_aes128Decrypt;
 // RSA
 // Certificate Signing Request,证书请求,CSR文件
 

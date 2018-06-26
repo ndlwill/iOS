@@ -328,7 +328,7 @@ static NSInteger cc = 0;
 }
 
 - (void)viewDidLoad {
-    [@"wohgei76s1" ndl_aesEncrypt];
+    [@"wohgei76s1" ndl_aes128Encrypt];
     
 //    [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) {
 //        NSLog(@"thread = %@", [NSThread currentThread]);
