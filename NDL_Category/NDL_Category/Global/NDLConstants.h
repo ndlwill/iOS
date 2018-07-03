@@ -71,6 +71,9 @@ typedef NS_ENUM(NSInteger, AuthorityType) {
     AuthorityType_DataNetwork
 };
 
+// =====Block=====
+typedef void(^CommonNoParamNoReturnValueBlock)(void);
+
 
 //
 FOUNDATION_EXTERN CGFloat const kSystemBadgeViewWH;
@@ -91,3 +94,9 @@ FOUNDATION_EXTERN NSInteger const kTransitionAnimationViewTag;
 // 加密
 FOUNDATION_EXTERN NSString * const kAES_Key;
 FOUNDATION_EXTERN NSString * const kAES_IV;
+
+// =====Navigation=====
+FOUNDATION_EXTERN CGFloat const kNavBackButtonWidth;
+FOUNDATION_EXTERN CGFloat const kNavBigTitleContainerViewHeight;
+FOUNDATION_EXTERN CGFloat const kNavBigTitleHeight;
+FOUNDATION_EXTERN CGFloat const kNavBigTitleLeadingToLeftEdge;

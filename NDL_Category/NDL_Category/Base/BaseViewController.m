@@ -65,12 +65,21 @@
 {
     _statusBarStyle = statusBarStyle;
     [self setNeedsStatusBarAppearanceUpdate];
+    NSLog(@"BaseViewController method:setStatusBarStyle style = %ld self = %@", self.statusBarStyle, self);
 }
 
 #pragma mark - Overrides
+// 针对presentViewController出来的vc （nav-push得去研究，push出来的vc没效果）
 - (UIStatusBarStyle)preferredStatusBarStyle
 {
-    return _statusBarStyle;
+    NSLog(@"BaseViewController method:preferredStatusBarStyle");
+    return self.statusBarStyle;
+}
+
+#pragma mark - Private Methods
+- (void)_testForInherit
+{
+    NSLog(@"Base _testForInherit");
 }
 
 /*

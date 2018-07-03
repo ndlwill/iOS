@@ -7,8 +7,18 @@
 //
 
 #import "BaseViewController.h"
+#import "JSHandler.h"
 
 // (case-insensitive)不区分大小写
 @interface BaseWebViewController : BaseViewController
+
+- (instancetype)initWithURL:(NSString *)urlStr;
+
+- (void)loadRequest;
+
+@property (nonatomic, strong) WKWebView *webView;
+
+@property (nonatomic, copy) NSString *urlStr;
+@property (nonatomic, strong) UIColor *progressColor;
 
 @end

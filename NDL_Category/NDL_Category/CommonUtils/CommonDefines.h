@@ -60,6 +60,7 @@ __weak typeof(obj) weak_##obj = obj; \
 // 用户偏好设置
 #define UserPreferences [NSUserDefaults standardUserDefaults]
 #define NotificationCenter [NSNotificationCenter defaultCenter]
+#define CurrentDevice [UIDevice currentDevice]
 // 发通知
 #define PostNotification(name, obj) [[NSNotificationCenter defaultCenter] postNotificationName:name object:obj];
 
@@ -147,9 +148,11 @@ return shared##className; \
 
 #pragma mark - App
 // 获取App当前版本号
-#define App_Bundle_Version [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"]
+#define App_Bundle_Version [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"]
 // 获取App当前build版本号
-#define App_Build_Version [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"]
+#define App_Build_Version [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"]
+// 获取App当前版本identifier
+#define App_Bundle_Identifier [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleIdentifier"]
 // 获取App当前名字
 #define App_Name [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleDisplayName"]
 
@@ -168,5 +171,9 @@ _Pragma("clang diagnostic ignored \"-Wdeprecated-declarations\"")
 #define NDLBadgeViewIgnoreDeprecatedMethodEnd()
 #endif
 
+
+#pragma mark - Navigation_BigTitle
+#define BigTitleFont [UIFont fontWithName:@"PingFangSC-Medium" size:28]
+#define BigTitleTextColor UIColorFromHex(0x343434)
 
 

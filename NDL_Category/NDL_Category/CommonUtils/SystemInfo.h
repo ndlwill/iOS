@@ -26,10 +26,15 @@
 #define IS_IPHONE_6 (IS_IPHONE && SCREEN_MAX_LENGTH == 667.0)
 #define IS_IPHONE_6P (IS_IPHONE && SCREEN_MAX_LENGTH == 736.0)
 
+/*
+ IMEI(International Mobile Equipment Identity)是国际移动设备身份码的缩写，国际移动装备辨识码
+ 是由15位数字组成的”电子串号”，它与每台手机一一对应，而且该码是全世界唯一的
+ */
+
 // 系统信息
 @interface SystemInfo : NSObject
 
-/// 获取设备名称
+/// 获取设备名称 
 //+ (NSString *)deviceName;
 
 /// 当前系统名称
@@ -41,7 +46,9 @@
 /// 获取电池电量 0-1.0
 //+ (CGFloat)batteryLevel;
 
-/// 通用唯一识别码UUID
+// Universally Unique Identifier 通用唯一标识符 一个32位的十六进制序列，使用小横线来连接8-4-4-4-12
+// identifierForVendor是一种应用加设备绑定产生的标识符
+/// 通用唯一识别码UUID Z(identifierForVendor) = X(某应用) + Y(某设备) identifierForVendor是应用和设备两者都有关的
 + (NSString *)uuid;
 
 /// 获取app版本号

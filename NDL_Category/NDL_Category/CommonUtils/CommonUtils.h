@@ -9,6 +9,11 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
+/*
+ iOS的keychain服务:
+ 提供了一种安全的保存私密信息（密码，序列号，证书等）的方式，每个ios程序都有一个独立的keychain存储。
+ 相对于NSUserDefaults、文件保存等一般方式，keychain保存更为安全，而且keychain里保存的信息不会因App被删除而丢失
+ */
 @interface CommonUtils : NSObject
 
 // 键盘所在的window

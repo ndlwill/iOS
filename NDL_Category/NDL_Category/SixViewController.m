@@ -8,6 +8,7 @@
 
 #import "SixViewController.h"
 #import "MagicMoveTransitionAnimator.h"
+#import "TestWebViewController.h"
 
 @interface SixViewController () <UIGestureRecognizerDelegate, UINavigationControllerDelegate>
 
@@ -24,7 +25,7 @@
     NSLog(@"Six viewDidLoad");
     NSLog(@"Six self.view = %@", self.view);
     
-    self.navigationController.delegate = self;
+//    self.navigationController.delegate = self;
     
     self.view.backgroundColor = [UIColor orangeColor];
     
@@ -41,6 +42,23 @@
     label.textAlignment = NSTextAlignmentCenter;
     [self.view addSubview:label];
     self.label = label;
+    
+    UIButton *nextVCButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    nextVCButton.backgroundColor = [UIColor cyanColor];
+    nextVCButton.frame = CGRectMake(0, CGRectGetMaxY(label.frame) + 10, 60, 40);
+    nextVCButton.centerX = self.view.centerX;
+    [nextVCButton addActionBlock:^(UIButton *pSender) {
+//        NSLog(@"nextVCButton");
+        NSString *filePath = [[NSBundle mainBundle] pathForResource:@"JSToOC" ofType:@"html"];
+        NSURL *fileURL = [NSURL fileURLWithPath:filePath];
+        TestWebViewController *webVC = [[TestWebViewController alloc] initWithURL:fileURL.absoluteString];
+        webVC.urlStr = fileURL.absoluteString;
+        NSLog(@"before push webViwe");
+        [self.navigationController pushViewController:webVC animated:YES];
+//        [self presentViewController:webVC animated:YES completion:nil];
+    }];
+    [self.view addSubview:nextVCButton];
+    
     
     UIScreenEdgePanGestureRecognizer *edgePan = [[UIScreenEdgePanGestureRecognizer alloc] initWithTarget:self action:@selector(handleNavigationTransition:)];
     edgePan.edges = UIRectEdgeLeft;
@@ -103,9 +121,16 @@
 {
     [super viewDidAppear:animated];
     
-//    self.navigationController.delegate = self;
+    self.navigationController.delegate = self;
     NSLog(@"Six viewDidAppear frame = %@", NSStringFromCGRect(self.view.frame));
 //    NSLog(@"Six left = %@ back = %@", self.navigationItem.leftBarButtonItem, self.navigationItem.backBarButtonItem);
+}
+
+- (void)viewWillDisappear:(BOOL)animated
+{
+    [super viewWillDisappear:animated];
+    
+    self.navigationController.delegate = nil;// 这个vc push到其他vc 防止其他vc返回这个界面时执行UINavigationControllerDelegate
 }
 
 //- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
@@ -177,7 +202,7 @@
 // 返回转场交互对象
 - (id<UIViewControllerInteractiveTransitioning>)navigationController:(UINavigationController *)navigationController interactionControllerForAnimationController:(id<UIViewControllerAnimatedTransitioning>)animationController
 {
-    if ([animationController isKindOfClass:[MagicMoveTransitionAnimator class]]) {
+    if (animationController && [animationController isKindOfClass:[MagicMoveTransitionAnimator class]]) {
         return self.interactiveTransition;
     }
     

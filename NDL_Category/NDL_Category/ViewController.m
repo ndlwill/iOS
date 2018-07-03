@@ -65,6 +65,10 @@
 
 #import "NSString+NDLSecurity.h"
 
+#import "OpenUDID.h"
+
+#import <AdSupport/AdSupport.h>
+
 // TODO: Import
 @interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
@@ -328,6 +332,17 @@ static NSInteger cc = 0;
 }
 
 - (void)viewDidLoad {
+    NSLog(@"YYkit = %@ === %@", App_Bundle_Version,[[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleIdentifier"]);
+    
+    NSLog(@"IDFA = %@ IDFV = %@", [ASIdentifierManager sharedManager].advertisingIdentifier.UUIDString, [[UIDevice currentDevice].identifierForVendor UUIDString]);
+    
+    // 每次运行都会发生变化，最理想的就是保存在keychain里面，以此作为标识用户设备的唯一标识符
+    CFUUIDRef uuid = CFUUIDCreate(NULL);
+    CFStringRef uuidStr = CFUUIDCreateString(NULL, uuid);
+    NSLog(@"uuidStr = %@", uuidStr);
+    
+    NSString *udid = [OpenUDID value];
+    NSLog(@"openUDID = %@ count = %ld", udid, udid.length);// 40
     [@"wohgei76s1" ndl_aes128Encrypt];
     
 //    [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) {
@@ -671,11 +686,11 @@ NSLog(@"viewDidLoad 22");
     subView1.backgroundColor = [UIColor redColor];
     [self.floatLayoutView addSubview:subView1];
     
-//    self.testView = [[UILabel alloc] initWithFrame:CGRectMake(100, 100, 200, 80)];
-//    self.testView.textAlignment = NSTextAlignmentCenter;
-//    self.testView.text = @"12345";
-//    [self.view addSubview:self.testView];
-//    self.testView.backgroundColor = [UIColor purpleColor];
+    self.testView = [[UILabel alloc] initWithFrame:CGRectMake(100, 100, 200, 80)];
+    self.testView.textAlignment = NSTextAlignmentCenter;
+    self.testView.text = @"12345";
+    [self.view addSubview:self.testView];
+    self.testView.backgroundColor = [UIColor purpleColor];
     
     
     

@@ -81,7 +81,9 @@
         
         CGRect fromImageViewFinalFrameInContainerView = [containerView convertRect:self.animationOriginView.frame fromView:self.animationOriginView.superview];
         
+        // 添加toView
         [containerView insertSubview:toView atIndex:0];
+        [containerView bringSubviewToFront:self.animationTempView];// 防止five push six push other pop six时视图层级问题
         
         [UIView animateWithDuration:_transitionDuration delay:0.0 usingSpringWithDamping:0.6 initialSpringVelocity:1.0 options:UIViewAnimationOptionCurveLinear animations:^{
             fromView.alpha = 0.0;
