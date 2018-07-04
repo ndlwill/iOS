@@ -175,5 +175,8 @@ _Pragma("clang diagnostic ignored \"-Wdeprecated-declarations\"")
 #pragma mark - Navigation_BigTitle
 #define BigTitleFont [UIFont fontWithName:@"PingFangSC-Medium" size:28]
 #define BigTitleTextColor UIColorFromHex(0x343434)
+#define TextFieldBigTitleFont [UIFont fontWithName:@"PingFangSC-Medium" size:22];
+// TextField光标颜色
+#define TextFieldCursorColor UIColorFromHex(0x02C6DC)
 
 
