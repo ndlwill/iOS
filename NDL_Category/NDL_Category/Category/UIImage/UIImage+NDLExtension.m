@@ -175,4 +175,71 @@
     
     return newImage;
 }
+
+- (UIImage *)ndl_compressToWidth:(CGFloat)width
+{
+    if (width <= 0 || [self isKindOfClass:[NSNull class]] || self == nil) {
+        return nil;
+    }
+    CGSize newSize = CGSizeMake(width, width * (self.size.height / self.size.width));
+    UIGraphicsBeginImageContext(newSize);
+    [self drawInRect:CGRectMake(0, 0, newSize.width, newSize.height)];
+    UIImage *newImage = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return newImage;
+}
+
+- (void)ndl_compressToDataLength:(NSInteger)length withBlock:(void (^)(NSData *data))block
+{
+    if (length <= 0 || [self isKindOfClass:[NSNull class]] || self == nil) {
+        block(nil);
+    }
+    
+    dispatch_async(dispatch_get_global_queue(0, 0), ^{
+        UIImage *newImage = [self copy];
+        CGFloat scaleRatio = 0.9;
+        NSData *jpegData = UIImageJPEGRepresentation(newImage, scaleRatio);
+        
+        while (jpegData.length > length) {
+            newImage = [self ndl_compressToWidth:newImage.size.width * scaleRatio];
+            NSData *newData = UIImageJPEGRepresentation(newImage, 0.0);
+            if (newData.length < length) {
+                CGFloat scale = 1.0;
+                newData = UIImageJPEGRepresentation(newImage, scale);
+                while (newData.length > length) {
+                    scale -= 0.1;
+                    newData = UIImageJPEGRepresentation(newImage, scale);
+                }
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    block(newData);
+                });
+                return ;
+            }
+        }
+        block(jpegData);
+    });
+}
+
++ (UIImage *)ndl_createNonInterpolatedUIImageFormCIImage:(CIImage *)ciImage whValue:(CGFloat)whValue
+{
+    CGRect extent = CGRectIntegral(ciImage.extent);
+    CGFloat scale = MIN(whValue / CGRectGetWidth(extent), whValue / CGRectGetHeight(extent));
+    
+    // 1.创建bitmap;
+    size_t width = CGRectGetWidth(extent) * scale;
+    size_t height = CGRectGetHeight(extent) * scale;
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceGray();
+    CGContextRef bitmapRef = CGBitmapContextCreate(nil, width, height, 8, 0, cs, (CGBitmapInfo)kCGImageAlphaNone);
+    CIContext *context = [CIContext contextWithOptions:nil];
+    CGImageRef bitmapImage = [context createCGImage:ciImage fromRect:extent];
+    CGContextSetInterpolationQuality(bitmapRef, kCGInterpolationNone);
+    CGContextScaleCTM(bitmapRef, scale, scale);
+    CGContextDrawImage(bitmapRef, extent, bitmapImage);
+    
+    // 2.保存bitmap到图片
+    CGImageRef scaledImage = CGBitmapContextCreateImage(bitmapRef);
+    CGContextRelease(bitmapRef);
+    CGImageRelease(bitmapImage);
+    return [UIImage imageWithCGImage:scaledImage];
+}
 @end

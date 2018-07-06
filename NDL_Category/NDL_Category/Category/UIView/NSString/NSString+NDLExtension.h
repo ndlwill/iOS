@@ -67,4 +67,16 @@
 // 去除特殊字符
 - (instancetype)ndl_removeSpecialCharacter;
 
+// 提取字符串中的数字
+- (instancetype)ndl_extractDigit;
+
+// double 分:秒 00:00
++ (instancetype)ndl_stringWithTimeInterval:(NSTimeInterval)timeInterval;
+
+// GBK编码下的字节数
+- (NSUInteger)ndl_numberOfBytesWhenGBKEncoding;
+
+// 所占字节数 一个汉字占两个字节，一个英文字母占一个字节
+- (NSUInteger)ndl_numberOfBytesWhenCountingNonASCIICharacterAsTwo;
+
 @end

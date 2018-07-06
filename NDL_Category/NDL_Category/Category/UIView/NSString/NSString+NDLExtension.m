@@ -324,5 +324,37 @@ Unicode: U+1F928，UTF-8: F0 9F A4 A8
     return [regex stringByReplacingMatchesInString:self options:NSMatchingReportProgress range:NSMakeRange(0, self.length) withTemplate:@""];
 }
 
+- (instancetype)ndl_extractDigit
+{
+    NSCharacterSet *nonDigits = [[NSCharacterSet decimalDigitCharacterSet] invertedSet];
+    return [self stringByTrimmingCharactersInSet:nonDigits];
+}
+
++ (instancetype)ndl_stringWithTimeInterval:(NSTimeInterval)timeInterval
+{
+    NSInteger minute = timeInterval / 60;
+    NSInteger second = (NSInteger)round(timeInterval) % 60;
+    return [NSString stringWithFormat:@"%02ld:%02ld", minute ,second];
+}
+
+- (NSUInteger)ndl_numberOfBytesWhenGBKEncoding
+{
+    NSStringEncoding encoding = CFStringConvertEncodingToNSStringEncoding(kCFStringEncodingGB_18030_2000);
+    NSData *data = [self dataUsingEncoding:encoding];
+    return data.length;
+}
+
+- (NSUInteger)ndl_numberOfBytesWhenCountingNonASCIICharacterAsTwo
+{
+    NSUInteger numberOfBytes = 0;
+    char *p = (char *)[self cStringUsingEncoding:NSUnicodeStringEncoding];
+    for (NSInteger i = 0, l = [self lengthOfBytesUsingEncoding:NSUnicodeStringEncoding]; i < l; i++) {
+        if (*p) {
+            numberOfBytes++;
+        }
+        p++;
+    }
+    return numberOfBytes;
+}
 
 @end
