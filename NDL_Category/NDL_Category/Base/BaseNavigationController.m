@@ -27,6 +27,7 @@
     //    UINavigationBar *bar = [UINavigationBar appearanceWhenContainedIn:[self class], nil];
     
     UINavigationBar *bar = [UINavigationBar appearance];
+    // 使得self.navigationBar.translucent = NO
     [bar setBackgroundImage:[UIImage ndl_imageWithColor:[UIColor ndl_randomColor] size:CGSizeMake(1.0, 1.0)] forBarMetrics:UIBarMetricsDefault];
     [bar setTitleTextAttributes:@{NSFontAttributeName : [UIFont boldSystemFontOfSize:20]}];
     

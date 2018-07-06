@@ -15,6 +15,7 @@
 
 @implementation BaseViewController
 
+#pragma mark - Life Circle
 - (void)viewDidLoad {
     [super viewDidLoad];
     
@@ -26,6 +27,11 @@
     
 //    id object = [[NSUserDefaults standardUserDefaults] objectForKey:@"KEY"];// object == nil
 //    NSString *objStr = [NSString stringWithFormat:@"%@", object];// objStr == (null)
+}
+
+- (void)dealloc
+{
+    [self cancelAllRequests];
 }
 
 #pragma mark - Lazy Load
@@ -55,9 +61,21 @@
     }
 }
 
+- (void)backButtonDidClicked
+{
+    NSLog(@"presentingViewController = %@ navigationController = %@", self.presentingViewController, self.navigationController);
+    NSLog(@"backButtonDidClicked self = %@", self);
+    UINavigationController *navigationVC = self.navigationController;
+    if (navigationVC && navigationVC.viewControllers.firstObject != self) {
+        [navigationVC popViewControllerAnimated:YES];
+    } else {
+        [self dismissViewControllerAnimated:YES completion:nil];
+    }
+}
+
 - (void)cancelAllRequests
 {
-    
+
 }
 
 #pragma mark - Setter

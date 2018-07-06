@@ -16,6 +16,7 @@ typedef void(^CommonBlock)(void);
 @property (nonatomic, strong, readonly) UIButton *leftButton;
 @property (nonatomic, strong, readonly) UIButton *rightButton;
 @property (nonatomic, strong, readonly) UITextField *textField;// 占位文字颜色在设置占位文字后设置
+@property (nonatomic, copy) CommonBlock textFieldRightButtonBlock;
 
 // navigationBar背景颜色 default:white
 @property (nonatomic, strong) IBInspectable UIColor *navBarBackgroundColor;

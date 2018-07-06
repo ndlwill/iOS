@@ -332,6 +332,9 @@ static NSInteger cc = 0;
 }
 
 - (void)viewDidLoad {
+    NSString *message = @"wjhgfk";
+    NSLog(@"message = %@", message ? : @"123ws");
+    
     NSLog(@"YYkit = %@ === %@", App_Bundle_Version,[[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleIdentifier"]);
     
     NSLog(@"IDFA = %@ IDFV = %@", [ASIdentifierManager sharedManager].advertisingIdentifier.UUIDString, [[UIDevice currentDevice].identifierForVendor UUIDString]);

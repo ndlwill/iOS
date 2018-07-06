@@ -13,6 +13,8 @@
 
 - (instancetype)initWithViewController:(UIViewController *)vc configuration:(WKWebViewConfiguration *)configuration;
 
-- (void)removeAllMessageHandlers;
+//- (void)addScriptMessageName:(NSString *)messageName handler:(CommonNoParamNoReturnValueBlock)handlerBlock;
+
+- (void)removeAllScriptMessageHandlers;
 
 @end

@@ -53,6 +53,7 @@
         NSURL *fileURL = [NSURL fileURLWithPath:filePath];
         TestWebViewController *webVC = [[TestWebViewController alloc] initWithURL:fileURL.absoluteString];
         webVC.urlStr = fileURL.absoluteString;
+        webVC.progressColor = [UIColor redColor];
         NSLog(@"before push webViwe");
         [self.navigationController pushViewController:webVC animated:YES];
 //        [self presentViewController:webVC animated:YES completion:nil];

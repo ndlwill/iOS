@@ -94,6 +94,7 @@ __weak typeof(obj) weak_##obj = obj; \
 #define AdditionaliPhoneXBottomSafeH 34.0
 
 #define StatusBarH (iPhoneX ? AdditionaliPhoneXTopSafeH : 20.0)
+
 #define TopSafeH (iPhoneX ? AdditionaliPhoneXTopSafeH : 0.0)
 #define BottomSafeH (iPhoneX ? AdditionaliPhoneXBottomSafeH : 0.0)
 

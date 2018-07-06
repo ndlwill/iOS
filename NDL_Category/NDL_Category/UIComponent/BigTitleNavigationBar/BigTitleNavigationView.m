@@ -10,14 +10,15 @@
 
 @interface BigTitleNavigationView ()
 
+// containerView
+@property (nonatomic, strong) UIView *navBarContainerView;
+@property (nonatomic, strong) UIView *bottomContainerView;
+
 @property (nonatomic, strong) UIButton *leftButton;
 @property (nonatomic, strong) UIButton *rightButton;
-@property (nonatomic, strong) UITextField *textField;
-
-@property (nonatomic, strong) UIView *navBarView;
-@property (nonatomic, strong) UIView *bigTitleContainerView;
 
 @property (nonatomic, strong) UILabel *bigTitleLabel;
+@property (nonatomic, strong) UITextField *textField;
 
 @property (nonatomic, strong) UIView *lineView;
 
@@ -33,10 +34,10 @@
     if (!_leftButton) {
         _leftButton = [UIButton buttonWithType:UIButtonTypeCustom];
         [_leftButton addTarget:self action:@selector(leftButtonDidClicked) forControlEvents:UIControlEventTouchUpInside];
-        [self.navBarView addSubview:_leftButton];
+        [self.navBarContainerView addSubview:_leftButton];
         [_leftButton mas_makeConstraints:^(MASConstraintMaker *make) {
-            make.top.equalTo(self.navBarView).offset(StatusBarH);
-            make.left.equalTo(self.navBarView);
+            make.top.equalTo(self.navBarContainerView).offset(StatusBarH);
+            make.left.equalTo(self.navBarContainerView);
             make.width.mas_equalTo(kNavBackButtonWidth);
             make.height.mas_equalTo(NavigationBarH);
         }];
@@ -55,10 +56,10 @@
          _rightButton.imageView.backgroundColor = [UIColor cyanColor];
          */
         [_rightButton addTarget:self action:@selector(rightButtonDidClicked) forControlEvents:UIControlEventTouchUpInside];
-        [self.navBarView addSubview:_rightButton];
+        [self.navBarContainerView addSubview:_rightButton];
         [_rightButton mas_makeConstraints:^(MASConstraintMaker *make) {
-            make.top.equalTo(self.navBarView).offset(StatusBarH);
-            make.right.equalTo(self.navBarView).offset(-kNavBigTitleLeadingToLeftEdge);
+            make.top.equalTo(self.navBarContainerView).offset(StatusBarH);
+            make.right.equalTo(self.navBarContainerView).offset(-kNavBigTitleLeadingToLeftEdge);
             //         make.width.mas_equalTo(kNavBackButtonWidth);// 不设置width,宽度包裹
             make.height.mas_equalTo(NavigationBarH);
         }];
@@ -75,11 +76,11 @@
         _bigTitleLabel.textColor = BigTitleTextColor;
         _bigTitleLabel.font = BigTitleFont;
         _bigTitleLabel.textAlignment = NSTextAlignmentLeft;
-        [self.bigTitleContainerView addSubview:_bigTitleLabel];
+        [self.bottomContainerView addSubview:_bigTitleLabel];
         [_bigTitleLabel mas_makeConstraints:^(MASConstraintMaker *make) {
-            make.top.equalTo(self.bigTitleContainerView.mas_top);
-            make.left.equalTo(self.bigTitleContainerView).offset(kNavBigTitleLeadingToLeftEdge);
-            make.right.equalTo(self.bigTitleContainerView).offset(-kNavBigTitleLeadingToLeftEdge);
+            make.top.equalTo(self.bottomContainerView);
+            make.left.equalTo(self.bottomContainerView).offset(kNavBigTitleLeadingToLeftEdge);
+            make.right.equalTo(self.bottomContainerView).offset(-kNavBigTitleLeadingToLeftEdge);
             make.height.mas_equalTo(kNavBigTitleHeight);
         }];
     }
@@ -89,21 +90,11 @@
 - (UITextField *)textField
 {
     if (!_textField) {
-        // textFielfContainerView
-        UIView *textFieldContainerView = [[UIView alloc] init];
-        //      textFieldContainerView.backgroundColor = [UIColor yellowColor];
-        [self addSubview:textFieldContainerView];
-        [textFieldContainerView mas_makeConstraints:^(MASConstraintMaker *make) {
-            make.top.equalTo(self.navBarView.mas_bottom);
-            make.left.right.bottom.equalTo(self);
-        }];
-        
         // textField rightView
         UIButton *textFieldRightBtn = [UIButton buttonWithType:UIButtonTypeCustom];
         textFieldRightBtn.bounds = CGRectMake(0, 0, 20, 20);
         [textFieldRightBtn setImage:[UIImage imageNamed:@"common_textFieldRightViewImage_12x12"] forState:UIControlStateNormal];
         [textFieldRightBtn addTarget:self action:@selector(textFieldRightButtonDidClicked) forControlEvents:UIControlEventTouchUpInside];
-        
         
         // textField
         _textField = [[UITextField alloc] init];
@@ -116,10 +107,10 @@
         _textField.returnKeyType = UIReturnKeyDone;
         _textField.rightView = textFieldRightBtn;
         _textField.rightViewMode = UITextFieldViewModeWhileEditing;
-        [textFieldContainerView addSubview:_textField];
+        [self.bottomContainerView addSubview:_textField];
         [_textField mas_makeConstraints:^(MASConstraintMaker *make) {
-            make.left.equalTo(textFieldContainerView).offset(kNavBigTitleLeadingToLeftEdge);
-            make.center.equalTo(textFieldContainerView);
+            make.left.equalTo(self.bottomContainerView).offset(kNavBigTitleLeadingToLeftEdge);
+            make.center.equalTo(self.bottomContainerView);
         }];
     }
     return _textField;
@@ -130,7 +121,7 @@
 {
     if (!_lineView) {
         _lineView = [[UIView alloc] init];
-        _lineView.backgroundColor = UIColorFromHex(@"#C8C8C8");
+        _lineView.backgroundColor = UIColorFromHex(0xC8C8C8);
         [self addSubview:_lineView];
         [_lineView mas_makeConstraints:^(MASConstraintMaker *make) {
             make.left.right.bottom.equalTo(self);
@@ -171,22 +162,22 @@
     // IBInspectable设置了 这边为null
     NSLog(@"_setupUI navBarBackgroundColor = %@", self.navBarBackgroundColor);
     
-    // navBarView
-    self.navBarView = [[UIView alloc] init];
+    // navBarContainerView
+    self.navBarContainerView = [[UIView alloc] init];
     //   self.navBarView.backgroundColor = [UIColor whiteColor];
-    [self addSubview:self.navBarView];
-    [self.navBarView mas_makeConstraints:^(MASConstraintMaker *make) {
+    [self addSubview:self.navBarContainerView];
+    [self.navBarContainerView mas_makeConstraints:^(MASConstraintMaker *make) {
         make.left.top.right.equalTo(self);
         make.height.mas_equalTo(TopExtendedLayoutH);
     }];
     
-    // bigTitleContainerView
-    self.bigTitleContainerView = [[UIView alloc] init];
-    [self addSubview:self.bigTitleContainerView];
-    [self.bigTitleContainerView mas_makeConstraints:^(MASConstraintMaker *make) {
-        make.top.equalTo(self.navBarView.mas_bottom);
-        make.left.right.equalTo(self);
-        make.height.mas_equalTo(kNavBigTitleContainerViewHeight);
+    // bottomContainerView
+    self.bottomContainerView = [[UIView alloc] init];
+    //   self.bottomContainerView.backgroundColor = [UIColor yellowColor];
+    [self addSubview:self.bottomContainerView];
+    [self.bottomContainerView mas_makeConstraints:^(MASConstraintMaker *make) {
+        make.top.equalTo(self.navBarContainerView.mas_bottom);
+        make.left.right.bottom.equalTo(self);
     }];
 }
 
@@ -207,14 +198,16 @@
 
 - (void)textFieldRightButtonDidClicked
 {
-    self.textField.text = @"";
+    if (self.textFieldRightButtonBlock) {
+        self.textFieldRightButtonBlock();
+    }
 }
 
 #pragma mark - Setter
 - (void)setNavBarBackgroundColor:(UIColor *)navBarBackgroundColor
 {
     _navBarBackgroundColor = navBarBackgroundColor;
-    self.navBarView.backgroundColor = navBarBackgroundColor;
+    self.navBarContainerView.backgroundColor = navBarBackgroundColor;
 }
 
 - (void)setBigTitleStr:(NSString *)bigTitleStr

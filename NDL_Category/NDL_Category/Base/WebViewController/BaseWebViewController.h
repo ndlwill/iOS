@@ -16,9 +16,18 @@
 
 - (void)loadRequest;
 
-@property (nonatomic, strong) WKWebView *webView;
+- (void)updateNavigationItems;
+
+#pragma mark - readonly property
+@property (nonatomic, strong, readonly) WKWebView *webView;
+
 
 @property (nonatomic, copy) NSString *urlStr;
+// default: lightGray
 @property (nonatomic, strong) UIColor *progressColor;
+// progressView 是否显示在NavBar上面 default: NO
+@property (nonatomic, assign) BOOL progressShowInNavBarFlag;
+// 网页多级跳转 是否显示关闭按钮
+@property (nonatomic, assign) BOOL showCloseButtonFlag;
 
 @end
