@@ -71,6 +71,15 @@ typedef NS_ENUM(NSInteger, AuthorityType) {
     AuthorityType_DataNetwork
 };
 
+// 分享平台
+typedef NS_ENUM(NSInteger, SharePlatform) {
+    SharePlatform_WechatTimeLine,
+    SharePlatform_WechatSession,
+    SharePlatform_QQ,
+    SharePlatform_QZone,
+    SharePlatform_Weibo
+};
+
 // =====Block=====
 typedef void(^CommonNoParamNoReturnValueBlock)(void);
 

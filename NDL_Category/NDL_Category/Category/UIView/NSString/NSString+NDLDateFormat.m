@@ -31,4 +31,39 @@
     return [firstStr stringByAppendingString:lastStr];
 }
 
+// curTimeInterval > timeInterval
++ (instancetype)ndl_convertToTimeStatusFromTimeInterval:(NSTimeInterval)timeInterval
+{
+    NSTimeInterval curTimeInterval = [[NSDate date] timeIntervalSince1970];
+//    NSTimeInterval createTimeInterval = timeInterval;
+    NSTimeInterval deltaTimeInterval = curTimeInterval - timeInterval;
+    
+    if (deltaTimeInterval < 60.0) {
+        return @"刚刚";
+    }
+    
+    NSUInteger minutes = deltaTimeInterval / 60.0;
+    if (minutes < 60) {
+        return [NSString stringWithFormat:@"%ld分钟前", minutes];
+    }
+    
+    NSUInteger hours = deltaTimeInterval / 3600;
+    if (hours < 24) {
+        return [NSString stringWithFormat:@"%ld小时前", hours];
+    }
+    
+    NSUInteger days = deltaTimeInterval / 3600 / 24;
+    if (days < 30) {
+        return [NSString stringWithFormat:@"%ld天前", days];
+    }
+    
+    NSUInteger months = deltaTimeInterval / 3600 / 24 / 30;
+    if (months < 12) {
+        return [NSString stringWithFormat:@"%ld月前", months];
+    }
+    
+    NSUInteger years = deltaTimeInterval / 3600 / 24 / 30 / 12;
+    return [NSString stringWithFormat:@"%ld年前", years];
+}
+
 @end

@@ -16,5 +16,7 @@
 - (NSDate *)ndl_dateWithFormatter:(NSString *)fmtStr;
 // 2017-12-12 00:00 -> 2017年12月12日 00:00
 - (instancetype)ndl_convertToCNDateString;
+// 几天前，几分钟前等
++ (instancetype)ndl_convertToTimeStatusFromTimeInterval:(NSTimeInterval)timeInterval;
 
 @end

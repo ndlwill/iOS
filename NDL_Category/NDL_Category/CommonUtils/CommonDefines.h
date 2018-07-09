@@ -172,6 +172,10 @@ _Pragma("clang diagnostic ignored \"-Wdeprecated-declarations\"")
 #define NDLBadgeViewIgnoreDeprecatedMethodEnd()
 #endif
 
+// @property (nonatomic, strong, nonnull) dispatch_semaphore_t lock;
+#define NDLLOCK(lock) dispatch_semaphore_wait(lock, DISPATCH_TIME_FOREVER);
+#define NDLUNLOCK(lock) dispatch_semaphore_signal(lock);
+
 
 #pragma mark - Navigation_BigTitle
 #define BigTitleFont [UIFont fontWithName:@"PingFangSC-Medium" size:28]

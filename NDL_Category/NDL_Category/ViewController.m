@@ -332,6 +332,7 @@ static NSInteger cc = 0;
 }
 
 - (void)viewDidLoad {
+    [CommonUtils testForSubTitles:@"123", @"sdf", @"sdfghj",nil];
     NSString *message = @"wjhgfk";
     NSLog(@"message = %@", message ? : @"123ws");
     

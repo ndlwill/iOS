@@ -32,4 +32,10 @@
 // 打开app setting
 + (void)openAppSettingURL;
 
+// scrollView总共数据量
++ (NSUInteger)totalDataCountsForScrollView:(UIScrollView *)scrollView;
+
+// ========test========
++ (void)testForSubTitles:(NSString *)subTitle,...NS_REQUIRES_NIL_TERMINATION;
+
 @end
