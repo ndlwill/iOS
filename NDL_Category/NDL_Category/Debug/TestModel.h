@@ -10,4 +10,12 @@
 
 @interface TestModel : NSObject <NSCoding>
 
+// 用于NSObject对象
+//- (instancetype)init NS_UNAVAILABLE;
+//+ (instancetype)new NS_UNAVAILABLE;
+
+- (instancetype)initWithView:(UIView *)view NS_DESIGNATED_INITIALIZER;
+
+- (void)publicMethod:(NSString *)str;
+
 @end

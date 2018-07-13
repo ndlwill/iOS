@@ -7,6 +7,12 @@
 //
 
 #import "TestModel.h"
+#import <objc/runtime.h>
+
+typedef struct Params{
+    int a;
+    int b
+}MyParams;
 
 @implementation TestModel
 
@@ -42,5 +48,34 @@
     }
     return self;
 }
+
+#pragma mark - init
+- (instancetype)initWithView:(UIView *)view
+{
+    if (self = [super init]) {
+        
+    }
+    return self;
+}
+
+#pragma mark - Public Methods
+- (void)publicMethod:(NSString *)str
+{
+    SEL selector = NSSelectorFromString(@"_privateMethod:");
+    // 结构体转换为对象
+    MyParams params = {10, 20};
+    NSValue *structValue = [NSValue valueWithBytes:&params objCType:@encode(MyParams)];
+    ((void(*)(id, SEL, id))[self methodForSelector:selector])(self, selector, str);
+    
+//    ((void (*)(id, SEL, id))objc_msgSend)(self, selector, str);
+//    ((void(*)(id))[self methodForSelector:selector])(str);
+}
+
+#pragma mark - Private Methods
+- (void)_privateMethod:(NSString *)str
+{
+    NSLog(@"_privateMethod = %@", str);
+}
+
 
 @end

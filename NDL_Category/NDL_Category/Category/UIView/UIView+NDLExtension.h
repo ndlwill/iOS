@@ -45,7 +45,4 @@
 // 获取当前视图所在的控制器
 - (UIViewController *)ndl_viewController;
 
-// ?
-- (void)ndl_addTapGestureWithHandler:(void (^)())handler;
-
 @end

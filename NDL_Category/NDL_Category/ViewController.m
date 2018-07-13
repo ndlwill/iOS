@@ -69,6 +69,8 @@
 
 #import <AdSupport/AdSupport.h>
 
+#import "TestModel.h"
+
 // TODO: Import
 @interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
@@ -332,7 +334,15 @@ static NSInteger cc = 0;
 }
 
 - (void)viewDidLoad {
-    [CommonUtils testForSubTitles:@"123", @"sdf", @"sdfghj",nil];
+    NSLog(@"===ViewController viewDidLoad===");
+
+    
+    NSLog(@"pathComp = %@", [@"http:///www.baidu.com/:user/name我们" pathComponents]);
+    TestModel *model = [[TestModel alloc] init];
+    [model publicMethod:@"我们"];
+    
+    [CommonUtils logIvarListForClass:[UINavigationItem class]];
+    [CommonUtils logPropertyListForClass:[UINavigationItem class]];
     NSString *message = @"wjhgfk";
     NSLog(@"message = %@", message ? : @"123ws");
     
@@ -375,7 +385,6 @@ static NSInteger cc = 0;
 //    greeting[0] = 's';
 //    NSLog(@"grre = %s", greeting);
 
-    
     
     
     NSLog(@"===view controller view did load %@===", NSStringFromUIEdgeInsets(self.view.extraTouchInset));

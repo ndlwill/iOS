@@ -156,6 +156,8 @@ return shared##className; \
 #define App_Bundle_Identifier [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleIdentifier"]
 // 获取App当前名字
 #define App_Name [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleDisplayName"]
+// 返回dic dic[@"CFBundleURLSchemes"] 返回URLScheme数组
+#define App_URLTypes [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleURLTypes"]
 
 #pragma mark - Device
 // 获取当前设备的UUID ?
@@ -171,6 +173,11 @@ _Pragma("clang diagnostic ignored \"-Wdeprecated-declarations\"")
 #define NDLBadgeViewIgnoreDeprecatedMethodStart()
 #define NDLBadgeViewIgnoreDeprecatedMethodEnd()
 #endif
+
+#define IGNORE_PERFORM_SELECTOR_LEAK_WARNING(code) _Pragma("clang diagnostic push") \
+_Pragma("clang diagnostic ignored \"-Warc-performSelector-leaks\"") \
+code; \
+_Pragma("clang diagnostic pop")
 
 // @property (nonatomic, strong, nonnull) dispatch_semaphore_t lock;
 #define NDLLOCK(lock) dispatch_semaphore_wait(lock, DISPATCH_TIME_FOREVER);

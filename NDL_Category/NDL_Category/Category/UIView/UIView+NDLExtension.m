@@ -216,11 +216,4 @@
     return nil;
 }
 
-- (void)ndl_addTapGestureWithHandler:(void (^)())handler
-{
-    self.userInteractionEnabled = YES;
-    
-    //UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:<#(nullable id)#> action:<#(nullable SEL)#>];
-}
-
 @end

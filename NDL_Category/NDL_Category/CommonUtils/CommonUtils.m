@@ -125,6 +125,11 @@
     return totalCount;
 }
 
++ (void)logStackInfo
+{
+    NDLLog(@"stack info = %@", [NSThread callStackSymbols]);
+}
+
 + (void)testForSubTitles:(NSString *)subTitle,...NS_REQUIRES_NIL_TERMINATION
 {
     NSMutableArray *subTitleArray = [NSMutableArray array];

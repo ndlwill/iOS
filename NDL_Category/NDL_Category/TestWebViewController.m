@@ -30,6 +30,15 @@
     NSLog(@"TestWebViewController viewDidLoad");
     self.view.backgroundColor = [UIColor grayColor];
     
+//    self.navigationController.navigationBar.alpha = 1;
+    
+    UISegmentedControl *segmentedCtl = [[UISegmentedControl alloc] initWithItems:@[@"我们", @"傻逼"]];
+    segmentedCtl.width = 100;
+    segmentedCtl.height = 40;
+    segmentedCtl.tintColor = [UIColor greenColor];
+    segmentedCtl.backgroundColor = [UIColor redColor];
+    self.navigationItem.titleView = segmentedCtl;
+    
 //    self.navigationController.navigationBar.translucent = YES;
     
     // =====test rightImageButton=====

@@ -162,8 +162,19 @@
     NSString *headerStr = [[[HttpHeader alloc] init] modelToJSONString];
     NSLog(@"headerStr = %@", headerStr);
     NSString *headerAESStr = [headerStr ndl_aes128Encrypt];
+    // 添加请求头，服务端可以在这里取一些数据
     [request setValue:headerAESStr forHTTPHeaderField:@"header-encrypt-code"];
     [self.webView loadRequest:request];
+    
+    // 加载本地
+    // 1.html文件
+//    NSString *filePath = [[NSBundle mainBundle] pathForResource:@"JSToOC" ofType:@"html"];
+//    [self.webView loadRequest:[NSURLRequest requestWithURL:[NSURL fileURLWithPath:filePath]]];
+    // 2.html string
+//    NSURL *baseURL = [NSURL fileURLWithPath:[[NSBundle mainBundle] bundlePath]];
+//    NSString *filePath = [[NSBundle mainBundle] pathForResource:@"JSToOC" ofType:@"html"];
+//    NSString *htmlStr = [NSString stringWithContentsOfFile:filePath encoding:NSUTF8StringEncoding error:nil];
+//    [self.webView loadHTMLString:htmlStr baseURL:baseURL];
 }
 
 - (void)updateNavigationItems
@@ -260,6 +271,24 @@
     }
     
     decisionHandler(WKNavigationActionPolicyAllow);
+}
+
+// 加载https才会走这个方法
+// WKWebView加载不受信任的https(服务器证书无效,实际就是不受信任)
+/*
+ 1.
+ 在plist文件中设置:
+ Allow Arbitrary Loads in Web Content置为YES,
+ 假如有设置NSAllowsArbitraryLoads为YES,可不用设置上面
+ 2.实现这个方法
+ */
+- (void)webView:(WKWebView *)webView didReceiveAuthenticationChallenge:(NSURLAuthenticationChallenge *)challenge completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential * _Nullable))completionHandler
+{
+    NSLog(@"authenticationMethod = %@ NSURLAuthenticationMethodServerTrust = %@", challenge.protectionSpace.authenticationMethod, NSURLAuthenticationMethodServerTrust);
+    if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
+        NSURLCredential *cert = [[NSURLCredential alloc] initWithTrust:challenge.protectionSpace.serverTrust];
+        completionHandler(NSURLSessionAuthChallengeUseCredential, cert);
+    }
 }
 
 // 加载完毕
