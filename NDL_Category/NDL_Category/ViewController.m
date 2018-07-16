@@ -71,6 +71,8 @@
 
 #import "TestModel.h"
 
+#import <objc/runtime.h>
+
 // TODO: Import
 @interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
@@ -335,6 +337,26 @@ static NSInteger cc = 0;
 
 - (void)viewDidLoad {
     NSLog(@"===ViewController viewDidLoad===");
+    
+    if (class_isMetaClass([ViewController class])) {
+        NSLog(@"YES###");
+    } else {
+        NSLog(@"NO###");//
+    }
+    
+    Class class = [ViewController class];//
+    if (class_isMetaClass(object_getClass(class))) {// 类对象的类是元类
+        NSLog(@"object_getClassYES###");//
+    } else {
+        NSLog(@"object_getClassNO###");
+    }
+    
+    NSLog(@"实例对象的类 = %@", object_getClass(self));// Class = ViewController
+    if (class_isMetaClass(object_getClass(self))) {// 实例对象的类是ViewController
+        NSLog(@"selfYES###");
+    } else {
+        NSLog(@"selfNO###");//
+    }
 
     
     NSLog(@"pathComp = %@", [@"http:///www.baidu.com/:user/name我们" pathComponents]);
