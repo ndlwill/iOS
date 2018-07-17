@@ -341,6 +341,20 @@ static NSInteger cc = 0;
 - (void)viewDidLoad {
     NSLog(@"===ViewController viewDidLoad===");
     
+    NSLog(@"encode = %s", @encode(void));// 返回char[] = v
+//    [[NSObject alloc] init];
+    // 不需要import
+    Class testClass = NSClassFromString(@"TestRuntime");
+    NSObject *obj = [[testClass alloc] init];
+    SEL selector = NSSelectorFromString(@"logRuntime");
+    if ([obj respondsToSelector:selector]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+        [obj performSelector:selector withObject:nil];
+#pragma clang diagnostic pop
+    }
+    
+    
     if (class_isMetaClass([ViewController class])) {
         NSLog(@"YES###");
     } else {
