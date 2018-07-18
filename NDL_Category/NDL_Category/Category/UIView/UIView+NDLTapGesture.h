@@ -10,6 +10,6 @@
 
 @interface UIView (NDLTapGesture)
 
-//- (void)ndl_addTapGestureWithHandler:(CommonNoParamNoReturnValueBlock)handler;
+- (void)ndl_addTapGestureWithHandler:(CommonNoParamNoReturnValueBlock)handler;
 
 @end

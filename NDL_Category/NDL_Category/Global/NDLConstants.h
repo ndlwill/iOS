@@ -80,6 +80,18 @@ typedef NS_ENUM(NSInteger, SharePlatform) {
     SharePlatform_Weibo
 };
 
+// gradient渐变方向
+typedef NS_ENUM(NSInteger, GradientDirection) {
+    GradientDirection_TopToBottom = 0,// topMiddle->bottomMiddle
+    GradientDirection_BottomToTop,
+    GradientDirection_LeftToRight,// leftMiddle->rightMiddle
+    GradientDirection_RightToLeft,
+    GradientDirection_LeftTopToRightBottom,
+    GradientDirection_RightBottomToLeftTop,
+    GradientDirection_LeftBottomToRightTop,
+    GradientDirection_RightTopToLeftBottom
+};
+
 // =====Block=====
 typedef void(^CommonNoParamNoReturnValueBlock)(void);
 

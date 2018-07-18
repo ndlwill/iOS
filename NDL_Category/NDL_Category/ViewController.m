@@ -76,6 +76,9 @@
 //#import <DrawLib/DrawLib.h>
 #import <DrawLib.h>
 
+#import "NDLLabel.h"
+#import "UIView+NDLTapGesture.h"
+
 // TODO: Import
 @interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
@@ -340,6 +343,8 @@ static NSInteger cc = 0;
 
 - (void)viewDidLoad {
     NSLog(@"===ViewController viewDidLoad===");
+    
+    
     
     NSLog(@"encode = %s", @encode(void));// 返回char[] = v
 //    [[NSObject alloc] init];
@@ -1095,6 +1100,23 @@ NSLog(@"viewDidLoad 22");
         NSLog(@"bottomBtn clicked");
     }];
     [self.view addSubview:bottomBtn];
+    
+    NDLLabel *ndlLabel = [[NDLLabel alloc] init];
+    ndlLabel.backgroundColor = [UIColor whiteColor];
+//    ndlLabel.padding = UIEdgeInsetsMake(8, 8, 8, 8);
+    ndlLabel.text = @"我么事他们管";
+    ndlLabel.longPressFlag = YES;
+    ndlLabel.highlightedBackgroundColor = [UIColor purpleColor];
+    [ndlLabel sizeToFit];
+    ndlLabel.y = 250;
+    ndlLabel.x = 20;
+    [self.view addSubview:ndlLabel];
+    [ndlLabel ndl_addTapGestureWithHandler:^{
+        ndlLabel.padding = UIEdgeInsetsMake(16, 16, 16, 16);
+        [ndlLabel sizeToFit];
+        ndlLabel.y = 250;
+        ndlLabel.x = 20;
+    }];
 }
 
 

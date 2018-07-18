@@ -10,6 +10,8 @@
 #import "BigTitleNavigationView.h"
 #import "TabView.h"
 
+#import "GradientView.h"
+
 @interface TestTextFieldViewController () <UITextFieldDelegate>
 
 @property (nonatomic, strong) BigTitleNavigationView *navView;
@@ -20,6 +22,8 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    
+//    self.view.backgroundColor = [UIColor cyanColor];
     
     self.navView = [[BigTitleNavigationView alloc] initWithFrame:CGRectMake(0, 100, NDLScreenW, 114)];
     self.navView.backgroundColor = [UIColor lightGrayColor];
@@ -57,9 +61,14 @@
 //    maskView.backgroundColor = [UIColor blueColor];
 //    frontLabel.maskView = maskView;
     
-    TabView *tabView = [[TabView alloc] initWithFrame:CGRectMake(0, 0, 210, 40) tabTitleArray:@[@"问吧", @"话题", @"关注"] tabTitleFont:[UIFont systemFontOfSize:17.0]];
-    [self.view addSubview:tabView];
-    tabView.center = self.view.center;
+    // tabView
+//    TabView *tabView = [[TabView alloc] initWithFrame:CGRectMake(0, 0, 210, 40) tabTitleArray:@[@"问吧", @"话题", @"关注"] tabTitleFont:[UIFont systemFontOfSize:17.0]];
+//    [self.view addSubview:tabView];
+//    tabView.center = self.view.center;
+    
+    GradientView *gradientView = [[GradientView alloc] initWithFrame:CGRectMake(20, 400, 100, 60) colors:@[[UIColor redColor], [[UIColor redColor] colorWithAlphaComponent:0.0]] gradientDirection:GradientDirection_LeftToRight];// [[UIColor redColor] colorWithAlphaComponent:0.0]
+//    gradientView.backgroundColor = [UIColor clearColor];
+    [self.view addSubview:gradientView];
 }
 
 - (BOOL)textFieldShouldBeginEditing:(UITextField *)textField
