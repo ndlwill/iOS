@@ -15,4 +15,6 @@
 // 恢复CALayer的动画
 - (void)resumeAnimation;
 
+- (void)ndl_bringSubLayerToFront:(CALayer *)subLayer;
+
 @end

@@ -12,9 +12,13 @@
 
 #import "GradientView.h"
 
+#import "TestCommonView.h"
+
 @interface TestTextFieldViewController () <UITextFieldDelegate>
 
 @property (nonatomic, strong) BigTitleNavigationView *navView;
+
+@property (nonatomic, strong) TestCommonView *commonView;
 
 @end
 
@@ -69,6 +73,15 @@
     GradientView *gradientView = [[GradientView alloc] initWithFrame:CGRectMake(20, 400, 100, 60) colors:@[[UIColor redColor], [[UIColor redColor] colorWithAlphaComponent:0.0]] gradientDirection:GradientDirection_LeftToRight];// [[UIColor redColor] colorWithAlphaComponent:0.0]
 //    gradientView.backgroundColor = [UIColor clearColor];
     [self.view addSubview:gradientView];
+    
+    self.commonView = [[TestCommonView alloc] initWithFrame:CGRectMake(0, 100, 200, 200)];
+    self.commonView.backgroundColor = [UIColor redColor];
+    [self.view addSubview:self.commonView];
+}
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
+{
+    self.commonView.origin = CGPointMake(0, 300);
 }
 
 - (BOOL)textFieldShouldBeginEditing:(UITextField *)textField

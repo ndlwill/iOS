@@ -79,6 +79,11 @@
 #import "NDLLabel.h"
 #import "UIView+NDLTapGesture.h"
 
+#import "MarqueeLabel.h"
+
+#import "WaveView.h"
+#import "TieBaLoadingView.h"
+
 // TODO: Import
 @interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
@@ -1101,22 +1106,45 @@ NSLog(@"viewDidLoad 22");
     }];
     [self.view addSubview:bottomBtn];
     
-    NDLLabel *ndlLabel = [[NDLLabel alloc] init];
-    ndlLabel.backgroundColor = [UIColor whiteColor];
-//    ndlLabel.padding = UIEdgeInsetsMake(8, 8, 8, 8);
-    ndlLabel.text = @"我么事他们管";
-    ndlLabel.longPressFlag = YES;
-    ndlLabel.highlightedBackgroundColor = [UIColor purpleColor];
-    [ndlLabel sizeToFit];
-    ndlLabel.y = 250;
-    ndlLabel.x = 20;
-    [self.view addSubview:ndlLabel];
-    [ndlLabel ndl_addTapGestureWithHandler:^{
-        ndlLabel.padding = UIEdgeInsetsMake(16, 16, 16, 16);
-        [ndlLabel sizeToFit];
-        ndlLabel.y = 250;
-        ndlLabel.x = 20;
-    }];
+//    NDLLabel *ndlLabel = [[NDLLabel alloc] init];
+//    ndlLabel.backgroundColor = [UIColor whiteColor];
+////    ndlLabel.padding = UIEdgeInsetsMake(8, 8, 8, 8);
+//    ndlLabel.text = @"我么事他们管";
+//    ndlLabel.longPressFlag = YES;
+//    ndlLabel.highlightedBackgroundColor = [UIColor purpleColor];
+//    [ndlLabel sizeToFit];
+//    ndlLabel.y = 250;
+//    ndlLabel.x = 20;
+//    [self.view addSubview:ndlLabel];
+//    [ndlLabel ndl_addTapGestureWithHandler:^{
+//        ndlLabel.padding = UIEdgeInsetsMake(16, 16, 16, 16);
+//        [ndlLabel sizeToFit];
+//        ndlLabel.y = 250;
+//        ndlLabel.x = 20;
+//    }];
+    MarqueeLabel *marquee = [[MarqueeLabel alloc] initWithFrame:CGRectMake(20, 170, NDLScreenW - 40, 20)];
+    marquee.backgroundColor = [UIColor greenColor];
+    marquee.font = [UIFont systemFontOfSize:16];
+    marquee.textColor = [UIColor blackColor];
+//    marquee.edgeFadeStartColor = [UIColor redColor];
+    
+    marquee.text = @"我没睡呢还是公司觉得接班人时间回家冻结实也是极极好的你懂吃呢和你扯视屏呢";
+//    marquee.text = @"sjhdgdgjk";
+    
+    marquee.showEdgeFadeFlag = YES;
+    [self.view addSubview:marquee];
+    
+    
+//    WaveView *wave = [[WaveView alloc] initWithFrame:CGRectMake(20, 170, 200, 200) waveColors:@[[UIColor redColor], [UIColor cyanColor]]];//  [UIColor greenColor]
+//    wave.tag = 1000;
+//    wave.backgroundColor = [UIColor whiteColor];
+//    [self.view addSubview:wave];
+//    wave.progress = 0.4;
+    
+    TieBaLoadingView *loadView = [[TieBaLoadingView alloc] initWithFrame:CGRectMake(20, 170, 100, 100)];
+    loadView.backgroundColor = [UIColor whiteColor];
+    loadView.tag = 1000;
+    [self.view addSubview:loadView];
 }
 
 
@@ -1159,6 +1187,9 @@ NSLog(@"viewDidLoad 22");
 //    self.loadingView.loadingStatus = LoadingStatus_Success;
 //    [self.view addSubview:self.loadingView];
 //    [self.loadingView startAnimation];
+    
+    TieBaLoadingView *view = [self.view viewWithTag:1000];
+    view.progress = 0.6;
 }
 
 - (void)viewTapped:(UIGestureRecognizer *)gesture

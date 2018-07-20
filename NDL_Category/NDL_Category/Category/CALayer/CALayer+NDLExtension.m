@@ -34,4 +34,12 @@
     self.beginTime = timeSincePause;
 }
 
+- (void)ndl_bringSubLayerToFront:(CALayer *)subLayer
+{
+    if (subLayer.superlayer == self) {
+        [subLayer removeFromSuperlayer];// self.sublayers.count = (count - 1)
+        [self insertSublayer:subLayer atIndex:(unsigned)self.sublayers.count];// 不需要count - 1
+    }
+}
+
 @end

@@ -41,4 +41,13 @@
     
 }
 
+#pragma mark - Overrides
+// frame改变(主要是size。 x,y改变不会调用)会调layoutSubviews
+- (void)layoutSubviews
+{
+    [super layoutSubviews];
+    
+    NDLLog(@"===TestCommonView layoutSubviews===");
+}
+
 @end
