@@ -148,6 +148,8 @@ return shared##className; \
 
 
 #pragma mark - App
+
+#define MainBundle [NSBundle mainBundle]
 // 获取App当前版本号
 #define App_Bundle_Version [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"]
 // 获取App当前build版本号
@@ -158,6 +160,11 @@ return shared##className; \
 #define App_Name [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleDisplayName"]
 // 返回dic dic[@"CFBundleURLSchemes"] 返回URLScheme数组
 #define App_URLTypes [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleURLTypes"]
+// app icon
+#define App_Icon_File [[[MainBundle infoDictionary] valueForKeyPath:@"CFBundleIcons.CFBundlePrimaryIcon.CFBundleIconFiles"] lastObject];
+
+// 检查APPStore版本
+// http://itunes.apple.com/cn/lookup?id=1071516426
 
 #pragma mark - Device
 // 获取当前设备的UUID ?
