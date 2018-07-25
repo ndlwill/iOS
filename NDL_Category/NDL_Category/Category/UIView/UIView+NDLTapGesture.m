@@ -28,14 +28,17 @@
     
     [self associateTapGestureActionBlock:handler];// 关联tap手势action block
     
-    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(viewDidTapped)];
-    [self addGestureRecognizer:tap];
+    if (!objc_getAssociatedObject(self, _cmd)) {
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(viewDidTapped)];
+        [self addGestureRecognizer:tap];
+        objc_setAssociatedObject(self, _cmd, tap, OBJC_ASSOCIATION_RETAIN_NONATOMIC);// 关联tap gesture
+    }
 }
 
 - (void)associateTapGestureActionBlock:(CommonNoParamNoReturnValueBlock)handler
 {
     if (handler) {
-        objc_setAssociatedObject(self, _cmd, handler, OBJC_ASSOCIATION_COPY_NONATOMIC);
+        objc_setAssociatedObject(self, _cmd, handler, OBJC_ASSOCIATION_COPY_NONATOMIC);// 关联block
     }
 }
 

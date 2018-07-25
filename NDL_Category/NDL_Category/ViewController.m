@@ -84,6 +84,8 @@
 #import "WaveView.h"
 #import "TieBaLoadingView.h"
 
+#import "BounceView.h"
+
 // TODO: Import
 @interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
@@ -349,9 +351,10 @@ static NSInteger cc = 0;
 - (void)viewDidLoad {
     NSLog(@"===ViewController viewDidLoad===");
     
+    SEL sel = @selector(viewDidLoad);
+    NSLog(@"sel = %s", sel);
     
-    
-    NSLog(@"encode = %s", @encode(void));// 返回char[] = v
+    NSLog(@"encode = %s", @encode(void));// 返回 v
 //    [[NSObject alloc] init];
     // 不需要import
     Class testClass = NSClassFromString(@"TestRuntime");
@@ -1092,9 +1095,11 @@ NSLog(@"viewDidLoad 22");
     successView.center = self.view.center;
     
     
-    [self.view addGestureRecognizer:[UITapGestureRecognizer ndl_gestureRecognizerWithActionBlock:^(UIGestureRecognizer *gesture) {
-        NSLog(@"123===");
-    }]];
+    // self.view添加手势 添加在上面的view的touchEnded不会走
+//    [self.view addGestureRecognizer:[UITapGestureRecognizer ndl_gestureRecognizerWithActionBlock:^(UIGestureRecognizer *gesture) {
+//        // ended手抬起 才会走
+//        NSLog(@"123===");
+//    }]];
     
     
     
@@ -1145,6 +1150,10 @@ NSLog(@"viewDidLoad 22");
     loadView.backgroundColor = [UIColor whiteColor];
     loadView.tag = 1000;
     [self.view addSubview:loadView];
+    
+    BounceView *bounceView = [[BounceView alloc] initWithFrame:CGRectMake(20, 300, 120, 60) bounceSpacing:10];
+    bounceView.backgroundColor = [UIColor grayColor];
+    [self.view addSubview:bounceView];
 }
 
 

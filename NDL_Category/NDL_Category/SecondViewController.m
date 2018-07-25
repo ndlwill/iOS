@@ -19,11 +19,16 @@
 #import "FiveViewController.h"
 #import "BaseNavigationController.h"
 
+#import "VariableCircleLayer.h"
+
 @interface SecondViewController () <CAAnimationDelegate>
 
 @property (nonatomic, strong) UISearchBar *searchBar;
+@property (weak, nonatomic) IBOutlet UISlider *slider;
 
 @property (nonatomic, strong) NavigationControllerDelegate *navigationControllerDelegate;
+
+@property (nonatomic, weak) VariableCircleLayer *variableLayer;
 
 @end
 
@@ -208,7 +213,25 @@
     replicator.instanceTransform = CATransform3DMakeRotation(angle, 0, 0, 1);
 
     
+    [self.slider addTarget:self action:@selector(sliderValueDidChanged:) forControlEvents:UIControlEventValueChanged];
+    
+    VariableCircleLayer *variableLayer = [VariableCircleLayer layer];
+    variableLayer.backgroundColor = [UIColor blueColor].CGColor;
+    variableLayer.frame = CGRectMake(0, self.view.height - 160, 160, 160);
+    variableLayer.contentsScale = [UIScreen mainScreen].scale;
+    [self.view.layer addSublayer:variableLayer];
+    variableLayer.progress = 0.5;
+    self.variableLayer = variableLayer;
+    
+//    NSLog(@"variableLayer position = %@", NSStringFromCGPoint(variableLayer.position));
 }
+
+- (void)sliderValueDidChanged:(UISlider *)slider
+{
+    self.variableLayer.progress = slider.value;
+    NSLog(@"slider value = %f", slider.value);
+}
+
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
 {
     NSLog(@"second touch begin");
