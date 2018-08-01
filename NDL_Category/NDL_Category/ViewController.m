@@ -85,6 +85,7 @@
 #import "TieBaLoadingView.h"
 
 #import "BounceView.h"
+#import <PinYin4Objc.h>
 
 // TODO: Import
 @interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate>
@@ -350,6 +351,45 @@ static NSInteger cc = 0;
 
 - (void)viewDidLoad {
     NSLog(@"===ViewController viewDidLoad===");
+    
+    if ([@"" ndl_isWholeDigit]) {
+        NSLog(@"ndl_isWholeCN");
+    } else {
+        NSLog(@"no ndl_isWholeCN");
+    }
+    
+    
+    for (int i = 0; i < 10; i++) {
+        StartTime
+        NSString *hanziText = @"我是汉字";
+        if ([hanziText length]) {
+            NSMutableString *ms = [[NSMutableString alloc] initWithString:hanziText];
+            if (CFStringTransform((__bridge CFMutableStringRef)ms, 0, kCFStringTransformMandarinLatin, NO)) {
+                NSLog(@"pinyin: #%@#", ms);
+            }
+            if (CFStringTransform((__bridge CFMutableStringRef)ms, 0, kCFStringTransformStripDiacritics, NO)) {
+                NSLog(@"pinyin: #%@#", ms);
+            }
+        }
+        EndTime
+    }
+    
+    
+//    StartTime
+//    NSString *sourceText=@"我是汉字";
+//    HanyuPinyinOutputFormat *outputFormat=[[HanyuPinyinOutputFormat alloc] init];
+//    [outputFormat setToneType:ToneTypeWithoutTone];// ToneTypeWithoutTone
+//    [outputFormat setVCharType:VCharTypeWithV];
+//    [outputFormat setCaseType:CaseTypeLowercase];
+//    [PinyinHelper toHanyuPinyinStringWithNSString:sourceText
+//                      withHanyuPinyinOutputFormat:outputFormat
+//                                     withNSString:@" "
+//                                      outputBlock:^(NSString *pinYin) {
+//                                          NSLog(@"pinYin = %@", pinYin);
+//                                          EndTime
+//                                      }];// 0.0008
+    
+    
     
     SEL sel = @selector(viewDidLoad);
     NSLog(@"sel = %s", sel);

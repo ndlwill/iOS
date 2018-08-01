@@ -79,4 +79,18 @@
 // 所占字节数 一个汉字占两个字节，一个英文字母占一个字节
 - (NSUInteger)ndl_numberOfBytesWhenCountingNonASCIICharacterAsTwo;
 
+// eg:@"s"   匹配单个字符串是不是字母
+- (BOOL)ndl_matchFirstLetter;
+
+// 常用正则表达式 http://tool.oschina.net/regex/#
+// 汉字字符集编码查询 http://www.qqxiuzi.cn/bianma/zifuji.php
+// 汉字的Unicode编码范围为/u4E00-/u9FA5 /uF900-/uFA2D,
+// 是否全汉字
+- (BOOL)ndl_isWholeCN;
+// 是否全数字
+- (BOOL)ndl_isWholeDigit;
+// 是否全字母
+- (BOOL)ndl_isWholeLetter;
+// 字母或数字 @"[a-zA-Z0-9]*"
+
 @end

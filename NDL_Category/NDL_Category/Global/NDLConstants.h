@@ -121,3 +121,4 @@ FOUNDATION_EXTERN CGFloat const kNavBackButtonWidth;
 FOUNDATION_EXTERN CGFloat const kNavBigTitleContainerViewHeight;
 FOUNDATION_EXTERN CGFloat const kNavBigTitleHeight;
 FOUNDATION_EXTERN CGFloat const kNavBigTitleLeadingToLeftEdge;
+FOUNDATION_EXTERN CGFloat const kNavTextFieldBigTitleContainerViewHeight;

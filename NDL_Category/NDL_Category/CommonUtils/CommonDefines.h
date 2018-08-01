@@ -144,7 +144,7 @@ return shared##className; \
 
 // 获取一段时间间隔
 #define StartTime CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
-#define EndTime NDLLog(@"TimeDelta: %lf", CFAbsoluteTimeGetCurrent() - start)
+#define EndTime NDLLog(@"TimeDelta: %lf", CFAbsoluteTimeGetCurrent() - start);
 
 
 #pragma mark - App
@@ -197,6 +197,9 @@ _Pragma("clang diagnostic pop")
 #define TextFieldBigTitleFont [UIFont fontWithName:@"PingFangSC-Medium" size:22];
 // TextField光标颜色
 #define TextFieldCursorColor UIColorFromHex(0x02C6DC)
+
+// 高德行政区域查询
+// https://lbs.amap.com/api/webservice/guide/api/district
 
 // math
 // https://blog.csdn.net/u013282174/article/details/80311284 矩阵变换

@@ -357,4 +357,41 @@ Unicode: U+1F928，UTF-8: F0 9F A4 A8
     return numberOfBytes;
 }
 
+- (BOOL)ndl_matchFirstLetter
+{
+    NSString *letterRegex = @"^[A-Za-z]+$";
+    NSPredicate *predicate = [NSPredicate predicateWithFormat:@"SELF MATCHES %@", letterRegex];
+    return [predicate evaluateWithObject:self];
+}
+
+- (BOOL)ndl_isWholeCN
+{
+    if (self.length == 0) {
+        return NO;
+    }
+    NSString *regex = @"[\u4e00-\u9fa5]+";
+    NSPredicate *predicate = [NSPredicate predicateWithFormat:@"SELF MATCHES %@",regex];
+    return [predicate evaluateWithObject:self];
+}
+
+- (BOOL)ndl_isWholeDigit
+{
+    if (self.length == 0) {
+        return NO;
+    }
+    NSString *regex = @"[0-9]*";// 写了*上面必须写 不写的话不然@""也能匹配成功
+    NSPredicate *predicate = [NSPredicate predicateWithFormat:@"SELF MATCHES %@",regex];
+    return [predicate evaluateWithObject:self];
+}
+
+- (BOOL)ndl_isWholeLetter
+{
+    if (self.length == 0) {
+        return NO;
+    }
+    NSString *regex = @"[a-zA-Z]*";
+    NSPredicate *predicate = [NSPredicate predicateWithFormat:@"SELF MATCHES %@",regex];
+    return [predicate evaluateWithObject:self];
+}
+
 @end

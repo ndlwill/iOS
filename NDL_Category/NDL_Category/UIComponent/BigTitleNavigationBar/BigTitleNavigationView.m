@@ -125,7 +125,7 @@
         [self addSubview:_lineView];
         [_lineView mas_makeConstraints:^(MASConstraintMaker *make) {
             make.left.right.bottom.equalTo(self);
-            make.height.mas_equalTo(1.0);
+            make.height.mas_equalTo(0.5);
         }];
     }
     return _lineView;
@@ -154,6 +154,13 @@
     
     // IBInspectable设置了 这边有值
     NSLog(@"awakeFromNib navBarBackgroundColor = %@", self.navBarBackgroundColor);
+}
+
+#pragma mark - Overrides
+// 拦截触摸事件
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
+{
+    NSLog(@"view touchesBegan");
 }
 
 #pragma mark - Private Methods
@@ -198,6 +205,8 @@
 
 - (void)textFieldRightButtonDidClicked
 {
+    self.textField.text = @"";
+    
     if (self.textFieldRightButtonBlock) {
         self.textFieldRightButtonBlock();
     }

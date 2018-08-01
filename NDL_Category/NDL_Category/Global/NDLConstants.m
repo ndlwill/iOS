@@ -31,3 +31,4 @@ CGFloat const kNavBackButtonWidth = 60.0;
 CGFloat const kNavBigTitleContainerViewHeight = 48.0;
 CGFloat const kNavBigTitleHeight = 40.0;
 CGFloat const kNavBigTitleLeadingToLeftEdge = 20.0;
+CGFloat const kNavTextFieldBigTitleContainerViewHeight = 50.0;
