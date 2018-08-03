@@ -43,6 +43,14 @@
 #if DEBUG
     
 #endif
+    // 禁止手机睡眠
+    [UIApplication sharedApplication].idleTimerDisabled = YES;
+    
+    // 系统悬浮窗口调试工具
+    // 运行程序后，两根手指点击状态栏即可调起这个调试的悬浮层 在iOS 11及更高版本上不起作用
+//    Class overlayClass = NSClassFromString(@"UIDebuggingInformationOverlay");
+//    IGNORE_PERFORM_SELECTOR_LEAK_WARNING([overlayClass performSelector:NSSelectorFromString(@"prepareDebuggingOverlay")])
+    
     
     // log: UIApplicationLaunchOptionsRemoteNotificationKey
     NSLog(@"remote key = %@", UIApplicationLaunchOptionsRemoteNotificationKey);

@@ -352,6 +352,10 @@ static NSInteger cc = 0;
 - (void)viewDidLoad {
     NSLog(@"===ViewController viewDidLoad===");
     
+//    NSNumber *intNumber = [NSNumber numberWithInteger:20];
+//    NSLog(@"intNumber = %@", [intNumber description]);
+    
+    
     if ([@"" ndl_isWholeDigit]) {
         NSLog(@"ndl_isWholeCN");
     } else {

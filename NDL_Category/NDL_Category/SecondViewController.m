@@ -21,6 +21,8 @@
 
 #import "VariableCircleLayer.h"
 
+#import "TestRACController.h"
+
 @interface SecondViewController () <CAAnimationDelegate>
 
 @property (nonatomic, strong) UISearchBar *searchBar;
@@ -99,7 +101,8 @@
 //    btn.frame = titleView.bounds;
 //    btn.center = titleView.center;
     
-    self.navigationItem.titleView = titleView;
+    // titleView
+//    self.navigationItem.titleView = titleView;
     
 //initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width - 80, 44)
 //    UISearchBar *searchBar = [[UISearchBar alloc] init];
@@ -237,6 +240,9 @@
     NSLog(@"second touch begin");
     
     self.searchBar.showsCancelButton = NO;
+}
+- (IBAction)testRACDidClicked:(id)sender {
+    [self.navigationController pushViewController:[[TestRACController alloc] init] animated:YES];
 }
 
 - (void)animationDidStop:(CAAnimation *)anim finished:(BOOL)flag
