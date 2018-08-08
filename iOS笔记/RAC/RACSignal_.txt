@@ -1,0 +1,124 @@
+RACSiganl:信号类,一般表示将来有数据传递，只要有数据改变，信号内部接收到数据，就会马上发出数据
+信号类(RACSiganl)，只是表示当数据改变时，信号内部会发出数据，它本身不具备发送信号的能力，而是交给内部一个订阅者去发出
+默认一个信号都是冷信号，也就是值改变了，也不会触发，只有订阅了这个信号，这个信号才会变为热信号，值改变了才会触发
+如何订阅信号：调用信号RACSignal的subscribeNext就能订阅
+
+// RACSignal使用步骤：
+// 1.创建信号 + (RACSignal *)createSignal:(RACDisposable * (^)(id<RACSubscriber> subscriber))didSubscribe
+// 2.订阅信号,才会激活信号. - (RACDisposable *)subscribeNext:(void (^)(id x))nextBlock
+// 3.发送信号 - (void)sendNext:(id)value
+
+
+// RACSignal底层实现：
+// 1.创建信号，首先把didSubscribe（block 被订阅后会执行的block）保存到信号中，还不会触发。
+// 2.当信号被订阅，也就是调用signal的subscribeNext:nextBlock
+// 2.2 subscribeNext内部会创建订阅者subscriber，并且把nextBlock保存到subscriber中。
+// 2.1 subscribeNext内部会调用siganl的didSubscribe
+// 3.siganl的didSubscribe中调用[subscriber sendNext:@1];
+// 3.1 sendNext底层其实就是执行subscriber的nextBlock
+
+// 1.创建信号
+RACSignal *siganl = [RACSignal createSignal:^RACDisposable *(id<RACSubscriber> subscriber) {
+
+	// didSubscribe调用:只要一个信号被订阅就会调用
+	// didSubscribe作用:发送数据
+	NSLog(@"信号被订阅");
+
+	// block调用时刻：每当有订阅者订阅信号，就会调用block。
+	// 3.发送信号
+	[subscriber sendNext:@1];
+
+
+	// 如果不在发送数据，最好发送信号完成，内部会自动调用[RACDisposable disposable]取消订阅信号。
+	[subscriber sendCompleted];
+
+	return [RACDisposable disposableWithBlock:^{
+
+		// block调用时刻：当信号发送完成或者发送错误，就会自动执行这个block,取消订阅信号。
+
+		// 执行完Block后，当前信号就不在被订阅了。
+
+		NSLog(@"信号被销毁");
+
+	}];
+}];
+
+// 2.订阅信号,才会激活信号.
+[siganl subscribeNext:^(id x) {//x就是信号发送的值
+	// block调用时刻：每当有信号发出数据，就会调用block.
+	//处理数据
+	NSLog(@"接收到数据:%@",x);
+}];
+
+
+RACSubscriber:表示订阅者的意思，用于发送信号，这是一个协议，不是一个类，只要遵守这个协议，并且实现方法才能成为订阅者。通过create创建的信号，都有一个订阅者，帮助他发送数据。
+RACDisposable:用于取消订阅或者清理资源，当信号发送完成或者发送错误的时候，就会自动触发它。
+使用场景:不想监听某个信号时，可以通过它主动取消订阅信号
+
+
+===================RACSubject:RACSubject:信号提供者，自己可以充当信号，又能发送信号。
+使用场景:通常用来代替代理，有了它，就不必要定义代理了。
+
+// RACSubject使用步骤
+// 1.创建信号 [RACSubject subject]，跟RACSiganl不一样，创建信号时没有block。
+// 2.订阅信号 - (RACDisposable *)subscribeNext:(void (^)(id x))nextBlock
+// 3.发送信号 sendNext:(id)value
+
+// RACSubject:底层实现和RACSignal不一样。
+// 1.调用subscribeNext订阅信号，只是把订阅者保存起来，并且订阅者的nextBlock已经赋值了。
+// 2.调用sendNext发送信号，遍历刚刚保存的所有订阅者，一个一个调用订阅者的nextBlock。
+
+// 1.创建信号
+RACSubject *subject = [RACSubject subject];
+
+// 2.订阅信号
+[subject subscribeNext:^(id x) {
+    // block调用时刻：当信号发出新值，就会调用.
+    NSLog(@"第一个订阅者%@",x);
+}];
+[subject subscribeNext:^(id x) {
+    // block调用时刻：当信号发出新值，就会调用.
+    NSLog(@"第二个订阅者%@",x);
+}];
+
+// 3.发送信号
+[subject sendNext:@"1"];
+
+===================RACReplaySubject:重复提供信号类，RACSubject的子类。
+RACReplaySubject与RACSubject区别:
+RACReplaySubject可以先发送信号，在订阅信号，RACSubject就不可以。
+
+使用场景一:如果一个信号每被订阅一次，就需要把之前的值重复发送一遍，使用重复提供信号类。
+使用场景二:可以设置capacity数量来限制缓存的value的数量,即只缓充最新的几个值。
+
+// RACReplaySubject使用步骤:
+// 1.创建信号 [RACSubject subject]，跟RACSiganl不一样，创建信号时没有block。
+// 2.可以先订阅信号，也可以先发送信号。
+// 2.1 订阅信号 - (RACDisposable *)subscribeNext:(void (^)(id x))nextBlock
+// 2.2 发送信号 sendNext:(id)value
+
+// RACReplaySubject:底层实现和RACSubject不一样。
+// 1.调用sendNext发送信号，把值保存起来，然后遍历刚刚保存的所有订阅者，一个一个调用订阅者的nextBlock。
+// 2.调用subscribeNext订阅信号，遍历保存的所有值，一个一个调用订阅者的nextBlock
+
+// 如果想当一个信号被订阅，就重复播放之前所有值，需要先发送信号，在订阅信号。
+// 也就是先保存值，在订阅值。
+
+// 1.创建信号
+RACReplaySubject *replaySubject = [RACReplaySubject subject];
+
+// 2.发送信号
+[replaySubject sendNext:@1];
+[replaySubject sendNext:@2];
+
+// 3.订阅信号
+[replaySubject subscribeNext:^(id x) {
+
+    NSLog(@"第一个订阅者接收到的数据%@",x);
+}];
+
+// 订阅信号
+[replaySubject subscribeNext:^(id x) {
+
+    NSLog(@"第二个订阅者接收到的数据%@",x);
+}];
