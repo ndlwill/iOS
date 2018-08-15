@@ -87,6 +87,8 @@
 #import "BounceView.h"
 #import <PinYin4Objc.h>
 
+#import "Book.h"
+
 // TODO: Import
 @interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
@@ -352,8 +354,28 @@ static NSInteger cc = 0;
 - (void)viewDidLoad {
     NSLog(@"===ViewController viewDidLoad===");
     
-//    NSNumber *intNumber = [NSNumber numberWithInteger:20];
+    NSInteger ii = 13;
+    NSInteger oo = ii;
+    ii = 23;
+    NSLog(@"oo = %ld", oo);// 13
+    
+    NSNumber *intNumber = [NSNumber numberWithInteger:20];
+    NSNumber *other = intNumber;
+    intNumber = [NSNumber numberWithInteger:40];
+    NSLog(@"other = %@", other);// 20
+    
+    NSString *sss = [NSString stringWithFormat:@"123"];
+    NSString *oSS = sss;
+    sss = [NSString stringWithFormat:@"123df"];
+    NSLog(@"oSS = %@", oSS);// 123
 //    NSLog(@"intNumber = %@", [intNumber description]);
+    
+    Book *book = [[Book alloc] init];
+    book.title = @"234";
+    Book *otherBook = book;
+    book = [[Book alloc] init];
+    book.title = @"sdf";
+    NSLog(@"otherBook = %@ title = %@ book = %@", otherBook, otherBook.title, book);// 234 两个对象不同
     
     
     if ([@"" ndl_isWholeDigit]) {
