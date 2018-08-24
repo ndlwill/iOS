@@ -1,0 +1,206 @@
+其内容存储形式类似 Json 对象，它的字段值可以包含其他文档，数组及文档数组
+
+brew install mongodb
+
+然后创建一个新文件夹 /data/db，用于存放 MongoDB 数据。
+
+启动 MongoDB 服务：
+brew services start mongodb
+sudo mongod
+
+停止、重启 MongoDB 服务的命令：
+brew services stop mongodb
+brew services restart 
+
+mongo #进入mongo命令行
+
+show dbs   #查看所有数据库
+
+use test  #切换到名为test的数据库
+show collections  #查看数据库下的所有集合，例如集合名为QuoteItem
+db. QuoteItem.find()  #查看集合QuoteItem下的所有数据
+
+==================PyMongo
+pip3 install pymongo
+
+>>> import pymongo
+>>> pymongo.version
+
+==================连接MongoDB
+import pymongo
+client = pymongo.MongoClient(host='localhost', port=27017) # 第一个参数为地址 host，第二个参数为端口 port，端口如果不传默认是 27017
+
+另外 MongoClient 的第一个参数 host 还可以直接传MongoDB 的连接字符串，以 mongodb 开头，例如：
+client = MongoClient('mongodb://localhost:27017/')
+
+==================指定数据库
+db = client.test
+调用 client 的 test 属性即可返回 test 数据库，当然也可以这样来指定：
+db = client['test']
+
+==================指定集合
+每个数据库又包含了许多集合 Collection，也就类似与关系型数据库中的表
+指定要操作的集合，在这里我们指定一个集合名称为 students，学生集合
+collection = db.students
+collection = db['students']
+
+==================插入数据
+student = {
+    'id': '20170101',
+    'name': 'Jordan',
+    'age': 20,
+    'gender': 'male'
+}
+
+result = collection.insert(student)
+print(result)
+运行结果：
+5932a68615c2606814c91f3d
+
+在 MongoDB 中，每条数据其实都有一个 _id 属性来唯一标识，如果没有显式指明 _id，MongoDB 会自动产生一个 ObjectId 类型的 _id 属性。insert() 方法会在执行后返回的 _id 值
+
+也可以同时插入多条数据：
+result = collection.insert([student1, student2])
+
+insert() 方法官方已经不推荐使用了，当然继续使用也没有什么问题，官方推荐使用 insert_one() 和 insert_many() 方法将插入单条和多条记录分开
+result = collection.insert_one(student)
+print(result)
+print(result.inserted_id)
+
+返回结果和 insert() 方法不同，这次返回的是InsertOneResult 对象，我们可以调用其 inserted_id 属性获取 _id。
+
+result = collection.insert_many([student1, student2])
+print(result)
+print(result.inserted_ids)
+
+insert_many() 方法返回的类型是 InsertManyResult
+
+==================查询
+可以利用 find_one() 或 find() 方法进行查询，find_one() 查询得到是单个结果，find() 则返回一个生成器对象。
+
+result = collection.find_one({'name': 'Mike'})
+print(type(result))
+print(result)
+在这里我们查询 name 为 Mike 的数据，它的返回结果是字典类型
+
+from bson.objectid import ObjectId
+
+result = collection.find_one({'_id': ObjectId('593278c115c2602667ec6bae')})
+print(result)
+
+查询结果不存在则会返回 None
+
+对于多条数据的查询，我们可以使用 find() 方法，例如在这里查找年龄为 20 的数据，示例如下：
+results = collection.find({'age': 20})
+print(results)
+for result in results:
+    print(result)
+返回结果是 Cursor 类型，相当于一个生成器，我们需要遍历取到所有的结果，每一个结果都是字典类型。
+
+如果要查询年龄大于 20 的数据，则写法如下：
+results = collection.find({'age': {'$gt': 20}})
+
+符号	含义	示例
+$lt	小于	{'age': {'$lt': 20}}
+$gt	大于	{'age': {'$gt': 20}}
+$lte	小于等于	{'age': {'$lte': 20}}
+$gte	大于等于	{'age': {'$gte': 20}}
+$ne	不等于	{'age': {'$ne': 20}}
+$in	在范围内	{'age': {'$in': [20, 23]}}
+$nin	不在范围内	{'age': {'$nin': [20, 23]}}
+
+另外还可以进行正则匹配查询，例如查询名字以 M 开头的学生数据，示例如下：
+results = collection.find({'name': {'$regex': '^M.*'}})
+
+符号	含义	示例	示例含义
+$regex	匹配正则	{'name': {'$regex': '^M.*'}}	name 以 M开头
+$exists	属性是否存在	{'name': {'$exists': True}}	name 属性存在
+$type	类型判断	{'age': {'$type': 'int'}}	age 的类型为 int
+$mod	数字模操作	{'age': {'$mod': [5, 0]}}	年龄模 5 余 0
+$text	文本查询	{'$text': {'$search': 'Mike'}}	text 类型的属性中包含 Mike 字符串
+$where	高级条件查询	{'$where': 'obj.fans_count == obj.follows_count'}	自身粉丝数等于关注数
+
+==================计数
+统计所有数据条数：
+count = collection.find().count()
+print(count)
+
+或者统计符合某个条件的数据：
+count = collection.find({'age': 20}).count()
+print(count)
+结果是一个数值
+
+==================排序
+可以调用 sort() 方法，传入排序的字段及升降序标志即可，示例如下：
+results = collection.find().sort('name', pymongo.ASCENDING)
+print([result['name'] for result in results])
+
+如果要降序排列可以传入 pymongo.DESCENDING
+
+==================偏移
+在某些情况下我们可能想只取某几个元素，在这里可以利用skip() 方法偏移几个位置，比如偏移 2，就忽略前 2 个元素，得到第三个及以后的元素。
+results = collection.find().sort('name', pymongo.ASCENDING).skip(2)
+print([result['name'] for result in results])
+
+另外还可以用 limit() 方法指定要取的结果个数，示例如下：
+results = collection.find().sort('name', pymongo.ASCENDING).skip(2).limit(2)
+print([result['name'] for result in results])
+
+在数据库数量非常庞大的时候，如千万、亿级别，最好不要使用大的偏移量来查询数据，很可能会导致内存溢出，可以使用类似如下操作来进行查询：
+from bson.objectid import ObjectId
+collection.find({'_id': {'$gt': ObjectId('593278c815c2602678bb2b8d')}})
+
+这时记录好上次查询的 _id
+
+==================更新
+condition = {'name': 'Kevin'}
+student = collection.find_one(condition)
+student['age'] = 25
+result = collection.update(condition, student)
+print(result)
+在这里我们将 name 为 Kevin 的数据的年龄进行更新，首先指定查询条件，然后将数据查询出来，修改年龄，之后调用 update() 方法将原条件和修改后的数据传入，即可完成数据的更新。
+运行结果：
+{'ok': 1, 'nModified': 1, 'n': 1, 'updatedExisting': True}
+
+ok 即代表执行成功，nModified 代表影响的数据条数
+
+另外我们也可以使用 $set 操作符对数据进行更新，代码改写如下：
+result = collection.update(condition, {'$set': student})
+这样可以只更新 student 字典内存在的字段，如果其原先还有其他字段则不会更新，也不会删除。而如果不用 $set 的话则会把之前的数据全部用 student 字典替换，如果原本存在其他的字段则会被删除
+
+另外 update() 方法其实也是官方不推荐使用的方法，在这里也分了 update_one() 方法和 update_many() 方法，用法更加严格，第二个参数需要使用 $ 类型操作符作为字典的键名
+
+condition = {'name': 'Kevin'}
+student = collection.find_one(condition)
+student['age'] = 26
+result = collection.update_one(condition, {'$set': student})
+print(result)
+print(result.matched_count, result.modified_count)
+在这里调用了 update_one() 方法，第二个参数不能再直接传入修改后的字典，而是需要使用 {'$set': student} 这样的形式，其返回结果是 UpdateResult 类型，然后调用 matched_count 和 modified_count 属性分别可以获得匹配的数据条数和影响的数据条数
+
+condition = {'age': {'$gt': 20}}
+result = collection.update_one(condition, {'$inc': {'age': 1}})
+print(result)
+print(result.matched_count, result.modified_count)
+在这里我们指定查询条件为年龄大于 20，然后更新条件为 {'$inc': {'age': 1}}，也就是年龄加 1，执行之后会将第一条符合条件的数据年龄加 1
+
+condition = {'age': {'$gt': 20}}
+result = collection.update_many(condition, {'$inc': {'age': 1}})
+print(result)
+print(result.matched_count, result.modified_count)
+
+==================删除
+直接调用 remove() 方法指定删除的条件即可，符合条件的所有数据均会被删除，示例如下：
+result = collection.remove({'name': 'Kevin'})
+print(result)
+
+另外依然存在两个新的推荐方法，delete_one() 和 delete_many() 方法，示例如下：
+result = collection.delete_one({'name': 'Kevin'})
+print(result)
+print(result.deleted_count)
+result = collection.delete_many({'age': {'$lt': 25}})
+print(result.deleted_count)
+
+==================
+如find_one_and_delete()、find_one_and_replace()、find_one_and_update()，就是查找后删除、替换、更新操作，用法与上述方法基本一致。
+另外还可以对索引进行操作，如 create_index()、create_indexes()、drop_index() 等

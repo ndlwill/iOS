@@ -1,0 +1,145 @@
+PyMySQL
+
+import pymysql
+
+# root用户拥有最高权限
+# 没密码 省略password
+# 由于 MySQL 在本地运行，所以传入的是 localhost，如果 MySQL 在远程运行，则传入其公网 IP 地址
+db = pymysql.connect(host='localhost',user='root', password='123456', port=3306)
+cursor = db.cursor() #操作游标
+cursor.execute('SELECT VERSION()')
+data = cursor.fetchone() #fetchone() 方法来获得第一条数据
+print('Database version:', data)
+cursor.execute("CREATE DATABASE spiders DEFAULT CHARACTER SET utf8")
+db.close()
+
+
+创建表的示例代码如下：
+import pymysql
+
+db = pymysql.connect(host='localhost', user='root', password='123456', port=3306, db='spiders')
+cursor = db.cursor()
+sql = 'CREATE TABLE IF NOT EXISTS students (id VARCHAR(255) NOT NULL, name VARCHAR(255) NOT NULL, age INT NOT NULL, PRIMARY KEY (id))'
+cursor.execute(sql)
+db.close()
+
+================插入数据
+import pymysql
+
+id = '20120001'
+user = 'Bob'
+age = 20
+
+db = pymysql.connect(host='localhost', user='root', password='123456', port=3306, db='spiders')
+cursor = db.cursor()
+sql = 'INSERT INTO students(id, name, age) values(%s, %s, %s)'
+try:
+    cursor.execute(sql, (id, user, age))
+    db.commit()
+except:
+    db.rollback()
+db.close()
+
+需要执行 db 对象的 commit() 方法才可实现数据插入，这个方法才是真正将语句提交到数据库执行的方法，对于数据插入、更新、删除操作都需要调用该方法才能生效
+
+接下来我们加了一层异常处理，如果执行失败，则调用rollback() 执行数据回滚，相当于什么都没有发生过一样
+
+事务机制可以确保数据的一致性，也就是这件事要么发生了，要么没有发生，比如插入一条数据，不会存在插入一半的情况，要么全部插入，要么整个一条都不插入，这就是事务的原子性，另外事务还有另外三个属性，一致性、隔离性、持久性，通常成为 ACID 特性。
+
+属性	解释
+原子性（atomicity）	一个事务是一个不可分割的工作单位，事务中包括的诸操作要么都做，要么都不做。
+一致性（consistency）	事务必须是使数据库从一个一致性状态变到另一个一致性状态。一致性与原子性是密切相关的。
+隔离性（isolation）	一个事务的执行不能被其他事务干扰。即一个事务内部的操作及使用的数据对并发的其他事务是隔离的，并发执行的各个事务之间不能互相干扰。
+持久性（durability）	持续性也称永久性（permanence），指一个事务一旦提交，它对数据库中数据的改变就应该是永久性的。接下来的其他操作或故障不应该对其有任何影响。
+
+插入、更新、删除操作都是对数据库进行更改的操作，更改操作都必须为一个事务，所以对于这些操作的标准写法就是：
+try:
+    cursor.execute(sql)
+    db.commit()
+except:
+    db.rollback()
+
+
+
+
+
+data = {
+    'id': '20120001',
+    'name': 'Bob',
+    'age': 21
+}
+
+table = 'students'
+keys = ', '.join(data.keys())
+values = ', '.join(['%s'] * len(data))
+
+sql = 'INSERT INTO {table}({keys}) VALUES ({values}) ON DUPLICATE KEY UPDATE'.format(table=table, keys=keys, values=values)
+update = ','.join([" {key} = %s".format(key=key) for key in data])
+sql += update
+try:
+    if cursor.execute(sql, tuple(data.values())*2):
+        print('Successful')
+        db.commit()
+except:
+    print('Failed')
+    db.rollback()
+db.close()
+
+ON DUPLICATE KEY UPDATE，这个的意思是如果主键已经存在了，那就执行更新操作，比如在这里我们传入的数据 id 仍然为 20120001，但是年龄有所变化，由 20 变成了 21，但在这条数据不会被插入，而是将 id 为 20120001 的数据更新
+
+完整的 SQL 构造出来是这样的：
+INSERT INTO students(id, name, age) VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE id = %s, name = %s, age = %s
+
+================删除数据
+table = 'students'
+condition = 'age > 20'
+
+sql = 'DELETE FROM  {table} WHERE {condition}'.format(table=table, condition=condition)
+try:
+    cursor.execute(sql)
+    db.commit()
+except:
+    db.rollback()
+
+db.close()
+
+================查询数据
+sql = 'SELECT * FROM students WHERE age >= 20'
+
+try:
+    cursor.execute(sql)
+    print('Count:', cursor.rowcount)
+    one = cursor.fetchone()
+    print('One:', one)
+    results = cursor.fetchall()
+    print('Results:', results)
+    print('Results Type:', type(results))
+    for row in results:
+        print(row)
+except:
+    print('Error')
+运行结果：
+Count: 4
+One: ('20120001', 'Bob', 25)
+Results: (('20120011', 'Mary', 21), ('20120012', 'Mike', 20), ('20120013', 'James', 22))
+Results Type: <class 'tuple'>
+('20120011', 'Mary', 21)
+('20120012', 'Mike', 20)
+('20120013', 'James', 22)
+
+
+显示的是4条数据，fetall() 方法不是获取所有数据吗？为什么只有3条？这是因为它的内部实现是有一个偏移指针来指向查询结果的，最开始偏移指针指向第一条数据，取一次之后，指针偏移到下一条数据，这样再取的话就会取到下一条数据了。所以我们最初调用了一次 fetchone() 方法，这样结果的偏移指针就指向了下一条数据，fetchall() 方法返回的是偏移指针指向的数据一直到结束的所有数据，所以 fetchall() 方法获取的结果就只剩 3 个了，所以在这里要理解偏移指针的概念。
+
+所以我们还可以用 while 循环加 fetchone() 的方法来获取所有数据，而不是用 fetchall() 全部一起获取出来，fetchall() 会将结果以元组形式全部返回，如果数据量很大，那么占用的开销会非常高。所以推荐使用如下的方法来逐条取数据：
+sql = 'SELECT * FROM students WHERE age >= 20'
+try:
+    cursor.execute(sql)
+    print('Count:', cursor.rowcount)
+    row = cursor.fetchone()
+    while row:
+        print('Row:', row)
+        row = cursor.fetchone()
+except:
+    print('Error')
+
+================

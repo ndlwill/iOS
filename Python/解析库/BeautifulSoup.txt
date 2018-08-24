@@ -1,0 +1,464 @@
+专注于 HTML 文档操作
+
+BeautifulSoup 自动将输入文档转换为 Unicode 编码，输出文档转换为 utf-8 编码
+
+======================解析器
+BeautifulSoup 在解析的时候实际上是依赖于解析器的
+解析器 使用方法    优势  劣势
+Python标准库   BeautifulSoup(markup, "html.parser")    Python的内置标准库、执行速度适中 、文档容错能力强    Python 2.7.3 or 3.2.2)前的版本中文容错能力差
+LXML HTML 解析器   BeautifulSoup(markup, "lxml")   速度快、文档容错能力强 需要安装C语言库
+LXML XML 解析器    BeautifulSoup(markup, "xml")    速度快、唯一支持XML的解析器 需要安装C语言库
+html5lib    BeautifulSoup(markup, "html5lib")   最好的容错性、以浏览器的方式解析文档、生成 HTML5 格式的文档   速度慢、不依赖外部扩展
+
+# 推荐lxml
+from bs4 import BeautifulSoup
+soup = BeautifulSoup('<p>Hello</p>', 'lxml')
+print(soup.p.string)
+
+============================
+pip install beautifulsoup4
+
+<html>  
+    <head>
+     <title>hello, world</title>
+    </head>
+    <body>
+        <h1>BeautifulSoup</h1>
+        <p>如何使用BeautifulSoup</p>
+    <body>
+</html>
+它由很多标签（Tag）组成，比如 html、head、title等等都是标签
+一个标签对构成一个节点，比如 <html>…</html>是一个根节点
+节点之间存在某种关系，比如 h1 和 p 互为邻居，他们是相邻的兄弟（sibling）节点
+h1 是 body 的直接子（children）节点，还是 html 的子孙（descendants）节点
+body 是 p 的父（parent）节点，html 是 p 的祖辈（parents）节点
+嵌套在标签之间的字符串是该节点下的一个特殊子节点，比如 “hello, world” 也是一个节点，只不过没名字。
+
+构建一个 BeautifulSoup 对象需要两个参数，第一个参数是将要解析的 HTML 文本字符串，第二个参数告诉 BeautifulSoup 使用哪个解析器来解析 HTML。
+
+解析器负责把 HTML 解析成相关的对象，而 BeautifulSoup 负责操作数据（增删改查）。“html.parser” 是 Python 内置的解析器，“lxml” 则是一个基于c语言开发的解析器，它的执行速度更快，不过它需要额外安装
+
+from bs4 import BeautifulSoup  
+text = """
+<html>  
+    <head>
+     <title >hello, world</title>
+    </head>
+    <body>
+        <h1>BeautifulSoup</h1>
+        <p class="bold">如何使用BeautifulSoup</p>
+        <p class="big" id="key1"> 第二个p标签</p>
+        <a href="http://foofish.net">python</a>
+    </body>
+</html>  
+"""
+soup = BeautifulSoup(text, "html.parser")
+print(soup.prettify()) # 把要解析的字符串以标准的缩进格式输出
+print(soup.title.string)
+ 
+# title 标签
+>>> soup.title
+<title>hello, world</title>
+ 
+# p 标签
+>>> soup.p
+<p class="bold">\u5982\u4f55\u4f7f\u7528BeautifulSoup</p>
+ 
+# p 标签的内容
+>>> soup.p.string
+u'\u5982\u4f55\u4f7f\u7528BeautifulSoup'
+
+BeatifulSoup 将 HTML 抽象成为 4 类主要的数据类型，分别是Tag , NavigableString , BeautifulSoup，Comment 。每个标签节点就是一个Tag对象，NavigableString 对象一般是包裹在Tag对象中的字符串，BeautifulSoup 对象代表整个 HTML 文档。
+
+>>> type(soup)
+<class 'bs4.BeautifulSoup'>
+>>> type(soup.h1)
+<class 'bs4.element.Tag'>
+>>> type(soup.p.string)
+<class 'bs4.element.NavigableString'>
+
+=====================Tag
+每个 Tag 都有一个名字，它对应 HTML 的标签名称。
+
+print(type(soup.title))
+<class 'bs4.element.Tag'>
+
+print(soup.p)
+当有多个节点时，这种选择方式只会选择到第一个匹配的节点，其他的后面的节点都会忽略。
+
+
+
+# name 属性来获取节点的名称
+>>> soup.h1.name
+u'h1'
+>>> soup.p.name
+u'p'
+
+标签还可以有属性，属性的访问方式和字典是类似的，它返回一个列表对象
+>>> soup.p['class']
+[u'bold']
+
+======================
+html = """
+<html><head><title>The Dormouse's story</title></head>
+<body>
+<p class="title" name="dromouse"><b>The Dormouse's story</b></p>
+<p class="story">Once upon a time there were three little sisters; and their names were
+<a href="http://example.com/elsie" class="sister" id="link1"><!-- Elsie --></a>,
+<a href="http://example.com/lacie" class="sister" id="link2">Lacie</a> and
+<a href="http://example.com/tillie" class="sister" id="link3">Tillie</a>;
+and they lived at the bottom of a well.</p>
+<p class="story">...</p>
+"""
+
+------------------获取属性
+print(soup.p.attrs)
+print(soup.p.attrs['name'])
+
+# 比如 name 属性的值是唯一的，返回的结果就是单个字符串，而对于 class，一个节点元素可能由多个 class，所以返回的是列表
+{'class': ['title'], 'name': 'dromouse'} 
+dromouse
+
+我们可以不用写 attrs
+print(soup.p['name'])
+print(soup.p['class'])
+
+------------------嵌套选择
+html = """
+<html><head><title>The Dormouse's story</title></head>
+<body>
+"""
+from bs4 import BeautifulSoup
+soup = BeautifulSoup(html, 'lxml')
+print(soup.head.title)
+print(type(soup.head.title))
+print(soup.head.title.string)
+
+------------------关联选择
+1.子节点和子孙节点
+
+html = """
+<html>
+    <head>
+        <title>The Dormouse's story</title>
+    </head>
+    <body>
+        <p class="story">
+            Once upon a time there were three little sisters; and their names were
+            <a href="http://example.com/elsie" class="sister" id="link1">
+                <span>Elsie</span>
+            </a>
+            <a href="http://example.com/lacie" class="sister" id="link2">Lacie</a> 
+            and
+            <a href="http://example.com/tillie" class="sister" id="link3">Tillie</a>
+            and they lived at the bottom of a well.
+        </p>
+        <p class="story">...</p>
+"""
+
+print(soup.p.contents) # 直接子节点的列表
+
+from bs4 import BeautifulSoup
+soup = BeautifulSoup(html, 'lxml')
+print(soup.p.children)
+for i, child in enumerate(soup.p.children):
+    print(i, child)
+
+
+from bs4 import BeautifulSoup
+soup = BeautifulSoup(html, 'lxml')
+print(soup.p.descendants)
+for i, child in enumerate(soup.p.descendants): # 得到所有的子孙节点,descendants 会递归地查询所有子节点，得到的是所有的子孙节点
+    print(i, child)
+
+2.父节点和祖先节点
+
+html = """
+<html>
+    <head>
+        <title>The Dormouse's story</title>
+    </head>
+    <body>
+        <p class="story">
+            Once upon a time there were three little sisters; and their names were
+            <a href="http://example.com/elsie" class="sister" id="link1">
+                <span>Elsie</span>
+            </a>
+        </p>
+        <p class="story">...</p>
+"""
+
+from bs4 import BeautifulSoup
+soup = BeautifulSoup(html, 'lxml')
+print(soup.a.parent)
+
+想获取所有的祖先节点，可以调用 parents 属性
+from bs4 import BeautifulSoup
+soup = BeautifulSoup(html, 'lxml')
+print(type(soup.a.parents))
+print(list(enumerate(soup.a.parents))) # parents-> <class 'generator'>
+
+3.兄弟节点
+html = """
+<html>
+    <body>
+        <p class="story">
+            Once upon a time there were three little sisters; and their names were
+            <a href="http://example.com/elsie" class="sister" id="link1">
+                <span>Elsie</span>
+            </a>
+            Hello
+            <a href="http://example.com/lacie" class="sister" id="link2">Lacie</a> 
+            and
+            <a href="http://example.com/tillie" class="sister" id="link3">Tillie</a>
+            and they lived at the bottom of a well.
+        </p>
+"""
+from bs4 import BeautifulSoup
+soup = BeautifulSoup(html, 'lxml')
+print('Next Sibling', soup.a.next_sibling)
+print('Prev Sibling', soup.a.previous_sibling)
+print('Next Siblings', list(enumerate(soup.a.next_siblings)))
+print('Prev Siblings', list(enumerate(soup.a.previous_siblings)))
+
+4.提取信息
+html = """
+<html>
+    <body>
+        <p class="story">
+            Once upon a time there were three little sisters; and their names were
+            <a href="http://example.com/elsie" class="sister" id="link1">Bob</a><a href="http://example.com/lacie" class="sister" id="link2">Lacie</a> 
+        </p>
+"""
+from bs4 import BeautifulSoup
+soup = BeautifulSoup(html, 'lxml')
+print('Next Sibling:')
+print(type(soup.a.next_sibling))
+print(soup.a.next_sibling)
+print(soup.a.next_sibling.string)
+print('Parent:')
+print(type(soup.a.parents))
+print(list(soup.a.parents)[0])
+print(list(soup.a.parents)[0].attrs['class'])
+
+======================NavigableString
+获取标签中的内容，直接使用 .stirng 即可获取，它是一个 NavigableString 对象，你可以显式地将它转换为 unicode 字符串。
+
+>>> soup.p.string
+u'\u5982\u4f55\u4f7f\u7528BeautifulSoup'
+>>> type(soup.p.string)
+<class 'bs4.element.NavigableString'>
+>>> unicode_str = unicode(soup.p.string)
+>>> unicode_str
+u'\u5982\u4f55\u4f7f\u7528BeautifulSoup'
+
+======================遍历文档树
+就是是从根节点 html 标签开始遍历，直到找到目标元素为止，遍历的一个缺陷是，如果你要找的内容在文档的末尾，那么它要遍历整个文档才能找到它，速度上就慢了。
+
+获取 body 标签：
+
+>>> soup.body
+<body>\n<h1>BeautifulSoup</h1>\n<p class="bold">\u5982\u4f55\u4f7f\u7528BeautifulSoup</p>\n</body>
+获取 p 标签
+
+>>> soup.body.p
+<p class="bold">\u5982\u4f55\u4f7f\u7528BeautifulSoup</p>
+获取 p 标签的内容
+
+>>> soup.body.p.string
+\u5982\u4f55\u4f7f\u7528BeautifulSoup
+
+遍历文档树的另一个缺点是只能获取到与之匹配的第一个子节点
+如果有两个相邻的 p 标签时，第二个标签就没法通过 .p 的方式获取，这是需要借用 next_sibling 属性获取相邻的节点。
+
+还有很多不怎么常用的属性，比如：.contents 获取所有子节点，.parent 获取父节点
+
+======================搜索文档树(方法选择器)
+搜索文档树是通过指定标签名来搜索元素，还可以通过指定标签的属性值来精确定位某个节点元素，最常用的两个方法就是 find 和 find_all。这两个方法在 BeatifulSoup 和 Tag 对象上都可以被调用
+
+find_all( name , attrs , recursive , text , **kwargs )
+find_all 的返回值是一个 Tag 组成的列表
+
+-------------------第一个参数 name 是标签节点的名字:
+# 找到所有标签名为title的节点
+print(soup.find_all(name='title'))
+>>> soup.find_all("title")
+[<title>hello, world</title>]
+
+# 嵌套查询
+for ul in soup.find_all(name='ul'): # ul -> <class 'bs4.element.Tag'>
+    print(ul.find_all(name='li'))
+
+
+ 
+>>> soup.find_all("p")
+[<p class="bold">\xc8\xe7\xba\xce\xca....</p>, 
+<p class="big"> \xb5\xda\xb6\xfe\xb8\xf6p...</p>]
+
+-------------------第二个参数是标签的class属性值:
+html='''
+<div class="panel">
+    <div class="panel-heading">
+        <h4>Hello</h4>
+    </div>
+    <div class="panel-body">
+        <ul class="list" id="list-1" name="elements">
+            <li class="element">Foo</li>
+            <li class="element">Bar</li>
+            <li class="element">Jay</li>
+        </ul>
+        <ul class="list list-small" id="list-2">
+            <li class="element">Foo</li>
+            <li class="element">Bar</li>
+        </ul>
+    </div>
+</div>
+'''
+
+from bs4 import BeautifulSoup
+soup = BeautifulSoup(html, 'lxml')
+print(soup.find_all(attrs={'id': 'list-1'}))
+print(soup.find_all(attrs={'name': 'elements'}))
+
+
+对于一些常用的属性比如 id、class 等，我们可以不用 attrs 来传递
+print(soup.find_all(id='list-1'))
+# 由于 class 在 python 里是一个关键字，所以在这里后面需要加一个下划线
+print(soup.find_all(class_='element'))
+
+# 找到所有class属性为big的p标签
+>>> soup.find_all("p", "big")
+等效于
+>>> soup.find_all("p", class_="big")
+[<p class="big"> \xb5\xda\xb6\xfe\xb8\xf6p\xb1\xea\xc7\xa9</p>]
+[<p class="big"> \xb5\xda\xb6\xfe\xb8\xf6p\xb1\xea\xc7\xa9</p>]
+
+kwargs 是标签的属性名值对，例如：查找有href属性值为 “http://foofish.net” 的标签
+>>> soup.find_all(href="http://foofish.net")
+[<a href="http://foofish.net">python</a>]
+
+----------------------text 参数
+# 传入的形式可以是字符串，可以是正则表达式对象
+
+import re
+html='''
+<div class="panel">
+    <div class="panel-body">
+        <a>Hello, this is a link</a>
+        <a>Hello, this is a link, too</a>
+    </div>
+</div>
+'''
+from bs4 import BeautifulSoup
+soup = BeautifulSoup(html, 'lxml')
+print(soup.find_all(text=re.compile('link')))
+
+
+
+
+它还支持正则表达式
+>>> import re
+>>> soup.find_all(href=re.compile("^http"))
+[<a href="http://foofish.net">python</a>]
+
+属性除了可以是具体的值、正则表达式之外，它还可以是一个布尔值（True/Flase），表示有属性或者没有该属性。
+>>> soup.find_all(id="key1")
+[<p class="big" id="key1"> \xb5\xda\xb6\xfe\xb8\xf6p\xb1\xea\xc7\xa9</p>]
+>>> soup.find_all(id=True)
+[<p class="big" id="key1"> \xb5\xda\xb6\xfe\xb8\xf6p\xb1\xea\xc7\xa9</p>]
+
+遍历和搜索相结合查找，先定位到 body 标签，缩小搜索范围，再从 body 中找 a 标签。
+>>> body_tag = soup.body
+>>> body_tag.find_all("a")
+[<a href="http://foofish.net">python</a>]
+
+
+# find() 方法返回的是单个元素，也就是第一个匹配的元素，而 find_all() 返回的是所有匹配的元素组成的列表。
+find()
+find 方法跟 find_all 类似，唯一不同的地方是，它返回的单个 Tag 对象而非列表，如果没找到匹配的节点则返回 None。如果匹配多个 Tag，只返回第0个。
+
+>>> body_tag.find("a")
+<a href="http://foofish.net">python</a>
+>>> body_tag.find("p")
+<p class="bold">\xc8\xe7\xba\xce\xca\xb9\xd3\xc3BeautifulSoup</p>
+
+
+
+get_text()
+获取标签里面内容，除了可以使用 .string 之外，还可以使用 get_text 方法，不同的地方在于前者返回的一个 NavigableString 对象，后者返回的是 unicode 类型的字符串。
+
+>>> p1 = body_tag.find('p').get_text()
+>>> type(p1)
+<type 'unicode'>
+>>> p1
+u'\xc8\xe7\xba\xce\xca\xb9\xd3\xc3BeautifulSoup'
+ 
+>>> p2 = body_tag.find("p").string
+>>> type(p2)
+<class 'bs4.element.NavigableString'>
+>>> p2
+u'\xc8\xe7\xba\xce\xca\xb9\xd3\xc3BeautifulSoup'
+
+我们一般使用 get_text 方法获取标签中的内容
+
+
+
+
+
+find_parents() find_parent()
+find_parents() 返回所有祖先节点，find_parent() 返回直接父节点。
+find_next_siblings() find_next_sibling()
+find_next_siblings() 返回后面所有兄弟节点，find_next_sibling() 返回后面第一个兄弟节点。
+find_previous_siblings() find_previous_sibling()
+find_previous_siblings() 返回前面所有兄弟节点，find_previous_sibling() 返回前面第一个兄弟节点。
+find_all_next() find_next()
+find_all_next() 返回节点后所有符合条件的节点, find_next() 返回第一个符合条件的节点。
+find_all_previous() 和 find_previous()
+find_all_previous() 返回节点后所有符合条件的节点, find_previous() 返回第一个符合条件的节点
+
+==============================CSS选择器
+html='''
+<div class="panel">
+    <div class="panel-heading">
+        <h4>Hello</h4>
+    </div>
+    <div class="panel-body">
+        <ul class="list" id="list-1">
+            <li class="element">Foo</li>
+            <li class="element">Bar</li>
+            <li class="element">Jay</li>
+        </ul>
+        <ul class="list list-small" id="list-2">
+            <li class="element">Foo</li>
+            <li class="element">Bar</li>
+        </ul>
+    </div>
+</div>
+'''
+from bs4 import BeautifulSoup
+soup = BeautifulSoup(html, 'lxml')
+print(soup.select('.panel .panel-heading'))
+print(soup.select('ul li')) # 选择所有 ul 节点下面的所有 li 节点，结果便是所有的 li 节点组成的列表
+print(soup.select('#list-2 .element'))
+print(type(soup.select('ul')[0]))
+
+
+嵌套选择:
+from bs4 import BeautifulSoup
+soup = BeautifulSoup(html, 'lxml')
+for ul in soup.select('ul'):
+    print(ul.select('li'))
+
+获取属性:
+from bs4 import BeautifulSoup
+soup = BeautifulSoup(html, 'lxml')
+for ul in soup.select('ul'):
+    print(ul['id'])
+    print(ul.attrs['id'])
+
+获取文本:
+from bs4 import BeautifulSoup
+soup = BeautifulSoup(html, 'lxml')
+for li in soup.select('li'):
+    print('Get Text:', li.get_text())
+    print('String:', li.string)
