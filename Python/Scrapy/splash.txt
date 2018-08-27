@@ -1,0 +1,225 @@
+Splash 是一个 JavaScript 渲染服务，是一个带有 HTTP API 的轻量级浏览器
+
+ScrapySplash 的安装分为两部分，一个是是 Splash 服务的安装，安装方式是通过 Docker，安装之后会启动一个 Splash 服务，我们可以通过它的接口来实现 JavaScript 页面的加载。另外一个是 ScrapySplash 的 Python 库的安装，安装之后即可在 Scrapy 中使用 Splash 服务
+
+ScrapySplash 会使用 Splash 的 HTTP API 进行页面渲染
+
+docker run -p 8050:8050 scrapinghub/splash
+
+证明 Splash 已经在 8050 端口上运行
+这时我们打开：http://localhost:8050 即可看到 Splash 的主页
+
+
+当然 Splash 也可以直接安装在远程服务器上，我们在服务器上运行以守护态运行 Splash 即可，命令如下：
+docker run -d -p 8050:8050 scrapinghub/splash
+在这里多了一个 -d 参数，它代表将 Docker 容器以守护态运行，这样在中断远程服务器连接后不会终止 Splash 服务的运行
+
+=================ScrapySplash的安装
+pip3 install scrapy-splash
+
+=================Splash Lua脚本
+Splash可以通过Lua脚本执行一系列渲染操作，这样我们就可以用Splash来模拟类似Chrome、PhantomJS的操作了
+
+function main(splash, args)
+  splash:go("http://www.baidu.com")
+  splash:wait(0.5)
+  local title = splash:evaljs("document.title")
+  return {title=title}
+end
+
+方法名称叫做 main()，这个名称必须是固定的，Splash 会默认调用这个方法
+
+方法的返回值可以是字典形式、也可以是字符串形式，最后都会转化为一个 Splash HTTP Response
+
+function main(splash)
+    return {hello="world!"}
+end
+这样即返回了一个字典形式的内容。
+function main(splash)
+    return 'hello'
+end
+这样即返回了一个字符串形式的内容
+
+-------------------异步处理
+Splash是支持异步处理的，但是这里我们并没有显式地指明回调方法，其回调的跳转是在Splash内部完成的
+
+function main(splash, args)
+  local example_urls = {"www.baidu.com", "www.taobao.com", "www.zhihu.com"}
+  local urls = args.urls or example_urls
+  local results = {}
+  for index, url in ipairs(urls) do
+    local ok, reason = splash:go("http://" .. url) // 字符串拼接使用的是 .. 操作符
+    if ok then
+      splash:wait(2) // 在脚本内调用了 wait() 方法，这类似于 Python 中的 sleep()
+      results[url] = splash:png()
+    end
+  end
+  return results
+end
+
+Lua语法:
+http://www.runoob.com/lua/lua-basic-syntax.html
+
+-------------------Splash对象属性
+main() 方法的第一个参数是 splash，这个对象非常重要，类似于在 Selenium 中的WebDriver 对象：
+from selenium import webdriver
+browser = webdriver.Chrome()
+
+args
+splash 对象的 args 属性可以获取加载时配置的参数，它可以获取加载的 URL，如果为 GET 请求它还可以获取 GET 请求参数，如果为 POST 请求它可以获取表单提交的数据。Splash 支持第二个参数直接作为 args，例如：
+function main(splash, args)
+    local url = args.url
+end
+在这里第二个参数 args 就相当于 splash.args 属性，以上代码等价于：
+function main(splash)
+    local url = splash.args.url
+end
+
+
+-------------------js_enabled
+这个属性是 Splash 的 JavaScript 执行开关，我们可以将其配置为 True 或 False 来控制是否可以执行 JavaScript 代码，默认为 True，例如我们在这里禁用一下 JavaScript 的执行：
+function main(splash, args)
+  splash:go("https://www.baidu.com")
+  splash.js_enabled = false
+  local title = splash:evaljs("document.title")
+  return {title=title}
+end
+
+运行结果就会抛出异常
+
+-------------------resource_timeout
+此属性可以设置加载的超时时间，单位是秒，如果设置为 0或 nil（类似 Python 中的 None）就代表不检测超时，我们用一个实例感受一下：
+function main(splash)
+    splash.resource_timeout = 0.1
+    assert(splash:go('https://www.taobao.com'))
+    return splash:png()
+end
+
+-------------------images_enabled
+此属性可以设置图片是否加载，默认情况下是加载的，但是禁用之后可以节省网络流量并提高网页加载速度，但是值得注意的是禁用图片加载之后可能会影响 JavaScript 渲染，因为禁用图片之后它的外层 DOM 节点的高度会受影响，进而影响 DOM 节点的位置，所以如果 JavaScript 如果使用了相关变量的话，其执行就会受到影响，不过一般情况下不会。
+另外值得注意的是 Splash 使用了缓存，所以如果你一开始加载出来了网页图片，然后禁用了图片加载，然后再重新加载页面，之前加载好的图片可能还会显示出来，这时可以重启一下 Splash 即可解决。
+禁用图片加载的示例如下：
+function main(splash, args)
+  splash.images_enabled = false
+  assert(splash:go('https://www.jd.com'))
+  return {png=splash:png()}
+end
+
+
+更多参考：
+https://germey.gitbooks.io/python3webspider/7.2-Splash%E7%9A%84%E4%BD%BF%E7%94%A8.html
+
+=======================Splash负载均衡配置
+如果我们用 Splash 来做 JavaScript 动态渲染的页面的抓取的话，如果爬取的量非常大，任务非常多，如果我们用一个 Splash 服务来处理的话未免压力太大了，所以我们可以考虑搭建一个负载均衡器来把压力分散到各个服务器上，这样相当于多台机器多个服务共同参与任务的处理，可以减小单个 Splash 服务的压力
+
+1.配置Splash服务
+要搭建 Splash 负载均衡首先我们需要有多个 Splash 服务，假如在这里我在四台远程主机的 8050 端口上都开启了 Splash 服务，它们的服务地址分别为：41.159.27.223:8050、41.159.27.221:8050、41.159.27.9:8050、41.159.117.119:8050，四个服务完全一致，都是通过 Docker 的 Splash 镜像开启的，访问任何一个服务都可以使用 Splash 服务
+
+2.配置负载均衡
+可以选用任意一台带有公网 IP 的主机来配置负载均衡，首先需要在这台主机上装好 Nginx，然后修改 Nginx 的配置文件 nginx.conf，添加如下内容：
+http {
+    upstream splash {
+        least_conn;
+        server 41.159.27.223:8050;
+        server 41.159.27.221:8050;
+        server 41.159.27.9:8050;
+        server 41.159.117.119:8050;
+    }
+    server {
+        listen 8050;
+        location / {
+            proxy_pass http://splash;
+        }
+    }
+}
+
+这样我们通过 upstream 字段定义了一个名字叫做 splash 的服务集群配置，least_conn 代表最少链接负载均衡，它适合处理请求处理时间长短不一造成服务器过载的情况。
+
+或者我们也可以不指定配置，配置如下：
+upstream splash {
+    server 41.159.27.223:8050;
+    server 41.159.27.221:8050;
+    server 41.159.27.9:8050;
+    server 41.159.117.119:8050;
+}
+这样默认以轮询策略实现负载均衡，每个服务器的压力相同，此策略适合服务器配置相当，无状态且短平快的服务使用。
+
+
+另外我们还可以指定权重，配置如下：
+upstream splash {
+    server 41.159.27.223:8050 weight=4;
+    server 41.159.27.221:8050 weight=2;
+    server 41.159.27.9:8050 weight=2;
+    server 41.159.117.119:8050 weight=1;
+}
+我们通过 weight 指定了各个服务的权重，权重越高分配到处理的请求越多，假如不同的服务器配置差别比较大的话，就可以使用此种配置。
+
+
+最后还有一种 IP 哈希负载均衡，配置如下：
+upstream splash {
+    ip_hash;
+    server 41.159.27.223:8050;
+    server 41.159.27.221:8050;
+    server 41.159.27.9:8050;
+    server 41.159.117.119:8050;
+}
+服务器根据请求客户端的 IP 地址进行哈希计算，确保使用同一个服务器响应请求，这种策略适合有状态的服务，如用户登录后访问某个页面的情形。不过对于 Splash 来说不需要
+
+
+我们可以根据不同的情形选用不同的配置，配置完成后重启一下 Nginx 服务：
+sudo nginx -s reload
+这样直接访问 Nginx 所在服务器的 8050 端口即可实现负载均衡了。
+
+3.配置认证
+现在 Splash 是公开访问的，如果我们不想让其被公开访问还可以配置认证，仍然借助于 Nginx 即可，可以在 server 的 location 字段中添加一个 auth_basic 和 auth_basic_user_file 字段，配置如下：
+http {
+    upstream splash {
+        least_conn;
+        server 41.159.27.223:8050;
+        server 41.159.27.221:8050;
+        server 41.159.27.9:8050;
+        server 41.159.117.119:8050;
+    }
+    server {
+        listen 8050;
+        location / {
+            proxy_pass http://splash;
+            auth_basic "Restricted";
+            auth_basic_user_file /etc/nginx/conf.d/.htpasswd;
+        }
+    }
+}
+
+在这里使用的用户名密码配置放置在 /etc/nginx/conf.d 目录，我们需要使用 htpasswd 命令创建，例如创建一个用户名为 admin 的文件，命令如下：
+htpasswd -c .htpasswd admin
+
+接下就会提示我们输入密码，输入两次之后，就会生成密码文件，查看一下内容：
+cat .htpasswd 
+admin:5ZBxQr0rCqwbc
+
+配置完成之后我们重启一下 Nginx 服务，运行如下命令：
+sudo nginx -s reload
+这样访问认证就成功配置好了。
+
+4.测试
+最后我们可以用代码来测试一下负载均衡的配置，看看到底是不是每次请求会切换IP，利用 http://httpbin.org/get 测试即可，代码实现如下：
+
+import requests
+from urllib.parse import quote
+import re
+
+lua = '''
+function main(splash, args)
+  local treat = require("treat")
+  local response = splash:http_get("http://httpbin.org/get")
+  return treat.as_string(response.body)
+end
+'''
+
+url = 'http://splash:8050/execute?lua_source=' + quote(lua)
+response = requests.get(url, auth=('admin', 'admin'))
+ip = re.search('(\d+\.\d+\.\d+\.\d+)', response.text).group(1)
+print(ip)
+
+
+多次运行代码之后可以发现每次请求的 IP 都会变化，这就说明负载均衡已经成功实现了
