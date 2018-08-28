@@ -87,6 +87,8 @@
 #import "BounceView.h"
 #import <PinYin4Objc.h>
 
+#import "YouKuPlayButton.h"
+
 #import "Book.h"
 
 // TODO: Import
@@ -1220,9 +1222,21 @@ NSLog(@"viewDidLoad 22");
     BounceView *bounceView = [[BounceView alloc] initWithFrame:CGRectMake(20, 300, 120, 60) bounceSpacing:10];
     bounceView.backgroundColor = [UIColor grayColor];
     [self.view addSubview:bounceView];
+    
+    YouKuPlayButton * youku = [[YouKuPlayButton alloc] initWithFrame:CGRectMake(self.view.width - 120, 480, 120, 120) state:YouKuButtonState_Play];//YouKuButtonState_Pause
+    youku.backgroundColor = [UIColor orangeColor];
+    [youku addTarget:self action:@selector(youkuDidClicked:) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:youku];
 }
 
-
+- (void)youkuDidClicked:(YouKuPlayButton *)btn
+{
+    if (btn.buttonState == YouKuButtonState_Pause) {
+        btn.buttonState = YouKuButtonState_Play;
+    } else {
+        btn.buttonState = YouKuButtonState_Pause;
+    }
+}
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section
 {
