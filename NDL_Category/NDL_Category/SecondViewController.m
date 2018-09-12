@@ -68,6 +68,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     
+    
 //    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(navControllerPanGesture:)];
 //    [self.navigationController.view addGestureRecognizer:pan];
     

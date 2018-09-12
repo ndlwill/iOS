@@ -10,6 +10,16 @@
 
 @implementation CALayer (NDLExtension)
 
+/*
+ 一定要设置这个 不然到后台再返回没发恢复
+ scaleAnim.removedOnCompletion = NO;
+ scaleAnim.fillMode = kCAFillModeForwards;
+ 
+ 或者
+ removeAllAnimations...
+ addAnimation...
+ 
+ */
 - (void)pauseAnimation
 {
     CFTimeInterval pausedTime = [self convertTime:CACurrentMediaTime() fromLayer:nil];

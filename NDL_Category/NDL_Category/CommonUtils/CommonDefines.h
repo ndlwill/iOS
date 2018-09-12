@@ -172,19 +172,38 @@ return shared##className; \
 // 获取当前设备的系统版本
 #define Device_System_Version [[[UIDevice currentDevice] systemVersion] floatValue]
 
-#if  __IPHONE_OS_VERSION_MIN_REQUIRED >= __IPHONE_7_0
-#define NDLBadgeViewIgnoreDeprecatedMethodStart()   _Pragma("clang diagnostic push") \
+
+// ====================ignore clang warning====================
+#pragma mark - ignore clang warning
+//warning 列表参考：https://clang.llvm.org/docs/DiagnosticsReference.html
+/*
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wunused-variable"
+ #pragma clang diagnostic ignored "-Wundeclared-selector"
+ // 这里是会报警告的代码
+ #pragma clang diagnostic pop
+ */
+
+#define BeginIgnoreDeprecatedWarning _Pragma("clang diagnostic push") \
 _Pragma("clang diagnostic ignored \"-Wdeprecated-declarations\"")
-#define NDLBadgeViewIgnoreDeprecatedMethodEnd()     _Pragma("clang diagnostic pop")
-#else
-#define NDLBadgeViewIgnoreDeprecatedMethodStart()
-#define NDLBadgeViewIgnoreDeprecatedMethodEnd()
-#endif
+#define EndIgnoreDeprecatedWarning _Pragma("clang diagnostic pop")
 
 #define IGNORE_PERFORM_SELECTOR_LEAK_WARNING(code) _Pragma("clang diagnostic push") \
 _Pragma("clang diagnostic ignored \"-Warc-performSelector-leaks\"") \
 code; \
 _Pragma("clang diagnostic pop")
+
+
+
+
+
+// ====================deprecated====================
+#pragma mark - deprecated
+/*
+ NS_DEPRECATED_IOS(2_0, 4_0)
+ __attribute((deprecated("不建议使用")))
+ */
+
 
 // @property (nonatomic, strong, nonnull) dispatch_semaphore_t lock;
 #define NDLLOCK(lock) dispatch_semaphore_wait(lock, DISPATCH_TIME_FOREVER);

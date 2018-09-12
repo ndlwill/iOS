@@ -7,10 +7,13 @@
 //
 
 #import "TestAnimViewController.h"
+#import "AnimNextController.h"
+#import "WaterRippleView.h"
 
 @interface TestAnimViewController () <CAAnimationDelegate>
 
 @property (nonatomic, weak) CAShapeLayer *animLayer;
+@property (weak, nonatomic) IBOutlet UIView *backView;
 
 @end
 
@@ -19,18 +22,45 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     
+    // ###borderWidth算在view的frame里面,不是在原始frame的宽高上面在加borderWidth###
+    // CG框架绘制border 如果width=1，绘制点应在1/2=0.5 
+    self.backView.layer.borderWidth = 5.0;
+    self.backView.layer.borderColor = [UIColor greenColor].CGColor;
+    
     UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
-    btn.frame = CGRectMake(0, 500, 100, 60);
+    btn.frame = CGRectMake(0, 300, 100, 60);
     btn.backgroundColor = [UIColor redColor];
     [btn addTarget:self action:@selector(btnDidClicked) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:btn];
     
+    UIButton *nextBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    nextBtn.frame = CGRectMake(0, 400, 100, 60);
+    nextBtn.backgroundColor = [UIColor cyanColor];
+    [nextBtn addTarget:self action:@selector(nextBtnDidClicked) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:nextBtn];
+    
+    // routeAnimation
     [self routeAnimation];
+    
+    WaterRippleView *rippleView = [[WaterRippleView alloc] initWithFrame:CGRectMake(kScreenWidth - 300, kScreenHeight - 300, 300, 300) originWH:100];
+    [self.view addSubview:rippleView];
+}
+
+- (void)viewWillAppear:(BOOL)animated
+{
+    [super viewWillAppear:animated];
+    
+    NSLog(@"===TestAnimViewController viewWillAppear===");
 }
 
 - (void)btnDidClicked
 {
     [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)nextBtnDidClicked
+{
+    [self presentViewController:[AnimNextController new] animated:YES completion:nil];
 }
 
 - (void)routeAnimation

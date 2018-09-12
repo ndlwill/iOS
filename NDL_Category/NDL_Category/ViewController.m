@@ -356,6 +356,10 @@ static NSInteger cc = 0;
 - (void)viewDidLoad {
     NSLog(@"===ViewController viewDidLoad===");
     
+#warning TODO_MORE
+    // 后面转义
+    NSLog(@"%@---%@", @"-Warc-performSelector-leaks", @"\"-Warc-performSelector-leaks\"");
+    
     NSInteger ii = 13;
     NSInteger oo = ii;
     ii = 23;
@@ -378,7 +382,6 @@ static NSInteger cc = 0;
     book = [[Book alloc] init];
     book.title = @"sdf";
     NSLog(@"otherBook = %@ title = %@ book = %@", otherBook, otherBook.title, book);// 234 两个对象不同
-    
     
     if ([@"" ndl_isWholeDigit]) {
         NSLog(@"ndl_isWholeCN");
@@ -1223,7 +1226,7 @@ NSLog(@"viewDidLoad 22");
     bounceView.backgroundColor = [UIColor grayColor];
     [self.view addSubview:bounceView];
     
-    YouKuPlayButton * youku = [[YouKuPlayButton alloc] initWithFrame:CGRectMake(self.view.width - 120, 480, 120, 120) state:YouKuButtonState_Play];//YouKuButtonState_Pause
+    YouKuPlayButton * youku = [[YouKuPlayButton alloc] initWithFrame:CGRectMake(self.view.width - 120, 480, 120, 120) state:YouKuButtonState_Pause];//
     youku.backgroundColor = [UIColor orangeColor];
     [youku addTarget:self action:@selector(youkuDidClicked:) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:youku];
