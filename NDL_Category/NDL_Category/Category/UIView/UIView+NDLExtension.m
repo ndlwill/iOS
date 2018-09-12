@@ -46,6 +46,18 @@
     return CGRectContainsPoint(hitRect, point);
 }
 
+- (void)setOrigin:(CGPoint)origin
+{
+    CGRect frame = self.frame;
+    frame.origin = origin;
+    self.frame = frame;
+}
+
+- (CGPoint)origin
+{
+    return self.frame.origin;
+}
+
 - (void)setSize:(CGSize)size
 {
     CGRect frame = self.frame;

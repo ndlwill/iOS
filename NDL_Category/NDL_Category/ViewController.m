@@ -353,6 +353,14 @@ static NSInteger cc = 0;
     [self presentViewController:[FirstViewController new] animated:YES completion:nil];
 }
 
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+#if DEBUG
+    [[FLEXManager sharedManager] showExplorer];
+#endif
+}
+
 - (void)viewDidLoad {
     NSLog(@"===ViewController viewDidLoad===");
     

@@ -8,6 +8,7 @@
 
 #import "AnimNextController.h"
 #import "BadgeView.h"
+#import "MBProgressHUD+NDLExtension.h"
 
 @interface AnimNextController ()
 
@@ -23,12 +24,21 @@
     view.backgroundColor = [UIColor blackColor];
     [self.view addSubview:view];
     
+    
     [BadgeView appearance].badgeBackgroundColor = [UIColor redColor];
     BadgeView *badgeView = [[BadgeView alloc] initWithParentView:view alignment:BadgeViewAlignment_TopRight];
     badgeView.badgeStrokeWidth = 2.0;
     badgeView.badgeStrokeColor = [UIColor whiteColor];
     badgeView.badgeMinWH = 12;
 //    badgeView.badgeText = @"6";
+}
+
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+    
+    [MBProgressHUD ndl_showCustomViewWithImageNamed:@"info" text:@"我是信息" toView:nil];
+
 }
 
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event

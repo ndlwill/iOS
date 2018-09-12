@@ -8,6 +8,9 @@
 
 #import <UIKit/UIKit.h>
 
+// remote gif 
+// https://upload.wikimedia.org/wikipedia/commons/2/2c/Rotating_earth_%28large%29.gif
+
 #pragma mark - 内联静态函数
 // 方法交换
 CG_INLINE BOOL

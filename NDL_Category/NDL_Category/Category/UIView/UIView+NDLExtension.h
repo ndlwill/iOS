@@ -11,6 +11,7 @@
 // kvo [change objectForKey:NSKeyValueChangeNewKey];
 @interface UIView (NDLExtension)
 
+@property (nonatomic, assign) CGPoint origin;
 @property (nonatomic, assign) CGSize size;
 @property (nonatomic, assign) CGFloat width;
 @property (nonatomic, assign) CGFloat height;
