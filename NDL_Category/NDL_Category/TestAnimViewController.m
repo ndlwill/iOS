@@ -9,11 +9,13 @@
 #import "TestAnimViewController.h"
 #import "AnimNextController.h"
 #import "WaterRippleView.h"
+#import "TagView.h"
 
 @interface TestAnimViewController () <CAAnimationDelegate>
 
 @property (nonatomic, weak) CAShapeLayer *animLayer;
 @property (weak, nonatomic) IBOutlet UIView *backView;
+
 
 @end
 

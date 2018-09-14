@@ -10,6 +10,8 @@
 #import "BadgeView.h"
 #import "MBProgressHUD+NDLExtension.h"
 
+#import "TagView.h"
+
 @interface AnimNextController ()
 
 @end
@@ -20,6 +22,26 @@
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor cyanColor];
     
+    // tagView
+    TagView *tagView = [[TagView alloc] initWithFrame:CGRectMake(0, 44, self.view.width, 0) initialDataSource:@[@"Objective-C", @"Swift", @"C", @"C++", @"Java", @"Lua", @"Python", @"JavaScript", @"MySQL", @"Redis", @"Sqlite3"]];
+//    tagView.x = 0;
+//    tagView.y = 44;
+//    tagView.width = self.view.width;
+    tagView.tagCornerRadius = 2.0;
+    tagView.multipleSelectionFlag = YES;
+    
+    tagView.backgroundColor = [UIColor blueColor];
+    NSLog(@"======before add=====");
+    [self.view addSubview:tagView];
+    NSLog(@"======after add=====");
+    
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        [tagView addTagArray:@[@"Objective-C", @"Swift", @"C", @"C++", @"Java"]];
+        [tagView deselectAll];
+    });
+    
+    
+    // test for badgeView
     UIView *view = [[UIView alloc] initWithFrame:CGRectMake(60, 300, 120, 120)];
     view.backgroundColor = [UIColor blackColor];
     [self.view addSubview:view];

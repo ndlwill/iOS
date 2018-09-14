@@ -91,6 +91,8 @@
 
 #import "Book.h"
 
+typedef id (^WeakReference)(void);
+
 // TODO: Import
 @interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
@@ -130,10 +132,21 @@
 
 @property (nonatomic, weak) Person *testPerson;
 
+@property (nonatomic, weak) Person *p_ndl;
+@property (nonatomic, strong) NSMutableDictionary *p_dic;
+
 @end
 
 static NSInteger cc = 0;
 @implementation ViewController
+
+- (NSMutableDictionary *)p_dic
+{
+    if (!_p_dic) {
+        _p_dic = [NSMutableDictionary dictionary];
+    }
+    return _p_dic;
+}
 
 #pragma mark - ABPeoplePickerNavigationControllerDelegate
 - (void)peoplePickerNavigationController:(ABPeoplePickerNavigationController *)peoplePicker didSelectPerson:(ABRecordRef)person
@@ -359,10 +372,37 @@ static NSInteger cc = 0;
 #if DEBUG
     [[FLEXManager sharedManager] showExplorer];
 #endif
+    
+    
+    NSLog(@"viewDidAppear p_ndl = %@ dic_ndl = %@", self.p_ndl, [self.p_dic objectForKey:@"ndl"]);
 }
+
+
+// =====弱=====
+
+WeakReference makeWeakReference(id object) {
+    __weak id weakref = object;
+    return ^{
+        return weakref;
+    };
+}
+
+id weakReferenceNonretainedObjectValue(WeakReference ref) {
+    return ref ? ref() : nil;
+}
+
 
 - (void)viewDidLoad {
     NSLog(@"===ViewController viewDidLoad===");
+    
+    Person *p_ndl = [[Person alloc] init];
+    self.p_ndl = p_ndl;// 弱引用
+    NSLog(@"p_ndl = %@", self.p_ndl);
+    [self.p_dic setObject:self.p_ndl forKey:@"ndl"];// 强引用了self.p_ndl
+    
+    
+    
+    
     
 #warning TODO_MORE
     // 后面转义
