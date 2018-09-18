@@ -63,6 +63,7 @@ static NSString * const kTagCellID = @"TagCellID";
 - (instancetype)initWithFrame:(CGRect)frame initialDataSource:(NSArray<NSString *> *)initialDataSource
 {
     if (self = [super initWithFrame:frame]) {
+        // initialize初始化
         [self _initialDataWithDataSource:initialDataSource];
         [self _initialConfiguration];
         [self _setupUI];

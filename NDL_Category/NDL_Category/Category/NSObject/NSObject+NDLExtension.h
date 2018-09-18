@@ -13,4 +13,6 @@
 // 模型转字典 // 针对一层模型
 - (NSDictionary *)ndl_model2Dictionary;
 
+- (id)ndl_performSelector:(SEL)selector withObjects:(NSArray<id> *)objects;
+
 @end

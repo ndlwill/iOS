@@ -379,7 +379,6 @@ static NSInteger cc = 0;
 
 
 // =====弱=====
-
 WeakReference makeWeakReference(id object) {
     __weak id weakref = object;
     return ^{
@@ -401,7 +400,21 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
     [self.p_dic setObject:self.p_ndl forKey:@"ndl"];// 强引用了self.p_ndl
     
     
+//    UIBarButtonItem
+//    UIBarItem
     
+    NSMapTable *mapTable = [NSMapTable mapTableWithKeyOptions:NSMapTableCopyIn valueOptions:NSMapTableWeakMemory];
+    [mapTable setObject:@"123" forKey:@"name"];
+    [mapTable setObject:@"234" forKey:@"age"];
+    
+    NSEnumerator *keys = [mapTable keyEnumerator];
+    
+    id keyObj = [keys nextObject];
+    if (keyObj) {
+        NSLog(@"keys nextObject = %@", keyObj);
+    }
+    
+    [[UIButton buttonWithType:UIButtonTypeCustom] ndl_performSelector:@selector(setTitleColor:forState:) withObjects:@[[UIColor redColor], @(UIControlStateNormal)]];
     
     
 #warning TODO_MORE
@@ -1489,6 +1502,8 @@ NSLog(@"viewDidLoad 22");
     [[NSNotificationCenter defaultCenter] removeObserver:self name:UIDeviceOrientationDidChangeNotification object:nil];
     
     NSLog(@"===ViewController dealloc===");
+    
+//    [super dealloc];// arc不允许调用这个 (这个对象被置nil，会调用dealloc)
 }
 
 - (void)deviceOrientationDidChanged:(NSNotification *)notification

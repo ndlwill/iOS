@@ -8,6 +8,7 @@
 
 #import <QuartzCore/QuartzCore.h>
 
+// https://github.com/KittenYang/A-GUIDE-TO-iOS-ANIMATION
 @interface VariableCircleLayer : CALayer
 
 // 默认0.5 0-1
