@@ -95,6 +95,12 @@ typedef NS_ENUM(NSInteger, GradientDirection) {
     GradientDirection_RightTopToLeftBottom
 };
 
+// resources
+FOUNDATION_EXTERN NSString * const kRemoteGifUrlStr;
+
+// sql
+FOUNDATION_EXTERN NSString * const kTestTableName;
+
 // =====Block=====
 typedef void(^CommonNoParamNoReturnValueBlock)(void);
 

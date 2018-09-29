@@ -9,7 +9,9 @@
 #import "NDLConstants.h"
 
 
+NSString * const kRemoteGifUrlStr = @"https://raw.githubusercontent.com/mengxianliang/XLPlayButton/master/GIF/1.gif";
 
+NSString * const kTestTableName = @"t_test";
 
 // label: font = 15
 CGFloat const kSystemBadgeViewWH = 18.0;

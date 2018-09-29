@@ -193,8 +193,10 @@ _Pragma("clang diagnostic ignored \"-Warc-performSelector-leaks\"") \
 code; \
 _Pragma("clang diagnostic pop")
 
-
-
+// 角度转弧度
+#define DEGREE2RADIAN(angle) ((angle) / 180.0 * M_PI)
+// 弧度转角度
+#define RADIAN2DEGREE(radian) ((radian) * (180.0 / M_PI))
 
 
 // ====================deprecated====================

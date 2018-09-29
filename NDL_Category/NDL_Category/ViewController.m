@@ -91,6 +91,8 @@
 
 #import "Book.h"
 
+#import "SQLiteManager.h"
+
 typedef id (^WeakReference)(void);
 
 // TODO: Import
@@ -139,6 +141,7 @@ typedef id (^WeakReference)(void);
 
 static NSInteger cc = 0;
 @implementation ViewController
+
 
 - (NSMutableDictionary *)p_dic
 {
@@ -374,6 +377,7 @@ static NSInteger cc = 0;
 #endif
     
     
+    
     NSLog(@"viewDidAppear p_ndl = %@ dic_ndl = %@", self.p_ndl, [self.p_dic objectForKey:@"ndl"]);
 }
 
@@ -393,6 +397,35 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
 
 - (void)viewDidLoad {
     NSLog(@"===ViewController viewDidLoad===");
+    
+    SQLiteManager *sqliteManager = [SQLiteManager sharedSQLiteManager];
+    [sqliteManager openDB:@"test.sqlite"];
+    
+//    StartTime
+//    for (NSInteger i = 0; i < 1000; i++) {
+//        dispatch_async(dispatch_get_global_queue(0, 0), ^{
+//            NSString *text = [NSString stringWithFormat:@"NO-%ld", i];
+//            [sqliteManager insertWithSQL:@"INSERT INTO t_test (testID, testText) VALUES (?, ?);" valueArray:@[@(i), text]];
+//        });
+////        NSString *text = [NSString stringWithFormat:@"NO-%ld", i];
+////        [sqliteManager insertWithSQL:@"INSERT INTO t_test (testID, testText) VALUES (?, ?);" valueArray:@[@(i), text]];
+//    }
+//    EndTime
+    
+    // test str
+//    NSString *str1 = @"123";
+//    NSString *str2 = [NSString stringWithFormat:@"123"];
+//
+//    NSLog(@"str1 = %p str2 = %p", str1, str2);// 地址不一样
+//
+//    if (str1 == str2) {
+//        NSLog(@"str1 == str2");// 不走
+//    }
+//
+//    if ([str1 isEqual:str2]) {
+//        NSLog(@"str1 isEqual:str2");// 走
+//    }
+    
     
     Person *p_ndl = [[Person alloc] init];
     self.p_ndl = p_ndl;// 弱引用

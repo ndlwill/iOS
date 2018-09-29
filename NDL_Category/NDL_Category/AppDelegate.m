@@ -16,6 +16,8 @@
 
 @interface AppDelegate ()
 
+@property (nonatomic, assign) UIBackgroundTaskIdentifier bgTask;
+
 @end
 
 @implementation AppDelegate
@@ -44,6 +46,11 @@
 //        NSLog(@"===123456===");
     } error:nil];
     
+//    self.bgTask = [application beginBackgroundTaskWithExpirationHandler:^{
+//        [application endBackgroundTask:self.bgTask];
+//        self.bgTask = UIBackgroundTaskInvalid;
+//    }];
+    
 #if DEBUG
     
 #endif
@@ -69,6 +76,7 @@
         }
     }
     
+    // 涉及到UIScrollView的contentInsets等一些问题
     if (@available(iOS 11.0, *)) {
         UIScrollView.appearance.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
     }
@@ -122,6 +130,13 @@
     
     return YES;
 }
+
+//- (void)startTask {
+//    self.bgTask = [application beginBackgroundTaskWithExpirationHandler:^{
+//        [application endBackgroundTask:self.bgTask];
+//        self.bgTask = UIBackgroundTaskInvalid;
+//    }];
+//}
 
 // iOS 9 3D-Touch 主屏操作
 - (void)application:(UIApplication *)application performActionForShortcutItem:(UIApplicationShortcutItem *)shortcutItem completionHandler:(void (^)(BOOL))completionHandler
