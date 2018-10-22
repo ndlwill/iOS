@@ -1,0 +1,146 @@
+Nagle算法通过减少必须发送的封包的数量，提高网络应用程序系统的效率，解决负载问题。
+通俗的讲，就是在发包的时候会建立一个缓存区，发送的数据都会先进入这个缓存区，当上一条数据的接收被确认或者到达最大等待时间之后，才会将缓存区的数据一块发送过去，如此反复。将小包进行整合，避免小包多次发送造成的传输速度慢等问题
+
+粘包就是多组数据被一并接收了,粘在了一起，无法做划分
+半包就是有数据接收不完整，无法处理
+消息＝消息头＋消息体。消息头用于描述消息本身的基本信息，消息体则为消息的具体内容
+
+粘包出现原因
+1.发送端需要等缓冲区满才发送出去，造成粘包
+2.接收方不及时接收缓冲区的包，造成多个包接收
+
+对于粘包，一般有两种解决方案
+1.第一种就是服务器返回的字段中有可识别的头和尾，我们可以根据可识别的头和尾来拆包。
+2.第二种是服务器返回的数据只包含头，头里面有数据的长度，我们可以根据这个头包含的数据长度来进行拆包
+
+===================================================no protobuf 自定义协议
+- (void)onSocket:(AsyncSocket *)sock didReadData:(NSData *)data withTag:(long)tag 
+{ 
+  while (_readBuf.length >= 10)//因为头部固定10个字节，数据长度至少要大于10个字节，我们才能得到完整的消息描述信息 
+  { 
+    NSData *head = [_readBuf subdataWithRange:NSMakeRange(0, 10)];//取得头部数据 
+    NSData *lengthData = [head subdataWithRange:NSMakeRange(6, 4)];//取得长度数据 
+    NSInteger length = [[[NSString alloc] initWithData:lengthData encoding:NSUTF8StringEncoding] integerValue];//得出内容长度 
+    NSInteger complateDataLength = length + 10;//算出一个包完整的长度(内容长度＋头长度) 
+    if (_readBuf.length >= complateDataLength)//如果缓存中数据够一个整包的长度 
+    { 
+      NSData *data = [_readBuf subdataWithRange:NSMakeRange(0, complateDataLength)];//截取一个包的长度(处理粘包) 
+      [self handleTcpResponseData:data];//处理包数据 
+      //从缓存中截掉处理完的数据,继续循环 
+      _readBuf = [NSMutableData dataWithData:[_readBuf subdataWithRange:NSMakeRange(complateDataLength, _readBuf.length - complateDataLength)]]; 
+    } 
+    else//如果缓存中的数据长度不够一个包的长度，则包不完整(处理半包，继续读取) 
+    { 
+      [_socket readDataWithTimeout:-1 buffer:_readBuf bufferOffset:_readBuf.length tag:0];//继续读取数据 
+      return; 
+    } 
+  } 
+  //缓存中数据都处理完了，继续读取新数据 
+  [_socket readDataWithTimeout:-1 buffer:_readBuf bufferOffset:_readBuf.length tag:0];//继续读取数据 
+}
+
+
+===================================================protobuf
+/** 监听来自服务器的消息代理方法 */
+- (void)socket:(GCDAsyncSocket *)sock didReadData:(NSData *)data withTag:(long)tag
+{
+    [self.receiveData appendData:data];
+    
+    //读取data的头部占用字节 和 从头部读取内容长度
+    //验证结果：数据比较小时头部占用字节为1，数据比较大时头部占用字节为2
+    int32_t headL = 0;
+    int32_t contentL = [self getContentLength:self.receiveData withHeadLength:&headL];
+    
+    if (contentL < 1){
+        [sock readDataWithTimeout:-1 tag:0];
+        return;
+    }
+    
+    //拆包情况下：继续接收下一条消息，直至接收完这条消息所有的拆包，再解析
+    if (headL + contentL > self.receiveData.length){
+        [sock readDataWithTimeout:-1 tag:0];
+        return;
+    }
+    
+    //当receiveData长度不小于第一条消息内容长度时，开始解析receiveData
+    [self parseContentDataWithHeadLength:headL withContentLength:contentL];
+    [sock readDataWithTimeout:-1 tag:tag];
+} 
+
+#pragma mark - private methods  辅助方法
+/** 解析二进制数据：NSData --> 自定义模型对象 */
+- (void)parseContentDataWithHeadLength:(int32_t)headL withContentLength:(int32_t)contentL{
+    
+    NSRange range = NSMakeRange(0, headL + contentL);   //本次解析data的范围
+    NSData *data = [self.receiveData subdataWithRange:range]; //本次解析的data
+    
+    GPBCodedInputStream *inputStream = [GPBCodedInputStream streamWithData:data];
+    
+    NSError *error;
+    ChatMsg *obj = [ChatMsg parseDelimitedFromCodedInputStream:inputStream extensionRegistry:nil error:&error];
+    
+    if (!error){
+        if (obj) [self saveReceiveInfo:obj];  //保存解析正确的模型对象
+        [self.receiveData replaceBytesInRange:range withBytes:NULL length:0];  //移除已经解析过的data
+    }
+    
+    if (self.receiveData.length < 1) return;
+    
+    //对于粘包情况下被合并的多条消息，循环递归直至解析完所有消息
+    headL = 0;
+    contentL = [self getContentLength:self.receiveData withHeadLength:&headL];
+    if (headL + contentL > self.receiveData.length) return; //实际包不足解析，继续接收下一个包
+
+    [self parseContentDataWithHeadLength:headL withContentLength:contentL]; //继续解析下一条
+}
+
+/** 获取data数据的内容长度和头部长度: index --> 头部占用长度 (头部占用长度1-4个字节) */
+- (int32_t)getContentLength:(NSData *)data withHeadLength:(int32_t *)index{
+    
+    int8_t tmp = [self readRawByte:data headIndex:index];
+    
+    if (tmp >= 0) return tmp;
+    
+    int32_t result = tmp & 0x7f;
+    if ((tmp = [self readRawByte:data headIndex:index]) >= 0) {
+        result |= tmp << 7;
+    } else {
+        result |= (tmp & 0x7f) << 7;
+        if ((tmp = [self readRawByte:data headIndex:index]) >= 0) {
+            result |= tmp << 14;
+        } else {
+            result |= (tmp & 0x7f) << 14;
+            if ((tmp = [self readRawByte:data headIndex:index]) >= 0) {
+                result |= tmp << 21;
+            } else {
+                result |= (tmp & 0x7f) << 21;
+                result |= (tmp = [self readRawByte:data headIndex:index]) << 28;
+                if (tmp < 0) {
+                    for (int i = 0; i < 5; i++) {
+                        if ([self readRawByte:data headIndex:index] >= 0) {
+                            return result;
+                        }
+                    }
+                    
+                    result = -1;
+                }
+            }
+        }
+    }
+    return result;
+}
+
+/** 读取字节 */
+- (int8_t)readRawByte:(NSData *)data headIndex:(int32_t *)index{
+    
+    if (*index >= data.length) return -1;
+    
+    *index = *index + 1;
+    
+    return ((int8_t *)data.bytes)[*index - 1];
+}
+
+/** 处理解析出来的信息 */
+- (void)saveReceiveInfo:(ChatMsg *)obj{
+    //...
+}

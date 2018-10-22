@@ -93,6 +93,8 @@
 
 #import "SQLiteManager.h"
 
+#import "PersonAll.pbobjc.h"
+
 typedef id (^WeakReference)(void);
 
 // TODO: Import
@@ -394,6 +396,56 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
     return ref ? ref() : nil;
 }
 
+//==================================================
+
+/** 关键代码：获取data数据的内容长度和头部长度: index --> 头部占用长度 (头部占用长度1-4个字节) */
+- (int32_t)getContentLength:(NSData *)data withHeadLength:(int32_t *)index{
+    
+    int8_t tmp = [self readRawByte:data headIndex:index];
+    
+    if (tmp >= 0) return tmp;
+    
+    int32_t result = tmp & 0x7f;
+    if ((tmp = [self readRawByte:data headIndex:index]) >= 0) {
+        result |= tmp << 7;
+    } else {
+        result |= (tmp & 0x7f) << 7;
+        if ((tmp = [self readRawByte:data headIndex:index]) >= 0) {
+            result |= tmp << 14;
+        } else {
+            result |= (tmp & 0x7f) << 14;
+            if ((tmp = [self readRawByte:data headIndex:index]) >= 0) {
+                result |= tmp << 21;
+            } else {
+                result |= (tmp & 0x7f) << 21;
+                result |= (tmp = [self readRawByte:data headIndex:index]) << 28;
+                if (tmp < 0) {
+                    for (int i = 0; i < 5; i++) {
+                        if ([self readRawByte:data headIndex:index] >= 0) {
+                            return result;
+                        }
+                    }
+                    
+                    result = -1;
+                }
+            }
+        }
+    }
+    return result;
+}
+
+
+/** 读取字节 */
+- (int8_t)readRawByte:(NSData *)data headIndex:(int32_t *)index{
+    
+    if (*index >= data.length) return -1;
+    
+    *index = *index + 1;
+    
+    return ((int8_t *)data.bytes)[*index - 1];
+}
+
+//==================================================
 
 - (void)viewDidLoad {
     NSLog(@"===ViewController viewDidLoad===");
@@ -426,11 +478,98 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
 //        NSLog(@"str1 isEqual:str2");// 走
 //    }
     
+    NSDictionary *json = @{
+                       @"id": @(1),
+                       @"name": @"jojo",
+                       @"email": @"123@qq.com",
+                       };
+    NSData *data = [NSJSONSerialization dataWithJSONObject:json options:0 error:nil];
+    NSLog(@"data = %@ length = %ld", data, data.length);
     
     Person *p_ndl = [[Person alloc] init];
     self.p_ndl = p_ndl;// 弱引用
     NSLog(@"p_ndl = %@", self.p_ndl);
     [self.p_dic setObject:self.p_ndl forKey:@"ndl"];// 强引用了self.p_ndl
+    
+    NSLog(@"==========protobuf============");
+    // protobuf
+    PersonAll *pAll = [[PersonAll alloc] init];
+    pAll.id_p = 1;
+    pAll.name = @"personAll";
+    pAll.email = @"ndl@126.com";
+    NSLog(@"person = %@", pAll);
+    // encode
+    NSData *pAllData = [pAll data];
+    NSLog(@"data = %@ length = %lu", pAllData, pAllData.length);
+    // decode
+    PersonAll *newPAll = [[PersonAll alloc] initWithData:pAllData error:nil];
+    NSLog(@"decode = %@", newPAll);
+    
+    NSLog(@"==========test data==========");
+    NSString *testStr = @"我们是test的定西 哈哈呀666";
+    NSData *testData = [testStr dataUsingEncoding:NSUTF8StringEncoding];
+    NSLog(@"testData = %@ testDataLen = %ld", testData, testData.length);
+    
+    Byte *testByte = (Byte *)testData.bytes;
+    NSLog(@"testByte = %s###", testByte);
+    
+    NSData *imageData = [NSData dataWithContentsOfFile:[MainBundle pathForResource:@"girl" ofType:@"jpeg"]];
+    NSLog(@"=====imageDataLen = %lu=====", imageData.length);
+    
+//    int32_t headL = 0;
+//    int32_t contentL = [self getContentLength:imageData withHeadLength:&headL];
+//    NSLog(@"headL = %d contentL = %d", headL, contentL);
+    
+    
+    // =====format=====
+    NSInteger testLong = 6;
+    NSString *string = [NSString stringWithFormat:@"%03ld",testLong];
+    NSLog(@"%@", string);
+    NSLog(@"%@",[NSString stringWithFormat:@"这个字符串要拼接百分号-%%"]);
+    
+    NSLog(@"%@",[NSString stringWithFormat:@"双引号的转义字符-\""]);
+    NSLog(@"%@",[NSString stringWithFormat:@"反斜杠的转义字符-\\"]);
+    /*
+     %x, %X 16进制整数
+     %o 八进制整数
+     %zu size_t
+     %p 指针
+     %s C 字符串
+     %c 字符
+     %C unichar
+     %lld 64位长整数（long long）
+     %llu 无符64位长整数
+     */
+    
+    
+    
+    
+    // typedef unsigned char                   UInt8;
+//    int32_t value = 17;// 0x00000011
+    int32_t value = (int32_t)imageData.length;// 46526
+    
+    Byte *byteArray = NULL;
+    NSLog(@"sizeof byte = %ld", sizeof(Byte));// 1
+    byteArray = (Byte *)calloc(4, sizeof(Byte));
+    if (byteArray != NULL) {
+        byteArray[0] = (Byte)((value & 0xFF000000) >> 24);// 值为hex
+        byteArray[1] = (Byte)((value & 0x00FF0000) >> 16);
+        byteArray[2] = (Byte)((value & 0x0000FF00) >> 8);
+        byteArray[3] = (Byte)(value & 0x000000FF);
+        // NSLog(@"NSIntegerMax = %ld NSUIntegerMax = %lu", NSIntegerMax, NSUIntegerMax);
+        // ff -> 255
+        NSLog(@"byte1 = %d byte2 = %d byte3 = %d byte4 = %d", byteArray[0], byteArray[1], byteArray[2], byteArray[3]);// 10进制 0,0,181,190
+        NSLog(@"byte1 = %o byte2 = %o byte3 = %o byte4 = %o", byteArray[0], byteArray[1], byteArray[2], byteArray[3]);// 8进制 0,0,265,276
+        NSLog(@"byte1 = %x byte2 = %x byte3 = %x byte4 = %x", byteArray[0], byteArray[1], byteArray[2], byteArray[3]);// 每个字节是0,0,b5,be(16进制) -> 0000b5be
+    }
+    
+    // ###
+    NSInteger byte2Integer = byteArray[2];
+    NSLog(@"byte2Integer = %ld", byte2Integer);// 181
+    
+    free(byteArray);
+    
+//    NSLog(@"16jinzhi = %@", [NSString ndl_hexStringFromDecimalSystemValue:102]);
     
     
 //    UIBarButtonItem

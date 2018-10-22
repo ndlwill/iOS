@@ -8,6 +8,9 @@
 
 #import "CommonUtils.h"
 #import <objc/runtime.h>
+#import <AudioToolbox/AudioToolbox.h>
+
+#import <SystemConfiguration/CaptiveNetwork.h>
 
 @implementation CommonUtils
 - (void)dealloc
@@ -123,6 +126,26 @@
         }
     }
     return totalCount;
+}
+
++ (void)playCustomSoundWithPath:(NSString *)resourcePath
+{
+    SystemSoundID soundID = 0;
+    if (resourcePath) {
+        OSStatus status = AudioServicesCreateSystemSoundID((__bridge CFURLRef _Nonnull)([NSURL URLWithString:resourcePath]), &soundID);
+        if (status != kAudioServicesNoError) {
+            NSLog(@"status = %d", status);
+        }
+    }
+    // 声音和振动
+    AudioServicesPlayAlertSoundWithCompletion(soundID, ^{
+        
+    });
+    
+    // 声音
+//    AudioServicesPlaySystemSoundWithCompletion(soundID, ^{
+//        
+//    });
 }
 
 + (void)logStackInfo

@@ -10,6 +10,8 @@
 #import "DraggableCollectionView.h"
 #import "TitleCell.h"
 
+#import <AudioToolbox/AudioToolbox.h>
+
 @interface TestCollectionViewController () <DraggableCollectionViewDelegate, DraggableCollectionViewDataSource>
 
 @property (nonatomic, weak) DraggableCollectionView *draggableCollectionView;
@@ -24,9 +26,10 @@
     if (!_dataSourceArray) {
         _dataSourceArray = [NSMutableArray array];
         
-        for (NSInteger j = 0; j < 3; j++) {
+        // 设置j可b改变section
+        for (NSInteger j = 0; j < 1; j++) {
             NSMutableArray *tempArray = [NSMutableArray array];
-            for (NSInteger i = 0; i < 50; i++) {
+            for (NSInteger i = 0; i < 20; i++) {
                 NSString *str = [NSString stringWithFormat:@"%ld-%ld", j, i];
                 [tempArray addObject:str];
             }
@@ -57,6 +60,19 @@
     [draggableCollectionView registerNib:[UINib nibWithNibName:NSStringFromClass([TitleCell class]) bundle:nil] forCellWithReuseIdentifier:@"CellID"];
     [self.view addSubview:draggableCollectionView];
     self.draggableCollectionView = draggableCollectionView;
+    
+    UIButton *soundBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    soundBtn.backgroundColor = [UIColor blackColor];
+    soundBtn.frame = CGRectMake(10, self.view.height / 2.0 + 20, 60, 40);
+    [self.view addSubview:soundBtn];
+    [soundBtn addTarget:self action:@selector(soundBtnDidClicked) forControlEvents:UIControlEventTouchUpInside];
+}
+
+#pragma mark - Button Actions
+- (void)soundBtnDidClicked
+{
+//    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);
+//    AudioServicesPlaySystemSound(1007);
 }
 
 // test for editingModel
@@ -74,7 +90,7 @@
     // 每个section的最后一个cell都不能交换
     NSMutableArray *excludeIndexPathArray = [NSMutableArray array];
     for (NSInteger i = 0; i < 3; i++) {
-        NSIndexPath *indexPath = [NSIndexPath indexPathForItem:50 - 1 inSection:i];
+        NSIndexPath *indexPath = [NSIndexPath indexPathForItem:20 - 1 inSection:i];
         [excludeIndexPathArray addObject:indexPath];
     }
     return excludeIndexPathArray;
@@ -83,6 +99,13 @@
 - (void)draggableCollectionView:(DraggableCollectionView *)collectionView updatedDataSourceArray:(NSArray *)updatedDataSourceArray
 {
     self.dataSourceArray = [updatedDataSourceArray mutableCopy];
+    
+    // test for 不嵌套数组
+    NSLog(@"=====start log=====");
+    for (NSString *str in self.dataSourceArray) {
+        NSLog(@"=====str = %@=====", str);
+    }
+    NSLog(@"=====end log=====");
 }
 
 #pragma mark - DraggableCollectionViewDataSource

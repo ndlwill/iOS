@@ -11,6 +11,9 @@
 // remote gif 
 // https://upload.wikimedia.org/wikipedia/commons/2/2c/Rotating_earth_%28large%29.gif
 
+// 以groups方式添加文件，文件参与编译 ，图标为黄色
+// 以folder方式添加文件，文件将被作为资源文件，不参与编译，图标为蓝色
+
 #pragma mark - 内联静态函数
 // 方法交换
 CG_INLINE BOOL

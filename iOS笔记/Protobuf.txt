@@ -1,0 +1,186 @@
+https://github.com/protocolbuffers/protobuf
+
+https://github.com/protocolbuffers/protobuf/releases // release安装包
+
+===================安装
+// mac 默认已经安装
+编译 Protobuf，这里可能需要安装部分工具:
+$ brew install autoconf
+$ brew install automake
+$ brew install libtool
+
+运行下面脚本进行编译：
+$ ./autogen.sh
+$ ./configure
+$ make
+$ makeinstall
+
+$ protoc --version
+
+编译Person.proto为objective-c的文件，编译出来的文件为Person.pbobjc.h和Person.pbobjc.m：
+protoc Person.proto --objc_out=./
+----------手动引入
+
+----------直接引入 ProtocolBuffers 工程
+如果项目B编译出来的是".a"库，记得要在项目A中增加“header search paths”来添加项目B的头文件，如果项目B编译出来是“.framework”就不需要了，因为里面已经有头文件了
+
+每次改动项目B，都需要单独编译一下项目B，再编译项目A，太麻烦了，可以在项目A中添加项目B的target依赖，这样每次编译项目A，顺带连着项目B一期编译了
+首先找到主项目A的targets，再找到build phase下面的Target Dependencies
+点击+，找到项目B添加就可以了，这样，每次编译项目A，项目B也会自动被编译
+
+===============================
+Google Protocol Buffer( 简称 Protobuf) 
+可用于通讯协议、数据存储等领域的语言无关、平台无关、可扩展的序列化结构数据格式
+
+对部分数据的传输大小和效率也有较高的要求，普通的数据格式如 JSON 或者 XML 已经不能满足，因此决定采用 Google 推出的 Protocol Buffers 以达到数据高效传输
+
+Protocol buffers 为 Google 提出的一种跨平台、多语言支持且开源的序列化数据格式。相对于类似的 XML 和 JSON，Protocol buffers 更为小巧、快速和简单。其语法目前分为proto2和proto3两种格式
+
+相对于传统的 XML 和 JSON, Protocol buffers 的优势主要在于：更加小、更加快
+
+对于自定义的数据结构，Protobuf 可以通过生成器生成不同语言的源代码文件，读写操作都非常方便
+
+######
+有下面 JSON 格式的数据:
+{
+        "id":1,
+        "name":"jojo",
+        "email":"123@qq.com",
+}
+使用 JSON 进行编码，得出byte长度为43的的二进制数据：
+7b226964 223a312c 226e616d 65223a22 6a6f6a6f 222c2265 6d61696c 223a2231 32334071 712e636f 6d227d
+如果使用 Protobuf 进行编码，得到的二进制数据仅有20个字节：
+0a046a6f 6a6f1001 1a0a3132 33407171 2e636f6d
+
+===============Varint原理
+对于int32类型的数字，如果很小的话，protubuf 因为采用了Varint方式，可以只用 1 个字节表示
+
+Varint 中每个字节的最高位 bit 表示此 byte 是否为最后一个 byte 。1 表示后续的 byte 也表示该数字，0 表示此 byte 为结束的 byte。
+
+数字 300 用 Varint 表示为 1010 1100 0000 0010
+
+需要注意解析的时候会首先将两个 byte 位置互换，因为字节序采用了 little-endian 方式
+
+但 Varint 方式对于带符号数的编码效果比较差。因为带符号数通常在最高位表示符号，那么使用 Varint 表示一个带符号数无论大小就必须要 5 个 byte（最高位的符号位无法忽略，因此对于 -1 的 Varint 表示就变成了 010001）
+Protobuf 引入了 ZigZag 编码很好地解决了这个问题
+
+===============================
+http://www.52im.net/thread-323-1-1.html
+
+解决流量过大的基本方法就是使用高度压缩的通信协议，而数据压缩后流量减小带来的自然结果也就是省电：因为大数据量的传输必然需要更久的网络操作、数据序列化及反序列化操作，这些都是电量消耗过快的根源
+
+即时通讯应用中最热门的通信协议无疑就是Google的Protobuf了
+
+
+===============================Protobuf 的源代码安装
+tar -xzf protobuf-2.1.0.tar.gz 
+cd protobuf-2.1.0 
+./configure --prefix=$INSTALL_DIR 
+make
+make check 
+make install
+
+####################################################
+===============================书写.proto 文件
+首先我们需要编写一个 proto 文件，定义我们程序中需要处理的结构化数据，在 protobuf 的术语中，结构化数据被称为 Message
+
+package lm; 
+message helloworld 
+{ 
+   required int32     id = 1;  // ID 
+   required string    str = 2;  // str 
+   optional int32     opt = 3;  //optional field 
+}
+
+一个比较好的习惯是认真对待 proto 文件的文件名。比如将命名规则定于如下：
+packageName.MessageName.proto
+
+package 名字叫做 lm，定义了一个消息 helloworld，该消息有三个成员，类型为 int32 的 id，另一个为类型为 string 的成员 str。opt 是一个可选的成员，即消息中可以不包含该成员
+
+===============================编译 .proto 文件
+假设您的 proto 文件存放在 $SRC_DIR 下面，您也想把生成的文件放在同一个目录下，则可以使用如下命令：
+protoc -I=$SRC_DIR --cpp_out=$DST_DIR $SRC_DIR/addressbook.proto
+
+命令将生成两个文件：
+lm.helloworld.pb.h ， 定义了 C++ 类的头文件
+lm.helloworld.pb.cc ， C++ 类的实现文件
+
+转换为字符串的方法可以使用 sprintf()，这非常简单。数字 123 可以变成字符串”123”
+
+// writer
+#include "lm.helloworld.pb.h"
+int main(void) 
+{ 
+
+lm::helloworld msg1; 
+msg1.set_id(101); 
+msg1.set_str(“hello”); 
+ 
+// Write the new address book back to disk. 
+fstream output("./log", ios::out | ios::trunc | ios::binary); 
+     
+if (!msg1.SerializeToOstream(&output)) { // 将对象序列化后写入一个 fstream 流
+  cerr << "Failed to write msg." << endl; 
+  return -1; 
+}         
+return 0; 
+
+
+// reader
+lm::helloworld msg1; 
+
+{ 
+fstream input("./log", ios::in | ios::binary); 
+if (!msg1.ParseFromIstream(&input)) { // 从一个 fstream 流中读取信息并反序列化
+  cerr << "Failed to parse address book." << endl; 
+  return -1; 
+} 
+
+cout << msg1.id() << endl; 
+cout << msg1.str() << endl; 
+} 
+}
+
+===============================Encoding
+Varint 是一种紧凑的表示数字的方法。它用一个或多个字节来表示一个数字，值越小的数字使用越少的字节数。这能减少用来表示数字的字节数
+
+比如对于 int32 类型的数字，一般需要 4 个 byte 来表示。但是采用 Varint，对于很小的 int32 类型的数字，则可以用 1 个 byte 来表示
+当然凡事都有好的也有不好的一面，采用 Varint 表示法，大的数字则需要 5 个 byte 来表示
+
+因此小于 128 的数字都可以用一个 byte 表示。大于 128 的数字，比如 300，会用两个字节来表示
+
+消息经过序列化后会成为一个二进制数据流，该流中的数据为一系列的 Key-Value 对
+采用这种 Key-Pair 结构无需使用分隔符来分割不同的 Field。对于可选的 Field，如果消息中不存在该 field，那么在最终的 Message Buffer 中就没有该 field
+Key 用来标识具体的 field，在解包的时候，Protocol Buffer 根据 Key 就可以知道相应的 Value 应该对应于消息中的哪一个 field
+
+Key 的定义如下：
+(field_number << 3) | wire_type
+Key 由两部分组成。第一部分是 field_number，比如消息 lm.helloworld 中 field id 的 field_number 为 1。第二部分为 wire_type。表示 Value 的传输类型
+
+field id 所采用的数据类型为 int32，因此对应的 wire type 为 0
+
+在计算机内，一个负数一般会被表示为一个很大的整数，因为计算机定义负数的符号位为数字的最高位。如果采用 Varint 表示一个负数，那么一定需要 5 个 byte。为此 Google Protocol Buffer 定义了 sint32 这种类型，采用 zigzag 编码
+
+Zigzag 编码用无符号数来表示有符号数字，正数和负数交错
+
+使用 zigzag 编码，绝对值小的数字，无论正负都可以采用较少的 byte 来表示，充分利用了 Varint 这种技术
+其他的数据类型，比如字符串等则采用类似数据库中的 varchar 的表示方法，即用一个 varint 表示长度，然后将其余部分紧跟在这个长度部分之后即可
+
+
+
+message Person {
+  int32 id = 1;
+  string name = 2;
+}
+其中，id字段的field为1，writetype为int32类型对应的序号。编码后id对应的 Tag 为 (field_number << 3) | wire_type = 0000 1000，其中低位的 3 位标识 writetype，其他位标识field。
+
+Protobuf 的消息结构是一系列序列化后的Tag-Value对。
+其中 Tag 由数据的 field 和 writetype组成，Value 为源数据编码后的二进制数据
+
+对于string类型的数据，由于其长度是不定的，所以 T-V的消息结构是不能满足的，需要增加一个标识长度的Length字段，即T-L-V结构
+
+===============================封解包的速度
+Protobuf，它只需要简单地将一个二进制序列，按照指定的格式读取到 C++ 对应的结构类型中就可以了。
+消息的 decoding 过程也可以通过几个位移操作组成的表达式计算即可完成
+
+===============================反射机制

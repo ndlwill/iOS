@@ -39,6 +39,11 @@
 // scrollView总共数据量
 + (NSUInteger)totalDataCountsForScrollView:(UIScrollView *)scrollView;
 
+// 播放自定义声音
++ (void)playCustomSoundWithPath:(NSString *)resourcePath;
+
+// SSID全称Service Set IDentifier - wifi名称
+
 // ========test========
 + (void)logStackInfo;
 
