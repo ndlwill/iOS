@@ -10,19 +10,84 @@
 #import "Masonry.h"
 #import "CommonUtils.h"
 
+#import "NavigationControllerDelegate.h"
+#import "PanGestureTransitionNavController.h"
+
+#import "ThirdViewController.h"
+#import "FourViewController.h"
+
+#import "FiveViewController.h"
+#import "BaseNavigationController.h"
+
+#import "VariableCircleLayer.h"
+
+#import "TestRACController.h"
+
 @interface SecondViewController () <CAAnimationDelegate>
 
 @property (nonatomic, strong) UISearchBar *searchBar;
+@property (weak, nonatomic) IBOutlet UISlider *slider;
+
+@property (nonatomic, strong) NavigationControllerDelegate *navigationControllerDelegate;
+
+@property (nonatomic, weak) VariableCircleLayer *variableLayer;
 
 @end
 
 @implementation SecondViewController
 
+- (void)navControllerPanGesture:(UIPanGestureRecognizer *)panGesture
+{
+//    CGPoint translationOffset = [panGesture translationInView:self.navigationController.view];
+//    CGFloat progress = fabs(translationOffset.x) / self.view.width;
+//    
+//    switch (panGesture.state) {
+//        case UIGestureRecognizerStateBegan:
+//            self.interactiveTransition = [[UIPercentDrivenInteractiveTransition alloc] init];
+//            if (self.viewControllers.count > 1) {
+//                [self popViewControllerAnimated:YES];
+//            } else {
+//                
+//            }
+//            
+//            break;
+//        case UIGestureRecognizerStateChanged:
+//            [self.interactiveTransition updateInteractiveTransition:progress];
+//            break;
+//        case UIGestureRecognizerStateEnded:
+//            
+//            break;
+//            
+//        default:
+//            [self.interactiveTransition cancelInteractiveTransition];
+//            self.interactiveTransition = nil;
+//            break;
+//    }
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
+    
+    
+//    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(navControllerPanGesture:)];
+//    [self.navigationController.view addGestureRecognizer:pan];
+    
+    PanGestureTransitionNavController *navVC = (PanGestureTransitionNavController *)(self.navigationController);
+    navVC.pushVC = [[FourViewController alloc] init];
+    
+    self.navigationControllerDelegate = [[NavigationControllerDelegate alloc] init];
+    self.navigationControllerDelegate.interactiveTransition = navVC.interactiveTransition;
+    
+    
+    navVC.delegate = self.navigationControllerDelegate;
+    
     self.view.backgroundColor = [UIColor yellowColor];
     
-    //[self.navigationController setNavigationBarHidden:YES animated:NO];
+    
+    
+    
+    
+//    [self.navigationController setNavigationBarHidden:YES animated:NO];
 
     UIView *titleView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width - 80, 44)];
     titleView.backgroundColor = [UIColor cyanColor];
@@ -37,7 +102,8 @@
 //    btn.frame = titleView.bounds;
 //    btn.center = titleView.center;
     
-    self.navigationItem.titleView = titleView;
+    // titleView
+//    self.navigationItem.titleView = titleView;
     
 //initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width - 80, 44)
 //    UISearchBar *searchBar = [[UISearchBar alloc] init];
@@ -149,17 +215,35 @@
     // 设置子层形变角度
     CGFloat angle = M_PI * 2 / count;
     replicator.instanceTransform = CATransform3DMakeRotation(angle, 0, 0, 1);
+
     
+    [self.slider addTarget:self action:@selector(sliderValueDidChanged:) forControlEvents:UIControlEventValueChanged];
     
+    VariableCircleLayer *variableLayer = [VariableCircleLayer layer];
+    variableLayer.backgroundColor = [UIColor blueColor].CGColor;
+    variableLayer.frame = CGRectMake(0, self.view.height - 160, 160, 160);
+    variableLayer.contentsScale = [UIScreen mainScreen].scale;
+    [self.view.layer addSublayer:variableLayer];
+    variableLayer.progress = 0.5;
+    self.variableLayer = variableLayer;
     
-    
-    [UIApplication sharedApplication].windows;
-    
+//    NSLog(@"variableLayer position = %@", NSStringFromCGPoint(variableLayer.position));
 }
+
+- (void)sliderValueDidChanged:(UISlider *)slider
+{
+    self.variableLayer.progress = slider.value;
+    NSLog(@"slider value = %f", slider.value);
+}
+
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
 {
+    NSLog(@"second touch begin");
     
     self.searchBar.showsCancelButton = NO;
+}
+- (IBAction)testRACDidClicked:(id)sender {
+    [self.navigationController pushViewController:[[TestRACController alloc] init] animated:YES];
 }
 
 - (void)animationDidStop:(CAAnimation *)anim finished:(BOOL)flag
@@ -167,19 +251,13 @@
     NSLog(@"=== %@ %@", anim, [NSNumber numberWithBool:flag].stringValue);
 }
 
-- (void)didReceiveMemoryWarning {
-    [super didReceiveMemoryWarning];
-    // Dispose of any resources that can be recreated.
+- (IBAction)fiveButtonDidClicked:(id)sender {
+    // embed in nav
+    BaseNavigationController *navVC = [[BaseNavigationController alloc] initWithRootViewController:[FiveViewController new]];
+    
+//    [self presentViewController:navVC animated:YES completion:nil];
+    [self.navigationController presentViewController:navVC animated:YES completion:nil];
 }
 
-/*
-#pragma mark - Navigation
-
-// In a storyboard-based application, you will often want to do a little preparation before navigation
-- (void)prepareForSegue:(UIStoryboardSegue *)segue sender:(id)sender {
-    // Get the new view controller using [segue destinationViewController].
-    // Pass the selected object to the new view controller.
-}
-*/
 
 @end

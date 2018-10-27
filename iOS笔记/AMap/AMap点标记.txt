@@ -1,0 +1,99 @@
+点标注:
+MAPointAnnotation : MAShape
+MACircle : MAShape
+MAAnimatedAnnotation : MAPointAnnotation
+MAUserLocation : MAAnimatedAnnotation
+
+overlay:
+MAOverlayRenderer : NSObject
+MAOverlayPathRenderer : MAOverlayRenderer
+MACircleRenderer : MAOverlayPathRenderer
+
+
+标注view:
+MAAnnotationView : UIView
+
+MAAnnotationView *userLocationView = [self.mapView viewForAnnotation:self.mapView.userLocation];// 根据model获取view
+[UIView animateWithDuration:0.1 animations:^{
+        double degree = self.mapView.userLocation.heading.trueHeading - self.mapView.rotationDegree;
+        userLocationView.imageView.transform = CGAffineTransformMakeRotation(degree * M_PI / 180.f );
+    }];
+
+MAPointAnnotation->MAPinAnnotationView
+- (MAAnnotationView*)mapView:(MAMapView *)mapView viewForAnnotation:(id <MAAnnotation>)annotation {
+    if ([annotation isKindOfClass:[MAPointAnnotation class]])
+    {
+        static NSString *pointReuseIndetifier = @"pointReuseIndetifier";
+        MAPinAnnotationView *annotationView = (MAPinAnnotationView*)[mapView dequeueReusableAnnotationViewWithIdentifier:pointReuseIndetifier];
+        if (annotationView == nil)
+        {
+            annotationView = [[MAPinAnnotationView alloc] initWithAnnotation:annotation reuseIdentifier:pointReuseIndetifier];
+        }
+        
+        annotationView.canShowCallout               = YES;
+        annotationView.animatesDrop                 = YES;
+        annotationView.draggable                    = YES;
+        annotationView.rightCalloutAccessoryView    = [UIButton buttonWithType:UIButtonTypeDetailDisclosure];
+        annotationView.pinColor                     = [self.annotations indexOfObject:annotation] % 3;
+        
+        return annotationView;
+    }
+    
+    return nil;
+}
+
+
+
+// CustomAnnotationView全部自定义
+MAPointAnnotation->@interface CustomAnnotationView : MAAnnotationView
+
+// must set to NO, so we can show the custom callout view.
+annotationView.canShowCallout = NO;
+annotationView.draggable = YES;
+annotationView.calloutOffset = CGPointMake(0, -20);
+
+
+#define kCalloutViewMargin          -8
+// callout先显示后，再调整callout 为了显示完整
+- (void)mapView:(MAMapView *)mapView didSelectAnnotationView:(MAAnnotationView *)view
+{
+    NSLog(@"=====didSelectAnnotationView");
+    /* Adjust the map center in order to show the callout view completely. */
+    if ([view isKindOfClass:[CustomAnnotationView class]]) {
+        CustomAnnotationView *cusView = (CustomAnnotationView *)view;
+        CGRect frame = [cusView convertRect:cusView.calloutView.frame toView:self.mapView];
+        
+        NSLog(@"frame 1 = %@", NSStringFromCGRect(frame));
+        frame = UIEdgeInsetsInsetRect(frame, UIEdgeInsetsMake(kCalloutViewMargin, kCalloutViewMargin, kCalloutViewMargin, kCalloutViewMargin));
+        NSLog(@"frame 2 = %@", NSStringFromCGRect(frame));
+        
+        if (!CGRectContainsRect(self.mapView.frame, frame))
+        {
+            /* Calculate the offset to make the callout view show up. */
+            CGSize offset = [self offsetToContainRect:frame inRect:self.mapView.frame];
+            
+            CGPoint theCenter = self.mapView.center;
+            theCenter = CGPointMake(theCenter.x - offset.width, theCenter.y - offset.height);
+            
+            CLLocationCoordinate2D coordinate = [self.mapView convertPoint:theCenter toCoordinateFromView:self.mapView];
+            
+            [self.mapView setCenterCoordinate:coordinate animated:YES];
+        }
+        
+    }
+}
+
+- (CGSize)offsetToContainRect:(CGRect)innerRect inRect:(CGRect)outerRect
+{
+    CGFloat nudgeRight = fmaxf(0, CGRectGetMinX(outerRect) - (CGRectGetMinX(innerRect)));
+    CGFloat nudgeLeft = fminf(0, CGRectGetMaxX(outerRect) - (CGRectGetMaxX(innerRect)));
+    CGFloat nudgeTop = fmaxf(0, CGRectGetMinY(outerRect) - (CGRectGetMinY(innerRect)));
+    CGFloat nudgeBottom = fminf(0, CGRectGetMaxY(outerRect) - (CGRectGetMaxY(innerRect)));
+    return CGSizeMake(nudgeLeft ?: nudgeRight, nudgeTop ?: nudgeBottom);
+}
+
+
+// 自定义calloutView
+@interface CustomCalloutView : UIView
+
+@end

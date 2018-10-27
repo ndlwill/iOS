@@ -1,0 +1,263 @@
+Python支持多重继承
+
+>>> bart = Student()
+>>> bart
+<__main__.Student object at 0x10a67a590>
+>>> Student
+<class '__main__.Student'>
+
+=====================type()
+
+动态语言和静态语言最大的不同，就是函数和类的定义，不是编译时定义的，而是运行时动态创建的。
+
+class Hello(object):
+    def hello(self, name='world'):
+        print('Hello, %s.' % name)
+
+>>> from hello import Hello
+>>> h = Hello()
+>>> h.hello()
+Hello, world.
+>>> print(type(Hello))
+<class 'type'>
+>>> print(type(h))
+<class 'hello.Hello'>
+
+type()函数可以查看一个类型或变量的类型，Hello是一个class，它的类型就是type，而h是一个实例，它的类型就是class Hello
+
+
+type()函数既可以返回一个对象的类型，又可以创建出新的类型，比如，我们可以通过type()函数创建出Hello类，而无需通过class Hello(object)...的定义：
+
+type(类名, 父类的元组（针对继承的情况，可以为空），包含属性的字典（名称和值）)
+
+###类对象也是对象###
+类是元类的实例，而实例对象是类的实例
+元类就是创建类的类
+
+>>> Test = type('Test', (object,), {'name':'test'})
+>>> Test
+<class '__main__.Test'>
+>>> t = Test()
+>>> t
+<__main__.Test object at 0x1089308d0>
+>>> Test.__dict__ # 类的__dict__
+mappingproxy({'name': 'test', '__module__': '__main__', '__dict__': <attribute '__dict__' of 'Test' objects>, '__weakref__': <attribute '__weakref__' of 'Test' objects>, '__doc__': None})
+>>> Test.__bases__ // 对象(类)的父类
+(<class 'object'>,)
+>>> Test.__class__
+<class 'type'>
+>>> t.__class__
+<class '__main__.Test'>
+>>> t.__class__.__class__
+<class 'type'>
+
+用__metaclass__指定的元类来创建类
+
+
+>>> def fn(self, name='world'): # 先定义函数
+...     print('Hello, %s.' % name)
+...
+>>> Hello = type('Hello', (object,), dict(hello=fn)) # 创建Hello class
+>>> h = Hello()
+>>> h.hello()
+Hello, world.
+>>> print(type(Hello))
+<class 'type'>
+>>> print(type(h))
+<class '__main__.Hello'>
+
+要创建一个class对象，type()函数依次传入3个参数：
+class的名称；
+继承的父类集合，注意Python支持多重继承，如果只有一个父类，别忘了tuple的单元素写法；
+class的方法名称与函数绑定，这里我们把函数fn绑定到方法名hello上
+
+通过type()函数创建的类和直接写class是完全一样的，因为Python解释器遇到class定义时，仅仅是扫描一下class定义的语法，然后调用type()函数创建出class。
+
+type()函数也允许我们动态创建出类来，也就是说，动态语言本身支持运行期动态创建类
+
+
+
+-------将所有的属性都改为大写的
+input:
+def upper_attr(class_name, class_parents, class_attr):
+    """
+    返回一个对象,将属性都改为大写的形式
+    :param class_name:  类的名称
+    :param class_parents: 类的父类tuple
+    :param class_attr: 类的参数
+    :return: 返回类
+    """
+    # 生成了一个generator
+    attrs = ((name, value) for name, value in class_attr.items() if not name.startswith('__'))
+    uppercase_attrs = dict((name.upper(), value) for name, value in attrs)
+    return type(class_name, class_parents, uppercase_attrs)
+
+__metaclass__ = upper_attr
+
+pw = upper_attr('Trick', (), {'bar': 0})
+print hasattr(pw, 'bar')
+print hasattr(pw, 'BAR')
+print pw.BAR
+
+output:
+False
+True
+0
+
+上面我们使用了函数做元类传递给类，下面我们使用一个正式类来作为元类传递给__metaclass__
+
+复制代码
+class UpperAttrMetaClass(type):
+    def __new__(mcs, class_name, class_parents, class_attr):
+        attrs = ((name, value) for name, value in class_attr.items() if not name.startswith('__'))
+        uppercase_attrs = dict((name.upper(), value) for name, value in attrs)
+        return super(UpperAttrMetaClass, mcs).__new__(mcs, class_name, class_parents, uppercase_attrs)
+
+
+class Trick(object):
+    __metaclass__ = UpperAttrMetaClass
+    bar = 12
+    money = 'unlimited'
+
+print Trick.BAR
+print Trick.MONEY
+
+================metaclass
+就是拦截类的创建，然后修改一些特性，然后返回该类
+
+除了使用type()动态创建类以外，要控制类的创建行为，还可以使用metaclass。
+
+metaclass，直译为元类，简单的解释就是：
+
+当我们定义了类以后，就可以根据这个类创建出实例，所以：先定义类，然后创建实例。
+
+但是如果我们想创建出类呢？那就必须根据metaclass创建出类，所以：先定义metaclass，然后创建类。
+
+连接起来就是：先定义metaclass，就可以创建类，最后创建实例。
+
+所以，metaclass允许你创建类或者修改类。换句话说，你可以把类看成是metaclass创建出来的“实例”。
+
+---------------
+这个metaclass可以给我们自定义的MyList增加一个add方法：
+
+metaclass的类名总是以Metaclass结尾，以便清楚地表示这是一个metaclass：
+
+# metaclass是类的模板，所以必须从`type`类型派生：
+class ListMetaclass(type):
+    def __new__(cls, name, bases, attrs):
+        attrs['add'] = lambda self, value: self.append(value)
+        return type.__new__(cls, name, bases, attrs)
+
+有了ListMetaclass，我们在定义类的时候还要指示使用ListMetaclass来定制类
+class MyList(list, metaclass=ListMetaclass):
+    pass
+
+它指示Python解释器在创建MyList时，要通过ListMetaclass.__new__()来创建
+
+__new__()方法接收到的参数依次是：
+当前准备创建的类的对象；
+类的名字；
+类继承的父类集合；
+类的方法集合。
+
+>>> L = MyList()
+>>> L.add(1)
+>> L
+[1]
+
+---------------
+class Base(object):
+    def __init__(self):
+        print 'Base create'
+ 
+class childA(Base):
+    def __init__(self):
+        print 'creat A ',
+        Base.__init__(self)
+ 
+ 
+class childB(Base):
+    def __init__(self):
+        print 'creat B ',
+        super(childB, self).__init__()
+
+b = childB()
+b.__class__.__mro__
+super（）相当于返回继承顺序的下一个类，而不是父类
+
+---------------
+ORM全称“Object Relational Mapping”，即对象-关系映射，就是把关系数据库的一行映射为一个对象，也就是一个类对应一个表，这样，写代码更简单，不用直接操作SQL语句
+
+首先来定义Field类，它负责保存数据库表的字段名和字段类型：
+
+class Field(object):
+
+    def __init__(self, name, column_type):
+        self.name = name
+        self.column_type = column_type
+
+    def __str__(self):
+        return '<%s:%s>' % (self.__class__.__name__, self.name)
+在Field的基础上，进一步定义各种类型的Field，比如StringField，IntegerField等等：
+
+class StringField(Field):
+
+    def __init__(self, name):
+    # 找到StringField类的下一个Field，把StringField类的对象转成类Field的对象，然后Field类的对象调用自己的__init__方法
+        super(StringField, self).__init__(name, 'varchar(100)')
+
+class IntegerField(Field):
+
+    def __init__(self, name):
+        super(IntegerField, self).__init__(name, 'bigint')
+
+
+class ModelMetaclass(type):
+
+    def __new__(cls, name, bases, attrs):
+        if name=='Model':
+            return type.__new__(cls, name, bases, attrs)
+        print('Found model: %s' % name)
+        mappings = dict()
+        for k, v in attrs.items():
+            if isinstance(v, Field):
+                print('Found mapping: %s ==> %s' % (k, v))
+                mappings[k] = v
+        for k in mappings.keys():
+            attrs.pop(k)
+        attrs['__mappings__'] = mappings # 保存属性和列的映射关系
+        attrs['__table__'] = name # 假设表名和类名一致
+        return type.__new__(cls, name, bases, attrs)
+
+
+class Model(dict, metaclass=ModelMetaclass):
+
+    def __init__(self, **kw):
+        super(Model, self).__init__(**kw)
+
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(r"'Model' object has no attribute '%s'" % key)
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+    def save(self):
+        fields = []
+        params = []
+        args = []
+        for k, v in self.__mappings__.items():
+            fields.append(v.name)
+            params.append('?')
+            args.append(getattr(self, k, None))
+        sql = 'insert into %s (%s) values (%s)' % (self.__table__, ','.join(fields), ','.join(params))
+        print('SQL: %s' % sql)
+        print('ARGS: %s' % str(args))
+
+
+当用户定义一个class User(Model)时，Python解释器首先在当前类User的定义中查找metaclass，如果没有找到，就继续在父类Model中查找metaclass，找到了，就使用Model中定义的metaclass的ModelMetaclass来创建User类，也就是说，metaclass可以隐式地继承到子类，
+
+u = User(id=12345, name='Michael', email='test@orm.org', password='my-pwd')
+u.save()

@@ -1,0 +1,106 @@
+self.mapView.showsUserLocation = YES;
+self.mapView.userTrackingMode = MAUserTrackingModeFollowWithHeading;// MAUserTrackingModeFollow也行  MAUserTrackingModeFollowWithHeading这个地图也会旋转
+self.mapView.userLocation.title = @"您的位置在这里";
+
+// 这边最好用MAUserTrackingModeFollowWithHeading，设置MAUserLocationRepresentation的showsHeadingIndicator需要MAUserTrackingModeFollowWithHeading这个模式
+MAUserLocationRepresentation *represent = [[MAUserLocationRepresentation alloc] init];
+represent.showsAccuracyRing = YES;
+represent.showsHeadingIndicator = NO;
+represent.fillColor = [UIColor colorWithRed:1 green:0 blue:0 alpha:.3];
+represent.strokeColor = [UIColor lightGrayColor];;
+represent.lineWidth = 2.f;
+represent.image = [UIImage imageNamed:@"userPosition"];
+[self.mapView updateUserLocationRepresentation:represent];
+
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+    
+    MAAnnotationView *userLocationView = [self.mapView viewForAnnotation:self.mapView.userLocation];
+    [UIView animateWithDuration:0.1 animations:^{
+        double degree = self.mapView.userLocation.heading.trueHeading - self.mapView.rotationDegree;
+        userLocationView.imageView.transform = CGAffineTransformMakeRotation(degree * M_PI / 180.f );
+    }];
+}
+
+
+#pragma mark - mapview delegate
+- (void)mapView:(MAMapView *)mapView didUpdateUserLocation:(MAUserLocation *)userLocation updatingLocation:(BOOL)updatingLocation
+{
+    
+    if (!updatingLocation)
+    {
+        NSLog(@"NO");
+        MAAnnotationView *userLocationView = [mapView viewForAnnotation:mapView.userLocation];
+        [UIView animateWithDuration:0.1 animations:^{
+            
+            double degree = userLocation.heading.trueHeading - self.mapView.rotationDegree;
+            userLocationView.imageView.transform = CGAffineTransformMakeRotation(degree * M_PI / 180.f );
+        }];
+    } else {
+        NSLog(@"YES");
+    }
+}
+
+===================================推荐下面这种自定义###
+@property (nonatomic, strong) MAAnnotationView *userLocationAnnotationView;
+
+self.mapView.showsUserLocation = YES;
+self.mapView.userTrackingMode = MAUserTrackingModeFollow;
+///是否自定义用户位置精度圈(userLocationAccuracyCircle)对应的 view, 默认为 NO.\n 如果为YES: 会调用 - (MAOverlayRenderer *)mapView (MAMapView *)mapView rendererForOverlay:(id <MAOverlay>)overlay 若返回nil, 则不加载.\n 如果为NO : 会使用默认的样式.
+self.mapView.customizeUserLocationAccuracyCircleRepresentation = YES;// 自定义精度圈
+
+- (MAOverlayRenderer *)mapView:(MAMapView *)mapView rendererForOverlay:(id <MAOverlay>)overlay
+{
+    /* 自定义定位精度对应的MACircleView. */
+    if (overlay == mapView.userLocationAccuracyCircle)
+    {
+        NSLog(@"userLocationAccuracyCircle====");
+        MACircleRenderer *accuracyCircleRenderer = [[MACircleRenderer alloc] initWithCircle:overlay];
+        
+        accuracyCircleRenderer.lineWidth    = 5.f;
+        accuracyCircleRenderer.strokeColor  = [UIColor greenColor];
+        accuracyCircleRenderer.fillColor    = [UIColor colorWithRed:1 green:0 blue:0 alpha:.3];
+        
+        return accuracyCircleRenderer;
+    }
+    
+    return nil;
+}
+
+- (MAAnnotationView *)mapView:(MAMapView *)mapView viewForAnnotation:(id<MAAnnotation>)annotation
+{
+    /* 自定义userLocation对应的annotationView. */
+    if ([annotation isKindOfClass:[MAUserLocation class]])
+    {
+        NSLog(@"MAUserLocation");
+        static NSString *userLocationStyleReuseIndetifier = @"userLocationStyleReuseIndetifier";
+        MAAnnotationView *annotationView = [mapView dequeueReusableAnnotationViewWithIdentifier:userLocationStyleReuseIndetifier];
+        if (annotationView == nil)
+        {
+            annotationView = [[MAAnnotationView alloc] initWithAnnotation:annotation
+                                                          reuseIdentifier:userLocationStyleReuseIndetifier];
+        }
+
+        annotationView.image = [UIImage imageNamed:@"userPosition"];
+
+        self.userLocationAnnotationView = annotationView;
+
+        return annotationView;
+    }
+
+    return nil;
+}
+
+
+- (void)mapView:(MAMapView *)mapView didUpdateUserLocation:(MAUserLocation *)userLocation updatingLocation:(BOOL)updatingLocation
+{
+    if (!updatingLocation && self.userLocationAnnotationView != nil)
+    {
+        [UIView animateWithDuration:0.1 animations:^{
+            double degree = userLocation.heading.trueHeading - self.mapView.rotationDegree;
+            self.userLocationAnnotationView.transform = CGAffineTransformMakeRotation(degree * M_PI / 180.f );
+            
+        }];
+    }
+}

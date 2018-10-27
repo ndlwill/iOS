@@ -11,12 +11,21 @@
 
 #import "Aspects.h"
 
+#import <UserNotifications/UserNotifications.h>
+#import "SecondViewController.h"
+
 @interface AppDelegate ()
+
+@property (nonatomic, assign) UIBackgroundTaskIdentifier bgTask;
 
 @end
 
 @implementation AppDelegate
 
+// MVVM M:模型 V:视图+控制器 VM:视图模型
+//模型(M):保存视图数据。
+//视图+控制器(V):展示内容 + 如何展示
+//视图模型(VM):处理展示的业务逻辑，包括按钮的点击，数据的请求和解析等等。
 
 /*
 需要在某个页面禁止自动键盘处理事件相应
@@ -30,14 +39,49 @@
 
  */
 
+
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+    NSLog(@"=====didFinishLaunchingWithOptions=====");
     [UIViewController aspect_hookSelector:@selector(viewDidLoad) withOptions:AspectPositionAfter usingBlock:^(id<AspectInfo> aspectInfo){
-        NSLog(@"===123456===");
+//        NSLog(@"===123456===");
     } error:nil];
+    
+//    self.bgTask = [application beginBackgroundTaskWithExpirationHandler:^{
+//        [application endBackgroundTask:self.bgTask];
+//        self.bgTask = UIBackgroundTaskInvalid;
+//    }];
     
 #if DEBUG
     
 #endif
+    // 禁止手机睡眠
+    [UIApplication sharedApplication].idleTimerDisabled = YES;
+    
+    // 系统悬浮窗口调试工具
+    // 运行程序后，两根手指点击状态栏即可调起这个调试的悬浮层 在iOS 11及更高版本上不起作用
+//    Class overlayClass = NSClassFromString(@"UIDebuggingInformationOverlay");
+//    IGNORE_PERFORM_SELECTOR_LEAK_WARNING([overlayClass performSelector:NSSelectorFromString(@"prepareDebuggingOverlay")])
+    
+    
+    // log: UIApplicationLaunchOptionsRemoteNotificationKey
+    NSLog(@"remote key = %@", UIApplicationLaunchOptionsRemoteNotificationKey);
+    // 推送点击 APP完全被关闭后，收到通知
+    if (launchOptions) {
+        NSLog(@"launchOptions = %@", launchOptions);
+        // UIApplication: 493-line
+        NSDictionary *pushInfo = [launchOptions objectForKey:UIApplicationLaunchOptionsRemoteNotificationKey];
+        if (pushInfo) {
+            application.applicationIconBadgeNumber = 0;
+            NSLog(@"pushInfo = %@", pushInfo);
+        }
+    }
+    
+    // 涉及到UIScrollView的contentInsets等一些问题
+    if (@available(iOS 11.0, *)) {
+        UIScrollView.appearance.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+    }
+    
+    
     
     // 是否启用自动键盘处理事件响应，默认为 YES
     [IQKeyboardManager sharedManager].enable = YES;
@@ -60,15 +104,69 @@
      IQAutoToolbarByPosition,根据坐标位置
      */
     [IQKeyboardManager sharedManager].toolbarManageBehaviour = IQAutoToolbarBySubviews;
+    // =====推送=====
+    UIUserNotificationSettings *userNotificationSettings = [UIApplication sharedApplication].currentUserNotificationSettings;
+    UIUserNotificationType userNotificationType = userNotificationSettings.types;
+    if (userNotificationType != UIUserNotificationTypeNone) {
+        // 允许推送
+    }
     
+    // 8.0 DEPRECATED
+    UIRemoteNotificationType remoteNotificationType = Application.enabledRemoteNotificationTypes;
+    if (remoteNotificationType != UIRemoteNotificationTypeNone) {
+        // 允许远程推送
+    }
     
-    //[[UIApplication sharedApplication] registerForRemoteNotifications];
+    [[UNUserNotificationCenter currentNotificationCenter] getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings * _Nonnull settings) {
+        UNAuthorizationStatus authorizationStatus = settings.authorizationStatus;
+        if (authorizationStatus == UNAuthorizationStatusAuthorized) {
+            // 被授权
+        }
+    }];
+    
+//    [Application isRegisteredForRemoteNotifications];// 8.0
+    
+//    [[UIApplication sharedApplication] registerForRemoteNotifications];
+    
+    return YES;
+}
+
+//- (void)startTask {
+//    self.bgTask = [application beginBackgroundTaskWithExpirationHandler:^{
+//        [application endBackgroundTask:self.bgTask];
+//        self.bgTask = UIBackgroundTaskInvalid;
+//    }];
+//}
+
+// iOS 9 3D-Touch 主屏操作
+- (void)application:(UIApplication *)application performActionForShortcutItem:(UIApplicationShortcutItem *)shortcutItem completionHandler:(void (^)(BOOL))completionHandler
+{
+    NSLog(@"shortcutItem = %@", shortcutItem.userInfo);
+    NSArray<NSString *> *allKeyArr = shortcutItem.userInfo.allKeys;
+    for (NSString *key in allKeyArr) {
+        if ([key isEqualToString:@"secondKey"]) {
+            NSLog(@"current vc = %@", [UIViewController ndl_curTopViewController]);
+            [[UIViewController ndl_curTopViewController] presentViewController:[SecondViewController new] animated:YES completion:nil];
+        }
+    }
+}
+
+// iOS 9.0
+- (BOOL)application:(UIApplication *)app openURL:(NSURL *)url options:(NSDictionary<UIApplicationOpenURLOptionsKey,id> *)options
+{
     return YES;
 }
 
 - (void)application:(UIApplication *)application didReceiveLocalNotification:(UILocalNotification *)notification
 {
     
+}
+
+// 推送点击  app在后台/前台，app未关闭时：
+- (void)application:(UIApplication *)application didReceiveRemoteNotification:(NSDictionary *)userInfo
+{
+    application.applicationIconBadgeNumber = 0;
+    NSLog(@"userInfo = %@", userInfo);
 }
 
 //- (BOOL)application:(UIApplication *)application shouldAllowExtensionPointIdentifier:(UIApplicationExtensionPointIdentifier)extensionPointIdentifier
@@ -101,6 +199,13 @@
 
 - (void)applicationWillTerminate:(UIApplication *)application {
     // Called when the application is about to terminate. Save data if appropriate. See also applicationDidEnterBackground:.
+}
+
+- (void)applicationDidReceiveMemoryWarning:(UIApplication *)application
+{
+    [[SDImageCache sharedImageCache] setValue:nil forKey:@"memCache"];
+    [[YYWebImageManager sharedManager].cache.diskCache removeAllObjects];
+    [[YYWebImageManager sharedManager].cache.memoryCache removeAllObjects];
 }
 
 

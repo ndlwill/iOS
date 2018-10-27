@@ -11,6 +11,12 @@
 //https://blog.csdn.net/u013282507/article/category/6429655
 //https://github.com/mengxianliang?tab=repositories
 
+/*
+Bitbucket:
+ndlwill1020@126.com
+gmail:
+ndlwill1020@gmail.com
+ */
 @interface AppDelegate : UIResponder <UIApplicationDelegate>
 
 @property (strong, nonatomic) UIWindow *window;

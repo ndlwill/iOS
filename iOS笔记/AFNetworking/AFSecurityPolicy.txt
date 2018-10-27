@@ -1,0 +1,74 @@
+AFSecurityPolicy分三种验证模式：
+AFSSLPinningModeNone
+这个模式表示不做SSL pinning，
+只跟浏览器一样在系统的信任机构列表里验证服务端返回的证书。若证书是信任机构签发的就会通过，若是自己服务器生成的证书就不会通过。
+
+AFSSLPinningModeCertificate
+这个模式表示用证书绑定方式验证证书，需要客户端保存有服务端的证书拷贝，这里验证分两步，第一步验证证书的域名有效期等信息，第二步是对比服务端返回的证书跟客户端返回的是否一致。
+代表客户端会将服务器端返回的证书和本地保存的证书中的所有内容，包括PublicKey和证书部分，全部进行校验；如果正确，才继续进行
+
+AFSSLPinningModePublicKey
+这个模式同样是用证书绑定方式验证，客户端要有服务端的证书拷贝，
+只是验证时只验证证书里的公钥，不验证证书的有效期等信息。只要公钥是正确的，就能保证通信不会被窃听，因为中间人没有私钥，无法解开通过公钥加密的数据
+
+
+@property (nonatomic, strong, nullable) NSSet <NSData *> *pinnedCertificates;
+// 根据验证模式来返回用于验证服务器的证书。
+pinnedCertificates 就是用来校验服务器返回证书的证书。通常都保存在mainBundle 下。通常默认情况下，AFNetworking会自动寻找在mainBundle的根目录下所有的.cer文件并保存在pinnedCertificates数组里，以校验服务器返回的证书
+
+
+@property (nonatomic, assign) BOOL allowInvalidCertificates;
+// 属性代表是否允许不信任的证书（证书无效、证书时间过期）通过验证 ，默认为NO.
+
+@property (nonatomic, assign) BOOL validatesDomainName;
+// 是否验证域名证书的CN(common name)字段。默认值为YES。
+validatesDomainName 是指是否校验在证书中的domain这一个字段。每个证书都会包含一个DomainName, 它可以是一个IP地址，一个域名或者一端带有通配符的域名。如*.google.com, www.google.com 都可以成为这个证书的DomainName。设置validatesDomainName=YES将严格地保证其安全性
+
+
+在AFNetworking 2.6.0中，也正式将validatesCertificateChain拿掉了
+validatesCertificateChain 指的是是否校验其证书链。
+通常来讲，一个CA证书颁发机构有很多个子机构，用来签发不同用途的子证书，然后这些子证书又再用来签发相应的证书。只有证书链上的证书都正确，CertificateChain才算验证完成
+Google.com的证书的根CA证书是GeoTrust Global CA; 而CA并没有直接给google.com签证书，而是先签名了Google Internet Authority G2, 然后G2再签名了google.com。这时候就需要设备中保存有Google Internet Authority G2证书才能通过校验。
+
+
+
++ (instancetype)defaultPolicy;
+// 返回一个默认的安全策略：不允许使用无效证书、验证域名CN、不验证绑定的证书和公钥。
+
+- (BOOL)evaluateServerTrust:(SecTrustRef)serverTrust
+                  forDomain:(nullable NSString *)domain;
+// 核心类  当服务器响应提出进行证书验证时，此方法将会被调用。然后app根据之前设置的验证策略来进行判断验证是否通过。
+
++ (NSSet <NSData *> *)certificatesInBundle:(NSBundle *)bundle;
+//从你的bundle中获取证书。同时如果是调用+ policyWithPinningMode:withPinnedCertificates:方法来创建
+AFSecurityPolicy对象时应当使用这个方法来获得证书
+
+
+HTTPS自带了基于非对称密钥的加密通道
+
+HTTPS 就是 HTTP协议加了一层SSL协议的加密处理，SSL 证书就是遵守 SSL协议，由受信任的数字证书颁发机构CA（如GlobalSign，wosign），在验证服务器身份后颁发，这是需要花钱的，签发后的证书作为公钥一般放在服务器的根目录下，便于客户端请求返回给客户端，私钥在服务器的内部中心保存，用于解密公钥
+
+
+
+========================
+- (AFSecurityPolicy *)customSecurityPolicy {  
+    // 先导入证书 证书由服务端生成，具体由服务端人员操作  
+    NSString *cerPath = [[NSBundle mainBundle] pathForResource:@"xxx" ofType:@"cer"];//证书的路径  
+    NSData *cerData = [NSData dataWithContentsOfFile:cerPath];  
+      
+    // AFSSLPinningModeCertificate 使用证书验证模式  
+    AFSecurityPolicy *securityPolicy = [AFSecurityPolicy policyWithPinningMode:AFSSLPinningModeCertificate];  
+         // allowInvalidCertificates 是否允许无效证书（也就是自建的证书），默认为NO  
+    // 如果是需要验证自建证书，需要设置为YES  
+    securityPolicy.allowInvalidCertificates = YES;  
+      
+    //validatesDomainName 是否需要验证域名，默认为YES;  
+    //假如证书的域名与你请求的域名不一致，需把该项设置为NO；如设成NO的话，即服务器使用其他可信任机构颁发的证书，也可以建立连接，这个非常危险，建议打开。  
+    //置为NO，主要用于这种情况：客户端请求的是子域名，而证书上的是另外一个域名。因为SSL证书上的域名是独立的，假如证书上注册的域名是www.google.com，那么mail.google.com是无法验证通过的；当然，有钱可以注册通配符的域名*.google.com，但这个还是比较贵的。  
+    //如置为NO，建议自己添加对应域名的校验逻辑。  
+    securityPolicy.validatesDomainName = NO;  
+      
+    securityPolicy.pinnedCertificates = [[NSSet alloc] initWithObjects:cerData, nil nil];  
+      
+    return securityPolicy;  
+}  

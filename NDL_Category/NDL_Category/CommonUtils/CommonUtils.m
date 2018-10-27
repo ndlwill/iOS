@@ -92,4 +92,59 @@
     NSLog(@"==========end==========");
 }
 
++ (void)openAppSettingURL
+{
+    if (@available(iOS 8.0, *)) {
+        NSURL *settingURL = [NSURL URLWithString:UIApplicationOpenSettingsURLString];
+        
+        if (@available(iOS 10.0, *)) {
+            [Application openURL:settingURL options:@{} completionHandler:nil];
+        } else {
+            [Application openURL:settingURL];
+        }
+    }
+}
+
++ (NSUInteger)totalDataCountsForScrollView:(UIScrollView *)scrollView
+{
+    NSUInteger totalCount = 0;
+    
+    if ([scrollView isKindOfClass:[UITableView class]]) {
+        UITableView *tableView = (UITableView *)scrollView;
+        
+        for (NSInteger i = 0; i < tableView.numberOfSections; i++) {
+            totalCount += [tableView numberOfRowsInSection:i];
+        }
+    } else if ([scrollView isKindOfClass:[UICollectionView class]]) {
+        UICollectionView *collectionView = (UICollectionView *)scrollView;
+        
+        for (NSInteger i = 0; i < collectionView.numberOfSections; i++) {
+            totalCount += [collectionView numberOfItemsInSection:i];
+        }
+    }
+    return totalCount;
+}
+
++ (void)logStackInfo
+{
+    NDLLog(@"stack info = %@", [NSThread callStackSymbols]);
+}
+
++ (void)testForSubTitles:(NSString *)subTitle,...NS_REQUIRES_NIL_TERMINATION
+{
+    NSMutableArray *subTitleArray = [NSMutableArray array];
+    va_list argumentList;
+    
+    NSString *paramTitle = @"";
+    if (subTitle) {
+        [subTitleArray addObject:subTitle];
+        va_start(argumentList, subTitle);
+        while ((paramTitle = va_arg(argumentList, id))) {
+            [subTitleArray addObject:paramTitle];
+        }
+        va_end(argumentList);
+    }
+    NSLog(@"subTitles = %@", subTitleArray);
+}
+
 @end

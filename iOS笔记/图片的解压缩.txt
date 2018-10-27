@@ -1,0 +1,92 @@
+图片解压缩的过程其实就是将图片的二进制数据转换成像素数据的过程
+
+将压缩的图片数据解码成未压缩的位图形式，这是一个非常耗时的 CPU 操作；
+最后 Core Animation 使用未压缩的位图数据渲染 UIImageView 的图层
+
+当未解压缩的图片将要渲染到屏幕时，系统会在主线程对图片进行解压缩，而如果图片已经解压缩了，系统就不会再对图片进行解压缩。
+
+而强制解压缩的原理就是对图片进行重新绘制，得到一张新的解压缩后的位图。其中，用到的最核心的函数是 CGBitmapContextCreate
+
+Pixel Format：
+Bits per component ：一个像素中每个独立的颜色分量使用的 bit 数；
+Bits per pixel ：一个像素使用的总 bit 数；
+Bytes per row ：位图中的每一行使用的字节数。
+
+
+CGBitmapInfo ：位图的布局信息 
+typedef CF_OPTIONS(uint32_t, CGBitmapInfo) {
+    kCGBitmapAlphaInfoMask = 0x1F,
+
+    kCGBitmapFloatInfoMask = 0xF00,
+    kCGBitmapFloatComponents = (1 << 8),
+
+    kCGBitmapByteOrderMask     = kCGImageByteOrderMask,
+    kCGBitmapByteOrderDefault  = (0 << 12),
+    kCGBitmapByteOrder16Little = kCGImageByteOrder16Little,
+    kCGBitmapByteOrder32Little = kCGImageByteOrder32Little,
+    kCGBitmapByteOrder16Big    = kCGImageByteOrder16Big,
+    kCGBitmapByteOrder32Big    = kCGImageByteOrder32Big
+} CG_AVAILABLE_STARTING(__MAC_10_0, __IPHONE_2_0);
+它主要提供了三个方面的布局信息：
+alpha 的信息；
+颜色分量是否为浮点数；
+像素格式的字节顺序。
+
+alpha 的信息由枚举值 CGImageAlphaInfo 来表示：
+typedef CF_ENUM(uint32_t, CGImageAlphaInfo) {
+    kCGImageAlphaNone,               /* For example, RGB. */
+    kCGImageAlphaPremultipliedLast,  /* For example, premultiplied RGBA */
+    kCGImageAlphaPremultipliedFirst, /* For example, premultiplied ARGB */
+    kCGImageAlphaLast,               /* For example, non-premultiplied RGBA */
+    kCGImageAlphaFirst,              /* For example, non-premultiplied ARGB */
+    kCGImageAlphaNoneSkipLast,       /* For example, RBGX. */
+    kCGImageAlphaNoneSkipFirst,      /* For example, XRGB. */
+    kCGImageAlphaOnly                /* No color data, alpha data only */
+};
+它同样也提供了三个方面的 alpha 信息：
+是否包含 alpha ；
+如果包含 alpha ，那么 alpha 信息所处的位置，在像素的最低有效位，比如 RGBA ，还是最高有效位，比如 ARGB ；
+如果包含 alpha ，那么每个颜色分量是否已经乘以 alpha 的值，这种做法可以加速图片的渲染时间，因为它避免了渲染时的额外乘法运算。比如，对于 RGB 颜色空间，用已经乘以 alpha 的数据来渲染图片，每个像素都可以避免 3 次乘法运算，红色乘以 alpha ，绿色乘以 alpha 和蓝色乘以 alpha 。
+
+
+
+像素格式的字节顺序，它是由枚举值 CGImageByteOrderInfo 来表示的：
+typedef CF_ENUM(uint32_t, CGImageByteOrderInfo) {
+    kCGImageByteOrderMask     = 0x7000,
+    kCGImageByteOrder16Little = (1 << 12),
+    kCGImageByteOrder32Little = (2 << 12),
+    kCGImageByteOrder16Big    = (3 << 12),
+    kCGImageByteOrder32Big    = (4 << 12)
+} CG_AVAILABLE_STARTING(__MAC_10_12, __IPHONE_10_0);
+它主要提供了两个方面的字节顺序信息：
+小端模式还是大端模式；
+数据以 16 位还是 32 位为单位。
+
+对于 iPhone 来说，采用的是小端模式，但是为了保证应用的向后兼容性，我们可以使用系统提供的宏，来避免 Hardcoding ：
+#ifdef __BIG_ENDIAN__
+    #define kCGBitmapByteOrder16Host kCGBitmapByteOrder16Big
+    #define kCGBitmapByteOrder32Host kCGBitmapByteOrder32Big
+#else /* Little endian. */
+    #define kCGBitmapByteOrder16Host kCGBitmapByteOrder16Little
+    #define kCGBitmapByteOrder32Host kCGBitmapByteOrder32Little
+#endif
+
+在 32 位像素格式下，每个颜色分量使用 8 位；而在 16 位像素格式下，每个颜色分量则使用 5 位。
+
+
+
+CGBitmapContextCreate 函数中每个参数所代表的具体含义：
+
+data ：如果不为 NULL ，那么它应该指向一块大小至少为 bytesPerRow * height 字节的内存；如果 为 NULL ，那么系统就会为我们自动分配和释放所需的内存，所以一般指定 NULL 即可；
+width 和 height ：位图的宽度和高度，分别赋值为图片的像素宽度和像素高度即可；
+bitsPerComponent ：像素的每个颜色分量使用的 bit 数，在 RGB 颜色空间下指定 8 即可；
+bytesPerRow ：位图的每一行使用的字节数，大小至少为 width * bytes per pixel 字节。有意思的是，当我们指定 0 时，系统不仅会为我们自动计算，而且还会进行 cache line alignment 的优化，
+space ：就是我们前面提到的颜色空间，一般使用 RGB 即可；
+bitmapInfo ：就是我们前面提到的位图的布局信息。
+
+
+YYKit 中的相关代码，用于解压缩图片的函数 YYCGImageCreateDecodedCopy 存在于 YYImageCoder 类中
+它接受一个原始的位图参数 imageRef ，最终返回一个新的解压缩后的位图 newImage ，中间主要经过了以下三个步骤：
+使用 CGBitmapContextCreate 函数创建一个位图上下文；
+使用 CGContextDrawImage 函数将原始位图绘制到上下文中；
+使用 CGBitmapContextCreateImage 函数创建一张新的解压缩后的位图。

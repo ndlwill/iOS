@@ -1,0 +1,247 @@
+http://www.cocoachina.com/ios/20170720/19942.html 源码解析
+
+https://github.com/yuantiku/YTKNetwork/blob/master/Docs/BasicGuide_cn.md
+https://github.com/yuantiku/YTKNetwork/blob/master/Docs/ProGuide_cn.md
+大部分企业应用都需要对一些静态资源（例如图片、js、css）使用 CDN
+
+YTKNetwork 的基本的思想是把每一个网络请求封装成对象。
+所以使用 YTKNetwork，你的每一种请求都需要继承 YTKRequest 类，通过覆盖父类的一些方法来构造指定的网络请求。把每一个网络请求封装成对象其实是使用了设计模式中的 Command 模式
+eg:
+// RegisterApi.h
+#import "YTKRequest.h"
+
+@interface RegisterApi : YTKRequest
+
+- (id)initWithUsername:(NSString *)username password:(NSString *)password;
+
+@end
+
+
+// RegisterApi.m
+
+#import "RegisterApi.h"
+
+@implementation RegisterApi {
+    NSString *_username;
+    NSString *_password;
+}
+
+- (id)initWithUsername:(NSString *)username password:(NSString *)password {
+    self = [super init];
+    if (self) {
+        _username = username;
+        _password = password;
+    }
+    return self;
+}
+
+- (NSString *)requestUrl {
+    // “ http://www.yuantiku.com ” 在 YTKNetworkConfig 中设置，这里只填除去域名剩余的网址信息
+    return @"/iphone/register";
+}
+
+- (YTKRequestMethod)requestMethod {
+    return YTKRequestMethodPOST;
+}
+
+- (id)requestArgument {
+    return @{
+        @"username": _username,
+        @"password": _password
+    };
+}
+
+@end
+
+
+- (void)loginButtonPressed:(id)sender {
+    NSString *username = self.UserNameTextField.text;
+    NSString *password = self.PasswordTextField.text;
+    if (username.length > 0 && password.length > 0) {
+        RegisterApi *api = [[RegisterApi alloc] initWithUsername:username password:password];
+        [api startWithCompletionBlockWithSuccess:^(YTKBaseRequest *request) {
+            // 你可以直接在这里使用 self
+            NSLog(@"succeed");
+        } failure:^(YTKBaseRequest *request) {
+            // 你可以直接在这里使用 self
+            NSLog(@"failed");
+        }];
+    }
+}
+
+NSError * __autoreleasing requestSerializationError = nil;
+
+如果构建自定义的 request，会忽略其他的一切自定义 request 的方法，例如 requestUrl, requestArgument, requestMethod, requestSerializerType,requestHeaderFieldValueDictionary 等等。一个上传 gzippingData 的示例如下：
+- (NSURLRequest *)buildCustomUrlRequest {
+    NSData *rawData = [[_events jsonString] dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *gzippingData = [NSData gtm_dataByGzippingData:rawData];
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:self.requestUrl]];
+    [request setHTTPMethod:@"POST"];
+    [request addValue:@"application/json;charset=UTF-8" forHTTPHeaderField:@"Content-Type"];
+    [request addValue:@"gzip" forHTTPHeaderField:@"Content-Encoding"];
+    [request setHTTPBody:gzippingData];
+    return request;
+}
+
+
+你可以直接在 block 回调中使用 self，不用担心循环引用。因为 YTKRequest 会在执行完 block 回调之后，将相应的 block 设置成 nil。从而打破循环引用
+
+我们发送了 4 个批量的请求，并统一处理这 4 个请求同时成功的回调。
+#import "YTKBatchRequest.h"
+#import "GetImageApi.h"
+#import "GetUserInfoApi.h"
+- (void)sendBatchRequest {
+    GetImageApi *a = [[GetImageApi alloc] initWithImageId:@"1.jpg"];
+    GetImageApi *b = [[GetImageApi alloc] initWithImageId:@"2.jpg"];
+    GetImageApi *c = [[GetImageApi alloc] initWithImageId:@"3.jpg"];
+    GetUserInfoApi *d = [[GetUserInfoApi alloc] initWithUserId:@"123"];
+    YTKBatchRequest *batchRequest = [[YTKBatchRequest alloc] initWithRequestArray:@[a, b, c, d]];
+    [batchRequest startWithCompletionBlockWithSuccess:^(YTKBatchRequest *batchRequest) {
+        NSLog(@"succeed");
+        NSArray *requests = batchRequest.requestArray;
+        GetImageApi *a = (GetImageApi *)requests[0];
+        GetImageApi *b = (GetImageApi *)requests[1];
+        GetImageApi *c = (GetImageApi *)requests[2];
+        GetUserInfoApi *user = (GetUserInfoApi *)requests[3];
+        // deal with requests result ...
+    } failure:^(YTKBatchRequest *batchRequest) {
+        NSLog(@"failed");
+    }];
+}
+
+
+YTKNetwork框架将每一个请求实例化，YTKBaseRequest是所有请求类的基类，YTKRequest是它的子类。
+所以如果我们想要发送一个请求，则需要创建并实例化一个继承于YTKRequest的自定义的请求类（CustomRequest）并发送请求
+
+离散式的网络请求
+可定制性强，可以为每个请求指定请求的超时时间以及缓存的周期
+========================
+把每一个网络请求封装成对象其实是使用了设计模式中的 Command 模式，它有以下好处：
+将网络请求与具体的第三方库依赖隔离，方便以后更换底层的网络库
+方便在基类中处理公共逻辑
+方便在基类中处理缓存逻辑，以及其它一些公共逻辑。
+方便做对象的持久化
+
+命令模式把一个请求封装为一个对象，因此你可以使用不同的请求来参数化你的客户、对请求进行排队或记录请求的日志，以及支持可撤销操作。
+请求对象把一个或多个操作绑定到一个特定的接收者上。命令模式把创建请求的对象，和接收、执行请求的对象分隔开来
+
+1.命令模式的本质是对命令的封装，将发出命令的责任和执行命令的责任分割开
+2.命令模式允许请求的一方和接收的一方独立开来，使得请求的一方不必知道接收请求的一方的接口，更不必知道请求是怎么被接收，以及操作是否被执行、何时被执行，以及是怎么被执行的
+
+《Head First 设计模式》
+一个客人在餐厅点餐的过程：
+你将点的菜写在订单里，交给了服务员。
+服务员将订单交给厨师。
+厨师做好菜之后将做好的菜交给服务员。
+最后服务员把菜递给你。
+
+命令就好比是订单，而你是命令的发起者。你的命令（订单）通过服务员（调用者）交给了命令的执行者（厨师）
+
+场景	         Command	      ConcreteCommand	Invoker	        Receiver	    Client
+餐厅	         空白订单	          填入菜名的订单	    服务员	        厨师	            客人
+YTKNetwork	 YTKBaseRequest	  CustomRequest	    YTKNetworkAgent	AFNetworking	ViewController/ViewModel
+它将请求的发起者和接收者分离开来(中间隔着调用者)，可以让我们随时更换接受者
+因为封装了请求，我们既可以管理单个请求，也可以同时管理多个请求，甚至实现琏式请求的发送
+关于多个请求的发送，我们也可以想象在餐厅里，你可以在吃的过程中还想起来要吃别的东西，例如点心，饮料之类的，你就可以填多个订单（当然也可以写在一起）交给服务员
+
+所以至于这道菜具体是谁做，怎么做，你是不知道的，你做的只是发出命令和接受结果。而且对于餐厅来说，厨师是可以随便换的，而你可能对此一无所知。反过来，厨师只需要好好把菜做好，至于是谁点的菜也不需要他考虑
+
+命令模式其实是把需求(Invoker)和具体实现(Receiver)通过命令层(Command)进行了解耦
+
+Commands类接口
+#import <Foundation/Foundation.h>
+
+@class Receiver;
+@interface Commands :NSObject{
+    Receiver *myReceiver;
+}
+-(Commands*)MyInit:(Receiver*)receiver;
+-(void)Execute;
+@end
+Commands类实现  抽象命令类
+#import "Commands.h"
+#import "Receiver.h"
+
+@implementation Commands
+-(Commands*)MyInit:(Receiver *)receiver{
+    myReceiver = receiver;
+    return self;
+}
+-(void)Execute{
+    return;
+}
+
+-(void)undo{
+    return;
+}
+@end
+
+ConcreteCommands类接口  命令类的实现类
+#import "Commands.h"
+
+@class Receiver;
+@interface ConcreteCommands :Commands
+-(ConcreteCommands*)MyInit:(Receiver*)receiver;
+@end
+ConcreteCommands类实现
+#import "ConcreteCommands.h"
+#import "Receiver.h"
+
+@implementation ConcreteCommands
+-(ConcreteCommands*)MyInit:(Receiver *)receiver{
+    myReceiver = receiver;
+    return self;
+}
+-(void)Execute{
+    [myReceiver Action];
+}
+@end
+
+
+// 调用者
+Invoker类接口
+#import <Foundation/Foundation.h>
+
+@class Commands;
+@interface Invoker :NSObject{
+    Commands *myCommands;
+}
+-(void)SetCommands:(Commands*)commands;
+-(void)ExecuteCommand;
+@end
+Invoker类实现
+#import "Invoker.h"
+#import "Commands.h"
+
+@implementation Invoker
+-(void)SetCommands:(Commands *)commands{
+    myCommands = commands;
+}
+-(void)ExecuteCommand{
+    [myCommands Execute];
+}
+@end
+
+
+// 命令接收者（执行者)
+Receiver类接口
+#import <Foundation/Foundation.h>
+
+@interface Receiver:NSObject
+-(void)Action;
+@end
+Receiver类实现
+#import "Receiver.h"
+
+@implementation Receiver
+-(void)Action{
+    NSLog(@"执行请求！");
+}
+@end
+
+
+Receiver *r = [[Receiver alloc]init];
+Commands *c = [[ConcreteCommands alloc]MyInit:r];
+Invoker *i = [[Invoker alloc]init];
+[i SetCommands:c];
+[i ExecuteCommand];

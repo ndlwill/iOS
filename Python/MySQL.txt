@@ -1,0 +1,128 @@
+MySQL是Web世界中使用最广泛的数据库服务器。SQLite的特点是轻量级、可嵌入，但不能承受高并发访问，适合桌面和移动应用。而MySQL是为服务器端设计的数据库，能承受高并发访问，同时占用的内存也远远大于SQLite。
+
+安装成功，但还需要额外的配置：
+(1) 进入系统偏好设置
+(2) 点击mysql
+(3) 开启mysql服务
+需要将mysql加入系统环境变量。
+(1).进入/usr/local/mysql/bin,查看此目录下是否有mysql
+(2)执行vim ~/.bash_profile
+.bash_profile在该文件中添加mysql/bin的目录，PATH=$PATH:/usr/local/mysql/bin
+添加完成后，按esc，然后输入wq保存。
+最后在命令行输入source ~/.bash_profile
+
+在Mac或Linux上，需要编辑MySQL的配置文件，把数据库默认的编码全部改为UTF-8。MySQL的配置文件默认存放在/etc/my.cnf或者/etc/mysql/my.cnf：
+[client]
+default-character-set = utf8
+
+[mysqld]
+default-storage-engine = INNODB
+character-set-server = utf8
+collation-server = utf8_general_ci
+
+
+$ mysql -u root -p 
+show variables like '%char%';
+
+如果MySQL的版本≥5.5.3，可以把编码设置为utf8mb4，utf8mb4和utf8完全兼容，但它支持最新的Unicode标准，可以显示emoji字符。
+
+==========解决
+Can't connect to local MySQL server through socket '/tmp/mysql.sock'
+
+Mac OS X的升级或其他原因会导致ＭySQL启动或开机自动运行时/usr/local/mysql/data的宿主发生了改变，没有了这个文件夹的权限了
+sudo chown -R mysql /usr/local/mysql/data
+
+sudo是非root用户临时获取root权利来执行
+chown是修改文件或者文件夹的属主或者属组
+-R是递归，即该目录下的子目录和文件都生效
+mysql是要改成的文件夹属主
+/usr/local/mysql/data就是你要修改的目标，可以是文件或文件夹
+
+
+chmod abc file 
+其中a,b,c各为一个数字，分别表示User、Group、及Other的权限。 // ugo
+r=4，w=2，x=1 
+若要rwx属性则4+2+1=7； 
+若要rw-属性则4+2=6； 
+若要r-x属性则4+1=5
+
+======================推荐
+推荐使用 Homebrew 安装，执行 brew 命令即可。
+brew install mysql
+启动、停止、重启 MySQL 服务的命令：
+sudo mysql.server start
+sudo mysql.server stop
+sudo mysql.server restart
+
+We've installed your MySQL database without a root password. To secure it run:
+    mysql_secure_installation
+
+MySQL is configured to only allow connections from localhost by default
+
+To connect run:
+    mysql -uroot
+
+To have launchd start mysql now and restart at login:
+  brew services start mysql
+Or, if you don't want/need a background service you can just run:
+  mysql.server start
+
+======================MySQL 用户设置
+如果你需要添加 MySQL 用户，你只需要在 mysql 数据库中的 user 表添加新用户即可
+
+mysql -uroot
+
+mysql> use mysql;
+
+INSERT INTO user 
+          (host, user, password, 
+           select_priv, insert_priv, update_priv) 
+           VALUES ('localhost', 'guest', 
+           PASSWORD('guest123'), 'Y', 'Y', 'Y');
+
+FLUSH PRIVILEGES;
+
+SELECT host, user, password FROM user WHERE user = 'guest';
+
+======================pymysql
+在 Python3 中如果想要将数据存储到 MySQL 中就需要借助于 PyMySQL 来操作
+
+pip3 install pymysql
+
+$ python3
+>>> import pymysql
+>>> pymysql.VERSION
+(0, 9, 2, None)
+
+===================安装MySQL驱动
+由于MySQL服务器以独立的进程运行，并通过网络对外服务，所以，需要支持Python的MySQL驱动来连接到MySQL服务器。MySQL官方提供了mysql-connector-python驱动，
+
+$ pip install mysql-connector-python
+如果上面的命令安装失败，可以试试另一个驱动：
+$ pip install mysql-connector // 我用的这个
+
+
+# 导入MySQL驱动:
+>>> import mysql.connector
+# 注意把password设为你的root口令:
+>>> conn = mysql.connector.connect(user='root', password='password', database='test')
+>>> cursor = conn.cursor()
+# 创建user表:
+>>> cursor.execute('create table user (id varchar(20) primary key, name varchar(20))')
+# 插入一行记录，注意MySQL的占位符是%s:
+>>> cursor.execute('insert into user (id, name) values (%s, %s)', ['1', 'Michael'])
+>>> cursor.rowcount
+1
+# 提交事务:
+>>> conn.commit()
+>>> cursor.close()
+# 运行查询:
+>>> cursor = conn.cursor()
+>>> cursor.execute('select * from user where id = %s', ('1',))
+>>> values = cursor.fetchall()
+>>> values
+[('1', 'Michael')]
+# 关闭Cursor和Connection:
+>>> cursor.close()
+True
+>>> conn.close()

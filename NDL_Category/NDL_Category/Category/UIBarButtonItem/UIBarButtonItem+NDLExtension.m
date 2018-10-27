@@ -25,4 +25,16 @@
     return [[self alloc] initWithCustomView:button];
 }
 
+
++ (instancetype)itemWithTitle:(NSString *)title titleColor:(UIColor *)titleColor titleFont:(UIFont *)titleFont target:(id)target action:(SEL)action
+{
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
+    [button setTitle:title forState:UIControlStateNormal];
+    [button setTitleColor:titleColor forState:UIControlStateNormal];
+    button.titleLabel.font = titleFont;
+//    [button sizeToFit];
+    [button addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
+    return [[self alloc] initWithCustomView:button];
+}
+
 @end

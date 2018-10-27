@@ -44,8 +44,59 @@
 #import "UIImage+NDLExtension.h"
 
 #import "LoadingView.h"
+#import "PhotoCell.h"
+#import "HorizontalLinearMiddleScaleLayout.h"
 
-@interface ViewController () <UITextViewDelegate>
+#import "TestXibView.h"
+#import "TextStrokeLabel.h"
+
+#import "RedEnvelopeLoadingView.h"
+#import "AlipayPaymentAnimationView.h"
+
+#import "SpeechRecognitionAnimationView.h"
+#import "AlipayPaymentSuccessAnimationView.h"
+
+#import "FirstViewController.h"
+
+#import <AddressBookUI/AddressBookUI.h>
+#import <ContactsUI/ContactsUI.h>
+
+#import <CommonCrypto/CommonCryptor.h>
+
+#import "NSString+NDLSecurity.h"
+
+#import "OpenUDID.h"
+
+#import <AdSupport/AdSupport.h>
+
+#import "TestModel.h"
+
+#import <objc/runtime.h>
+
+//#import <DrawLib/DrawLib.h>
+#import <DrawLib.h>
+
+#import "NDLLabel.h"
+#import "UIView+NDLTapGesture.h"
+
+#import "MarqueeLabel.h"
+
+#import "WaveView.h"
+#import "TieBaLoadingView.h"
+
+#import "BounceView.h"
+#import <PinYin4Objc.h>
+
+#import "YouKuPlayButton.h"
+
+#import "Book.h"
+
+#import "SQLiteManager.h"
+
+typedef id (^WeakReference)(void);
+
+// TODO: Import
+@interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
 
 @property (weak, nonatomic) UIView *touchView;
@@ -72,9 +123,128 @@
 
 @property (nonatomic, strong) LoadingView *loadingView;
 
+@property (nonatomic, weak) UICollectionView *collectionView;
+
+@property (nonatomic, strong) TestXibView *xibView;
+
+@property (nonatomic, strong) NSTimer *timer;
+
+@property (nonatomic, weak) RedEnvelopeLoadingView *redView;
+@property (nonatomic, weak) AlipayPaymentAnimationView *alipayView;
+
+@property (nonatomic, weak) Person *testPerson;
+
+@property (nonatomic, weak) Person *p_ndl;
+@property (nonatomic, strong) NSMutableDictionary *p_dic;
+
 @end
 
+static NSInteger cc = 0;
 @implementation ViewController
+
+
+- (NSMutableDictionary *)p_dic
+{
+    if (!_p_dic) {
+        _p_dic = [NSMutableDictionary dictionary];
+    }
+    return _p_dic;
+}
+
+#pragma mark - ABPeoplePickerNavigationControllerDelegate
+- (void)peoplePickerNavigationController:(ABPeoplePickerNavigationController *)peoplePicker didSelectPerson:(ABRecordRef)person
+{
+    // CFTypeRef : Base "type" of all "CF objects"
+    
+//    如果是多重属性，那么ABRecordCopyValue函数返回的就是ABMultiValueRef类型的数据
+    
+//    ABRecordCopyValue(<#ABRecordRef record#>, <#ABPropertyID property#>)
+    
+    /*
+     // 取电话号码
+     ABMultiValueRef phones = ABRecordCopyValue(person, kABPersonPhoneProperty);
+     // 取记录数量
+     NSInteger phoneCount = ABMultiValueGetCount(phones);
+     // 遍历所有的电话号码
+     for (NSInteger i = 0; i < phoneCount; i++) {...}
+     获取多重属性的方法
+     // 电话标签
+     CFStringRef phoneLabel = ABMultiValueCopyLabelAtIndex(phones, i);
+     // 本地化电话标签
+     CFStringRef phoneLocalLabel = ABAddressBookCopyLocalizedLabel(phoneLabel);
+     // 电话号码
+     CFStringRef phoneNumber = ABMultiValueCopyValueAtIndex(phones, i);
+     */
+    
+    /*
+     CFStringRef lastName = ABRecordCopyValue(person, kABPersonLastNameProperty);
+     NSString *lastNameStr = (__bridge NSString *)(lastName);
+     CFRelease(lastName); // 使用__bridge type 方法记得释放！
+     */
+    
+    /*
+     // 获取电话，电话是多数据类型
+     ABMultiValueRef phones = ABRecordCopyValue(person, kABPersonPhoneProperty);
+     // 获取电话的个数
+     CFIndex count = ABMultiValueGetCount(phones);
+     // 遍历联系人，取出每个电话标签和电话号码，CF框架必须用for i循环
+     for (CFIndex i = 0 ; i < count; i++) {
+     // 获取联系电话的标签，使用__bridge_transfer方法不用释放  CF->Foundation
+     NSString *label = (__bridge_transfer NSString *)ABMultiValueCopyLabelAtIndex(phones,  i);
+     NSLog(@"label: %@",label);
+     // 获取联系电话，使用CFBridgingRelease方法和上面功能一样也不需要释放
+     NSString *value = CFBridgingRelease(ABMultiValueCopyValueAtIndex(phones,  i));
+     NSLog(@"value: %@",value);
+     }
+     //phones 对象需要被释放
+     CFRelease(phones);
+     */
+}
+/*
+ 该方法可以获取具体的哪个电话号码，例如使用充值话费时不能使用上面方法，因为无法确定具体充值哪个号码
+ - (void)peoplePickerNavigationController:(ABPeoplePickerNavigationController*)peoplePicker didSelectPerson:(ABRecordRef)person property:(ABPropertyID)property identifier:(ABMultiValueIdentifier)identifier NS_AVAILABLE_IOS(8_0);
+ */
+
+/*
+ 不需要弹出联系人控制器就可以获取联系人信息的方法
+ #pragma mark - 点击屏幕获取所有联系人信息，记得授权
+ - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+ //1. 判断是否授权成功, 授权成功才能获取数据
+ if ( ABAddressBookGetAuthorizationStatus() == kABAuthorizationStatusAuthorized) {
+ //2. 创建通讯录
+ ABAddressBookRef addressBook = ABAddressBookCreateWithOptions(NULL, NULL);
+ //3. 获取所有联系人
+ CFArrayRef peosons = ABAddressBookCopyArrayOfAllPeople(addressBook);
+ //4. 遍历所有联系人来获取数据(姓名和电话)
+ CFIndex count = CFArrayGetCount(peosons);
+ for (CFIndex i = 0 ; i < count; i++) {
+ //5. 获取单个联系人
+ ABRecordRef person = CFArrayGetValueAtIndex(peosons, i);
+ //6. 获取姓名
+ NSString *lastName = CFBridgingRelease(ABRecordCopyValue(person, kABPersonLastNameProperty));
+ NSString *firstName  = CFBridgingRelease(ABRecordCopyValue(person, kABPersonFirstNameProperty));
+ NSLog(@"lastName: %@, firstName: %@", lastName, firstName);
+ //7. 获取电话
+ ABMultiValueRef phones = ABRecordCopyValue(person, kABPersonPhoneProperty);
+ //7.1 获取电话的count数
+ CFIndex phoneCount = ABMultiValueGetCount(phones);
+ //7.2 遍历所有电话号码
+ for (CFIndex i = 0; i < phoneCount; i++) {
+ NSString *label = CFBridgingRelease(ABMultiValueCopyLabelAtIndex(phones, i));
+ NSString *value = CFBridgingRelease(ABMultiValueCopyValueAtIndex(phones, i));
+ // 打印标签和电话号
+ NSLog(@"label: %@, value: %@",label, value);
+ }
+ NSLog(@"\\n\\n");
+ //8.1 释放 CF 对象
+ CFRelease(phones);
+ }
+ //8.1 释放 CF 对象
+ CFRelease(peosons);
+ CFRelease(addressBook);
+ }
+ }
+ */
 
 - (PopoverView *)popoverView
 {
@@ -144,17 +314,363 @@
     return modifiedString;
 }
 
+// TODO:viewWillLayoutSubviews
 - (void)viewWillLayoutSubviews
 {
     [super viewWillLayoutSubviews];
     
-    NSLog(@"viewWillLayoutSubviews button Frame = %@", NSStringFromCGRect(self.rightButton.frame));
+//    NSLog(@"viewWillLayoutSubviews button Frame = %@", NSStringFromCGRect(self.rightButton.frame));
+//    self.xibView.width = NDLScreenW;
+}
+
+- (void)createBaseDirectoryAtPath:(NSString *)path {
+    NSError *error = nil;
+    [[NSFileManager defaultManager] createDirectoryAtPath:path withIntermediateDirectories:YES
+                                               attributes:nil error:&error];
+}
+
+- (void)timeCallback
+{
+    
+    cc++;
+//    NSLog(@"###===timeCallback=%ld==##########", cc);
+}
+
+//
+- (NSString *)convertSimpleUnicodeStr:(NSString *)str{
+    NSString *strUrl = [str stringByReplacingOccurrencesOfString:@"U+" withString:@""];
+    unsigned long  unicodeIntValue= strtoul([strUrl UTF8String],0,16);
+//       UTF32Char inputChar = unicodeIntValue ;// 变成utf32
+    unsigned long inputChar = unicodeIntValue ;// 变成utf32
+    //    inputChar = NSSwapHostIntToLittle(inputChar); // 转换成Little 如果需要
+    inputChar = NSSwapHostLongToLittle(inputChar); // 转换成Little 如果需要
+    NSString *sendStr = [[NSString alloc] initWithBytes:&inputChar length:4 encoding:NSUTF32LittleEndianStringEncoding];
+    return sendStr;
+}
+// TODO:right button clicked
+- (IBAction)rightButtonClicked:(UIButton *)sender {
+    NSLog(@"===person = %@", self.testPerson);
+    
+    [self.redView startAnimation];
+    
+    sender.selected = !sender.selected;
+    if (sender.selected) {
+        // pause
+        [self.timer setFireDate:[NSDate distantFuture]];
+        
+        [self.alipayView pauseAnimation];
+    } else {
+        [self.timer setFireDate:[NSDate distantPast]];
+//        [self.timer setFireDate:[NSDate date]];
+        
+        [self.alipayView resumeAnimation];
+    }
+    
+    [self presentViewController:[FirstViewController new] animated:YES completion:nil];
+}
+
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+#if DEBUG
+    [[FLEXManager sharedManager] showExplorer];
+#endif
+    
+    
+    
+    NSLog(@"viewDidAppear p_ndl = %@ dic_ndl = %@", self.p_ndl, [self.p_dic objectForKey:@"ndl"]);
 }
 
 
+// =====弱=====
+WeakReference makeWeakReference(id object) {
+    __weak id weakref = object;
+    return ^{
+        return weakref;
+    };
+}
+
+id weakReferenceNonretainedObjectValue(WeakReference ref) {
+    return ref ? ref() : nil;
+}
+
 
 - (void)viewDidLoad {
-    NSLog(@"here = %ld", [@"" integerValue]);
+    NSLog(@"===ViewController viewDidLoad===");
+    
+    SQLiteManager *sqliteManager = [SQLiteManager sharedSQLiteManager];
+    [sqliteManager openDB:@"test.sqlite"];
+    
+//    StartTime
+//    for (NSInteger i = 0; i < 1000; i++) {
+//        dispatch_async(dispatch_get_global_queue(0, 0), ^{
+//            NSString *text = [NSString stringWithFormat:@"NO-%ld", i];
+//            [sqliteManager insertWithSQL:@"INSERT INTO t_test (testID, testText) VALUES (?, ?);" valueArray:@[@(i), text]];
+//        });
+////        NSString *text = [NSString stringWithFormat:@"NO-%ld", i];
+////        [sqliteManager insertWithSQL:@"INSERT INTO t_test (testID, testText) VALUES (?, ?);" valueArray:@[@(i), text]];
+//    }
+//    EndTime
+    
+    // test str
+//    NSString *str1 = @"123";
+//    NSString *str2 = [NSString stringWithFormat:@"123"];
+//
+//    NSLog(@"str1 = %p str2 = %p", str1, str2);// 地址不一样
+//
+//    if (str1 == str2) {
+//        NSLog(@"str1 == str2");// 不走
+//    }
+//
+//    if ([str1 isEqual:str2]) {
+//        NSLog(@"str1 isEqual:str2");// 走
+//    }
+    
+    
+    Person *p_ndl = [[Person alloc] init];
+    self.p_ndl = p_ndl;// 弱引用
+    NSLog(@"p_ndl = %@", self.p_ndl);
+    [self.p_dic setObject:self.p_ndl forKey:@"ndl"];// 强引用了self.p_ndl
+    
+    
+//    UIBarButtonItem
+//    UIBarItem
+    
+    NSMapTable *mapTable = [NSMapTable mapTableWithKeyOptions:NSMapTableCopyIn valueOptions:NSMapTableWeakMemory];
+    [mapTable setObject:@"123" forKey:@"name"];
+    [mapTable setObject:@"234" forKey:@"age"];
+    
+    NSEnumerator *keys = [mapTable keyEnumerator];
+    
+    id keyObj = [keys nextObject];
+    if (keyObj) {
+        NSLog(@"keys nextObject = %@", keyObj);
+    }
+    
+    [[UIButton buttonWithType:UIButtonTypeCustom] ndl_performSelector:@selector(setTitleColor:forState:) withObjects:@[[UIColor redColor], @(UIControlStateNormal)]];
+    
+    
+#warning TODO_MORE
+    // 后面转义
+    NSLog(@"%@---%@", @"-Warc-performSelector-leaks", @"\"-Warc-performSelector-leaks\"");
+    
+    NSInteger ii = 13;
+    NSInteger oo = ii;
+    ii = 23;
+    NSLog(@"oo = %ld", oo);// 13
+    
+    NSNumber *intNumber = [NSNumber numberWithInteger:20];
+    NSNumber *other = intNumber;
+    intNumber = [NSNumber numberWithInteger:40];
+    NSLog(@"other = %@", other);// 20
+    
+    NSString *sss = [NSString stringWithFormat:@"123"];
+    NSString *oSS = sss;
+    sss = [NSString stringWithFormat:@"123df"];
+    NSLog(@"oSS = %@", oSS);// 123
+//    NSLog(@"intNumber = %@", [intNumber description]);
+    
+    Book *book = [[Book alloc] init];
+    book.title = @"234";
+    Book *otherBook = book;
+    book = [[Book alloc] init];
+    book.title = @"sdf";
+    NSLog(@"otherBook = %@ title = %@ book = %@", otherBook, otherBook.title, book);// 234 两个对象不同
+    
+    if ([@"" ndl_isWholeDigit]) {
+        NSLog(@"ndl_isWholeCN");
+    } else {
+        NSLog(@"no ndl_isWholeCN");
+    }
+    
+    
+    for (int i = 0; i < 10; i++) {
+        StartTime
+        NSString *hanziText = @"我是汉字";
+        if ([hanziText length]) {
+            NSMutableString *ms = [[NSMutableString alloc] initWithString:hanziText];
+            if (CFStringTransform((__bridge CFMutableStringRef)ms, 0, kCFStringTransformMandarinLatin, NO)) {
+                NSLog(@"pinyin: #%@#", ms);
+            }
+            if (CFStringTransform((__bridge CFMutableStringRef)ms, 0, kCFStringTransformStripDiacritics, NO)) {
+                NSLog(@"pinyin: #%@#", ms);
+            }
+        }
+        EndTime
+    }
+    
+    
+//    StartTime
+//    NSString *sourceText=@"我是汉字";
+//    HanyuPinyinOutputFormat *outputFormat=[[HanyuPinyinOutputFormat alloc] init];
+//    [outputFormat setToneType:ToneTypeWithoutTone];// ToneTypeWithoutTone
+//    [outputFormat setVCharType:VCharTypeWithV];
+//    [outputFormat setCaseType:CaseTypeLowercase];
+//    [PinyinHelper toHanyuPinyinStringWithNSString:sourceText
+//                      withHanyuPinyinOutputFormat:outputFormat
+//                                     withNSString:@" "
+//                                      outputBlock:^(NSString *pinYin) {
+//                                          NSLog(@"pinYin = %@", pinYin);
+//                                          EndTime
+//                                      }];// 0.0008
+    
+    
+    
+    SEL sel = @selector(viewDidLoad);
+    NSLog(@"sel = %s", sel);
+    
+    NSLog(@"encode = %s", @encode(void));// 返回 v
+//    [[NSObject alloc] init];
+    // 不需要import
+    Class testClass = NSClassFromString(@"TestRuntime");
+    NSObject *obj = [[testClass alloc] init];
+    SEL selector = NSSelectorFromString(@"logRuntime");
+    if ([obj respondsToSelector:selector]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+        [obj performSelector:selector withObject:nil];
+#pragma clang diagnostic pop
+    }
+    
+    
+    if (class_isMetaClass([ViewController class])) {
+        NSLog(@"YES###");
+    } else {
+        NSLog(@"NO###");//
+    }
+    
+    Class class = [ViewController class];//
+    if (class_isMetaClass(object_getClass(class))) {// 类对象的类是元类
+        NSLog(@"object_getClassYES###");//
+    } else {
+        NSLog(@"object_getClassNO###");
+    }
+    
+    NSLog(@"实例对象的类 = %@", object_getClass(self));// Class = ViewController
+    if (class_isMetaClass(object_getClass(self))) {// 实例对象的类是ViewController
+        NSLog(@"selfYES###");
+    } else {
+        NSLog(@"selfNO###");//
+    }
+
+    
+    NSLog(@"pathComp = %@", [@"http:///www.baidu.com/:user/name我们" pathComponents]);
+    TestModel *model = [[TestModel alloc] init];
+    [model publicMethod:@"我们"];
+    
+    [CommonUtils logIvarListForClass:[UINavigationItem class]];
+    [CommonUtils logPropertyListForClass:[UINavigationItem class]];
+    NSString *message = @"wjhgfk";
+    NSLog(@"message = %@", message ? : @"123ws");
+    
+    NSLog(@"YYkit = %@ === %@", App_Bundle_Version,[[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleIdentifier"]);
+    
+    NSLog(@"IDFA = %@ IDFV = %@", [ASIdentifierManager sharedManager].advertisingIdentifier.UUIDString, [[UIDevice currentDevice].identifierForVendor UUIDString]);
+    
+    // 每次运行都会发生变化，最理想的就是保存在keychain里面，以此作为标识用户设备的唯一标识符
+    CFUUIDRef uuid = CFUUIDCreate(NULL);
+    CFStringRef uuidStr = CFUUIDCreateString(NULL, uuid);
+    NSLog(@"uuidStr = %@", uuidStr);
+    
+    NSString *udid = [OpenUDID value];
+    NSLog(@"openUDID = %@ count = %ld", udid, udid.length);// 40
+    [@"wohgei76s1" ndl_aes128Encrypt];
+    
+//    [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) {
+//        NSLog(@"thread = %@", [NSThread currentThread]);
+//    }];
+    
+//    CCCryptorStatus
+//    char pKey[kCCKeySizeAES128 + 1];// 使用 null 字符 '\0' 终止
+//    bzero(pKey, sizeof(pKey));
+//    NSString *key = @"1234567812345678";
+//
+//    NSLog(@"key bytes = %ld value = %s", sizeof(key.UTF8String), key.UTF8String);
+//    NSLog(@"key bytes utf8= %ld", sizeof([key cStringUsingEncoding:NSUTF8StringEncoding]));
+//    NSLog(@"key bytes ascii= %ld", sizeof([key cStringUsingEncoding:NSASCIIStringEncoding]));
+//
+//    if ([key getCString:pKey maxLength:sizeof(pKey) encoding:NSUTF8StringEncoding]) {//
+//        NSLog(@"YES leng = %ld key = %s", sizeof(pKey), pKey);
+//    } else {
+//        NSLog(@"NO leng = %ld key = %s", sizeof(pKey), pKey);
+//    }
+    
+//    char greeting[13] = "Hello";
+//    NSLog(@"bytes = %ld len = %ld", sizeof(greeting), strlen(greeting));// 13 , 5
+    
+//    char greeting[13];
+//    greeting[0] = 's';
+//    NSLog(@"grre = %s", greeting);
+
+    
+    
+    NSLog(@"===view controller view did load %@===", NSStringFromUIEdgeInsets(self.view.extraTouchInset));
+    
+    // https://www.jianshu.com/p/e6b7cb1eca9e
+    // 通讯录
+//    ABPeoplePickerNavigationController *peoplePickerNavVC = [[ABPeoplePickerNavigationController alloc] init];
+//    peoplePickerNavVC.peoplePickerDelegate = self;
+//    peoplePickerNavVC.predicateForSelectionOfPerson = [NSPredicate predicateWithValue:NO];// 不自动dismiss选择控制器
+    
+    CNContactPickerViewController *contactPickerVC = [[CNContactPickerViewController alloc] init];
+    /*
+     // 2. 设置代理
+     picker.delegate = self;
+     // 3. 设置相关属性，谓词筛选email地址是@mac.com的联系人
+     picker.predicateForSelectionOfProperty = [NSPredicate predicateWithFormat:@"(key == 'emailAddresses') AND (value LIKE '*@mac.com')"];
+     / / 谓词筛选email地址数等于1的联系人
+     picker.predicateForSelectionOfContact = [NSPredicate predicateWithFormat:@"emailAddresses.@count == 1"];
+     // 4. 弹出
+     [self presentViewController: picker  animated:YES completion:nil];
+     */
+    
+    
+    NSLog(@"%@", NSStringFromCGRect(CGRectInset(CGRectMake(0, 0, 100, 100), 0, 10)));
+
+    self.testPerson = [Person personWithName:@"ndl" age:20];
+    NSLog(@"person = %@", self.testPerson);
+    
+    /*
+    🤨
+Unicode: U+1F928，UTF-8: F0 9F A4 A8
+     \ud83e\udd28
+     */
+    
+//    NSLog(@"%@", [self convertSimpleUnicodeStr:@"U+6211"]);
+
+//    NSLog(@"%@", [@"我门" ndl_emojiStringEncoding]);// \u6211\u95e8
+    NSLog(@"%.2f", 11.2345);
+    
+    self.timer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(timeCallback) userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:self.timer forMode:NSRunLoopCommonModes];
+    /*
+     Causes the receiver’s message to be sent to its target// 立即执行
+     If the timer is non-repeating, it is automatically invalidated after firing
+     */
+//    [timer fire];// 立即执行
+    
+    
+//    [NSArray arrayWithObject:@""];
+    NSArray *arrr = [NSArray arrayWithObject:@""];
+    if ([arrr isEqual:@""]) {
+        NSLog(@" arr 123");
+    } else {
+        NSLog(@" arr 234");
+    }
+    
+    
+    Person *p = [[Person alloc] init];
+    p.name = @"nick";
+    p.age = 20;
+    NSLog(@"dic = %@", [p ndl_model2Dictionary]);
+    
+    NSLog(@"---date = %@---", [[NSDate alloc] initWithTimeIntervalSince1970:1524535958000]);
+    NSLog(@"---date = %@---", [[NSDate alloc] initWithTimeIntervalSince1970:1524535958000 / 1000]);
+    
+    NSLog(@"%@", [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES) firstObject]);
+    
+    NSInteger ttt = 10;
+    NSAssert(ttt != 9, @"=====");
     
     NSArray<NSString *> *arrrr = @[@"1", @"2", @"3"];
     if ([arrrr containsObject:@"1"]) {
@@ -162,7 +678,6 @@
     } else {
         NSLog(@"###@@@");
     }
-    
     NSLog(@"dic = %@", [[NSBundle mainBundle] infoDictionary]);
     NSLog(@"viewDidLoad 11");
     [super viewDidLoad];
@@ -186,13 +701,11 @@ NSLog(@"viewDidLoad 22");
     WEAK_REF(self)
 //    weak_self.view
     
+    
     NSNumber *v = [NSNumber numberWithBool:[@"😄" canBeConvertedToEncoding:NSASCIIStringEncoding]];
     NSLog(@"v = %ld", [v boolValue]);
     
     NSLog(@"range = %@", NSStringFromRange([@"我们是😄" rangeOfComposedCharacterSequenceAtIndex:3]));
-    
-    NSLog(@"length = %ld", [@"我" length]);//1
-    
     
     NSLog(@"byte = %ld", sizeof(NSInteger));
     
@@ -208,9 +721,16 @@ NSLog(@"viewDidLoad 22");
 //    [CommonUtils logIvarListForClass:NSClassFromString(@"_UIBarBackground")];
     
     
-    TestView *tview = [[TestView alloc] initWithFrame:CGRectMake(20, 20, self.view.width - 40, 200)];
-    tview.backgroundColor = [UIColor redColor];
+    TestView *tview = [[TestView alloc] initWithFrame:CGRectMake(20, 20, self.view.width - 40, 100)];
+    tview.backgroundColor = [UIColor purpleColor];
     [self.view addSubview:tview];
+    
+    tview.layer.borderColor = [UIColor blueColor].CGColor;
+    tview.layer.borderWidth = 2.0;
+//    tview.layer.shadowColor = [UIColor blackColor].CGColor;
+//    tview.layer.shadowOpacity = 1.0;
+//    tview.layer.shadowRadius = 8;
+//    tview.layer.shadowOffset = CGSizeZero;//CGSizeMake(0, 5);
     NSLog(@"layer = %@", tview.layer);
     NSLog(@"===%@ dele = %@", tview, tview.layer.delegate);
     NSLog(@"here = %@  tt = %@", nil, [NSNull null]);
@@ -396,11 +916,11 @@ NSLog(@"viewDidLoad 22");
     subView1.backgroundColor = [UIColor redColor];
     [self.floatLayoutView addSubview:subView1];
     
-//    self.testView = [[UILabel alloc] initWithFrame:CGRectMake(100, 100, 200, 80)];
-//    self.testView.textAlignment = NSTextAlignmentCenter;
-//    self.testView.text = @"12345";
-//    [self.view addSubview:self.testView];
-//    self.testView.backgroundColor = [UIColor purpleColor];
+    self.testView = [[UILabel alloc] initWithFrame:CGRectMake(100, 100, 200, 80)];
+    self.testView.textAlignment = NSTextAlignmentCenter;
+    self.testView.text = @"12345";
+    [self.view addSubview:self.testView];
+    self.testView.backgroundColor = [UIColor purpleColor];
     
     
     
@@ -640,23 +1160,222 @@ NSLog(@"viewDidLoad 22");
 //    [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer * _Nonnull timer) {
 //        NSLog(@"NSTimer = %@", self.loadingView);
 //    }];
+    
+    // TODO: test collectionView
+    
+    HorizontalLinearMiddleScaleLayout *layout = [[HorizontalLinearMiddleScaleLayout alloc] init];
+    layout.itemSize = CGSizeMake(100, 160);
+//    layout.itemSize = CGSizeMake(60, 80);
+//    layout.minimumInteritemSpacing = 100;
+    layout.minimumLineSpacing = 40;
+//    layout.scrollDirection = UICollectionViewScrollDirectionHorizontal;//上下布局
+     
+    
+    /*
+     //UICollectionViewFlowLayout
+    UICollectionViewFlowLayout *layout = [[UICollectionViewFlowLayout alloc] init];
+    layout.itemSize = CGSizeMake(100, 160);
+    layout.minimumLineSpacing = 40;
+    layout.scrollDirection = UICollectionViewScrollDirectionHorizontal;
+    layout.sectionInset = UIEdgeInsetsMake(0, 100, 0, 0);
+     */
+    
+    // 200
+    UICollectionView *collectionView = [[UICollectionView alloc] initWithFrame:CGRectMake(0, 200, NDLScreenW, 200) collectionViewLayout:layout];
+    NSLog(@"===collectionView-1===");
+    collectionView.backgroundColor = [UIColor yellowColor];
+//    collectionView.showsHorizontalScrollIndicator = NO;
+    collectionView.delegate = self;
+    collectionView.dataSource = self;
+//    collectionView.contentInset = UIEdgeInsetsMake(0, 100, 0, 0);
+//    collectionView.contentOffset = CGPointMake(-100, 0);
+    [self.view addSubview:collectionView];
+    self.collectionView = collectionView;
+    NSLog(@"===collectionView-2===");
+    
+    [collectionView registerNib:[UINib nibWithNibName:NSStringFromClass([PhotoCell class]) bundle:nil] forCellWithReuseIdentifier:@"PhotoCell"];
+    
+    
+    // TestXibView
+    self.xibView = [TestXibView viewFromXib];
+    [self.view addSubview:self.xibView];
+//    [self.xibView mas_makeConstraints:^(MASConstraintMaker *make) {
+//        make.top.left.right.equalTo(self).offset(10);
+////        make.bottom.equalTo(self).offset(50).priorityLow(250);
+//    }];
+    self.xibView.x = 0;
+    self.xibView.y = 0;
+    self.xibView.width = NDLScreenW;
+    self.xibView.height = 170;
+    
+    
+    [self.view bringSubviewToFront:tview];
+    tview.clipsToBounds = NO;
+    
+    
+//    TextStrokeLabel *sLabel = [[TextStrokeLabel alloc] init];
+//    sLabel.text = @"我们是中国";
+//    sLabel.textColor = [UIColor blackColor];
+//    sLabel.font = [UIFont boldSystemFontOfSize:14.0];
+//    sLabel.textStrokeWidth = 5.0;
+//    sLabel.textStrokeColor = [UIColor whiteColor];
+//    [self.view addSubview:sLabel];
+//    [sLabel sizeToFit];
+//    sLabel.y = 100;
+    
+//    UIImageView *imageV = [[UIImageView alloc] initWithImage:nil];
+//    imageV.backgroundColor = [UIColor blackColor];
+////    UIImageView *imageV = [[UIImageView alloc] initWithImage:[[UIImage imageNamed:@"couponBG"] ndl_stretchedImage]];
+//    imageV.frame = CGRectMake(0, 0, 80, 80);
+//    imageV.center = self.view.center;
+//    [self.view addSubview:imageV];
+//    
+//    [UIView animateWithDuration:5.0 delay:0.0 options:UIViewAnimationOptionRepeat animations:^{
+//        imageV.layer.transform = CATransform3DMakeRotation(M_PI, 0, 1, 0);
+//    } completion:nil];
+    
+    NSURL *url = [NSURL URLWithString:nil];
+    NSLog(@"url = %@", url);
+    
+    // 红包动画
+//    RedEnvelopeLoadingView *redView = [[RedEnvelopeLoadingView alloc] initWithFrame:CGRectMake(0, 0, 120, 50) dotsSpace:20];
+//    redView.backgroundColor = [UIColor whiteColor];
+//    [self.view addSubview:redView];
+//    redView.center = self.view.center;
+//    [redView startAnimation];
+//    self.redView = redView;
+    
+    // TODO:alipay动画
+//    AlipayPaymentAnimationView *alipayView = [AlipayPaymentAnimationView showInView:self.view];
+//    self.alipayView = alipayView;
+    
+    // TODO:语音识别动画
+//    SpeechRecognitionAnimationView *srView = [[SpeechRecognitionAnimationView alloc] initWithFrame:CGRectMake(0, 0, 88, 88)];
+//    [self.view addSubview:srView];
+//    srView.center = self.view.center;
+    
+    AlipayPaymentSuccessAnimationView *successView = [[AlipayPaymentSuccessAnimationView alloc] initWithFrame:CGRectMake(0, 0, 80, 80)];
+    successView.backgroundColor = [UIColor purpleColor];
+    [self.view addSubview:successView];
+    successView.center = self.view.center;
+    
+    
+    // self.view添加手势 添加在上面的view的touchEnded不会走
+//    [self.view addGestureRecognizer:[UITapGestureRecognizer ndl_gestureRecognizerWithActionBlock:^(UIGestureRecognizer *gesture) {
+//        // ended手抬起 才会走
+//        NSLog(@"123===");
+//    }]];
+    
+    
+    
+    UIButton *bottomBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    bottomBtn.frame = CGRectMake(0, NDLScreenH - 50, 80, 50);
+    bottomBtn.backgroundColor = [UIColor redColor];
+    [bottomBtn addActionBlock:^(UIButton *pSender) {
+        NSLog(@"bottomBtn clicked");
+    }];
+    [self.view addSubview:bottomBtn];
+    
+//    NDLLabel *ndlLabel = [[NDLLabel alloc] init];
+//    ndlLabel.backgroundColor = [UIColor whiteColor];
+////    ndlLabel.padding = UIEdgeInsetsMake(8, 8, 8, 8);
+//    ndlLabel.text = @"我么事他们管";
+//    ndlLabel.longPressFlag = YES;
+//    ndlLabel.highlightedBackgroundColor = [UIColor purpleColor];
+//    [ndlLabel sizeToFit];
+//    ndlLabel.y = 250;
+//    ndlLabel.x = 20;
+//    [self.view addSubview:ndlLabel];
+//    [ndlLabel ndl_addTapGestureWithHandler:^{
+//        ndlLabel.padding = UIEdgeInsetsMake(16, 16, 16, 16);
+//        [ndlLabel sizeToFit];
+//        ndlLabel.y = 250;
+//        ndlLabel.x = 20;
+//    }];
+    MarqueeLabel *marquee = [[MarqueeLabel alloc] initWithFrame:CGRectMake(20, 170, NDLScreenW - 40, 20)];
+    marquee.backgroundColor = [UIColor greenColor];
+    marquee.font = [UIFont systemFontOfSize:16];
+    marquee.textColor = [UIColor blackColor];
+//    marquee.edgeFadeStartColor = [UIColor redColor];
+    
+    marquee.text = @"我没睡呢还是公司觉得接班人时间回家冻结实也是极极好的你懂吃呢和你扯视屏呢";
+//    marquee.text = @"sjhdgdgjk";
+    
+    marquee.showEdgeFadeFlag = YES;
+    [self.view addSubview:marquee];
+    
+    
+//    WaveView *wave = [[WaveView alloc] initWithFrame:CGRectMake(20, 170, 200, 200) waveColors:@[[UIColor redColor], [UIColor cyanColor]]];//  [UIColor greenColor]
+//    wave.tag = 1000;
+//    wave.backgroundColor = [UIColor whiteColor];
+//    [self.view addSubview:wave];
+//    wave.progress = 0.4;
+    
+    TieBaLoadingView *loadView = [[TieBaLoadingView alloc] initWithFrame:CGRectMake(20, 170, 100, 100)];
+    loadView.backgroundColor = [UIColor whiteColor];
+    loadView.tag = 1000;
+    [self.view addSubview:loadView];
+    
+    BounceView *bounceView = [[BounceView alloc] initWithFrame:CGRectMake(20, 300, 120, 60) bounceSpacing:10];
+    bounceView.backgroundColor = [UIColor grayColor];
+    [self.view addSubview:bounceView];
+    
+    YouKuPlayButton * youku = [[YouKuPlayButton alloc] initWithFrame:CGRectMake(self.view.width - 120, 480, 120, 120) state:YouKuButtonState_Pause];//
+    youku.backgroundColor = [UIColor orangeColor];
+    [youku addTarget:self action:@selector(youkuDidClicked:) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:youku];
+}
+
+- (void)youkuDidClicked:(YouKuPlayButton *)btn
+{
+    if (btn.buttonState == YouKuButtonState_Pause) {
+        btn.buttonState = YouKuButtonState_Play;
+    } else {
+        btn.buttonState = YouKuButtonState_Pause;
+    }
+}
+
+- (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section
+{
+    return 10;
+}
+
+- (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath
+{
+    PhotoCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"PhotoCell" forIndexPath:indexPath];
+    cell.text = [NSString stringWithFormat:@"%ld", indexPath.item];
+    
+    if (indexPath.item == 0) {
+        cell.backgroundColor = [UIColor cyanColor];
+    }
+    
+    if (indexPath.item == 1) {
+        cell.backgroundColor = [UIColor greenColor];
+    }
+    
+    return cell;
 }
 
 
-#warning TODO...
+#warning TODO touchesBegan...
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
 {
+//    [super touchesBegan:touches withEvent:event];
     NSLog(@"===touchesBegan===");
+//    self.xibView.height += 10;
+//
+//    [self.loadingView removeFromSuperview];
+//    self.loadingView = nil;
+//
+//    NSLog(@"loadingView = nil create###");
+//    self.loadingView = [[LoadingView alloc] initWithFrame:CGRectMake(0, 0, 250, 250)];
+//    self.loadingView.backgroundColor = [UIColor yellowColor];
+//    self.loadingView.loadingStatus = LoadingStatus_Success;
+//    [self.view addSubview:self.loadingView];
+//    [self.loadingView startAnimation];
     
-    [self.loadingView removeFromSuperview];
-    self.loadingView = nil;
-    
-    NSLog(@"loadingView = nil create###");
-    self.loadingView = [[LoadingView alloc] initWithFrame:CGRectMake(0, 0, 250, 250)];
-    self.loadingView.backgroundColor = [UIColor yellowColor];
-    self.loadingView.loadingStatus = LoadingStatus_Success;
-    [self.view addSubview:self.loadingView];
-    [self.loadingView startAnimation];
+    TieBaLoadingView *view = [self.view viewWithTag:1000];
+    view.progress = 0.6;
 }
 
 - (void)viewTapped:(UIGestureRecognizer *)gesture
@@ -739,6 +1458,9 @@ NSLog(@"viewDidLoad 22");
     NSLog(@"hitButton clcked");
 }
 
+
+
+// TODO: viewDidLayoutSubviews
 - (void)viewDidLayoutSubviews
 {
     NSLog(@"=====viewDidLayoutSubviews=====");
@@ -751,6 +1473,8 @@ NSLog(@"viewDidLoad 22");
     self.floatView.frame = CGRectMake(24, 200, contentWidth, floatLayoutViewSize.height);
     
     NSLog(@"viewDidLayoutSubviews button Frame = %@", NSStringFromCGRect(self.rightButton.frame));NSLog(@"viewDidLayoutSubviews button Frame = %@", NSStringFromCGRect(self.rightButton.frame));
+    
+    NSLog(@"###collection view offset = %@ contentSize = %@", NSStringFromCGPoint(self.collectionView.contentOffset), NSStringFromCGSize(self.collectionView.contentSize));
 }
 
 - (void)viewDidDisappear:(BOOL)animated
@@ -798,9 +1522,21 @@ NSLog(@"viewDidLoad 22");
 }
 
 
+- (void)viewWillDisappear:(BOOL)animated
+{
+    [super viewWillDisappear:animated];
+    
+    [self.timer invalidate];
+    self.timer = nil;
+}
+
 - (void)dealloc
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self name:UIDeviceOrientationDidChangeNotification object:nil];
+    
+    NSLog(@"===ViewController dealloc===");
+    
+//    [super dealloc];// arc不允许调用这个 (这个对象被置nil，会调用dealloc)
 }
 
 - (void)deviceOrientationDidChanged:(NSNotification *)notification

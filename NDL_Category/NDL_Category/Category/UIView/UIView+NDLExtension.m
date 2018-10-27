@@ -10,6 +10,54 @@
 
 @implementation UIView (NDLExtension)
 
++ (void)load
+{
+    ReplaceMethod(self, @selector(pointInside:withEvent:), @selector(ndlPointInside:withEvent:));
+}
+
+- (void)setExtraTouchInset:(UIEdgeInsets)extraTouchInset
+{
+    objc_setAssociatedObject(self, @selector(extraTouchInset), [NSValue valueWithUIEdgeInsets:extraTouchInset], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+- (UIEdgeInsets)extraTouchInset
+{
+    id value = objc_getAssociatedObject(self, _cmd);
+    if (!value) {
+//        NSLog(@"objc_getAssociatedObject extraTouchInset is nil");
+        value = [NSValue valueWithUIEdgeInsets:UIEdgeInsetsZero];
+    }
+    
+    return [value UIEdgeInsetsValue];
+//    return [objc_getAssociatedObject(self, _cmd) UIEdgeInsetsValue];
+}
+
+// point相对于self.bounds
+- (BOOL)ndlPointInside:(CGPoint)point withEvent:(UIEvent *)event
+{
+    if (UIEdgeInsetsEqualToEdgeInsets(self.extraTouchInset, UIEdgeInsetsZero) || self.hidden || ([self isKindOfClass:[UIControl class]] && !((UIControl *)self).enabled)) {
+        [self ndlPointInside:point withEvent:event];
+    }
+
+    CGRect hitRect = UIEdgeInsetsInsetRect(self.bounds, self.extraTouchInset);
+    hitRect.size.width = MAX(hitRect.size.width, 0);
+    hitRect.size.height = MAX(hitRect.size.height, 0);
+
+    return CGRectContainsPoint(hitRect, point);
+}
+
+- (void)setOrigin:(CGPoint)origin
+{
+    CGRect frame = self.frame;
+    frame.origin = origin;
+    self.frame = frame;
+}
+
+- (CGPoint)origin
+{
+    return self.frame.origin;
+}
+
 - (void)setSize:(CGSize)size
 {
     CGRect frame = self.frame;
@@ -178,13 +226,6 @@
         responder = [responder nextResponder];
     } while (responder != nil);
     return nil;
-}
-
-- (void)ndl_addTapGestureWithHandler:(void (^)())handler
-{
-    self.userInteractionEnabled = YES;
-    
-    //UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:<#(nullable id)#> action:<#(nullable SEL)#>];
 }
 
 @end

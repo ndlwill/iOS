@@ -1,0 +1,12 @@
+MAX_SCORE = 100
+MIN_SCORE = 0
+INITIAL_SCORE = 10
+
+REDIS_HOST = 'localhost' # '127.0.0.1'
+REDIS_PORT = 6379
+REDIS_PASSWORD = None
+
+REDIS_KEY = 'proxies'
+
+# 代理池数量界限 threshold阈值，临界值
+POOL_UPPER_LIMIT = 10000

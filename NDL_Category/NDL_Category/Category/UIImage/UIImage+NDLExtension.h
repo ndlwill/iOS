@@ -33,5 +33,11 @@
 
 // 生成裁剪后的图片? targetSize < sourceSize
 - (UIImage *)ndl_cropImageToSize:(CGSize)targetSize;
+// 压缩到宽为width的图片
+- (UIImage *)ndl_compressToWidth:(CGFloat)width;
+// 压缩到多少字节大小的图片
+- (void)ndl_compressToDataLength:(NSInteger)length withBlock:(void (^)(NSData *data))block;
+// 生成高清二维码
++ (UIImage *)ndl_createNonInterpolatedUIImageFormCIImage:(CIImage *)ciImage whValue:(CGFloat)whValue;
 
 @end

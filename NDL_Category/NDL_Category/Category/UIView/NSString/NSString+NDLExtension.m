@@ -125,6 +125,17 @@
             result[8], result[9], result[10], result[11],
             result[12], result[13], result[14], result[15]
             ];
+    
+//    NSData *data = [self dataUsingEncoding:NSUTF8StringEncoding];
+//    unsigned char result[CC_MD5_DIGEST_LENGTH];
+//    CC_MD5(data.bytes, (CC_LONG)data.length, result);
+//    return [NSString stringWithFormat:
+//            @"%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
+//            result[0],  result[1],  result[2],  result[3],
+//            result[4],  result[5],  result[6],  result[7],
+//            result[8],  result[9],  result[10], result[11],
+//            result[12], result[13], result[14], result[15]
+//            ];
 }
 
 
@@ -167,10 +178,220 @@
     //  \uFF00-\\uFFEF  日文  (ｵｶｷｸｹｺｻ)
     //  \u2000-\\u201f  特殊字符(‐‑‒–—―‖‗‘’‚‛“”„‟)
     NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"[^\\u0020-\\u007E\\u00A0-\\u00BE\\u2E80-\\uA4CF\\uF900-\\uFAFF\\uFE30-\\uFE4F\\uFF00-\\uFFEF\\u0080-\\u009F\\u2000-\\u201f\r\n]" options:NSRegularExpressionCaseInsensitive error:nil];
-    
+    // 把匹配到的替换为@""
     NSString* resultStr = [regex stringByReplacingMatchesInString:self options:0 range:NSMakeRange(0, self.length) withTemplate:@""];
     
     return resultStr;
+}
+
+- (instancetype)ndl_json2string:(NSDictionary *)jsonDic
+{
+    if (!jsonDic) {
+        return nil;
+    }
+    
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:jsonDic options:NSJSONWritingPrettyPrinted error:nil];
+    return [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
+}
+
+- (NSAttributedString *)ndl_attrStrWithAttrDic:(NSDictionary *)attrDic range:(NSRange)range
+{
+    NSMutableAttributedString *attrStr = [[NSMutableAttributedString alloc] initWithString:self];
+    [attrStr setAttributes:attrDic range:range];
+    return [attrStr copy];
+}
+
+- (instancetype)ndl_CN2UTF8String
+{
+    return [self stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]];
+//    return [self stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];// ios9 deprecate
+}
+
+- (instancetype)ndl_UTF8String2CN
+{
+    return [self stringByRemovingPercentEncoding];
+//    return [self stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];// ios9 deprecate
+}
+
+
+/*
+🤨
+Unicode: U+1F928，UTF-8: F0 9F A4 A8
+ */
+- (instancetype)ndl_emojiStringEncoding
+{
+    NSData *data = [self dataUsingEncoding:NSNonLossyASCIIStringEncoding];// self: 🤨
+    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];// return:\ud83e\udd28
+}
+
+- (instancetype)ndl_emojiStringDecoding
+{
+    const char *cStr = [self UTF8String];// self:\ud83e\udd28
+    NSData *data = [NSData dataWithBytes:cStr length:strlen(cStr)];
+    return [[NSString alloc] initWithData:data encoding:NSNonLossyASCIIStringEncoding];// return:🤨
+}
+
+// NSLog(@"\"");->输出“,\是转义符  NSLog(@"\\\"");->输出\"
+- (instancetype)ndl_unicode2UTF8
+{
+    NSString *tempStr1 = [self stringByReplacingOccurrencesOfString:@"\\u" withString:@"\\U"];
+    NSString *tempStr2 = [tempStr1 stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+    NSString *tempStr3 = [[@"\"" stringByAppendingString:tempStr2] stringByAppendingString:@"\""];
+    NSData *data = [tempStr3 dataUsingEncoding:NSUTF8StringEncoding];
+//    NSString *returnStr = [NSPropertyListSerialization propertyListFromData:data mutabilityOption:NSPropertyListImmutable format:NULL errorDescription:NULL];// ios8 deprecate
+    
+    NSString *returnStr = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable  format:NULL  error:NULL];
+    return [returnStr stringByReplacingOccurrencesOfString:@"\\r\\n" withString:@"\n"];
+}
+
++ (instancetype)ndl_integerStr:(NSInteger)value
+{
+    return [NSString stringWithFormat:@"%@", @(value)];
+}
+
++ (instancetype)ndl_cgfloatStr:(CGFloat)value decimal:(NSUInteger)decimal
+{
+    NSString *formatStr = [NSString stringWithFormat:@"%%.%@f",@(decimal)];
+    return [NSString stringWithFormat:formatStr, value];
+}
+
++ (instancetype)ndl_hexStringFromDecimalSystemValue:(NSInteger)value
+{
+    NSString *hexString = @"";
+    NSInteger remainder = 0;
+    for (NSInteger i = 0; i < 9; i++) {
+        remainder = value % 16;
+        value = value / 16;
+        NSString *letter = [self hexLetterStringWithInteger:remainder];
+        hexString = [letter stringByAppendingString:hexString];
+        if (value == 0) {
+            break;
+        }
+        
+    }
+    return hexString;
+}
+
+// letter:字母
++ (NSString *)hexLetterStringWithInteger:(NSInteger)integer {
+    NSAssert(integer < 16, @"要转换的数必须是16进制里的个位数，也即小于16，但你传给我是%@", @(integer));
+    
+    NSString *letter = nil;
+    switch (integer) {
+        case 10:
+            letter = @"A";
+            break;
+        case 11:
+            letter = @"B";
+            break;
+        case 12:
+            letter = @"C";
+            break;
+        case 13:
+            letter = @"D";
+            break;
+        case 14:
+            letter = @"E";
+            break;
+        case 15:
+            letter = @"F";
+            break;
+        default:
+            letter = [[NSString alloc]initWithFormat:@"%@", @(integer)];
+            break;
+    }
+    return letter;
+}
+
+- (instancetype)ndl_trim
+{
+    return [self stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+}
+
+- (instancetype)ndl_trimAllWhiteSpace
+{
+    return [self stringByReplacingOccurrencesOfString:@"\\s" withString:@"" options:NSRegularExpressionSearch range:NSMakeRange(0, self.length)];
+}
+
+- (instancetype)ndl_removeSpecialCharacter
+{
+    if (self.length == 0) {
+        return self;
+    }
+    
+    NSError *error = nil;
+    NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"[\u0300-\u036F]" options:NSRegularExpressionCaseInsensitive error:&error];
+    return [regex stringByReplacingMatchesInString:self options:NSMatchingReportProgress range:NSMakeRange(0, self.length) withTemplate:@""];
+}
+
+- (instancetype)ndl_extractDigit
+{
+    NSCharacterSet *nonDigits = [[NSCharacterSet decimalDigitCharacterSet] invertedSet];
+    return [self stringByTrimmingCharactersInSet:nonDigits];
+}
+
++ (instancetype)ndl_stringWithTimeInterval:(NSTimeInterval)timeInterval
+{
+    NSInteger minute = timeInterval / 60;
+    NSInteger second = (NSInteger)round(timeInterval) % 60;
+    return [NSString stringWithFormat:@"%02ld:%02ld", minute ,second];
+}
+
+- (NSUInteger)ndl_numberOfBytesWhenGBKEncoding
+{
+    NSStringEncoding encoding = CFStringConvertEncodingToNSStringEncoding(kCFStringEncodingGB_18030_2000);
+    NSData *data = [self dataUsingEncoding:encoding];
+    return data.length;
+}
+
+- (NSUInteger)ndl_numberOfBytesWhenCountingNonASCIICharacterAsTwo
+{
+    NSUInteger numberOfBytes = 0;
+    char *p = (char *)[self cStringUsingEncoding:NSUnicodeStringEncoding];
+    for (NSInteger i = 0, l = [self lengthOfBytesUsingEncoding:NSUnicodeStringEncoding]; i < l; i++) {
+        if (*p) {
+            numberOfBytes++;
+        }
+        p++;
+    }
+    return numberOfBytes;
+}
+
+- (BOOL)ndl_matchFirstLetter
+{
+    NSString *letterRegex = @"^[A-Za-z]+$";
+    NSPredicate *predicate = [NSPredicate predicateWithFormat:@"SELF MATCHES %@", letterRegex];
+    return [predicate evaluateWithObject:self];
+}
+
+- (BOOL)ndl_isWholeCN
+{
+    if (self.length == 0) {
+        return NO;
+    }
+    NSString *regex = @"[\u4e00-\u9fa5]+";
+    NSPredicate *predicate = [NSPredicate predicateWithFormat:@"SELF MATCHES %@",regex];
+    return [predicate evaluateWithObject:self];
+}
+
+- (BOOL)ndl_isWholeDigit
+{
+    if (self.length == 0) {
+        return NO;
+    }
+    NSString *regex = @"[0-9]*";// 写了*上面必须写 不写的话不然@""也能匹配成功
+    NSPredicate *predicate = [NSPredicate predicateWithFormat:@"SELF MATCHES %@",regex];
+    return [predicate evaluateWithObject:self];
+}
+
+- (BOOL)ndl_isWholeLetter
+{
+    if (self.length == 0) {
+        return NO;
+    }
+    NSString *regex = @"[a-zA-Z]*";
+    NSPredicate *predicate = [NSPredicate predicateWithFormat:@"SELF MATCHES %@",regex];
+    return [predicate evaluateWithObject:self];
 }
 
 @end

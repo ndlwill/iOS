@@ -1,0 +1,135 @@
+https://developer.apple.com/library/archive/technotes/tn2151/_index.html#//apple_ref/doc/uid/DTS40008184-CH1-ANALYZING_CRASH_REPORTS
+
+http://www.cocoachina.com/ios/20171026/20921.html
+
+当应用程序崩溃时，将创建一个崩溃报告并存储在设备上。
+
+有回溯的崩溃报告需要被符号化了才可以分析。符号化(symbolication)成人们可读的函数名称和行号来取代内存地址。
+
+
+以下的内容是摘录的一个崩溃报告的异常代码段,该崩溃报告是一个进程由于一个未捕获的异常而崩溃产生的。
+Exception Type: EXC_CRASH (SIGABRT)
+Exception Codes: 0x0000000000000000, 0x0000000000000000
+Exception Note: EXC_CORPSE_NOTIFY
+Triggered by Thread: 0
+
+
+以下的内容是摘录于一个因为空指针的访问而崩溃产生的崩溃报告的异常代码段
+Exception Type: EXC_BAD_ACCESS (SIGSEGV)
+Exception Subtype: KERN_INVALID_ADDRESS at 0x0000000000000000
+Termination Signal: Segmentation fault: 11
+Termination Reason: Namespace SIGNAL, Code 0xb
+Terminating Process: exc handler [0]
+Triggered by Thread: 0
+
+Exception Note: 不是特定于一个异常类型的额外信息.如果这个区域包含SIMULATED (这不是一个崩溃)然后进程没有崩溃，但是被watchdog杀掉了
+
+Abnormal Exit (异常退出)[EXC_CRASH // SIGABRT]
+进程异常退出。该异常类型崩溃最常见的原因是未捕获的Objective-C和C++异常和调用abort()。
+如果他们需要太多的时间来初始化，程序将被终止，因为触发了看门狗。如果是因为启动的时候被挂起，所产生的崩溃报告异常类型(Exception Subtype)将是launch_hang
+
+其它的异常信息:
+0x8badf00d: 读做 “ate bad food”! (把数字换成字母，是不是很像 :p)该编码表示应用是因为发生watchdog超时而被iOS终止的。 通常是应用花费太多时间而无法启动、终止或响应用系统事件。
+
+0xbad22222: 该编码表示 VoIP 应用因为过于频繁重启而被终止。
+
+0xdead10cc: 读做 “dead lock”!该代码表明应用因为在后台运行时占用系统资源，如通讯录数据库不释放而被终止 。
+
+0xdeadfa11: 读做 “dead fall”! 该代码表示应用是被用户强制退出的。根据苹果文档, 强制退出发生在用户长按开关按钮直到出现 “滑动来关机”, 然后长按 Home按钮。强制退出将产生 包含0xdeadfa11 异常编码的崩溃日志, 因为大多数是强制退出是因为应用阻塞了界面
+
+这些地址其实并没有给我们提供什么有用的信息，我们需要把它们转换为类/函数才能找到问题，这个过程就叫做Symbolication（符号化）
+符号化你需要一样东西：Debug Symbol文件，也就是我们常说的dsym文件
+
+<mach/exception_types.h>
+非正常的进程退出
+#define EXC_CRASH       10  /* Abnormal process exit */
+
+#define SIGKILL 9   /* kill (cannot be caught or ignored) */
+表示这个这是一个无法捕获也不能忽略的异常，所以系统决定杀掉这个进程
+
+#define EXC_CORPSE_NOTIFY   13  /* Abnormal process exited to corpse state */
+
+0x8badf00d是一个很常见的Code，表示App启动时间过长或者主线程卡住时间过长，导致系统的WatchDog杀掉了当前App
+
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
+{
+    [[AFNetworkReachabilityManager sharedManager] startMonitoring];
+    appDelegate = self;
+    self.window = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
+    // Override point for customization after application launch.
+    self.window.backgroundColor = [UIColor whiteColor];
+    UILocalNotification *notification = [launchOptions objectForKey:UIApplicationLaunchOptionsLocalNotificationKey];
+    _notification = notification;
+    NSSetUncaughtExceptionHandler(&caughtExceptionHandler);
+    /*Changes the top-level error handler.
+    Sets the top-level error-handling function where you can perform last-minute logging before the program terminates
+    */
+    return YES;
+}
+void caughtExceptionHandler(NSException *exception){
+    /**
+     *  获取异常崩溃信息
+     */
+    NSArray *callStack = [exception callStackSymbols];
+    NSString *reason = [exception reason];
+    NSString *name = [exception name];
+    NSString *content = [NSString stringWithFormat:@"========异常错误报告========\\nname:%@\\nreason:\\n%@\\ncallStackSymbols:\\n%@",name,reason,[callStack componentsJoinedByString:@"\\n"]];
+    //把异常崩溃信息发送至开发者邮件
+    NSMutableString *mailUrl = [NSMutableString string];
+    [mailUrl appendString:@"mailto:xxx@qq.com"];
+    [mailUrl appendString:@"?subject=程序异常崩溃信息，请配合发送异常报告，谢谢合作！"];
+    [mailUrl appendFormat:@"&body=%@", content];
+    // 打开地址
+    NSString *mailPath = [mailUrl stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+    [[UIApplication sharedApplication] openURL:[NSURL URLWithString:mailPath]];
+}
+
+========解决问题
+可以通过lldb，查看汇编代码
+
+打开终端，导入crashlog工具
+lldb
+(lldb) command script import lldb.macosx.crashlog
+
+载入Crash log
+crashlog /Users/…/RideSharingApp-2018-05-24-1.crash
+..
+Thread[0] EXC_BAD_ACCESS (SIGSEGV) (0x000007fdd5e70700)
+[ 0] 0x00007fff6011713c libobjc.A.dylib objc_release + 28
+[ 1] 0x00000001000022ea RideSharingApp @objc LoginViewController.__ivar_destroyer + 42
+[ 2] 0x00007fff6011ed66 libobjc.A.dylib object_cxxDestructFromClass + 127
+[ 3] 0x00007fff60117276 libobjc.A.dylib objc_destructInstance + 76
+[ 4] 0x00007fff60117218 libobjc.A.dylib object_dispose + 22
+[ 5] 0x0000000100002493 RideSharingApp Initialize (main.swift:33)
+[ 6] 0x0000000100001e75 RideSharingApp main (main.swift:37)
+[ 7] 0x00007fff610a2ee1 libdyld.dylib start + 1
+
+查看汇编代码
+(lldb) disassemble -a 0x00000001000022ea
+RideSharingApp`@objc LoginViewController.__ivar_destroyer:
+0x1000022c0 < +0>: pushq %rbp
+0x1000022c1 < +1>: movq %rsp, %rbp
+0x1000022c4 < +4>: pushq %rbp
+0x1000022c4 < +4>: pushq %rbx
+0x1000022c5 < +5>: pushq %rax
+0x1000022c6 < +6>: movq %rdi, %rbx 
+0x1000022c9 < +9>: movq 0x551e40(%rip), %rax      ; direct field offset for LoginViewController.userName
+0x1000022d0 < +16>: movq 0x10(%rbx,%rax), %rdi
+0x1000022d5 < +21>: callq 0x1004adc90             ; swift_unknownRelease
+0x1000022da < +26>: movq 0x551e37(%rip), %rax     ; direct field offset for LoginViewController.database
+0x1000022e1 < +33>: movq (%rbx,%rax), %rdi
+0x1000022e5 < +37>: callq 0x1004bf9e6             ; symbol stub for: objc_release
+0x1000022ea < +42>: movq 0x551e2f(%rip), %rax     ; direct field offset for LoginViewController.views
+0x1000022f1 < +49>: movq (%rbx,%rax), %rdi
+0x1000022f5 < +53>: addq $0x8, %rsp
+0x1000022f9 < +57>: popq %rbx
+0x1000022fa < +58>: popq %rbp
+0x1000022fb < +59>: jmp 0x1004adec0               ; swift_bridgeObjectRelease
+
+这一行的地址就是我们crash的符号地址：
+0x1000022ea < +42>: movq 0x551e2f(%rip), %rax     ; direct field offset for LoginViewController.views
+
+PC寄存器始终保存下一条执行的指令，所以实际crash的应该是上一条指令
+
+==========watchdog
+卡顿里有一类卡顿又尤其严重：主线程长期不响应而导致的系统 Watchdog 强杀
