@@ -154,6 +154,9 @@
 // iOS 9.0
 - (BOOL)application:(UIApplication *)app openURL:(NSURL *)url options:(NSDictionary<UIApplicationOpenURLOptionsKey,id> *)options
 {
+//    NSLog(@"url.scheme = %@", url.scheme);
+//    NSLog(@"from source app key（Bundle ID）= %@", options[UIApplicationOpenURLOptionsSourceApplicationKey]);
+    
     return YES;
 }
 

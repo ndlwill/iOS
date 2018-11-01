@@ -26,7 +26,7 @@
 
 @property (nonatomic, strong) UIColor *edgeFadeEndColor;
 
-// 1 表示不首尾连接，大于 1 表示首尾连接
+// 1-表示不首尾连接，大于1表示首尾连接(default: 2)
 @property(nonatomic, assign) NSInteger textRepeatCount;
 
 @end
@@ -181,6 +181,10 @@
     CGFloat textInitialX = 0;
     if (self.textAlignment == NSTextAlignmentLeft) {
         textInitialX = 0;
+    } else if (self.textAlignment == NSTextAlignmentCenter) {
+        textInitialX = fmax(0, CGFloatGetCenter(CGRectGetWidth(self.bounds), self.textWidth));
+    } else if (self.textAlignment == NSTextAlignmentRight) {
+        textInitialX = fmax(0, CGRectGetWidth(self.bounds) - self.textWidth);
     }
 
     CGFloat textOffsetXByFade = textInitialX < self.edgeFadeWidth ? ((self.showEdgeFadeFlag && self.showTextAtFadeTailFlag) ? self.edgeFadeWidth : 0) : 0;
@@ -191,6 +195,8 @@
     }
 }
 
+// after add - 2
+// 添加subView会走这边
 - (void)layoutSubviews
 {
     [super layoutSubviews];
@@ -208,6 +214,19 @@
         }
     }
 }
+
+// after add - 1
+// 退到后台 不走这边
+//- (void)willMoveToWindow:(UIWindow *)newWindow
+//{
+//    [super willMoveToWindow:newWindow];
+//
+//    if (newWindow) {
+//
+//    } else {
+//
+//    }
+//}
 
 #pragma mark - Setter
 - (void)setNumberOfLines:(NSInteger)numberOfLines

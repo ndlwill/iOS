@@ -48,6 +48,38 @@ UIEdgeInsetsGetVerticalValue(UIEdgeInsets insets) {
     return insets.top + insets.bottom;
 }
 
+// 在2x倍数下（0.5pt 对应 1px），在3x倍数下（0.333pt 对应 1px）
+/**
+ *  某些地方可能会将 CGFLOAT_MIN 作为一个数值参与计算（但其实 CGFLOAT_MIN 更应该被视为一个标志位而不是数值），可能导致一些精度问题，所以提供这个方法快速将 CGFLOAT_MIN 转换为 0
+ */
+CG_INLINE CGFloat
+convertFloatMin2Zero(CGFloat floatValue) {
+    return floatValue == CGFLOAT_MIN ? 0 : floatValue;
+}
+
+// 基于指定的倍数，对传进来的 floatValue 进行像素取整。若指定倍数为0，则表示以当前设备的屏幕倍数为准。
+CG_INLINE CGFloat
+flatSpecificScale(CGFloat floatValue, CGFloat scale) {
+    floatValue = convertFloatMin2Zero(floatValue);
+    scale = scale == 0 ? ScreenScale : scale;
+    CGFloat flattedValue = ceil(floatValue * scale) / scale;
+    return flattedValue;
+}
+
+// 基于当前设备的屏幕倍数，对传进来的 floatValue 进行像素取整。
+// 在 Core Graphic 绘图里使用时，要注意当前画布的倍数是否和设备屏幕倍数一致，若不一致，不可使用 flat() 函数，而应该用 flatSpecificScale
+CG_INLINE CGFloat
+flat(CGFloat floatValue) {
+    return flatSpecificScale(floatValue, 0);
+}
+
+#pragma mark - CGFloat
+/// 用于居中运算
+CG_INLINE CGFloat
+CGFloatGetCenter(CGFloat parent, CGFloat child) {
+    return flat((parent - child) / 2.0);
+}
+
 
 // 气泡框箭头方向
 typedef NS_ENUM(NSInteger, BubbleFrameArrowDirection) {

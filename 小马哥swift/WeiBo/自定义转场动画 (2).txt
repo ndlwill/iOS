@@ -1,0 +1,232 @@
+/// 监听图片点击通知
+    @objc private func showBrowser(notice: NSNotification)
+    {
+        // 注意: 但凡是通过网络或者通知获取到的数据, 都需要进行安全校验
+        guard let pictures = notice.userInfo!["bmiddle_pic"] as? [NSURL] else
+        {
+            SVProgressHUD.showErrorWithStatus("没有图片", maskType: SVProgressHUDMaskType.Black)
+            return
+        }
+        
+        guard let index = notice.userInfo!["indexPath"] as? NSIndexPath else
+        {
+            SVProgressHUD.showErrorWithStatus("没有索引", maskType: SVProgressHUDMaskType.Black)
+            return
+        }
+        
+        guard let pictureView = notice.object as? XMGPictureView else
+        {
+            return
+        }
+        
+        // 弹出图片浏览器, 将所有图片和当前点击的索引传递给浏览器
+        let vc = BrowserViewController(bmiddle_pic: pictures, indexPath: index)
+        
+
+        // 设置转场动画代理
+        vc.transitioningDelegate = browserPresentationManager
+        
+        // 设置转场动画样式
+        vc.modalPresentationStyle = UIModalPresentationStyle.Custom
+        
+        // 设置转场需要的其它数据
+        browserPresentationManager.setDefaultInfo(index, browserDelegate: pictureView)
+        
+        presentViewController(vc, animated: true, completion: nil)
+    }
+	
+	private lazy var browserPresentationManager: XMGBrowserPresentationController = XMGBrowserPresentationController()
+	
+	
+---------------------------------------------------------------------
+protocol XMGBrowserPresentationDelegate: NSObjectProtocol
+{
+    /// 用于创建一个和点击图片一模一样的UIImageView
+    func browserPresentationWillShowImageView(browserPresenationController: XMGBrowserPresentationController, indexPath: NSIndexPath) -> UIImageView
+    
+    /// 用于获取点击图片相对于window的frame
+    func browserPresentationWillFromFrame(browserPresenationController: XMGBrowserPresentationController, indexPath: NSIndexPath) -> CGRect
+    
+    /// 用于获取点击图片最终的frame
+    func browserPresentationWillToFrame(browserPresenationController: XMGBrowserPresentationController, indexPath: NSIndexPath) -> CGRect
+}
+
+class XMGBrowserPresentationController: UIPresentationController, UIViewControllerTransitioningDelegate, UIViewControllerAnimatedTransitioning {
+    
+    
+    /// 定义标记记录当前是否是展现
+    private var isPresent = false
+    
+    /// 当前点击图片对应的索引
+    private var index: NSIndexPath?
+    
+    /// 代理对象
+    weak var browserDelegate: XMGBrowserPresentationDelegate?
+    
+    /// 设置默认数据
+    func setDefaultInfo(index: NSIndexPath, browserDelegate: XMGBrowserPresentationDelegate)
+    {
+        self.index = index
+        self.browserDelegate = browserDelegate
+    }
+    
+    // MARK: - UIViewControllerTransitioningDelegate
+    // 该方法用于返回一个负责转场动画的对象
+    // 可以在该对象中控制弹出视图的尺寸等
+    func presentationControllerForPresentedViewController(presented: UIViewController, presentingViewController presenting: UIViewController, sourceViewController source: UIViewController) -> UIPresentationController?
+    {
+        return XMGBrowserPresentationController(presentedViewController: presented, presentingViewController: presenting)
+    }
+    
+    // 该方法用于返回一个负责转场如何出现的对象
+    func animationControllerForPresentedController(presented: UIViewController, presentingController presenting: UIViewController, sourceController source: UIViewController) -> UIViewControllerAnimatedTransitioning?
+    {
+        isPresent = true
+        return self
+    }
+    
+    // 该方法用于返回一个负责转场如何消失的对象
+    func animationControllerForDismissedController(dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning?
+    {
+        isPresent = false
+        return self
+    }
+    
+    // MARK: - UIViewControllerAnimatedTransitioning
+    // 告诉系统展现和消失的动画时长
+    // 暂时用不上
+    func transitionDuration(transitionContext: UIViewControllerContextTransitioning?) -> NSTimeInterval
+    {
+        return 3.0
+    }
+    
+    // 专门用于管理modal如何展现和消失的, 无论是展现还是消失都会调用该方法
+    func animateTransition(transitionContext: UIViewControllerContextTransitioning)
+    {
+        // 0.判断当前是展现还是消失
+        if isPresent
+        {
+            // 展现
+            willPresentedController(transitionContext)
+            
+        }else
+        {
+            // 消失
+            willDismissedController(transitionContext)
+        }
+    }
+    
+    /// 执行展现动画
+    private func willPresentedController(transitionContext: UIViewControllerContextTransitioning)
+    {
+        
+        assert(index != nil, "必须设置被点击cell的indexPath")
+        assert(browserDelegate != nil, "必须设置代理才能展现")
+        
+        // 1.获取需要弹出视图
+        // 通过ToViewKey取出的就是toVC对应的view(图片浏览器)
+        guard let toView = transitionContext.viewForKey(UITransitionContextToViewKey) else
+        {
+            return
+        }
+        
+        // 2.准备动画
+        // 2.1.新建一个UIImageView, 并且上面显示的内容必须和被点击的图片一模一样
+        let imageView = browserDelegate!.browserPresentationWillShowImageView(self, indexPath: index!)
+        // 2.2.获取点击图片相对于window的frame, 因为容器视图是全屏的, 而图片是添加到容器视图上的, 所以必须获取相对于window的frame
+        imageView.frame = browserDelegate!.browserPresentationWillFromFrame(self, indexPath: index!)
+        transitionContext.containerView()?.addSubview(imageView)
+        // 2.3.获取点击图片最终显示的尺寸
+        let toFrame = browserDelegate!.browserPresentationWillToFrame(self, indexPath: index!)
+        
+        // 3.执行动画
+        UIView.animateWithDuration(transitionDuration(transitionContext), animations: { () -> Void in
+            imageView.frame = toFrame
+            }) { (_) -> Void in
+                
+                // 移除自己添加的UIImageView
+                imageView.removeFromSuperview()
+                
+                // 显示图片浏览器
+                transitionContext.containerView()?.addSubview(toView)
+                
+                // 告诉系统动画执行完毕
+                transitionContext.completeTransition(true)
+        }
+    }
+    
+    /// 执行消失动画
+    private func willDismissedController(transitionContext: UIViewControllerContextTransitioning)
+    {
+		//省略 类似
+        transitionContext.completeTransition(true)//这句代码会自动移除view
+    }
+    
+}
+
+
+----------------------------------------------------------------
+extension XMGPictureView: XMGBrowserPresentationDelegate
+{
+    /// 用于创建一个和点击图片一模一样的UIImageView
+    func browserPresentationWillShowImageView(browserPresenationController: XMGBrowserPresentationController, indexPath: NSIndexPath) -> UIImageView
+    {
+        // 1.创建一个新的UIImageView
+        let iv = UIImageView()
+        iv.contentMode = UIViewContentMode.ScaleAspectFill
+        iv.clipsToBounds = true
+        
+        // 2.设置UIImageView的图片为点击的图片
+//        let cell = cellForItemAtIndexPath(indexPath) as! HomePictureCell
+//        iv.image = cell.customIconImageView.image
+        let key = viewModel!.bmiddle_pic![indexPath.item].absoluteString
+        let image = SDWebImageManager.sharedManager().imageCache.imageFromDiskCacheForKey(key)
+        iv.image = image
+        
+        iv.sizeToFit()
+        // 3.返回图片
+        return iv
+    }
+    
+    /// 用于获取点击图片相对于window的frame
+    func browserPresentationWillFromFrame(browserPresenationController: XMGBrowserPresentationController, indexPath: NSIndexPath) -> CGRect
+    {
+        // 1.拿到被点击的cell
+        let cell = cellForItemAtIndexPath(indexPath) as! HomePictureCell
+        // 2.将被点击的cell的坐标系从collectionview转换到keywindow
+//        NJLog(cell.frame)
+        let frame = self.convertRect(cell.frame, toCoordinateSpace: UIApplication.sharedApplication().keyWindow!)
+//        NJLog(frame)
+        
+        return frame
+    }
+    
+    /// 用于获取点击图片最终的frame
+    func browserPresentationWillToFrame(browserPresenationController: XMGBrowserPresentationController, indexPath: NSIndexPath) -> CGRect
+    {
+        
+        let width = UIScreen.mainScreen().bounds.width
+        let height = UIScreen.mainScreen().bounds.height
+        
+        // 1.拿到被点击的cell
+        let cell = cellForItemAtIndexPath(indexPath) as! HomePictureCell
+        // 2.拿到被点击的图片
+        let image = cell.customIconImageView.image!
+        
+        // 3.计算当前图片的宽高比
+        let scale = image.size.height / image.size.width
+        
+        // 4.利用宽高比乘以屏幕宽度, 等比缩放图片
+        let imageHeight = scale * width
+        
+        var offsetY: CGFloat = 0
+        // 5.判断当前是长图还是短图
+        if imageHeight < height
+        {
+            // 短图
+            // 4.计算顶部和底部内边距
+            offsetY = (height - imageHeight) * 0.5
+        }
+        return CGRect(x: 0, y: offsetY, width: width, height: imageHeight)
+    }
+}

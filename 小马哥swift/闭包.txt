@@ -1,0 +1,119 @@
+闭包和OC中的block非常相似
+OC中的block是匿名的函数
+Swift中的闭包是一个特殊的函数
+block和闭包都经常用于回调
+
+block的写法:
+类型:
+返回值(^block的名称)(block的参数)
+
+值:
+^(参数列表) {
+    // 执行的代码
+};
+
+
+定义网络请求的类
+class HttpTool: NSObject {
+
+    func loadRequest(callBack : ()->()){
+        dispatch_async(dispatch_get_global_queue(0, 0)) { () -> Void in
+            print("加载数据", [NSThread.currentThread()])
+
+             dispatch_async(dispatch_get_main_queue(), { () -> Void in
+                callBack()
+             })
+        }
+    }
+}
+进行网络请求,请求到数据后利用闭包进行回调
+    override func touchesBegan(touches: Set<UITouch>, withEvent event: UIEvent?) {
+        // 网络请求
+        httpTool.loadRequest ({ () -> () in
+            print("回到主线程", NSThread.currentThread());
+        })
+    }
+
+闭包写法总结:
+闭包的写法:
+类型:(形参列表)->(返回值)
+技巧:初学者定义闭包类型,直接写()->().再填充参数和返回值
+
+值:
+{
+    (形参) -> 返回值类型 in
+    // 执行代码
+}
+
+
+闭包的简写
+如果闭包没有参数,没有返回值.in和in之前的内容可以省略
+    httpTool.loadRequest({
+        print("回到主线程", NSThread.currentThread());
+    })
+
+
+// MARK:- 尾随闭包写法
+尾随闭包写法:
+如果闭包是函数的最后一个参数,则可以将闭包写在()后面
+如果函数只有一个参数,并且这个参数是闭包,那么()可以不写
+httpTool.loadRequest() {
+    print("回到主线程", NSThread.currentThread());
+}
+// 开发中建议该写法
+httpTool.loadRequest {
+    print("回到主线程", NSThread.currentThread());
+}
+
+
+--------------------------------------------闭包的循环引用
+swift没有dealloc方法，有析构函数
+deinit{
+	
+}
+
+如果在HttpTool中有对闭包进行强引用,则会形成循环引用
+class HttpTool: NSObject {
+
+    // 定义属性,来强引用传入的闭包
+    var callBack : (()->())?
+
+    func loadRequest(callBack : ()->()){
+        dispatch_async(dispatch_get_global_queue(0, 0)) { () -> Void in
+            print("加载数据", [NSThread.currentThread()])
+
+             dispatch_async(dispatch_get_main_queue(), { () -> Void in
+                callBack()
+             })
+        }
+
+        self.callBack = callBack
+    }
+}
+
+
+swift中解决循环引用的方式
+    //1.// weak var weakSelf = self;
+
+    //2.//这个方式不能省略() -> () in
+    // [weak self] () -> () in
+
+    //3.
+    // [unowned self] () -> () in
+    
+    httpTool.loadRequest { [unowned self] () -> () in
+    	//1.//weakSelf!.view.backgroundColor = UIColor.redColor()
+
+    	//2.
+    	//self!.view.backgroundColor = UIColor.redColor()
+
+    	//3.
+        self.view.backgroundColor = UIColor.redColor()
+        print("回到主线程", NSThread.currentThread());
+    }
+
+
+ViewController的self是个可选类型  可能有值可能没有值
+
+__weak:当弱指针指向的对象销毁时，指针自动指向nil
+__unsafe_unretained:不安全 当弱指针指向的对象销毁时，指针依然指向之前的内存地址

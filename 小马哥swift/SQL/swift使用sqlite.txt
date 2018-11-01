@@ -1,0 +1,93 @@
+// 通常情况下是启动程序立即打开数据库
+
+添加 libsqlite3.dylib
+创建 SQLite-Bridge.h
+SQLite3 框架是一套 C 语言的框架，因此需要添加桥接文件
+选择 项目-TARGETS-Build Settings，搜索 Bridg
+在 Objective-C Bridging Header 中输入 项目名/SQLite-Bridge.h
+
+
+
+
+
+
+
+///  从 stmt 中获取记录字典
+///
+///  :param: stmt stmt
+///
+///  :returns: 字典信息
+private func recordDict(stmt: COpaquePointer) -> [String: AnyObject]? {
+    // 列数
+    let colCount = sqlite3_column_count(stmt)
+    if colCount <= 0 {
+        return nil
+    }
+
+    // 定义记录字典
+    var record = [String: AnyObject]()
+    for i in 0..<colCount {
+        // 字段名称
+        let cname = sqlite3_column_name(stmt, i)
+        let colName = String(CString: cname, encoding: NSUTF8StringEncoding)!
+
+        let type = sqlite3_column_type(stmt, i)
+        print(" \(i) 列 \(type) \(colName)")
+
+        switch type {
+        case SQLITE_INTEGER:
+            record[colName] = Int(sqlite3_column_int64(stmt, i))
+        case SQLITE_FLOAT:
+            record[colName] = sqlite3_column_double(stmt, i)
+        case SQLITE_NULL:
+            println(NSNull())
+            record[colName] = NSNull()
+        case SQLITE3_TEXT:
+            let t = UnsafePointer<Int8>(sqlite3_column_text(stmt, i))
+            record[colName] = String(CString: t, encoding: NSUTF8StringEncoding)
+        default:
+            println("不支持的类型 \(type)")
+        }
+    }
+    return record
+}
+提取结果集函数
+///  执行 SQL 获得结果集合
+///
+///  :param: sql 加载数据
+///
+///  :returns: 结果集合
+func execRecordSet(sql: String) -> [[String: AnyObject]]? {
+
+    let cSQL = sql.cStringUsingEncoding(NSUTF8StringEncoding)!
+    // 编译后的 SQL 语句对象
+    var stmt: COpaquePointer = nil
+
+    /**
+        准备 SQL 语句
+
+        参数
+        1. 已经打开的数据库句柄
+        2. 要执行的 SQL
+        3. 以字节为单位的 SQL 最大长度，传入 -1 会自动计算
+        4. SQL 语句地址
+        5. 未使用的指针地址，通常传入 nil
+    */
+    var recordList: [[String: AnyObject]]?
+    if sqlite3_prepare_v2(db, cSQL, -1, &stmt, nil) == SQLITE_OK {
+
+        // 实例化数组
+        recordList = [[String: AnyObject]]()
+        // 判断是否读取到记录
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let record = recordDict(stmt) {
+                recordList!.append(record)
+            }
+        }
+    }
+
+    // 释放语句对象
+    sqlite3_finalize(stmt)
+
+    return recordList
+}

@@ -48,6 +48,9 @@
 {
     if (subLayer.superlayer == self) {
         [subLayer removeFromSuperlayer];// self.sublayers.count = (count - 1)
+        /* Insert 'layer' at position 'idx' in the receiver's sublayers array.
+         * If 'layer' already has a superlayer, it will be removed before being
+         * inserted. */
         [self insertSublayer:subLayer atIndex:(unsigned)self.sublayers.count];// 不需要count - 1
     }
 }

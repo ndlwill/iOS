@@ -1,0 +1,268 @@
+通信录开发主要是获取用户手机中的联系人
+通过获取用户的通信录,可以在应用中添加好友等
+
+
+
+在iOS9之前，有2个框架可以访问用户的通讯录
+AddressBookUI.framework
+提供了联系人列表界面、联系人详情界面、添加联系人界面等
+一般用于选择联系人
+AddressBook.framework
+纯C语言的API，仅仅是获得联系人数据
+没有提供UI界面展示，需要自己搭建联系人展示界面
+里面的数据类型大部分基于Core Foundation框架
+
+
+在iOS9开始，也有2个框架可以访问用户的通讯录
+ContactsUI.framework
+对应AddressBookUI.framework
+Contacts.framework
+对应AddressBook.framework
+
+
+------------------------------------------------------------iOS9之前获取通信录
+AddressBookUI的使用
+
+使用步骤：
+创建选择联系人控制器
+设置代理
+实现代理方法(在代理方法中拿到用户选择的联系人)
+弹出控制器
+
+// 1.创建选择联系人的界面
+ABPeoplePickerNavigationController *ppnc = [[ABPeoplePickerNavigationController alloc] init];
+
+// 2.设置代理(在代理方法中可以拿到用户的联系人信息)
+ppnc.peoplePickerDelegate = self;
+
+// 3.弹出控制器
+[self presentViewController:ppnc animated:YES completion:nil];
+	
+	
+#pragma mark - 实现ABPeoplePickerNavigationController的代理方法,在代理方法中获取通信录信息
+/**
+ *  当选择选中一个联系人时就会执行该方法(当实现该方法时,选中了联系人会自动退出控制器)
+ *
+ *  @param peoplePicker 联系人选择控制器
+ *  @param person       选中的联系人
+ */
+- (void)peoplePickerNavigationController:(ABPeoplePickerNavigationController *)peoplePicker didSelectPerson:(ABRecordRef)person
+{
+    // 1.获取联系人的姓名
+    CFStringRef firstName = ABRecordCopyValue(person, kABPersonFirstNameProperty);
+    CFStringRef lastName = ABRecordCopyValue(person, kABPersonLastNameProperty);
+    NSLog(@"%@ %@", firstName, lastName);
+
+    // 2.获取电话号码
+    ABMultiValueRef phones = ABRecordCopyValue(person, kABPersonPhoneProperty);
+    CFIndex phoneCount = ABMultiValueGetCount(phones);
+    for (CFIndex i = 0; i < phoneCount; i++) {
+        // 2.1.获取电话号码
+        CFStringRef phoneLabel = ABMultiValueCopyLabelAtIndex(phones, i);
+        CFStringRef phoneValue = ABMultiValueCopyValueAtIndex(phones, i);
+        NSLog(@"%@ %@", phoneLabel, phoneValue);
+    }
+}
+
+/**
+ *  当用户选择某一个联系人的某一个属性时会调用该方法
+ *
+ *  @param person       选择的联系人
+ *  @param property     选择的属性
+ *  @param identifier   属性对应的标识符
+ */
+- (void)peoplePickerNavigationController:(ABPeoplePickerNavigationController *)peoplePicker didSelectPerson:(ABRecordRef)person property:(ABPropertyID)property identifier:(ABMultiValueIdentifier)identifier
+{
+}
+
+
+
+
+
+
+AddressBook的使用
+使用步骤：
+获取用户的授权
+获取授权状态
+如果用户是未决定状态,则请求授权
+获取联系人信息
+获取授权状态
+如果是已经授权,则获取联系人信息
+创建通信录对象
+获取通信录中所有的联系人
+遍历所有的联系人,获取联系人信息
+获取用户授权的代码实现
+
+注意:通常在应用启动时就询问用户授权
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+
+    // 1.获取授权状态
+    ABAuthorizationStatus status = ABAddressBookGetAuthorizationStatus();
+
+    // 2.判断授权状态
+    if (status == kABAuthorizationStatusNotDetermined) {
+        // 2.1.创建通信录对象
+        ABAddressBookRef addressBook = ABAddressBookCreate();
+
+        // 2.2.请求授权
+        ABAddressBookRequestAccessWithCompletion(addressBook, ^(bool granted, CFErrorRef error) {
+            if (granted) {
+                NSLog(@"授权成功");
+            } else {
+                NSLog(@"授权失败");
+            }
+        });
+    }
+
+    return YES;
+}
+
+获取联系人信息
+    // 1.获取授权状态
+    ABAuthorizationStatus status = ABAddressBookGetAuthorizationStatus();
+
+    // 2.如果是没有授权,则直接返回
+    if (status != kABAuthorizationStatusAuthorized) return;
+
+    // 3.获取联系人
+    // 3.1.创建通信录对象
+    ABAddressBookRef addressBook = ABAddressBookCreate();
+
+    // 3.2.从通信录对象中获取所有的联系人
+    CFArrayRef peopleArray = ABAddressBookCopyArrayOfAllPeople(addressBook);
+
+    // 3.2.遍历所有的联系人
+    CFIndex peopleCount = CFArrayGetCount(peopleArray);
+    for (CFIndex i = 0; i < peopleCount; i++) {
+        // 3.3.获取i位置的联系人
+        ABRecordRef person = CFArrayGetValueAtIndex(peopleArray, i);
+
+        // 1.获取联系人的姓名
+        CFStringRef firstName = ABRecordCopyValue(person, kABPersonFirstNameProperty);
+        CFStringRef lastName = ABRecordCopyValue(person, kABPersonLastNameProperty);
+        NSLog(@"%@ %@", firstName, lastName);
+
+        // 2.获取电话号码
+        ABMultiValueRef phones = ABRecordCopyValue(person, kABPersonPhoneProperty);
+        CFIndex phoneCount = ABMultiValueGetCount(phones);
+        for (CFIndex i = 0; i < phoneCount; i++) {
+            // 2.1.获取电话号码
+            CFStringRef phoneLabel = ABMultiValueCopyLabelAtIndex(phones, i);
+            CFStringRef phoneValue = ABMultiValueCopyValueAtIndex(phones, i);
+            NSLog(@"%@ %@", phoneLabel, phoneValue);
+        }
+    }
+------------------------------------------------------------iOS9之后获取通信录
+ContactsUI的使用
+
+使用步骤：
+创建选择联系人控制器
+设置代理
+实现代理方法(在代理方法中拿到用户选择的联系人)
+弹出控制器
+
+#pragma mark - <CNContactPickerViewController代理方法>
+/**
+ *  当选中一个联系人时,会执行该方法
+ *
+ *  @param picker  选择联系人的控制器
+ *  @param contact 选择的联系人
+ */
+- (void)contactPicker:(CNContactPickerViewController *)picker didSelectContact:(CNContact *)contact
+{
+    // 1.获取联系人的姓名
+    NSString *firstName = contact.givenName;
+    NSString *lastName = contact.familyName;
+    NSLog(@"%@ %@", firstName, lastName);
+
+    // 2.获取联系人的电话号码
+    NSArray *phoneNumers = contact.phoneNumbers;
+    for (CNLabeledValue *labelValue in phoneNumers) {
+        CNPhoneNumber *phoneNumber = labelValue.value;
+        NSString *phoneValue = phoneNumber.stringValue;
+        NSString *phoneLabel = labelValue.label;
+        NSLog(@"%@ %@", phoneValue, phoneLabel);
+    }
+}
+
+/**
+ *  当选中某一个联系人的某一个属性时,会执行该方法
+ *
+ *  @param contactProperty 选中的联系人属性
+ */
+- (void)contactPicker:(CNContactPickerViewController *)picker didSelectContactProperty:(CNContactProperty *)contactProperty{}
+
+
+
+
+
+Contacts的使用
+
+使用步骤：
+获取用户的授权
+获取授权状态
+如果用户是未决定状态,则请求授权
+获取联系人信息
+获取授权状态
+如果是已经授权,则获取联系人信息
+创建通信录对象
+创建联系人请求对象
+遍历所有的联系人,获取联系人信息
+获取用户授权的代码实现
+注意:通常在应用启动时就询问用户授权
+授权的代码实现
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+
+    // 1.获取授权状态
+    CNAuthorizationStatus status = [CNContactStore authorizationStatusForEntityType:CNEntityTypeContacts];
+
+    // 2.如果是未决定状态,则请求授权
+    if (status == CNAuthorizationStatusNotDetermined) {
+        // 3.创建CNContactStore对象
+        CNContactStore *contactStore = [[CNContactStore alloc] init];
+
+        // 4.请求授权
+        [contactStore requestAccessForEntityType:CNEntityTypeContacts completionHandler:^(BOOL granted, NSError * _Nullable error) {
+            if (granted) {
+                NSLog(@"授权成功");
+            } else {
+                NSLog(@"授权失败:%@", error);
+            }
+        }];
+    }
+
+    return YES;
+}
+
+
+获取联系人
+    // 1.获取授权状态
+    CNAuthorizationStatus status = [CNContactStore authorizationStatusForEntityType:CNEntityTypeContacts];
+
+    // 2.如果是没有授权,则直接返回
+    if (status != CNAuthorizationStatusAuthorized) return;
+
+    // 3.创建通信录的对象
+    CNContactStore *contactStore = [[CNContactStore alloc] init];
+
+    // 4.创建联系人请求对象
+    NSArray *keys = @[CNContactGivenNameKey, CNContactFamilyNameKey, CNContactPhoneNumbersKey];
+    CNContactFetchRequest *request = [[CNContactFetchRequest alloc] initWithKeysToFetch:keys];
+
+    // 5.遍历所有的联系人
+    [contactStore enumerateContactsWithFetchRequest:request error:nil usingBlock:^(CNContact * _Nonnull contact, BOOL * _Nonnull stop) {
+        // stop是决定是否要停止
+        // 1.获取姓名
+        NSString *firstname = contact.givenName;
+        NSString *lastname = contact.familyName;
+        NSLog(@"%@ %@", firstname, lastname);
+
+        // 2.获取电话号码
+        NSArray *phones = contact.phoneNumbers;
+
+        // 3.遍历电话号码
+        for (CNLabeledValue *labelValue in phones) {
+            CNPhoneNumber *phoneNumber = labelValue.value;
+            NSLog(@"%@ %@", phoneNumber.stringValue, labelValue.label);
+        }
+    }];

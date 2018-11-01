@@ -1,0 +1,198 @@
+UITextView和UITextField区别
+UITextField:
+可以输入内容
+不可以换行
+不可以滚动
+可以设置提示文本
+
+UITextView
+可以输入内容
+可以换行
+可以滚动
+不可以设置提示文本
+
+监听UITextView的文本变化可以通过代理或通知来监听
+import UIKit
+import SnapKit
+
+class XMGTextView: UITextView {
+
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+        setupUI()
+        
+    }
+
+    required init?(coder aDecoder: NSCoder) {
+        super.init(coder: aDecoder)
+        setupUI()
+        
+    }
+    
+    deinit
+    {
+        NSNotificationCenter.defaultCenter().removeObserver(self)
+    }
+    
+    // MARK: - 内部控制方法
+    private func setupUI()
+    {
+        addSubview(placeholderLabel)
+        
+        placeholderLabel.snp_makeConstraints { (make) -> Void in
+            make.left.equalTo(4)
+            make.top.equalTo(8)
+        }
+
+        NSNotificationCenter.defaultCenter().addObserver(self, selector: Selector("textChange"), name: UITextViewTextDidChangeNotification, object: self)
+    }
+    
+    func textChange()
+    {
+        // 控制提示文本是否显示
+        placeholderLabel.hidden = hasText()
+    }
+    
+    
+    // MARK: - 懒加载
+    private lazy var placeholderLabel: UILabel =
+    {
+       let lb = UILabel()
+        lb.textColor = UIColor.lightGrayColor()
+        lb.text = "分享新鲜事..."
+        lb.font = self.font
+        return lb
+    }()
+}
+
+---------------------------------------------------------
+import UIKit
+import SVProgressHUD
+
+class ComposeViewController: UIViewController {
+    
+    /// 发送按钮
+    @IBOutlet weak var sendItem: UIBarButtonItem!
+    
+    /// 输入框
+    @IBOutlet weak var customTextView: XMGTextView!
+    
+    /// 工具条底部约束
+    @IBOutlet weak var toolbarBottomCons: NSLayoutConstraint!
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        // 注册通知, 监听键盘变化
+        NSNotificationCenter.defaultCenter().addObserver(self, selector: Selector("keyboardWillChange:"), name: UIKeyboardWillChangeFrameNotification, object: nil)
+        
+//        customTextView.inputView = UISwitch()
+    }
+    
+    /*
+    override func viewWillAppear(animated: Bool) {
+       
+        super.viewWillAppear(animated)
+        // 如果在这个地方召唤键盘, 执行工具条动画时会有bug
+        customTextView.becomeFirstResponder()
+    }
+    */
+    override func viewDidAppear(animated: Bool) {
+        super.viewDidAppear(animated)
+        customTextView.becomeFirstResponder()
+    }
+    
+    override func viewWillDisappear(animated: Bool) {
+        super.viewWillDisappear(animated)
+        customTextView.resignFirstResponder()
+    }
+    
+    deinit
+    {
+        NSNotificationCenter.defaultCenter().removeObserver(self)
+    }
+    
+    // MARK: - 内部控制方法
+    func keyboardWillChange(notice: NSNotification)
+    {
+        // 弹出: UIKeyboardFrameEndUserInfoKey = "NSRect: {{0, 409}, {375, 258}}";
+        // 关闭: UIKeyboardFrameEndUserInfoKey = "NSRect: {{0, 667}, {375, 258}}";
+        
+        // 弹出: 250 关闭 0
+        // 屏幕的高度 - 键盘的y值
+        // 667 - 409 = 258
+        // 667 - 667 = 0
+        // 1.获取键盘的frame
+        let rect = notice.userInfo![UIKeyboardFrameEndUserInfoKey]!.CGRectValue
+        // 2.获取屏幕的高度
+        let height = UIScreen.mainScreen().bounds.height
+        // 3.计算需要移动的距离
+        let offsetY = height - rect.origin.y
+
+        // 4.修改底部工具条约束
+        toolbarBottomCons.constant = offsetY
+        UIView.animateWithDuration(0.25) { () -> Void in
+            self.view.layoutIfNeeded()
+        }
+        
+    }
+    
+    
+    @IBAction func sendBtnClick() {
+        // 1.获取用户输入内容
+        let text = customTextView.text
+        // 2. 发送请求发送微博
+        NetworkTools.shareInstance.sendStatus(text) { (objc, error) -> () in
+            if error != nil{
+                SVProgressHUD.showErrorWithStatus("发送微博失败", maskType: SVProgressHUDMaskType.Black)
+                return
+            }
+            
+            SVProgressHUD.showSuccessWithStatus("发送微博成功", maskType: SVProgressHUDMaskType.Black)
+            self.closeBtnClick()
+        }
+    }
+    
+    @IBAction func closeBtnClick() {
+        dismissViewControllerAnimated(true, completion: nil)
+    }
+    
+    /// 选择图片
+    @IBAction func pictureBtnClick(sender: AnyObject) {
+        
+    }
+    /// 切换键盘
+    @IBAction func emoticonBtnClick(sender: AnyObject) {
+        // 通过观察发现, 如果是系统默认的键盘inputView = nil
+        // 如果不是系统自带的键盘, 那么inputView != nil
+        // 注意点: 要想切换切换, 必须先关闭键盘, 切换之后再打开
+        
+        // 关闭键盘
+        customTextView.resignFirstResponder()
+        
+        // 1.判断inputView是否是nil
+        if customTextView.inputView != nil
+        {
+            // 切换为系统键盘
+            customTextView.inputView = nil
+        }else
+        {
+            // 切换为自定义键盘
+            customTextView.inputView = UISwitch()
+        }
+        
+        // 重新打开键盘
+        customTextView.becomeFirstResponder()
+    }
+}
+
+extension ComposeViewController: UITextViewDelegate
+{
+    func textViewDidChange(textView: UITextView) {
+        /// 控制发送按钮是否能够点击
+        sendItem.enabled = textView.hasText()
+    }
+    func scrollViewWillBeginDragging(scrollView: UIScrollView) {
+        customTextView.resignFirstResponder()
+    }
+}

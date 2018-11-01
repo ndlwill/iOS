@@ -15,6 +15,8 @@
 
 //#define NSLog(format, ...) printf("\n[%s] %s [第%d行] %s\n", __TIME__, __FUNCTION__, __LINE__, [[NSString stringWithFormat:format, ## __VA_ARGS__] UTF8String]);
 
+// 父视图layoutSubViews然后子视图layoutSubViews
+
 #ifdef DEBUG
 #define NDLLog(...) NSLog(__VA_ARGS__)
 #else
@@ -27,6 +29,7 @@
 
 #define NDLScreenW [UIScreen mainScreen].bounds.size.width
 #define NDLScreenH [UIScreen mainScreen].bounds.size.height
+#define ScreenScale ([[UIScreen mainScreen] scale])
 
 // UIColorFromHex(0xffffff)
 #define UIColorFromHex(hex) [UIColor colorWithRed:((hex & 0xFF0000) >> 16) / 255.0 green:((hex & 0x00FF00) >> 8) / 255.0 blue:(hex & 0x0000FF) / 255.0 alpha:1.0]
@@ -76,9 +79,12 @@ __weak typeof(obj) weak_##obj = obj; \
 // ## 把两个语言符号组合成单个语言符号  ...省略号只能代替最后面的宏参数
 #define NSStringFormat(format,...) [NSString stringWithFormat:format,##__VA_ARGS__]
 
+// ui适配
 // 资源按照iphone6设计
 #define ReferToIphone6WidthRatio (NDLScreenW / 375.0)
-#define RealValueReferToIphone6(value) (value * ReferToIphone6WidthRatio)
+#define RealWidthValueReferToIphone6(value) (value * ReferToIphone6WidthRatio)
+#define ReferToIphone6HeightRatio (NDLScreenH / 667.0)
+#define RealHeightValueReferToIphone6(value) (value * ReferToIphone6HeightRatio)
 
 // 机型小于等于4英寸
 #define IS_LESS_THAN_OR_EQUAL_TO_4INCH (NDLScreenW < 375.0)

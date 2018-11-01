@@ -1,0 +1,83 @@
+UIRefreshControl自带的UITableView刷新控件 继承UIControl
+拉倒一定程度，不管有没有松手，都会触发下拉事件，菊花不会自动隐藏
+
+
+class XMGRefreshControl: UIRefreshControl {
+    override init() {
+        super.init()
+        // 1.添加子控件
+        addSubview(refreshView)
+        // 2.布局子控件
+        refreshView.snp_makeConstraints { (make) -> Void in
+            make.size.equalTo(CGSize(width: 150, height: 50))
+            make.center.equalTo(self)
+        }
+        
+        // 3.监听UIRefreshControl frame改变
+        addObserver(self, forKeyPath: "frame", options: NSKeyValueObservingOptions.New, context: nil)
+    }
+
+    required init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    deinit
+    {
+        removeObserver(self, forKeyPath: "frame")
+    }
+    
+    /// 记录是否需要旋转
+    var rotationFlag = false
+    // MARK: - 内部控制方法
+    override func observeValueForKeyPath(keyPath: String?, ofObject object: AnyObject?, change: [String : AnyObject]?, context: UnsafeMutablePointer<Void>) {
+        
+        if frame.origin.y == 0 || frame.origin.y == -64
+        {
+            // 过滤掉垃圾数据
+            return
+        }
+        
+        // 通过观察发现: 往下拉Y越小, 往上推Y越大
+        if frame.origin.y < -50 && !rotationFlag
+        {
+            rotationFlag = true
+            NJLog("往上旋转")
+            refreshView.rotationArrow(rotationFlag)
+        }else if frame.origin.y > -50 && rotationFlag
+        {
+            rotationFlag = false
+            NJLog("往下旋转")
+            refreshView.rotationArrow(rotationFlag)
+        }
+    }
+    
+    // MARK: -懒加载
+    private lazy var refreshView: RefreshView = RefreshView.refreshView()
+}
+
+class RefreshView: UIView {
+    /// 菊花
+    @IBOutlet weak var loadingImageView: UIImageView!
+    /// 提示视图
+    @IBOutlet weak var tipView: UIView!
+    /// 箭头
+    @IBOutlet weak var arrowImageView: UIImageView!
+    
+    class func refreshView() -> RefreshView {
+        return NSBundle.mainBundle().loadNibNamed("RefreshView", owner: nil, options: nil).last as! RefreshView
+    }
+    
+    // MARK: - 外部控制方法
+    /// 旋转箭头
+    func rotationArrow(flag: Bool)
+    {
+        var angle: CGFloat = flag ? -0.01 : 0.01
+        angle += CGFloat(M_PI)
+        /*
+        transform旋转动画默认是按照顺时针旋转的
+        但是旋转时还有一个原则, 就近原则
+        */
+        UIView.animateWithDuration(2.0) { () -> Void in
+            self.arrowImageView.transform = CGAffineTransformRotate(self.arrowImageView.transform, angle)
+        }
+    }
+}

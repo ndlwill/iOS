@@ -1,0 +1,319 @@
+swift  建议下载框架 不要使用cocoapods
+服务器请求的微博数据缓存到本地
+
+/*
+1.创建一个类来管理数据库
+2.将该类设计成单例
+3.打开或者创建数据库
+4.创建表
+5.基本操作:增删改查
+*/
+
+//桥接文件 swift使用oc框架  Build Settings->搜索bri->Objective-C Bridging Header   项目名称/SQLite_bridge.h
+SQLite_bridge.h
+#import "FMDB.h"
+
+SQLiteManager.swift
+import UIKit
+class SQLiteManager: NSObject {
+    // 1.将类设计成单例
+    static let shareIntance : SQLiteManager = SQLiteManager()
+    
+    // 保存数据库队列对象  FMDatabaseQueue里面有FMDatabase对象  FMDatabaseQueue保证线程安全
+    var dbQueue : FMDatabaseQueue?
+    
+    // 2.打开数据库
+    func openDB(dbName : String) {
+        // 2.1.获取数据库文件存放的路径
+        let path = NSSearchPathForDirectoriesInDomains(NSSearchPathDirectory.DocumentDirectory, NSSearchPathDomainMask.UserDomainMask, true).first
+        let filePath = path?.stringByAppendingString("/" + dbName)
+        print(filePath)
+        
+        // 2.2.创建数据库
+        dbQueue = FMDatabaseQueue(path: filePath)
+        
+        // 2.3.创建表
+        createTable()
+    }
+    
+    // 3.创建表
+    private func createTable() {
+        // 3.1.拼接创建表的SQL语句
+        let createTableSQL = "CREATE TABLE IF NOT EXISTS t_student ('id' INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,'name' TEXT,'age' INTEGER );"
+        
+        // 3.2.执行SQL语句
+        dbQueue?.inDatabase({ (db) -> Void in
+            if db.executeUpdate(createTableSQL, withArgumentsInArray: nil) {
+                print("创建表成功")
+            }
+        })
+    }
+}
+
+
+
+class ViewController: UIViewController {
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+    }
+    
+    override func touchesBegan(touches: Set<UITouch>, withEvent event: UIEvent?) {
+        // 1.拼接查询的SQL语句
+        let querySQL = "SELECT * FROM t_student ORDER BY id DESC;";
+        
+        // 2.执行SQL语句
+        SQLiteManager.shareIntance.dbQueue?.inDatabase({ (db) -> Void in
+            let result = db.executeQuery(querySQL, withArgumentsInArray: nil)
+            
+            while result.next() {
+                let stuID = result.stringForColumn("id")
+                let stuName = result.stringForColumn("name")
+                print(stuID, stuName)
+            }
+        })
+    }
+    
+    func insertData() {
+        // 1.拼接插入的SQL语句
+        let insertSQL = "INSERT INTO t_student (name, age) VALUES (?, ?);"
+        
+        // 2.执行SQL语句
+        SQLiteManager.shareIntance.dbQueue?.inDatabase({ (db) -> Void in
+            if db.executeUpdate(insertSQL, withArgumentsInArray: ["why", 18]) {
+                print("插入数据成功")
+            }
+        })
+    }
+}
+
+
+----------------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS t_status ('statusID' INTEGER NOT NULL PRIMARY KEY,'statusText' TEXT,'userID' INTEGER, 'createTime' TEXT DEFAULT (datetime('now', 'localtime')));
+
+
+
+class StatusViewModelList {
+    
+    /// 保存所有微博数据
+    var statuses: [StatusViewModel]?
+    
+    /// 获取微博数据
+    func loadStatus(since_id: String, max_id: String,finished: (models: [StatusViewModel]?, error: NSError?)->())
+    {
+        // 1.获取用户的ID
+        guard let userID = UserAccount.loadUserAccount()?.uid else {
+            print("用户没有登录")
+            return
+        }
+        
+        // 2.拼接查询的SQL
+        var querySQL = "SELECT * FROM t_status WHERE userID = \(userID)"
+        if since_id != "0"
+        {
+            querySQL += " AND statusID > \(since_id)"
+        } else if max_id != "0"
+        {
+            let temp = Int(max_id)! - 1
+            querySQL += " AND statusID <= \(temp)"
+        }
+        
+        querySQL += " ORDER BY statusID DESC LIMIT 20;"
+        
+        // 3.执行查询的SQL语句
+        SQLiteManager.shareIntance.dbQueue?.inDatabase({ (db) -> Void in
+            // 3.1.获取查询结果
+            let result = db.executeQuery(querySQL, withArgumentsInArray: nil)
+            
+            // 3.2.遍历所有的查询结果
+            var models = [StatusViewModel]()
+            while result.next() {
+                // 3.2.1.获取微博的字符串
+                let statusText = result.stringForColumn("statusText")
+                
+                // 3.2.2.将字符串转成字典
+                guard let data = statusText.dataUsingEncoding(NSUTF8StringEncoding) else {
+                    continue
+                }
+                guard let dict = try? NSJSONSerialization.JSONObjectWithData(data, options: NSJSONReadingOptions.MutableContainers) else {
+                    print("没有获取到微博数据")
+                    continue
+                }
+                
+                models.append(StatusViewModel(status: Status(dict: dict as! [String : AnyObject])))
+            }
+            
+            // 3.3.判断数组中是否有值
+            if models.count != 0 {
+                
+                print("从本地读取到数据")
+                // 3.3.1.将获取到的数据拼接到原来的数组中
+                if since_id != "0"
+                {
+                    // 将新的数据凭借到旧数据前面
+                    self.statuses = models + self.statuses!
+                    
+                }else if max_id != "0"
+                {
+                    // 将新的数据拼接到旧数据后面
+                    self.statuses = self.statuses! + models
+                }else{
+                    self.statuses = models
+                }
+                
+                // 3.3.2.回调告知外面现在获取到了数据
+                finished(models: models, error: nil)
+                
+                return
+            }
+            
+            // 3.4.没有从本地读取到数据,那么从网络中加载数据
+            self.loadDataFromNetwork(since_id, max_id: max_id, finished: finished)
+        })
+    }
+    
+    /// 从网络中获取数据
+    private func loadDataFromNetwork(since_id: String,  max_id: String,finished: (models: [StatusViewModel]?, error: NSError?)->()) {
+        
+        print("从网络中获取数据")
+        
+        // 1.获取微博数据
+        NetworkTools.shareInstance.loadStatus(since_id, max_id: max_id) { (dicts, error) -> () in
+            
+            // 1.安全校验
+            if error != nil
+            {
+                finished(models: nil, error: error)
+                return
+            }
+            
+            guard let array = dicts else
+            {
+                finished(models: nil, error: NSError(domain: "com.520it.lnj", code: 1002, userInfo: ["message": "没有获取到微博数据"]))
+                return
+            }
+            
+            // 2.遍历字典数组, 处理微博数据
+            var models = [StatusViewModel]()
+            for dict in array
+            {
+                models.append(StatusViewModel(status:Status(dict: dict)))
+            }
+            
+            // 3.处理下拉刷新的数据
+            if since_id != "0"
+            {
+                // 将新的数据凭借到旧数据前面
+                self.statuses = models + self.statuses!
+                
+            }else if max_id != "0"
+            {
+                // 将新的数据拼接到旧数据后面
+                self.statuses = self.statuses! + models
+            }else{
+                self.statuses = models
+            }
+            
+            // 4.缓存配图
+            self.cacheImage(models, finished: finished)
+            
+            // 5.本地缓存数据
+            self.cacheData(array)
+        }
+    }
+    
+    /// 缓存微博的数据
+    private func cacheData(list : [[String : AnyObject]]) {
+        // 1.拿到用户的UID
+        guard let userID = UserAccount.loadUserAccount()?.uid else {
+            print("用户ID没有值")
+            return
+        }
+        
+        // 2.遍历字典数据,拿到每一条微博数据
+        for dict in list {
+            // 2.1.获取微博的ID
+            guard let statusID = dict["idstr"] else {
+                print("微博ID没有值")
+                continue
+            }
+            
+            // 2.2.获取微博的内容
+            // 2.2.1.将字典转成NSData
+            guard let data = try? NSJSONSerialization.dataWithJSONObject(dict, options: NSJSONWritingOptions.PrettyPrinted) else {
+                print("没有转化成功")
+                continue
+            }
+            
+            // 2.2.2.将NSData转成字符串
+            guard let statusText = String(data: data, encoding: NSUTF8StringEncoding) else {
+                print("没有获取数据")
+                continue
+            }
+            
+            // 3.拼接插入SQL语句
+            let insertSQL = "INSERT INTO t_status (statusID, statusText, userID) VALUES (?, ?, ?);"
+            
+            // 4.执行sql语句
+            SQLiteManager.shareIntance.dbQueue?.inDatabase({ (db) -> Void in
+                db.executeUpdate(insertSQL, withArgumentsInArray: [statusID, statusText, userID])
+            })
+        }
+    }
+    
+    /// 缓存配图
+    private func cacheImage(list: [StatusViewModel], finished: (models: [StatusViewModel]?, error: NSError?)->())
+    {
+        
+        // 0.创建一个组
+        let group = dispatch_group_create()
+        
+        // 1.取出所有微博模型
+        for viewModel in list
+        {
+            // 2.安全校验
+            guard let urls = viewModel.thumbnail_pics else
+            {
+                continue
+            }
+            
+            // 3.从微博模型中取出所有的配图字典
+            for url in urls
+            {
+                // 将当前操作添加到组中
+                dispatch_group_enter(group)
+                
+                // 4.下载图片
+                // 注意:downloadImageWithURL方法下载图片是在子线程下载的, 而回调是在主线程回调
+                SDWebImageManager.sharedManager().downloadImageWithURL(url, options: SDWebImageOptions(rawValue: 0), progress: nil, completed: { (_, error, _, _, _) -> Void in
+                    
+                    // 将当前操作从组中移除
+                    dispatch_group_leave(group)
+                })
+            }
+            
+        }
+        
+        dispatch_group_notify(group, dispatch_get_main_queue()) { () -> Void in
+            // 执行回调
+            finished(models: list, error: nil)
+        }
+    }
+    
+    /// 清除数据缓存
+    class func clearData() {
+        // 1.获取三天前的时间
+        let threeDate = NSDate(timeIntervalSinceNow: -3 * 24 * 60 * 60)
+        let fmt = NSDateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd HH:mm:ss" // 2015-12-21 11:31:25
+        let dateString = fmt.stringFromDate(threeDate)
+        
+        // 2.拼接删除数据的SQL
+        let deleteSQL = "DELETE FROM t_status WHERE createTime < '\(dateString)';"
+        
+        // 3.执行SQL语句
+        SQLiteManager.shareIntance.dbQueue?.inDatabase({ (db) -> Void in
+            db.executeUpdate(deleteSQL, withArgumentsInArray: nil)
+        })
+    }
+}

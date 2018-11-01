@@ -95,6 +95,8 @@
 
 #import "PersonAll.pbobjc.h"
 
+#import "NSDate+NDLExtension.h"
+
 typedef id (^WeakReference)(void);
 
 // TODO: Import
@@ -139,9 +141,14 @@ typedef id (^WeakReference)(void);
 @property (nonatomic, weak) Person *p_ndl;
 @property (nonatomic, strong) NSMutableDictionary *p_dic;
 
+@property (nonatomic, strong) Book *bookModel;
+
 @end
 
 static NSInteger cc = 0;
+
+static NSDateFormatter *dateFormatter_ = nil;
+
 @implementation ViewController
 
 
@@ -378,8 +385,6 @@ static NSInteger cc = 0;
     [[FLEXManager sharedManager] showExplorer];
 #endif
     
-    
-    
     NSLog(@"viewDidAppear p_ndl = %@ dic_ndl = %@", self.p_ndl, [self.p_dic objectForKey:@"ndl"]);
 }
 
@@ -396,8 +401,8 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
     return ref ? ref() : nil;
 }
 
-//==================================================
-
+//==================================================protobuf
+// 解决读取每条数据的头部字节，根据头部字节读取这条数据的内容长度
 /** 关键代码：获取data数据的内容长度和头部长度: index --> 头部占用长度 (头部占用长度1-4个字节) */
 - (int32_t)getContentLength:(NSData *)data withHeadLength:(int32_t *)index{
     
@@ -447,8 +452,72 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
 
 //==================================================
 
+- (void)currentLocaleDidChanged:(NSNotification *)notification
+{
+    NSLog(@"currentLocaleDidChanged");
+}
+
+- (NSDate *)dateFromTime:(int)year setMonth:(int)month setDay:(int)day setHour:(int)hour setMinute:(int)minute
+{
+    NSCalendar *calendar = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
+    //NSCalendar *calendar = [NSCalendar autoupdatingCurrentCalendar];
+    NSDateComponents *dateComps = [[NSDateComponents alloc] init];
+    
+    [dateComps setYear:year];
+    [dateComps setMonth:month];
+    [dateComps setDay:day];
+    [dateComps setHour:hour];
+    [dateComps setMinute:minute];
+    [dateComps setSecond:00];
+    
+    NSDate *date = [calendar dateFromComponents:dateComps];
+    
+    return date;
+}
+
 - (void)viewDidLoad {
     NSLog(@"===ViewController viewDidLoad===");
+    NSLog(@"date = %@ ceil = %lf", [NSDate date], ceil(6.3));// 7.0
+    
+    NSLog(@"date = %@ ndl_date = %@", [NSDate date], [NSDate ndl_currentDate]);
+    
+    // gregorian
+    NSLog(@"calendarIdentifier = %@", [[NSDateFormatter alloc] init].calendar.calendarIdentifier);
+
+    // test dateTools
+    // second:满60自己进minute
+    NSLog(@"date from calendar = %@", [NSDate dateWithYear:2018 month:10 day:30 hour:12 minute:58 second:126]);
+    NSDate *ddate = [NSDate date];
+    NSLog(@"NSdate = %@", ddate);
+    // weekend:(1表示周日) 周日是1 周一2 。。。。。7
+    // weekdayOrdinal: 周六是1 。。。。。7
+    NSLog(@"weekday = %ld, weekdayOrdinal = %ld", [ddate weekday], [ddate weekdayOrdinal]);// Wed Oct 31 14:41:46 2018 打印(4, 5)
+    
+    
+//    NSDate *curDate = [NSDate date];// 0时区
+//    NSTimeZone *zone = [NSTimeZone systemTimeZone];
+//    NSTimeInterval interval = [zone secondsFromGMTForDate:curDate];
+//    NSDate *correctDate = [curDate dateByAddingTimeInterval:interval];// b东8区date
+//    NSLog(@"curDate = %@ correctDate = %@", curDate, correctDate);
+    
+    
+    // yyyy-MM-dd HH:mm:ss
+    NSDate *customDate = [NSDate dateWithString:@"2018-3-8 00:25" format:@"yyyy-MM-dd HH:mm"];
+    NSLog(@"customDate = %@", customDate);
+    NSLog(@"dayInMonth = %ld", [[NSDate date] daysInMonth]);// 2018-10-26 -> 31
+    
+    
+    dateFormatter_ = [[NSDateFormatter alloc] init];
+    NSLocale *dateFormatterLocale = dateFormatter_.locale;
+    NSLog(@"%@", dateFormatterLocale.localeIdentifier);// 默认系统locale
+    
+    // 监听用户本地化的设置信息
+    [NotificationCenter addObserver:self selector:@selector(currentLocaleDidChanged:) name:NSCurrentLocaleDidChangeNotification object:nil];
+    
+    // 获取当前系统设置语言的标识符
+    NSLocale *locale = [NSLocale currentLocale];
+    // 这些标识符包含一个语言码（例如en代表英语）和一个地区码（例如US代表美国）
+    NSLog(@"localeIdentifier = %@", locale.localeIdentifier);// 模拟器默认en_US （中文en_CN）
     
     SQLiteManager *sqliteManager = [SQLiteManager sharedSQLiteManager];
     [sqliteManager openDB:@"test.sqlite"];
@@ -542,8 +611,9 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
      */
     
     
-    
-    
+//    SInt8
+//    uint8_t // typedef unsigned char uint8_t;
+//    uint32_t
     // typedef unsigned char                   UInt8;
 //    int32_t value = 17;// 0x00000011
     int32_t value = (int32_t)imageData.length;// 46526
@@ -1431,16 +1501,16 @@ NSLog(@"viewDidLoad 22");
 //        ndlLabel.y = 250;
 //        ndlLabel.x = 20;
 //    }];
-    MarqueeLabel *marquee = [[MarqueeLabel alloc] initWithFrame:CGRectMake(20, 170, NDLScreenW - 40, 20)];
+    MarqueeLabel *marquee = [[MarqueeLabel alloc] initWithFrame:CGRectMake(20, 170, NDLScreenW - 40, 40)];
     marquee.backgroundColor = [UIColor greenColor];
     marquee.font = [UIFont systemFontOfSize:16];
     marquee.textColor = [UIColor blackColor];
 //    marquee.edgeFadeStartColor = [UIColor redColor];
+    marquee.textAlignment = NSTextAlignmentCenter;
+//    marquee.text = @"我没睡呢还是公司觉得接班人时间回家冻结实也是极极好的你懂吃呢和你扯视屏呢";
+    marquee.text = @"sjhdgdgjk";
     
-    marquee.text = @"我没睡呢还是公司觉得接班人时间回家冻结实也是极极好的你懂吃呢和你扯视屏呢";
-//    marquee.text = @"sjhdgdgjk";
-    
-    marquee.showEdgeFadeFlag = YES;
+    marquee.showEdgeFadeFlag = NO;
     [self.view addSubview:marquee];
     
     
@@ -1515,6 +1585,17 @@ NSLog(@"viewDidLoad 22");
     
     TieBaLoadingView *view = [self.view viewWithTag:1000];
     view.progress = 0.6;
+    
+    
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        NSLog(@"===dispatch_after===");
+//        
+//        NSString *customURL = @"NDL_TEST_ROUTE://NaviPush/TestViewController?name=home&userId=99999&age=18&adbc=29";
+//        
+//        //        [[UIApplication sharedApplication] openURL:[NSURL URLWithString:customURL]];
+//        
+//        [[UIApplication sharedApplication] openURL:[NSURL URLWithString:customURL] options:@{UIApplicationOpenURLOptionsSourceApplicationKey : @YES} completionHandler:nil];
+//    });
 }
 
 - (void)viewTapped:(UIGestureRecognizer *)gesture

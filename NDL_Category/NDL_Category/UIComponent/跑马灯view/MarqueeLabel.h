@@ -8,6 +8,12 @@
 
 #import <UIKit/UIKit.h>
 
+/**
+ *  跑马灯Label
+ *  当Text对应的Width超过了Frame宽度，滚动显示
+ *  当Text对应的Width未超过Frame宽度，无滚动显示
+ */
+
 // right->left
 @interface MarqueeLabel : UILabel
 // default: 0.5  10表示1帧10pt

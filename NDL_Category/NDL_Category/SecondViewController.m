@@ -22,6 +22,8 @@
 #import "VariableCircleLayer.h"
 
 #import "TestRACController.h"
+#import "Book.h"
+#import "TestModelController.h"
 
 @interface SecondViewController () <CAAnimationDelegate>
 
@@ -31,6 +33,8 @@
 @property (nonatomic, strong) NavigationControllerDelegate *navigationControllerDelegate;
 
 @property (nonatomic, weak) VariableCircleLayer *variableLayer;
+
+@property (nonatomic, strong) Book *book;
 
 @end
 
@@ -241,6 +245,19 @@
     NSLog(@"second touch begin");
     
     self.searchBar.showsCancelButton = NO;
+    
+    self.book = [[Book alloc] init];
+    self.book.title = @"ndl";
+    self.book.subtitle = @"will";
+    NSLog(@"before:title = %@ subTitle = %@", self.book.title, self.book.subtitle);
+    
+    TestModelController *vc = [[TestModelController alloc] init];
+    vc.model = self.book;// TestModelController的变 这边也变
+    vc.callback = ^(Book * _Nonnull book) {
+        NSLog(@"after:title = %@ subTitle = %@", self.book.title, self.book.subtitle);
+        NSLog(@"callback:title = %@ subTitle = %@", book.title, book.subtitle);
+    };
+    [self.navigationController pushViewController:vc animated:YES];
 }
 - (IBAction)testRACDidClicked:(id)sender {
     [self.navigationController pushViewController:[[TestRACController alloc] init] animated:YES];

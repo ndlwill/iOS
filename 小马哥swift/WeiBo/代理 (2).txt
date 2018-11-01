@@ -1,0 +1,157 @@
+private let reuseIdentifier = "Cell"
+
+class PhotoPickerViewController: UICollectionViewController {
+    
+    // 定义存放用户选择UIImage对象的数组
+    var images = [UIImage]()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+    }
+    
+    override func collectionView(collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        return images.count + 1
+    }
+
+    override func collectionView(collectionView: UICollectionView, cellForItemAtIndexPath indexPath: NSIndexPath) -> UICollectionViewCell {
+        // 1.创建或者取出cell
+        let cell = collectionView.dequeueReusableCellWithReuseIdentifier("cell", forIndexPath: indexPath) as! PhotoPickerViewCell
+        cell.delegate = self
+        
+        // 2.给cell设置数据
+        cell.image = indexPath.item >= images.count ? nil : images[indexPath.item]
+        
+        // 3.返回cell
+        return cell
+    }
+}
+
+extension PhotoPickerViewController : PhotoPickerViewCellDelegate
+{
+    func photoPickerViewCellAddPhotoBtnClick(cell: PhotoPickerViewCell) {
+        // 1.判断照片源是否可用
+        guard UIImagePickerController.isSourceTypeAvailable(UIImagePickerControllerSourceType.PhotoLibrary) else {
+            print("照片源不可用")
+            return
+        }
+        
+        // 2.创建照片选择控制器
+        let ipc = UIImagePickerController()
+        
+        // 3.设置照片源
+        ipc.sourceType = .PhotoLibrary
+        
+        // 4.设置代理
+        ipc.delegate = self
+        
+        // 5.弹出照片选择控制器
+        presentViewController(ipc, animated: true, completion: nil)
+    }
+    
+    func photoPickerViewCellRemovePhotoBtnClick(cell: PhotoPickerViewCell) {
+        // 1.移除选中的照片
+        let indexPath = collectionView!.indexPathForCell(cell)!
+        images.removeAtIndex(indexPath.item)
+        
+        // 2.刷新表格
+        collectionView?.reloadData()
+    }
+}
+
+extension PhotoPickerViewController : UIImagePickerControllerDelegate, UINavigationControllerDelegate
+{
+    func imagePickerController(picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [String : AnyObject]) {
+        // 1.获取选择的照片
+        let image = info["UIImagePickerControllerOriginalImage"] as! UIImage
+        
+        // 2.退出控制器
+        picker.dismissViewControllerAnimated(true, completion: nil)
+        
+        
+        // 3.用collectionView显示照片
+        // 3.1.将照片存放到数组中
+        images.append(image)
+        
+        // 3.2.刷新表格
+        collectionView?.reloadData()
+    }
+}
+
+    
+
+    
+@objc
+protocol PhotoPickerViewCellDelegate : NSObjectProtocol {
+    optional func photoPickerViewCellAddPhotoBtnClick(cell : PhotoPickerViewCell)
+    optional func photoPickerViewCellRemovePhotoBtnClick(cell : PhotoPickerViewCell)
+}
+
+
+
+class PhotoPickerViewCell : UICollectionViewCell {
+    
+    // 代理属性
+    var delegate : PhotoPickerViewCellDelegate?
+    
+    // 添加照片的btn
+    @IBOutlet weak var addPhotoBtn: UIButton!
+    
+    // 移除照片的btn
+    @IBOutlet weak var removePhotoBtn: UIButton!
+    
+    // UIImage接口的属性
+    var image : UIImage? {
+        didSet {
+            if image == nil {
+                addPhotoBtn.setBackgroundImage(UIImage(named: "compose_pic_add"), forState: UIControlState.Normal)
+                addPhotoBtn.setBackgroundImage(UIImage(named: "compose_pic_add_highlighted"), forState: UIControlState.Highlighted)
+                addPhotoBtn.userInteractionEnabled = true
+                removePhotoBtn.hidden = true
+            } else {
+                addPhotoBtn.setBackgroundImage(image, forState: UIControlState.Normal)
+                addPhotoBtn.userInteractionEnabled = false
+                removePhotoBtn.hidden = false
+            }
+        }
+    }
+    
+    // 监听添加照片按钮的点击
+    @IBAction func addPhotoBtnClick() {
+        if let tempDelegate = delegate {
+            if tempDelegate.respondsToSelector("photoPickerViewCellAddPhotoBtnClick:") {
+                tempDelegate.photoPickerViewCellAddPhotoBtnClick!(self)
+            }
+        }
+    }
+    
+    // 监听移除照片按钮的点击
+    @IBAction func removeBtnClick() {
+        if let tempDelegate = delegate {
+            if tempDelegate.respondsToSelector("photoPickerViewCellRemovePhotoBtnClick:") {
+                tempDelegate.photoPickerViewCellRemovePhotoBtnClick!(self)
+            }
+        }
+    }
+}
+
+
+class PhotoPickerCollectionViewLayout : UICollectionViewFlowLayout {
+    override func prepareLayout() {
+        super.prepareLayout()
+        
+        // 1.定义常量
+        let margin : CGFloat = 20
+        let col : CGFloat = 3
+        
+        // 2.计算item的宽度和高度,以及设置item的宽度和高度
+        let itemWH = (collectionView!.bounds.width - margin * (col + 1)) / col
+        itemSize = CGSize(width: itemWH, height: itemWH)
+        
+        // 3.设置其他属性
+        minimumInteritemSpacing = margin
+        minimumLineSpacing = margin
+        
+        // 4.设置内边距
+        sectionInset = UIEdgeInsets(top: margin, left: margin, bottom: 0, right: margin)
+    }
+}
