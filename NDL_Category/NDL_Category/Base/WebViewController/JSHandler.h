@@ -9,6 +9,7 @@
 #import <Foundation/Foundation.h>
 #import <WebKit/WebKit.h>
 
+// https://www.cnblogs.com/someonelikeyou/p/6890587.html
 @interface JSHandler : NSObject
 
 - (instancetype)initWithViewController:(UIViewController *)vc configuration:(WKWebViewConfiguration *)configuration;

@@ -1,0 +1,70 @@
+队列FIFO(First In First Out),新的任务需要在队尾加入，读取任务则从队首部读取
+
+//挂起队列 
+dispatch_suspend(queque);
+//恢复队列
+dispatch_resume(queue);
+挂起对已经执行的任务没有影响，会暂停所有未执行的任务以及后续追加的任务
+恢复则会继续执行所有被挂起的任务
+
+================================================
+dispatch_queue_t mySerialDispatchQueue =
+    dispatch_queue_create("com.example.gcd.MySerialDispatchQueue", NULL);
+dispatch_queue_t globalDispatchQueueBackground =
+    dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0);
+dispatch_set_target_queue(mySerialDispatchQueue, globalDispatchQueueBackground);
+dispatch_set_target_queue主要有两个作用:
+1.设置优先级，自建的队列优先级默认和系统队列优先级一致，设置参数1队列的优先级和参数2的优先级一致，显然你不能设置系统全局队列和主队列优先级
+2.更改队列的执行层级，如果多个串行队列设置函数目标串行队列是某一个串行队列，原本并发执行的串行队列，在目标串行队列上只能依次执行，代码示例如下
+    dispatch_queue_t targetQueue = dispatch_queue_create("test.target.queue", DISPATCH_QUEUE_SERIAL);
+    dispatch_queue_t queue1 = dispatch_queue_create("test.1", DISPATCH_QUEUE_SERIAL);
+    dispatch_queue_t queue2 = dispatch_queue_create("test.2", DISPATCH_QUEUE_SERIAL);
+    dispatch_queue_t queue3 = dispatch_queue_create("test.3", DISPATCH_QUEUE_SERIAL);
+    dispatch_set_target_queue(queue1, targetQueue);
+    dispatch_set_target_queue(queue2, targetQueue);
+    dispatch_set_target_queue(queue3, targetQueue);
+    dispatch_async(queue1, ^{
+        NSLog(@"1 in");
+        [NSThread sleepForTimeInterval:3.f];
+        NSLog(@"1 out");
+    });
+    dispatch_async(queue2, ^{
+        NSLog(@"2 in");
+        [NSThread sleepForTimeInterval:2.f];
+        NSLog(@"2 out");
+    });
+    dispatch_async(queue3, ^{
+        NSLog(@"3 in");
+        [NSThread sleepForTimeInterval:1.f];
+        NSLog(@"3 out");
+    });
+
+================================================
+有时候创建两组并发任务，如果在中间加入栅栏，那么这个任务会在第一组任务完成后执行，并且第二组任务会在栅栏任务完成后才开始执行
+
+dispatch_barrier只会对自建的队列生效，对于系统的mainQueue和GlobalQueue不起作用
+
+dispatch_barrier_async和dispatch_barrier_sync的区别也同样在于同步和异步，dispatch_barrier_async不会等待自己任务执行完毕才会在队列中添加其他任务，而dispatch_barrier_sync会等待自己任务执行完毕后才会在队列中添加其他任务。
+AFNetworking中大量使用dispatch_barrier_async做数据存储，可以看到dispatch_barrier_async也可以实现串行同步队列效果，相比于dispatch_sync容易产生死锁（在串行队列中同步添加该串行队列任务即会发生死锁),dispatch_barrier_async更加安全
+
+================================================
+dispatch source是一个监视某些类型事件的对象
+
+dispatch_queue_t globalQueue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
+//定时器作为属性创建
+     self.timerSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+    //开始时间
+    dispatch_time_t start = dispatch_time(DISPATCH_TIME_NOW, 3.0 * NSEC_PER_SEC);
+    //间隔时间
+    uint64_t interval = 2.0 * NSEC_PER_SEC;
+  //设置时间
+    dispatch_source_set_timer( self.timerSource start, interval, 0);
+
+    //设置回调
+    dispatch_source_set_event_handler( self.timerSource, ^{
+        //处理事件
+    });
+
+    //启动定时器
+    dispatch_resume( self.timerSource);
+   

@@ -10,6 +10,8 @@
 #import <CommonCrypto/CommonDigest.h>
 #import "CommonDefines.h"
 
+#define FileHashDefaultChunkSizeForReadingData (1024 * 8)
+
 @implementation NSString (NDLExtension)
 
 - (BOOL)ndl_isPhoneNumber
@@ -303,6 +305,84 @@ Unicode: U+1F928，UTF-8: F0 9F A4 A8
     return letter;
 }
 
++ (instancetype)ndl_hexStringWithLength:(NSUInteger)length fromDecimalSystemValue:(NSInteger)value
+{
+    NSString *hexStr = [self ndl_hexStringFromDecimalSystemValue:value];
+    NSUInteger deltaLength = length - hexStr.length;
+    if (deltaLength > 0) {
+        for (NSInteger i = 0; i < deltaLength; i++) {
+            hexStr = [NSString stringWithFormat:@"0%@", hexStr];
+        }
+    }
+    return hexStr;
+}
+
+- (NSUInteger)ndl_hex2Decimal
+{
+    return strtoul([self UTF8String], 0, 16);
+}
+
+- (NSUInteger)ndl_binary2Decimal
+{
+    NSUInteger decimalValue = 0;
+    NSInteger bitValue = 0;
+    for (NSInteger i = 0; i < self.length; i++) {
+        bitValue = [[self substringWithRange:NSMakeRange(i, 1)] integerValue];
+        bitValue = (NSInteger)(bitValue * powf(2, self.length - i - 1));
+        decimalValue += bitValue;
+    }
+    return decimalValue;
+}
+
++ (instancetype)ndl_binaryStringFromDecimalSystemValue:(NSInteger)value
+{
+    NSInteger remainder = 0;// 余数
+    NSInteger quotient = 0;// 商
+//    NSInteger divisor = 0;// 除数
+    NSString *binaryStr = @"";// 倒序的二进制
+    
+    while (true) {
+        remainder = value % 2;
+        quotient = value / 2;
+        value = quotient;
+        
+        binaryStr = [binaryStr stringByAppendingFormat:@"%ld", remainder];
+        
+        if (quotient == 0) {
+            break;
+        }
+    }
+    
+    NSString *resultStr = @"";
+    
+    // 正确的二进制（倒序->顺序）
+    for (NSInteger i = binaryStr.length - 1; i >= 0 ; i--) {
+        resultStr = [resultStr stringByAppendingString:[binaryStr substringWithRange:NSMakeRange(i, 1)]];
+    }
+    
+    // 补成8位
+    return [NSString stringWithFormat:@"%08ld", [resultStr integerValue]];
+}
+
+- (NSData *)ndl_dataFromHexString
+{
+    NSMutableData *data = [NSMutableData data];
+    
+    NSScanner *scanner = nil;
+    NSString *tempHexStr = nil;
+
+    for (NSInteger i = 0; (i + 2) <= self.length; i += 2) {
+        tempHexStr = [self substringWithRange:NSMakeRange(i, 2)];
+        scanner = [NSScanner scannerWithString:tempHexStr];
+        //    UInt32
+        unsigned int intValue = 0;
+        [scanner scanHexInt:&intValue];
+        [data appendBytes:&intValue length:1];// 1个字节
+    }
+    
+    return data;
+}
+
 - (instancetype)ndl_trim
 {
     return [self stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -392,6 +472,76 @@ Unicode: U+1F928，UTF-8: F0 9F A4 A8
     NSString *regex = @"[a-zA-Z]*";
     NSPredicate *predicate = [NSPredicate predicateWithFormat:@"SELF MATCHES %@",regex];
     return [predicate evaluateWithObject:self];
+}
+
++ (instancetype)ndl_fileMD5WithFilePath:(NSString *)filePath
+{
+    if (filePath) {
+        return (__bridge_transfer NSString *)FileMD5HashCreateWithPath((__bridge CFStringRef)filePath, FileHashDefaultChunkSizeForReadingData);
+    } else {
+        return @"";
+    }
+}
+
+CFStringRef FileMD5HashCreateWithPath(CFStringRef filePath,size_t chunkSizeForReadingData) {
+    // Declare needed variables
+    CFStringRef result = NULL;
+    CFReadStreamRef readStream = NULL;
+    // Get the file URL
+    CFURLRef fileURL =
+    CFURLCreateWithFileSystemPath(kCFAllocatorDefault,
+                                  (CFStringRef)filePath,
+                                  kCFURLPOSIXPathStyle,
+                                  (Boolean)false);
+    if (!fileURL) goto done;
+    // Create and open the read stream
+    readStream = CFReadStreamCreateWithFile(kCFAllocatorDefault,
+                                            (CFURLRef)fileURL);
+    if (!readStream) goto done;
+    bool didSucceed = (bool)CFReadStreamOpen(readStream);
+    if (!didSucceed) goto done;
+    // Initialize the hash object
+    CC_MD5_CTX hashObject;
+    CC_MD5_Init(&hashObject);
+    // Make sure chunkSizeForReadingData is valid
+    if (!chunkSizeForReadingData) {
+        chunkSizeForReadingData = FileHashDefaultChunkSizeForReadingData;
+    }
+    // Feed the data to the hash object
+    bool hasMoreData = true;
+    while (hasMoreData) {
+        uint8_t buffer[chunkSizeForReadingData];
+        CFIndex readBytesCount = CFReadStreamRead(readStream,(UInt8 *)buffer,(CFIndex)sizeof(buffer));
+        if (readBytesCount == -1) break;
+        if (readBytesCount == 0) {
+            hasMoreData = false;
+            continue;
+        }
+        CC_MD5_Update(&hashObject,(const void *)buffer,(CC_LONG)readBytesCount);
+    }
+    // Check if the read operation succeeded
+    didSucceed = !hasMoreData;
+    // Compute the hash digest
+    unsigned char digest[CC_MD5_DIGEST_LENGTH];
+    CC_MD5_Final(digest, &hashObject);
+    // Abort if the read operation failed
+    if (!didSucceed) goto done;
+    // Compute the string result
+    char hash[2 * sizeof(digest) + 1];
+    for (size_t i = 0; i < sizeof(digest); ++i) {
+        snprintf(hash + (2 * i), 3, "%02x", (int)(digest[i]));
+    }
+    result = CFStringCreateWithCString(kCFAllocatorDefault,(const char *)hash,kCFStringEncodingUTF8);
+    
+done:
+    if (readStream) {
+        CFReadStreamClose(readStream);
+        CFRelease(readStream);
+    }
+    if (fileURL) {
+        CFRelease(fileURL);
+    }
+    return result;
 }
 
 @end

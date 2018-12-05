@@ -58,6 +58,16 @@
 
 // 十进制数字->十六进制字符串 “10”->“A”
 + (instancetype)ndl_hexStringFromDecimalSystemValue:(NSInteger)value;
+// 十进制数字->十六进制字符串（设置十六进制长度，不足补0）
++ (instancetype)ndl_hexStringWithLength:(NSUInteger)length fromDecimalSystemValue:(NSInteger)value;
+// 十六进制字符串->十进制数字
+- (NSUInteger)ndl_hex2Decimal;
+// 二进制字符串->十进制数字
+- (NSUInteger)ndl_binary2Decimal;
+// 十进制数字->二进制字符串
++ (instancetype)ndl_binaryStringFromDecimalSystemValue:(NSInteger)value;
+// 十六进制字符串->NSData
+- (NSData *)ndl_dataFromHexString;
 
 // 去除头尾空白字符(空格)
 - (instancetype)ndl_trim;
@@ -92,5 +102,7 @@
 // 是否全字母
 - (BOOL)ndl_isWholeLetter;
 // 字母或数字 @"[a-zA-Z0-9]*"
+
++ (instancetype)ndl_fileMD5WithFilePath:(NSString *)filePath;
 
 @end

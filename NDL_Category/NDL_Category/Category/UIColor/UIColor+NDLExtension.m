@@ -62,4 +62,25 @@
     return [UIColor colorWithRed:r green:g blue:b alpha:1.0];
 }
 
++ (instancetype)ndl_interpolationColorWithFromColor:(UIColor *)fromColor toColor:(UIColor *)toColor percentComplete:(CGFloat)percentComplete
+{
+    CGFloat fromRed = 0.0;
+    CGFloat fromGreen = 0.0;
+    CGFloat fromBlue = 0.0;
+    CGFloat fromAlpha = 0.0;
+    [fromColor getRed:&fromRed green:&fromGreen blue:&fromBlue alpha:&fromAlpha];
+    
+    CGFloat toRed = 0.0;
+    CGFloat toGreen = 0.0;
+    CGFloat toBlue = 0.0;
+    CGFloat toAlpha = 0.0;
+    [toColor getRed:&toRed green:&toGreen blue:&toBlue alpha:&toAlpha];
+    
+    CGFloat newRed = fromRed + (toRed - fromRed) * percentComplete;
+    CGFloat newGreen = fromGreen + (toGreen - fromGreen) * percentComplete;
+    CGFloat newBlue = fromBlue + (toBlue - fromBlue) * percentComplete;
+    CGFloat newAlpha = fromAlpha + (toAlpha - fromAlpha) * percentComplete;
+    return [UIColor colorWithRed:newRed green:newGreen blue:newBlue alpha:newAlpha];
+}
+
 @end

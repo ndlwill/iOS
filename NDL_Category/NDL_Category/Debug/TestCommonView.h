@@ -8,6 +8,10 @@
 
 #import <UIKit/UIKit.h>
 
+/*
+ @"https://raw.githubusercontent.com/mengxianliang/XLImageViewer/master/Images/12.png"
+ @"https://raw.githubusercontent.com/mengxianliang/XLPlayButton/master/GIF/1.gif"
+ */
 @interface TestCommonView : UIView
 
 

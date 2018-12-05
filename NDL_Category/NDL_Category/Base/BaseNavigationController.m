@@ -28,7 +28,8 @@
     
     UINavigationBar *bar = [UINavigationBar appearance];
     // 使得self.navigationBar.translucent = NO
-    [bar setBackgroundImage:[UIImage ndl_imageWithColor:[UIColor ndl_randomColor] size:CGSizeMake(1.0, 1.0)] forBarMetrics:UIBarMetricsDefault];
+//    [bar setBackgroundImage:[UIImage ndl_imageWithColor:[UIColor ndl_randomColor] size:CGSizeMake(1.0, 1.0)] forBarMetrics:UIBarMetricsDefault];
+    
     [bar setTitleTextAttributes:@{NSFontAttributeName : [UIFont boldSystemFontOfSize:20]}];
     
     // 设置item
@@ -44,7 +45,8 @@
     itemDisabledAttrs[NSForegroundColorAttributeName] = [UIColor lightGrayColor];
     [item setTitleTextAttributes:itemDisabledAttrs forState:UIControlStateDisabled];
     
-//    [bar setShadowImage:[[UIImage alloc] init]];// 去除ShadowImage
+    // 去除ShadowImage
+//    [bar setShadowImage:[[UIImage alloc] init]];
 }
 
 /**
@@ -100,7 +102,7 @@
 //    self.interactivePopGestureRecognizer.enabled = YES;
     
     // 如果边缘右滑移除控制器的功能失效，清空代理(让导航控制器重新设置这个功能)
-//    self.interactivePopGestureRecognizer.delegate = nil;// 设置了viewController.navigationItem.leftBarButtonItem需要设置这个
+    self.interactivePopGestureRecognizer.delegate = nil;// 设置了viewController.navigationItem.leftBarButtonItem需要设置这个
 }
 
 #pragma mark - Private Methods

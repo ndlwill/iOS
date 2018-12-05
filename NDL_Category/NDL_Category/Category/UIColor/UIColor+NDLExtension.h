@@ -13,6 +13,10 @@
 // (eg:@"#ccff88")
 + (instancetype)ndl_colorWithHexString:(NSString *)hexString;
 
+// 随机颜色
 + (instancetype)ndl_randomColor;
+
+// 插值颜色
++ (instancetype)ndl_interpolationColorWithFromColor:(UIColor *)fromColor toColor:(UIColor *)toColor percentComplete:(CGFloat)percentComplete;
 
 @end

@@ -10,6 +10,6 @@
 
 @interface UINavigationController (NDLExtension)
 
-
+- (void)setNavBarFirstSubViewAlpha:(CGFloat)alpha;
 
 @end

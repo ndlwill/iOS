@@ -42,6 +42,18 @@
 // 播放自定义声音
 + (void)playCustomSoundWithPath:(NSString *)resourcePath;
 
++ (NSArray *)bubbleSort:(NSArray *)array;
+
+// =====C Function=====
+// 冒泡排序
+void bubbleSort_C(int array[], int arrayLength);
+// 选择排序
+void selectionSort_C(int array[], int arrayLength);
+// 快速排序
+void quickSort_C(int array[], int minIndex, int maxIndex);
+// 二分查找(在排好序的基础上实现)
+
+
 // SSID全称Service Set IDentifier - wifi名称
 
 // ========test========

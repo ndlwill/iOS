@@ -57,7 +57,7 @@
 #import "AlipayPaymentSuccessAnimationView.h"
 
 #import "FirstViewController.h"
-
+#import <SystemConfiguration/CaptiveNetwork.h>
 #import <AddressBookUI/AddressBookUI.h>
 #import <ContactsUI/ContactsUI.h>
 
@@ -96,11 +96,17 @@
 #import "PersonAll.pbobjc.h"
 
 #import "NSDate+NDLExtension.h"
+#import <CoreLocation/CoreLocation.h>
+
+#import "TestNavBarAlphaViewController.h"
+#import "BaseNavigationController.h"
+
+#import "NSData+NDLExtension.h"
 
 typedef id (^WeakReference)(void);
 
 // TODO: Import
-@interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate>
+@interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate, CLLocationManagerDelegate>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
 
 @property (weak, nonatomic) UIView *touchView;
@@ -143,6 +149,8 @@ typedef id (^WeakReference)(void);
 
 @property (nonatomic, strong) Book *bookModel;
 
+@property (nonatomic, strong) CLLocationManager *locationManager;
+
 @end
 
 static NSInteger cc = 0;
@@ -158,6 +166,11 @@ static NSDateFormatter *dateFormatter_ = nil;
         _p_dic = [NSMutableDictionary dictionary];
     }
     return _p_dic;
+}
+
+- (void)locationManager:(CLLocationManager *)manager didUpdateLocations:(NSArray<CLLocation *> *)locations
+{
+    NSLog(@"didUpdateLocations");
 }
 
 #pragma mark - ABPeoplePickerNavigationControllerDelegate
@@ -377,6 +390,10 @@ static NSDateFormatter *dateFormatter_ = nil;
     
     [self presentViewController:[FirstViewController new] animated:YES completion:nil];
 }
+// TODO:testNavBarAlpha
+- (IBAction)presentNavVC:(id)sender {
+    [self presentViewController:[[BaseNavigationController alloc] initWithRootViewController:[TestNavBarAlphaViewController new]] animated:YES completion:nil];
+}
 
 - (void)viewDidAppear:(BOOL)animated
 {
@@ -475,9 +492,73 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
     return date;
 }
 
+- (void)testArr:(NSMutableArray *)arr
+{
+    arr[0] = @(100);// 这边改变，实参也会改变
+}
+
 - (void)viewDidLoad {
     NSLog(@"===ViewController viewDidLoad===");
     NSLog(@"date = %@ ceil = %lf", [NSDate date], ceil(6.3));// 7.0
+    
+    // 升序排序
+    int array[5] = {5, 18, 8 , 12, 25};
+    //    array[0] = 100;// 能修改
+    int length = sizeof(array) / sizeof(int);
+//    bubbleSort_C(array, length);
+//    selectionSort_C(array, length);
+    quickSort_C(array, 0, length - 1);
+    for (int i = 0; i < length; i++) {
+        printf("%d\n", array[i]);
+    }
+    
+    
+    // 1
+    NSLog(@"cur = %@", [NSThread currentThread]);// main
+    // 2
+    dispatch_sync(dispatch_queue_create("serial1", DISPATCH_QUEUE_SERIAL), ^{
+        NSLog(@"sync-ser = %@", [NSThread currentThread]);// main
+    });
+    // 4
+    dispatch_async(dispatch_queue_create("serial2", DISPATCH_QUEUE_SERIAL), ^{
+        NSLog(@"async-ser = %@", [NSThread currentThread]);// new thread
+    });
+    // 3
+    NSLog(@"thread end");
+    
+    
+    NSLog(@"test set target");
+    dispatch_queue_t targetQueue = dispatch_queue_create("test.target.queue", DISPATCH_QUEUE_SERIAL);
+    dispatch_queue_t queue1 = dispatch_queue_create("test.1", DISPATCH_QUEUE_SERIAL);
+    dispatch_queue_t queue2 = dispatch_queue_create("test.2", DISPATCH_QUEUE_SERIAL);
+    dispatch_queue_t queue3 = dispatch_queue_create("test.3", DISPATCH_QUEUE_SERIAL);
+    dispatch_set_target_queue(queue1, targetQueue);
+    dispatch_set_target_queue(queue2, targetQueue);
+    dispatch_set_target_queue(queue3, targetQueue);
+    dispatch_async(queue1, ^{
+        NSLog(@"1 in");
+        [NSThread sleepForTimeInterval:8.f];
+        NSLog(@"1 out");
+    });
+    dispatch_async(queue2, ^{
+        NSLog(@"2 in");
+        [NSThread sleepForTimeInterval:5.f];
+        NSLog(@"2 out");
+    });
+    dispatch_async(queue3, ^{
+        NSLog(@"3 in");
+        [NSThread sleepForTimeInterval:1.f];
+        NSLog(@"3 out");
+    });
+    
+    // location
+    self.locationManager = [[CLLocationManager alloc] init];
+    self.locationManager.allowsBackgroundLocationUpdates = YES;
+    self.locationManager.desiredAccuracy = kCLLocationAccuracyBest;
+    self.locationManager.delegate = self;
+    [self.locationManager requestAlwaysAuthorization];
+    [self.locationManager startUpdatingLocation];
+    
     
     NSLog(@"date = %@ ndl_date = %@", [NSDate date], [NSDate ndl_currentDate]);
     
@@ -582,8 +663,33 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
     Byte *testByte = (Byte *)testData.bytes;
     NSLog(@"testByte = %s###", testByte);
     
+    // imageData
     NSData *imageData = [NSData dataWithContentsOfFile:[MainBundle pathForResource:@"girl" ofType:@"jpeg"]];
-    NSLog(@"=====imageDataLen = %lu=====", imageData.length);
+    NSUInteger imageDataLen = imageData.length;
+    NSLog(@"=====imageDataLen = %lu=====", imageDataLen);
+//    NSString *dataStr = [imageData ndl_convertData2StrWithSpliceStr:@"-"];
+//    NSString *dataHexStr = [imageData ndl_convertData2HexStr];
+    
+    // test scanner
+//    NSScanner *scanner = [NSScanner scannerWithString:@"ff"];// 0xff也行
+//    unsigned int hexInt = 0;
+//    [scanner scanHexInt:&hexInt];
+//    NSLog(@"hexInt = %u", hexInt);// 255
+    
+    NSLog(@"%ld", [@"0023400" integerValue]);// 23400
+    NSLog(@"%@-%@", [NSString ndl_binaryStringFromDecimalSystemValue:7], [NSString ndl_binaryStringFromDecimalSystemValue:32]);
+    
+    // =============================
+    //    int32_t headL = 0;
+    //    int32_t contentL = [self getContentLength:imageData withHeadLength:&headL];
+    //    NSLog(@"headL = %d contentL = %d", headL, contentL);
+    
+    // fileMD5
+//    YYFileHash *fileHash = [YYFileHash hashForFile:[MainBundle pathForResource:@"girl" ofType:@"jpeg"] types:YYFileHashTypeMD5 | YYFileHashTypeSHA1];
+//    // md5:6da4f34633a60b6b6499e2a97b333b38
+//    NSLog(@"md5:%@ | sha1:%@", fileHash.md5String, fileHash.sha1String);
+//    // md5:6da4f34633a60b6b6499e2a97b333b38
+//    NSLog(@"md5:%@", [NSString ndl_fileMD5WithFilePath:[MainBundle pathForResource:@"girl" ofType:@"jpeg"]]);
     
 //    int32_t headL = 0;
 //    int32_t contentL = [self getContentLength:imageData withHeadLength:&headL];
@@ -627,7 +733,8 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
         byteArray[2] = (Byte)((value & 0x0000FF00) >> 8);
         byteArray[3] = (Byte)(value & 0x000000FF);
         // NSLog(@"NSIntegerMax = %ld NSUIntegerMax = %lu", NSIntegerMax, NSUIntegerMax);
-        // ff -> 255
+        // hex（16进制） -> 10进制 -> 2进制
+        // ff -> 255 -> 11111111
         NSLog(@"byte1 = %d byte2 = %d byte3 = %d byte4 = %d", byteArray[0], byteArray[1], byteArray[2], byteArray[3]);// 10进制 0,0,181,190
         NSLog(@"byte1 = %o byte2 = %o byte3 = %o byte4 = %o", byteArray[0], byteArray[1], byteArray[2], byteArray[3]);// 8进制 0,0,265,276
         NSLog(@"byte1 = %x byte2 = %x byte3 = %x byte4 = %x", byteArray[0], byteArray[1], byteArray[2], byteArray[3]);// 每个字节是0,0,b5,be(16进制) -> 0000b5be
@@ -1551,6 +1658,8 @@ NSLog(@"viewDidLoad 22");
 
 - (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath
 {
+    NSLog(@"=====#####indexItem = %ld", indexPath.item);
+    
     PhotoCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"PhotoCell" forIndexPath:indexPath];
     cell.text = [NSString stringWithFormat:@"%ld", indexPath.item];
     

@@ -1,0 +1,107 @@
+AVAudioSession就是用来管理多个APP对音频硬件设备（麦克风，扬声器）的资源使用
+
+AVAudioSession可以做这些事情:
+设置自己的APP是否和其他APP音频同时存在，还是中断其他APP声音
+在手机调到静音模式下，自己的APP音频是否可以播放出声音
+电话或者其他APP中断自己APP的音频的事件处理
+指定音频输入和输出的设备（比如是听筒输出声音，还是扬声器输出声音）
+是否支持录音，录音同时是否支持音频播放
+
+APP启动的时候会自动帮激活AVAudioSession，当然我们可以手动激活
+//导入头文件
+#import <AVFoundation/AVFoundation.h>
+
+//AVAudioSession是一个单例类
+AVAudioSession *session = [AVAudioSession sharedInstance];
+//AVAudioSessionCategorySoloAmbient是系统默认的category
+[session setCategory:AVAudioSessionCategorySoloAmbient error:nil];
+//激活AVAudioSession
+[session setActive:YES error:nil];
+
+设置session这里有两个参数，category和options
+
+Category iOS下目前有七种，每种Category都对应是否支持下面四种能力
+Interrupts non-mixable apps audio：是否打断不支持混音播放的APP
+Silenced by the Silent switch：是否会响应手机静音键开关
+Supports audio input：是否支持音频录制
+Supports audio output：是否支持音频播放
+
+
+Category	是否允许音频播放/录音	是否打断其他不支持混音APP	是否会被静音键或锁屏键静音
+AVAudioSessionCategoryAmbient	只支持播放	否	是
+AVAudioSessionCategoryAudioProcessing	不支持播放，不支持录制	是	否
+AVAudioSessionCategoryMultiRoute	支持播放，支持录制	是	否
+AVAudioSessionCategoryPlayAndRecord	支持播放，支持录制	默认YES，可以重写为NO	否
+AVAudioSessionCategoryPlayback	只支持播放	默认YES，可以重写为NO	否
+AVAudioSessionCategoryRecord	只支持录制	是	否（锁屏下仍可录制）
+AVAudioSessionCategorySoloAmbient	只支持播放	是	是
+
+AVAudioSessionCategoryPlayback，只支持音频播放。你的音频不会被静音键和锁屏键静音。适用于音频是主要功能的APP，像网易云这些音乐app，锁屏后依然可以播放
+AVAudioSessionCategoryPlayAndRecord，支持音频播放和录制。音频的输入和输出不需要同步进行，也可以同步进行。需要音频通话类应用，可以使用这个 Category
+AVAudioSessionCategoryMultiRoute，支持音频播放和录制。允许多条音频流的同步输入和输出。（比如USB连接外部扬声器输出音频，蓝牙耳机同时播放另一路音频这种特殊需求）
+
+选择支持在静音键切到静音状态以及锁屏键切到锁屏状态下仍然可以播放音频 Category 时，必须在应用中开启支持后台音频功能
+
+
+读取当前设备支持的Category,这样可以保证设备兼容性
+@property(readonly) NSArray<NSString *> *availableCategories
+获取当前设备支持的Mode
+@property(readonly) NSArray<NSString *> *availableModes;
+
+
+=============七种mode来定制我们的Category行为
+
+模式	  兼容的Category	  场景
+AVAudioSessionModeDefault	All	默认模式
+AVAudioSessionModeVoiceChat	AVAudioSessionCategoryPlayAndRecord	VoIP
+AVAudioSessionModeGameChat	AVAudioSessionCategoryPlayAndRecord	游戏录制，GKVoiceChat自动设置
+AVAudioSessionModeVideoRecording	AVAudioSessionCategoryPlayAndRecord AVAudioSessionCategoryRecord	录制视频
+AVAudioSessionModeMoviePlayback	AVAudioSessionCategoryPlayback	视频播放
+AVAudioSessionModeMeasurement	AVAudioSessionCategoryPlayAndRecord AVAudioSessionCategoryRecord AVAudioSessionCategoryPlayback	最小系统
+AVAudioSessionModeVideoChat	AVAudioSessionCategoryPlayAndRecord	视频通话
+
+
+VAudioSessionModeVoiceChat，适用于VoIP 类型的应用。只能是 AVAudioSessionCategoryPlayAndRecord Category下。在这个模式系统会自动配置AVAudioSessionCategoryOptionAllowBluetooth 这个选项。系统会自动选择最佳的内置麦克风组合支持语音聊天
+
+AVAudioSessionModeVideoChat，用于视频聊天类型应用，只能是 AVAudioSessionCategoryPlayAndRecord Category下。适在这个模式系统会自动配置 AVAudioSessionCategoryOptionAllowBluetooth 和 AVAudioSessionCategoryOptionDefaultToSpeaker 选项。系统会自动选择最佳的内置麦克风组合支持视频聊天
+
+AVAudioSessionModeVideoRecording，适用于使用摄像头采集视频的应用。只能是 AVAudioSessionCategoryPlayAndRecord 和 AVAudioSessionCategoryRecord 这两个 Category下。这个模式搭配 AVCaptureSession API 结合来用可以更好地控制音视频的输入输出路径。(例如，设置 automaticallyConfiguresApplicationAudioSession 属性，系统会自动选择最佳输出路径
+
+AVAudioSessionModeMoviePlayback，适用于播放视频的应用。只用于 AVAudioSessionCategoryPlayback 这个Category。
+
+=============Options
+Option	Option功能说明	兼容的 Category
+AVAudioSessionCategoryOptionMixWithOthers	支持和其他APP音频 mix	AVAudioSessionCategoryPlayAndRecord AVAudioSessionCategoryPlayback AVAudioSessionCategoryMultiRoute
+AVAudioSessionCategoryOptionDuckOthers	系统智能调低其他APP音频音量	AVAudioSessionCategoryPlayAndRecord AVAudioSessionCategoryPlayback AVAudioSessionCategoryMultiRoute
+AVAudioSessionCategoryOptionAllowBluetooth	支持蓝牙音频输入	AVAudioSessionCategoryRecord AVAudioSessionCategoryPlayAndRecord
+AVAudioSessionCategoryOptionDefaultToSpeaker	设置默认输出音频到扬声器	AVAudioSessionCategoryPlayAndRecord
+
+通过Category和合适的Mode和Options的搭配我们可以调优出我们的效果
+
+用过高德地图的都知道，在后台播放QQ音乐的时候，如果导航语音出来，QQ音乐不会停止，而是被智能压低和混音，等导航语音播报完后，QQ音乐正常播放，这里我们需要后台播放音乐，所以Category使用AVAudioSessionCategoryPlayback，需要混音和智能压低其他APP音量，所以Options选用 AVAudioSessionCategoryOptionMixWithOthers和AVAudioSessionCategoryOptionDuckOthers
+
+=============音频中断处理
+其他APP或者电话会中断我们的APP音频，所以相应的我们要做出处理。
+我们可以通过监听AVAudioSessionInterruptionNotification这个key获取音频中断事件
+
+回调回来Userinfo有键值:
+AVAudioSessionInterruptionTypeKey：
+取值AVAudioSessionInterruptionTypeBegan表示中断开始
+取值AVAudioSessionInterruptionTypeEnded表示中断结束
+
+中断开始：我们需要做的是保存好播放状态，上下文，更新用户界面等
+中断结束：我们要做的是恢复好状态和上下文，更新用户界面，根据需求准备好之后选择是否激活我们session
+
+
+选择不同的音频播放技术，处理中断方式也有差别，具体如下:
+System Sound Services：使用 System Sound Services 播发音频，系统会自动处理，不受APP控制，当中断发生时，音频播放会静音，当中断结束后，音频播放会恢复。
+
+AV Foundation framework：AVAudioPlayer 类和 AVAudioRecorder 类提供了中断开始和结束的 Delegate 回调方法来处理中断。中断发生，系统会自动停止播放，需要做的是记录播放时间等状态，更新用户界面，等中断结束后，再次调用播放方法，系统会自动激活session。
+
+Audio Queue Services, I/O audio unit：使用aduio unit这些技术需要处理中断，需要做的是记录播放或者录制的位置，中断结束后自己恢复audio session。
+
+OpenAL：使用 OpenAL 播放时，同样需要自己监听中断。管理 OpenAL上下文，用户中断结束后恢复audio session。
+
+
+
+需要注意的是：1. 有中断开始事件，不一定对应有中断结束事件，所以需要在用户进入前台，点击UI操作的时候，需要保存好播放状态和对Audio Session管理，以便不影响APP的音频功能。2.音频资源竞争上，一定是电话优先。3. AVAudioSession同样可以监听外设音频状态，比如耳机拔入拔出。
