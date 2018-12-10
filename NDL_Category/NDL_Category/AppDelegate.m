@@ -14,6 +14,7 @@
 #import <UserNotifications/UserNotifications.h>
 #import "SecondViewController.h"
 #import <PushKit/PushKit.h> // iOS8.0
+#import <FBMemoryProfiler/FBMemoryProfiler.h>
 
 static NSInteger badgeCount = 0;
 @interface AppDelegate () <PKPushRegistryDelegate>
@@ -22,6 +23,9 @@ static NSInteger badgeCount = 0;
 
 // test bgTask
 @property (nonatomic, strong) NSTimer *timer;
+
+// will show up as a button on the screen. Once tapped, it will open memory profiler in full size mode
+@property (nonatomic, strong) FBMemoryProfiler *memoryProfiler;
 
 @end
 
@@ -59,6 +63,10 @@ static NSInteger badgeCount = 0;
     [UIViewController aspect_hookSelector:@selector(viewDidLoad) withOptions:AspectPositionAfter usingBlock:^(id<AspectInfo> aspectInfo){
 //        NSLog(@"===123456===");
     } error:nil];
+    
+    
+    self.memoryProfiler = [[FBMemoryProfiler alloc] init];
+    [self.memoryProfiler enable];
     
 //    self.bgTask = [application beginBackgroundTaskWithExpirationHandler:^{
 //        [application endBackgroundTask:self.bgTask];

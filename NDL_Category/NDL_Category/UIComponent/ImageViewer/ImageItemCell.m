@@ -464,6 +464,9 @@ static CGFloat const minImageScale = 0.2f;
         case UIGestureRecognizerStateEnded:
         {
             NSLog(@"UIGestureRecognizerStateEnded");
+//            CGRect imageViewFrame = self.imageView.frame;
+//            self.imageView.transform = CGAffineTransformIdentity;
+//            self.imageView.frame = imageViewFrame;
             if (ABS(translation.y) >= (NDLScreenH / 4.0)) {// dismiss消失
                 [UIView animateWithDuration:0.3 animations:^{
                     self.imageView.frame = self.thumbnailImageRect;

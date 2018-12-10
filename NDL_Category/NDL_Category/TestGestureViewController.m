@@ -73,6 +73,7 @@
 {
     // frame改变了
     NSLog(@"frame = %@ tran = %@", NSStringFromCGRect(self.scrollView.frame), NSStringFromCGAffineTransform(self.scrollView.transform));// frame = {{120, 170}, {100, 90}}
+    
 }
 
 - (void)viewDidAppear:(BOOL)animated
@@ -83,8 +84,9 @@
 //    self.scrollView.transform = CGAffineTransformMakeScale(0.5, 0.5);// size = {100, 90} halfSize = {50, 45}
 //    self.scrollView.transform = CGAffineTransformMakeTranslation(50, 45);
     // 同时有效果
-    self.scrollView.transform = CGAffineTransformMake(0.5, 0, 0, 0.5, 50, 45);
-    
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        self.scrollView.transform = CGAffineTransformMake(0.5, 0, 0, 0.5, 50, 45);
+    });
 }
 
 - (void)scrollViewPan:(UIPanGestureRecognizer *)gesture

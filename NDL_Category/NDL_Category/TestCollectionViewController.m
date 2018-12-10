@@ -62,6 +62,7 @@
     self.draggableCollectionView = draggableCollectionView;
     
     UIButton *soundBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    [soundBtn setTitle:@"PlaySystemSound" forState:UIControlStateNormal];
     soundBtn.backgroundColor = [UIColor blackColor];
     soundBtn.frame = CGRectMake(10, self.view.height / 2.0 + 20, 60, 40);
     [self.view addSubview:soundBtn];
@@ -71,8 +72,22 @@
 #pragma mark - Button Actions
 - (void)soundBtnDidClicked
 {
+    // iOS10.0
+//    UIImpactFeedbackGenerator *generator = [[UIImpactFeedbackGenerator alloc] initWithStyle: UIImpactFeedbackStyleLight];
+//    [generator prepare];
+//    [generator impactOccurred];
+    
+    // 长震
 //    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);
 //    AudioServicesPlaySystemSound(1007);
+    
+    // 可能是private methods
+    // 普通短震，3D Touch 中 Peek 震动反馈
+//    AudioServicesPlaySystemSound(1519);
+    // 普通短震，3D Touch 中 Pop 震动反馈
+//    AudioServicesPlaySystemSound(1520);
+    // 连续三次短震
+//    AudioServicesPlaySystemSound(1521);
 }
 
 // test for editingModel

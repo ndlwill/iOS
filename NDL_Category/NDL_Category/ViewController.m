@@ -103,6 +103,8 @@
 
 #import "NSData+NDLExtension.h"
 
+#import <CoreML/CoreML.h>
+
 typedef id (^WeakReference)(void);
 
 // TODO: Import
