@@ -81,7 +81,7 @@
 //    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);
 //    AudioServicesPlaySystemSound(1007);
     
-    // 可能是private methods
+    // 可能是###private methods###
     // 普通短震，3D Touch 中 Peek 震动反馈
 //    AudioServicesPlaySystemSound(1519);
     // 普通短震，3D Touch 中 Pop 震动反馈
