@@ -503,6 +503,13 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
     NSLog(@"===ViewController viewDidLoad===");
     NSLog(@"date = %@ ceil = %lf", [NSDate date], ceil(6.3));// 7.0
     
+#pragma mark - crash
+    // ###crash###
+    //-[__NSPlaceholderDictionary initWithObjects:forKeys:count:]
+    // 字典初始化:这种初始化方式value为nil会崩溃，数组同理
+//    NSString *value111 = nil;
+//    NSDictionary *crashDic = @{@"key": value111};
+    
     // 升序排序
     int array[5] = {5, 18, 8 , 12, 25};
     //    array[0] = 100;// 能修改
