@@ -175,6 +175,67 @@
     CGContextDrawPath(context, kCGPathFillStroke);
 }
 
++ (void)drawRightAngleBubbleFrameInContext:(CGContextRef)context
+                                    inRect:(CGRect)inRect
+                                 lineWidth:(CGFloat)lineWidth
+                           lineStrokeColor:(CGColorRef)lineStrokeColor
+                                 fillColor:(CGColorRef)fillColor
+                              cornerRadius:(CGFloat)cornerRadius
+                        rightAnglePosition:(BubbleFrameRightAnglePosition)rightAnglePosition
+{
+    CGContextSetLineWidth(context, lineWidth);
+    CGContextSetStrokeColorWithColor(context, lineStrokeColor);
+    if (fillColor == NULL) {
+        CGContextSetFillColorWithColor(context, [UIColor whiteColor].CGColor);// 默认
+    } else {
+        CGContextSetFillColorWithColor(context, fillColor);
+    }
+    
+    CGContextBeginPath(context);
+    
+    // 边框范围
+    CGFloat minX = 0.0, maxX = 0.0;
+    CGFloat minY = 0.0, maxY = 0.0;
+    
+    minX = CGRectGetMinX(inRect) + lineWidth / 2.0;
+    minY = CGRectGetMinY(inRect) + lineWidth / 2.0;
+    maxX = CGRectGetMaxX(inRect) - lineWidth / 2.0;
+    maxY = CGRectGetMaxY(inRect) - lineWidth / 2.0;
+    
+    switch (rightAnglePosition) {
+        case BubbleFrameRightAnglePosition_LB:
+        {
+            // 顺时针绘制
+            CGContextMoveToPoint(context, minX, maxY);
+//            CGContextAddLineToPoint(context, minX, minY);
+            CGContextAddArcToPoint(context, minX, minY, maxX, minY, cornerRadius);
+            CGContextAddArcToPoint(context, maxX, minY, maxX, maxY, cornerRadius);
+            CGContextAddArcToPoint(context, maxX, maxY, minX, maxY, cornerRadius);// 需要CGContextClosePath
+        }
+            break;
+        case BubbleFrameRightAnglePosition_LT:
+        {
+            
+        }
+            break;
+        case BubbleFrameRightAnglePosition_RT:
+        {
+            
+        }
+            break;
+        case BubbleFrameRightAnglePosition_RB:
+        {
+            
+        }
+            break;
+        default:
+            break;
+    }
+    
+    CGContextClosePath(context);// 连接起点和当前点
+    CGContextDrawPath(context, kCGPathFillStroke);
+}
+
 + (void)drawCouponBackgroundInContext:(CGContextRef)context
                                  rect:(CGRect)rect
                          cornerRadius:(CGFloat)cornerRadius

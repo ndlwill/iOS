@@ -10,7 +10,7 @@
 #import "Person.h"
 
 #import "SystemInfo.h"
-
+#import "TestLifeCircleController.h"
 #import "UIView+NDLExtension.h"
 #import "TestView.h"
 #import "TestView1.h"
@@ -104,11 +104,23 @@
 #import "NSData+NDLExtension.h"
 
 #import <CoreML/CoreML.h>
+#import "HomeTranViewController.h"
+
+#import "TestMaskView.h"
+#import "TestBubbleView.h"
+
+// iOS4.0-iOS10.0
+#import <CoreTelephony/CTCallCenter.h>
+#import <CoreTelephony/CTCall.h>
+// iOS10.0
+#import <CallKit/CallKit.h>
+
+#import "LocalNotificationUtils.h"
 
 typedef id (^WeakReference)(void);
 
 // TODO: Import
-@interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate, CLLocationManagerDelegate>
+@interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate, CLLocationManagerDelegate, UITabBarControllerDelegate>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
 
 @property (weak, nonatomic) UIView *touchView;
@@ -152,6 +164,8 @@ typedef id (^WeakReference)(void);
 @property (nonatomic, strong) Book *bookModel;
 
 @property (nonatomic, strong) CLLocationManager *locationManager;
+
+@property (nonatomic, strong) CTCallCenter *callCenter;
 
 @end
 
@@ -342,7 +356,7 @@ static NSDateFormatter *dateFormatter_ = nil;
 - (void)viewWillLayoutSubviews
 {
     [super viewWillLayoutSubviews];
-    
+    NSLog(@"===viewWillLayoutSubviews===");
 //    NSLog(@"viewWillLayoutSubviews button Frame = %@", NSStringFromCGRect(self.rightButton.frame));
 //    self.xibView.width = NDLScreenW;
 }
@@ -355,9 +369,12 @@ static NSDateFormatter *dateFormatter_ = nil;
 
 - (void)timeCallback
 {
-    
     cc++;
-//    NSLog(@"###===timeCallback=%ld==##########", cc);
+//    NSLog(@"###===NStimer: timeCallback=%ld==##########", cc);
+    
+//    if (cc == 15) {
+//        [self.view setNeedsLayout];
+//    }
 }
 
 //
@@ -404,7 +421,7 @@ static NSDateFormatter *dateFormatter_ = nil;
     [[FLEXManager sharedManager] showExplorer];
 #endif
     
-    NSLog(@"viewDidAppear p_ndl = %@ dic_ndl = %@", self.p_ndl, [self.p_dic objectForKey:@"ndl"]);
+    NSLog(@"===Home viewDidAppear p_ndl = %@ dic_ndl = %@", self.p_ndl, [self.p_dic objectForKey:@"ndl"]);
 }
 
 
@@ -497,6 +514,10 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
 - (void)testArr:(NSMutableArray *)arr
 {
     arr[0] = @(100);// 这边改变，实参也会改变
+}
+- (IBAction)tranBtnClicked:(id)sender {
+    
+    [self presentViewController:[[BaseNavigationController alloc] initWithRootViewController:[[HomeTranViewController alloc] init]] animated:YES completion:nil];
 }
 
 - (void)viewDidLoad {
@@ -966,14 +987,35 @@ Unicode: U+1F928，UTF-8: F0 9F A4 A8
 //    NSLog(@"%@", [@"我门" ndl_emojiStringEncoding]);// \u6211\u95e8
     NSLog(@"%.2f", 11.2345);
     
+    
+    // applicationWillResignActive // 来电话
+    // applicationDidBecomeActive // 挂电话
+    // vc消失的时候 self.callCenter = nil
+    self.callCenter = [[CTCallCenter alloc] init];
+    self.callCenter.callEventHandler = ^(CTCall * _Nonnull call) {
+        NSLog(@"callID = %@", call.callID);
+        NSString *state = call.callState;
+        if ([state isEqualToString:CTCallStateDisconnected]) {
+            NSLog(@"CTCallStateDisconnected");// 挂电话（移除系统电话UI）
+        } else if ([state isEqualToString:CTCallStateConnected]) {
+            NSLog(@"CTCallStateConnected");// 接电话
+        } else if ([state isEqualToString:CTCallStateIncoming]) {
+            NSLog(@"CTCallStateIncoming");// 来电话（显示系统电话UI）
+        } else if ([state isEqualToString:CTCallStateDialing]) {
+            NSLog(@"CTCallStateDialing");// 打电话
+        }
+    };
+    
+    // 退到后台还会执行
     self.timer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(timeCallback) userInfo:nil repeats:YES];
-    [[NSRunLoop mainRunLoop] addTimer:self.timer forMode:NSRunLoopCommonModes];
+    // 必须添加到runloop
+//    self.timer = [NSTimer timerWithTimeInterval:1.0 target:self selector:@selector(timeCallback) userInfo:nil repeats:YES];
+//    [[NSRunLoop mainRunLoop] addTimer:self.timer forMode:NSRunLoopCommonModes];
     /*
      Causes the receiver’s message to be sent to its target// 立即执行
      If the timer is non-repeating, it is automatically invalidated after firing
      */
 //    [timer fire];// 立即执行
-    
     
 //    [NSArray arrayWithObject:@""];
     NSArray *arrr = [NSArray arrayWithObject:@""];
@@ -1649,6 +1691,67 @@ NSLog(@"viewDidLoad 22");
     youku.backgroundColor = [UIColor orangeColor];
     [youku addTarget:self action:@selector(youkuDidClicked:) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:youku];
+    
+    
+//    TestMaskView *testMaskView = [[TestMaskView alloc] initWithFrame:self.view.bounds];
+//    testMaskView.backgroundColor = [UIColor whiteColor];
+//    [self.view addSubview:testMaskView];
+    
+    
+    // bubbleView
+    TestBubbleView *bubbleView = [[TestBubbleView alloc] initWithFrame:CGRectMake(40, 300, 80, 60)];
+    [bubbleView ndl_addTapGestureWithHandler:^{
+        STRONG_REF(self)
+        [strong_self presentViewController:[TestLifeCircleController new] animated:YES completion:nil];
+    }];
+    bubbleView.backgroundColor = [UIColor lightGrayColor];
+    [self.view addSubview:bubbleView];
+    
+    // YYKit
+    [NSDate dateWithString:@"2019-02-25 10:00" format:@"yyyy-MM-dd HH:mm"];
+    // test date
+    NSDate *oneDate = [NSDate dateWithString:@"2019-02-25 10:00" formatString:@"yyyy-MM-dd HH:mm"];
+    NSDate *testDate = [NSDate dateWithString:@"2019-02-25 20:00" formatString:@"yyyy-MM-dd HH:mm"];
+    NSDate *otherDate = [NSDate dateWithString:@"2019-02-26 21:00" formatString:@"yyyy-MM-dd HH:mm"];
+    NSLog(@"oneDate = %@ otherDate = %@ date =%@", oneDate, otherDate, [NSDate date]);
+//    NSLog(@"1.dayCount = %ld", [otherDate daysFrom:oneDate]);
+//    NSLog(@"2.dayCount = %ld", [oneDate daysFrom:otherDate]);
+//    if ([oneDate isToday]) {
+//        NSLog(@"oneDate isToday");
+//    }
+//
+//    if ([testDate isToday]) {
+//        NSLog(@"testDate isToday");
+//    }
+    
+    // ======================================
+    // TimeZone
+    NSLog(@"###date = %@###", [NSDate date]);// ###date = Tue Feb 26 18:19:47 2019###
+    NSLog(@"###date = %@###", [NSString stringWithFormat:@"%@", [NSDate date]]);// ###date = 2019-02-26 10:19:47 +0000###
+    CLog(@"###date = %@###", [NSDate date]);// ###date = 2019-02-26 10:19:47 +0000### UTC
+    NSInteger hour = [NSDate date].hour;// YYKit: 18
+    
+    
+    
+    NSLog(@"CString = %s ", CString(123qwe));
+    
+    [CommonUtils logTimeZone:[NSTimeZone localTimeZone]];
+    [CommonUtils logDate];
+    [CommonUtils logCalendar];
+    [CommonUtils logLocal:[NSLocale currentLocale]];
+    
+    [UserInfo sharedUserInfo].userID = 123;
+    [UserInfo sharedUserInfo].token = @"token";
+    NSLog(@"UserInfo = %@", [UserInfo sharedUserInfo]);
+    
+    
+    // local notification
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSLog(@"dispatch local notification");
+        [LocalNotificationUtils presentLocalNotificationWithContent:@"ndlwill～～～" soundNamed:nil];
+    });
+    
+    NSLog(@"===Home viewDidLoad===");
 }
 
 - (void)youkuDidClicked:(YouKuPlayButton *)btn
@@ -1684,11 +1787,41 @@ NSLog(@"viewDidLoad 22");
 }
 
 
+- (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate
+{
+    if (decelerate) {
+        
+        
+    } else {
+        NSLog(@"scrollViewDidEndDragging");
+        NSArray *cells = ((UICollectionView *)scrollView).visibleCells;
+    }
+    
+    
+}
+
+- (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView
+{
+    NSLog(@"scrollViewDidEndDecelerating");
+    NSArray *cells = ((UICollectionView *)scrollView).visibleCells;
+    NSLog(@"cells = %@", cells);
+}
+
+//- (void)scrollViewDidEndScrollingAnimation:(UIScrollView *)scrollView
+//{
+//    NSLog(@"scrollViewDidEndScrollingAnimation");
+//    NSArray *cells = ((UICollectionView *)scrollView).visibleCells;
+//
+//}
+
+
 #warning TODO touchesBegan...
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
 {
-//    [super touchesBegan:touches withEvent:event];
     NSLog(@"===touchesBegan===");
+    
+//    [super touchesBegan:touches withEvent:event];
+    
 //    self.xibView.height += 10;
 //
 //    [self.loadingView removeFromSuperview];
@@ -1714,6 +1847,22 @@ NSLog(@"viewDidLoad 22");
 //        
 //        [[UIApplication sharedApplication] openURL:[NSURL URLWithString:customURL] options:@{UIApplicationOpenURLOptionsSourceApplicationKey : @YES} completionHandler:nil];
 //    });
+    
+    
+    // 替换icon
+//    if (@available(iOS 10.3, *)) {
+//        if (!Application.supportsAlternateIcons) {
+//            return;
+//        }
+//
+//        // 这个是替换图标的名称，在Info.plist文件里面添加一个CFBundleAlternateIcons字段，如果你想显示应用的主图标，则设置字段的值为nil，键的主键是plist里面的CFBundleIcons字段
+//        NSString *alternateIconName = Application.alternateIconName;
+//        if (alternateIconName) {
+//            [Application setAlternateIconName:@"" completionHandler:^(NSError * _Nullable error) {
+//
+//            }];
+//        }
+//    }
 }
 
 - (void)viewTapped:(UIGestureRecognizer *)gesture

@@ -12,4 +12,10 @@
 
 SINGLETON_FOR_IMPLEMENT(UserInfo)
 
+// NSLog会走对象的description
+- (NSString *)description
+{
+    return [NSString stringWithFormat:@"%@ : %p , %@", [self class], self, @{@"userID" : @(_userID), @"token" : _token}];
+}
+
 @end

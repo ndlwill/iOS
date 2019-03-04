@@ -18,6 +18,21 @@
     NSLog(@"===CommonUtils Dealloc===");
 }
 
++ (NSInteger)integerCeil:(NSInteger)value
+{
+    if (value == 0) {
+        return value;
+    }
+    NSInteger divisor = value / 10;
+    NSInteger remainder = value % 10;
+    
+    if (remainder <= 0) {
+        return divisor * 10;
+    } else {
+        return (divisor + 1) * 10;
+    }
+}
+
 + (UIWindow *)keyboardWindow
 {
     UIWindow *keyboardWindow = nil;
@@ -280,6 +295,125 @@ int partition(int array[], int minIndex, int maxIndex)
         va_end(argumentList);
     }
     NSLog(@"subTitles = %@", subTitleArray);
+}
+
++ (void)logTimeZone:(NSTimeZone *)timeZone
+{
+    // 时区获取
+    NSLog(@"systemTimeZone = %@ localTimeZone = %@ defaultTimeZone = %@", [NSTimeZone systemTimeZone], [NSTimeZone localTimeZone], [NSTimeZone defaultTimeZone]);
+    // 时区名称和缩写
+    NSLog(@"name = %@ abbreviation = %@ date_abbreviation = %@", timeZone.name, timeZone.abbreviation, [timeZone abbreviationForDate:[NSDate date]]);
+    // 获取与零时区的间隔秒数
+    NSInteger secondOffset = [timeZone secondsFromGMT];// 28800 = 8 * 60 * 60
+    NSInteger date_secondOffset = [timeZone secondsFromGMTForDate:[NSDate date]];
+    NSLog(@"secondOffset = %ld date_secondOffset = %ld", secondOffset, date_secondOffset);
+    
+    // 不建议用下面的方式获取本地时间
+    // 在GMT时间基础上追加时间差值，得到本地时间
+    NSDate *nowDate = [NSDate date];// 获取的是零时区的时间（格林尼治的时间: 年-月-日 时:分:秒: +时区）
+    NSTimeZone *systemTimeZone = [NSTimeZone systemTimeZone];
+    NSDate *nowLocalDate = [nowDate dateByAddingTimeInterval:[systemTimeZone secondsFromGMT]];
+    NSLog(@"nowDate = %@ nowLocalDate = %@", nowDate, nowLocalDate);
+    CLog(@"nowDate = %@ nowLocalDate = %@", nowDate, nowLocalDate);
+}
+
++ (void)logDate
+{
+    NSDate *nowDate = [NSDate date];
+    NSLog(@"nowDate = %@", nowDate);
+    
+    // 时间戳
+    NSTimeInterval timestamp = [nowDate timeIntervalSince1970];
+    NSLog(@"timestamp = %lf", timestamp);
+    
+    // 北京时区时间
+    NSDate *beijingDate = [nowDate dateByAddingTimeInterval:[NSTimeZone systemTimeZone].secondsFromGMT];
+    NSLog(@"beijingDate = %@", beijingDate);
+    
+    // 未来的一个时间
+    NSDate *futureDate = [NSDate distantFuture];
+    NSLog(@"futureDate = %@", futureDate);
+    
+    // 远古的一个时间
+    NSDate *pastDate = [NSDate distantPast];
+    NSLog(@"pastDate = %@", pastDate);
+    
+    // 时间戳->date
+    NSString *timestampStr = [NSString stringWithFormat:@"%d", (20 * 60 * 60)];
+    NSDate *testDate = [NSDate dateWithTimeIntervalSince1970:[timestampStr doubleValue]];
+    NSLog(@"testDate = %@", testDate);
+    
+    // NSDateFormatter 设置 NSTimeZone
+    // 设置时区
+//    NSLog(@"abbreviationDictionary = %@", [NSTimeZone abbreviationDictionary]);
+    NSTimeZone *timeZone1 = [NSTimeZone timeZoneWithAbbreviation:@"GMT"];
+//    NSLog(@"knownTimeZoneNames = %@", [NSTimeZone knownTimeZoneNames]);
+    NSTimeZone *timeZone2 = [NSTimeZone timeZoneWithName:@"Asia/Shanghai"];
+    NSTimeZone *timeZone3 = [NSTimeZone timeZoneForSecondsFromGMT:28800];
+    
+    // dateStr->date
+    NSDate *curDate = [NSDate date];
+    NDLLog(@"curDate = %@", curDate);
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    [formatter setDateFormat:@"yyyy-MM-dd HH:mm:ss Z"];
+    NSString *curStr = [formatter stringFromDate:curDate];
+    NSLog(@"curStr = %@", curStr);// 8时区的时间
+    [formatter setTimeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]];// 设置时区:0时区
+    NSDate *zeroTimeZoneDate = [formatter dateFromString:curStr];
+    NSLog(@"zeroTimeZoneDate = %@", zeroTimeZoneDate);
+    
+    // compare
+    NSDate *oneDate = [NSDate date];
+    NSDate *otherDate = [NSDate date];
+    NSComparisonResult result = [oneDate compare:otherDate];
+    if (result == NSOrderedSame) {
+        NSLog(@"NSOrderedSame");
+    } else if (result == NSOrderedAscending) {
+        NSLog(@"NSOrderedAscending");
+    } else if (result == NSOrderedDescending) {
+        NSLog(@"NSOrderedDescending");
+    }
+}
+
++ (void)logCalendar
+{
+    NSCalendar *curCalendar = [NSCalendar currentCalendar];
+    NSLog(@"calendarIdentifier = %@ timeZone = %@ localeIdentifier = %@", curCalendar.calendarIdentifier, curCalendar.timeZone, curCalendar.locale.localeIdentifier);// 通用-语言与地区-地区localeIdentifierlocaleIdentifier = en_US(美国) en_CN(中国)
+    
+    
+}
+
++ (void)logLocal:(NSLocale *)local
+{
+    NSLocale *sysLocal = [NSLocale systemLocale];
+    NSLog(@"sysLocal.localeIdentifier = %@", sysLocal.localeIdentifier);
+    NSLocale *curLocal = [NSLocale currentLocale];
+    NSLog(@"curLocal.localeIdentifier = %@", curLocal.localeIdentifier);
+    NSLocale *autoupdatingCurrentLocale = [NSLocale autoupdatingCurrentLocale];
+    NSLog(@"autoupdatingCurrentLocale.localeIdentifier = %@", autoupdatingCurrentLocale.localeIdentifier);
+    
+}
+
++ (void)testDate
+{
+    // DateTools
+    NSDate *date = [NSDate date];// 06:35 UTC
+    NSInteger hour = date.hour;// 6 + 8 = 14
+    
+    // 10-20 02:20 UTC
+    NSDate *testDate = [NSDate dateWithYear:2018 month:10 day:20 hour:10 minute:20 second:30];
+    NSInteger testhour = testDate.hour;// 10
+    // 10-17 18:20 UTC
+    NSDate *otherDate = [NSDate dateWithYear:2018 month:10 day:18 hour:2 minute:20 second:30];
+    NSInteger delta = [testDate daysFrom:otherDate];// 2.x (天delta) = 2   1.x = 1
+    
+    NSInteger laterThanDay = [testDate daysLaterThan:otherDate];// 2
+    double laterThanHour = [testDate hoursLaterThan:otherDate];// 56 = 48 + 8
+    
+    // log方式不同 显示不同
+    NSLog(@"testDate: date = %@", testDate);// 10:20
+    NSLog(@"testDate: str = %@", [NSString stringWithFormat:@"%@", testDate]);// 02:20
+    
 }
 
 @end

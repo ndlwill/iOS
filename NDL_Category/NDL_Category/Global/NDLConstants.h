@@ -89,6 +89,14 @@ typedef NS_ENUM(NSInteger, BubbleFrameArrowDirection) {
     BubbleFrameArrowDirection_Right
 };
 
+// 气泡框直角位置
+typedef NS_ENUM(NSInteger, BubbleFrameRightAnglePosition) {
+    BubbleFrameRightAnglePosition_LB = 0,// 左下
+    BubbleFrameRightAnglePosition_LT,// 左上
+    BubbleFrameRightAnglePosition_RT,// 右上
+    BubbleFrameRightAnglePosition_RB// 右下
+};
+
 // 优惠券背景分隔形状
 typedef NS_ENUM(NSInteger, CouponBackgroundSeparateShape) {
     CouponBackgroundSeparateShape_None = 0,

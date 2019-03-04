@@ -114,6 +114,13 @@ static CGFloat const kPresentedViewTopOffsetToEdge = 100.0;
     return presentedViewRect;
 }
 
+// ios8以上的系统，可以通过UIPresentationController类并重写以下方法并返回true可以解决
+// Indicate whether the view controller's view we are transitioning from will be removed from the window in the end of the presentation transition  (Default: NO)
+//- (BOOL)shouldRemovePresentersView
+//{
+//    return YES;
+//}
+
 - (void)dealloc
 {
     NSLog(@"===DrawerPresentationController Dealloc===");

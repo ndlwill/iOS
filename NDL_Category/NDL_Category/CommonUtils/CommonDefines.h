@@ -13,7 +13,11 @@
 //CGRectOffset(CGRectMake(0, 0, 100, 100), 0, 10) // {0, 10, 100, 100}
 //CGRectInset(CGRectMake(0, 0, 100, 100), 0, 10) // {0, 10, 100, 80}
 
-//#define NSLog(format, ...) printf("\n[%s] %s [第%d行] %s\n", __TIME__, __FUNCTION__, __LINE__, [[NSString stringWithFormat:format, ## __VA_ARGS__] UTF8String]);
+// #用来把参数转换成字符串
+#define CString(value) #value
+// __VA_ARGS__ 是一个可变参数的宏
+// ##__VA_ARGS__ 宏前面加上##的作用在于，当可变参数的个数为0时，这里的##起到把前面多余的","去掉的作用,否则会编译出错
+#define CLog(format, ...) printf("\n[%s] %s [第%d行] %s\n", __TIME__, __FUNCTION__, __LINE__, [[NSString stringWithFormat:format, ## __VA_ARGS__] UTF8String]);
 
 // 父视图layoutSubViews然后子视图layoutSubViews
 
@@ -203,6 +207,8 @@ _Pragma("clang diagnostic pop")
 #define DEGREE2RADIAN(angle) ((angle) / 180.0 * M_PI)
 // 弧度转角度
 #define RADIAN2DEGREE(radian) ((radian) * (180.0 / M_PI))
+// 是否是有效字符串
+#define ValidStringFlag(str) (str && ![str isEqualToString:@""])
 
 
 // ====================deprecated====================

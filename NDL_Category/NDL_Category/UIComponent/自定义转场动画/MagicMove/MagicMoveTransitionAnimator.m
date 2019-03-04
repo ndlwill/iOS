@@ -27,7 +27,7 @@
 
 - (void)animateTransition:(id <UIViewControllerContextTransitioning>)transitionContext
 {
-    UIView *containerView = transitionContext.containerView;
+    UIView *containerView = transitionContext.containerView;// UIViewControllerWrapperView
     
     if (self.isPushFlag) {// push
         NSLog(@"push before containerView.subViews = %@", containerView.subviews);// FiveView(fromView) 系统自动添加fromView
@@ -59,8 +59,10 @@
             toImageView.hidden = NO;
             
             self.animationTempView.hidden = YES;
-            
+            /* 转场的结果有两种：完成或取消。非交互转场的结果只有完成一种情况，不过交互式转场需要考虑取消的情况。如何结束取决于转场的进度，通过[transitionContext transitionWasCancelled]方法来获取转场的结果，然后使用completeTransition:来通知系统转场过程结束，这个方法会检查动画控制器是否实现了animationEnded:方法，如果有，则调用该方法*/
+            // before completeTransition: 有fromView+toView
             [transitionContext completeTransition:!transitionContext.transitionWasCancelled];
+            // after completeTransition: fromView被移除
             NSLog(@"push after containerView.subViews = %@", containerView.subviews);// SixView(toView) + animationTempView 完成后系统自动移除fromView
         }];
     } else {// pop

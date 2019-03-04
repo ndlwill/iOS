@@ -61,6 +61,11 @@
     return 0.5;
 }
 
+/*
+ 1.FullScreen 模式：presentation 结束后，presentingView 被主动移出视图结构，不过，在 dismissal transition中希望其出现在屏幕上并且在对其添加动画怎么办呢？实际上，你按照容器类 VC 转场里动画控制器里那样做也没有问题，就是将其加入 containerView 并添加动画。不用担心，结束后，UIKit 会自动将其恢复到原来的位置。
+ 2.Custom 模式：presentation 结束后，presentingView(fromView) 未被主动移出视图结构，在 dismissal 中，注意不要像其他转场中那样将 presentingView(toView) 加入 containerView 中，否则 dismissal 结束后本来可见的 presentingView 将会随着 containerView 一起被移除。如果你在 Custom 模式下没有注意到这点，很容易出现黑屏之类的现象
+ */
+
 /// 无论是展现还是消失都会调用这个方法
 /// 注意点: 只要实现了这个方法, 那么系统就不会再管控制器如何弹出和消失了, 所有的操作都需要我们自己做
 // transitionContext: 里面就包含了我们所有需要的参数

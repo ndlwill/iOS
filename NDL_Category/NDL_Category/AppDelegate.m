@@ -16,8 +16,54 @@
 #import <PushKit/PushKit.h> // iOS8.0
 #import <FBMemoryProfiler/FBMemoryProfiler.h>
 
+#define LOG_LEVEL_DEF ddLogLevel
+#import <CocoaLumberjack/CocoaLumberjack.h>
+
+#import "MBProgressHUD+NDLExtension.h"
+
+#ifdef DEBUG
+static const DDLogLevel ddLogLevel = DDLogLevelVerbose;// DDLogLevelDebug下面的DDLogVerbose不会打印显示
+#else
+static const DDLogLevel ddLogLevel = DDLogLevelWarning;
+#endif
+
+
+#define TEST test
+static const NSUInteger test = 100;
+
+
 static NSInteger badgeCount = 0;
-@interface AppDelegate () <PKPushRegistryDelegate>
+
+int func1(int a) {
+    static int b = 3;
+    return a + b;;
+}
+
+int func2(int c) {
+    static int b = 2;
+    return func1(c + b);
+}
+
+/*
+ Downloading Content in the Background(在后台下载内容):
+ 利用NSURLSession 对象来启动下载 // iOS 7.0
+ 
+ 创建configuration对象支持后台下载的步骤如下：
+ 1. 创建configuration对象，利用NSURLSessionConfiguration 的backgroundSessionConfigurationWithIdentifier: 方法。
+ 2. 设置configurtion对象的sessionSendsLaunchEvents 属性为YES
+ 3. 如果你的应用在前台的时候就开始传输，那么建议设置configuration对象的 discretionary属性为YES
+ 4. 配置其他相关的configuration对象属性
+ 5. 利用configuration对象，创建NSURLSession对象
+ 
+ 你的NSURLSession对象就会把上传和下载任务在相应的时间交给系统处理。如果任务完成的时候，你的应用依然在前台运行，session对象会通知它的代理。如果任务没有完成的时候系统终止了你的应用，系统会在后台继续自动管理这些任务，如果用户终止了你的应用，系统会取消所有正在等待的任务
+ 
+ 当程序退到后台进行下载时，不会再走NSURLSession的代理方法，只有所有的下载任务都执行完成，系统会调用ApplicationDelegate的application:handleEventsForBackgroundURLSession:completionHandler:回调
+ 
+ 当所有和后台session相关联的任务完成的时候，系统重新启动终止的应用（assuming that the sessionSendsLaunchEvents property was set to YES and that the user did not force quit the app）并会调用app的代理方法* application:handleEventsForBackgroundURLSession:completionHandler:*（The system may also relaunch the app to handle authentication challenges or other task-related events that require your app’s attention.）在你实现这个代理中，利用提供的标识创建一个和以前配置一样的新的NSURLSessionConfiguration和NSURLSession对象，
+ 系统会重新连接新的session对象到以前的任务，并向session对象的代理报告其状态
+ */
+
+@interface AppDelegate () <PKPushRegistryDelegate, UNUserNotificationCenterDelegate>
 
 @property (nonatomic, assign) UIBackgroundTaskIdentifier bgTask;
 
@@ -64,16 +110,40 @@ static NSInteger badgeCount = 0;
 //        NSLog(@"===123456===");
     } error:nil];
     
+    NSLog(@"%ld", TEST);
     
-    self.memoryProfiler = [[FBMemoryProfiler alloc] init];
-    [self.memoryProfiler enable];
+    // https://blog.csdn.net/mandagod/article/details/82854364
+    // 添加记录器
+    // OS
+//    [DDLog addLogger:[DDOSLogger sharedInstance]];
+    // TTY 发送日志语句到Xcode控制台，如果可用
+//    [[DDTTYLogger sharedInstance] setColorsEnabled:YES];
+    [DDLog addLogger:[DDTTYLogger sharedInstance]];
+    // ASL 发送日志语句到苹果日志系统(Apple System Logs)，以便它们显示在Console.app上
+//    [DDLog addLogger:[DDASLLogger sharedInstance]];
+    // DDFileLogger，你的日志语句将写入到一个文件中，默认路径在沙盒的Library/Caches/Logs/目录下，文件名为bundleid+空格+日期.log
+    DDFileLogger *fileLogger = [[DDFileLogger alloc] init];// File
+    fileLogger.rollingFrequency = 60 * 60 * 24;// 24 hour rolling
+    fileLogger.logFileManager.maximumNumberOfLogFiles = 7;
+    [DDLog addLogger:fileLogger];
+    
+    // fileLogger.currentLogFileInfo.filePath
+    // /Users/dzcx/Library/Developer/CoreSimulator/Devices/43F257FE-9CD7-48C8-8834-AD0C8C38E949/data/Containers/Data/Application/F63A8943-977F-4E85-A784-895C0D05EF02/Library/Caches
+    DDLogVerbose(@"Verbose");
+    DDLogDebug(@"Debug");
+    DDLogInfo(@"Info");
+    DDLogWarn(@"Warn");
+    DDLogError(@"Error");
+    
+    // FBMemoryProfiler
+//    self.memoryProfiler = [[FBMemoryProfiler alloc] init];
+//    [self.memoryProfiler enable];
     
 //    self.bgTask = [application beginBackgroundTaskWithExpirationHandler:^{
 //        [application endBackgroundTask:self.bgTask];
 //        self.bgTask = UIBackgroundTaskInvalid;
 //    }];
     
-    // APNs: 能够有效收到apns推送，首先必须要确保设备处于online的状态
     
     // https://oopsr.github.io/2016/06/20/voip/
     /*
@@ -131,11 +201,12 @@ static NSInteger badgeCount = 0;
     // 推送点击 APP完全被关闭后，收到通知
     if (launchOptions) {
         NSLog(@"launchOptions = %@", launchOptions);
+        
         // UIApplication: 493-line
         NSDictionary *pushInfo = [launchOptions objectForKey:UIApplicationLaunchOptionsRemoteNotificationKey];
         if (pushInfo) {
             application.applicationIconBadgeNumber = 0;
-            NSLog(@"pushInfo = %@", pushInfo);
+            NSLog(@"app被通知启动 pushInfo = %@", pushInfo);
         }
     }
     
@@ -186,7 +257,6 @@ static NSInteger badgeCount = 0;
     
 //    [Application isRegisteredForRemoteNotifications];// 8.0
     
-//    [[UIApplication sharedApplication] registerForRemoteNotifications];
     
     [NotificationCenter addObserver:self selector:@selector(systemClockDidChanged:) name:NSSystemClockDidChangeNotification object:nil];
     
@@ -201,8 +271,10 @@ static NSInteger badgeCount = 0;
 // 注册推送
 - (void)registerPush
 {
+    // 申请通知权限
     if (@available(iOS 10.0, *)) {
         UNUserNotificationCenter *userNotificationCenter = [UNUserNotificationCenter currentNotificationCenter];
+        userNotificationCenter.delegate = self;// 必须写代理，不然无法监听通知的接收与点击事件
         // 进行用户授权
         [userNotificationCenter requestAuthorizationWithOptions:(UNAuthorizationOptionBadge | UNAuthorizationOptionSound | UNAuthorizationOptionAlert) completionHandler:^(BOOL granted, NSError * _Nullable error) {
             NSLog(@"granted = %ld", [[NSNumber numberWithBool:granted] integerValue]);
@@ -210,6 +282,7 @@ static NSInteger badgeCount = 0;
                 NSLog(@"request authorization succeeded!");
             }
         }];
+        
         [userNotificationCenter getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings * _Nonnull settings) {
             UNAuthorizationStatus authorizationStatus = settings.authorizationStatus;
             if (authorizationStatus == UNAuthorizationStatusAuthorized) {
@@ -222,24 +295,46 @@ static NSInteger badgeCount = 0;
         UIUserNotificationSettings *userNotificationSettings = [UIUserNotificationSettings settingsForTypes:UIUserNotificationTypeBadge | UIUserNotificationTypeSound | UIUserNotificationTypeAlert categories:nil];
         // 授权通知
         [[UIApplication sharedApplication] registerUserNotificationSettings:userNotificationSettings];
-
+        
+        
+        //
         UIUserNotificationSettings *curUserNotificationSettings = [UIApplication sharedApplication].currentUserNotificationSettings;
         UIUserNotificationType userNotificationType = curUserNotificationSettings.types;
         if (userNotificationType != UIUserNotificationTypeNone) {
             // 允许推送
         }
     }
+    
+    //iOS8以下
+//    [[UIApplication sharedApplication] registerForRemoteNotificationTypes:UIRemoteNotificationTypeBadge | UIRemoteNotificationTypeAlert | UIRemoteNotificationTypeSound];
+    
+    
+    // 注册远程通知
+    [[UIApplication sharedApplication] registerForRemoteNotifications];
 }
+
+
 
 // //app进入后台后保持运行
 - (void)startTask {
     self.bgTask = [Application beginBackgroundTaskWithExpirationHandler:^{
- //如果在系统规定时间3分钟内任务还没有完成，在时间到之前会调用这个block
+ //如果在系统规定时间3分钟内任务还没有完成，在时间到之前会调用这个 ExpirationHandlerBlock
  //结束后台运行，让app挂起
  //切记endBackgroundTask要和beginBackgroundTaskWithExpirationHandler成对出现
         [Application endBackgroundTask:self.bgTask];
         self.bgTask = UIBackgroundTaskInvalid;
     }];
+    
+    // do bg task
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        // do something
+        NSLog(@"backgroundTimeRemaining = %lf", Application.backgroundTimeRemaining);
+        
+        
+        
+        [Application endBackgroundTask:self.bgTask];
+        self.bgTask = UIBackgroundTaskInvalid;
+    });
 }
 
 // iOS 9 3D-Touch 主屏操作
@@ -264,17 +359,68 @@ static NSInteger badgeCount = 0;
     return YES;
 }
 
+// ======================didReceiveLocalNotification======================
+// iOS4.0-iOS10.0
 - (void)application:(UIApplication *)application didReceiveLocalNotification:(UILocalNotification *)notification
 {
+    NSLog(@"didReceiveLocalNotification = %@ state = %ld", notification, Application.applicationState);
     
 }
 
+// ======================RegisterUserNotificationSettings======================
+// iOS8.0-iOS10.0
+- (void)application:(UIApplication *)application didRegisterUserNotificationSettings:(UIUserNotificationSettings *)notificationSettings
+{
+    // 10.0 use: [UNUserNotificationCenter requestAuthorizationWithOptions:completionHandler:]
+    NSLog(@"didRegisterUserNotificationSettings = %@", notificationSettings);
+}
+// ======================RegisterForRemoteNotifications(DeviceToken)======================
+// iOS3.0
+- (void)application:(UIApplication *)application didRegisterForRemoteNotificationsWithDeviceToken:(NSData *)deviceToken
+{
+    NSLog(@"didRegisterForRemoteNotificationsWithDeviceToken = %@", deviceToken);
+}
+// iOS3.0
+- (void)application:(UIApplication *)application didFailToRegisterForRemoteNotificationsWithError:(NSError *)error
+{
+    NSLog(@"didFailToRegisterForRemoteNotifications: error = %@", error);
+}
+
+// =================didReceiveRemoteNotification=================
 // 推送点击  app在后台/前台，app未关闭时：
-// iOS3.0-10.0
+// iOS3.0-10.0 (ios12测试下来 3种情况都不走这个)
 - (void)application:(UIApplication *)application didReceiveRemoteNotification:(NSDictionary *)userInfo
 {
     application.applicationIconBadgeNumber = 0;
     NSLog(@"userInfo = %@", userInfo);
+    
+    //    //程序关闭状态点击推送消息打开
+    //    if (self.isLaunchedByNotification) {
+    //        //TODO
+    //    }
+    //    else{
+    //        //前台运行
+    //        if ([UIApplication sharedApplication].applicationState == UIApplicationStateActive) {
+    //            //TODO
+    //        }
+    //        //后台挂起时
+    //        else{
+    //            //TODO
+    //        }
+    //        //收到推送消息手机震动，播放音效
+    //        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);
+    //        AudioServicesPlaySystemSound(1007);
+    //    }
+    //    //设置应用程序角标数为0
+    //    [UIApplication sharedApplication].applicationIconBadgeNumber = 9999;
+    //    [UIApplication sharedApplication].applicationIconBadgeNumber = 0;
+}
+
+// ios7  用于静默推送   静默推送:iOS7以后出现, 不会出现提醒及声音
+- (void)application:(UIApplication *)application didReceiveRemoteNotification:(NSDictionary *)userInfo fetchCompletionHandler:(nonnull void (^)(UIBackgroundFetchResult))completionHandler
+{
+    NSLog(@"=====ios7-静默推送=====");
+    completionHandler(UIBackgroundFetchResultNewData);
 }
 
 //- (BOOL)application:(UIApplication *)application shouldAllowExtensionPointIdentifier:(UIApplicationExtensionPointIdentifier)extensionPointIdentifier
@@ -283,15 +429,14 @@ static NSInteger badgeCount = 0;
 //}
 
 
+// =================app life cirlce=================
 - (void)applicationWillResignActive:(UIApplication *)application {
-    // Sent when the application is about to move from active to inactive state. This can occur for certain types of temporary interruptions (such as an incoming phone call or SMS message) or when the user quits the application and it begins the transition to the background state.
-    // Use this method to pause ongoing tasks, disable timers, and invalidate graphics rendering callbacks. Games should use this method to pause the game.
+    NSLog(@"AppDelegate applicationWillResignActive");
 }
-
 
 - (void)applicationDidEnterBackground:(UIApplication *)application {
 //    [self startTask];
-    
+    NSLog(@"AppDelegate applicationDidEnterBackground");
     Application.applicationIconBadgeNumber = 0;
     self.timer = [NSTimer scheduledTimerWithTimeInterval:2.f repeats:YES block:^(NSTimer * _Nonnull timer) {
         badgeCount++;
@@ -303,19 +448,18 @@ static NSInteger badgeCount = 0;
     }];
 }
 
-
 - (void)applicationWillEnterForeground:(UIApplication *)application {
-    // Called as part of the transition from the background to the active state; here you can undo many of the changes made on entering the background.
+    NSLog(@"AppDelegate applicationWillEnterForeground");
 }
 
 
 - (void)applicationDidBecomeActive:(UIApplication *)application {
-    // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
+    NSLog(@"AppDelegate applicationDidBecomeActive");
 }
 
 
 - (void)applicationWillTerminate:(UIApplication *)application {
-    // Called when the application is about to terminate. Save data if appropriate. See also applicationDidEnterBackground:.
+    NSLog(@"AppDelegate applicationWillTerminate");
 }
 
 - (void)applicationDidReceiveMemoryWarning:(UIApplication *)application
@@ -324,6 +468,64 @@ static NSInteger badgeCount = 0;
     [[YYWebImageManager sharedManager].cache.diskCache removeAllObjects];
     [[YYWebImageManager sharedManager].cache.memoryCache removeAllObjects];
 }
+
+
+#pragma mark - UNUserNotificationCenterDelegate
+// 用于前台运行
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)notification withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler
+{
+    //可以设置当收到通知后, 有哪些效果呈现(声音/提醒/数字角标)
+    completionHandler(UNNotificationPresentationOptionBadge | UNNotificationPresentationOptionSound | UNNotificationPresentationOptionAlert);
+}
+
+// =================didReceiveRemoteNotification=================
+// iOS 10 及以上 - 收到推送消息后   用于后台及程序退出
+//后台运行: 指的是程序已经打开, 用户看不见程序的界面, 如锁屏和按Home键.
+//程序退出: 指的是程序没有运行, 或者通过双击Home键,关闭了程序
+// 点击提送通知
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center didReceiveNotificationResponse:(UNNotificationResponse *)response withCompletionHandler:(void (^)(void))completionHandler
+{
+    NSDictionary *userInfo = response.notification.request.content.userInfo;
+    [MBProgressHUD ndl_showText:response.actionIdentifier toView:KeyWindow];
+    // actionIdentifier:
+    // UNNotificationDefaultActionIdentifier 用户点击
+    // UNNotificationDismissActionIdentifier
+    NSLog(@"actionIdentifier = %@ identifier = %@", response.actionIdentifier, response.notification.request.identifier);// request.identifier用来区分
+    NSLog(@"didReceiveNotificationResponse userInfo = %@", userInfo);
+    
+    
+    /*
+     亲测:
+     本地推送:
+     前台，后台，app被kill都走这个
+     */
+    
+    
+//    //程序关闭状态点击推送消息打开
+//    if (self.isLaunchedByNotification) {
+//        //TODO
+    // 此时state为: UIApplicationStateInactive
+//    }
+//    else{
+//        //前台运行
+//        if ([UIApplication sharedApplication].applicationState == UIApplicationStateActive) {
+//            //TODO
+//        }
+//        //后台挂起时
+//        else{
+            // 此时state为: UIApplicationStateInactive
+//            //TODO
+//        }
+//        //收到推送消息手机震动，播放音效
+//        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);
+//        AudioServicesPlaySystemSound(1007);
+//    }
+//    //设置应用程序角标数为0
+//    [UIApplication sharedApplication].applicationIconBadgeNumber = 9999;
+//    [UIApplication sharedApplication].applicationIconBadgeNumber = 0;
+}
+
+
 
 #pragma mark - PKPushRegistryDelegate
 /*

@@ -18,7 +18,12 @@
 // pem转cer证书：$ openssl x509 -in in.pem -out out.cer -outform der
 
 // NSString *regexStr = @"(#\\w+#)";// 含#XXX#的字符串
+
+// NSInteger test = (-22 % 10);// -2
+// NSInteger test = (-22 / 10);// -2
 @interface CommonUtils : NSObject
+
++ (NSInteger)integerCeil:(NSInteger)value;
 
 // 键盘所在的window
 + (UIWindow *)keyboardWindow;
@@ -60,5 +65,15 @@ void quickSort_C(int array[], int minIndex, int maxIndex);
 + (void)logStackInfo;
 
 + (void)testForSubTitles:(NSString *)subTitle,...NS_REQUIRES_NIL_TERMINATION;
+
++ (void)logTimeZone:(NSTimeZone *)timeZone;
+
++ (void)logDate;
+
++ (void)logCalendar;
+
++ (void)logLocal:(NSLocale *)local;
+
++ (void)testDate;
 
 @end

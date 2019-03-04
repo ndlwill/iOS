@@ -9,6 +9,7 @@
 #import "TestCollectionViewController.h"
 #import "DraggableCollectionView.h"
 #import "TitleCell.h"
+#import "LimitedTouchRangeView.h"
 
 #import <AudioToolbox/AudioToolbox.h>
 
@@ -16,6 +17,8 @@
 
 @property (nonatomic, weak) DraggableCollectionView *draggableCollectionView;
 @property (nonatomic, strong) NSMutableArray *dataSourceArray;
+
+@property (nonatomic, strong) LimitedTouchRangeView *limitedTouchRangeView;
 
 @end
 
@@ -64,14 +67,21 @@
     UIButton *soundBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     [soundBtn setTitle:@"PlaySystemSound" forState:UIControlStateNormal];
     soundBtn.backgroundColor = [UIColor blackColor];
-    soundBtn.frame = CGRectMake(10, self.view.height / 2.0 + 20, 60, 40);
+    soundBtn.frame = CGRectMake(10, self.view.height / 2.0, 60, 40);
     [self.view addSubview:soundBtn];
     [soundBtn addTarget:self action:@selector(soundBtnDidClicked) forControlEvents:UIControlEventTouchUpInside];
+    
+    // limitedTouchRangeView
+    self.limitedTouchRangeView = [[LimitedTouchRangeView alloc] initWithFrame:self.view.bounds];
+    self.limitedTouchRangeView.backgroundColor = [[UIColor cyanColor] colorWithAlphaComponent:0.7];
+    self.limitedTouchRangeView.touchRangeRect = CGRectMake(0, self.view.height / 2.0, self.view.width, self.view.height / 2.0);
+    [self.view addSubview:self.limitedTouchRangeView];
 }
 
 #pragma mark - Button Actions
 - (void)soundBtnDidClicked
 {
+    NSLog(@"soundBtnDidClicked");
     // iOS10.0
 //    UIImpactFeedbackGenerator *generator = [[UIImpactFeedbackGenerator alloc] initWithStyle: UIImpactFeedbackStyleLight];
 //    [generator prepare];

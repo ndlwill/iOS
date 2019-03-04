@@ -57,6 +57,16 @@
                       controlPointOffsetLeft:(CGFloat)controlPointOffsetLeft
                      controlPointOffsetRight:(CGFloat)controlPointOffsetRight;
 
+// 绘制直角气泡框
++ (void)drawRightAngleBubbleFrameInContext:(CGContextRef)context
+                                    inRect:(CGRect)inRect
+                                 lineWidth:(CGFloat)lineWidth
+                           lineStrokeColor:(CGColorRef)lineStrokeColor
+                                 fillColor:(CGColorRef)fillColor
+                              cornerRadius:(CGFloat)cornerRadius
+                        rightAnglePosition:(BubbleFrameRightAnglePosition)rightAnglePosition;
+
+
 // 绘制优惠券背景
 + (void)drawCouponBackgroundInContext:(CGContextRef)context
                                  rect:(CGRect)rect

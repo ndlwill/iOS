@@ -63,7 +63,7 @@
 {
     NSLog(@"NSArray description");
     NSMutableString *string = [NSMutableString string];
-    
+
     // 开头有个[
     [string appendString:@"[\n"];
     

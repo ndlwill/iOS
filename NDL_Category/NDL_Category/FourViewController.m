@@ -29,7 +29,7 @@
     
     self.view.backgroundColor = [UIColor purpleColor];
     
-//    self.view.backgroundColor = [UIColor colorWithPatternImage:[UIImage imageNamed:@"AppIcon60x60"]];
+//    self.view.backgroundColor = [UIColor colorWithPatternImage:[UIImage imageNamed:@"wechat"]];
 //    self.title = @"Four";
     
 //    self.webView = [[WKWebView alloc] initWithFrame:self.view.bounds];

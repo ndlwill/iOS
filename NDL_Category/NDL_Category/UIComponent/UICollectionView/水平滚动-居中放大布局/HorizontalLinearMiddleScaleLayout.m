@@ -86,18 +86,19 @@
 //velocity：滚动速率，通过这个参数可以了解滚动的方向
 - (CGPoint)targetContentOffsetForProposedContentOffset:(CGPoint)proposedContentOffset withScrollingVelocity:(CGPoint)velocity
 {
+    NSLog(@"proposedContentOffset = %@ velocity = %@", NSStringFromCGPoint(proposedContentOffset), NSStringFromCGPoint(velocity));
     // 计算出最终显示的矩形框
     CGRect rect;
     rect.origin.y = 0;
     rect.origin.x = proposedContentOffset.x;
     rect.size = self.collectionView.frame.size;
-    
+
     // 获得super已经计算好的布局属性
     NSArray *array = [super layoutAttributesForElementsInRect:rect];
-    
+
     // 计算collectionView最中心点的x值
     CGFloat centerX = proposedContentOffset.x + self.collectionView.frame.size.width * 0.5;
-    
+
     // 存放最小的间距值
     CGFloat minDelta = MAXFLOAT;
     for (UICollectionViewLayoutAttributes *attrs in array) {
@@ -105,9 +106,10 @@
             minDelta = attrs.center.x - centerX;
         }
     }
-    
+
     // 修改原有的偏移量
     proposedContentOffset.x += minDelta;
+    NSLog(@"after proposedContentOffset = %@", NSStringFromCGPoint(proposedContentOffset));
     return proposedContentOffset;
 }
 

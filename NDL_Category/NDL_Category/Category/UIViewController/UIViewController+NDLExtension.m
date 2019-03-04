@@ -21,6 +21,7 @@
     }
 }
 
+// modal转场动画:presentingVC相当于fromVC，presentedVC相当于toVC
 + (instancetype)ndl_curTopViewController
 {
     UIViewController *curTopVC = RootViewController;
