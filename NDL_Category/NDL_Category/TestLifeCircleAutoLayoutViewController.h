@@ -1,5 +1,5 @@
 //
-//  TestLifeCircleController.h
+//  TestLifeCircleAutoLayoutViewController.h
 //  NDL_Category
 //
 //  Created by dzcx on 2019/3/4.
@@ -10,8 +10,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-// TestCalcFrame
-@interface TestLifeCircleController : UIViewController
+@interface TestLifeCircleAutoLayoutViewController : UIViewController
 
 @end
 

@@ -1,8 +1,8 @@
 //
-//  TestLifeCircleController.h
+//  TestCalcFrameView.h
 //  NDL_Category
 //
-//  Created by dzcx on 2019/3/4.
+//  Created by dzcx on 2019/3/5.
 //  Copyright © 2019 ndl. All rights reserved.
 //
 
@@ -10,8 +10,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-// TestCalcFrame
-@interface TestLifeCircleController : UIViewController
+@interface TestCalcFrameView : UIView
 
 @end
 

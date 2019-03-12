@@ -33,6 +33,7 @@
 #import "PieView.h"
 #import "CommonUtils.h"
 #import "PlaceholderTextView.h"
+#import "TestLifeCircleAutoLayoutViewController.h"
 
 #import "PopoverView.h"
 
@@ -1702,6 +1703,9 @@ NSLog(@"viewDidLoad 22");
     TestBubbleView *bubbleView = [[TestBubbleView alloc] initWithFrame:CGRectMake(40, 300, 80, 60)];
     [bubbleView ndl_addTapGestureWithHandler:^{
         STRONG_REF(self)
+        // TestAutoLayout
+//        [strong_self presentViewController:[TestLifeCircleAutoLayoutViewController new] animated:YES completion:nil];
+        // TestCalcFrame
         [strong_self presentViewController:[TestLifeCircleController new] animated:YES completion:nil];
     }];
     bubbleView.backgroundColor = [UIColor lightGrayColor];

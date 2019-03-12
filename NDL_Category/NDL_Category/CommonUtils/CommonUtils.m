@@ -196,13 +196,21 @@
 // {5, 18, 8 , 12, 25};
 void bubbleSort_C(int array[], int arrayLength)
 {
-    for (int i = 0; i < arrayLength; i++) {
+    int swapFlag = 0;// 交换标记 (用于优化)
+    for (int i = 0; i < arrayLength; i++) {// 控制内层循环次数
         for (int j = 0; j < arrayLength - 1 - i; j++) {
-            if (array[j] > array[j + 1]) {
+            if (array[j] > array[j + 1]) {// 最大的值放最后面
                 int temp = array[j];
                 array[j] = array[j + 1];
                 array[j + 1] = temp;
+                swapFlag = 1;
             }
+        }
+        
+        if (swapFlag == 0) {// 一遍循环下来没有数据交换 表示已排序好
+            break;
+        } else {
+            swapFlag = 0;
         }
     }
 }
@@ -223,10 +231,11 @@ void selectionSort_C(int array[], int arrayLength)
         
         for (int j = i + 1; j < arrayLength; j++) {
             if (array[min] > array[j]) {
-                min = j;
+                min = j;// 下标赋值
             }
         }
         
+        // 交换
         if (min != i) {
             temp = array[min];
             array[min] = array[i];
@@ -240,6 +249,7 @@ void selectionSort_C(int array[], int arrayLength)
 2. 重新排序数列，所有元素比基准值小的摆放在基准前面，所有元素比基准值大的摆在基准的后面（相同的数可以到任一边）。在这个分割之后，该基准是它的最后位置。这个称为分割（partition）操作。
 3. 递归地（recursive）把小于基准值元素的子数列和大于基准值元素的子数列排序。
  */
+// O(nlogn)
 void quickSort_C(int array[], int minIndex, int maxIndex)
 {
     if (minIndex < maxIndex) {
