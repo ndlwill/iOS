@@ -64,4 +64,31 @@
     return view;
 }
 
++ (UIView *)viewWithFrame:(CGRect)frame backgroundColor:(UIColor *)backgroundColor cornerRadius:(CGFloat)cornerRadius borderWidth:(CGFloat)borderWidth borderColor:(UIColor *)borderColor
+{
+    UIView *view = [WidgetManager viewWithFrame:frame backgroundColor:backgroundColor cornerRadius:cornerRadius];
+    if (borderWidth != 0) {
+        view.layer.borderWidth = borderWidth;
+        if (borderColor) {
+            view.layer.borderColor = borderColor.CGColor;
+        }
+    }
+    return view;
+}
+
++ (UITableView *)tableViewWithFrame:(CGRect)frame style:(UITableViewStyle)style separatorStyle:(UITableViewCellSeparatorStyle)separatorStyle
+{
+    UITableView *tableView = [[UITableView alloc] initWithFrame:frame style:style];
+    
+    tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
+    
+    tableView.estimatedRowHeight = 0.0;
+    tableView.estimatedSectionHeaderHeight = 0.0;
+    tableView.estimatedSectionFooterHeight = 0.0;
+    
+    tableView.separatorStyle = separatorStyle;
+    
+    return tableView;
+}
+
 @end

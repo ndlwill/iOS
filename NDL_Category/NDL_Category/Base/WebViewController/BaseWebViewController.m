@@ -250,7 +250,7 @@
 #pragma mark - WKNavigationDelegate
 - (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler
 {
-    NSLog(@"decidePolicyForNavigationAction url.scheme = %@", webView.URL.scheme);
+    NSLog(@"decidePolicyForNavigationAction url.scheme = %@ navigationAction.request.URL = %@", webView.URL.scheme, navigationAction.request.URL);
     [self updateNavigationItems];
     
     // WKNavigationActionPolicyCancel表示禁止webView打开app store通过系统浏览器打开

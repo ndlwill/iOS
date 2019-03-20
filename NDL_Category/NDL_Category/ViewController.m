@@ -99,6 +99,8 @@
 #import "NSDate+NDLExtension.h"
 #import <CoreLocation/CoreLocation.h>
 
+#import "UIApplication+NDLExtension.h"
+
 #import "TestNavBarAlphaViewController.h"
 #import "BaseNavigationController.h"
 
@@ -1755,6 +1757,13 @@ NSLog(@"viewDidLoad 22");
         [LocalNotificationUtils presentLocalNotificationWithContent:@"ndlwill～～～" soundNamed:nil];
     });
     
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        NSLog(@"open URL");
+//        [[UIApplication sharedApplication] ndl_openURL:[NSURL URLWithString:@"testapp://"]];
+//    });
+    
+    
+    [CommonUtils logBinaryTree];
     NSLog(@"===Home viewDidLoad===");
 }
 

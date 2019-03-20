@@ -11,6 +11,7 @@
 #import <AudioToolbox/AudioToolbox.h>
 
 #import <SystemConfiguration/CaptiveNetwork.h>
+#import "BinaryTree.h"
 
 @implementation CommonUtils
 - (void)dealloc
@@ -284,6 +285,36 @@ int partition(int array[], int minIndex, int maxIndex)
 
 // 假设数据是按升序排序的，对于给定值x，从序列的中间位置开始比较，如果当前位置值等于x，则查找成功；若x小于当前位置值，则在数列的前半段 中查找；若x大于当前位置值则在数列的后半段中继续查找，直到找到为止。
 // 采用二分法查找时，数据需是排好序的
+
+
+// ========================================
++ (void)logBinaryTree
+{
+    BinaryTreeNode *rootNode = [BinaryTree createBinarySortTreeWithValues:@[@(50), @(25), @(75), @(28), @(10), @(8), @(12), @(30), @(60), @(80), @(100)]];
+    
+    
+    NSMutableArray *traversalArray = [NSMutableArray array];
+//    [BinaryTree preOrderTraversalTree:rootNode handler:^(BinaryTreeNode * _Nonnull node) {
+//        [traversalArray addObject:@(node.value)];
+//    }];
+//    NSLog(@"preOrderTraversal: traversalArray = %@", traversalArray);
+    
+//    [BinaryTree inOrderTraversalTree:rootNode handler:^(BinaryTreeNode * _Nonnull node) {
+//        [traversalArray addObject:@(node.value)];
+//    }];
+//    NSLog(@"inOrderTraversal: traversalArray = %@", traversalArray);
+    
+//    [BinaryTree postOrderTraversalTree:rootNode handler:^(BinaryTreeNode * _Nonnull node) {
+//        [traversalArray addObject:@(node.value)];
+//    }];
+//    NSLog(@"postOrderTraversal: traversalArray = %@", traversalArray);
+    
+    NSLog(@"depth = %ld", [BinaryTree depthOfTree:rootNode]);
+    
+}
+
+// ========================================
+
 
 + (void)logStackInfo
 {
