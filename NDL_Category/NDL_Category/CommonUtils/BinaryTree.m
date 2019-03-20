@@ -305,5 +305,4 @@
     return MAX(leftDepth, rightDepth) + 1;
 }
 
-// test master
 @end
