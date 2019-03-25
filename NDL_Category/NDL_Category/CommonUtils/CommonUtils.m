@@ -294,6 +294,7 @@ int partition(int array[], int minIndex, int maxIndex)
     
     
     NSMutableArray *traversalArray = [NSMutableArray array];
+    // 前序 中序 后序
 //    [BinaryTree preOrderTraversalTree:rootNode handler:^(BinaryTreeNode * _Nonnull node) {
 //        [traversalArray addObject:@(node.value)];
 //    }];
@@ -309,7 +310,19 @@ int partition(int array[], int minIndex, int maxIndex)
 //    }];
 //    NSLog(@"postOrderTraversal: traversalArray = %@", traversalArray);
     
-    NSLog(@"depth = %ld", [BinaryTree depthOfTree:rootNode]);
+    // DFS
+//    [BinaryTree DFSNonRecursiveTraversalTree:rootNode handler:^(BinaryTreeNode * _Nonnull node) {
+//        [traversalArray addObject:@(node.value)];
+//    }];
+//    NSLog(@"DFSNonRecursiveTraversal: traversalArray = %@", traversalArray);
+    
+    [BinaryTree DFSRecursionTraversalTree:rootNode handler:^(BinaryTreeNode * _Nonnull node) {
+        [traversalArray addObject:@(node.value)];
+    }];
+    NSLog(@"DFSRecursionTraversalTree: traversalArray = %@", traversalArray);
+    
+    // depth
+//    NSLog(@"depth = %ld", [BinaryTree depthOfTree:rootNode]);
     
 }
 
@@ -455,6 +468,36 @@ int partition(int array[], int minIndex, int maxIndex)
     NSLog(@"testDate: date = %@", testDate);// 10:20
     NSLog(@"testDate: str = %@", [NSString stringWithFormat:@"%@", testDate]);// 02:20
     
+}
+
++ (void)testFont:(UIFont *)font
+{
+    // [UIFont fontWithName:@"PingFangSC-Semibold" size:28]
+    
+    // ascender:小写字体中超出x字母高度部分 descender:下行字母
+    /*
+     fontLabel.text = @"TextFont";
+     label size = {118, 39.5}
+     */
+    
+    /*
+     fontLabel.text = @"测试字体";
+     label size = {112, 39.5}
+     */
+    
+    /*
+     font.pointSize = 28.000000
+     font.ascender = 29.680000
+     font.descender = -9.520000
+     font.capHeight = 24.080000
+     font.xHeight = 16.800000
+     font.lineHeight = 39.200000
+     font.leading = 0.000000
+     */
+    NSLog(@"\nfont.pointSize = %lf\nfont.ascender = %lf\nfont.descender = %lf\nfont.capHeight = %lf\nfont.xHeight = %lf\nfont.lineHeight = %lf\nfont.leading = %lf", font.pointSize, font.ascender, font.descender, font.capHeight, font.xHeight, font.lineHeight, font.leading);
+    
+    // str size = {112, 39.200000000000003}
+    NSLog(@"str size = %@", NSStringFromCGSize([@"测试字体" ndl_sizeForSingleLineStringWithFont:[UIFont fontWithName:@"PingFangSC-Semibold" size:28]]));
 }
 
 @end

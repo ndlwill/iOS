@@ -93,8 +93,13 @@ __weak typeof(obj) weak_##obj = obj; \
 // 机型小于等于4英寸
 #define IS_LESS_THAN_OR_EQUAL_TO_4INCH (NDLScreenW < 375.0)
 
-// 适配iphoneX
+// 适配iphoneX || iphoneXS
+#define iPhoneX_XS (NDLScreenW == 375.f && NDLScreenH == 812.f ? YES : NO)
 #define iPhoneX (NDLScreenW == 375.f && NDLScreenH == 812.f ? YES : NO)
+// 适配iphoneXR || iphoneXS_MAX
+#define iPhoneXR_XSMAX (NDLScreenW == 414.f && NDLScreenH == 896.f ? YES : NO)
+// 全面屏
+#define FullScreenIphone (iPhoneX_XS || iPhoneXR_XSMAX)
 
 // 视频通话statusBarH会有变化,所以写死20或者44
 //#define NDLStatusBarH [UIApplication sharedApplication].statusBarFrame.size.height
@@ -103,10 +108,10 @@ __weak typeof(obj) weak_##obj = obj; \
 #define AdditionaliPhoneXTopSafeH 44.0
 #define AdditionaliPhoneXBottomSafeH 34.0
 
-#define StatusBarH (iPhoneX ? AdditionaliPhoneXTopSafeH : 20.0)
+#define StatusBarH (FullScreenIphone ? AdditionaliPhoneXTopSafeH : 20.0)
 
-#define TopSafeH (iPhoneX ? AdditionaliPhoneXTopSafeH : 0.0)
-#define BottomSafeH (iPhoneX ? AdditionaliPhoneXBottomSafeH : 0.0)
+#define TopSafeH (FullScreenIphone ? AdditionaliPhoneXTopSafeH : 0.0)
+#define BottomSafeH (FullScreenIphone ? AdditionaliPhoneXBottomSafeH : 0.0)
 
 #define TopExtendedLayoutH (StatusBarH + NavigationBarH)
 #define BottomExtendedLayoutH self.tabBarController.tabBar.frame.size.height

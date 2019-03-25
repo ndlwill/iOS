@@ -119,30 +119,37 @@
  */
 
 // 滚动调整
-//- (void)scrollAdjustWithScrollView:(UIScrollView *)scrollView
+//- (void)scrollAdjustWithScrollView:(UIScrollView *)scrollView autoFlag:(BOOL)autoFlag
 //{
 //    CGFloat offsetY = scrollView.contentOffset.y;
 //    self.totalOffsetY += offsetY;
-//    
+//    NSLog(@"offsetY = %lf self.totalOffsetY = %lf", offsetY, self.totalOffsetY);
+//
 //    // self.totalOffsetY判断
-//    if (self.totalOffsetY >= 0 && self.totalOffsetY <= kBigTitleHeight) {
+//    if (self.totalOffsetY >= 0 && self.totalOffsetY < kBigTitleHeight) {
 //        scrollView.contentOffset = CGPointZero;
 //        self.bigTitleViewTopOffsetToNavigationViewBottomCons.constant = -self.totalOffsetY;
-//        [self.view layoutIfNeeded];
+//        if (autoFlag) {
+//            [UIView animateWithDuration:0.5 animations:^{
+//                [self.view layoutIfNeeded];
+//            }];
+//        } else {
+//            [self.view layoutIfNeeded];
+//        }
 //    } else if (self.totalOffsetY < 0) {
 //        self.totalOffsetY = 0;
 //        if (self.bigTitleViewTopOffsetToNavigationViewBottomCons.constant != 0) {
 //            self.bigTitleViewTopOffsetToNavigationViewBottomCons.constant = 0;
 //            [self.view layoutIfNeeded];
 //        }
-//    } else if (self.totalOffsetY > kBigTitleHeight) {
+//    } else if (self.totalOffsetY >= kBigTitleHeight) {
 //        self.totalOffsetY = kBigTitleHeight;
 //        if (self.bigTitleViewTopOffsetToNavigationViewBottomCons.constant != -kBigTitleHeight) {
 //            self.bigTitleViewTopOffsetToNavigationViewBottomCons.constant = -kBigTitleHeight;
 //            [self.view layoutIfNeeded];
 //        }
 //    }
-//    
+//
 //    // 显示隐藏 titleLabel
 //    if (self.totalOffsetY >= 0 && self.totalOffsetY < kBigTitleMaxY) {
 //        if (!self.navigationTitleLabel.hidden) {
@@ -152,6 +159,18 @@
 //        if (self.navigationTitleLabel.hidden) {
 //            self.navigationTitleLabel.hidden = NO;
 //        }
+//    }
+//}
+
+// 自动调整
+//- (void)_autoScrollAdjustmentWithScrollView:(UIScrollView *)scrollView
+//{
+//    if (self.totalOffsetY > 0.0 && self.totalOffsetY <= 20.0) {
+//        self.totalOffsetY = 0.0;
+//        [self _scrollAdjustWithScrollView:scrollView autoFlag:YES];
+//    } else if (self.totalOffsetY > 20.0 && self.totalOffsetY <= 60.0) {
+//        self.totalOffsetY = 60;
+//        [self _scrollAdjustWithScrollView:scrollView autoFlag:YES];
 //    }
 //}
 

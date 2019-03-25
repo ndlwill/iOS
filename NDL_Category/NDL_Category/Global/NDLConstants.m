@@ -16,6 +16,12 @@ NSString * const kTestTableName = @"t_test";
 // label: font = 15
 CGFloat const kSystemBadgeViewWH = 18.0;
 
+CGFloat const kBigTitleWrapperViewHeight = 60.0;
+CGFloat const kBigTitleFontSize = 28.0;
+CGFloat const kBigTitleBundleMargin = (40 - kBigTitleFontSize) / 2.0;
+// ((40 - 28) / 2)=6 + 28 = 34
+CGFloat const kBigTitleLimitY = (kBigTitleBundleMargin + kBigTitleFontSize);
+
 CGFloat const kBigTitleHeight = 60.0;
 CGFloat const kBigTitleMaxY = 52.0;
 CGFloat const kBigTitleMiddleY = 28.0;

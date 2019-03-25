@@ -24,7 +24,8 @@
 - (void)cancelAllRequests;
 
 // 大标题滚动调整
-//- (void)scrollAdjustWithScrollView:(UIScrollView *)scrollView;
+//- (void)scrollAdjustWithScrollView:(UIScrollView *)scrollView autoFlag:(BOOL)autoFlag;
+//- (void)_autoScrollAdjustmentWithScrollView:(UIScrollView *)scrollView;
 
 
 // for test

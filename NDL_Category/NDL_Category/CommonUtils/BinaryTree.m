@@ -243,6 +243,21 @@
  
  */
 // DFS非递归
+/*
+ [
+ 50,
+ 25,
+ 10,
+ 8,
+ 12,
+ 28,
+ 30,
+ 75,
+ 60,
+ 80,
+ 100
+ ]
+ */
 + (void)DFSNonRecursiveTraversalTree:(BinaryTreeNode *)rootNode handler:(void(^)(BinaryTreeNode *node))handler
 {
     if (!rootNode) {
@@ -262,8 +277,7 @@
         
 //        [stackArray removeObjectAtIndex:(stackArray.count - 1)];
         [stackArray removeLastObject];
-        
-        
+        NSLog(@"tempNode = %ld", tempNode.value);
         
         if (rightNode) {
             [stackArray addObject:rightNode];
@@ -276,12 +290,33 @@
 }
 
 // DFS递归
-//+ (void)DFSRecursionTraversalTree:(BinaryTreeNode *)rootNode
-//{
-//    if (!rootNode) {
-//        
-//    }
-//}
+/*
+ [
+ 50,
+ 25,
+ 10,
+ 8,
+ 12,
+ 28,
+ 30,
+ 75,
+ 60,
+ 80,
+ 100
+ ]
+ */
++ (void)DFSRecursionTraversalTree:(BinaryTreeNode *)rootNode handler:(void(^)(BinaryTreeNode *node))handler
+{
+    if (!rootNode) {
+        return;
+    }
+    
+    if (handler) {
+        handler(rootNode);
+    }
+    [self DFSRecursionTraversalTree:rootNode.leftNode handler:handler];
+    [self DFSRecursionTraversalTree:rootNode.rightNode handler:handler];
+}
 
 
 // 二叉树的深度  二叉树的深度定义为：从根节点到叶子结点依次经过的结点形成树的一条路径,最长路径的长度为树的深度
@@ -305,4 +340,96 @@
     return MAX(leftDepth, rightDepth) + 1;
 }
 
+// 二叉树的宽度  二叉树的宽度定义为各层节点数的最大值
++ (NSInteger)widthOfTree:(BinaryTreeNode *)rootNode
+{
+    if (!rootNode) {
+        return 0;
+    }
+    
+    NSMutableArray *queueArray = [NSMutableArray array];
+    [queueArray addObject:rootNode];
+    
+    NSInteger maxWidth = 1;
+    NSInteger curLayerWidth = 0;
+    
+    while (queueArray.count > 0) {
+        curLayerWidth = queueArray.count;
+        
+        for (NSInteger i = 0; i < curLayerWidth; i++) {
+            BinaryTreeNode *tempNode = [queueArray firstObject];
+            [queueArray removeFirstObject];
+            
+            if (tempNode.leftNode) {
+                [queueArray addObject:tempNode.leftNode];
+            }
+            
+            if (tempNode.rightNode) {
+                [queueArray addObject:tempNode.rightNode];
+            }
+        }
+        
+        maxWidth = MAX(maxWidth, queueArray.count);
+    }
+    return maxWidth;
+}
+
+// 二叉树的所有节点数   二叉树所有节点数=左子树节点数+右子树节点数+1
++ (NSInteger)numberOfNodesInTree:(BinaryTreeNode *)rootNode
+{
+    if (!rootNode) {
+        return 0;
+    }
+    
+    return [self numberOfNodesInTree:rootNode.leftNode] + [self numberOfNodesInTree:rootNode.rightNode] + 1;
+}
+
+/*
+ 二叉树某层中的节点数
+ 1）根节点为空，则节点数为0；
+ 2）层为1，则节点数为1（即根节点）
+ 3）递归思想：二叉树第k层节点数=左子树第k-1层节点数+右子树第k-1层节点数
+ */
++ (NSInteger)numberOfNodesOnLevel:(NSInteger)level inTree:(BinaryTreeNode *)rootNode
+{
+    if (!rootNode || level < 1) {
+        return 0;
+    }
+    
+    if (level == 1) {
+        return 1;// 根节点
+    }
+    
+    return [self numberOfNodesOnLevel:level - 1 inTree:rootNode.leftNode] + [self numberOfNodesOnLevel:level - 1 inTree:rootNode.rightNode];
+}
+
+// 二叉树叶子节点数   叶子节点，又叫终端节点，是左右子树都是空的节点
++ (NSInteger)numberOfLeadNodesInTree:(BinaryTreeNode *)rootNode
+{
+    if (!rootNode) {
+        return 0;
+    }
+    
+    if (!rootNode.leftNode && !rootNode.rightNode) {
+        return 1;
+    }
+    
+    return [self numberOfLeadNodesInTree:rootNode.leftNode] + [self numberOfLeadNodesInTree:rootNode.rightNode];
+}
+
+// 二叉树最大距离（二叉树的直径）
+// 二叉树中任意两个节点都有且仅有一条路径，这个路径的长度叫这两个节点的距离。二叉树中所有节点之间的距离的最大值就是二叉树的直径
+/*
+ 把这个最大距离划分了3种情况:
+ 1）这2个节点分别在根节点的左子树和右子树上，他们之间的路径肯定经过根节点，而且他们肯定是根节点左右子树上最远的叶子节点（他们到根节点的距离=左右子树的深度）。
+ 2）这2个节点都在左子树上
+ 3）这2个节点都在右子树上
+ 只要取这3种情况中的最大值，就是二叉树的直径
+ */
+// diameter(maxDistance)
++ (NSInteger)diameterOfTree:(BinaryTreeNode *)rootNode
+{
+    
+    return 0;
+}
 @end

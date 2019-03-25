@@ -61,6 +61,7 @@
 
 + (NSArray *)bubbleSort:(NSArray *)array;
 
+// https://www.cnblogs.com/manji/p/4881907.html
 /*
  排序算法分类：
  内部排序（在排序过程中不需要访问外存就可以完成排序）
@@ -136,5 +137,7 @@ void quickSort_C(int array[], int minIndex, int maxIndex);
 + (void)logLocal:(NSLocale *)local;
 
 + (void)testDate;
+
++ (void)testFont:(UIFont *)font;
 
 @end

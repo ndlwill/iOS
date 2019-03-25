@@ -120,6 +120,8 @@
 
 #import "LocalNotificationUtils.h"
 
+#import "TestPresentViewController.h"
+
 typedef id (^WeakReference)(void);
 
 // TODO: Import
@@ -1764,7 +1766,30 @@ NSLog(@"viewDidLoad 22");
     
     
     [CommonUtils logBinaryTree];
+    
+    UILabel *fontLabel = [[UILabel alloc] init];
+    fontLabel.backgroundColor = [UIColor whiteColor];
+    fontLabel.font = [UIFont systemFontOfSize:28];
+    fontLabel.textColor = [UIColor blackColor];
+//    fontLabel.text = @"TextFont";
+    fontLabel.text = @"测试字体";
+    [self.view addSubview:fontLabel];
+    [fontLabel sizeToFit];
+    NSLog(@"fontLabel size before = %@", NSStringFromCGSize(fontLabel.size));
+    fontLabel.height = 28;// 我感觉高度就是fontSize=28
+    NSLog(@"fontLabel size after = %@", NSStringFromCGSize(fontLabel.size));
+    
+    [CommonUtils testFont:[UIFont fontWithName:@"PingFangSC-Semibold" size:28]];
+    
+    NSLog(@"kBigTitleBundleMargin = %lf kBigTitleLimitY = %lf", kBigTitleBundleMargin, kBigTitleLimitY);
+    
     NSLog(@"===Home viewDidLoad===");
+    
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        NSLog(@"Home dispatch_after 6.0");
+//        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[TestPresentViewController new]];
+//        [self presentViewController:nav animated:YES completion:nil];
+//    });
 }
 
 - (void)youkuDidClicked:(YouKuPlayButton *)btn

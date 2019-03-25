@@ -138,6 +138,15 @@ typedef NS_ENUM(NSInteger, GradientDirection) {
     GradientDirection_RightTopToLeftBottom
 };
 
+// scrollView 拖拽方向
+typedef NS_ENUM(NSInteger, ScrollViewDragDirection) {
+    ScrollViewDragDirection_None = 0,// 没有拖拽
+    ScrollViewDragDirection_Left,
+    ScrollViewDragDirection_Right,
+    ScrollViewDragDirection_Up,
+    ScrollViewDragDirection_Down
+};
+
 // resources
 FOUNDATION_EXTERN NSString * const kRemoteGifUrlStr;
 
@@ -150,6 +159,26 @@ typedef void(^CommonNoParamNoReturnValueBlock)(void);
 
 //
 FOUNDATION_EXTERN CGFloat const kSystemBadgeViewWH;
+
+
+// scrollView
+/*
+ setContentOffset: animated:
+ 只会调用scrollViewDidScroll
+ 
+ animated:
+ YES 调用多次scrollViewDidScroll
+ NO 调用1次scrollViewDidScroll
+ 
+ scrollView.contentOffset 设置的值与原来的一样，不调用scrollViewDidScroll
+ */
+
+// 大标题fontSize = 28(相当于bundle包裹大小) (BigTitleHeight = 40, BigTitleWrapperViewHeight = 60, (40 - 28) / 2 = 6表示字体到上下边界的距离)
+FOUNDATION_EXTERN CGFloat const kBigTitleWrapperViewHeight;
+FOUNDATION_EXTERN CGFloat const kBigTitleFontSize;
+FOUNDATION_EXTERN CGFloat const kBigTitleBundleMargin;
+FOUNDATION_EXTERN CGFloat const kBigTitleLimitY;
+
 
 // 大标题高度 = 60
 FOUNDATION_EXTERN CGFloat const kBigTitleHeight;

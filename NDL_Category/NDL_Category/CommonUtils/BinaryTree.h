@@ -26,11 +26,21 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)postOrderTraversalTree:(BinaryTreeNode *)rootNode handler:(void(^)(BinaryTreeNode *node))handler;
 // non-recursive
 + (void)BFSTraversalTree:(BinaryTreeNode *)rootNode handler:(void(^)(BinaryTreeNode *node))handler;
-+ (void)DFSNonRecursiveTraversalTree:(BinaryTreeNode *)rootNode handler:(void(^)(BinaryTreeNode *node))handler;
 
-//+ (void)DFSRecursionTraversalTree:(BinaryTreeNode *)rootNode;
++ (void)DFSNonRecursiveTraversalTree:(BinaryTreeNode *)rootNode handler:(void(^)(BinaryTreeNode *node))handler;
++ (void)DFSRecursionTraversalTree:(BinaryTreeNode *)rootNode handler:(void(^)(BinaryTreeNode *node))handler;
 
 + (NSInteger)depthOfTree:(BinaryTreeNode *)rootNode;
+
++ (NSInteger)widthOfTree:(BinaryTreeNode *)rootNode;
+
++ (NSInteger)numberOfNodesInTree:(BinaryTreeNode *)rootNode;
+
++ (NSInteger)numberOfNodesOnLevel:(NSInteger)level inTree:(BinaryTreeNode *)rootNode;
+
++ (NSInteger)numberOfLeadNodesInTree:(BinaryTreeNode *)rootNode;
+
++ (NSInteger)diameterOfTree:(BinaryTreeNode *)rootNode;
 
 @end
 
