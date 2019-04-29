@@ -1,0 +1,1 @@
+../../../../WCDBOptimizedSQLCipher/ext/fts3/fts3_tokenizer.h

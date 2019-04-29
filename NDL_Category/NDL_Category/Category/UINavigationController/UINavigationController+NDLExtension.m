@@ -8,26 +8,27 @@
 
 #import "UINavigationController+NDLExtension.h"
 
-@interface UINavigationController () <UINavigationBarDelegate>
+@interface UINavigationController ()
 
 @end
 
 @implementation UINavigationController (NDLExtension)
 
-+ (void)load
-{
-    NSArray *methodArray = @[@"_updateInteractiveTransition:"];// , @"popToViewController:animated:", @"popToRootViewControllerAnimated:", @"setDelegate:"
-    for (NSString *methodStr in methodArray) {
-        NSString *newMethodStr = [[@"ndl_" stringByAppendingString:methodStr] stringByReplacingOccurrencesOfString:@"__" withString:@"_"];
-        ReplaceMethod([self class], NSSelectorFromString(methodStr), NSSelectorFromString(newMethodStr));
-    }
-}
+//+ (void)load
+//{
+//    NSArray *methodArray = @[@"_updateInteractiveTransition:"];// , @"popToViewController:animated:", @"popToRootViewControllerAnimated:", @"setDelegate:"
+//    for (NSString *methodStr in methodArray) {
+//        NSString *newMethodStr = [[@"ndl_" stringByAppendingString:methodStr] stringByReplacingOccurrencesOfString:@"__" withString:@"_"];
+//        ReplaceMethod([self class], NSSelectorFromString(methodStr), NSSelectorFromString(newMethodStr));
+//    }
+//}
 
 #pragma mark - public methods
 - (void)setNavBarFirstSubViewAlpha:(CGFloat)alpha
 {
 //    NSLog(@"subView = %@", self.navigationBar.subviews);
     UIView *navBarFirstSubView = self.navigationBar.subviews.firstObject;// _UIBarBackground
+
     /*
      [
      <UIImageView: 0x7f99bcc8e4c0; frame = (0 64; 375 0.5); userInteractionEnabled = NO; layer = <CALayer: 0x6000030621a0>>,
@@ -68,30 +69,31 @@
 }
 
 #pragma mark - private methods
-- (void)ndl_updateInteractiveTransition:(CGFloat)percentComplete
-{
-    UIViewController *topVC = self.topViewController;
-    if (!topVC) {
-        return;
-    }
-    // 1.获取转场上下文协调者
-    id <UIViewControllerTransitionCoordinator> transitionCoordinator = topVC.transitionCoordinator;
-    // 2.根据转场上下文协调者获取转场始末控制器
-    UIViewController *fromVC = [transitionCoordinator viewControllerForKey:UITransitionContextFromViewControllerKey];
-    UIViewController *toVC = [transitionCoordinator viewControllerForKey:UITransitionContextToViewControllerKey];
-    // 3.获取始末控制器导航栏透明度
-    CGFloat fromNavBarAlpha = fromVC.navBarAlpha;
-    CGFloat toNavBarAlpha = toVC.navBarAlpha;
-    // 4.计算转场过程中变化的透明度值(系统默认从一个颜色过渡到另一个颜色，不考虑alpha，eg:toVC的navBar color:blue alpha:0.0,刚开始边缘交互的时候 颜色会一下子变为blue)
-    CGFloat curNavBarAlpha = fromNavBarAlpha + (toNavBarAlpha - fromNavBarAlpha) * percentComplete;
-    // 5.重新设定透明度
-    [self setNavBarFirstSubViewAlpha:curNavBarAlpha];
-    
-    // 6.设置转场中的tintColor ?
-    
-    // 调用系统原来的操作(调用系统原来的f操作前，做一些自定义操作)
-    [self ndl_updateInteractiveTransition:percentComplete];
-}
+//- (void)ndl_updateInteractiveTransition:(CGFloat)percentComplete
+//{
+//    UIViewController *topVC = self.topViewController;
+//    if (!topVC) {
+//        return;
+//    }
+//    // 1.获取转场上下文协调者
+//    id <UIViewControllerTransitionCoordinator> transitionCoordinator = topVC.transitionCoordinator;
+//    // 2.根据转场上下文协调者获取转场始末控制器
+//    UIViewController *fromVC = [transitionCoordinator viewControllerForKey:UITransitionContextFromViewControllerKey];
+//    UIViewController *toVC = [transitionCoordinator viewControllerForKey:UITransitionContextToViewControllerKey];
+//    // 3.获取始末控制器导航栏透明度
+//    CGFloat fromNavBarAlpha = fromVC.navBarAlpha;
+//    CGFloat toNavBarAlpha = toVC.navBarAlpha;
+//    // 4.计算转场过程中变化的透明度值(系统默认从一个颜色过渡到另一个颜色，不考虑alpha，eg:toVC的navBar color:blue alpha:0.0,刚开始边缘交互的时候 颜色会一下子变为blue)
+//    CGFloat curNavBarAlpha = fromNavBarAlpha + (toNavBarAlpha - fromNavBarAlpha) * percentComplete;
+//    // 5.重新设定透明度
+//    [self setNavBarFirstSubViewAlpha:curNavBarAlpha];
+//    
+//    // 6.设置转场中的tintColor
+//    // TODO:设置转场中的tintColor
+//    
+//    // 调用系统原来的操作(调用系统原来的操作前，做一些自定义操作)
+//    [self ndl_updateInteractiveTransition:percentComplete];
+//}
 
 //- (NSArray<UIViewController *> *)ndl_popToViewController:(UIViewController *)viewController animated:(BOOL)animated
 //{
@@ -106,22 +108,5 @@
 //
 //    return [self ndl_popToRootViewControllerAnimated:animated];
 //}
-
-#pragma mark - UINavigationBarDelegate
-//- (BOOL)navigationBar:(UINavigationBar *)navigationBar shouldPushItem:(UINavigationItem *)item
-//{
-//
-//    return YES;
-//}
-
-// 处理手势转场取消的情况 （侧滑返回也会走这个）
-- (BOOL)navigationBar:(UINavigationBar *)navigationBar shouldPopItem:(UINavigationItem *)item
-{
-    UIViewController *topVC = self.topViewController;
-    id <UIViewControllerTransitionCoordinator> transitionCoordinator = topVC.transitionCoordinator;
-    
-    
-    return YES;
-}
 
 @end

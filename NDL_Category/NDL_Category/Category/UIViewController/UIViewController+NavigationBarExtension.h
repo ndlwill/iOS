@@ -11,12 +11,13 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @interface UIViewController (NavigationBarExtension)
+
 // 当前控制器导航栏透明度
-@property (nonatomic, assign) CGFloat navBarAlpha;
+//@property (nonatomic, assign) CGFloat navBarAlpha;
 // 当前控制器导航栏barTintColor
-@property (nonatomic, strong) UIColor *navBarTintColor;
+//@property (nonatomic, strong) UIColor *navBarTintColor;
 // 当前控制器导航栏item TintColor
-@property (nonatomic, strong) UIColor *navItemTintColor;
+//@property (nonatomic, strong) UIColor *navItemTintColor;
 
 @end
 

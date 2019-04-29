@@ -45,15 +45,13 @@
     [self.view addSubview:imageView];
     imageView.centerX = self.view.centerX;
     imageView.y = 500;
+    
 }
 
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
-    
-    self.navItemTintColor = [UIColor redColor];
-    self.navBarTintColor = [UIColor greenColor];
-    self.navBarAlpha = 0.8;
+
 }
 
 - (void)viewDidAppear:(BOOL)animated

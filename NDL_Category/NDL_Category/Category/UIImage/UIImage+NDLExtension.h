@@ -8,6 +8,8 @@
 
 #import <UIKit/UIKit.h>
 
+// WebP是由google推出来的一种图片格式,这种格式的主要优势在于高效率,高压缩率,能够加快图片加载速度
+// http://www.uisdc.com/image-format-webp-introduction
 @interface UIImage (NDLExtension)
 
 // 生成圆形图片

@@ -154,16 +154,7 @@
         NSLog(@"#####clearDiskOnCompletion#####");
     }];
     
-    self.navItemTintColor = [UIColor cyanColor];
-    self.navBarTintColor = [UIColor blueColor];
-    self.navBarAlpha = 0.0;
 }
-
-- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
-{
-//    [self.navigationController popToRootViewControllerAnimated:YES];
-}
-
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section
 {

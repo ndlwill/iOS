@@ -34,6 +34,26 @@
     }
 }
 
++ (CGFloat)transitionValueWithPercent:(CGFloat)percent fromValue:(CGFloat)fromValue toValue:(CGFloat)toValue
+{
+    return (fromValue + (toValue - fromValue) * percent);
+}
+
++ (UIColor *)transitionColorWithPercent:(CGFloat)percent fromColor:(UIColor *)fromColor toColor:(UIColor *)toColor
+{
+    CGFloat fromRed = 0.0, fromGreen = 0.0, fromBlue = 0.0, fromAlpha = 0.0;
+    [fromColor getRed:&fromRed green:&fromGreen blue:&fromBlue alpha:&fromAlpha];
+    
+    CGFloat toRed = 0.0, toGreen = 0.0, toBlue = 0.0, toAlpha = 0.0;
+    [toColor getRed:&toRed green:&toGreen blue:&toBlue alpha:&toAlpha];
+    
+    CGFloat transitionRed = [self transitionValueWithPercent:percent fromValue:fromRed toValue:toRed];
+    CGFloat transitionGreen = [self transitionValueWithPercent:percent fromValue:fromGreen toValue:toGreen];
+    CGFloat transitionBlue = [self transitionValueWithPercent:percent fromValue:fromBlue toValue:toBlue];
+    CGFloat transitionAlpha = [self transitionValueWithPercent:percent fromValue:fromAlpha toValue:toAlpha];
+    return [UIColor colorWithRed:transitionRed green:transitionGreen blue:transitionBlue alpha:transitionAlpha];
+}
+
 + (UIWindow *)keyboardWindow
 {
     UIWindow *keyboardWindow = nil;
@@ -107,6 +127,20 @@
         const char * attribute = property_getAttributes(property);
         NSString* objcAttribute = [NSString stringWithUTF8String:attribute];
         NSLog(@"property_name = %@ property_attribute = %@", objcName, objcAttribute);
+    }
+    NSLog(@"==========end==========");
+}
+
++ (void)logInstanceMethodListForClass:(Class)className
+{
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(className, &count);
+    
+    NSLog(@"==========begin==========");
+    for (int i = 0; i < count; i++) {
+        SEL selector = method_getName(methods[i]);
+        NSString *selectorStr = NSStringFromSelector(selector);
+        NSLog(@"selectorStr = %@", selectorStr);
     }
     NSLog(@"==========end==========");
 }

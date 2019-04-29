@@ -10,6 +10,15 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
+// 索引的作用是为了提高查询速度
+// 对象关系映射 Object Relational Mapping，简称ORM
+
+// xcode配置
+/*
+ Run->Arguments 环境变量设置:
+ DYLD_PRINT_STATISTICS YES
+ */
+
 //CGRectOffset(CGRectMake(0, 0, 100, 100), 0, 10) // {0, 10, 100, 100}
 //CGRectInset(CGRectMake(0, 0, 100, 100), 0, 10) // {0, 10, 100, 80}
 
@@ -30,6 +39,9 @@
 
 #define IsMainThread [NSThread isMainThread]
 #define MainThreadAssert() NSAssert([NSThread isMainThread], @"needs to be accessed on the main thread.");
+
+// 归一化:把数据映射到[0,1]或者[-1, 1]区间内
+#define NDLNormalization(value) MAX(0, MIN(1, value))
 
 #define NDLScreenW [UIScreen mainScreen].bounds.size.width
 #define NDLScreenH [UIScreen mainScreen].bounds.size.height

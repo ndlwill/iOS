@@ -11,6 +11,7 @@
 
 @interface NextViewController ()
 
+// https://developer.apple.com/documentation/uikit/uipercentdriveninteractivetransition?language=objc
 @property (nonatomic, strong) UIPercentDrivenInteractiveTransition *interactiveTransition;
 
 @property (nonatomic, assign) BOOL dismissFlag;

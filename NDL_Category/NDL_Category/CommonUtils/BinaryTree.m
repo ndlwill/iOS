@@ -429,7 +429,12 @@
 // diameter(maxDistance)
 + (NSInteger)diameterOfTree:(BinaryTreeNode *)rootNode
 {
+    if (!rootNode) {
+        return 0;
+    }
     
     return 0;
 }
+
+
 @end

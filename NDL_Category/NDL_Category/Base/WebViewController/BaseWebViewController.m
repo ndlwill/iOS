@@ -123,7 +123,9 @@
     self.webView.scrollView.backgroundColor = [UIColor cyanColor];
     self.webView.scrollView.decelerationRate = UIScrollViewDecelerationRateNormal;
     [self.webView addObserver:self forKeyPath:@"estimatedProgress" options:NSKeyValueObservingOptionNew context:nil];
+    [self.webView addObserver:self forKeyPath:@"scrollView.contentSize" options:NSKeyValueObservingOptionNew context:nil];
     [self.view addSubview:self.webView];
+    
     
     // webView进度条
     self.progressView = [[UIProgressView alloc] initWithFrame:progressViewFrame];

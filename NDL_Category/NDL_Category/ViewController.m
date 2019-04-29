@@ -8,14 +8,16 @@
 
 #import "ViewController.h"
 #import "Person.h"
-
+#import "ChildObject.h"
 #import "SystemInfo.h"
 #import "TestLifeCircleController.h"
 #import "UIView+NDLExtension.h"
 #import "TestView.h"
 #import "TestView1.h"
 #import "LongPressLabel.h"
-
+#import "NavController.h"
+#import "GestureViewController.h"
+#import "UINavigationBar+NDLExtension.h"
 #import "Masonry.h"
 #import <Photos/Photos.h>
 #import <CoreText/CoreText.h>
@@ -34,7 +36,7 @@
 #import "CommonUtils.h"
 #import "PlaceholderTextView.h"
 #import "TestLifeCircleAutoLayoutViewController.h"
-
+#import "TestWCDBViewController.h"
 #import "PopoverView.h"
 
 #import "DrawUtils.h"
@@ -122,10 +124,14 @@
 
 #import "TestPresentViewController.h"
 
+#import "NextRootViewController.h"
+
+#import "ThreeDTouchViewController.h"
+
 typedef id (^WeakReference)(void);
 
 // TODO: Import
-@interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate, CLLocationManagerDelegate, UITabBarControllerDelegate>
+@interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate, CLLocationManagerDelegate, UITabBarControllerDelegate, UIViewControllerPreviewingDelegate>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
 
 @property (weak, nonatomic) UIView *touchView;
@@ -171,6 +177,11 @@ typedef id (^WeakReference)(void);
 @property (nonatomic, strong) CLLocationManager *locationManager;
 
 @property (nonatomic, strong) CTCallCenter *callCenter;
+
+@property (nonatomic, weak) id<UIViewControllerPreviewing> previewingContext;
+
+@property (nonatomic, strong) BaseObject *baseObj;
+@property (nonatomic, strong) ChildObject *childObj;
 
 @end
 
@@ -427,6 +438,7 @@ static NSDateFormatter *dateFormatter_ = nil;
 #endif
     
     NSLog(@"===Home viewDidAppear p_ndl = %@ dic_ndl = %@", self.p_ndl, [self.p_dic objectForKey:@"ndl"]);
+    
 }
 
 
@@ -526,6 +538,10 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
 }
 
 - (void)viewDidLoad {
+    [self aspect_hookSelector:@selector(testHook) withOptions:AspectPositionAfter usingBlock:^(id<AspectInfo> aspectInfo){
+        NSLog(@"###ViewController After testHook###");
+    } error:nil];
+    
     NSLog(@"===ViewController viewDidLoad===");
     NSLog(@"date = %@ ceil = %lf", [NSDate date], ceil(6.3));// 7.0
     
@@ -1790,6 +1806,130 @@ NSLog(@"viewDidLoad 22");
 //        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[TestPresentViewController new]];
 //        [self presentViewController:nav animated:YES completion:nil];
 //    });
+    
+    [self testHook];
+    
+    
+    
+    NSString *crashStr = nil;
+    // crash
+//    NSDictionary *crashDic = @{@"key1" : @"123", @"key2" : crashStr, @"key3" : @"234"};
+    
+    // exception捕获 不crash了
+    NSDictionary *exceptionDic = nil;
+    @try {
+        // 删除全局异常断点 不然还是会进入到断点
+        exceptionDic = @{@"key1" : @"123", @"key2" : crashStr, @"key3" : @"234"};
+    } @catch (NSException *exception) {
+        // exception = *** -[__NSPlaceholderDictionary initWithObjects:forKeys:count:]: attempt to insert nil object from objects[1]
+        NSLog(@"exception = %@", exception);
+    } @finally {
+        NSLog(@"finally exceptionDic = %@", exceptionDic);// nil
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            NSLog(@"===after 3.0, need crash===");
+            // condition:应该exceptionDic != nil 现在exceptionDic == nil 会断言 会闪退
+//            NSAssert(exceptionDic != nil, @"exceptionDic == nil,need to crash");
+        });
+    }
+    
+    // 根控制器 transition animation
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        NSLog(@"=====start transition animation===");
+//
+//        // UIViewAnimationOptionTransitionCrossDissolve
+//        [UIView transitionWithView:KeyWindow duration:2.0 options:UIViewAnimationOptionTransitionFlipFromLeft animations:^{
+//            KeyWindow.rootViewController = [NextRootViewController new];
+//        } completion:^(BOOL finished) {
+//            NSLog(@"===Home finished===");
+//        }];
+//    });
+    
+    
+    // new navController
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        
+//        [self presentViewController:[[UINavigationController alloc] initWithRootViewController:[NextRootViewController new]] animated:YES completion:nil];
+//    });
+ 
+    
+//    // 3DTouch
+//    if (@available(iOS 9.0, *)) {
+//        if (self.traitCollection.forceTouchCapability == UIForceTouchCapabilityAvailable) {
+//            self.previewingContext = [self registerForPreviewingWithDelegate:self sourceView:self.view];
+//        }
+//    }
+    
+    // ===object_setClass===
+//    self.childObj = [[ChildObject alloc] init];
+//    self.childObj.objectName = @"objectName";
+//    self.childObj.childObjName = @"childObjName";
+//    object_setClass(self.childObj, [BaseObject class]);
+//
+//    NSLog(@"childObj = %@", self.childObj);
+//
+    // -[BaseObject childObjName]: unrecognized selector sent to instance
+//    NSLog(@"childObj = %@ childObjName = %@", self.childObj, self.childObj.childObjName);
+    
+    
+    // ===TestGesture===
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        GestureViewController *vc = [GestureViewController new];
+//
+//        NavController *nav = [[NavController alloc] initWithRootViewController:vc];
+//        [self presentViewController:nav animated:YES completion:nil];
+//    });
+    
+    // ===TestTransitionController===
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        GestureViewController *vc = [GestureViewController new];
+//        // 默认的从下到上 UIModalTransitionStyleCoverVertical
+//        // 翻转:UIModalTransitionStyleFlipHorizontal
+//        // 渐显:UIModalTransitionStyleCrossDissolve
+////        vc.modalTransitionStyle = UIModalTransitionStyleCoverVertical;
+//        // 默认全屏
+////        vc.modalPresentationStyle = UIModalPresentationFullScreen;
+////        [self presentViewController:vc animated:YES completion:nil];
+//
+//        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
+//        [self presentViewController:nav animated:YES completion:nil];
+//    });
+    
+    
+    // ===log method list===
+//    [CommonUtils logInstanceMethodListForClass:[UINavigationController class]];
+//    [CommonUtils logInstanceMethodListForClass:[UIPercentDrivenInteractiveTransition class]];
+    
+    // ===test BOOL===
+//    BOOL trueFlag = YES;// 1
+//    BOOL falseFlag = NO;// 0
+//    NSLog(@"trueFlag = %ld falseFlag = %ld", trueFlag, falseFlag);
+    
+    // =====test database=====
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        [self presentViewController:[TestWCDBViewController new] animated:YES completion:nil];
+//    });
+    
+    // =====test navBar=====
+}
+
+// iOS9.0
+#pragma mark - UIViewControllerPreviewingDelegate
+- (UIViewController *)previewingContext:(id<UIViewControllerPreviewing>)previewingContext viewControllerForLocation:(CGPoint)location
+{
+    NSLog(@"previewingContext:viewControllerForLocation location = %@", NSStringFromCGPoint(location));
+    ThreeDTouchViewController *vc = [[ThreeDTouchViewController alloc] init];
+    
+    return vc;
+}
+
+- (void)previewingContext:(id<UIViewControllerPreviewing>)previewingContext commitViewController:(UIViewController *)viewControllerToCommit
+{
+    NSLog(@"previewingContext:commitViewController = %@", viewControllerToCommit);
+}
+
+- (void)testHook
+{
+    NSLog(@"###ViewController testHook###");
 }
 
 - (void)youkuDidClicked:(YouKuPlayButton *)btn
@@ -1856,7 +1996,7 @@ NSLog(@"viewDidLoad 22");
 #warning TODO touchesBegan...
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
 {
-    NSLog(@"===touchesBegan===");
+    NSLog(@"===Home touchesBegan===");
     
 //    [super touchesBegan:touches withEvent:event];
     
@@ -2002,13 +2142,6 @@ NSLog(@"viewDidLoad 22");
     NSLog(@"###collection view offset = %@ contentSize = %@", NSStringFromCGPoint(self.collectionView.contentOffset), NSStringFromCGSize(self.collectionView.contentSize));
 }
 
-- (void)viewDidDisappear:(BOOL)animated
-{
-    CGRect bound = self.view.bounds;
-    bound.size.height = 400;
-    self.view.bounds = bound;
-}
-
 
 - (void)setupTextView {
     _textView = [[UITextView alloc] initWithFrame:CGRectMake(0, 50, [UIScreen mainScreen].bounds.size.width, 200)];
@@ -2051,15 +2184,28 @@ NSLog(@"viewDidLoad 22");
 {
     [super viewWillDisappear:animated];
     
+    NSLog(@"===Home viewWillDisappear===");
+    
     [self.timer invalidate];
     self.timer = nil;
+}
+
+- (void)viewDidDisappear:(BOOL)animated
+{
+    [super viewDidDisappear:animated];
+    
+    NSLog(@"===Home viewDidDisappear===");
+    
+    CGRect bound = self.view.bounds;
+    bound.size.height = 400;
+    self.view.bounds = bound;
 }
 
 - (void)dealloc
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self name:UIDeviceOrientationDidChangeNotification object:nil];
     
-    NSLog(@"===ViewController dealloc===");
+    NSLog(@"===HomeViewController dealloc===");
     
 //    [super dealloc];// arc不允许调用这个 (这个对象被置nil，会调用dealloc)
 }

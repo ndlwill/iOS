@@ -10,6 +10,10 @@
 
 typedef void(^GestureActionBlock)(UIGestureRecognizer *gesture);
 
+/*
+ KVC:
+ canPanVertically
+ */
 @interface UIGestureRecognizer (NDLBlock)
 
 + (instancetype)ndl_gestureRecognizerWithActionBlock:(void(^)(UIGestureRecognizer *gesture))block;

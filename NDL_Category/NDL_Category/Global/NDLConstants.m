@@ -11,6 +11,7 @@
 
 NSString * const kRemoteGifUrlStr = @"https://raw.githubusercontent.com/mengxianliang/XLPlayButton/master/GIF/1.gif";
 
+NSString * const kMessageTableName = @"t_message";
 NSString * const kTestTableName = @"t_test";
 
 // label: font = 15

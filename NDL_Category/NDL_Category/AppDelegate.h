@@ -59,6 +59,16 @@ fishhook是Facebook提供的一个动态修改链接mach-O文件的工具。
 // (卸载安装 每次都不一样)dev-db33aa54 d21dd18b fc554e13 e6d3705e c118f36a cf76edc8 74a8e287 2d510a2a
 //                        89d9968b 6127f805 5dc0ecb7 1dabd512 4bf9ead6 b05751ef f98a2be4 2d41ef7d
 // dis-93caf972 50ec26e0 430dbb18 43a2fca7 2fc4cb97 a882c0fe 8120ff60 a113fd0a
+
+/*
+ Mediator 不能直接去调用组件的方法，因为这样会产生依赖，那我就要通过其他方法去调用，也就是通过 字符串->方法 的映射去调用。runtime 接口的 className + selectorName -> IMP 是一种，注册表的 key -> block 是一种，而前一种是 OC 自带的特性，后一种需要内存维持一份注册表
+ */
+
+/*
+ @encode是编译器指令之一
+ @encode返回一个给定的Objective-C 类型编码(Objective-C Type Encodings)
+ 这是一种内部表示的字符串，类似于 ANSI C 的 typeof 操作
+ */
 @interface AppDelegate : UIResponder <UIApplicationDelegate>
 
 @property (strong, nonatomic) UIWindow *window;

@@ -100,6 +100,118 @@
     NSLog(@"Base _testForInherit");
 }
 
+// MJRefresh
+/*
+- (void)_loadLatestDatas
+{
+    NSMutableDictionary *paramsDic = [NSMutableDictionary dictionary];
+    paramsDic[@"pageNumber"] = @(1);
+    paramsDic[@"pageSize"] = @(kNetworkDataPageCount);
+    kWeakSelf(weakSelf)
+    [[VWTHttpToolManager shareManger] requestWithUrlString:@"https://dev01.letzgo.com.cn/dzcx_ck/m/enterprise/orders/query" andParams:paramsDic method:HttpRequestMehodPOST showIndicatorInView:self.view andCompletionHandler:^(NSDictionary *resBodyDic, NSError *error) {
+        kStrongSelf(strongSelf, weakSelf)
+        NSLog(@"resBodyDic = %@", resBodyDic);
+        if (!error) {
+            if ([[resBodyDic notNullObjectForKey:@"success"] isEqualToString:@"0"]) {
+                NSArray *modelArray = [NSArray yy_modelArrayWithClass:[EnterpriseRouteItem class] json:[resBodyDic objectForKey:@"data"]];
+                NSInteger datasCount = modelArray.count;
+                strongSelf.requestPageIndex = 1;
+                if (datasCount > 0) {
+                    [strongSelf.dataSourceArray removeAllObjects];
+                    
+                    for (NSInteger i = 0; i < datasCount; i++) {
+                        RouteCellViewModel *vm = [[RouteCellViewModel alloc] initWithEnterpriseRouteItem:modelArray[i]];
+                        [strongSelf.dataSourceArray addObject:vm];
+                    }
+                    if (strongSelf.tableView.mj_footer.hidden == YES) {
+                        strongSelf.tableView.mj_footer.hidden = NO;
+                    }
+                    if (datasCount < kNetworkDataPageCount) {
+                        strongSelf.tableView.mj_footer.state = MJRefreshStateNoMoreData;
+                    } else if (datasCount == kNetworkDataPageCount) {
+                        if (strongSelf.tableView.mj_footer.state == MJRefreshStateNoMoreData) {
+                            [strongSelf.tableView.mj_footer resetNoMoreData];
+                        }
+                    }
+                    [strongSelf.tableView reloadData];
+                } else {
+                    // footer隐藏 上拉不走_loadMoreDatas
+                    if (strongSelf.tableView.mj_footer.hidden == NO) {
+                        strongSelf.tableView.mj_footer.hidden = YES;
+                    }
+                }
+            } else {
+                [Common tipAlert:[resBodyDic objectForKey:@"msg"]];
+            }
+            
+            if ([strongSelf.tableView.mj_header isRefreshing]) {
+                [strongSelf.tableView.mj_header endRefreshing];
+            }
+        } else {
+            if ([strongSelf.tableView.mj_header isRefreshing]) {
+                [strongSelf.tableView.mj_header endRefreshing];
+            }
+            [Common tipAlert:error.localizedDescription];
+        }
+    }];
+}
+
+- (void)_loadMoreDatas
+{
+    NSInteger page = self.requestPageIndex + 1;
+    NSMutableDictionary *paramsDic = [NSMutableDictionary dictionary];
+    paramsDic[@"pageNumber"] = @(page);
+    paramsDic[@"pageSize"] = @(kNetworkDataPageCount);
+    kWeakSelf(weakSelf)
+    [[VWTHttpToolManager shareManger] requestWithUrlString:@"https://dev01.letzgo.com.cn/dzcx_ck/m/enterprise/orders/query" andParams:paramsDic method:HttpRequestMehodPOST showIndicatorInView:self.view andCompletionHandler:^(NSDictionary *resBodyDic, NSError *error) {
+        kStrongSelf(strongSelf, weakSelf)
+        NSLog(@"resBodyDic = %@", resBodyDic);
+        if (!error) {
+            if ([[resBodyDic notNullObjectForKey:@"success"] isEqualToString:@"0"]) {
+                NSArray *modelArray = [NSArray yy_modelArrayWithClass:[EnterpriseRouteItem class] json:[resBodyDic objectForKey:@"data"]];
+                NSInteger datasCount = modelArray.count;
+                strongSelf.requestPageIndex = page;
+                if (datasCount > 0) {
+                    for (NSInteger i = 0; i < datasCount; i++) {
+                        RouteCellViewModel *vm = [[RouteCellViewModel alloc] initWithEnterpriseRouteItem:modelArray[i]];
+                        [strongSelf.dataSourceArray addObject:vm];
+                    }
+                    if (datasCount < kNetworkDataPageCount) {
+                        strongSelf.tableView.mj_footer.state = MJRefreshStateNoMoreData;
+                    } else if (datasCount == kNetworkDataPageCount) {
+                        if (strongSelf.tableView.mj_footer.state == MJRefreshStateNoMoreData) {
+                            [strongSelf.tableView.mj_footer resetNoMoreData];
+                        }
+                    }
+                    
+                    [strongSelf.tableView reloadData];
+                } else {
+                    strongSelf.tableView.mj_footer.state = MJRefreshStateNoMoreData;
+                    if (strongSelf.dataSourceArray.count == 0) {
+                        if (strongSelf.tableView.mj_footer.hidden == NO) {
+                            strongSelf.tableView.mj_footer.hidden = YES;
+                        }
+                    }
+                }
+            } else {
+                [Common tipAlert:[resBodyDic objectForKey:@"msg"]];
+            }
+            
+            if ([strongSelf.tableView.mj_footer isRefreshing]) {
+                [strongSelf.tableView.mj_footer endRefreshing];
+            }
+        } else {
+            if ([strongSelf.tableView.mj_footer isRefreshing]) {
+                [strongSelf.tableView.mj_footer endRefreshing];
+            }
+            
+            [Common tipAlert:error.localizedDescription];
+        }
+    }];
+}
+*/
+
+// 屏幕旋转
 /*
  // 屏幕旋转
 - (BOOL)shouldAutorotate
@@ -118,6 +230,8 @@
 }
  */
 
+
+// BigTitle
 // 滚动调整
 //- (void)scrollAdjustWithScrollView:(UIScrollView *)scrollView autoFlag:(BOOL)autoFlag
 //{

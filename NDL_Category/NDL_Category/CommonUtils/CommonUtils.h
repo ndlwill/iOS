@@ -33,9 +33,30 @@
 
 // NSInteger test = (-22 % 10);// -2
 // NSInteger test = (-22 / 10);// -2
+
+// NS_DESIGNATED_INITIALIZER关键字 意思是最终被指定的初始化方法，在interface只能用一次而且必须以init开头的方法
+// NS_UNAVAILABLE关键字 这个宏的意思的不能用,有这个宏你在前面调用的时候Xcode是不会提示这个方法的
+/*
+ - (instancetype)init{
+ 
+ @throw [NSException exceptionWithName:NSInvalidArgumentException reason:@"Use -initWithGestureRecognizer:edgeForDragging:" userInfo:nil];
+ }
+ */
+
+// 手势
+/*
+velocityInView： 手指在视图上移动的速度（x,y）, 正负也是代表方向
+在绝对值上|x| > |y| 水平移动， |y| > |x| 竖直移动
+ */
+
 @interface CommonUtils : NSObject
 
 + (NSInteger)integerCeil:(NSInteger)value;
+
+// 过渡值
++ (CGFloat)transitionValueWithPercent:(CGFloat)percent fromValue:(CGFloat)fromValue toValue:(CGFloat)toValue;
+
++ (UIColor *)transitionColorWithPercent:(CGFloat)percent fromColor:(UIColor *)fromColor toColor:(UIColor *)toColor;
 
 // 键盘所在的window
 + (UIWindow *)keyboardWindow;
@@ -49,6 +70,8 @@
 + (void)logIvarListForClass:(Class)className;
 // 打印某个类所有的属性
 + (void)logPropertyListForClass:(Class)className;
+// 打印某个类所有的实例方法（包括私有方法）
++ (void)logInstanceMethodListForClass:(Class)className;
 
 // 打开app setting
 + (void)openAppSettingURL;

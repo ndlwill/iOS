@@ -260,6 +260,12 @@ int func2(int c) {
     
     [NotificationCenter addObserver:self selector:@selector(systemClockDidChanged:) name:NSSystemClockDidChangeNotification object:nil];
     
+#if CGFLOAT_IS_DOUBLE
+    
+#else
+    
+#endif
+    
     return YES;
 }
 
@@ -340,6 +346,7 @@ int func2(int c) {
 // iOS 9 3D-Touch 主屏操作
 - (void)application:(UIApplication *)application performActionForShortcutItem:(UIApplicationShortcutItem *)shortcutItem completionHandler:(void (^)(BOOL))completionHandler
 {
+    // iconType: UIApplicationShortcutIconType
     NSLog(@"shortcutItem = %@", shortcutItem.userInfo);
     NSArray<NSString *> *allKeyArr = shortcutItem.userInfo.allKeys;
     for (NSString *key in allKeyArr) {

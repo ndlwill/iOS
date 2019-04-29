@@ -152,6 +152,7 @@ FOUNDATION_EXTERN NSString * const kRemoteGifUrlStr;
 
 // sql
 FOUNDATION_EXTERN NSString * const kTestTableName;
+FOUNDATION_EXTERN NSString * const kMessageTableName;
 
 // =====Block=====
 typedef void(^CommonNoParamNoReturnValueBlock)(void);

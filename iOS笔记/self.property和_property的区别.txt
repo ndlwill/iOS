@@ -1,0 +1,68 @@
+最直接的区别就在于self.property是通过get和set方法来访问的，如果我们没有重新定义property的get和set方法，那么它使用的就是系统默成的方法，当然前提是你使用的是@synthesize而不是@dynamic；而_property的方式就是C++的访问方式，直接对变量进行操作
+
+self.property的访问方式要优于直接使用_property，因为它封装了访问方法，加强了我们对于变量的控制
+
+
+
+
+@property (nonatomic, copy, readwrite) NSString *str2;
+
+// Sample 1
+NSMutableString *str = [[NSMutableString alloc] initWithString:@"demo1"];
+self.str2 = str;
+NSLog(@"%p %@", str, _str2);
+[str appendString:@"demo2"];
+NSLog(@"%p %@", str, _str2);
+// output
+2016-06-15 22:38:09.980 InitDemo[82882:958415] 0x100700530 0x316f6d656455 demo1
+2016-06-15 22:38:09.981 InitDemo[82882:958415] 0x100700530 0x316f6d656455 demo1
+
+// Sample 2
+NSMutableString *str = [[NSMutableString alloc] initWithString:@"demo1"];
+_str2 = str;
+NSLog(@"%p %@", str, _str2);
+[str appendString:@"demo2"];
+NSLog(@"%p %@", str, _str2);
+// output
+2016-06-15 22:37:44.841 InitDemo[82870:958019] 0x1002095a0 0x1002095a0 demo1
+2016-06-15 22:37:44.842 InitDemo[82870:958019] 0x1002095a0 0x1002095a0 demo1demo2
+
+
+会产生这样结果的原因有两个，第一我们对于NSString声明的方式是copy而不是retain或是strong，第二就是self.property的访问方式会自动进行一次copy的操作，所以str2的地址和str的地址其实是不相同的，而_property的操作就是直接的对象赋值操作，不会有copy的行为，只是引用计数的增加，还是指向同一块内存
+
+
+有一种情况下，我并不建议使用self.property的方式访问
+
+在任何的init方法中不要使用self.property的方式访问，因为如果子类中重写了setProperty方法，那么在父类的init函数中调用的就是子类的setProperty方法，这样可能会产生一些不容易预知的情况
+
+// AClass
+@implementation AClass
+
+- (instancetype)initWithName:(NSString *)name {
+    if (self = [super init]) {
+        self.name = name;
+    }
+    return self;
+}
+
+- (void)setName:(NSString *)name {
+    NSLog(@"%@", [[self class] description]);
+}
+
+@end
+
+// BClass
+@implementation BClass
+
+- (void)setName:(NSString *)name {
+    NSLog(@"%@", [[self class] description]);
+}
+
+@end
+
+// main
+BClass *bClazz = [[BClass alloc] initWithName:@"jim"];
+
+
+BClass是AClass的子类，BClass没有实现自己的初始化方法，实际是调用了AClass的初始化方法，但是由于BClass重写了setName的方法，导致AClass的self.name ＝ name实际上是调用了子类中的setName方法
+但这其实和我们之前说的是有矛盾的，当传入一个mutable对象的时候你不得不使用self.property的方式来存储变量，或者使用对_property进行copy或者mutablecopy的操作。我建议这种情况下还是使用后者吧

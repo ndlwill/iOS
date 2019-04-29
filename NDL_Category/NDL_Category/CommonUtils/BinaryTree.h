@@ -16,6 +16,7 @@ NS_ASSUME_NONNULL_BEGIN
 // recursion 递归
 // non-recursive 非递归
 
+// 二叉查找树（Binary Search Tree） 即二叉搜索树，二叉排序树
 // 创建二叉排序树 二叉排序树：左节点值全部小于根节点值，右节点值全部大于根节点值
 // return 二叉树根节点
 + (BinaryTreeNode *)createBinarySortTreeWithValues:(NSArray *)valueArray;

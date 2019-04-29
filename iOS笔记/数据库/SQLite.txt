@@ -1,6 +1,55 @@
 http://www.runoob.com/sqlite/sqlite-tutorial.html
 http://www.w3school.com.cn/sql/sql_syntax.asp
 
+// Using SQLite In Multi-Threaded Applications
+https://sqlite.org/threadsafe.html
+
+// 第三方源码解析
+###https://www.jianshu.com/p/3d66aa58ebe6###
+
+SQLite支持三种不同的线程模式： 
+①单线程(Single-thread) 
+该模式下，所有的互斥锁被禁用；SQLite在多线程中使用是不安全的。 
+当SQLite编译时加了SQLITE_THREADSAFE=0参数，或者在初始化SQLite前调用sqlite3_config(SQLITE_CONFIG_SINGLETHREAD)时启用该模式。
+
+②多线程（Multi-thread） 
+这种模式下，SQLite在多线程中同时使用单个数据库连接是不安全的，否则就是安全的。（不能在多个线程中并发使用同一个数据库连接）。在此模式下，SQLite可以安全地由多个线程使用，前提是在两个或多个线程中不同时使用单个数据库连接
+
+③串行（Serialized） 
+在串行模式下，SQLite在多线程中使用是安全的
+
+SQLite 本身是支持多线程并发操作的，WCDB 通过设置PRAGMA SQLITE_THREADSAFE=2将 SQLite 的线程模式设置为多线程（Multi-thread）模式，并且保证同一个句柄在同一时间只有一个线程在操作
+
+WCDB 内置一个句柄池HandlePool，由它管理和分发 SQLite 句柄。WCDB 提供的WCTDatabase、WCTTable和WCTTransaction的所有 SQL 操作接口都是线程安全，它们不直接持有数据库句柄，而是由HandlePool根据数据库访问所在的线程、是否处于事务、并发状态等，自动分发合适的 SQLite 连接进行操作，以此来保证同一个句柄在同一时间只有一个线程在操作，从而达到读与读、读与写并发的效果
+
+WCDB开启了 SQLite 的 WAL模式（Write-Ahead-Log），来进一步提升多线程的并发性
+
+SQLite主要有两种日志模式：DELETE模式和WAL模式，默认是DELETE模式。
+DELETE模式下，日志文件记录的是数据页变更前的内容。当事务开启时，将db-page的内容写入日志，写操作直接修改db-page，读操作也是直接读取db-page，db-page存储了事务最新的所有更新，当事务提交时直接删除日志文件即可，事务回滚时将日志文件覆盖db-page文件，恢复原始数据。
+WAL模式下，日志文件记录的是数据变更后的内容。当事务开启时，写操作不直接修改db-page，而是以append的方式追加到日志文件末尾，当事务提交时不会影响db-page，直接将日志文件覆盖到db-page即可，事务回滚时直接将日志文件去掉即可。读操作也是读取日志文件，开始读数据时会先扫描日志文件，看需要读的数据是否在日志文件中，如果在直接读取，否则从对应的db-page读取，并引入.shm文件，建立日志索引，采用哈希索引来加快日志扫描。
+
+在iOS平台上，默认使用的是第2种线程模式编译的（Multi-thread），也就是只有一个线程能够打开数据库操作，其他线程要操作数据库必须等数据库关闭后才能打开操作。多线程时：每个线程独立打开数据库，操作数据库，操作完后关闭数据库。打开和关闭都比较费时间，而且要手动控制打开关闭锁，在每个线程操作不频繁时可用该方法。 
+如果多个线程频繁操作数据库，使用以上方法很容易造成系统崩溃，解决方案： 
+①开启第3种串行模式，使用一个类（单例方式）操作数据库。 
+②使用串行队列操作数据库。
+
+
+多线程操作数据库：
+    dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0);
+    ​
+    dispatch_async(queue, ^{
+        NSArray *messages = [_database getAllObjectsOfClass:Message.class fromTable:@"message"];
+        /// ...
+    });
+    ​
+    dispatch_async(queue, ^{
+        [_database insertObjects:messages into:@"message"];
+    });
+
+FMDB 采用串行队列来保证线程安全，并且采用单句柄方案，即所有线程共用一个SQLite Handle。在多线程并发时，虽然能够使各个线程的数据库操作按顺序同步进行，保证了数据安全，但正是因为各线程同步进行，导致后来的线程会被阻塞较长时间，无论是读操作还是写操作，都必须等待前面的线程执行完毕，使得性能无法得到更好的保障
+
+WCDB 内置了一个句柄池，根据各个线程的情况派发数据库句柄，通过多句柄方案来实现线程间读与读、读与写并发执行，并开启SQLite的WAL日志模式进一步提高多线程的并发性。同时 WCDB 修改了SQLite的内部实现，优化了 Busy Retry 方案，禁用了文件锁并添加队列来支持主动唤醒等待的线程，以此来提高线程间写与写串行执行的效率
+
 SQL 语句对大小写不敏感。SELECT 等效于 select
 但也有一些命令是大小写敏感的，比如 GLOB 和 glob 在 SQLite 的语句中有不同的含义
 ===================================

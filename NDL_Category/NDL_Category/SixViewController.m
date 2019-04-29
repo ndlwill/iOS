@@ -10,6 +10,7 @@
 #import "MagicMoveTransitionAnimator.h"
 #import "TestWebViewController.h"
 
+// 专门创建个对象实现UINavigationControllerDelegate以及手势处理 不该交给某个控制器
 @interface SixViewController () <UIGestureRecognizerDelegate, UINavigationControllerDelegate>
 
 @property (nonatomic, weak) UILabel *label;
@@ -187,6 +188,7 @@
 }
 
 #pragma mark - UINavigationControllerDelegate
+// 返回转场动画对象 如果返回nil，下面的- (id<UIViewControllerInteractiveTransitioning>)navigationController:(UINavigationController *)navigationController interactionControllerForAnimationController:(id<UIViewControllerAnimatedTransitioning>)animationController不会调用
 - (id<UIViewControllerAnimatedTransitioning>)navigationController:(UINavigationController *)navigationController animationControllerForOperation:(UINavigationControllerOperation)operation fromViewController:(UIViewController *)fromVC toViewController:(UIViewController *)toVC
 {
     if (operation == UINavigationControllerOperationPop) {
@@ -202,7 +204,7 @@
     return nil;
 }
 
-// 返回转场交互对象
+// 返回转场交互对象-实时管理控制器之间转场动画的完成度
 - (id<UIViewControllerInteractiveTransitioning>)navigationController:(UINavigationController *)navigationController interactionControllerForAnimationController:(id<UIViewControllerAnimatedTransitioning>)animationController
 {
     if (animationController && [animationController isKindOfClass:[MagicMoveTransitionAnimator class]]) {

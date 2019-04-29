@@ -11,6 +11,11 @@
 
 @implementation NSObject (NDLExtension)
 
+// main函数之前执行
+__attribute__((constructor)) static void ndl_inject(void) {
+    
+}
+
 - (NSDictionary *)ndl_model2Dictionary
 {
     NSMutableDictionary *dic = [NSMutableDictionary dictionary];

@@ -116,7 +116,8 @@
 
 - (void)navigationController:(UINavigationController *)navigationController willShowViewController:(UIViewController *)viewController animated:(BOOL)animated
 {
-    NSLog(@"Five willShowViewController = %@", viewController);// 6.-SixVC
+    NSLog(@"Five willShowViewController = %@ topViewController = %@", viewController, navigationController.topViewController);// 6.-SixVC
+    
 }
 
 - (void)navigationController:(UINavigationController *)navigationController didShowViewController:(UIViewController *)viewController animated:(BOOL)animated

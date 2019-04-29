@@ -10,6 +10,7 @@
 
 @interface UINavigationController (NDLExtension)
 
-- (void)setNavBarFirstSubViewAlpha:(CGFloat)alpha;
+// 设置导航栏alpha
+//- (void)setNavBarFirstSubViewAlpha:(CGFloat)alpha;
 
 @end

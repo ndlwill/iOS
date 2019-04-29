@@ -102,7 +102,7 @@
 //    self.interactivePopGestureRecognizer.enabled = YES;
     
     // 如果边缘右滑移除控制器的功能失效，清空代理(让导航控制器重新设置这个功能)
-    self.interactivePopGestureRecognizer.delegate = nil;// 设置了viewController.navigationItem.leftBarButtonItem需要设置这个
+//    self.interactivePopGestureRecognizer.delegate = nil;// 设置了viewController.navigationItem.leftBarButtonItem需要设置这个
 }
 
 #pragma mark - Private Methods

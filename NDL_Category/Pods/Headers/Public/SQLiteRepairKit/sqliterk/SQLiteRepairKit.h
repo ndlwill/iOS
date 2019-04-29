@@ -1,0 +1,1 @@
+../../../../SQLiteRepairKit/repair/SQLiteRepairKit.h

@@ -8,6 +8,7 @@
 
 #import <UIKit/UIKit.h>
 
+// UIPresentationController提供了四个函数来定义present和dismiss动画开始前后的操作
 @interface DrawerPresentationController : UIPresentationController
 
 @end

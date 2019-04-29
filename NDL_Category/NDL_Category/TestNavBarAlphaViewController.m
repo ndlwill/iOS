@@ -10,6 +10,8 @@
 #import "UIViewController+NavigationBarExtension.h"
 #import "TestAlphaNextViewController.h"
 
+#import "UINavigationBar+NDLExtension.h"
+
 // protocol: UIViewControllerInteractiveTransitioning
 @interface TestNavBarAlphaViewController () <UINavigationControllerDelegate>
 
@@ -47,15 +49,16 @@
     UIView *bottomView = [[UIView alloc] initWithFrame:CGRectMake(0, CGRectGetMaxY(imageView.frame), NDLScreenW, 70)];
     bottomView.backgroundColor = [UIColor redColor];
     [self.view addSubview:bottomView];
+    
 }
 
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
     
-    // 设置的不是_UIBarBackground，在默认颜色的层级基础上面多个_UIVisualEffectSubview（颜色设置在这个上面）
-    self.navBarTintColor = [UIColor redColor];// 不设置这个 有默认颜色 ，也就是_UIBarBackground层级上面多个UIVisualEffectView，UIVisualEffectView层级上面_UIVisualEffectBackdropView，_UIVisualEffectSubview（颜色设置在这个上面）
-    self.navBarAlpha = 0.8;
+    // barTintColor设置的不是_UIBarBackground，在默认颜色的层级基础上面多个_UIVisualEffectSubview（颜色设置在这个上面）
+    // 不设置这个 有默认颜色 ，也就是_UIBarBackground层级上面多个UIVisualEffectView，UIVisualEffectView层级上面_UIVisualEffectBackdropView，_UIVisualEffectSubview（颜色设置在这个上面）
+
     
     // _UIBarBackground  层级上面多个UIIMageView
 //    [self.navigationController.navigationBar setBackgroundImage:[UIImage ndl_imageWithColor:[UIColor cyanColor] size:CGSizeMake(1.0, 1.0)] forBarMetrics:UIBarMetricsDefault];// 设置了 isTranslucent = 0(NO），（NO的情况下，UI会向下位移64）
@@ -65,6 +68,8 @@
 {
     [super viewDidAppear:animated];
     NSLog(@"isTranslucent = %ld", [[NSNumber numberWithBool:self.navigationController.navigationBar.isTranslucent] integerValue]);
+    
+    [self.navigationController.navigationBar ndl_backgroundView];
 }
 
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
