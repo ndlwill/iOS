@@ -226,7 +226,7 @@ define i32 @main() #0 {
 }
 上面代码中最重要的是第 4 行，它创建了一个 NSNumber 对象。第 7 行，给这个 number 对象发送了一个 description 消息。第 8 行，将 description 消息返回的内容打印出来
 
-==================================
+==========================================iOS编译
 xcode工程build之后一般会执行如下几个步骤：
 预处理
 语法和语义分析
@@ -235,3 +235,70 @@ xcode工程build之后一般会执行如下几个步骤：
 链接
 
 iOS编译采用Clang作为编译器前端，LLVM作为编译器后端
+Clang的任务：预处理、词法分析、语法分析、语义分析、静态分析、生成中间代码。
+预处理：以#开头的代码预处理。包括引入的头文件和自定义宏。
+词法分析：每一个.m源文件的声明和定义从string转化为特殊的标记流。
+语法分析：将标记流解析成一颗抽象语法树（ abstract syntax tree-AST）。
+静态分析：包含类型检查和其他检查。
+中间代码生成：生成LLVM代码
+
+LLVM的任务：将代码进行优化并产生汇编代码。
+汇编器：将可读的汇编代码转换为机器代码，最终创建一个目标对象.o文件。
+链接器的任务：把目标文件和库相连，最终输出可运行文件：a.out
+
+Apple出品的操作系统的可执行文件格式几乎都是mach-o，iOS当然也不例外
+Mach-o:
+Executable 可执行文件
+Dylib 动态库
+Bundle 无法被连接的动态库，只能通过dlopen()加载
+Image 指的是Executable，Dylib或者Bundle的一种
+Framework 动态库和对应的头文件和资源文件的集合
+
+所有Mach-O(可使用MachOView工具查看)都包含:
+__TEXT 包含Mach header, 被执行的代码和只读常量。
+__DATA 包含全局变量，静态变量。可读写。
+__LINKEDIT 包含加载程序的元数据（位置，偏移量），比如函数的名称和地址
+
+当用户点击一个app，app从启动到打开第一个页面的时间 t = t1 + t2，其中t1 = 系统dylib和自身app可执行文件（app中所有.o文件的集合）的加载，t2为main函数到appdelegate中的- (BOOL)Application:(UIApplication *)Application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions 方法执行结束这段时间
+app启动后，先加载可执行文件，再使用dyld(动态链接器)动态递归加载dylib（系统的framework，oc runtime的libobjc，系统级别的libSystem）。由于dylib是共享的，所以可以减少app包的体积
+
+dylib加载过程:
+load dylibs image
+Rebase image
+Bind image
+Objc setup
+initializers
+
+==========================================mach-o
+mach-o可以大致的分为三部分：
+Header 头部，包含可以执行的CPU架构，比如x86,arm64
+Load commands 加载命令，包含文件的组织架构和在虚拟内存中的布局方式
+Data，数据，包含load commands中需要的各个段(segment)的数据，每一个Segment都得大小是Page的整数倍
+
+dyld的全称是dynamic loader，它的作用是加载一个进程所需要的image
+
+Virtual Memory
+虚拟内存是在物理内存上建立的一个逻辑地址空间，它向上（应用）提供了一个连续的逻辑地址空间，向下隐藏了物理内存的细节
+虚拟内存使得逻辑地址可以没有实际的物理地址，也可以让多个逻辑地址对应到一个物理地址
+虚拟内存被划分为一个个大小相同的Page，提高管理和读写的效率.Page又分为只读和读写的Page
+虚拟内存是建立在物理内存和进程之间的中间层
+在iOS上，当内存不足的时候，会尝试释放那些只读的Page，因为只读的Page在下次被访问的时候，可以再从磁盘读取
+如果没有可用内存，会通知在后台的App（也就是在这个时候收到了memory warning），如果在这之后仍然没有可用内存，则会杀死在后台的App
+
+Page fault:
+在应用执行的时候，它被分配的逻辑地址空间都是可以访问的，当应用访问一个逻辑Page，而在对应的物理内存中并不存在的时候，这时候就发生了一次Page fault
+当Page fault发生的时候，会中断当前的程序，在物理内存中寻找一个可用的Page，然后从磁盘中读取数据到物理内存，接着继续执行当前程序
+如果一个Page可以从磁盘上重新生成，那么这个Page称为Clean Page
+如果一个Page包含了进程相关信息，那么这个Page称为Dirty Page
+像代码段这种只读的Page就是Clean Page。而像数据段(_DATA)这种读写的Page，当写数据发生的时候，会触发COW(Copy on write)，也就是写时复制，Page会被标记成Dirty，同时会被复制
+
+dyld会首先读取mach-o文件的Header和load commands。 
+接着就知道了这个可执行文件依赖的动态库
+例如加载动态库A到内存，接着检查A所依赖的动态库，就这样的递归加载，直到所有的动态库加载完毕
+
+ASLR的全称是Address space layout randomization,"地址空间布局随机化"
+mach-o中采用了PIC技术，全称是Position Independ code。当你的程序要调用printf的时候，会先在__DATA段中建立一个指针指向printf，在通过这个指针实现间接调用
+dyld这时候需要做一些fix-up工作，即帮助应用程序找到这些符号的实际地址。主要包括两部分
+Rebase 修正内部(指向当前mach-o文件)的指针指向
+Bind 修正外部指针指向
+

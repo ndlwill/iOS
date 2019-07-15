@@ -11,6 +11,7 @@
 
 @implementation NSObject (NDLExtension)
 
+// 尽量不要用
 // main函数之前执行
 __attribute__((constructor)) static void ndl_inject(void) {
     

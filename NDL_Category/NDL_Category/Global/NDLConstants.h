@@ -11,6 +11,10 @@
 // remote gif 
 // https://upload.wikimedia.org/wikipedia/commons/2/2c/Rotating_earth_%28large%29.gif
 
+// CMake - Cross Platform Makefile Generator
+
+// QR码是二维条码的一种,QR来自英文 “Quick Response” 的缩写,即快速反应的意思,源自发明者希望QR码可让其内容快速被解码
+
 // 以groups方式添加文件，文件参与编译 ，图标为黄色
 // 以folder方式添加文件，文件将被作为资源文件，不参与编译，图标为蓝色
 
@@ -158,8 +162,11 @@ FOUNDATION_EXTERN NSString * const kMessageTableName;
 typedef void(^CommonNoParamNoReturnValueBlock)(void);
 
 
-//
+// system
 FOUNDATION_EXTERN CGFloat const kSystemBadgeViewWH;
+
+// textView
+FOUNDATION_EXTERN NSInteger const kTextViewMaxTextLength;
 
 
 // scrollView

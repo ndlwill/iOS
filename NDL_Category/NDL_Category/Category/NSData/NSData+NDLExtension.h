@@ -8,6 +8,8 @@
 
 #import <Foundation/Foundation.h>
 
+// gzip
+// https://github.com/nicklockwood/GZIP
 NS_ASSUME_NONNULL_BEGIN
 
 @interface NSData (NDLExtension)

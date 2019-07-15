@@ -12,7 +12,6 @@
 @interface BigTitleBaseViewController () <UIScrollViewDelegate>
 
 @property (nonatomic, weak) UILabel *titleLabel;
-@property (nonatomic, weak) UILabel *bigTitleLabel;
 
 @end
 
@@ -63,48 +62,56 @@
         make.center.equalTo(navigationView);
     }];
     
-    UIScrollView *scrollView = [[UIScrollView alloc] init];
-    scrollView.showsHorizontalScrollIndicator = NO;
-    scrollView.delegate = self;
-    if (iPhoneX) {
-        scrollView.contentInset = UIEdgeInsetsMake(0, 0, AdditionaliPhoneXBottomSafeH, 0);
-        scrollView.scrollIndicatorInsets = scrollView.contentInset;
-    }
-    [self.view addSubview:scrollView];
-    [scrollView mas_makeConstraints:^(MASConstraintMaker *make) {
-        make.left.right.bottom.equalTo(self.view);
-        make.top.equalTo(navigationView.mas_bottom);
-    }];
+    [self setupMainViewWithBigTitleStr:self.titleStr referToNavigationView:navigationView];
+    //  不注释:写死的主内容是scrollView
+    //  注释:如果主内容是tableView，写个空方法 让子类重写 动态的让别人告诉我 主内容是什么
+//    UIScrollView *scrollView = [[UIScrollView alloc] init];
+//    scrollView.showsHorizontalScrollIndicator = NO;
+//    scrollView.delegate = self;
+//    if (iPhoneX) {
+//        scrollView.contentInset = UIEdgeInsetsMake(0, 0, AdditionaliPhoneXBottomSafeH, 0);
+//        scrollView.scrollIndicatorInsets = scrollView.contentInset;
+//    }
+//    [self.view addSubview:scrollView];
+//    [scrollView mas_makeConstraints:^(MASConstraintMaker *make) {
+//        make.left.right.bottom.equalTo(self.view);
+//        make.top.equalTo(navigationView.mas_bottom);
+//    }];
+//
+//    UIView *contentView = [[UIView alloc] init];
+//    [scrollView addSubview:contentView];
+//    [contentView mas_makeConstraints:^(MASConstraintMaker *make) {
+//        make.edges.equalTo(scrollView);
+//        make.width.equalTo(scrollView);
+//    }];
+//
+//    UIView *bigTitleWrapperView = [[UIView alloc] init];
+//    [contentView addSubview:bigTitleWrapperView];
+//    [bigTitleWrapperView mas_makeConstraints:^(MASConstraintMaker *make) {
+//        make.top.left.right.equalTo(contentView);
+//        make.height.mas_equalTo(kBigTitleWrapperViewHeight);
+//    }];
+//
+//    UILabel *bigTitleLabel = [WidgetManager labelWithFrame:CGRectZero font:[UIFont fontWithName:@"PingFangSC-Semibold" size:kBigTitleFontSize] textColor:UIColorFromHex(0x2C2C2C) textAlignment:NSTextAlignmentLeft text:self.titleStr];
+//    [bigTitleWrapperView addSubview:bigTitleLabel];
+//    [bigTitleLabel mas_makeConstraints:^(MASConstraintMaker *make) {
+//        make.top.equalTo(bigTitleWrapperView);
+//        make.left.equalTo(bigTitleWrapperView).offset(20.0);
+//        make.right.equalTo(bigTitleWrapperView).offset(-20.0);
+//        make.height.mas_equalTo(40.0);
+//    }];
+//
+//    _mainView = [[UIView alloc] init];
+//    [contentView addSubview:_mainView];
+//    [_mainView mas_makeConstraints:^(MASConstraintMaker *make) {
+//        make.top.equalTo(bigTitleWrapperView.mas_bottom);
+//        make.left.right.bottom.equalTo(contentView);
+//    }];
+}
+
+- (void)setupMainViewWithBigTitleStr:(NSString *)bigTitleStr referToNavigationView:(UIView *)navigationView
+{
     
-    UIView *contentView = [[UIView alloc] init];
-    [scrollView addSubview:contentView];
-    [contentView mas_makeConstraints:^(MASConstraintMaker *make) {
-        make.edges.equalTo(scrollView);
-        make.width.equalTo(scrollView);
-    }];
-    
-    UIView *bigTitleWrapperView = [[UIView alloc] init];
-    [contentView addSubview:bigTitleWrapperView];
-    [bigTitleWrapperView mas_makeConstraints:^(MASConstraintMaker *make) {
-        make.top.left.right.equalTo(contentView);
-        make.height.mas_equalTo(kBigTitleWrapperViewHeight);
-    }];
-    
-    UILabel *bigTitleLabel = [WidgetManager labelWithFrame:CGRectZero font:[UIFont fontWithName:@"PingFangSC-Semibold" size:kBigTitleFontSize] textColor:UIColorFromHex(0x2C2C2C) textAlignment:NSTextAlignmentLeft text:self.titleStr];
-    [bigTitleWrapperView addSubview:bigTitleLabel];
-    [bigTitleLabel mas_makeConstraints:^(MASConstraintMaker *make) {
-        make.top.equalTo(bigTitleWrapperView);
-        make.left.equalTo(bigTitleWrapperView).offset(20.0);
-        make.right.equalTo(bigTitleWrapperView).offset(-20.0);
-        make.height.mas_equalTo(40.0);
-    }];
-    
-    _mainView = [[UIView alloc] init];
-    [contentView addSubview:_mainView];
-    [_mainView mas_makeConstraints:^(MASConstraintMaker *make) {
-        make.top.equalTo(bigTitleWrapperView.mas_bottom);
-        make.left.right.bottom.equalTo(contentView);
-    }];
 }
 
 // 6.0 等价于 kBigTitleBundleMargin

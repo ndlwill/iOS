@@ -18,6 +18,13 @@
 
 
 #pragma mark - Overrides
+/*
+ 每个类的initialize只会执行一次，在alloc之前
+ 父类的调用的会先于子类调用
+ 父类的调用会被执行多次，如果子类的initialize函数没有被实现
+ 
+ initialize的调用也是和其他函数一样是通过objc_msgSend的方式来执行的
+ */
 /**
  * 当第一次使用这个类的时候会调用一次,只会被调用一次
  */

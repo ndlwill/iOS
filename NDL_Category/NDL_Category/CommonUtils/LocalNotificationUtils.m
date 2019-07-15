@@ -9,6 +9,13 @@
 #import "LocalNotificationUtils.h"
 #import <UserNotifications/UserNotifications.h>
 
+// Pneding: 未送达的
+// Delivered: 已送达的
+
+// test:
+// NWPusher
+// Easy APNs Provider
+// Knuff
 @implementation LocalNotificationUtils
 
 // target >= iOS8

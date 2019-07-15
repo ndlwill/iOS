@@ -55,8 +55,12 @@ velocityInView： 手指在视图上移动的速度（x,y）, 正负也是代表
 
 // 过渡值
 + (CGFloat)transitionValueWithPercent:(CGFloat)percent fromValue:(CGFloat)fromValue toValue:(CGFloat)toValue;
-
+// 过渡颜色值
 + (UIColor *)transitionColorWithPercent:(CGFloat)percent fromColor:(UIColor *)fromColor toColor:(UIColor *)toColor;
+// 缓存的大小
++ (CGFloat)cachedSize;
+// 清除缓存
++ (void)clearCache;
 
 // 键盘所在的window
 + (UIWindow *)keyboardWindow;
@@ -164,3 +168,38 @@ void quickSort_C(int array[], int minIndex, int maxIndex);
 + (void)testFont:(UIFont *)font;
 
 @end
+
+
+// GCD:
+// GCD也可以创建计时器，而且更为精确:
+//
+// -(void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
+// {
+// //创建队列
+// dispatch_queue_t queue = dispatch_get_global_queue(0, 0);
+// //1.创建一个GCD定时器
+// /*
+// 第一个参数:表明创建的是一个定时器
+// 第四个参数:队列
+// */
+//dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+//// 需要对timer进行强引用，保证其不会被释放掉，才会按时调用block块
+//// 局部变量，让指针强引用
+//self.timer = timer;
+////2.设置定时器的开始时间,间隔时间,精准度
+///*
+// 第1个参数:要给哪个定时器设置
+// 第2个参数:开始时间
+// 第3个参数:间隔时间
+// 第4个参数:精准度 一般为0 在允许范围内增加误差可提高程序的性能
+// GCD的单位是纳秒 所以要*NSEC_PER_SEC
+// */
+//dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, 2.0 * NSEC_PER_SEC, 0 * NSEC_PER_SEC);
+//
+////3.设置定时器要执行的事情
+//dispatch_source_set_event_handler(timer, ^{
+//    NSLog(@"---%@--",[NSThread currentThread]);
+//});
+//// 启动
+//dispatch_resume(timer);
+//}

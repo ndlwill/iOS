@@ -8,6 +8,10 @@
 
 #import <UIKit/UIKit.h>
 
+// 面试 && ###
+// https://blog.csdn.net/qxuewei/article/details/79418952
+// https://blog.csdn.net/qxuewei/
+
 /*
  // 控制器添加其他view或者删除view（或者改变self.view的size）会调viewWillLayoutSubviews
  // 布局顺序 (先self.view上面的subView布局 viewDidLayoutSubviews后 再subView里面的subViews布局)
@@ -108,3 +112,38 @@ return nil;
 
 @end
 
+/*
+ objccn:
+ https://objccn.io/issues/
+ */
+
+/*
+ AOP:
+ AOP主要是被使用在日志记录，性能统计，安全控制，事务处理，异常处理几个方面
+ */
+
+/*
+ 不到万不得已最好永远都不要去改动第三方的库源码，采用继承的方式永远要优于修改
+ */
+
+/*
+ UIView && CALayer
+ 每一个单位区间其实都是一个梯形，也就是说我们只需要通过画一个三角形和一个矩形就可以画出一个单位区间
+ 
+ layer内部维护着三分layer tree，分别是presentLayer Tree(动画树)，modeLayer Tree(模型树), Render Tree(渲染树)，在做 iOS动画的时候，我们修改动画的属性，在动画的其实是Layer的presentLayer的属性值，而最终展示在界面上的其实是提供View的modelLayer
+ 
+ 但是如果你在16.7ms内做的事情太多，导致CPU，GPU无法在指定时间内完成指定的工作，那么就会出现卡顿现象，也就是丢帧
+ 60fps是Apple给出的最佳帧率，但是实际中我们如果能保证帧率可以稳定到30fps就能保证不会有卡顿的现象，60fps更多用在游戏上
+ 
+ UIView从Draw到Render的过程有如下几步:
+ 每一个UIView都有一个layer，每一个layer都有个content，这个content指向的是一块缓存，叫做backing store。
+ UIView的绘制和渲染是两个过程，当UIView被绘制时，CPU执行drawRect，通过context将数据写入backing store。
+ 当backing store写完后，通过render server交给GPU去渲染，将backing store中的bitmap数据显示在屏幕上
+ 
+ */
+
+/*
+ crash:
+ Crash分为两种，一种是由EXC_BAD_ACCESS引起的，原因是访问了不属于本进程的内存地址，有可能是访问已被释放的内存；另一种是未被捕获的Objective-C异常（NSException），导致程序向自身发送了SIGABRT信号而崩溃。其实对于未捕获的Objective-C异常，我们是有办法将它记录下来的，如果日志记录得当，能够解决绝大部分崩溃的问题
+
+*/

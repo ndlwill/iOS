@@ -23,7 +23,7 @@
 #import <CoreText/CoreText.h>
 #import "MyTableViewController.h"
 #import "CustomViewController.h"
-
+#import "TestTVViewController.h"
 #import "NSArray+NDLExtension.h"
 
 #import "CommonDefines.h"
@@ -127,6 +127,8 @@
 #import "NextRootViewController.h"
 
 #import "ThreeDTouchViewController.h"
+
+#import "NDL_Category-Swift.h"
 
 typedef id (^WeakReference)(void);
 
@@ -538,6 +540,12 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
 }
 
 - (void)viewDidLoad {
+    Person *person111 = nil;
+    NSLog(@"age = %ld", person111.age);// 0
+    
+    Person *person222 = [[Person alloc] init];
+    NSLog(@"age = %ld", person222.age);// 0
+    
     [self aspect_hookSelector:@selector(testHook) withOptions:AspectPositionAfter usingBlock:^(id<AspectInfo> aspectInfo){
         NSLog(@"###ViewController After testHook###");
     } error:nil];
@@ -1910,6 +1918,53 @@ NSLog(@"viewDidLoad 22");
 //    });
     
     // =====test navBar=====
+    
+    // =====test TextView=====
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self presentViewController:[TestTVViewController new] animated:YES completion:nil];
+    });
+    
+    // test apm
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        NSLog(@"cpu_usage = %.2lf cpu_usage_1 = %.2lf", [SystemInfo cpu_usage], [SystemInfo cpu_usage_1]);
+//        NSLog(@"totalMemorySize = %lld availableMemorySize = %lld", [SystemInfo totalMemorySize], [SystemInfo availableMemorySize]);
+//        NSLog(@"residentMemory = %llu", [SystemInfo residentMemory]);
+//        NSLog(@"usedMemory = %lld memoryUsage = %lld", [SystemInfo usedMemory], [SystemInfo memoryUsage]);
+//
+//    });
+    
+    
+    // ===test swift===
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        TestSwiftViewController *swiftVC = [[TestSwiftViewController alloc] init];
+//        [self presentViewController:swiftVC animated:YES completion:nil];
+//    });
+    
+    // TODO:start new test
+}
+
+- (BOOL)runUntilBlock:(BOOL(^)())block timeout:(NSTimeInterval)timeout
+{
+    __block Boolean fulfilled = NO;
+    void (^beforeWaiting) (CFRunLoopObserverRef observer, CFRunLoopActivity activity) =
+    ^(CFRunLoopObserverRef observer, CFRunLoopActivity activity) {
+        fulfilled = block();
+        if (fulfilled) {
+            CFRunLoopStop(CFRunLoopGetCurrent());
+        }
+    };
+    
+    CFRunLoopObserverRef observer = CFRunLoopObserverCreateWithHandler(NULL, kCFRunLoopBeforeWaiting, true, 0, beforeWaiting);
+    CFRunLoopAddObserver(CFRunLoopGetCurrent(), observer, kCFRunLoopDefaultMode);
+    
+    // Run!
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout, false);
+    
+    NSLog(@"=====after CFRunLoopRunInMode=====");
+    CFRunLoopRemoveObserver(CFRunLoopGetCurrent(), observer, kCFRunLoopDefaultMode);
+    CFRelease(observer);
+    
+    return fulfilled;
 }
 
 // iOS9.0

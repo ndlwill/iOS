@@ -6,6 +6,50 @@
 //  Copyright © 2018年 ndl. All rights reserved.
 //
 
+/*
+ openssl:
+ 1.对称加密
+ 指定密钥和初始向量:
+ $ openssl enc -aes-128-cbc -in in.txt -out out.txt -K 12345678901234567890 -iv 12345678
+ 将 in.txt 文件的内容进行加密后输出到 out.txt 中。这里通过 -K 指定密钥，-iv 指定初始向量。注意 AES 算法的密钥和初始向量都是 128 位的，这里 -K 和 -iv 后的参数都是 16 进制表示的，最大长度为 32。 即 -iv 1234567812345678 指定的初始向量在内存中为 | 12 34 56 78 12 34 56 78 00 00 00 00 00 00 00 00 |
+ 通过 -d 参数表示进行解密:
+ $ openssl enc -aes-128-cbc -in in.txt -out out.txt -K 12345678901234567890 -iv 12345678 -d
+ 表示将加密的 in.txt 解密后输出到 out.txt 中
+ 
+ 
+ 通过字符串密码加/解密:
+ $ openssl enc -aes-128-cbc -in in.txt -out out.txt -pass pass:helloworld
+ 这时程序会根据字符串 "helloworld" 和随机生成的 salt 生成密钥和初始向量，也可以用 -nosalt 不加盐。
+ 
+ 2.RSA
+ 使用 genrsa 子命令生成密钥对，密钥对是一个文件
+ // 生成密钥长度为 2048 比特
+ $ openssl genrsa -out mykey.pem 2048
+ 
+ 从密钥对中分离出公钥:
+ $ openssl rsa -in mykey.pem -pubout -out mypubkey.pem
+ 
+ 校验密码对文件是否正确:
+ // -noout 参数表示不打印密钥对信息，如果校验成功，说明密钥对文件无误
+ $ openssl rsa -in mykey.pem -check -noout
+ 
+ 显示公钥信息:
+ $ openssl rsa -pubin -in mypubkey.pem -text
+ Modulus 是 RSA 加密结构中的 N。Exponent 是公钥中的 E。-----BEGIN PUBLIC KEY----- 和 -----END PUBLIC KEY----- 之间是公钥具体的值
+ 
+ 使用密钥对加密:
+ // rsautl 命令默认填充机制是 PKCS#1 v1.5
+ $ openssl rsautl -encrypt -inkey mykey.pem -in plain.txt -out cipher.txt
+ // 指定 rsautl 填充机制为 PKCS#1 OAEP
+ $ openssl rsautl -encrypt -inkey mykey.pem -in plain.txt -out cipher.txt -oaep
+ 
+ 使用公钥加密，务必有 -pubin 参数表明 -inkey 参数输入的是公钥文件:
+ $ openssl rsautl -encrypt -pubin -inkey mypubkey.pem -in plain.txt -out cipher2.txt
+ 
+ 解密:
+ $ openssl rsautl -decrypt -inkey mykey.pem -in cipher.txt
+ */
+
 #import <Foundation/Foundation.h>
 
 @interface NSString (NDLSecurity)

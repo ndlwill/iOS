@@ -8,7 +8,6 @@
 
 #import "HomeTranViewController.h"
 #import "TranNextViewController.h"
-#import "BellhopTransitionAnimator.h"
 
 @interface HomeTranViewController () <UITextFieldDelegate, UINavigationControllerDelegate>
 
@@ -50,18 +49,18 @@
 }
 
 #pragma mark - UINavigationControllerDelegate
-- (id<UIViewControllerAnimatedTransitioning>)navigationController:(UINavigationController *)navigationController animationControllerForOperation:(UINavigationControllerOperation)operation fromViewController:(UIViewController *)fromVC toViewController:(UIViewController *)toVC
-{
-    if (operation == UINavigationControllerOperationPush) {// push
-        NSLog(@"===Five Push ===");// 3.
-        BellhopTransitionAnimator *animator = [[BellhopTransitionAnimator alloc] init];
-        animator.transitionDuration = 0.2;
-        animator.isPushFlag = YES;
-
-        return animator;
-    }
-    
-    return nil;// 返回nil表示默认转场动画
-}
+//- (id<UIViewControllerAnimatedTransitioning>)navigationController:(UINavigationController *)navigationController animationControllerForOperation:(UINavigationControllerOperation)operation fromViewController:(UIViewController *)fromVC toViewController:(UIViewController *)toVC
+//{
+//    if (operation == UINavigationControllerOperationPush) {// push
+//        NSLog(@"===Five Push ===");// 3.
+//        BellhopTransitionAnimator *animator = [[BellhopTransitionAnimator alloc] init];
+//        animator.transitionDuration = 0.2;
+//        animator.isPushFlag = YES;
+//
+//        return animator;
+//    }
+//    
+//    return nil;// 返回nil表示默认转场动画
+//}
 
 @end

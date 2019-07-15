@@ -14,7 +14,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (nonatomic, copy) NSString *titleStr;
 
-@property (nonatomic, strong, readonly) UIView *mainView;
+// ovverrides
+- (void)setupMainViewWithBigTitleStr:(NSString *)bigTitleStr referToNavigationView:(UIView *)navigationView;
 
 @end
 

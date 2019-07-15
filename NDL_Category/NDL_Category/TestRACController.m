@@ -517,6 +517,21 @@ Hook原理：在每次调用一个API返回结果之前，先执行你自己的�
 //使用场景:监听按钮点击，网络请求
 - (void)testRACCommand
 {
+    // RACCommand类是用于表示一些操作的执行。通常，是由于UI上的一些事件触发了RACCommand的执行.比如当用户按了一个按钮，如果对应RACCommand实例可以被执行，就会执行相应的操作。这使得它很容易和UI进行绑定，同时可以保证当RACCommand处于not enabled时RACCommand实例的操作不会被执行.当Command可以执行时，常做的方式是把allowsconcuuent的属性设置为NO，这可以保证Command已经执行完成后不会被重复执行。Command执行的结果是一个RACSignal，因此你可以调用next:、completed:、或者error:
+    
+    // ===button===
+    // Command通过一个enabledSignal参数来初始化。这个Signal可以指示Command是否可以被执行
+    // 当我们设置allowsConcurrentExecution为NO，Command将会看守这个signal并且在本次执行未完成前不允许任何新的执行
+    // Command来自于按钮的rac_command（在UIButtton+RACCommandSupport分类中定义），根据Command是否可以被执行，按钮会自动切换enabled和disabled状态
+    // Command会在按钮被用户点击的时候自动执行。我们可以通过RACCommand自由的实现这一切。如果你需要手动执行你可以调用-[RACCommand execute:]，参数是可选的，你可以传递nil.(按钮可以将自己当做-execute:的参数传入).-execute:方法也是一个你可以监控执行状态的地方，你可以这样写：
+//    [[self.viewModel.subscribeCommand execute:nil] subscribeCompleted:^{
+//        NSLog(@"The command executed");
+//    }];
+    // 所以在Command执行时，为了及时更新UI，我们需要监听Command的另一个属性。有几个让人迷惑的地方，RACCommand的executionSignals属性是一个每当Commands开始执行时就发送next:的Signal。问题在于Signal由Command创建，所以Signal中还有一层Signal
+    // materialize操作符让我们捕获到一个RACEvent（例如 next: complete 和 error:都是RACEvent的实例）
+    
+    // RACCommand有一个executing属性，实际上它是一个当execute:时会发送YES，终止时发送NO的信号
+    
     // 一、RACCommand使用步骤:
     // 1.创建命令 initWithSignalBlock:(RACSignal * (^)(id input))signalBlock
     // 2.在signalBlock中，创建RACSignal，并且作为signalBlock的返回值
@@ -533,7 +548,7 @@ Hook原理：在每次调用一个API返回结果之前，先执行你自己的�
     // 2.订阅executionSignals就能拿到RACCommand中返回的信号，然后订阅signalBlock返回的信号，就能获取发出的值。
     // 五、监听当前命令是否正在执行executing
     // 六、使用场景,监听按钮点击，网络请求
-    
+
     // 1.创建命令
     RACCommand *command = [[RACCommand alloc] initWithSignalBlock:^RACSignal *(id input) {
         

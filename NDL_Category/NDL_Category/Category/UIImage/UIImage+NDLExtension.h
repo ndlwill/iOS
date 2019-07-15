@@ -42,4 +42,7 @@
 // 生成高清二维码
 + (UIImage *)ndl_createNonInterpolatedUIImageFormCIImage:(CIImage *)ciImage whValue:(CGFloat)whValue;
 
+// 高斯模糊图片 （brush stroke 笔触）
+- (UIImage *)ndl_blurImage:(UIImage *)image withBlurValue:(CGFloat)blur;
+
 @end

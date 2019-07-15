@@ -6,8 +6,36 @@
 //  Copyright © 2018年 ndl. All rights reserved.
 //
 
-#import "NDLConstants.h"
+// swift demo
+// https://github.com/zixun/CocoaChinaPlus
+// https://github.com/Light413/dctt
+// https://github.com/hrscy/TodayNews
 
+// swift教程
+// http://www.swift51.com/swift4.0/chapter2/chapter2.html
+
+// swift第三方
+// RxSwift
+// https://www.jianshu.com/p/f61a5a988590
+
+/*
+ swift:
+ 1.Safe
+ 在软件生产之前捕获开发人员的错误
+ 2.Fast
+ 3.Expressive
+ 
+ Features:
+ 使代码更易于读写
+ 支持推断类型，使代码更清晰，更不容易出错，模块消除了头文件并提供了命名空间
+ 
+ 闭包与函数指针统一
+ 元组和多个返回值
+ 支持方法，扩展和协议的结构体
+ 功能编程模式，例如映射和过滤
+ */
+
+#import "NDLConstants.h"
 
 NSString * const kRemoteGifUrlStr = @"https://raw.githubusercontent.com/mengxianliang/XLPlayButton/master/GIF/1.gif";
 
@@ -16,6 +44,9 @@ NSString * const kTestTableName = @"t_test";
 
 // label: font = 15
 CGFloat const kSystemBadgeViewWH = 18.0;
+
+// 50
+NSInteger const kTextViewMaxTextLength = 5;
 
 CGFloat const kBigTitleWrapperViewHeight = 60.0;
 CGFloat const kBigTitleFontSize = 28.0;

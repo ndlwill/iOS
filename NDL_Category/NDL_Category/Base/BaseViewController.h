@@ -8,6 +8,24 @@
 
 #import <UIKit/UIKit.h>
 
+/*
+ tableView:
+ // EditingStyle  不写editingStyleForRowAtIndexPath:,默认UITableViewCellEditingStyleDelete  + canEditRowAtIndexPath:需要返回YES
+ */
+
+/*
+ swift:
+ https://www.cnblogs.com/QianChia/default.html?page=4
+ 
+ Swift进阶之内存模型和方法调度:
+ https://blog.csdn.net/hello_hwc/article/details/53147910
+ */
+
+/*
+ 滴滴技术:
+ https://www.jianshu.com/users/c3c893a27097/timeline
+ */
+
 @interface BaseViewController : UIViewController
 
 @property (nonatomic, assign) BOOL isNetworkReachable;

@@ -54,6 +54,36 @@
     return [UIColor colorWithRed:transitionRed green:transitionGreen blue:transitionBlue alpha:transitionAlpha];
 }
 
++ (CGFloat)cachedSize
+{
+    // sd
+    NSUInteger sdImageCacheSize = [[SDImageCache sharedImageCache] getSize];
+    
+    // Library/Caches
+    NSString *cachePath = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).lastObject;
+    NSDirectoryEnumerator *directoryEnumerator = [[NSFileManager defaultManager] enumeratorAtPath:cachePath];
+    __block NSUInteger cacheSize = 0;
+    for (NSString *dirName in directoryEnumerator) {
+        NSString *path = [cachePath stringByAppendingPathComponent:dirName];
+        NSDictionary<NSFileAttributeKey, id> *attrDic = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+        cacheSize += attrDic.fileSize;
+    }
+    // 得到是字节,转化为M
+    return (((CGFloat)(sdImageCacheSize + cacheSize)) / 1024 / 1024);
+}
+
++ (void)clearCache
+{
+    // Library/Caches
+    [[NSFileManager defaultManager] removeItemAtPath:NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).lastObject error:nil];
+    
+    // sd
+    [[SDImageCache sharedImageCache] clearMemory];
+    [[SDImageCache sharedImageCache] clearDiskOnCompletion:^{
+        
+    }];
+}
+
 + (UIWindow *)keyboardWindow
 {
     UIWindow *keyboardWindow = nil;

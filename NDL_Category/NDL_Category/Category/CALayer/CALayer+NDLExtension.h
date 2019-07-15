@@ -8,6 +8,10 @@
 
 #import <QuartzCore/QuartzCore.h>
 
+/*
+ Animation:
+ https://github.com/yixiangboy/IOSAnimationDemo
+ */
 @interface CALayer (NDLExtension)
 
 // 暂停CALayer的动画
