@@ -10,6 +10,7 @@
 #import <MAMapKit/MAMapKit.h>
 
 #import "InvisibleWatermark.h"
+#import "ResidentThread.h"
 
 @interface TestMapViewController () <MAMapViewDelegate>
 {
@@ -18,6 +19,8 @@
 
 @property (nonatomic, strong) MAMapView *mapView;
 @property (nonatomic, strong) MAAnimatedAnnotation *carAnno;
+
+@property (nonatomic, strong) ResidentThread *residentThread;
 
 @end
 
@@ -32,6 +35,20 @@
     self.mapView = [[MAMapView alloc] initWithFrame:self.view.bounds];
     self.mapView.delegate = self;
     [self.view addSubview:self.mapView];
+    
+    UIButton *back = [UIButton buttonWithType:UIButtonTypeCustom];
+    [back setTitle:@"Back" forState:UIControlStateNormal];
+    [back addTarget:self action:@selector(backDidClicked:) forControlEvents:UIControlEventTouchUpInside];
+    back.backgroundColor = [UIColor redColor];
+    back.frame = CGRectMake(0, 60, 60, 40);
+    [self.view addSubview:back];
+    
+    UIButton *executeBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    [executeBtn setTitle:@"ExecuteBtn" forState:UIControlStateNormal];
+    [executeBtn addTarget:self action:@selector(exeDidClicked:) forControlEvents:UIControlEventTouchUpInside];
+    executeBtn.backgroundColor = [UIColor redColor];
+    executeBtn.frame = CGRectMake(100, 60, 60, 40);
+    [self.view addSubview:executeBtn];
     
     // overlay
     MAPolyline *polyline = [MAPolyline polylineWithCoordinates:coords1 count:sizeof(coords1) / sizeof(coords1[0])];
@@ -63,11 +80,32 @@
         [InvisibleWatermark addWatermarkToImage:image text:@"ndl_will" completion:^(UIImage * _Nonnull newImage) {
             imageView.image = newImage;
             
+            // 会跟随当前控制器销毁而自动销毁的常驻线程
+            self.residentThread = [[ResidentThread alloc] init];
+            
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 imageView.image = [InvisibleWatermark colorBumWatermarkImage:newImage];
             });
         }];
     });
+}
+
+- (void)dealloc
+{
+    NSLog(@"TestMapViewController dealloc");
+}
+
+- (void)backDidClicked:(UIButton *)button
+{
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)exeDidClicked:(UIButton *)button
+{
+    __weak typeof(self) weakSelf = self;
+    [self.residentThread executeTask:^{
+        NSLog(@"###execute residentThread task###");
+    }];
 }
 
 - (void)buttonDidClicked:(UIButton *)pSender

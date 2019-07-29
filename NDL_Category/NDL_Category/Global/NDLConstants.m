@@ -17,6 +17,12 @@
 // swift第三方
 // RxSwift
 // https://www.jianshu.com/p/f61a5a988590
+// https://beeth0ven.github.io/RxSwift-Chinese-Documentation/
+
+// YTKNetwork是比较经典的利用OOP思想（面向对象）
+
+// Moya
+// 基于swift的Moya虽然也有使用到继承，但是它的整体上是以POP思想（Protocol Oriented Programming,面向协议编程）
 
 /*
  swift:

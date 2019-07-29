@@ -13,6 +13,16 @@
 
 #import <ReactiveObjC/RACReturnSignal.h>
 
+/*
+ demo:
+ // rac_willDeallocSignal
+ _fetchDataCommand = [[RACCommand alloc] initWithSignalBlock:^RACSignal *(id input) {
+ return [[self fetchNewData] takeUntil:self.rac_willDeallocSignal];
+ }];
+ 
+ 
+ */
+
 @interface TestRACController () <RACProtocol>
 
 @property (nonatomic, strong) UITextField *textField;

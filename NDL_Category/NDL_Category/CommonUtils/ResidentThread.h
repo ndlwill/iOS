@@ -352,6 +352,13 @@ typedef void(^TaskBlock)(void);
 
 @interface ResidentThread : NSObject
 
+// 不会销毁
++ (void)executeTask:(TaskBlock)taskBlock;
+
+// 不会销毁
++ (void)executeTask:(TaskBlock)taskBlock identity:(NSString *)identity;
+
+// 线程随当前对象销毁
 - (void)executeTask:(TaskBlock)taskBlock;
 
 @end

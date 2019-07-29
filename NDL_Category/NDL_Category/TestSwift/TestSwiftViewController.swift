@@ -1851,6 +1851,7 @@ till you come to the end; then stop."
          请始终使用大写字母开头的驼峰命名法（例如 T 和 MyTypeParameter）来为类型参数命名，以表明它们是占位类型
          
          泛型类型:
+         Swift 还允许你定义泛型类型。这些自定义类、结构体和枚举可以适用于任何类型
          struct Stack<Element> {
          var items = [Element]()
          mutating func push(_ item: Element) {
@@ -1874,8 +1875,9 @@ till you come to the end; then stop."
          }
          
          类型约束:
-         类型约束可以指定一个类型参数必须继承自指定类，或者符合一个特定的协议或协议组合
+         ##类型约束可以指定一个类型参数必须继承自指定类，或者符合一个特定的协议或协议组合##
          所有的 Swift 基本类型（例如 String、Int、Double 和 Bool）默认都是可哈希的,符合 Hashable 协议
+         
          类型约束语法:
          你可以在一个类型参数名后面放置一个类名或者协议名，并用冒号进行分隔，来定义类型约束，它们将成为类型参数列表的一部分
          func someFunction<T: SomeClass, U: SomeProtocol>(someT: T, someU: U) {
@@ -1892,7 +1894,7 @@ till you come to the end; then stop."
          }
          
          关联类型:
-         关联类型为协议中的某个类型提供了一个占位名（或者说别名），其代表的实际类型在协议被采纳时才会被指定。你可以通过  associatedtype 关键字来指定关联类型
+         关联类型为##协议中的某个类型##提供了一个占位名（或者说别名），其代表的实际类型在协议被采纳时才会被指定。你可以通过  associatedtype 关键字来指定关联类型
          protocol Container {
          associatedtype ItemType
          mutating func append(_ item: ItemType)
@@ -1946,6 +1948,11 @@ till you come to the end; then stop."
          }
          }
          
+         通过扩展一个存在的类型来指定关联类型：
+         让一个已存在的类型符合一个协议，这包括使用了关联类型的协议
+         Swift 的 Array 类型已经提供 append(_:) 方法，一个 count 属性，以及一个接受 Int 类型索引值的下标用以检索其元素。这三个功能都符合 Container 协议的要求，也就意味着你只需简单地声明 Array 采纳该协议就可以扩展 Array，使其遵从 Container 协议。你可以通过一个空扩展来实现这点
+         extension Array: Container {}
+         
          约束关联类型:
          protocol Container {
          associatedtype Item: Equatable
@@ -1953,6 +1960,9 @@ till you come to the end; then stop."
          var count: Int { get }
          subscript(i: Int) -> Item { get }
          }
+         
+         ###泛型 where 语句：###
+         为关联类型定义约束也是非常有用的。你可以在参数列表中通过 where 子句为关联类型定义约束。你能通过  where 子句要求一个关联类型遵从某个特定的协议，以及某个特定的类型参数和关联类型必须类型相同
          
          where 语句:
          可以在参数列表中通过 where 子句为关联类型定义约束
@@ -1975,7 +1985,8 @@ till you come to the end; then stop."
          return true
          }
          
-         具有泛型 where 子句的扩展:
+         
+         ##具有泛型 where 子句的扩展:##
          // 泛型 Stack 结构体
          extension Stack where Element: Equatable {
          func isTop(_ item: Element) -> Bool {
@@ -1993,6 +2004,7 @@ till you come to the end; then stop."
          }
          }
          
+         // 泛型 where 子句去要求 Item 为特定类型
          extension Container where Item == Double {
          func average() -> Double {
          var sum = 0.0

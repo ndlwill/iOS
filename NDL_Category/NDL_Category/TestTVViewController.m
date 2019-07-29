@@ -19,6 +19,10 @@
 #import "Person.h"
 #import "BaseNavigationController.h"
 
+#import "ResidentThread.h"
+
+#import <YYKit/YYKit.h>
+
 void stackFrame (void) {
     /* Trigger a crash */
     ((char *)NULL)[1] = 0;
@@ -199,6 +203,14 @@ void stackFrame (void) {
      */
     
     NSLog(@"===7===");
+    
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        YYImage *image = [YYImage imageNamed:@"launch_2"];
+//        YYAnimatedImageView *imageView = [[YYAnimatedImageView alloc] initWithImage:image];
+//        imageView.contentMode = UIViewContentModeScaleAspectFit;
+//        imageView.frame = self.view.bounds;
+//        [self.view addSubview:imageView];
+//    });
 }
 
 //// 开始摇动
@@ -219,7 +231,7 @@ void stackFrame (void) {
 
 - (void)dealloc
 {
-    NSLog(@"[TestTVViewController dealloc]");
+    NSLog(@"===[TestTVViewController dealloc]===");
 }
 
 - (void)threadTask
@@ -292,6 +304,8 @@ void stackFrame (void) {
         NSLog(@"textContainer.size = %@", NSStringFromCGSize(self.textView.textContainer.size));
     });
 }
+
+
 
 - (void)buttonDidClicked:(UIButton *)button
 {

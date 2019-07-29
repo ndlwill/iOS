@@ -133,7 +133,7 @@
 typedef id (^WeakReference)(void);
 
 // TODO: Import
-@interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate, CLLocationManagerDelegate, UITabBarControllerDelegate, UIViewControllerPreviewingDelegate>
+@interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate, CLLocationManagerDelegate, UITabBarControllerDelegate, UIViewControllerPreviewingDelegate, CLLocationManagerDelegate>
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
 
 @property (weak, nonatomic) UIView *touchView;
