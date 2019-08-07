@@ -12,7 +12,6 @@
 
 - (void)logRuntime
 {
-    
     NSLog(@"###TestRuntime logRuntime###");
 }
 

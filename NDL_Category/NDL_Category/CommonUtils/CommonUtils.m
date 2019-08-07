@@ -258,6 +258,8 @@
  对于第二种:
  则是传址调用
  */
+
+// 选择排序、冒泡排序、插入排序三种排序算法可以总结为：都将数组分为已排序部分和未排序部分
 // {5, 18, 8 , 12, 25};
 void bubbleSort_C(int array[], int arrayLength)
 {
@@ -307,6 +309,47 @@ void selectionSort_C(int array[], int arrayLength)
             array[i] = temp;
         }
     }
+    
+    /*
+     void selectSort(int *arr, int length) {
+     
+     for (int i = 0; i < length - 1; i++) { //趟数
+     
+     for (int j = i + 1; j < length; j++) { //比较次数
+     
+     if (arr[i] > arr[j]) {
+     
+     int temp = arr[i];
+     
+     arr[i] = arr[j];
+     
+     arr[j] = temp;
+     
+     }
+     
+     }
+     
+     }
+     
+     }
+     */
+}
+
+// 
+void insertionSort_C(int array[], int arrayLength)
+{
+    for (int i = 1; i < arrayLength; i++) {
+        int j = i;
+        int temp = array[i];
+        // 循环比较排好序的
+        while (j > 0 && temp < array[j - 1]) {
+            int sortedValue = array[j - 1];
+            array[j - 1] = temp;
+            array[j] = sortedValue;
+            
+            j--;
+        }
+    }
 }
 
 /*
@@ -349,7 +392,35 @@ int partition(int array[], int minIndex, int maxIndex)
 
 // 假设数据是按升序排序的，对于给定值x，从序列的中间位置开始比较，如果当前位置值等于x，则查找成功；若x小于当前位置值，则在数列的前半段 中查找；若x大于当前位置值则在数列的后半段中继续查找，直到找到为止。
 // 采用二分法查找时，数据需是排好序的
-
+/*
+ int findKey(int *arr, int length, int key) {
+ 
+ int min = 0, max = length - 1, mid;
+ 
+ while (min <= max) {
+ 
+ mid = (min + max) / 2; //计算中间值
+ 
+ if (key > arr[mid]) {
+ 
+ min = mid + 1;
+ 
+ } else if (key < arr[mid]) {
+ 
+ max = mid - 1;
+ 
+ } else {
+ 
+ return mid;
+ 
+ }
+ 
+ }
+ 
+ return -1;
+ 
+ }
+ */
 
 // ========================================
 + (void)logBinaryTree

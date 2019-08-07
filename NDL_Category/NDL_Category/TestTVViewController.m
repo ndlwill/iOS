@@ -22,6 +22,9 @@
 #import "ResidentThread.h"
 
 #import <YYKit/YYKit.h>
+#import "Person.h"
+
+#import "CTMediator+ModuleA.h"
 
 void stackFrame (void) {
     /* Trigger a crash */
@@ -35,6 +38,9 @@ void stackFrame (void) {
 @property (nonatomic, strong) DebugThread *thread;
 
 @property (nonatomic, strong) Person *person;
+
+
+
 
 @end
 
@@ -78,7 +84,7 @@ void stackFrame (void) {
     button.frame = CGRectMake(0, 620, self.view.width, 40);
     [self.view addSubview:button];
     
-    // KVO-Block
+    // KVO-Block 
     self.person = [Person personWithName:@"ndl" age:20];
     [self.person ndl_addObserver:self forKeyPath:@"name" changedBlock:^(NSString * _Nonnull keyPath, NSObject * _Nonnull observedObject, id  _Nonnull oldValue, id  _Nonnull newValue) {
         // ##weakSelf##
@@ -108,34 +114,79 @@ void stackFrame (void) {
     testView.backgroundColor = [[UIColor lightGrayColor] colorWithAlphaComponent:0.35];
     [self.view addSubview:testView];
     
-    DebugThread *thread = [[DebugThread alloc] initWithTarget:self selector:@selector(threadTask) object:nil];
-    [thread start];
-    self.thread = thread;// 不强引用 执行完就释放了dealloc,强引用 执行完状态为finish
+//    DebugThread *thread = [[DebugThread alloc] initWithTarget:self selector:@selector(threadTask) object:nil];
+//    [thread start];
+//    self.thread = thread;// 不强引用 执行完就释放了dealloc,强引用 执行完状态为finish
     
     // test crash
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [self testCrash];
-    });
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        [self testCrash];
+//    });
     
     /*
-     Block的存储域:
+     ##Block的存储域:##
      _NSConcreteStackBlock // 存储在栈上
-     _NSConcreteGlobalBlock // 存储在数据段
+     _NSConcreteGlobalBlock // 存储在数据段(text段),类似函数
      _NSConcreteMallocBlock // 存储在堆上
+     
+     全局静态 block，不会访问任何外部变量，执行完就销毁
+     保存在栈中的 block，当函数返回时会被销毁，和第一种的区别就是调用了外部变量
+     保存在堆中的 block，当引用计数为 0 时会被销毁
+     
      使用了静态或者全局变量的时候，block实际上是存放在全局区的
-     Block语法的表达式中不使用截获的自动变量，也就是不使用外部变量，block也是存放在全局区的
+     Block语法的表达式中不使用外部变量，block是存放在全局区的
      
      栈上的forwarding其实是去指向堆中的forwarding，而堆中的forwarding指向的还是自己。所以这样就能保证我们访问的就是同一个变量
      
      在ARC下，通常讲Block作为返回值的时候，编译器会自动加上copy，也就是自动生成复制到堆上的代码
      */
-    // __block原理:__block修饰的变量本身是一个结构体，我们存放指针的方式就可以修改实际的值了
+    // Block只捕获Block中会用到的变量。由于只捕获了自动变量(自动变量是以值传递方式传递到Block的构造函数里面)的值，并非内存地址，所以Block内部不能改变自动变量的值。Block捕获的外部变量可以改变值的是静态变量，静态全局变量，全局变量
+    // __block原理:__block修饰的变量被转化成了一个结构体，我们存放指针的方式就可以修改实际的值了
     int val = 1;
     void (^blk)(void) = ^{
         printf("%d\n", val);// Block保存了val的瞬间值,值拷贝
     };
     val = 2;
     blk();// 1
+    
+    // block
+    // 我们可以通过是否引用外部变量识别，未引用外部变量即为NSGlobalBlock，可以当做函数使用
+    float (^sum)(float, float) = ^(float a, float b){
+        return a + b;
+    };
+    NSLog(@"%@", sum);// block is <__NSGlobalBlock__>
+    sum(4.f, 5.f);
+    
+    // 如果是一个copy属性的block,它一定是NSMallocBlock.block堆内存的一个明显的特性就是:他会强引用block中的对象
+    // 在处理对象时,block会malloc
+    Person* model = [Person personWithName:@"ndl" age:21];
+    float (^sum1)(float, float) = ^(float a, float b){
+        model.age = 20;
+        return a + b;
+    };
+    NSLog(@"%@ age = %ld", sum1, model.age);// block is <__NSMallocBlock__> age = 21
+    
+    //
+    int multiplier = 7;
+    int (^myBlock)(int) = ^(int num) {
+        return num * multiplier;
+    };
+    NSLog(@"myBlock = %@", myBlock);// __NSMallocBlock__
+    
+    
+    void (^nullBlock)() = ^ {
+        
+    };
+    NSLog(@"nullBlock = %@", nullBlock);// __NSGlobalBlock__
+    [self func:nullBlock];
+    
+    NSMutableArray *mutaArr = [NSMutableArray arrayWithObject:@"123"];
+    void (^testBlock)(void) = ^{
+        // test1
+        [mutaArr addObject:@"234"];
+    };
+    testBlock();
+    NSLog(@"mutaArr = %@", mutaArr);// test1: @"123", @"234"
     
 //    NSURLProtocol
     
@@ -211,6 +262,19 @@ void stackFrame (void) {
 //        imageView.frame = self.view.bounds;
 //        [self.view addSubview:imageView];
 //    });
+    
+    
+}
+
+- (void)func:(void (^)())funcBlock
+{
+    NSLog(@"funcBlock = %@", funcBlock);// __NSGlobalBlock__
+    
+    void (^methodBlock)() = ^ {
+        
+    };
+//    methodBlock();
+    NSLog(@"methodBlock = %@", methodBlock);// __NSGlobalBlock__
 }
 
 //// 开始摇动
@@ -300,9 +364,9 @@ void stackFrame (void) {
     [super viewDidAppear:animated];
     
     // textView :{0, 120, 375, 300}
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        NSLog(@"textContainer.size = %@", NSStringFromCGSize(self.textView.textContainer.size));
-    });
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        NSLog(@"textContainer.size = %@", NSStringFromCGSize(self.textView.textContainer.size));
+//    });
 }
 
 
@@ -311,9 +375,13 @@ void stackFrame (void) {
 {
     NSLog(@"##buttonDidClicked##");
 //    [self dismissViewControllerAnimated:YES completion:nil];
-    
+
+    // tes map
     BaseNavigationController *nav = [[BaseNavigationController alloc] initWithRootViewController:[TestMapViewController new]];
     [self presentViewController:nav animated:YES completion:nil];
+    
+    
+//    [self presentViewController:[[CTMediator sharedInstance] moduleA_TestViewController] animated:YES completion:nil];
 }
 
 - (void)buttonDidTapped:(UITapGestureRecognizer *)gesture

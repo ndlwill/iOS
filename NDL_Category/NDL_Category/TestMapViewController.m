@@ -22,6 +22,13 @@
 
 @property (nonatomic, strong) ResidentThread *residentThread;
 
+@property (nonatomic, strong) dispatch_queue_t myQueue;
+@property (nonatomic, strong) dispatch_group_t group;
+
+@property (nonatomic, copy) NSString *testName;
+
+@property (nonatomic, strong) id obj;
+
 @end
 
 @implementation TestMapViewController
@@ -88,6 +95,18 @@
             });
         }];
     });
+    
+    self.group = dispatch_group_create();
+    self.myQueue = dispatch_queue_create("com.queue.my", DISPATCH_QUEUE_SERIAL);
+    dispatch_group_async(_group, _myQueue, ^{
+        self.testName = @"123";
+    });
+    
+    // 已验证
+//    WEAK_REF(self)
+//    _obj = [[NSNotificationCenter defaultCenter] addObserverForName:@"123" object:nil queue:nil usingBlock:^(NSNotification * _Nonnull note) {
+//        weak_self.testName = @"123";
+//    }];
 }
 
 - (void)dealloc

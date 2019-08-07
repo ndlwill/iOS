@@ -116,6 +116,8 @@ velocityInView： 手指在视图上移动的速度（x,y）, 正负也是代表
 void bubbleSort_C(int array[], int arrayLength);
 // 选择排序
 void selectionSort_C(int array[], int arrayLength);
+// 插入排序
+void insertionSort_C(int array[], int arrayLength);
 // 快速排序
 void quickSort_C(int array[], int minIndex, int maxIndex);
 

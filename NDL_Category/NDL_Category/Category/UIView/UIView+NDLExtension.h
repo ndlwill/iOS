@@ -9,6 +9,15 @@
 #import <UIKit/UIKit.h>
 
 /*
+ mas_makeConstraints执行流程:
+ 1.创建约束制造者MASConstraintMaker,绑定控件,生成了一个保存所有约束的数组
+ 2.执行mas_makeConstraints传入的block
+ 3.让约束制造者安装约束
+ *   1.清空之前的所有约束
+ *   2.遍历约束数组,一个一个安装
+ */
+
+/*
  UIView从Draw到Render:
  1.每一个UIView都有一个layer，每一个layer都有个content，这个content指向的是一块缓存，叫做backing store。
  2.UIView的绘制和渲染是两个过程，当UIView被绘制时，CPU执行drawRect，通过context将数据写入backing store。

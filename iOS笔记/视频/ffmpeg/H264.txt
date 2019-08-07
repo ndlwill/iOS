@@ -1,0 +1,51 @@
+H.264由视讯编码层(Video Coding Layer，VCL)与网络提取层(Network Abstraction Layer，NAL)组成
+
+序列参数集SPS：作用于一系列连续的编码图像；
+图像参数集PPS：作用于编码视频序列中一个或多个独立的图像
+
+VideoToolbox是iOS8以后开放的硬编码与硬解码的API，一组用C语言写的函数。使用流程如下：
+1、-initVideoToolBox中调用VTCompressionSessionCreate创建编码session，
+然后调用VTSessionSetProperty设置参数，最后调用VTCompressionSessionPrepareToEncodeFrames开始编码；
+2、开始视频录制，获取到摄像头的视频帧，传入-encode:，调用VTCompressionSessionEncodeFrame传入需要编码的视频帧，
+如果返回失败，调用VTCompressionSessionInvalidate销毁session，然后释放session；
+3、每一帧视频编码完成后会调用预先设置的编码函数didCompressH264，如果是关键帧需要用CMSampleBufferGetFormatDescription获取CMFormatDescriptionRef，然后用
+CMVideoFormatDescriptionGetH264ParameterSetAtIndex取得PPS和SPS；
+最后把每一帧的所有NALU数据前四个字节变成0x00 00 00 01之后再写入文件；
+4、调用VTCompressionSessionCompleteFrames完成编码，然后销毁session：VTCompressionSessionInvalidate，释放session。
+
+
+
+
+=============================================================
+CVPixelBuffer
+包含未压缩的像素数据，包括图像宽度、高度等；
+
+CVPixelBufferPool
+CVPixelBuffer的缓冲池，因为CVPixelBuffer的创建和销毁代价很大；
+
+pixelBufferAttributes
+CFDictionary包括宽高、像素格式（RGBA、YUV）、使用场景（OpenGL ES、Core Animation）
+
+CMTime
+64位的value，32位的scale，media的时间格式；
+
+CMVideoFormatDescription
+video的格式，包括宽高、颜色空间、编码格式等；对于H.264的视频，PPS和SPS的数据也在这里；
+
+CMBlockBuffer
+未压缩的图像数据；
+
+CMSampleBuffer
+存放一个或者多个压缩或未压缩的媒体文件；
+
+CMClock
+时间源：A timing source object.
+
+CMTimebase
+时间控制器，可以设置rate和time：A timebase represents a timeline that clients can control by setting the rate and time. Each timebase has either a master clock or a master timebase. The rate of the timebase is expressed relative to its master.
+
+用NSInputStream读入原始H.264码流，用CADisplayLink控制显示速率，用NALU的前四个字节识别SPS和PPS并存储，
+当读入IDR帧的时候初始化VideoToolbox，并开始同步解码；
+解码得到的CVPixelBufferRef会传入OpenGL ES类进行解析渲染
+
+

@@ -1,0 +1,2528 @@
+http://www.jianshu.com/p/bd42bacbe4cc  袁峥Seemygo 
+
+一个完整直播app功能：
+1、聊天
+私聊、聊天室、点亮、推送、黑名单等;
+2、礼物
+普通礼物、豪华礼物、红包、排行榜、第三方充值、内购、礼物动态更新、提现等；
+3、直播列表
+关注、热门、最新、分类直播用户列表等；
+4、自己直播
+录制、推流、解码、播放、美颜、心跳、后台切换、主播对管理员操作、管理员对用户等；
+5、房间逻辑
+创建房间、进入房间、退出房间、关闭房间、切换房间、房间管理员设置、房间用户列表等；
+6、用户逻辑
+普通登陆、第三方登陆、注册、搜索、修改个人信息、关注列表、粉丝列表、忘记密码、查看个人信息、收入榜、关注和取关、检索等；
+7、观看直播
+聊天信息、滚屏弹幕、礼物显示、加载界面等；
+8、统计
+APP业务统计、第三方统计等；
+9、超管
+禁播、隐藏、审核等；
+
+直播原理：把主播录制的视频，推送到服务器，在由服务器分发给观众观看。
+直播环节：推流端（采集、美颜处理、编码、推流）、服务端处理（转码、录制、截图、鉴黄）、播放器（拉流、解码、渲染）、互动系统（聊天室、礼物系统、赞）
+-------------------------------------------------------
+流媒体：
+直播需要用到流媒体
+流媒体开发:网络层(socket或st)负责传输，协议层(rtmp或hls)负责网络打包，封装层(flv、ts)负责编解码数据的封装，编码层(h.264和aac)负责图像，音频压缩。
+帧:每帧代表一幅静止的图像
+GOP:（Group of Pictures）画面组，一个GOP就是一组连续的画面，每个画面都是一帧，一个GOP就是很多帧的集合
+直播的数据，其实是一组图片，包括I帧、P帧、B帧，当用户第一次观看的时候，会寻找I帧，而播放器会到服务器寻找到最近的I帧反馈给用户。因此，GOP Cache增加了端到端延迟，因为它必须要拿到最近的I帧
+GOP Cache的长度越长，画面质量越好
+码率：图片进行压缩后每秒显示的数据量。
+帧率：每秒显示的图片数。影响画面流畅度，与画面流畅度成正比：帧率越大，画面越流畅；帧率越小，画面越有跳动感。
+由于人类眼睛的特殊生理结构，如果所看画面之帧率高于16的时候，就会认为是连贯的，此现象称之为视觉暂留。并且当帧速达到一定数值后，再增长的话，人眼也不容易察觉到有明显的流畅度提升了。
+分辨率：(矩形)图片的长度和宽度，即图片的尺寸
+压缩前的每秒数据量:帧率X分辨率(单位应该是若干个字节) 
+压缩比:压缩前的每秒数据量/码率 （对于同一个视频源并采用同一种视频编码算法，则：压缩比越高，画面质量越差。）　
+视频文件格式：文件的后缀，比如.wmv,.mov,.mp4,.mp3,.avi,
+主要用处，根据文件格式，系统会自动判断用什么软件打开,
+注意: 随意修改文件格式，对文件的本身不会造成太大的影响，比如把avi改成mp4,文件还是avi.
+视频封装格式：一种储存视频信息的容器，流式封装可以有TS、FLV等，索引式的封装有MP4,MOV,AVI等，
+主要作用：一个视频文件往往会包含图像和音频，还有一些配置信息(如图像和音频的关联，如何解码它们等)：这些内容需要按照一定的规则组织、封装起来.
+注意：会发现封装格式跟文件格式一样，因为一般视频文件格式的后缀名即采用相应的视频封装格式的名称,所以视频文件格式就是视频封装格式。
+视频封装格式和视频压缩编码标准：就好像项目工程和编程语言，封装格式就是一个项目的工程，视频编码方式就是编程语言，一个项目工程可以用不同语言开发。
+
+
+-------------------------------------------------------
+直播知识：
+1.采集视频、音频
+* 1.1 采集视频、音频编码框架 *
+AVFoundation:AVFoundation是用来播放和创建实时的视听媒体数据的框架，同时提供Objective-C接口来操作这些视听数据，比如编辑，旋转，重编码
+* 1.2 视频、音频硬件设备 *
+CCD:图像传感器： 用于图像采集和处理的过程，把图像转换成电信号。
+拾音器:声音传感器： 用于声音采集和处理的过程，把声音转换成电信号。
+音频采样数据:一般都是PCM格式
+视频采样数据: 一般都是YUV,或RGB格式，采集到的原始音视频的体积是非常大的，需要经过压缩技术处理来提高传输效率
+
+2.视频处理（美颜，水印）
+视频处理原理:因为视频最终也是通过GPU，一帧一帧渲染到屏幕上的，所以我们可以利用OpenGL ES，对视频帧进行各种加工，从而视频各种不同的效果，就好像一个水龙头流出的水，经过若干节管道，然后流向不同的目标
+现在的各种美颜和视频添加特效的app都是利用GPUImage这个框架实现的,.
+* 视频处理框架 *
+GPUImage : GPUImage是一个基于OpenGL ES的一个强大的图像/视频处理框架,封装好了各种滤镜同时也可以编写自定义的滤镜,其本身内置了多达120多种常见的滤镜效果。
+OpenGL:OpenGL（全写Open Graphics Library）是个定义了一个跨编程语言、跨平台的编程接口的规格，它用于三维图象（二维的亦可）。OpenGL是个专业的图形程序接口，是一个功能强大，调用方便的底层图形库。
+OpenGL ES:OpenGL ES (OpenGL for Embedded Systems) 是 OpenGL三维图形 API 的子集，针对手机、PDA和游戏主机等嵌入式设备而设计
+
+3.视频编码解码
+* 3.1 视频编码框架 *
+FFmpeg:是一个跨平台的开源视频框架,能实现如视频编码,解码,转码,串流,播放等丰富的功能。其支持的视频格式以及播放协议非常丰富,几乎包含了所有音视频编解码、封装格式以及播放协议。
+-Libswresample:可以对音频进行重采样,rematrixing 以及转换采样格式等操 作。
+-Libavcodec:提供了一个通用的编解码框架,包含了许多视频,音频,字幕流 等编码/解码器。
+-Libavformat:用于对视频进行封装/解封装。 
+-Libavutil:包含一些共用的函数,如随机数生成,数据结构,数学运算等。
+-Libpostproc:用于进行视频的一些后期处理。
+-Libswscale:用于视频图像缩放,颜色空间转换等。
+-Libavfilter:提供滤镜功能。
+X264:把视频原数据YUV编码压缩成H.264格式
+VideoToolbox:苹果自带的视频硬解码和硬编码API，但是在iOS8之后才开放。
+AudioToolbox:苹果自带的音频硬解码和硬编码API
+* 3.2 视频编码技术 *
+视频压缩编码标准：对视频进行压缩(视频编码)或者解压缩（视频解码）的编码技术,比如MPEG，H.264,这些视频编码技术是压缩编码视频的
+主要作用:是将视频像素数据压缩成为视频码流，从而降低视频的数据量。如果视频不经过压缩编码的话，体积通常是非常大的，一部电影可能就要上百G的空间。
+注意:最影响视频质量的是其视频编码数据和音频编码数据，跟封装格式没有多大关系
+MPEG:一种视频压缩方式，它采用了帧间压缩，仅存储连续帧之间有差别的地方 ，从而达到较大的压缩比
+H.264/AVC:一种视频压缩方式,采用事先预测和与MPEG中的P-B帧一样的帧预测方法压缩，它可以根据需要产生适合网络情况传输的视频流,还有更高的压缩比，有更好的图象质量
+注意1:如果是从单个画面清晰度比较，MPEG4有优势；从动作连贯性上的清晰度，H.264有优势
+注意2:由于264的算法更加复杂，程序实现烦琐，运行它需要更多的处理器和内存资源。因此，运行264对系统要求是比较高的。
+注意3:由于264的实现更加灵活，它把一些实现留给了厂商自己去实现，虽然这样给实现带来了很多好处，但是不同产品之间互通成了很大的问题，造成了通过A公司的编码器编出的数据，必须通过A公司的解码器去解这样尴尬的事情
+H.265/HEVC:一种视频压缩方式,基于H.264，保留原来的某些技术，同时对一些相关的技术加以改进，以改善码流、编码质量、延时和算法复杂度之间的关系，达到最优化设置。
+H.265 是一种更为高效的编码标准，能够在同等画质效果下将内容的体积压缩得更小，传输时更快更省带宽
+I帧:(关键帧)保留一副完整的画面，解码时只需要本帧数据就可以完成（因为包含完整画面）
+P帧:(差别帧)保留这一帧跟之前帧的差别，解码时需要用之前缓存的画面叠加上本帧定义的差别，生成最终画面。（P帧没有完整画面数据，只有与前一帧的画面差别的数据）
+B帧:(双向差别帧)保留的是本帧与前后帧的差别，解码B帧，不仅要取得之前的缓存画面，还要解码之后的画面，通过前后画面的与本帧数据的叠加取得最终的画面。B帧压缩率高，但是解码时CPU会比较累
+帧内（Intraframe）压缩:当压缩一帧图像时，仅考虑本帧的数据而不考虑相邻帧之间的冗余信息,帧内一般采用有损压缩算法
+帧间（Interframe）压缩:时间压缩（Temporal compression），它通过比较时间轴上不同帧之间的数据进行压缩。帧间压缩一般是无损的
+muxing（合成）：将视频流、音频流甚至是字幕流封装到一个文件中(容器格式（FLV，TS）)，作为一个信号进行传输。
+* 3.3 音频编码技术 *
+AAC，mp3：这些属于音频编码技术,压缩音频用
+* 3.4码率控制 *
+多码率:观众所处的网络情况是非常复杂的，有可能是WiFi，有可能4G、3G、甚至2G，那么怎么满足多方需求呢？多搞几条线路，根据当前网络环境自定义码率。
+列如：常常看见视频播放软件中的1024，720，高清，标清，流畅等，指的就是各种码率。
+* 3.5 视频封装格式 *
+TS : 一种流媒体封装格式，流媒体封装有一个好处，就是不需要加载索引再播放，大大减少了首次载入的延迟，如果片子比较长，mp4文件的索引相当大，影响用户体验
+为什么要用TS:这是因为两个TS片段可以无缝拼接，播放器能连续播放
+FLV: 一种流媒体封装格式,由于它形成的文件极小、加载速度极快，使得网络观看视频文件成为可能,因此FLV格式成为了当今主流视频格式
+
+4.推流
+* 4.1 数据传输框架 *
+librtmp:用来传输RTMP协议格式的数据
+* 4.2 流媒体数据传输协议 *
+RTMP:实时消息传输协议,Adobe Systems公司为Flash播放器和服务器之间音频、视频和数据传输开发的开放协议，因为是开放协议所以都可以使用了。
+RTMP协议用于对象、视频、音频的传输。
+这个协议建立在TCP协议或者轮询HTTP协议之上。
+RTMP协议就像一个用来装数据包的容器，这些数据可以是FLV中的视音频数据。一个单一的连接可以通过不同的通道传输多路网络流，这些通道中的包都是按照固定大小的包传输的
+chunk:消息包
+
+5.流媒体服务器
+* 5.1常用服务器 *
+SRS：一款国人开发的优秀开源流媒体服务器系统
+BMS:也是一款流媒体服务器系统，但不开源，是SRS的商业版，比SRS功能更多
+nginx:免费开源web服务器，常用来配置流媒体服务器。
+* 5.2数据分发 *
+CDN：(Content Delivery Network)，即内容分发网络,将网站的内容发布到最接近用户的网络”边缘”，使用户可以就近取得所需的内容，解决 Internet网络拥挤的状况，提高用户访问网站的响应速度.
+CDN：代理服务器，相当于一个中介。
+CDN工作原理：比如请求流媒体数据
+1.上传流媒体数据到服务器（源站）
+2.源站存储流媒体数据
+3.客户端播放流媒体，向CDN请求编码后的流媒体数据
+4.CDN的服务器响应请求，若节点上没有该流媒体数据存在，则向源站继续请求流媒体数据；若节点上已经缓存了该视频文件，则跳到第6步。
+5.源站响应CDN的请求，将流媒体分发到相应的CDN节点上
+6.CDN将流媒体数据发送到客户端
+回源：当有用户访问某一个URL的时候，如果被解析到的那个CDN节点没有缓存响应的内容，或者是缓存已经到期，就会回源站去获取搜索。如果没有人访问，那么CDN节点不会主动去源站拿.
+带宽:在固定的时间可传输的数据总量，
+比如64位、800MHz的前端总线，它的数据传输率就等于64bit×800MHz÷8(Byte)=6.4GB/s
+负载均衡: 由多台服务器以对称的方式组成一个服务器集合，每台服务器都具有等价的地位，都可以单独对外提供服务而无须其他服务器的辅助.
+通过某种负载分担技术，将外部发送来的请求均匀分配到对称结构中的某一台服务器上，而接收到请求的服务器独立地回应客户的请求。
+均衡负载能够平均分配客户请求到服务器列阵，籍此提供快速获取重要数据，解决大量并发访问服务问题。
+这种群集技术可以用最少的投资获得接近于大型主机的性能。
+QoS（带宽管理）:限制每一个组群的带宽，让有限的带宽发挥最大的效用
+
+6.拉流
+直播协议选择：
+即时性要求较高或有互动需求的可以采用RTMP,RTSP 
+对于有回放或跨平台需求的，推荐使用HLS 
+HLS:由Apple公司定义的用于实时流传输的协议,HLS基于HTTP协议实现，传输内容包括两部分，一是M3U8描述文件，二是TS媒体文件。可实现流媒体的直播和点播，主要应用在iOS系统
+HLS是以点播的技术方式来实现直播
+HLS是自适应码率流播，客户端会根据网络状况自动选择不同码率的视频流，条件允许的情况下使用高码率，网络繁忙的时候使用低码率，并且自动在二者间随意切
+换。这对移动设备网络状况不稳定的情况下保障流畅播放非常有帮助。
+实现方法是服务器端提供多码率视频流，并且在列表文件中注明，播放器根据播放进度和下载速度自动调整。
+HLS与RTMP对比:HLS主要是延时比较大，RTMP主要优势在于延时低
+HLS协议的小切片方式会生成大量的文件，存储或处理这些文件会造成大量资源浪费
+相比使用RTSP协议的好处在于，一旦切分完成，之后的分发过程完全不需要额外使用任何专门软件，普通的网络服务器即可，大大降低了CDN边缘服务器的配置要求，可以使用任何现成的CDN,而一般服务器很少支持RTSP。
+HTTP-FLV:基于HTTP协议流式的传输媒体内容。
+相对于RTMP，HTTP更简单和广为人知，内容延迟同样可以做到1~3秒，打开速度更快，因为HTTP本身没有复杂的状态交互。所以从延迟角度来看，HTTP-FLV要优于RTMP。
+RTSP:实时流传输协议,定义了一对多应用程序如何有效地通过IP网络传送多媒体数据.
+RTP:实时传输协议,RTP是建立在UDP协议上的，常与RTCP一起使用，其本身并没有提供按时发送机制或其它服务质量（QoS）保证，它依赖于低层服务去实现这一过程。
+RTCP:RTP的配套协议,主要功能是为RTP所提供的服务质量（QoS）提供反馈，收集相关媒体连接的统计信息，例如传输字节数，传输分组数，丢失分组数，单向和双向网络延迟等等。
+
+7.解码
+* 7.1 解封装 *
+demuxing（分离）：从视频流、音频流，字幕流合成的文件(容器格式（FLV，TS）)中， 分解出视频、音频或字幕，各自进行解码。
+* 7.2 音频编码框架 *
+fdk_aac:音频编码解码框架，PCM音频数据和AAC音频数据互转
+* 7.3 解码介绍 *
+硬解码：用GPU来解码，减少CPU运算
+　优点：播放流畅、低功耗，解码速度快，
+　　 * 缺点：兼容不好
+软解码：用CPU来解码
+优点：兼容好
+　　 * 缺点：加大CPU负担，耗电增加、没有硬解码流畅，解码速度相对慢
+
+8.播放
+ijkplayer:一个基于FFmpeg的开源Android/iOS视频播放器
+API易于集成；
+编译配置可裁剪，方便控制安装包大小；
+支持硬件加速解码，更加省电
+简单易用，指定拉流URL，自动解码播放.
+
+9.聊天互动
+IM:(InstantMessaging)即时通讯:是一个实时通信系统，允许两人或多人使用网络实时的传递文字消息、文件、语音与视频交流.
+IM在直播系统中的主要作用是实现观众与主播、观众与观众之间的文字互动.
+* 第三方SDK * 
+腾讯云：腾讯提供的即时通讯SDK，可作为直播的聊天室
+融云：一个比较常用的即时通讯SDK，可作为直播的聊天室
+
+
+第三方直播SDK快速的开发：
+七牛云:七牛直播云是专为直播平台打造的全球化直播流服务和一站式实现SDK端到端直播场景的企业级直播云服务平台.
+*熊猫TV,龙珠TV等直播平台都是用的七牛云
+网易视频云：基于专业的跨平台视频编解码技术和大规模视频内容分发网络，提供稳定流畅、低延时、高并发的实时音视频服务，可将视频直播无缝对接到自身App.
+
+
+=================================================================数据采集
+AVFoundation: 音视频数据采集需要用AVFoundation框架.
+AVCaptureDevice：硬件设备，包括麦克风、摄像头，通过该对象可以设置物理设备的一些属性（例如相机聚焦、白平衡等）
+AVCaptureDeviceInput：硬件输入对象，可以根据AVCaptureDevice创建对应的AVCaptureDeviceInput对象，用于管理硬件输入数据。
+AVCaptureOutput：硬件输出对象，用于接收各类输出数据，通常使用对应的子类AVCaptureAudioDataOutput（声音数据输出对象）、AVCaptureVideoDataOutput（视频数据输出对象）
+AVCaptionConnection:当把一个输入和输出添加到AVCaptureSession之后，AVCaptureSession就会在输入、输出设备之间建立连接,而且通过AVCaptureOutput可以获取这个连接对象。
+AVCaptureVideoPreviewLayer:相机拍摄预览图层，能实时查看拍照或视频录制效果，创建该对象需要指定对应的AVCaptureSession对象，因为AVCaptureSession包含视频输入数据，有视频数据才能展示。
+AVCaptureSession: 协调输入与输出之间传输数据
+系统作用：可以操作硬件设备 
+工作原理：让App与系统之间产生一个捕获会话，相当于App与硬件设备有联系了， 我们只需要把硬件输入对象和输出对象添加到会话中，会话就会自动把硬件输入对象和输出产生连接，这样硬件输入与输出设备就能传输音视频数据。
+现实生活场景：租客（输入钱），中介（会话），房东（输出房），租客和房东都在中介登记，中介就会让租客与房东之间产生联系，以后租客就能直接和房东联系了。
+
+
+1.创建AVCaptureSession对象
+2.获取AVCaptureDevicel录像设备（摄像头），录音设备（麦克风），注意不具备输入数据功能,只是用来调节硬件设备的配置。
+3.根据音频/视频硬件设备(AVCaptureDevice)创建音频/视频硬件输入数据对象(AVCaptureDeviceInput)，专门管理数据输入。
+4.创建视频输出数据管理对象（AVCaptureVideoDataOutput），并且设置样品缓存代理(setSampleBufferDelegate)就可以通过它拿到采集到的视频数据
+5.创建音频输出数据管理对象（AVCaptureAudioDataOutput），并且设置样品缓存代理(setSampleBufferDelegate)就可以通过它拿到采集到的音频数据
+6.将数据输入对象AVCaptureDeviceInput、数据输出对象AVCaptureOutput添加到媒体会话管理对象AVCaptureSession中,就会自动让音频输入与输出和视频输入与输出产生连接.
+7.创建视频预览图层AVCaptureVideoPreviewLayer并指定媒体会话，添加图层到显示容器layer中
+8.启动AVCaptureSession，只有开启，才会开始输入到输出数据流传输。
+// 捕获音视频
+- (void)setupCaputureVideo
+{
+    // 1.创建捕获会话,必须要强引用，否则会被释放
+    AVCaptureSession *captureSession = [[AVCaptureSession alloc] init];
+    _captureSession = captureSession;
+
+    // 2.获取摄像头设备，默认是后置摄像头
+    AVCaptureDevice *videoDevice = [self getVideoDevice:AVCaptureDevicePositionFront];
+
+    // 3.获取声音设备
+    AVCaptureDevice *audioDevice = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeAudio];
+
+    // 4.创建对应视频设备输入对象
+    AVCaptureDeviceInput *videoDeviceInput = [AVCaptureDeviceInput deviceInputWithDevice:videoDevice error:nil];
+    _currentVideoDeviceInput = videoDeviceInput;
+
+    // 5.创建对应音频设备输入对象
+    AVCaptureDeviceInput *audioDeviceInput = [AVCaptureDeviceInput deviceInputWithDevice:audioDevice error:nil];
+
+    // 6.添加到会话中
+    // 注意“最好要判断是否能添加输入，会话不能添加空的
+    // 6.1 添加视频
+    if ([captureSession canAddInput:videoDeviceInput]) {
+        [captureSession addInput:videoDeviceInput];
+    }
+    // 6.2 添加音频
+    if ([captureSession canAddInput:audioDeviceInput]) {
+        [captureSession addInput:audioDeviceInput];
+    }
+
+    // 7.获取视频数据输出设备
+    AVCaptureVideoDataOutput *videoOutput = [[AVCaptureVideoDataOutput alloc] init];
+    // 7.1 设置代理，捕获视频样品数据
+    // 注意：队列必须是串行队列，才能获取到数据，而且不能为空
+    dispatch_queue_t videoQueue = dispatch_queue_create("Video Capture Queue", DISPATCH_QUEUE_SERIAL);
+    [videoOutput setSampleBufferDelegate:self queue:videoQueue];
+    if ([captureSession canAddOutput:videoOutput]) {
+        [captureSession addOutput:videoOutput];
+    }
+
+    // 8.获取音频数据输出设备
+    AVCaptureAudioDataOutput *audioOutput = [[AVCaptureAudioDataOutput alloc] init];
+    // 8.2 设置代理，捕获视频样品数据
+    // 注意：队列必须是串行队列，才能获取到数据，而且不能为空
+    dispatch_queue_t audioQueue = dispatch_queue_create("Audio Capture Queue", DISPATCH_QUEUE_SERIAL);
+    [audioOutput setSampleBufferDelegate:self queue:audioQueue];
+    if ([captureSession canAddOutput:audioOutput]) {
+        [captureSession addOutput:audioOutput];
+    }
+
+    // 9.获取视频输入与输出连接，用于分辨音视频数据
+    _videoConnection = [videoOutput connectionWithMediaType:AVMediaTypeVideo];
+
+    // 10.添加视频预览图层
+    AVCaptureVideoPreviewLayer *previedLayer = [AVCaptureVideoPreviewLayer layerWithSession:captureSession];
+    previedLayer.frame = [UIScreen mainScreen].bounds;
+    [self.view.layer insertSublayer:previedLayer atIndex:0];
+    _previedLayer = previedLayer;
+
+    // 11.启动会话
+    [captureSession startRunning];
+}
+
+// 指定摄像头方向获取摄像头
+- (AVCaptureDevice *)getVideoDevice:(AVCaptureDevicePosition)position
+{
+    NSArray *devices = [AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo];
+    for (AVCaptureDevice *device in devices) {
+        if (device.position == position) {
+            return device;
+        }
+    }
+    return nil;
+}
+
+#pragma mark - AVCaptureVideoDataOutputSampleBufferDelegate
+// 获取输入设备数据，有可能是音频有可能是视频
+- (void)captureOutput:(AVCaptureOutput *)captureOutput didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer fromConnection:(AVCaptureConnection *)connection
+{
+    if (_videoConnection == connection) {
+        NSLog(@"采集到视频数据");
+    } else {
+        NSLog(@"采集到音频数据");
+    }
+}
+
+
+
+（切换摄像头）
+切换摄像头步骤
+1.获取当前视频设备输入对象
+2.判断当前视频设备是前置还是后置
+3.确定切换摄像头的方向
+4.根据摄像头方向获取对应的摄像头设备
+5.创建对应的摄像头输入对象
+6.从会话中移除之前的视频输入对象
+7.添加新的视频输入对象到会话中
+// 切换摄像头
+- (IBAction)toggleCapture:(id)sender {
+
+    // 获取当前设备方向
+    AVCaptureDevicePosition curPosition = _currentVideoDeviceInput.device.position;
+
+    // 获取需要改变的方向
+    AVCaptureDevicePosition togglePosition = curPosition == AVCaptureDevicePositionFront?AVCaptureDevicePositionBack:AVCaptureDevicePositionFront;
+
+    // 获取改变的摄像头设备
+    AVCaptureDevice *toggleDevice = [self getVideoDevice:togglePosition];
+
+    // 获取改变的摄像头输入设备
+    AVCaptureDeviceInput *toggleDeviceInput = [AVCaptureDeviceInput deviceInputWithDevice:toggleDevice error:nil];
+
+    // 移除之前摄像头输入设备
+    [_captureSession removeInput:_currentVideoDeviceInput];
+
+    // 添加新的摄像头输入设备
+    [_captureSession addInput:toggleDeviceInput];
+
+    // 记录当前摄像头输入设备
+    _currentVideoDeviceInput = toggleDeviceInput;
+
+}
+
+
+
+（聚焦光标）
+聚焦光标步骤
+1.监听屏幕的点击
+2.获取点击的点位置，转换为摄像头上的点，必须通过视频预览图层（AVCaptureVideoPreviewLayer）转
+3.设置聚焦光标图片的位置，并做动画
+4.设置摄像头设备聚焦模式和曝光模式(注意：这里设置一定要锁定配置lockForConfiguration,否则报错)
+// 点击屏幕，出现聚焦视图
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
+{
+    // 获取点击位置
+    UITouch *touch = [touches anyObject];
+    CGPoint point = [touch locationInView:self.view];
+
+    // 把当前位置转换为摄像头点上的位置
+    CGPoint cameraPoint = [_previedLayer captureDevicePointOfInterestForPoint:point];
+
+    // 设置聚焦点光标位置
+    [self setFocusCursorWithPoint:point];
+
+    // 设置聚焦
+    [self focusWithMode:AVCaptureFocusModeAutoFocus exposureMode:AVCaptureExposureModeAutoExpose atPoint:cameraPoint];
+}
+
+/**
+ *  设置聚焦光标位置
+ *
+ *  @param point 光标位置
+ */
+-(void)setFocusCursorWithPoint:(CGPoint)point{
+    self.focusCursorImageView.center=point;
+    self.focusCursorImageView.transform=CGAffineTransformMakeScale(1.5, 1.5);
+    self.focusCursorImageView.alpha=1.0;
+    [UIView animateWithDuration:1.0 animations:^{
+        self.focusCursorImageView.transform=CGAffineTransformIdentity;
+    } completion:^(BOOL finished) {
+        self.focusCursorImageView.alpha=0;
+
+    }];
+}
+
+/**
+ *  设置聚焦
+ */
+-(void)focusWithMode:(AVCaptureFocusMode)focusMode exposureMode:(AVCaptureExposureMode)exposureMode atPoint:(CGPoint)point{
+
+    AVCaptureDevice *captureDevice = _currentVideoDeviceInput.device;
+    // 锁定配置
+    [captureDevice lockForConfiguration:nil];
+
+    // 设置聚焦
+    if ([captureDevice isFocusModeSupported:AVCaptureFocusModeAutoFocus]) {
+        [captureDevice setFocusMode:AVCaptureFocusModeAutoFocus];
+    }
+    if ([captureDevice isFocusPointOfInterestSupported]) {
+        [captureDevice setFocusPointOfInterest:point];
+    }
+
+    // 设置曝光
+    if ([captureDevice isExposureModeSupported:AVCaptureExposureModeAutoExpose]) {
+        [captureDevice setExposureMode:AVCaptureExposureModeAutoExpose];
+    }
+    if ([captureDevice isExposurePointOfInterestSupported]) {
+        [captureDevice setExposurePointOfInterest:point];
+    }
+
+    // 解锁配置
+    [captureDevice unlockForConfiguration];
+}
+
+
+=================================================================美颜
+利用GPUImage处理直播过程中美颜的流程
+采集视频 => 获取每一帧图片 => 滤镜处理 => GPUImageView展示
+GPU工作原理：采集数据-> 存入主内存(RAM) -> CPU(计算处理) -> 存入显存(VRAM) -> GPU(完成图像渲染) -> 帧缓冲区 -> 显示器
+
+GPUImage:是一个基于OpenGL ES 2.0图像和视频处理的开源iOS框架，提供各种各样的图像处理滤镜，并且支持照相机和摄像机的实时滤镜，内置120多种滤镜效果，并且能够自定义图像滤镜
+
+滤镜处理的原理:就是把静态图片或者视频的每一帧进行图形变换再显示出来。它的本质就是像素点的坐标和颜色变化
+
+GPUImage处理画面原理
+GPUImage采用链式方式来处理画面,通过addTarget:方法为链条添加每个环节的对象，处理完一个target,就会把上一个环节处理好的图像数据传递下一个target去处理，称为GPUImage处理链。
+比如：墨镜原理，从外界传来光线，会经过墨镜过滤，在传给我们的眼睛，就能感受到大白天也是乌黑一片，哈哈。
+一般的target可分为两类
+中间环节的target, 一般是各种filter, 是GPUImageFilter或者是子类.
+最终环节的target, GPUImageView：用于显示到屏幕上, 或者GPUImageMovieWriter：写成视频文件。
+GPUImage处理主要分为3个环节
+source(视频、图片源) -> filter（滤镜） -> final target (处理后视频、图片)
+GPUImaged的Source:都继承GPUImageOutput的子类，作为GPUImage的数据源,就好比外界的光线，作为眼睛的输出源
+GPUImageVideoCamera：用于实时拍摄视频
+GPUImageStillCamera：用于实时拍摄照片
+GPUImagePicture：用于处理已经拍摄好的图片，比如png,jpg图片
+GPUImageMovie：用于处理已经拍摄好的视频,比如mp4文件
+GPUImage的filter:GPUimageFilter类或者子类，这个类继承自GPUImageOutput,并且遵守GPUImageInput协议，这样既能流进，又能流出，就好比我们的墨镜，光线通过墨镜的处理，最终进入我们眼睛
+GPUImage的final target:GPUImageView,GPUImageMovieWriter就好比我们眼睛，最终输入目标。
+
+美颜原理
+磨皮(GPUImageBilateralFilter)：本质就是让像素点模糊，可以使用高斯模糊，但是可能导致边缘会不清晰，用双边滤波(Bilateral Filter) ，有针对性的模糊像素点，能保证边缘不被模糊。
+美白(GPUImageBrightnessFilter)：本质就是提高亮度。
+
+GPUImage原生美颜
+步骤一：使用Cocoapods导入GPUImage
+步骤二：创建视频源GPUImageVideoCamera
+步骤三：创建最终目的源：GPUImageView
+步骤四：创建滤镜组(GPUImageFilterGroup)，需要组合亮度(GPUImageBrightnessFilter)和双边滤波(GPUImageBilateralFilter)这两个滤镜达到美颜效果.
+步骤五：设置滤镜组链
+步骤六：设置GPUImage处理链，从数据源 => 滤镜 => 最终界面效果
+步骤七：开始采集视频
+注意点：
+SessionPreset最好使用AVCaptureSessionPresetHigh，会自动识别，如果用太高分辨率，当前设备不支持会直接报错
+GPUImageVideoCamera必须要强引用，否则会被销毁，不能持续采集视频.
+必须调用startCameraCapture，底层才会把采集到的视频源，渲染到GPUImageView中，就能显示了。
+GPUImageBilateralFilter的distanceNormalizationFactor值越小，磨皮效果越好,distanceNormalizationFactor取值范围: 大于1。
+- (void)viewDidLoad {
+    [super viewDidLoad];
+
+    // 创建视频源
+    // SessionPreset:屏幕分辨率，AVCaptureSessionPresetHigh会自适应高分辨率
+    // cameraPosition:摄像头方向
+    GPUImageVideoCamera *videoCamera = [[GPUImageVideoCamera alloc] initWithSessionPreset:AVCaptureSessionPresetHigh cameraPosition:AVCaptureDevicePositionFront];
+     videoCamera.outputImageOrientation = UIInterfaceOrientationPortrait;
+    _videoCamera = videoCamera;
+
+    // 创建最终预览View
+    GPUImageView *captureVideoPreview = [[GPUImageView alloc] initWithFrame:self.view.bounds];
+    [self.view insertSubview:captureVideoPreview atIndex:0];
+
+    // 创建滤镜：磨皮，美白，组合滤镜
+    GPUImageFilterGroup *groupFilter = [[GPUImageFilterGroup alloc] init];
+
+    // 磨皮滤镜
+    GPUImageBilateralFilter *bilateralFilter = [[GPUImageBilateralFilter alloc] init];
+    [groupFilter addTarget:bilateralFilter];
+    _bilateralFilter = bilateralFilter;
+
+    // 美白滤镜
+    GPUImageBrightnessFilter *brightnessFilter = [[GPUImageBrightnessFilter alloc] init];
+    [groupFilter addTarget:brightnessFilter];
+    _brightnessFilter = brightnessFilter;
+
+    // 设置滤镜组链
+    [bilateralFilter addTarget:brightnessFilter];
+    [groupFilter setInitialFilters:@[bilateralFilter]];
+    groupFilter.terminalFilter = brightnessFilter;
+
+    // 设置GPUImage响应链，从数据源 => 滤镜 => 最终界面效果
+    [videoCamera addTarget:groupFilter];
+    [groupFilter addTarget:captureVideoPreview];
+
+    // 必须调用startCameraCapture，底层才会把采集到的视频源，渲染到GPUImageView中，就能显示了。
+    // 开始采集视频
+    [videoCamera startCameraCapture];
+}
+
+- (IBAction)brightnessFilter:(UISlider *)sender {
+    _brightnessFilter.brightness = sender.value;
+}
+
+- (IBAction)bilateralFilter:(UISlider *)sender {
+    // 值越小，磨皮效果越好
+    CGFloat maxValue = 10;
+    [_bilateralFilter setDistanceNormalizationFactor:(maxValue - sender.value)];
+}
+
+
+
+利用美颜滤镜实现
+步骤一：使用Cocoapods导入GPUImage
+步骤二：导入GPUImageBeautifyFilter文件夹
+步骤三：创建视频源GPUImageVideoCamera
+步骤四：创建最终目的源：GPUImageView
+步骤五：创建最终美颜滤镜：GPUImageBeautifyFilter
+步骤六：设置GPUImage处理链，从数据源 => 滤镜 => 最终界面效果
+注意：
+切换美颜效果原理：移除之前所有处理链，重新设置处理链
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    // Do any additional setup after loading the view.
+    // 创建视频源
+    // SessionPreset:屏幕分辨率，AVCaptureSessionPresetHigh会自适应高分辨率
+    // cameraPosition:摄像头方向
+    GPUImageVideoCamera *videoCamera = [[GPUImageVideoCamera alloc] initWithSessionPreset:AVCaptureSessionPresetHigh cameraPosition:AVCaptureDevicePositionFront];
+    videoCamera.outputImageOrientation = UIInterfaceOrientationPortrait;
+    _videoCamera = videoCamera;
+
+    // 创建最终预览View
+    GPUImageView *captureVideoPreview = [[GPUImageView alloc] initWithFrame:self.view.bounds];
+    [self.view insertSubview:captureVideoPreview atIndex:0];
+    _captureVideoPreview = captureVideoPreview;
+
+    // 设置处理链
+    [_videoCamera addTarget:_captureVideoPreview];
+
+    // 必须调用startCameraCapture，底层才会把采集到的视频源，渲染到GPUImageView中，就能显示了。
+    // 开始采集视频
+    [videoCamera startCameraCapture];
+
+}
+
+- (IBAction)openBeautifyFilter:(UISwitch *)sender {
+
+    // 切换美颜效果原理：移除之前所有处理链，重新设置处理链
+    if (sender.on) {
+
+        // 移除之前所有处理链
+        [_videoCamera removeAllTargets];
+
+        // 创建美颜滤镜
+        GPUImageBeautifyFilter *beautifyFilter = [[GPUImageBeautifyFilter alloc] init];
+
+        // 设置GPUImage处理链，从数据源 => 滤镜 => 最终界面效果
+        [_videoCamera addTarget:beautifyFilter];
+        [beautifyFilter addTarget:_captureVideoPreview];
+
+    } else {
+
+        // 移除之前所有处理链
+        [_videoCamera removeAllTargets];
+        [_videoCamera addTarget:_captureVideoPreview];
+    }
+
+
+}
+
+GPUImage所有滤镜介绍
+http://www.360doc.com/content/15/0907/10/19175681_497418716.shtml
+美图秀秀滤镜大汇总
+http://www.tuicool.com/articles/6bIbQbQ
+美颜滤镜
+http://www.jianshu.com/p/945fc806a9b4
+
+=================================================================推流
+需要流媒体服务器
+Homebrew简称brew，是Mac OSX上的软件包管理工具，能在Mac中方便的安装软件或者卸载软件
+
+查看是否已经安装了Homebrew：man brew
+
+Nginx：Nginx是一个非常出色的HTTP服务器，其特点是占有内存少，并发能力强，
+事实上nginx的并发能力确实在同类型的网页服务器中表现较好
+
+下载Nginx：brew tap homebrew/nginx
+安装Nginx服务器和rtmp模块： rtmp：Real Time Messaging Protocol（实时消息传输协议）
+brew install nginx-full --with-rtmp-module
+
+开启nginx服务器：nginx
+(brew services start homebrew/nginx/nginx-full 才能真正的打开服务器)
+在浏览器地址栏输入：http://localhost:8080 
+
+查看nginx配置文件安装在哪：brew info nginx-full
+前往那个文件夹，修改配置文件nginx.conf
+插入
+rtmp {
+    server {
+        listen 1990;
+        application liveApp {
+            live on;
+            record off;
+        }
+    }
+}
+
+重新加载nginx的配置文件：nginx -s reload
+
+安装ffmepg进行推流：brew install ffmpeg
+
+使用ffmepg推流测试：
+ffmpeg -re -i (视频全路径) -vcodec copy -f flv (rtmp路径)
+ffmpeg -re -i /Users/yuanzheng/Desktop/02-如何学习项目.mp4 -vcodec copy -f flv rtmp://localhost:1990/liveApp/room
+
+延时：发送流媒体的数据的时候需要延时。
+不然的话，FFmpeg处理数据速度很快，瞬间就能把所有的数据发送出去，流媒体服务器是接受不了的。
+因此需要按照视频实际的帧率发送数据
+
+-re: 一定要加，代表按照帧率发送，否则ffmpeg会一股脑地按最高的效率发送数据
+-i : 输入文件
+-vcodec copy: 强制使用codec编解码方式，要加，否则ffmpeg会重新编码输入的H.264裸流
+-f 强制转换为什么格式，后接格式
+
+使用VLC播放rtmp推流:
+下载VLC,打开VLC,输入直播地址，cmd + N   (File->Open Network)
+URL:填写rtmp://localhost:1990/liveApp/room
+
+
+用ffmpeg抓取OSX摄像头推流进行直播：
+首先查看ffmpeg是否支持对应的设备
+在OSX下面，Video和Audio设备使用的是avfoundation，所以可以使用avfoundation来查看
+ffmpeg -f avfoundation -list_devices true -i ""
+
+ffmpeg -f avfoundation -framerate 30 -i "1:0" -f avfoundation -framerate 30 -video_size 640x480 -i "0" -c:v libx264 -preset slow -filter_complex 'overlay=main_w-overlay_w-10:main_h-overlay_h-10' -acodec libmp3lame -ar 44100 -ac 1  -f flv rtmp://localhost:1990/liveApp/room
+-f avfoundation 转换为avfoundation
+-framerate 30 : 设置帧率 30
+-i "1:0" : 设置输出，视频：Capture screen 音频：Built-in Microphone 
+-f avfoundation -framerate 30 -video_size 640x480 ： 设置帧率和视频尺寸
+-c:v libx264 设置视频编码，H.264编码 优点是同等清晰度，视频文件更小 缺点就是转换慢
+-c:v flv 标准FLV编码 这个好处是速度快 清晰度高的话 视频文件会比较大
+-preset slow 使用慢速模式 延迟长 清晰度高
+ffmpeg的转码延时测试与设置优化
+-filter_complex 'overlay=main_w-overlay_w-10:main_h-overlay_h-10':给视频打水印
+-acodec libmp3lame 強制指定音频处理模式
+-ac 1 声道选择
+-ar 44100 音频赫兹
+=================================================================搭建Web服务器
+能处理HTTP请求的服务器都可以叫Web服务器
+Node.js,是一种新兴的服务器语言，用Javascript这个语言开发服务器
+Node.js本质：实际上它是对Google V8引擎进行了封装。
+什么是V8引擎：一种能够快速解析Javascript语言的内核。
+传统意义上的 JavaScript 运行在浏览器上，这是因为浏览器内核实际上分为两个部分:渲染引擎和 JavaScript 引擎。
+前者负责渲染 HTML + CSS，后者则负责运行 JavaScript。
+Chrome 使用的 JavaScript 引擎是 V8
+什么是内核：用于软件与硬件之间的通讯的API，可以理解为操作计算机硬件的API
+Node.js和PHP类似都是语言，是需要内核才需要跑起来的。Node.js依赖V8，PHP依赖Apache才能运行
+OC就需要依赖iPhone手机内核才能跑起来
+
+:传统的网络服务技术，是每个新增一个连接（请求）便生成一个新的线程，这个新的线程会占用系统内存，最终会占掉所有的可用内存
+Node.js工作原理(T)：只运行在一个单线程中，使用非阻塞的异步 I/O 调用，所有连接都由该线程处理，也就是一个新的连接，不会开启新的线程，仅仅一个线程去处理多个请求
+
+多线程与单线程：
+其实不管是多线程还是单线程，计算机一次最多执行运行一个任务，因为CPU就一个，只有它才能运行任务。
+那么多线程与单线程的区别：主要在于有序和无序，单线程必须一个一个按顺序执行，多线程可以开启多条线程，存放任务，而且CPU不确定先执行哪个任务，随机取一个执行
+
+优缺点：
+传统的比较消耗内存，Node.js只开启一个线程，大大减少内存消耗。
+假设是普通的Web程序，新接入一个连接会占用 2M 的内存，在有 8GB RAM的系统上运行时, 算上线程之间上下文切换的成本，并发连接的最大理论值则为 4000 个。这是在传统 Web服务端技术下的处理情况。而 Node.js 则达到了约 1M 一个并发连接的拓展级别
+Node.js弊端:大量的计算可能会使得 Node 的单线程暂时失去反应, 并导致所有的其他客户端的请求一直阻塞, 直到计算结束才恢复正常
+
+传统的web server多为基于线程模型。
+你启动Apache或者什么server，它开始等待接受连接。
+当收到一个连接，server保持连接连通直到页面或者什么事务请求完成。
+如果他需要花几微妙时间去读取磁盘或者访问数据库，web server就阻塞了IO操作（这也被称之为阻塞式IO).
+想提高这样的web server的性能就只有启动更多的线程
+
+Node.Js使用事件驱动模型，类似iOSRunloop,把事件存放到一个循环中，然后取出来处理，
+当web server接收到请求，放入事件队列，然后去服务下一个web请求。
+当这个请求完成，从事件队列中取出来执行处理，将结果返回给用户。
+因为webserver一直接受请求而不等待任何读写操作。（这也被称之为非阻塞式IO或者事件驱动IO）
+最大化利用CPU
+
+Node.js使用Module模块去划分不同的功能，以简化App开发，Module就是库，跟组件化差不多，一个功能一个库。
+NodeJS内建了一个HTTP服务器，可以轻而易举的实现一个网站和服务器的组合，不像PHP那样，在使用PHP的时候，必须先搭建一个Apache之类的HTTP服务器，然后通过HTTP服务器的模块加载CGI调用，才能将PHP脚本的执行结果呈现给用户
+require() 函数，用于在当前模块中加载和使用其他模块
+
+Express模块(框架)
+Express是Node.JS第三方库
+Express可以处理各种HTTP请求
+Express是目前最流行的基于Node.js的Web开发框架，
+Express框架建立在node.js内置的http模块上，可以快速地搭建一个Web服务器
+
+安装Node.JS：
+打开终端，输入node -v，先查看是否已经安装
+输入brew -v,查看mac是否安装了HomeBrew
+
+使用Homebrew安装Node：brew install node
+输入`node -v``查看是否安装成功
+
+NPM是随同NodeJS一起安装的包管理工具，用于下载NodeJS第三方库。
+类似iOS开发中cocoapods，用于安装第三方框架
+新版的NodeJS已经集成了npm，所以只要安装好Node.JS就好
+
+利用NPM下载第三方模块（Express和Socket.IO）
+package.json
+package.json类似cocoapods中的Podfile文件
+package.json文件描述了下载哪些第三方框架.
+可以使用npm init创建
+需要添加dependencies字段，描述添加哪些框架,其他字段随便填
+注意：不能有中文符号
+     "dependencies": {
+           "express": "^4.14.0",
+           "socket.io": "^1.4.8"
+         }
+执行npm install,就会自动下载依赖库
+
+创建Node.JS文件，搭建服务器：
+只要文件，以js为后缀就可以了，比如app.js
+使用node app.js 就能执行文件
+注意点：监听端口要注意，不能使用已经占用的端口比如（80），每个服务器相当于一个app，都需要端口，才能找到入口
+
+简单的搭建Http服务器：
+// require
+// 加载http模块
+var http = require('http');
+
+// 创建http服务器
+var server = http.createServer(function(request,response){
+    // response.write('Hello world');
+    // response.end();
+});
+
+// 监听服务器
+server.listen(8080,'192.168.0.101');
+
+console.log('监听8080');
+
+
+express框架：
+直接创建express应用，就是服务器，可以直接监听
+需要主动监听请求，get,post
+// 引入express模块
+var express = require('express');
+
+// 创建express服务器，创建服务器没有对访问服务器进行处理
+var app = express();
+
+// 监听get请求，请求根目录，输出Hello world
+app.get('/',function(request,response){
+    response.send('Hello world');
+});
+
+app.post('/',function(request,response){
+    response.send('Hello world');
+});
+
+app.listen(8080,"192.168.0.101");
+
+console.log("监听8080");
+
+
+
+路由：
+路由:针对不同的URL有不同的处理方式，比如以后会有首页，发现模块，每个模块处理不一样。
+添加url路径,根据不同路径，显示不同内容
+访问地址,/home应该往端口后拼接，8080/home
+ var express = require('express');
+
+ var server = express();
+
+ // 监听get请求，请求根目录，输出Hello world
+ server.get('/home',function(request,response){
+     response.send('home');
+ });
+
+ server.get('/live',function(request,response){
+     response.send('live');
+ });
+
+ server.listen(8080);
+路由句柄(索引):执行完一个函数，接着执行下一个 ,因为有时候处理一个请求，需要做很多其他事情，写在一起业务逻辑不好分开,所以多弄几个行数
+    // 路由句柄
+var express = require('express');
+
+var server = express();
+
+server.get('/live',function(request,response,next){
+    console.log('先执行A');
+    next();
+},function(request,response){
+    console.log('先执行B');
+    response.send('live');
+});
+
+server.listen(8080);
+
+
+中间件：
+优化代码，使代码清晰可读
+注意点，函数一定要添加next参数，一定要调用next(),才会进行下面操作，代码使一行一行执行，解释性语言
+原理，发送一个请求给服务器的时候，会被中间件拦截，先由中间件处理，每个中间件都有一个回调函数作为参数,拦截到参数，就会自动执行回调函数。
+注意：有中间件use，会先执行中间件的回调函数，然后才会调用get或者post的回调函数，也就是当监听到请求，先执行中间件，才会到get,post请求。
+use是express注册中间件的方法
+function(request,response,next){
+    console.log('先执行A');
+    next();
+}
+
+// 中间件
+var express = require('express');
+
+var server = express();
+
+server.use('/live',function(request,response,next){
+    console.log('先执行A');
+    next();
+});
+
+server.get('/live',function(request,response){
+    console.log('先执行B');
+    response.send('live');
+});
+
+server.listen(8080);
+
+
+
+get请求参数：
+request.query会把请求参数包装成字典对象，直接通过点就能获取参数
+var express = require('express');
+
+var server = express();
+
+// 监听get请求，请求根目录，输出Hello world
+server.get('/home',function(request,response){
+    console.log(request.query.id);
+    response.send(request.query);
+});
+
+server.listen(8080);
+
+console.log('监听8080');
+
+
+
+post请求参数：
+使用http发送请求，需要设置content-type字段
+content-type字段
+2.1 application/x-www-form-urlencoded(普通请求，默认一般使用这种)
+2.2 application/json(带有json格式的参数，需要使用这个，比如参数是字典或者数组)
+2.3 multipart/form-data(传输文件，文件上传使用这个)
+AFN框架中AFHTTPRequestSerializer使用的是application/x-www-form-urlencoded，AFJSONRequestSerializer使用的是application/json
+Node.JS需要使用body-parser模块,解析post请求参数，安装body-parser模块，用命令行
+npm install body-parser
+
+可以采用中间件的方式解析post请求参数
+5.1 注意bodyParser.urlencoded参数是一个字典，需要添加`{}``包装，bodyParser.urlencoded({extends:true})
+5.2 extends必传参数，是否展开
+// 解析urlencoded，把参数转换成对象，放入request.body
+var urlencodedParser = bodyParser.urlencoded({extends:true});
+// 解析json，把参数转换成对象，放入request.body
+var jsonParser = bodyParser.json();
+
+完整代码
+// 创建服务器
+var server = express();
+
+// 引入
+var bodyParser = require('body-parser');
+
+// 解析application/x-www-form-urlencoded
+var urlencodedParser = bodyParser.urlencoded({extended:true});
+
+// 解析application/json
+var jsonParser = bodyParser.json();
+
+// 使用中间件先拦截
+server.use(urlencodedParser);
+
+// 监听post请求
+server.post('/home',function(request,response){
+
+    console.log(request.body);
+
+    response.send(request.body);
+});
+
+server.listen(8080);
+
+console.log('监听8080');
+
+
+
+
+
+express创建对象返回客户端：
+{}:字典 []:数组
+自定义对象，才有function
+function可以定义函数，也可以定义对象，一般有属性的，都是对象
+定义对象,this：表示当前对象，类似self
+对象可以直接输出
+// 引入express模块
+var express = require('express');
+
+// 创建服务器
+var server = express();
+
+// {}:字典 []:数组
+// var room = {'a':'b'};
+
+var room = ['1','2','3'];
+
+// function可以定义函数，也可以定义对象，一般有属性的，都是对象
+// 定义方法
+function log(){
+    console.log('定义函数');
+}
+
+// 定义对象,this：表示当前对象，类似self
+function User(name,age){
+    // 定义属性，并且赋值
+    this.name = name;
+
+    // 定义属性，并且赋值
+    this.age = age;
+
+    // 定义方法
+    this.log = function(){
+        console.log(this.name + this.age);
+    }
+}
+
+// 创建对象使用new
+var u = new User('王思聪',18);
+
+u.log();
+
+// 对象可以直接输出，会自动转换为json字典
+
+// 监听post请求
+server.get('/room',function(request,response){
+
+    console.log(u);
+
+    response.send(u);
+});
+
+server.listen(8080);
+
+console.log('监听8080');
+
+
+express模块开发：
+如果把所有代码写在一个文件中，不好维护，代码可读性不好，最好分离文件
+使用模块开发，exports用来定义模块接口，可以定义函数，也可以定义自定义对象，需要用module.exports
+注意，module.exports和exports不能重复，重复以module.exports为准
+路径问题: ./ : 表示当前文件
+main.js
+// 引入express模块
+var express = require('express');
+
+// 创建服务器
+var server = express();
+
+// 引入user模块
+var User = require('./User');
+
+// user.log();
+var user = new User('x','20');
+
+console.log(user);
+// 监听post请求
+server.get('/room',function(request,response){
+
+    response.send(user);
+});
+
+server.listen(8080);
+User.js
+// exports.log = function(){
+//     console.log("引入其他模块");
+// }
+
+function User(name,age){
+    this.name = name;
+    this.age = age;
+}
+
+module.exports = User;
+
+
+
+字典和数组删除操作：
+删除数组splice，splice有2两个参数，第一个参数，从哪个角标开始 第二个参数，删除几个元素
+删除字典delete
+注意:delete删除数组，删除不干净，只是把元素删除，当前角标位置并不会移除
+[1,2,3] 比如delete arr[0] => [,2,3]
+// // 加载express模块，
+// var express = require('express');
+
+// // 创建server
+// var server = express();
+
+// // 创建数组
+// var arr = [1,2,3];
+
+// console.log(arr);
+
+// // delete arr[0];
+// // 删除数组元素
+// arr.splice(0,1);
+
+// console.log(arr);
+
+// // 监听端口
+// server.listen(8080);
+
+
+// 加载express模块，
+var express = require('express');
+
+// 创建server
+var server = express();
+
+// 创建数组
+var arr = {'a':'1','b':'2'};
+
+console.log(arr);
+
+delete arr['a'];
+
+console.log(arr);
+
+// 监听端口
+server.listen(8080);
+
+
+
+
+直播房间服务器搭建：
+创建package.json,安装express模块
+设计服务器接口和客户端怎么交互
+直播房间业务逻辑
+3.1 主播主动开启房间
+3.2 通知服务器开启房间了
+3.3 服务器保存房间
+3.4 观众打开房间，查看直播
+3.5 主播关闭直播，通知服务器移除房间号
+服务器处理
+4.1 主播开启房间，创建房间，需要传入给服务器保存
+4.2 服务器用什么保存房间名称，数组还是字典
+4.3 应该使用字典存储，当主播关闭房间时，可以根据房间号，找到服务器对应的房间号删除。
+4.4 添加房间，删除房间之后，服务器应该把最新的房间信息返回给客户端展示
+4.5 服务器可以直接返回房间字典，但是这样客户端必须自己处理下，服务器最好返回房间数组
+4.6 Object.keys(rooms),传入一个字典，就能获取字典中所有keys，返回一个数组
+4.7 然后遍历keys数组，一个一个取出对应的value，在保存到数组中
+4.8 可以使用map函数，让数组中所有元素执行一个方法，然后会自动把处理结果包装成数组.
+4.9 map函数原理，就是遍历数组中元素，一个一个执行，map函数的参数就是一个函数，，这个函数的参数就是数组中的一个元素key，map需要有返回值，返回值就是key参数的处理结果，会自动把处理结果包装到新数组，然后再统一返回处理好的数组
+ ```
+      keys.map(function(key){
+         return rooms[key];
+      });
+ ```
+客户端处理
+5.1 房间模型(ID,房间名称)
+5.2 保存到服务器字典,ID作为Key,房间名称作为Value
+5.3 在发送服务器的时候，需要把ID和Value传给服务器
+5.4 搞两个参数(一个roomID,一个roomName)
+服务器代码
+// 加载express模块，
+var express = require('express');
+
+// 创建server
+var server = express();
+
+// 创建房间字典
+var rooms = {};
+
+// 开启房间
+server.get('/openRoom',function(request,response){
+
+    // 获取房间ID
+    var roomID = request.query.roomID;
+
+    // 获取房间名称
+    var roomName = request.query.roomName;
+    rooms[roomID] = roomName;
+
+    // 获取字典中所有keys
+    var keys = Object.keys(rooms);
+    var values = keys.map(function(key){
+        return rooms[key];
+    });
+
+    console.log(values);
+    response.send(values);
+
+});
+
+// 删除房间
+server.get('/closeRoom',function(request,response){
+
+    // 获取房间ID
+    var roomID = request.query.roomID;
+
+    // 删除房间
+    delete rooms[roomID];
+
+    // 获取字典中所有keys
+    var keys = Object.keys(rooms);
+    var values = keys.map(function(key){
+        return rooms[key];
+    });
+
+    console.log(values);
+    response.send(values);
+
+});
+
+// 获取房间列表
+server.get('/rooms',function(request,response){
+
+    // 获取字典中所有keys
+    var keys = Object.keys(rooms);
+    var values = keys.map(function(key){
+        return rooms[key];
+    });
+
+    console.log(values);
+
+    response.send(values);
+
+});
+
+// 监听端口
+server.listen(8080);
+
+console.log('监听8080');
+
+
+
+上传下载服务器：
+node.js实现上传与下载文件 
+https://segmentfault.com/a/1190000004057022
+
+
+=================================================================搭建Socket即时通讯服务器
+在直播中，聊天和发礼物，需要用到及时通讯技术
+
+Socket介绍: 套接字或者插座，用于描述IP地址和端口号，是一种网络的通信机制。
+Socket作用: 网络通信底层都是通过socket建立连接的，因为它包含IP和端口，只要有这两个就能准确找到一台主机上的某个应用。
+
+IM通信原理(T):
+客户端A通过socket与IM服务器产生连接,客户端B也通过socket与IM服务器产生连接
+A先把信息发送给IM应用服务器，并且指定发送给B，服务器根据A信息中描述的接收者将它转发给B，同样B到A也是这样。 
+通讯问题: 服务器是不能主动连接客户端的，只能客户端主动连接服务器
+那么当服务器要推信息给客户端B,但是客户端B这时候没有与服务器产生连接，就推送不了.
+
+即时通讯都是长连接，基本上都是HTTP1.1协议，设置Connection为keep-alive即可实现长连接，而HTTP1.1默认是长连接，也就是默认Connection的值就是keep-alive。
+
+HTTP分为长连接和短连接，其实本质上是TCP连接，HTTP协议是应用层的协议，而TCP才是真正的传输层协议，只有负责传输的这一层才需要建立连接
+
+就拿网上购物来说，HTTP协议指的那个快递单，你寄件的时候填的单子就像是发了一个HTTP请求，
+等货物运到地方了，快递员会根据你发的请求把货物送给相应的收货人。
+而TCP协议就是中间运货的那个大货车，也可能是火车或者飞机，但不管是什么，它是负责运输的，
+因此必须要有路，不管是地上还是天上。那么这个路就是所谓的TCP连接
+Http连接：只要服务端给了响应，本次HTTP连接就结束，本质不存在没有长连接。
+
+htpp长连接指的是：长连接是为了复用，长连接是指的TCP连接，也就是说复用的是TCP连接，长连接情况下，多个HTTP请求可以复用同一个TCP连接，这就节省了很多TCP连接建立和断开的消耗，要不然每个Http请求都产生一个TCP连接，浪费很多资源
+
+目前实现即时通讯的有四种方式（短轮询、长轮询、SSE、Websocket）
+短轮询: 每隔一小段时间就发送一个请求到服务器，服务器返回最新数据，然后客户端根据获得的数据来更新界面，这样就间接实现了即时通信。优点是简单，缺点是对服务器压力较大，浪费带宽流量（通常情况下数据都是没有发生改变的）。
+短轮询: 主要是客户端人员写代码，服务器人员比较简单，适于小型应用
+长轮询: 客户端发送一个请求到服务器，服务器查看客户端请求的数据(服务器中数据)是否发生了变化（是否有最新数据），如果发生变化则立即响应返回，否则保持这个连接并定期检查最新数据，直到发生了数据更新或连接超时。同时客户端连接一旦断开，则再次发出请求，这样在相同时间内大大减少了客户端请求服务器的次数.
+长轮询底层实现:在服务器的程序中加入一个死循环，在循环中监测数据的变动。当发现新数据时，立即将其输出给浏览器并断开连接，浏览器在收到数据后，再次发起请求以进入下一个周期
+长轮询弊端:服务器长时间连接会消耗资源，返回数据顺序无保证，难于管理维护
+长轮询处理：不能一直持续下去，应该设定一个最长时限，可以通过心跳包的方式，设置多少秒没有接到心跳包，就关闭当前连接。
+心跳包：就是在客户端和服务器间定时通知对方自己状态的一个自己定义的命令字，按照一定的时间间隔发送，类似于心跳，所以叫做心跳包
+SSE（Server-sent Events服务器推送事件）:为了解决浏览器只能够单向传输数据到服务端，HTML5提供了一种新的技术叫做服务器推送事件SSE,SSE技术提供的是从服务器单向推送数据给浏览器的功能，加上配合浏览器主动Http请求，两者结合起来,实际上就实现了客户端和服务器的双向通信.
+WebSocket:上面的这些解决方案中，都是利用浏览器单向请求服务器或者服务器单向推送数据到浏览器,而在HTML5中，为了加强web的功能，提供了websocket技术，它不仅是一种web通信方式，也是一种应用层协议。它提供了浏览器和服务器之间原生的全双工跨域通信，通过浏览器和服务器之间建立websocket连接,在同一时刻能够实现客户端到服务器和服务器到客户端的数据发送.
+
+http://www.jianshu.com/p/6e7fb61c25e1
+
+=================================================================实现GPUImage(OpenGL渲染原理)
+GPUImage底层使用的是OPENGL,操控GPU来实现屏幕展示
+
+GPUImageVideoCamera：
+可以捕获采集的视频数据
+通过这个方法可以获取采集的视频数据
+- (void)captureOutput:(AVCaptureOutput *)captureOutput didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer fromConnection:(AVCaptureConnection *)connection
+采集视频注意点：要设置采集竖屏，否则获取的数据是横屏
+通过AVCaptureConnection就可以设置
+[videoConnection setVideoOrientation:AVCaptureVideoOrientationPortraitUpsideDown];
+
+自定义OpenGLView渲染视频：
+暴露一个接口，获取采集到的帧数据，然后把帧数据传递给渲染View,展示出来
+- (void)displayFramebuffer:(CMSampleBufferRef)sampleBuffer;
+
+利用OpenGL渲染帧数据并显示：
+导入头文件#import <GLKit/GLKit.h>，GLKit.h底层使用了OpenGLES,导入它，相当于自动导入了OpenGLES
+步骤
+01-自定义图层类型
+02-初始化CAEAGLLayer图层属性
+03-创建EAGLContext
+04-创建渲染缓冲区
+05-创建帧缓冲区
+06-创建着色器
+07-创建着色器程序
+08-创建纹理对象
+09-YUV转RGB绘制纹理
+10-渲染缓冲区到屏幕
+11-清理内存
+
+01-自定义图层类型
+CAEAGLLayer是OpenGL专门用来渲染的图层，使用OpenGL必须使用这个图层
+#pragma mark - 1.自定义图层类型
++ (Class)layerClass
+{
+    return [CAEAGLLayer class];
+}
+
+02-初始化CAEAGLLayer图层属性
+1.不透明度(opaque)=YES,CALayer默认是透明的，透明性能不好,最好设置为不透明.
+2.设置绘图属性
+kEAGLDrawablePropertyRetainedBacking ：NO (告诉CoreAnimation不要试图保留任何以前绘制的图像留作以后重用)
+kEAGLDrawablePropertyColorFormat ：kEAGLColorFormatRGBA8 (告诉CoreAnimation用8位来保存RGBA的值)
+其实设置不设置都无所谓，默认也是这个值,只不过GPUImage设置了
+#pragma mark - 2.初始化图层
+- (void)setupLayer
+{
+    CAEAGLLayer *openGLLayer = (CAEAGLLayer *)self.layer;
+    _openGLLayer = openGLLayer;
+
+    // 设置不透明,CALayer 默认是透明的，透明性能不好,最好设置为不透明.
+    openGLLayer.opaque = YES;
+
+    // 设置绘图属性drawableProperties
+    // kEAGLColorFormatRGBA8 ： red、green、blue、alpha共8位
+    openGLLayer.drawableProperties = @{
+                                       kEAGLDrawablePropertyRetainedBacking :[NSNumber numberWithBool:NO],
+                                      kEAGLDrawablePropertyColorFormat : kEAGLColorFormatRGBA8
+                                       };
+}
+
+03-创建EAGLContext
+需要将它设置为当前context，所有的OpenGL ES渲染默认渲染到当前上下文
+EAGLContext管理所有使用OpenGL ES进行描绘的状态，命令以及资源信息，要绘制东西，必须要有上下文，跟图形上下文类似。
+当你创建一个EAGLContext，你要声明你要用哪个version的API。这里，我们选择OpenGL ES 2.0
+#pragma mark - 3、创建OpenGL上下文，并且设置上下文
+- (void)setupContext
+{
+    // 指定OpenGL 渲染 API 的版本，目前都使用 OpenGL ES 2.0
+    EAGLRenderingAPI api = kEAGLRenderingAPIOpenGLES2;
+
+    // 创建EAGLContext上下文
+    _context = [[EAGLContext alloc] initWithAPI:api];
+
+    // 设置为当前上下文，所有的渲染默认渲染到当前上下文
+    [EAGLContext setCurrentContext:_context];
+}
+
+04-创建渲染缓冲区
+有了上下文，openGL还需要在一块buffer进行描绘，这块buffer就是RenderBuffer
+OpenGLES 总共有三大不同用途的color buffer，depth buffer 和 stencil buffer.
+最基本的是color buffer，创建它就好了 
+函数glGenRenderbuffers
+函数 void glGenRenderbuffers (GLsizei n, GLuint* renderbuffers)
+它是为renderbuffer(渲染缓存)申请一个id（名字）,创建渲染缓存
+参数n表示申请生成renderbuffer的个数
+参数renderbuffers返回分配给renderbuffer(渲染缓存)的id
+。 注意：返回的id不会为0，id 0 是OpenGL ES保留的，我们也不能使用id 为0的renderbuffer(渲染缓存)。
+函数glBindRenderbuffer
+ void glBindRenderbuffer (GLenum target, GLuint renderbuffer)
+告诉OpenGL：我在后面引用GL_RENDERBUFFER的地方，其实是引用_colorRenderBuffer
+参数target必须为GL_RENDERBUFFER
+参数renderbuffer就是使用glGenRenderbuffers生成的id
+。 当指定id的renderbuffer第一次被设置为当前renderbuffer时，会初始化该 renderbuffer对象，其初始值为：
+width 和 height：像素单位的宽和高，默认值为0；
+
+internal format：内部格式，三大 buffer 格式之一 -- color，depth or stencil；
+
+Color bit-depth：仅当内部格式为 color 时，设置颜色的 bit-depth，默认值为0；
+
+Depth bit-depth：仅当内部格式为 depth时，默认值为0；
+
+Stencil bit-depth: 仅当内部格式为 stencil，默认值为0
+函数renderbufferStorage
+EAGLContext方法 - (BOOL)renderbufferStorage:(NSUInteger)target fromDrawable:(id<EAGLDrawable>)drawable
+把渲染缓存(renderbuffer)绑定到渲染图层(CAEAGLLayer)上，并为它分配一个共享内存。
+参数target，为哪个renderbuffer分配存储空间
+参数drawable，绑定在哪个渲染图层，会根据渲染图层里的绘图属性生成共享内存。
+    //    底层调用这个分配内存
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA, _openGLLayer.bounds.size.width, _openGLLayer.bounds.size.height);
+实战代码
+#pragma mark - 4、创建渲染缓存
+- (void)setupRenderBuffer
+{
+    glGenRenderbuffers(1, &_colorRenderBuffer);
+    glBindRenderbuffer(GL_RENDERBUFFER, _colorRenderBuffer);
+
+    // 把渲染缓存绑定到渲染图层上CAEAGLLayer，并为它分配一个共享内存。
+    // 并且会设置渲染缓存的格式，和宽度
+    [_context renderbufferStorage:GL_RENDERBUFFER fromDrawable:_openGLLayer];
+
+}
+
+
+05-创建帧缓冲区
+它相当于buffer(color, depth, stencil)的管理者，三大buffer可以附加到一个framebuffer上
+本质是把framebuffer内容渲染到屏幕
+函数glFramebufferRenderbuffer
+void glFramebufferRenderbuffer (GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer)
+该函数是将相关buffer()三大buffer之一)attach到framebuffer上,就会自动把渲染缓存的内容填充到帧缓存，在由帧缓存渲染到屏幕
+参数target，哪个帧缓存
+参数attachment是指定renderbuffer被装配到那个装配点上，其值是GL_COLOR_ATTACHMENT0, GL_DEPTH_ATTACHMENT, GL_STENCIL_ATTACHMENT中的一个，分别对应 color，depth和 stencil三大buffer。
+renderbuffertarget:哪个渲染缓存
+renderbuffer渲染缓存id
+#pragma mark - 5、创建帧缓冲区
+- (void)setupFrameBuffer
+{
+    glGenFramebuffers(1, &_framebuffers);
+    glBindFramebuffer(GL_FRAMEBUFFER, _framebuffers);
+    // 把颜色渲染缓存 添加到 帧缓存的GL_COLOR_ATTACHMENT0上,就会自动把渲染缓存的内容填充到帧缓存，在由帧缓存渲染到屏幕
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, _colorRenderBuffer);
+}
+
+06-创建着色器
+着色器
+什么是着色器? 通常用来处理纹理对象，并且把处理好的纹理对象渲染到帧缓存上，从而显示到屏幕上。
+提取纹理信息，可以处理顶点坐标空间转换，纹理色彩度调整(滤镜效果)等操作。
+着色器分为顶点着色器，片段着色器
+顶点着色器用来确定图形形状
+片段着色器用来确定图形渲染颜色
+步骤： 1.编辑着色器代码 2.创建着色器 3.编译着色器
+只要创建一次，可以在一开始的时候创建
+// shader: 指向着色器对象的句柄
+// count: 着色器源代码字符串的数量。着色器可以由多个源字符串组成，但是每个着色器只能有一个main函数
+// string: 指向着色器源代码的字符串指针
+// length: 指向保存着多个（如果有多个）源代码字符串大小的整型数组指针
+void glShaderSource (GLuint shader, 
+                           GLsizei count, 
+                           const GLchar *const string,
+                           const GLint *length );
+着色器代码
+// 顶点着色器代码
+NSString *const kVertexShaderString = SHADER_STRING
+(
+ attribute vec4 position;
+ attribute vec2 inputTextureCoordinate;
+
+ varying vec2 textureCoordinate;
+
+ void main()
+ {
+     gl_Position = position;
+     textureCoordinate = inputTextureCoordinate;
+ }
+);
+
+// 片段着色器代码
+NSString *const kYUVFullRangeConversionForLAFragmentShaderString = SHADER_STRING
+(
+ varying highp vec2 textureCoordinate;
+
+ precision mediump float;
+
+ uniform sampler2D luminanceTexture;
+ uniform sampler2D chrominanceTexture;
+ uniform mediump mat3 colorConversionMatrix;
+
+ void main()
+ {
+     mediump vec3 yuv;
+     lowp vec3 rgb;
+
+     yuv.x = texture2D(luminanceTexture, textureCoordinate).r;
+     yuv.yz = texture2D(chrominanceTexture, textureCoordinate).ra - vec2(0.5, 0.5);
+     rgb = colorConversionMatrix * yuv;
+
+     gl_FragColor = vec4(rgb, 1);
+ }
+);
+实战代码
+#pragma mark - 06、创建着色器
+- (void)setupShader
+{
+    // 创建顶点着色器
+    _vertShader = [self loadShader:GL_VERTEX_SHADER withString:kVertexShaderString];
+
+    // 创建片段着色器
+    _fragShader = [self loadShader:GL_FRAGMENT_SHADER withString:kYUVFullRangeConversionForLAFragmentShaderString];
+
+}
+
+// 加载着色器
+- (GLuint)loadShader:(GLenum)type withString:(NSString *)shaderString
+{
+    // 创建着色器
+    GLuint shader = glCreateShader(type);
+    if (shader == 0) {
+        NSLog(@"Error: failed to create shader.");
+        return 0;
+    }
+
+    // 加载着色器源代码
+    const char * shaderStringUTF8 = [shaderString UTF8String];
+    glShaderSource(shader, 1, &shaderStringUTF8, NULL);
+
+    // 编译着色器
+    glCompileShader(shader);
+
+    // 检查是否完成
+    GLint compiled = 0;
+
+    // 获取完成状态
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+
+    if (compiled == 0) {
+
+        // 没有完成就直接删除着色器
+        glDeleteShader(shader);
+        return 0;
+    }
+
+    return shader;
+}
+
+
+07-创建着色器程序
+步骤： 1.创建程序 2.贴上顶点和片段着色器 3.绑定attribute属性 4.连接程序 5.绑定uniform属性 6.运行程序
+注意点：第3步和第5步，绑定属性，必须有顺序，否则绑定不成功，造成黑屏 
+#pragma mark - 7、创建着色器程序
+- (void)setupProgram
+{
+    // 创建着色器程序
+    _program = glCreateProgram();
+
+    // 绑定着色器
+    // 绑定顶点着色器
+    glAttachShader(_program, _vertShader);
+
+    // 绑定片段着色器
+    glAttachShader(_program, _fragShader);
+
+    // 绑定着色器属性,方便以后获取，以后根据角标获取
+    // 一定要在链接程序之前绑定属性,否则拿不到
+    glBindAttribLocation(_program, ATTRIB_POSITION, "position");
+    glBindAttribLocation(_program, ATTRIB_TEXCOORD, "inputTextureCoordinate");
+
+    // 链接程序
+    glLinkProgram(_program);
+
+    // 获取全局参数,注意 一定要在连接完成后才行，否则拿不到
+    _luminanceTextureAtt = glGetUniformLocation(_program, "luminanceTexture");
+    _chrominanceTextureAtt = glGetUniformLocation(_program, "chrominanceTexture");
+    _colorConversionMatrixAtt = glGetUniformLocation(_program, "colorConversionMatrix");
+
+    // 启动程序
+    glUseProgram(_program);
+}
+
+
+08-创建纹理对象
+纹理
+采集的是一张一张的图片，可以把图片转换为OpenGL中的纹理， 然后再把纹理画到OpenGL的上下文中
+什么是纹理？一个纹理其实就是一幅图像。
+纹理映射,我们可以把这幅图像的整体或部分贴到我们先前用顶点勾画出的物体上去.
+比如绘制一面砖墙，就可以用一幅真实的砖墙图像或照片作为纹理贴到一个矩形上，这样，一面逼真的砖墙就画好了。如果不用纹理映射的方法，则墙上的每一块砖都必须作为一个独立的多边形来画。另外，纹理映射能够保证在变换多边形时，多边形上的纹理图案也随之变化。
+纹理映射是一个相当复杂的过程，基本步骤如下：
+1）激活纹理单元、2）创建纹理 、3）绑定纹理 、4）设置滤波 
+注意：纹理映射只能在RGBA方式下执行
+函数glTexParameter
+void glTexParameter{if}[v](GLenum target,GLenum pname,TYPE param);
+{if}:表示可能是否i,f
+[v]:表示v可有可无
+控制滤波，滤波就是去除没用的信息，保留有用的信息
+一般来说，纹理图像为正方形或长方形。但当它映射到一个多边形或曲面上并变换到屏幕坐标时，纹理的单个纹素很少对应于屏幕图像上的像素。根据所用变换和所用纹理映射，屏幕上单个象素可以对应于一个纹素的一小部分（即放大）或一大批纹素（即缩小）
+固定写法
+/* 控制滤波 */  
+　　glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);  
+　　glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+函数glPixelStorei
+ void glPixelStorei(GLenum pname, GLint param);
+设置像素存储方式
+pname：像素存储方式名
+一种是GL_PACK_ALIGNMENT，用于将像素数据打包,一般用于压缩。
+另一种是GL_UNPACK_ALIGNMENT，用于将像素数据解包，一般生成纹理对象，就需要用到解包.
+param：用于指定存储器中每个像素行有多少个字节对齐。这个数值一般是1、2、4或8，
+一般填1，一个像素对应一个字节;
+函数CVOpenGLESTextureCacheCreateTextureFromImage
+CVOpenGLESTextureCacheCreateTextureFromImage(CFAllocatorRef  _Nullable allocator, CVOpenGLESTextureCacheRef  _Nonnull textureCache, CVImageBufferRef  _Nonnull sourceImage, CFDictionaryRef  _Nullable textureAttributes, GLenum target, GLint internalFormat, GLsizei width, GLsizei height, GLenum format, GLenum type, size_t planeIndex, CVOpenGLESTextureRef  _Nullable * _Nonnull textureOut)
+根据图片生成纹理
+参数allocator kCFAllocatorDefault,默认分配内存
+参数textureCache 纹理缓存
+参数sourceImage 图片
+参数textureAttributes NULL
+参数target , GL_TEXTURE_2D(创建2维纹理对象)
+参数internalFormat GL_LUMINANCE，亮度格式
+参数width 图片宽
+参数height 图片高
+参数format GL_LUMINANCE 亮度格式
+参数type 图片类型 GL_UNSIGNED_BYTE
+参数planeIndex 0,切面角标，表示第0个切面
+参数textureOut 输出的纹理对象
+fotmat格式                    描述
+GL_ALPHA            按照ALPHA值存储纹理单元
+GL_LUMINANCE        按照亮度值存储纹理单元
+GL_LUMINANCE_ALPHA    按照亮度和alpha值存储纹理单元
+GL_RGB                按照RGB成分存储纹理单元
+GL_RGBA                按照RGBA成分存储纹理单元
+实战代码
+#pragma mark - 7、创建纹理对象，渲染采集图片到屏幕
+- (void)setupTexture:(CMSampleBufferRef)sampleBuffer
+{
+    // 获取图片信息
+    CVImageBufferRef imageBufferRef = CMSampleBufferGetImageBuffer(sampleBuffer);
+
+    // 获取图片宽度
+    GLsizei bufferWidth = (GLsizei)CVPixelBufferGetWidth(imageBufferRef);
+    _bufferWidth = bufferWidth;
+    GLsizei bufferHeight = (GLsizei)CVPixelBufferGetHeight(imageBufferRef);
+    _bufferHeight = bufferHeight;
+
+    // 创建亮度纹理
+    // 激活纹理单元0, 不激活，创建纹理会失败
+    glActiveTexture(GL_TEXTURE0);
+
+    // 创建纹理对象
+    CVReturn err;
+    err = CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault, _textureCacheRef, imageBufferRef, NULL, GL_TEXTURE_2D, GL_LUMINANCE, bufferWidth, bufferHeight, GL_LUMINANCE, GL_UNSIGNED_BYTE, 0, &_luminanceTextureRef);
+    if (err) {
+        NSLog(@"Error at CVOpenGLESTextureCacheCreateTextureFromImage %d", err);
+    }
+    // 获取纹理对象
+    _luminanceTexture = CVOpenGLESTextureGetName(_luminanceTextureRef);
+
+    // 绑定纹理
+    glBindTexture(GL_TEXTURE_2D, _luminanceTexture);
+
+    // 设置纹理滤波
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    // 激活单元1
+    glActiveTexture(GL_TEXTURE1);
+
+    // 创建色度纹理
+    err = CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault, _textureCacheRef, imageBufferRef, NULL, GL_TEXTURE_2D, GL_LUMINANCE_ALPHA, bufferWidth / 2, bufferHeight / 2, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, 1, &_chrominanceTextureRef);
+    if (err) {
+        NSLog(@"Error at CVOpenGLESTextureCacheCreateTextureFromImage %d", err);
+    }
+    // 获取纹理对象
+    _chrominanceTexture = CVOpenGLESTextureGetName(_chrominanceTextureRef);
+
+    // 绑定纹理
+    glBindTexture(GL_TEXTURE_2D, _chrominanceTexture);
+
+    // 设置纹理滤波
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+
+09-YUV转RGB绘制纹理
+纹理映射只能在RGBA方式下执行
+而采集的是YUV，所以需要把YUV 转换 为 RGBA，
+本质其实就是改下矩阵结构
+注意点（熬夜凌晨的bug）：glDrawArrays如果要绘制着色器上的点和片段，必须和着色器赋值代码放在一个代码块中，否则找不到绘制的信息，就绘制不上去，造成屏幕黑屏 
+之前是把glDrawArrays和YUV转RGB方法分开，就一直黑屏.
+函数glUniform1i
+glUniform1i(GLint location, GLint x)
+指定着色器中亮度纹理对应哪一层纹理单元
+参数location:着色器中纹理坐标
+参数x：指定那一层纹理
+函数glEnableVertexAttribArray
+glEnableVertexAttribArray(GLuint index)
+开启顶点属性数组,只有开启顶点属性，才能给顶点属性信息赋值
+函数glVertexAttribPointer
+glVertexAttribPointer(GLuint indx, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const GLvoid *ptr)
+设置顶点着色器属性，描述属性的基本信息
+参数indx：属性ID，给哪个属性描述信息
+参数size：顶点属性由几个值组成，这个值必须位1，2，3或4；
+参数type：表示属性的数据类型
+参数normalized:GL_FALSE表示不要将数据类型标准化
+参数stride 表示数组中每个元素的长度；
+参数ptr 表示数组的首地址
+函数glBindAttribLocation
+glBindAttribLocation(GLuint program, GLuint index, const GLchar *name)
+给属性绑定ID，通过ID获取属性,方便以后使用
+参数program 程序
+参数index 属性ID
+参数name 属性名称
+函数glDrawArrays
+glDrawArrays(GLenum mode, GLint first, GLsizei count)
+作用：使用当前激活的顶点着色器的顶点数据和片段着色器数据来绘制基本图形
+mode：绘制方式 一般使用GL_TRIANGLE_STRIP，三角形绘制法
+first：从数组中哪个顶点开始绘制，一般为0
+count:数组中顶点数量，在定义顶点着色器的时候，就定义过了，比如vec4,表示4个顶点
+注意点,如果要绘制着色器上的点和片段，必须和着色器赋值代码放在一个代码块中，否则找不到绘制的信息，就绘制不上去，造成屏幕黑屏。
+实战代码
+// YUV 转 RGB，里面的顶点和片段都要转换
+- (void)convertYUVToRGBOutput
+{
+    // 在创建纹理之前，有激活过纹理单元，就是那个数字.GL_TEXTURE0,GL_TEXTURE1
+    // 指定着色器中亮度纹理对应哪一层纹理单元
+    // 这样就会把亮度纹理，往着色器上贴
+    glUniform1i(_luminanceTextureAtt, 0);
+
+    // 指定着色器中色度纹理对应哪一层纹理单元
+    glUniform1i(_chrominanceTextureAtt, 1);
+
+    // YUV转RGB矩阵
+    glUniformMatrix3fv(_colorConversionMatrixAtt, 1, GL_FALSE, _preferredConversion);
+
+    // 计算顶点数据结构
+    CGRect vertexSamplingRect = AVMakeRectWithAspectRatioInsideRect(CGSizeMake(self.bounds.size.width, self.bounds.size.height), self.layer.bounds);
+
+    CGSize normalizedSamplingSize = CGSizeMake(0.0, 0.0);
+    CGSize cropScaleAmount = CGSizeMake(vertexSamplingRect.size.width/self.layer.bounds.size.width, vertexSamplingRect.size.height/self.layer.bounds.size.height);
+
+    if (cropScaleAmount.width > cropScaleAmount.height) {
+        normalizedSamplingSize.width = 1.0;
+        normalizedSamplingSize.height = cropScaleAmount.height/cropScaleAmount.width;
+    }
+    else {
+        normalizedSamplingSize.width = 1.0;
+        normalizedSamplingSize.height = cropScaleAmount.width/cropScaleAmount.height;
+    }
+
+    // 确定顶点数据结构
+    GLfloat quadVertexData [] = {
+        -1 * normalizedSamplingSize.width, -1 * normalizedSamplingSize.height,
+        normalizedSamplingSize.width, -1 * normalizedSamplingSize.height,
+        -1 * normalizedSamplingSize.width, normalizedSamplingSize.height,
+        normalizedSamplingSize.width, normalizedSamplingSize.height,
+    };
+
+    // 确定纹理数据结构
+    GLfloat quadTextureData[] =  { // 正常坐标
+        0, 0,
+        1, 0,
+        0, 1,
+        1, 1
+    };
+
+    // 激活ATTRIB_POSITION顶点数组
+    glEnableVertexAttribArray(ATTRIB_POSITION);
+    // 给ATTRIB_POSITION顶点数组赋值
+    glVertexAttribPointer(ATTRIB_POSITION, 2, GL_FLOAT, 0, 0, quadVertexData);
+
+    // 激活ATTRIB_TEXCOORD顶点数组
+    glVertexAttribPointer(ATTRIB_TEXCOORD, 2, GL_FLOAT, 0, 0, quadTextureData);
+    // 给ATTRIB_TEXCOORD顶点数组赋值
+    glEnableVertexAttribArray(ATTRIB_TEXCOORD);
+
+    // 渲染纹理数据,注意一定要和纹理代码放一起
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+}
+
+
+10-渲染缓冲区到屏幕
+注意点：必须设置窗口尺寸glViewport 
+注意点：渲染代码必须调用[EAGLContext setCurrentContext:_context] 
+原因：因为是多线程，每一个线程都有一个上下文，只要在一个上下文绘制就好，设置线程的上下文为我们自己的上下文,就能绘制在一起了，否则会黑屏.
+注意点：每次创建纹理前，先把之前的纹理引用清空[self cleanUpTextures]，否则卡顿
+函数glViewport
+glViewport(GLint x, GLint y, GLsizei width, GLsizei height)
+设置OpenGL渲染窗口的尺寸大小,一般跟图层尺寸一样.
+注意：在我们绘制之前还有一件重要的事情要做，我们必须告诉OpenGL渲染窗口的尺寸大小
+方法presentRenderbuffer
+- (BOOL)presentRenderbuffer:(NSUInteger)target
+是将指定renderbuffer呈现在屏幕上
+实战代码
+#pragma mark - 10.渲染帧缓存
+- (void)displayFramebuffer:(CMSampleBufferRef)sampleBuffer
+{
+    // 因为是多线程，每一个线程都有一个上下文，只要在一个上下文绘制就好，设置线程的上下文为我们自己的上下文,就能绘制在一起了，否则会黑屏.
+    if ([EAGLContext currentContext] != _context) {
+        [EAGLContext setCurrentContext:_context];
+    }
+
+    // 清空之前的纹理，要不然每次都创建新的纹理，耗费资源，造成界面卡顿
+    [self cleanUpTextures];
+
+    // 创建纹理对象
+    [self setupTexture:sampleBuffer];
+
+    // YUV 转 RGB
+    [self convertYUVToRGBOutput];
+
+    // 设置窗口尺寸
+    glViewport(0, 0, self.bounds.size.width, self.bounds.size.height);
+
+    // 把上下文的东西渲染到屏幕上
+    [_context presentRenderbuffer:GL_RENDERBUFFER];
+
+}
+
+11-清理内存
+注意：只要有Ref结尾的，都需要自己手动管理，清空 
+函数glClearColor
+glClearColor (GLclampf red, GLclampf green, GLclampf blue, GLclampfalpha)
+设置一个RGB颜色和透明度，接下来会用这个颜色涂满全屏.
+函数glClear
+glClear (GLbitfieldmask)
+用来指定要用清屏颜色来清除由mask指定的buffer，mask可以是 GL_COLOR_BUFFER_BIT，GL_DEPTH_BUFFER_BIT和GL_STENCIL_BUFFER_BIT的自由组合。
+在这里我们只使用到 color buffer，所以清除的就是 clolor buffer。
+#pragma mark - 11.清理内存
+- (void)dealloc
+{
+    // 清空缓存
+    [self destoryRenderAndFrameBuffer];
+
+    // 清空纹理
+    [self cleanUpTextures];
+}
+
+#pragma mark - 销毁渲染和帧缓存
+- (void)destoryRenderAndFrameBuffer
+{
+    glDeleteRenderbuffers(1, &_colorRenderBuffer);
+    _colorRenderBuffer = 0;
+
+    glDeleteBuffers(1, &_framebuffers);
+    _framebuffers = 0;
+}
+
+// 清空纹理
+- (void)cleanUpTextures
+{
+    // 清空亮度引用
+    if (_luminanceTextureRef) {
+        CFRelease(_luminanceTextureRef);
+        _luminanceTextureRef = NULL;
+    }
+
+    // 清空色度引用
+    if (_chrominanceTextureRef) {
+        CFRelease(_chrominanceTextureRef);
+        _chrominanceTextureRef = NULL;
+    }
+
+    // 清空纹理缓存
+    CVOpenGLESTextureCacheFlush(_textureCacheRef, 0);
+}
+
+
+
+
+GPUImage工作原理：
+GPUImage最关键在于GPUImageFramebuffer这个类，这个类会保存当前处理好的图片信息。
+GPUImage是通过一个链条处理图片，每个链条通过target连接,每个target处理完图片后，会生成一个GPUImageFramebuffer对象，并且把图片信息保存到GPUImageFramebuffer。
+这样比如targetA处理好，要处理targetB,就会先取出targetA的图片，然后targetB在targetA的图片基础上在进行处理.
+=================================================================直播预览层添加滤镜效果(CIFilter)
+原理，在显示之前，提前对图片进行滤镜处理，把处理后的图片展示出来
+
+CIFiter(滤镜类)：给图片添加特殊效果（模糊，高亮等等）.
+CIFiter滤镜分类(一个滤镜可能属于多个分类)
+kCICategoryDistortionEffect 扭曲效果，比如bump、旋转、hole
+kCICategoryGeometryAdjustment 几何开着调整，比如仿射变换、平切、透视转换
+kCICategoryCompositeOperation 合并，比如源覆盖（source over）、最小化、源在顶（source atop）、色彩混合模式
+kCICategoryHalftoneEffect Halftone效果，比如screen、line screen、hatched
+kCICategoryColorAdjustment 色彩调整，比如伽马调整、白点调整、曝光
+kCICategoryColorEffect 色彩效果，比如色调调整、posterize
+kCICategoryTransition 图像间转换，比如dissolve、disintegrate with mask、swipe
+kCICategoryTileEffect 瓦片效果，比如parallelogram、triangle
+kCICategoryGenerator 图像生成器，比如stripes、constant color、checkerboard
+kCICategoryGradient 渐变，比如轴向渐变、仿射渐变、高斯渐变
+kCICategoryStylize 风格化，比如像素化、水晶化
+kCICategorySharpen 锐化、发光
+kCICategoryBlur 模糊，比如高斯模糊、焦点模糊、运动模糊
+kCICategoryStillImage 能用于静态图像
+kCICategoryVideo 能用于视频
+kCICategoryInterlaced 能用于交错图像
+kCICategoryNonSquarePixels 能用于非矩形像素
+kCICategoryHighDynamicRange 能用于HDR
+kCICategoryBuiltIn 获取所有滤镜
+常用图片处理滤镜：
+// 怀旧 --> CIPhotoEffectInstant                         单色 --> CIPhotoEffectMono
+// 黑白 --> CIPhotoEffectNoir                            褪色 --> CIPhotoEffectFade
+// 色调 --> CIPhotoEffectTonal                           冲印 --> CIPhotoEffectProcess
+// 岁月 --> CIPhotoEffectTransfer                        铬黄 --> CIPhotoEffectChrome
+
+
+
+自动处理滤镜,通过CIImage获取,CIImage会自动对图片进行滤镜处理：
+CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+// 转换为CIImage
+CIImage *ciImage = [CIImage imageWithCVImageBuffer:imageBuffer];
+NSArray *fiters = [ciImage autoAdjustmentFilters];
+NSLog(@"%@",fiters);
+
+常有的自动滤镜
+CIRedEyeCorrection：修复因相机的闪光灯导致的各种红眼
+CIFaceBalance：调整肤色
+CIVibrance：在不影响肤色的情况下，改善图像的饱和度
+CIToneCurve：改善图像的对比度
+CIHighlightShadowAdjust：改善阴影细节
+
+滤镜对象创建(也可以使用coreImage自动处理滤镜，就不需要自己创建)
+滤镜属性可以通过inputKeys属性获取
+滤镜工作原理，给滤镜传入一个图片，滤镜有个方法，可以获取处理完成的图片outputImage.
+CIFilter *fiter = [CIFilter filterWithName:@"CIPhotoEffectInstant"];
+[fiter setValue:ciImage forKey:@"inputImage"];
+ciImage = fiter.outputImage;
+
+直播预览层添加滤镜效果步骤：
+取出捕获到的帧(CMSampleBufferRef) 
+-> 获取帧里面图片信息(CVImageBufferRef) 
+-> CIFiter滤镜处理 
+->转换成UIImage 
+-> 设置为UIImageView的image就能实时显示捕获的画面
+if (_videoConnection == connection) {
+        // 获取图片信息
+        CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+
+        // 转换为CIImage
+        CIImage *ciImage = [CIImage imageWithCVImageBuffer:imageBuffer];
+
+        // 创建滤镜
+        CIFilter *fiter = [CIFilter filterWithName:@"CIFaceBalance"];
+
+        [fiter setValue:ciImage forKey:@"inputImage"];
+        [fiter setValue:@100 forKey:@"inputStrength"];
+        ciImage = fiter.outputImage;
+
+        // 转换UIImage
+        UIImage *image = [UIImage imageWithCIImage:ciImage];
+
+        dispatch_sync(dispatch_get_main_queue(), ^{
+
+            self.imageView.image = image;
+
+        });
+    }
+
+通过GPU渲染图片显示：
+只有OpenGL才能操控GPU,需要用到OpenGL才行
+CIContext:通过这个上下文的方法渲染图片(createCGImage)
+CIContext:通过OpenGL的上下文创建，就能用GPU渲染图片，处理图片效率高.(contextWithEAGLContext)
+
+解决：把一个周期的代码，放入一个自动释放池里管理，下一个运行循环，会自动清空已经销毁的对象。
+自动释放池：可以用来管理一段代码中对象的生命周期。
+@autoreleasepool {
+            // 获取图片信息
+            CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+
+            // 转换为CIImage
+            CIImage *ciImage = [CIImage imageWithCVImageBuffer:imageBuffer];
+
+            // 创建滤镜
+            CIFilter *fiter = [CIFilter filterWithName:@"CIPhotoEffectInstant"];
+
+            [fiter setValue:ciImage forKey:@"inputImage"];
+
+            ciImage = fiter.outputImage;
+
+            EAGLContext *openglCtx = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+            CIContext *ctx = [CIContext contextWithEAGLContext:openglCtx];
+
+            CGImageRef imgRef = [ctx createCGImage:ciImage fromRect:ciImage.extent];
+
+            UIImage *image = [UIImage imageWithCGImage:imgRef];
+
+            // 用完了及时清空,否则内存溢出，造成程序崩溃.使用C语言的时候，需要特别注意内存管理.
+            CGImageRelease(imgRef);
+
+            // 转换UIImage
+
+            dispatch_sync(dispatch_get_main_queue(), ^{
+
+                self.imageView.image = image;
+
+            });
+
+        }
+
+    }
+=================================================================直播预览层(AVCaptureVideoPreviewLayer)底层实现
+sampleBuffer(帧数据)
+通过设置AVCaptureVideoDataOutput的代理，就能获取捕获到一帧一帧数据
+[videoOutput setSampleBufferDelegate:self queue:videoQue];
+
+拿到这一帧一帧数据(sampleBuffer)怎么显示到屏幕上了
+-didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer fromConnection:(AVCaptureConnection *)connection
+
+sampleBuffer(帧数据)
+视频本质是由很多帧图片组成
+表示一帧视频/音频数据
+通过sampleBuffer可以获取当前帧信息
+CVImageBufferRef(CMSampleBufferGetImageBuffer):编码前，解码后，图片信息
+CMSampleBufferGetDuration获取当前帧播放时间:用于记录视频播放时间
+CMSampleBufferGetPresentationTimeStamp获取当前帧开始时间(PTS):用于做音视频同步
+PTS：Presentation Time Stamp。PTS主要用于度量解码后的视频帧什么时候被显示出来
+DTS：Decode Time Stamp。DTS主要是标识读入内存中的比特流在什么时候开始送入解码器中进行解码
+(CMVideoFormatDescription)CMSampleBufferGetFormatDescription:视频编码，解码格式描述信息,通过它能获取sps,pps，编码成H264，就会生成一段NALU,这里面就包含sps，pps。
+(CMBlockBuffer)CMSampleBufferGetDataBuffer:编码后，图像数据；
+
+视频帧的格式，可以在采集端的AVCaptureVideoDataOutput配置：
+// RGB
+   videoOutput.videoSettings = @{(NSString *)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA) }
+
+// YUV(Full)
+[videoOutput setVideoSettings:[NSDictionary dictionaryWithObject:[NSNumber numberWithInt:kCVPixelFormatType_420YpCbCr8BiPlanarFullRange] forKey:(id)kCVPixelBufferPixelFormatTypeKey]];
+
+// YUV
+[videoOutput setVideoSettings:[NSDictionary dictionaryWithObject:[NSNumber numberWithInt:kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange] forKey:(id)kCVPixelBufferPixelFormatTypeKey]];
+
+显示原理：
+预览层实现原理：
+取出捕获到的帧(CMSampleBufferRef) 
+-> 获取帧里面图片信息(CVImageBufferRef) 
+-> 转换成UIImage 
+-> 设置为UIImageView的image就能实时显示捕获的画面.
+
+因为是连续采集,每一帧都会变成图片显示出来，就相当于一串连贯的图片在播放，就形成视频了。
+CVImageBufferRef 如何转换成 UIImage
+使用CoreImage框架,前提CVImageBufferRef是RGB格式
+CVImageBufferRef -> CIImage -> UIImage
+
+设置UIImageView一定要放在主线程，默认接收到CMSampleBufferRef的代理方法不在主线程
+- (void)captureOutput:(AVCaptureOutput *)captureOutput didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer fromConnection:(AVCaptureConnection *)connection
+{
+    if (_videoConnection == connection) {
+        // 获取图片信息
+        CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+
+        // 转换为CIImage
+        CIImage *ciImage = [CIImage imageWithCVImageBuffer:imageBuffer];
+
+        // 转换UIImage
+        UIImage *image = [UIImage imageWithCIImage:ciImage];
+
+        // 回到主线程更新UI
+        dispatch_sync(dispatch_get_main_queue(), ^{
+
+            self.imageView.image = image;
+
+        });
+
+
+    }
+}
+
+CIImage和UIView坐标系是反的，需要设置UIImageView宽度为屏幕高度，长度为屏幕宽度，在旋转90度,还得设置锚点,自己画图就知道怎么旋转了
+- (UIImageView *)imageView
+{
+    if (_imageView == nil) {
+        _imageView = [[UIImageView alloc] init];
+        _imageView.bounds = CGRectMake(0, 0, self.view.bounds.size.height, self.view.bounds.size.width);
+        _imageView.layer.anchorPoint = CGPointMake(0, 0);
+        _imageView.layer.position = CGPointMake(self.view.bounds.size.width, 0);
+        _imageView.transform = CGAffineTransformMakeRotation(M_PI_2);
+
+        [self.view addSubview:_imageView];
+    }
+    return _imageView;
+}
+
+YUV与RGB视频格式讲解：
+YUV:流媒体的常用编码方式, 对于图像每一点，Y确定其亮度，UV确认其彩度.
+为什么流媒体需要用到YUV，相对于RGB24（RGB三个分量各8个字节）的编码格式，只需要一半的存储容量。在流数据传输时降低了带宽压力。
+YUV存储方式主要分为两种：Packeted 和 Planar。
+Packeted方式类似RGB的存储方式,以像素矩阵为存储方式。
+Planar方式将YUV分量分别存储到矩阵，每一个分量矩阵称为一个平面。
+YUV420即以平面方式存储，色度抽样为4:2:0的色彩编码格式。其中YUV420P为三平面存储，YUV420SP为两平面存储。
+RGB:在渲染时，不管是OpenGL还是iOS，都不支持直接渲染YUV数据，底层都是转为RGB，所以在显示到屏幕，必须用RGB.
+
+=================================================================直播(创建房间)
+直播(创建房间)
+1.进入主播界面，首先创建房间
+2.设计房间模型（key,名称），key作为房间的唯一标识，用来找到房间
+3.用socket创建房间,导入socket.io框架
+4.一般一个客户端一个socket就好了，可以搞个全局的socket
+5.客户端代码(需要封装) 1.一个获取全局的socket 2.一个连接方法封装
+6.可以在程序一启动的时候，就建立socket连接
+7.每次点击创建房间，直接发送请求就好了
+8.监听创建房间是否成功，因为有时候会重名
+创建房间客户端代码
+    AppDelegate.m
+    [[SocketIOClient clientSocket] connectWithSuccess:^{
+        NSLog(@"建议连接成功");
+        // 创建房间
+        [[SocketIOClient clientSocket] emit:@"createRoom" with:@[item.mj_keyValues]];
+    }];
+
+    XMGBroadcasterViewController.m
+    - (IBAction)createRoom:(id)sender {
+
+    // 获取房间名称
+    if (_textField.text.length == 0) {
+        [SVProgressHUD showImage:nil status:@"请输出房间名称"];
+        [SVProgressHUD setDefaultStyle:SVProgressHUDStyleLight];
+
+        return;
+    }
+
+    // 创建房间
+    NSString *roomName = _textField.text;
+    XMGRoomItem *item = [XMGRoomItem itemWithName:roomName];
+
+
+    // 创建房间
+    [[SocketIOClient clientSocket] emit:@"createRoom" with:@[item.mj_keyValues]];
+
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    // Do any additional setup after loading the view.
+    UIImageView *imageView = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"blur"]];
+    imageView.frame = self.view.bounds;
+    [_preView addSubview:imageView];
+
+    // 监听创建房间是否成功
+    [[SocketIOClient clientSocket] on:@"createRoomResult" callback:^(NSArray * _Nonnull data, SocketAckEmitter * _Nonnull ack) {
+
+        BOOL success = [data[0] boolValue];
+
+        if (success) {
+            // 进入主播界面，移除高斯模糊
+            [_blurView removeFromSuperview];
+        } else {
+            // 清空文本框
+            _textField.text = @"";
+
+            // 提示重新输入
+            [SVProgressHUD showImage:nil status:@"房间同名,请重新输入房间名称"];
+        }
+
+
+    }];
+
+
+}
+创建房间服务端代码
+1.每开启一个房间，服务端开启一个socket分组，应该搭建WebSocket服务器
+2.服务器代码
+3.连接成功后，监听创建房间
+1.判断房间名是否重复，使用underScore框架，操作数组,需要用npm下载
+2.没有重名,就执行下面操作3,4,5
+发送创建房间成功事件，通知客户端
+3.保存房间
+4.添加socket分组 
+5.记录当前socket正在直播的房间，一个主播只会开启一个房间，当主播关闭的时候，需要把当前房间移除.
+ // 监听创建房间
+    clientSocket.on('createRoom',function(data){
+
+        // 判断房间名是否一样
+        var roomNameArr = Object.keys(rooms).map(function(roomKey){
+            return rooms[roomKey];
+        })
+
+        // 获取结果
+        var createRoomResult = underscore.contains(roomNameArr,data.roomName);
+
+        // 发送结果给客户端
+        serverSocket.emit('createRoomResult',!createRoomResult);
+
+        if(createRoomResult == false){
+
+            console.log('创建新的房间');
+
+            // 之前没有包含房间，可以创建新的房间
+            clientSocket.roomKey = rooms[data.roomKey];
+
+            // 保存房间
+            rooms[data.roomKey] = data.roomName;
+
+            // 分组
+9.监听失去连接，需要把当前主播房间移除，分组也移除,因为表示当前主播不播了
+ // 失去连接
+    // 失去连接
+    clientSocket.on('disconnect',function(){
+
+        // 清空当前房间
+        if(clientSocket.roomKey) {
+
+            delete rooms[roomKey];
+
+            clientSocket.leave(roomKey);
+        }
+
+    });
+	
+=================================================================点赞
+客户端代码
+点击小红心，发送socket给服务器,并且要传递房间Key给服务器，通知给哪个主播点赞，就能传入到对应的分组socket中
+怎么传递房间key，房间Key在主播界面，一般一个客户端，只会产生一个房间，可以记录到socket对象中
+业务逻辑：用户点击小红心,小红心就会往上慢慢飘。
+实现原理：其实就是一个动画。
+怎么实现:用UIView做不了，因为小红心是不规则的左右摆动，慢慢上去的。
+可以使用核心动画(创建CALayer),CABasicAnimation和CAKeyframeAnimation，放在一个group组中。
+CABasicAnimation：渐渐显示动画，修改透明度
+CAKeyframeAnimation:做路径动画，描述小红心的路径，然后按照这个路径走.
+描述一根线，x从宽度中获取随机值，y值每次减减
+动画完成，记得移除，可以用动画事务类，监听动画是否完成,代码一定要放在最前面
+XMGLiveOverlayViewController.m
+
+- (IBAction)clickUpvote:(id)sender {
+
+    // 发送点赞事件
+    [[SocketIOClient clientSocket] emit:@"upvote" with:@[[SocketIOClient clientSocket].roomKey]];
+
+}
+
+
+XMGUpVoteViewController.m
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    // Do any additional setup after loading the view.
+
+    [[SocketIOClient clientSocket] on:@"upvote" callback:^(NSArray * _Nonnull data, SocketAckEmitter * _Nonnull ack) {
+       // 监听到点赞,进行点赞动画
+        [self setupVoteLayer];
+    }];
+
+}
+
+- (void)setupVoteLayer
+{
+    CALayer *layer = [CALayer layer];
+    layer.contents = (id)[UIImage imageNamed:@"hearts (1)"].CGImage;
+    [self.view.layer addSublayer:layer];
+    layer.bounds = CGRectMake(0, 0, 30, 30);
+    layer.position = CGPointMake(self.view.width * 0.5, self.view.height);
+
+    [self setupAnim:layer];
+}
+
+- (void)setupAnim:(CALayer *)layer
+{
+    [CATransaction begin];
+
+    [CATransaction setCompletionBlock:^{
+        [layer removeAllAnimations];
+        [layer removeFromSuperlayer];
+    }];
+
+    // 创建basic动画
+    CABasicAnimation *alphaAnim = [CABasicAnimation animation];
+    alphaAnim.keyPath = @"alpha";
+    alphaAnim.fromValue = @0;
+    alphaAnim.toValue = @1;
+
+    // 路径动画
+    CAKeyframeAnimation *pathAnim = [CAKeyframeAnimation animation];
+    pathAnim.keyPath = @"position";
+    pathAnim.path = [self animPath].CGPath;
+
+
+    // 创建动画组
+    CAAnimationGroup *group = [CAAnimationGroup animation];
+    group.animations = @[alphaAnim,pathAnim];
+    group.duration = 5;
+    [layer addAnimation:group forKey:nil];
+
+
+
+    [CATransaction commit];
+}
+
+
+- (UIBezierPath *)animPath
+{
+    UIBezierPath *path = [UIBezierPath bezierPath];
+
+    CGFloat y = self.view.height;
+    CGFloat x = self.view.width * 0.5;
+    while (y > 0) {
+        x = arc4random_uniform(self.view.width - 20) + 20;
+        if (y == self.view.height) {
+            [path moveToPoint:CGPointMake(x, y)];
+        } else {
+            [path addLineToPoint:CGPointMake(x, y)];
+        }
+        y -= 20;
+    }
+
+
+    return path;
+}
+
+
+=================================================================礼物
+搭建礼物列表
+使用modal,设置modal样式为custom,就能做到从小往上显示礼物列表，并且能看见前面的直播界面
+礼物模型设计
+一开始创建3个礼物模型，保存到数组，传入给礼物View展示，本来礼物数据应该从服务器获取，这里没做了。
+到时候拿到礼物View就能拿到对应按钮，传给服务器就好了.
+礼物模型设计
+礼物模型
+用户模型(userID，userName)，用于标志哪个用户发送,这里为方便测试，保证UserID一样
+礼物ID(giftID),用于标志当前礼物
+礼物名称（giftName）
+礼物总数(giftCount),用于记录礼物连发数，总共发了多少礼物
+发送礼物的房间Key(roomKey),用于知道是发送个哪个房间
+@interface XMGGiftItem : NSObject
+
+// 礼物ID
+@property (nonatomic, assign) NSInteger giftId;
+
+// 用户模型:记录哪个用户发送
+@property (nonatomic, strong) XMGUserItem *user;
+
+// 礼物名称
+@property (nonatomic, strong) XMGUserItem *giftName;
+
+// 礼物个数,用来记录礼物的连击数
+@property (nonatomic, assign) NSInteger giftCount;
+
+// 发送哪个房间
+@property (nonatomic, strong) NSString *roomKey;
+
++ (instancetype)giftWithGiftId:(NSInteger)giftId userId:(NSInteger)userId giftCount:(NSInteger)giftCount roomKey:(NSString *)roomKey;
+
+@end
+
+
++ (instancetype)giftWithGiftId:(NSInteger)giftId giftCount:(NSInteger)giftCount roomKey:(NSString *)roomKey giftName:(NSString *)giftName
+{
+    XMGGiftItem *item = [[self alloc] init];
+    item.giftId = giftId;
+    item.user = [[XMGUserItem alloc] init];
+    // ID一样，模拟只有一个用户
+    item.user.id = 1;
+    item.user.userName = @"用户1";
+    item.giftCount = giftCount;
+    item.roomKey = roomKey;
+    item.giftName = giftName;
+    return item;
+
+}
+监听礼物点击
+点击礼物的时候，发送礼物
+这里使用了websocket搭建的后台服务器，进行礼物发送
+    // 发送礼物
+    SocketIOClient *socket = [SocketIOClient shareSocketIOClient];
+
+    XMGGiftItem *gift = [XMGGiftItem giftWithGiftId:sender.tag userId:socket.user.id giftCount:1 roomKey:socket.roomKey];
+
+    [socket emit:@"gift" with:@[gift.mj_keyValues]];
+三、礼物界面监听礼物发送
+   // 监听礼物
+    SocketIOClient *socket = [SocketIOClient shareSocketIOClient];
+
+    [socket on:@"gift" callback:^(NSArray * _Nonnull data, SocketAckEmitter * _Nonnull ask) {
+        NSLog(@"接收到礼物%@",data);
+        XMGGiftItem *item = [XMGGiftItem mj_objectWithKeyValues:data[0]];
+
+        // 显示礼物动画
+        [self setupGiftAnim:item];
+    }];
+四、设置礼物动画
+显示礼物业务逻辑
+1.并不是每次接收到礼物，都需要创建对应礼物动画View，一次最多显示2个礼物View，当执行完一个礼物，就判断是否还有未执行的礼物，继续执行. 
+2.需要搞个礼物队列(数组)保存所有需要执行的礼物模型，并不是只保存未执行的礼物模型.
+2.1 什么是需要执行的礼物模型?每一个需要执行的礼物模型都对应一个礼物View
+2.2 如果只保存未执行的礼物，不记录之前的执行礼物，没法判断下一个礼物是否是连发礼物，因为拿不到之前的做判断。
+2.3 什么是连发礼物，同一个用户，连续发送相同的礼物。
+2.4 因此每接收一个新的礼物，需要与之前的礼物对比，是否是同一个人发送的相同礼物。
+@property (nonatomic, strong) NSMutableArray *giftQueue;
+
+- (NSMutableArray *)giftQueue
+{
+if (_giftQueue == nil) {
+   _giftQueue = [NSMutableArray array];
+}
+return _giftQueue;
+}
+3.判断是否是连发礼物
+3.1 遍历礼物队列中所有礼物，判断当前接收的礼物与之前礼物是否有相同的UserID和相同的礼物ID。
+3.2 如果有相同的UserID和相同的礼物ID，就表示是连发礼物，，把礼物模型的礼物总数+1.
+3.3 不需要把连发礼物添加到礼物队列中，因为只要是连发礼物就表示之前已经有相同的礼物，会和之前礼物共用同一个礼物View,不需要创建新的礼物View.
+3.4 因此只要是连发礼物，就直接return,不做操作.
+```
+pragma mark - 判断当前接收礼物是否属于连发礼物
+(BOOL)isComboGift:(XMGGiftItem )gift
+{
+XMGGiftItem comboGift = nil;
+for (XMGGiftItem *giftItem in self.giftQueue) {
+  // 如果是连发礼物就记录下来
+  if (giftItem.giftId == gift.giftId && giftItem.userId == gift.userId) {
+      comboGift = giftItem;
+  }
+}
+if (comboGift) { // 连发礼物有值
+  // 礼物模型的礼物总数+1
+  comboGift.giftCount += 1;
+  return YES;
+}
+return NO;
+}
+  *    4.如果不是连发礼物，直接把接收到的礼物添加到礼物队列
+  *    5.搞个数组记录当前显示的动画View
+      *    5.1 最多显示两个礼物动画View,记录当前正在做动画的View
+      *    5.2 如果超过2个显示的View,就先不创建礼物View，直接retun
+@property (nonatomic, strong) NSMutableArray *giftAnimViews;
+(NSMutableArray *)giftAnimViews
+{
+if (_giftAnimViews == nil) {
+_giftAnimViews = [NSMutableArray array];
+}
+return _giftAnimViews;
+}
+```
+6.过滤掉以上2个条件之后，处理礼物动画
+6.1 创建礼物View
+6.2 设置礼物View的frame
+6.2.1 分为上下两部分，先显示到底部，在显示顶部
+6.2.2 怎么才知道当前礼物View显示在哪部分，搞个位置数组，每次从数组中取出一个位置，取完，就移除，这样下次就不会显示重复的地方了。
+6.3 添加礼物View到控制器的View中
+6.4 做礼物平移动画
+6.5 礼物平移动画做完，开始做连击动画
+```
+// 处理礼物动画
+(void)handleGiftAnim:(XMGGiftItem )gift
+{
+// 1.创建礼物动画的View
+XMGGiftAnimView giftView = [XMGGiftAnimView giftAnimView];
+CGFloat h = self.view.bounds.size.height * 0.5;
+CGFloat w = self.view.bounds.size.width;
+// 取出礼物位置
+id position = self.positions.lastObject;
+// 从数组移除位置
+[self.positions removeObject:position];
+CGFloat y = [position floatValue] * h;
+// 2.设置礼物View的frame
+giftView.frame = CGRectMake(0, y, w, h);
+// 3.传递礼物模型
+giftView.gift = gift;
+// 记录当前位置
+giftView.tag = [position floatValue];
+// 添加礼物View
+[self.view addSubview:giftView];
+// 添加记录礼物View数组
+[self.giftAnimViews addObject:giftView];
+__weak typeof(self) weakSelf = self;
+giftView.dismissView = ^(XMGGiftAnimView *giftView){
+  [weakSelf dismissView:giftView];
+};
+// 设置动画
+giftView.transform = CGAffineTransformMakeTranslation(-w, 0);
+[UIView animateWithDuration:.25 delay:0 usingSpringWithDamping:0.6 initialSpringVelocity:1 options:UIViewAnimationOptionCurveLinear animations:^{
+  giftView.transform = CGAffineTransformIdentity;
+} completion:^(BOOL finished) {
+  // 开始连击动画
+  [giftView startComboAnim];
+}];
+}
+  *    7.礼物连击动画
+      *    7.1 封装到礼物View中，礼物需要拿到礼物连击Label做事情
+      *    7.2 每隔一段时间，需要修改连击数，搞个定时器，每隔0.3秒做事情
+      *    7.3 连击动画，也需要控制在0.3秒刚好做完，就能直接做下一次动画。
+      *    7.4 搞个属性记录当前连击数，没执行一次连击就++，当当前连击数大于礼物总数的时候，表示连击动画执行完毕，需要销毁定时器，销毁当前礼物View
+      *    7.5 `注意点`：当当前连击数大于礼物总数的时候，不能马上确定连击动画执行完毕，因为电脑执行速度大于用户点击速度，有可能用户在点的时候，没有电脑执行快，电脑执行完直接把礼物View移除了，就看不到连击效果了。
+      *    7.6 因此需要延迟销毁定时器，而且只要有新的连击数了，需要取消销毁定时器，要不然可能连击数还没显示完，定时器就销毁了
+(void)startComboAnim{
+if (_timer == nil) {
+_timer = [NSTimer scheduledTimerWithTimeInterval:0.3 target:self selector:@selector(combo) userInfo:nil repeats:YES];
+_curComboCount = 1;
+}
+}
+// 连击
+(void)combo
+{
+// 当前连发数，已经显示完毕
+if (_curComboCount > _gift.giftCount) { // 停止定时器
+  // 停止定时器
+  [self performSelector:@selector(cancel) withObject:nil afterDelay:1];
+} else {
+  // 修改label显示
+  _comboView.text = [NSString stringWithFormat:@"x%ld",_curComboCount];
+
+  [UIView animateWithDuration:0.15 animations:^{
+      _comboView.transform = CGAffineTransformMakeScale(3, 3);
+  } completion:^(BOOL finished) {
+     [UIView animateWithDuration:0.15 animations:^{
+         _comboView.transform = CGAffineTransformIdentity;
+     }];
+  }];
+
+  // 取消定时器销毁
+  [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(cancel) object:nil];
+
+  _curComboCount++;
+}
+}
+```
+8.连击动画做完，
+8.1 需要停止定时器
+8.2 需要移除礼物动画的View
+8.3 把礼物动画的View和礼物都移除数组，需要回到之前控制器，用Block
+注意点：cancel方法可能会调用多次，定时器没有销毁，就会一直调用cancel方法，但是只需要执行一次，需要搞个属性记录下.
+原因：因为要在1秒之后才会调用cancle，那在这一秒内，肯定又会调用定时器方法，而且这时候当前连击数已经大于礼物总数，就会在1秒内多少执行cancle方法，导致cancle在1秒内调用多次.
+    ```    
+    - (void)cancel
+    {
+        if (_isCancel == NO) {
+
+            _isCancel = YES;
+
+            [_timer invalidate];
+            _timer = nil;
+
+            if (_dismissView) {
+                _dismissView(self);
+            }
+        }
+    }
+    ```
+
+*    9.连击动画结束后执行的DismissBlock.
+    *     9.1 做礼物View移除动画，往上移动，透明度为0
+    *    9.2 把礼物模型从队列移除
+    *    9.3 把礼物View从显示的礼物View数组移除
+    *    9.4 移除当前View
+    *    9.5 恢复位置到位置数组
+        *    9.3.1 怎么知道恢复哪个位置？可以用礼物View的tag记录当前礼物View的位置
+        *    9.3.2 如果当前tag为0，需要插入第0个位置，其他情况使用addObject.
+    *    9.6 当一个礼物做完动画，查看队列中是否还有未执行的礼物。
+
+    ```
+            - (void)dismissView:(XMGGiftAnimView *)giftView
+    {
+
+        [UIView animateWithDuration:0.25 animations:^{
+
+            giftView.alpha = 0;
+            giftView.transform = CGAffineTransformMakeTranslation(0, -20);
+
+        } completion:^(BOOL finished) {
+
+            // 移除当前礼物
+            [self.giftQueue removeObject:giftView.gift];
+
+            // 移除当前动画的View
+            [giftView removeFromSuperview];
+
+            // 移除礼物动画View数组
+            [self.giftAnimViews removeObject:giftView];
+
+            // 恢复当前位置
+            if (giftView.tag == 0) {
+                // 插入第0个位置
+                [self.positions insertObject:@(0) atIndex:0];
+            } else {
+                [self.positions addObject:@(giftView.tag)];
+            }
+
+            // 判断队列中是否还有未处理的礼物
+            XMGGiftItem *item = [self fetchNoHandleGiftItemOfQueue];
+
+            // 处理礼物动画
+            if (item) {
+                [self handleGiftAnim:item];
+            }
+
+        }];
+
+    }
+    ```
+*    10.执行完一个礼物，判断礼物队列是否还有未执行的礼物
+    *    10.1 遍历礼物队列中所有礼物，查看是否有未执行的礼物
+    *    10.2 取出的礼物，有可能是当前正在执行的礼物，需要排除掉
+        *    10.2.1 遍历当前正在执行的礼物View,查看取出的礼物是否和它的礼物相同，相同表示当前礼物在执行
+    *    10.3 获取到未执行的礼物，直接处理礼物
+    ```
+    // 搜索礼物队列中未执行的礼物
+    - (XMGGiftItem *)fetchNoHandleGiftItemOfQueue
+    {
+
+        // 取出队列中的礼物
+        for (XMGGiftItem *item in self.giftQueue) {
+            // 当前礼物模型有可能在执行
+            if (![self isExcutingGift:item]) return item;
+        }
+
+        return nil;
+    }
+
+    // 判断当前礼物是否正在执行
+    - (BOOL)isExcutingGift:(XMGGiftItem *)gift
+    {
+        // 判断当前模型是否已经在执行，执行就不需要在做动画
+        for (XMGGiftAnimView *giftView in self.giftAnimViews) {
+
+            if (giftView.gift == gift) return YES;
+        }
+
+        return NO;
+    }
+
+    ```
+礼物整体业务逻辑
+   - (void)setupGiftAnim:(XMGGiftItem *)gift
+   {
+       // 1.判断当前接收的礼物是否属于连发礼物 属于直接return，不需要在重新创建新的动画View
+       if ([self isComboGift:gift]) return;
+
+       // 2.添加到礼物队列
+       [self.giftQueue addObject:gift];
+
+       // 3.判断当前显示多少个礼物动画View
+       if (self.giftAnimViews.count == 2) return;
+
+       // 4.处理礼物动画
+       [self handleGiftAnim:gift];
+   }
+   
+   
+=================================================================编解码原理
+编码就是压缩图像：
+手机摄像头采集的都是一帧一帧的图片，只要每秒采集了24帧，看起来就比较流畅,
+视频就是由一帧一帧的图片构成的，常见图片格式png,jpg，一张图片2M，
+一秒钟30帧，那么1秒就是60M，这么多保存到本地是没问题，
+但是进行网络传输，尤其是在外网传输，每一秒传输60M，
+在中国是不可能达到这个带宽，那这时候就要对每一帧图象进行压缩
+带宽:每秒网络传输的数据，每秒10M,每秒传输10M数据
+
+怎么编码：
+H.264算法
+因为第一帧和第二帧，可能没什么变化，`只传输不一样的部分``，这样图片压缩率就非常高,所以在网络中传输都会采用h.264进行传输，当然现在也有H.265，如果传输的720p，其实差距不大，h.265用于高清图片4k,比较大的图片.
+I frame ：帧内编码帧 又称intra picture，I 帧通常是每个 GOP（MPEG 所使用的一种视频压缩技术）的第一个帧，经过适度地压缩，做为随机访问的参考点，可以当成图象。I帧可以看成是一个图像经过压缩后的产物。
+P frame: 前向预测编码帧 又称predictive-frame，通过充分将低于图像序列中前面已编码帧的时间冗余信息来压缩传输数据量的编码图像，也叫预测帧；
+B frame: 双向预测内插编码帧 又称bi-directional interpolated prediction frame，既考虑与源图像序列前面已编码帧，也顾及源图像序列后面已编码帧之间的时间冗余信息来压缩传输数据量的编码图像，也叫双向预测帧；
+
+怎么解码：
+重点了解解码，编码FFmpeg有X264编码，
+但是实际过程中，很少用到软编码，软编码效率非常低，
+因为大量的嵌入式设备手机都集成了硬编码，可以直接把图像编码成H.264
+解码：
+解码的时候仅用I帧的数据就可重构完整图像
+在发网络数据的时候，2到3秒就需要一个I帧，否则传给去的图片可能半天看不到图像（IPBPBPB IPBPBPB）
+h.264由一个个NAL组成，每一段NAL由IPB组成(IPBPBPB)，解析NAL还原图像，就能展示

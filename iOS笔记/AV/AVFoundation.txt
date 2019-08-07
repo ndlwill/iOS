@@ -1,0 +1,437 @@
+苹果开发文档
+
+聚焦模式：
+1.AVCaptureFocusModeLocked：焦点位置是固定的。
+2.AVCaptureFocusModeAutoFocus：相机执行单个扫描对焦，然后恢复为锁定。
+3.AVCaptureFocusModeContinuousAutoFocus：相机会根据需要连续自动对焦。
+
+//{0,0}代表画面区域的左上角,{1,1}表示右下角
+if（[currentDevice isFocusModeSupported：AVCaptureFocusModeContinuousAutoFocus]）{
+    CGPoint autofocusPoint = CGPointMake（0.5f，0.5f）;
+    [currentDevice setFocusPointOfInterest：autofocusPoint];
+    [currentDevice setFocusMode：AVCaptureFocusModeContinuousAutoFocus];
+}
+
+
+曝光模式:
+1.AVCaptureExposureModeContinuousAutoExposure：设备根据需要自动调整曝光级别。
+2.AVCaptureExposureModeLocked：曝光级别固定在当前级别。
+
+
+if（[currentDevice isExposureModeSupported：AVCaptureExposureModeContinuousAutoExposure]）{
+    CGPoint exposurePoint = CGPointMake（0.5f，0.5f）;
+    [currentDevice setExposurePointOfInterest：exposurePoint];
+    [currentDevice setExposureMode：AVCaptureExposureModeContinuousAutoExposure];
+}
+
+闪光模式：
+1.AVCaptureFlashModeOff闪光灯不会闪光。
+2.AVCaptureFlashModeOn闪光灯将永远闪光。
+3.AVCaptureFlashModeAuto：闪光灯将根据环境光线条件而发光
+
+手电筒模式:
+1.AVCaptureTorchModeOff 手电筒总是关闭。
+2.AVCaptureTorchModeOn：手电筒一直在开。
+3.AVCaptureTorchModeAuto：手电筒根据需要自动打开和关闭。
+
+视频稳定:
+何时使用视频稳定，请使用该videoStabilizationEnabled属性。
+enablesVideoStabilizationWhenAvailable属性允许应用程序自动启用视频稳定
+
+白平衡:
+1.AVCaptureWhiteBalanceModeLocked白平衡模式是固定的。
+2.AVCaptureWhiteBalanceModeContinuousAutoWhiteBalance：相机会根据需要连续调整白平衡。
+
+---------------------------------------------------------------------设置设备方向
+AVCaptureConnection supportsVideoOrientation属性来确定设备是否支持更改视频的方向
+
+if（[captureConnection isVideoOrientationSupported]）
+{
+    AVCaptureVideoOrientation orientation = AVCaptureVideoOrientationLandscapeLeft;
+    [captureConnection setVideoOrientation：orientation];
+}
+---------------------------------------------------------------------配置设备
+if（[device isFocusModeSupported：AVCaptureFocusModeLocked]）{
+    NSError * error = nil;
+    if（[device lockForConfiguration：＆error]）{
+        device.focusMode = AVCaptureFocusModeLocked;
+        [device unlockForConfiguration];
+    }
+}
+
+---------------------------------------------------------------------在设备之间切换
+允许用户在输入设备之间切换,例如从使用前置摄像头切换到后置摄像头
+[session beginConfiguration];
+ 
+[session removeInput：frontFacingCameraDeviceInput];
+[session addInput：backFacingCameraDeviceInput];
+ 
+[session commitConfiguration];
+
+---------------------------------------------------------------------使用捕获输出从会话获取输出
+1.AVCaptureMovieFileOutput 输出到电影文件
+AVCaptureMovieFileOutput * aMovieFileOutput = [[AVCaptureMovieFileOutput alloc] init];
+CMTime maxDuration = 
+aMovieFileOutput.maxRecordedDuration = maxDuration;
+aMovieFileOutput.minFreeDiskSpaceLimit =
+输出的分辨率和比特率取决于捕获会话sessionPreset。视频编码通常是H.264，音频编码通常是AAC。
+
+
+2.AVCaptureVideoDataOutput 如果要从捕获的视频中处理帧
+处理视频帧
+你设置委托使用setSampleBufferDelegate:queue:。除了设置委托之外，
+还可以指定一个在其上调用方法委托的串行队列。
+您必须使用串行队列来确保将帧以正确的顺序传递给代理。
+您可以使用队列来修改提供和处理视频帧的优先级
+
+AVCaptureVideoDataOutput * videoDataOutput = [AVCaptureVideoDataOutput new];
+NSDictionary * newSettings =
+                @ {（NSString *）kCVPixelBufferPixelFormatTypeKey：@（kCVPixelFormatType_32BGRA）};
+videoDataOutput.videoSettings = newSettings;
+ 
+ //如果数据输出队列被阻止（因为我们处理静止图像）丢弃
+[videoDataOutput setAlwaysDiscardsLateVideoFrames：YES];）
+ 
+//创建一个用于示例缓冲区委托的串行调度队列，以及捕获静态图像时
+//必须使用串行调度队列来保证视频帧的顺序传送
+//查看setSampleBufferDelegate的头文件：queue：了解更多信息
+videoDataOutputQueue = dispatch_queue_create（“VideoDataOutputQueue”，DISPATCH_QUEUE_SERIAL）;
+[videoDataOutput setSampleBufferDelegate：self queue：videoDataOutputQueue];
+ 
+AVCaptureSession * captureSession = <＃Capture Capture＃>;
+ 
+if（[captureSession canAddOutput：videoDataOutput]）
+     [captureSession addOutput：videoDataOutput];
+
+3.AVCaptureAudioDataOutput 如果要处理正在捕获的音频数据
+4.AVCaptureStillImageOutput 如果您要捕获带有附带元数据的静态图像
+
+
+---------------------------------------------------------------------KVO
+adjustingFocus属性来确定设备当前是否正在对焦
+adjustingExposure属性来确定设备当前是否正在更改其曝光设置
+adjustingWhiteBalance属性来确定设备当前是否正在更改其白平衡设置
+
+
+---------------------------------------------------------------------启动和停止录制
+配置捕获会话后，您应确保相机有权根据用户的喜好记录。
+
+NSString * mediaType = AVMediaTypeVideo;
+ 
+[AVCaptureDevice requestAccessForMediaType：mediaType completionHandler：^（BOOL grant）{
+    如果（授予）
+    {
+        //授予对mediaType的访问权限
+        [self setDeviceAuthorized：YES];
+    }
+    其他
+    {
+        //未授予mediaType的访问权限
+        dispatch_async（dispatch_get_main_queue（），^ {
+        [[[UIAlertView alloc] initWithTitle：@“AVCam！”
+                                    消息：@“AVCam没有使用相机的权限，请更改隐私设置”
+                                   委托：自我
+                          cancelButtonTitle：@ “OK”
+                          otherButtonTitles：nil] show];
+                [self setDeviceAuthorized：NO];
+        }）;
+    }
+}];
+如果相机会话已配置，并且用户已批准对相机的访问（如果需要，麦克风），发送startRunning消息开始录制。
+[session startRunning]
+startRunning方法是一个阻塞调用，可能需要一些时间，因此您应该在串行队列上执行会话设置，以使主队列不被阻止（从而保持UI响应）。
+
+---------------------------------------------------------------------AVAssetTrack
+轨道还具有一系列格式描述。数组包含CMFormatDescription对象（见CMFormatDescriptionRef）
+轨道本身可以分为段，由实例表示AVAssetTrackSegment。段是从源到资产轨道时间线的时间映射。
+
+
+---------------------------------------------------------------------CMTime
+CMTime time1 = CMTimeMake（200,2）; // 200半秒钟
+CMTime time2 = CMTimeMake（400，4）; // 400四分之一秒
+ // time1和time2都代表100秒，但使用不同的时间尺度。
+ 
+if（CMTimeCompare（time1，time2）== 0）{
+    NSLog（@“time1和time2是一样的”）;
+}
+ 
+Float64 float64Seconds = 200.0 / 3;
+CMTime time3 = CMTimeMakeWithSeconds（float64Seconds，3）; // 66.66 ... third seconds
+time3 = CMTimeMultiply（time3,3）;
+// time3现在代表200秒; 下一次减1（100秒）。
+time3 = CMTimeSubtract（time3，time1）;
+CMTimeShow（时间3）;
+ 
+if（CMTIME_COMPARE_INLINE（time2，==，time3））{
+    NSLog（@“time2和time3是一样的”）;
+}
+
+特殊值的常量：kCMTimeZero，kCMTimeInvalid，kCMTimePositiveInfinity，和kCMTimeNegativeInfinity
+
+---------------------------------------------------------------------CMSampleBufferRef
+CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer（<＃A CMSampleBuffer＃>）;
+
+时序信息
+你得到两个原始演示文稿的时间和使用解码时间准确时间戳CMSampleBufferGetPresentationTimeStamp和CMSampleBufferGetDecodeTimeStamp分别。
+
+元数据。元数据作为附件存储在字典中。你CMGetAttachment用来检索字典：
+CMSampleBufferRef sampleBuffer = 
+CFDictionaryRef metadataDictionary =
+    CMGetAttachment（sampleBuffer，CFSTR（“MetadataDictionary”，NULL）;
+if（metadataDictionary）{
+    //用元数据做某事
+}
+
+---------------------------------------------------------------------CMSampleBufferRef -> UIImage
+- (UIImage *) imageFromSampleBuffer:(CMSampleBufferRef) sampleBuffer
+{
+    // Get a CMSampleBuffer's Core Video image buffer for the media data
+    CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+    // Lock the base address of the pixel buffer
+    CVPixelBufferLockBaseAddress(imageBuffer, 0);
+ 
+    // Get the number of bytes per row for the pixel buffer
+    void *baseAddress = CVPixelBufferGetBaseAddress(imageBuffer);
+ 
+    // Get the number of bytes per row for the pixel buffer
+    size_t bytesPerRow = CVPixelBufferGetBytesPerRow(imageBuffer);
+    // Get the pixel buffer width and height
+    size_t width = CVPixelBufferGetWidth(imageBuffer);
+    size_t height = CVPixelBufferGetHeight(imageBuffer);
+ 
+    // Create a device-dependent RGB color space
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+ 
+    // Create a bitmap graphics context with the sample buffer data
+    CGContextRef context = CGBitmapContextCreate(baseAddress, width, height, 8,
+      bytesPerRow, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+    // Create a Quartz image from the pixel data in the bitmap graphics context
+    CGImageRef quartzImage = CGBitmapContextCreateImage(context);
+    // Unlock the pixel buffer
+    CVPixelBufferUnlockBaseAddress(imageBuffer,0);
+ 
+    // Free up the context and color space
+    CGContextRelease(context);
+    CGColorSpaceRelease(colorSpace);
+ 
+    // Create an image object from the Quartz image
+    UIImage *image = [UIImage imageWithCGImage:quartzImage];
+ 
+    // Release the Quartz image
+    CGImageRelease(quartzImage);
+ 
+    return (image);
+}
+
+---------------------------------------------------------------------AVAssetReader和AVAssetWriter
+要从媒体（如样本缓冲区或静态图像）生成资产，请使用AVAssetWriter对象
+
+每个AVAssetReader对象一次只能与一个资产相关联，但该资产可能包含多个轨道。
+
+NSError * outError;
+AVAsset * someAsset = <#AVAsset你想读取＃>;
+AVAssetReader * assetReader = [AVAssetReader assetReaderWithAsset：someAsset error：＆outError];
+BOOL success =（assetReader！= nil）;
+
+
+AVAsset * localAsset = assetReader.asset;
+//获取音轨。
+AVAssetTrack * audioTrack = [[localAsset tracksWithMediaType：AVMediaTypeAudio] objectAtIndex：0];
+//线性PCM的解压缩设置
+NSDictionary * decompressionAudioSettings = @ {AVFormatIDKey：[NSNumber numberWithUnsignedInt：kAudioFormatLinearPCM]};
+//使用音轨和解压缩设置创建输出。
+AVAssetReaderOutput * trackOutput = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack：audioTrack outputSettings：decompressionAudioSettings];
+//如果可能，将输出添加到阅读器。
+if（[assetReader canAddOutput：trackOutput]）
+    [assetReader addOutput：trackOutput];
+	
+您可以使用AVAssetReaderAudioMixOutput和AVAssetReaderVideoCompositionOutput类来分别使用AVAudioMix对象或AVVideoComposition对象来混合或合成在一起的媒体数据。
+通常，当您的资产读取器从AVComposition对象读取时，将使用这些输出
+AVAudioMix * audioMix = <#An AVAudioMix，指定AVAsset的音轨如何混合＃>;
+//假设assetReader是使用AVComposition对象初始化的。
+AVComposition * composition =（AVComposition *）assetReader.asset;
+//获取要读取的音轨。
+NSArray * audioTracks = [composition tracksWithMediaType：AVMediaTypeAudio];
+//获取线性PCM的解压缩设置。
+NSDictionary * decompressionAudioSettings = @ {AVFormatIDKey：[NSNumber numberWithUnsignedInt：kAudioFormatLinearPCM]};
+//使用音轨和解压缩设置创建音频混合输出。
+AVAssetReaderOutput * audioMixOutput = [AVAssetReaderAudioMixOutput assetReaderAudioMixOutputWithAudioTracks：audioTracks audioSettings：decompressionAudioSettings];
+//将用于混合正在读取的音轨的音频混合器与输出相关联。
+audioMixOutput.audioMix = audioMix;
+//如果可能，将输出添加到阅读器。
+if（[assetReader canAddOutput：audioMixOutput]）
+    [assetReader addOutput：audioMixOutput];
+
+
+视频合成输出:
+从多个合成视频轨道读取媒体数据并将其解压缩到ARGB
+AVVideoComposition * videoComposition = <#An AVVideoComposition，用于指定AVAsset的视频轨迹是如何合成的。
+// Assumption assetReader已使用AVComposition初始化。
+AVComposition * composition =（AVComposition *）assetReader.asset;
+//获取视频轨道。
+NSArray * videoTracks = [composition tracksWithMediaType：AVMediaTypeVideo];
+// ARGB的解压缩设置。
+NSDictionary * decompressionVideoSettings = @ {（id）kCVPixelBufferPixelFormatTypeKey：[NSNumber numberWithUnsignedInt：kCVPixelFormatType_32ARGB]，（id）kCVPixelBufferIOSurfacePropertiesKey：[NSDictionary dictionary]};
+//使用视频轨道和解压缩设置创建视频合成输出。
+AVAssetReaderOutput * videoCompositionOutput = [AVAssetReaderVideoCompositionOutput assetReaderVideoCompositionOutputWithVideoTracks：videoTracks videoSettings：decompressionVideoSettings];
+//将用于复合正在读取的视频轨道的视频合成与输出相关联。
+videoCompositionOutput.videoComposition = videoComposition;
+//如果可能，将输出添加到阅读器。
+if（[assetReader canAddOutput：videoCompositionOutput]）
+    [assetReader addOutput：videoCompositionOutput];
+
+
+读：
+在设置所需的所有输出后开始阅读，请调用startReading资产读取器上的方法。
+接下来，使用该copyNextSampleBuffer方法从每个输出单独检索媒体数据。要使用单个输出启动资产读取器并读取其所有媒体样本
+[self.assetReader startReading];
+BOOL done = NO;
+while (!done)
+{
+  // Copy the next sample buffer from the reader output.
+  CMSampleBufferRef sampleBuffer = [self.assetReaderOutput copyNextSampleBuffer];
+  if (sampleBuffer)
+  {
+    // Do something with sampleBuffer here.
+    CFRelease(sampleBuffer);
+    sampleBuffer = NULL;
+  }
+  else
+  {
+    // Find out why the asset reader output couldn't copy another sample buffer.
+    if (self.assetReader.status == AVAssetReaderStatusFailed)
+    {
+      NSError *failureError = self.assetReader.error;
+      // Handle the error here.
+    }
+    else
+    {
+      // The asset reader output has read all of its samples.
+      done = YES;
+    }
+  }
+}
+
+=================================================================
+写：
+每个AVAssetWriterInput对象期望以对象的形式接收数据CMSampleBufferRef，但是如果要将CVPixelBufferRef对象附加到资产编写器输入，请使用AVAssetWriterInputPixelBufferAdaptor该类
+
+//将频道布局配置为立体声。
+AudioChannelLayout stereoChannelLayout = {
+    .mChannelLayoutTag = kAudioChannelLayoutTag_Stereo，
+    .mChannelBitmap = 0，
+    .mNumberChannelDescriptions = 0
+};
+ 
+//将通道布局对象转换为NSData对象。
+NSData * channelLayoutAsData = [NSData dataWithBytes：＆stereoChannelLayout length：offsetof（AudioChannelLayout，mChannelDescriptions）];
+ 
+//获取128 kbps AAC的压缩设置。
+NSDictionary * compressionAudioSettings = @ {
+    AVFormatIDKey：[NSNumber numberWithUnsignedInt：kAudioFormatMPEG4AAC]，
+    AVEncoderBitRateKey：[NSNumber numberWithInteger：128000]，
+    AVSampleRateKey：[NSNumber numberWithInteger：44100]，
+    AVChannelLayoutKey：channelLayoutAsData，
+    AVNumberOfChannelsKey：[NSNumber numberWithUnsignedInteger：2]
+};
+ 
+//使用压缩设置创建资源写入器输入，并将媒体类型指定为音频。
+AVAssetWriterInput * assetWriterInput = [AVAssetWriterInput assetWriterInputWithMediaType：AVMediaTypeAudio outputSettings：compressionAudioSettings];
+//如果可能，将输入添加到写入器。
+if（[assetWriter canAddInput：assetWriterInput]）
+    [assetWriter addInput：assetWriterInput];
+	
+	
+	
+	
+NSDictionary * pixelBufferAttributes = @ {
+     kCVPixelBufferCGImageCompatibilityKey：[NSNumber numberWithBool：YES]，
+     kCVPixelBufferCGBitmapContextCompatibilityKey：[NSNumber numberWithBool：YES]，
+     kCVPixelBufferPixelFormatTypeKey：[NSNumber numberWithInt：kCVPixelFormatType_32ARGB]
+};
+AVAssetWriterInputPixelBufferAdaptor * inputPixelBufferAdaptor = [AVAssetWriterInputPixelBufferAdaptor assetWriterInputPixelBufferAdaptorWithAssetWriterInput：self.assetWriterInput sourcePixelBufferAttributes：pixelBufferAttributes];
+注意：  所有AVAssetWriterInputPixelBufferAdaptor对象必须连接到单个资产编写器输入。资产作者输入必须接受类型的媒体数据AVMediaTypeVideo。
+
+编写媒体数据：
+配置资产编写器所需的所有输入后，即可开始编写媒体数据
+通过调用该startWriting方法启动写入过程
+
+
+
+如果您的来源是提供从AVAsset对象读取的媒体数据的资产读取器，并且不希望包含资产上半部分的媒体数据，则可以执行以下操作：
+CMTime halfAssetDuration = CMTimeMultiplyByFloat64（self.asset.duration，0.5）;
+[self.assetWriter startSessionAtSourceTime：halfAssetDuration];
+
+通常，要结束写入会话，您必须调用该endSessionAtSourceTime:方法。
+但是，如果您的写作会话直到文件的末尾，您可以简单地通过调用该finishWriting方法来结束写入会话
+//准备资产作者写作。
+[self.assetWriter startWriting];
+//开始一个样本写作会话。
+[self.assetWriter startSessionAtSourceTime：kCMTimeZero];
+//指定当资产写入程序准备好进行媒体数据并且队列调用它时执行的块。
+[self.assetWriterInput requestMediaDataWhenReadyOnQueue：myInputSerialQueue usingBlock：^ {
+     while（[self.assetWriterInput isReadyForMoreMediaData]）
+     {
+          //获取下一个示例缓冲区。
+          CMSampleBufferRef nextSampleBuffer = [self copyNextSampleBufferToWrite];
+          if（nextSampleBuffer）
+          {
+               //如果存在，请将下一个样本缓冲区附加到输出文件。
+               [self.assetWriterInput appendSampleBuffer：nextSampleBuffer];
+               CFRelease（nextSampleBuffer）;
+               nextSampleBuffer = nil;
+          }
+          其他
+          {
+               //假设缺少下一个样本缓冲区意味着样本缓冲区源不在样本中，并将输入标记为已完成。
+               [self.assetWriterInput markAsFinished];
+               打破;
+          }
+     }
+}];
+copyNextSampleBufferToWrite上面代码中的方法只是一个存根。此存根的位置是您需要插入一些逻辑来返回CMSampleBufferRef表示要写入的媒体数据的对象。
+
+=================================================================
+重新编码资产
+如何使用单个资产写入器输入来写入由单个资产读取器输出提供的媒体数据
+NSString *serializationQueueDescription = [NSString stringWithFormat:@"%@ serialization queue", self];
+ 
+// Create a serialization queue for reading and writing.
+dispatch_queue_t serializationQueue = dispatch_queue_create([serializationQueueDescription UTF8String], NULL);
+ 
+// Specify the block to execute when the asset writer is ready for media data and the queue to call it on.
+[self.assetWriterInput requestMediaDataWhenReadyOnQueue:serializationQueue usingBlock:^{
+     while ([self.assetWriterInput isReadyForMoreMediaData])
+     {
+          // Get the asset reader output's next sample buffer.
+          CMSampleBufferRef sampleBuffer = [self.assetReaderOutput copyNextSampleBuffer];
+          if (sampleBuffer != NULL)
+          {
+               // If it exists, append this sample buffer to the output file.
+               BOOL success = [self.assetWriterInput appendSampleBuffer:sampleBuffer];
+               CFRelease(sampleBuffer);
+               sampleBuffer = NULL;
+               // Check for errors that may have occurred when appending the new sample buffer.
+               if (!success && self.assetWriter.status == AVAssetWriterStatusFailed)
+               {
+                    NSError *failureError = self.assetWriter.error;
+                    //Handle the error.
+               }
+          }
+          else
+          {
+               // If the next sample buffer doesn't exist, find out why the asset reader output couldn't vend another one.
+               if (self.assetReader.status == AVAssetReaderStatusFailed)
+               {
+                    NSError *failureError = self.assetReader.error;
+                    //Handle the error here.
+               }
+               else
+               {
+                    // The asset reader output must have vended all of its samples. Mark the input as finished.
+                    [self.assetWriterInput markAsFinished];
+                    break;
+               }
+          }
+     }
+}];

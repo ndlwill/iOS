@@ -1,0 +1,60 @@
+CPU: 计算视图frame，图片解码，需要绘制纹理图片通过数据总线交给GPU
+GPU: 纹理混合，顶点变换与计算,像素点的填充计算，渲染到帧缓冲区。
+时钟信号：垂直同步信号V-Sync / 水平同步信号H-Sync。
+iOS设备双缓冲机制：显示系统通常会引入两个帧缓冲区，双缓冲机制
+
+图片显示到屏幕上是CPU与GPU的协作完成
+
+=====图片加载的工作流程:
+1.假设我们使用 +imageWithContentsOfFile: 方法从磁盘中加载一张图片，这个时候的图片并没有解压缩；
+2.然后将生成的 UIImage 赋值给 UIImageView ；
+3.接着一个隐式的 CATransaction 捕获到了 UIImageView 图层树的变化；
+4.在主线程的下一个 runloop 到来时，Core Animation 提交了这个隐式的 transaction，这个过程可能会对图片进行 copy 操作，而受图片是否字节对齐等因素的影响，这个 copy 操作可能会涉及以下部分或全部步骤：
+分配内存缓冲区用于管理文件 IO 和解压缩操作；
+将文件数据从磁盘读到内存中；
+将压缩的图片数据解码成未压缩的位图形式，这是一个非常耗时的 CPU 操作；
+最后 Core Animation 中CALayer使用未压缩的位图数据渲染 UIImageView 的图层。
+CPU计算好图片的Frame,对图片解压之后.就会交给GPU来做图片渲染
+5.渲染流程
+GPU获取获取图片的坐标
+将坐标交给顶点着色器(顶点计算)
+将图片光栅化(获取图片对应屏幕上的像素点)
+片元着色器计算(计算每个像素点的最终显示的颜色值)
+从帧缓存区中渲染到屏幕上
+
+图片的解压缩是一个非常耗时的 CPU 操作，并且它默认是在主线程中执行的
+
+=====为什么要解压缩图片:
+位图就是一个像素数组，数组中的每个像素就代表着图片中的一个点。我们在应用中经常用到的 JPEG 和 PNG 图片就是位图
+UIImage *image = [UIImage imageNamed:@"text.png"];
+CFDataRef rawData = CGDataProviderCopyData(CGImageGetDataProvider(image.CGImage));
+rawData,这里就是图片的原始数据
+不管是 JPEG 还是 PNG 图片，都是一种压缩的位图图形格式。只不过 PNG 图片是无损压缩，并且支持 alpha 通道，而 JPEG 图片则是有损压缩，可以指定 0-100% 的压缩比
+
+苹果的 SDK 中专门提供了两个函数用来生成 PNG 和 JPEG 图片:
+// return image as PNG. May return nil if image has no CGImageRef or invalid bitmap format
+UIKIT_EXTERN NSData * __nullable UIImagePNGRepresentation(UIImage * __nonnull image);
+// return image as JPEG. May return nil if image has no CGImageRef or invalid bitmap format. compression is 0(most)..1(least)                           
+UIKIT_EXTERN NSData * __nullable UIImageJPEGRepresentation(UIImage * __nonnull image, CGFloat compressionQuality);
+在将磁盘中的图片渲染到屏幕之前，必须先要得到图片的原始像素数据，才能执行后续的绘制操作，这就是为什么需要对图片解压缩的原因
+
+=====解压缩原理:
+当未解压缩的图片将要渲染到屏幕时，系统会在主线程对图片进行解压缩，而如果图片已经解压缩了，系统就不会再对图片进行解压缩
+强制解压缩的原理就是对图片进行重新绘制，得到一张新的解压缩后的位图,用到的最核心的函数是 CGBitmapContextCreate
+data ：如果不为 NULL ，那么它应该指向一块大小至少为 bytesPerRow * height 字节的内存；如果 为 NULL ，那么系统就会为我们自动分配和释放所需的内存，所以一般指定 NULL 即可；
+width 和height ：位图的宽度和高度，分别赋值为图片的像素宽度和像素高度即可；
+bitsPerComponent ：像素的每个颜色分量使用的 bit 数，在 RGB 颜色空间下指定 8 即可；
+bytesPerRow ：位图的每一行使用的字节数，大小至少为 width * bytes per pixel字节。当我们指定 0/NULL 时，系统不仅会为我们自动计算，而且还会进行 cache line alignment 的优化
+space ：就是我们前面提到的颜色空间，一般使用 RGB 即可；
+bitmapInfo ：位图的布局信息.kCGImageAlphaPremultipliedFirst
+
+YYImage:
+它接受一个原始的位图参数 imageRef ，最终返回一个新的解压缩后的位图 newImage ，中间主要经过了以下三个步骤
+使用 CGBitmapContextCreate 函数创建一个位图上下文；
+使用 CGContextDrawImage 函数将原始位图绘制到上下文中；
+使用 CGBitmapContextCreateImage 函数创建一张新的解压缩后的位图。
+
+
+=====总结:
+图片文件只有在确认要显示时,CPU才会对齐进行解压缩.因为解压是非常消耗性能的事情.解压过的图片就不会重复解压,会缓存起来.
+图片渲染到屏幕的过程: 读取文件->计算Frame->图片解码->解码后纹理图片位图数据通过数据总线交给GPU->GPU获取图片Frame->顶点变换计算->光栅化->根据纹理坐标获取每个像素点的颜色值(如果出现透明值需要将每个像素点的颜色*透明度值)->渲染到帧缓存区->渲染到屏幕

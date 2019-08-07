@@ -8,9 +8,48 @@
 
 #import <UIKit/UIKit.h>
 
+/*
+ ViewController生命周期
+ 按照执行顺序排列：
+ 1. initWithCoder：通过nib文件初始化时触发。
+ 2. awakeFromNib：nib文件被加载的时候，会发生一个awakeFromNib的消息到nib文件中的每个对象。
+ 3. loadView：开始加载视图控制器自带的view。
+ 4. viewDidLoad：视图控制器的view被加载完成。
+ 5. viewWillAppear：视图控制器的view将要显示在window上。
+ 6. updateViewConstraints：视图控制器的view开始更新AutoLayout约束。
+ 7. viewWillLayoutSubviews：视图控制器的view将要更新内容视图的位置。
+ 8. viewDidLayoutSubviews：视图控制器的view已经更新视图的位置。
+ 9. viewDidAppear：视图控制器的view已经展示到window上。
+ 10. viewWillDisappear：视图控制器的view将要从window上消失。
+ 11. viewDidDisappear：视图控制器的view已经从window上消失。
+ */
+
+/*
+ 反射机制:
+ 
+ class反射:
+ 通过类名的字符串形式实例化对象。
+ Class class = NSClassFromString(@"student");
+ Student *stu = [[class alloc] init];
+ 将类名变为字符串。
+ Class class =[Student class];
+ NSString *className = NSStringFromClass(class);
+ 
+ SEL的反射:
+ */
+
 // 面试 && ###
 // https://blog.csdn.net/qxuewei/article/details/79418952
 // https://blog.csdn.net/qxuewei/
+
+/*
+ Designated Initializer 指定初始化方法
+ 根据规范，通常选择一个接收参数最多的初始化方法作为指定初始化方法，真正的数据分配和其他相关初始化操作在这个方法中完成。而其他的初始化方法则作为便捷初始化方法去调用这个指定初始化方法
+ 便捷初始化方法也可以不直接调用指定初始化方法，它可以调用其他便捷初始化方法，但不管调用几层，最终是要调用到指定初始化方法的，因为真正的实现操作是在指定初始化方法中完成的
+ 
+ 1.便利初始化函数只能调用自己类中的其他初始化方法
+ 2.指定初始化函数才有资格调用父类的指定初始化函数
+ */
 
 /*
  // 控制器添加其他view或者删除view（或者改变self.view的size）会调viewWillLayoutSubviews
@@ -27,7 +66,7 @@
  
  // view.transform的CGAffineTransformMakeScale(0.9, 0.9); 会改变view的frame
  
- // MAMapView
+ // ##MAMapView##
  // 没网情况下[AMapFoundationKit][Info] : 错误信息：似乎已断开与互联网的连接
  // 位置或者设备方向更新后，会立即调用此函数
  // 每隔15秒自动调用

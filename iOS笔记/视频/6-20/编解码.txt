@@ -1,0 +1,65 @@
+http://www.jianshu.com/p/a6530fa46a88
+https://github.com/manishganvir/iOS-h264Hw-Toolbox
+
+
+
+软编解码：利用CPU做视频的编码和解码
+硬编解码：系统都会提供GPU或者专用处理器来对视频流进行编解码，也就是硬件编码和解码
+
+VideoToolBox的框架来处理硬件的编码和解码
+
+之前提供的AVFoundation框架也使用硬件对视频进行硬编码和解码
+但是编码后直接写入文件，解码后直接显示。
+VideoToolbox框架可以得到编码后的帧结构，也可以得到解码后的原始图像
+因此具有更大的灵活性做一些视频图像处理
+
+VideoToolbox视频编解码前后需要应用的数据结构
+（1）CVPixelBuffer：编码前和解码后的图像数据结构。
+（2）CMTime、CMClock和CMTimebase：时间戳相关。时间以64-bit/32-bit的形式出现。
+（3）CMBlockBuffer：编码后，结果图像的数据结构。
+（4）CMVideoFormatDescription：图像存储方式，编解码器等格式描述。
+（5）CMSampleBuffer：存放编解码前后的视频图像的容器数据结构。
+
+编码后：CMSampleBuffer = CMTime + CMVideoFormatDescription + CMBlockBuffer
+解码后：CMSampleBuffer = CMTime + CMVideoFormatDescription + CVPixelBuffer
+解码前后的视频图像均封装在CMSampleBuffer中
+如果是编码后的图像，以CMBlockBuffe方式存储
+解码后的图像，以CVPixelBuffer存储
+
+硬解码使用：
+应用场景是从网络处传来H264编码后的视频码流，最后显示在手机屏幕上：
+H264的码流由NALU单元组成，NALU单元包含视频图像数据和H264的参数信息。
+其中视频图像数据就是CMBlockBuffer，而H264的参数信息则可以组合成FormatDesc。
+具体来说参数信息包含SPS（Sequence Parameter Set）和PPS（Picture Parameter Set）。
+
+1.提取sps和pps生成format description
+每个NALU的开始码是0x00 00 01，按照开始码定位NALU
+CMVideoFormatDescriptionCreateFromH264ParameterSets函数来构建CMVideoFormatDescriptionRef
+2.提取视频图像数据生成CMBlockBuffer
+CMBlockBufferCreateWithMemoryBlock接口构造CMBlockBufferRef
+
+硬件解码图像显示：
+硬件解码显示的方式有两种：
+(1).通过系统提供的AVSampleBufferDisplayLayer来解码并显示
+AVSampleBufferDisplayLayer是苹果提供的一个专门显示编码后的H264数据的显示层，它是CALayer的子类
+该层内置了硬件解码功能，将原始的CMSampleBuffer解码后的图像直接显示在屏幕上面
+显示的接口为[_avslayer enqueueSampleBuffer:sampleBuffer];
+
+(2).通过VTDecompression接口来，将CMSampleBuffer解码成图像，将图像通过UIImageView或者OpenGL上显示
+调用VTDecompresSessionDecodeFrame接口进行解码操作
+
+
+硬编码使用:
+通过摄像头来采集图像，然后将采集到的图像，通过硬编码的方式进行编码，最后编码后的数据将其组合成H264的码流通过网络传播
+1、摄像头采集数据
+iOS系统提供了AVCaptureSession来采集摄像头的图像数据。设定好session的采集解析度。再设定好input和output即可。output设定的时候，需要设置delegate和输出队列。在delegate方法，处理采集好的图像
+图像输出的格式，是未编码的CMSampleBuffer形式
+2、使用VTCompressionSession进行硬编码
+VTCompressionSession初始化的时候，一般需要给出width宽，height长，编码器类型kCMVideoCodecType_H264等。然后通过调用VTSessionSetProperty接口设置帧率等属性
+最后需要设定一个回调函数，这个回调是视频图像编码成功后调用。全部准备好后，使用VTCompressionSessionCreate创建session
+
+摄像头采集后的图像是未编码的CMSampleBuffer形式，利用给定的接口函数CMSampleBufferGetImageBuffer从中提取出CVPixelBufferRef，
+使用硬编码接口VTCompressionSessionEncodeFrame来对该帧进行硬编码，编码成功后，会自动调用session初始化时设置的回调函数
+
+利用回调函数，将因编码成功的CMSampleBuffer转换成H264码流，通过网络传播。
+基本上是硬解码的一个逆过程。解析出参数集SPS和PPS，加上开始码后组装成NALU。提取出视频数据，将长度码转换成开始码，组长成NALU。将NALU发送出去

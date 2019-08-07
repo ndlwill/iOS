@@ -8,7 +8,155 @@
 
 #import <UIKit/UIKit.h>
 
+// ##Network##
+// https://github.com/kangzubin/XMNetworking
+
+// ##Demo##
+// https://github.com/boai/BADemoTest
+
+// apple
+// https://developer.apple.com/downloads/
+// iOS Developer Library
+
+/*
+ 支持本地的文件放在<本地代号>.lproj
+ eg:en-US.lproj    en是语言代号 US是国家代号
+ 本地代号由“语言代号+国家（或地区）代号”
+ */
+
+// ##OpenGL##
+// https://blog.csdn.net/wangdingqiaoit/article/category/2107037
+// https://learnopengl-cn.github.io/
+
+// js
+// https://github.com/guanyuxin/baogame
+
+// ##shader##
+// https://www.shadertoy.com/view/Ms2SD1
+
+// ##OC Vendor##
+// DOUAudioStreamer
+// iCarousel
+// libwebp
+// pop
+// RegexKitLite
+// ZipArchive
+// TTTAttributedLabel
+// https://github.com/samsoffes/sskeychain
+// https://github.com/calimarkus/JDStatusBarNotification
+
+// ##AV##
+// https://www.raywenderlich.com/30200/avfoundation-tutorial-adding-overlays-and-animations-to-videos
+
+// YXM
+// http://www.cnblogs.com/YouXianMing/archive/2016/01.html
+
+// ##美团##
+// http://www.jianshu.com/p/0ccf4ea14e79
+
+// 其他
+// effecthub.com
+// http://blog.it2048.cn/article_googlejx.html
+
+// ##面试##
+// https://www.jianshu.com/p/1798ba01e9ef
+// https://zhuanlan.zhihu.com/c_154646059
+// https://hit-alibaba.github.io/interview/
+// 各个大厂
+// https://www.jianshu.com/nb/34904451
+
+// AsyncDisplaykit
+// http://texturegroup.org/docs/getting-started.html
+
+// YY
+// https://blog.ibireme.com/
+
 // 业务逻辑: 处理数据
+// 反序列化 / 数据解析 : 把服务器返回给客户端的二进制数据转换成客户端可以直接使用的OC对象
+
+// 事件的传递和响应机制
+// https://www.jianshu.com/p/2e074db792ba
+/*
+ ###事件的产生和传递###
+ 
+ 事件的产生:
+ 发生触摸事件后，系统会将该事件加入到一个由UIApplication管理的事件队列中,为什么是队列而不是栈？因为队列的特点是FIFO，即先进先出，先产生的事件先处理才符合常理，所以把事件添加到队列。
+ UIApplication会从事件队列中取出最前面的事件，并将事件分发下去以便处理，通常，先发送事件给应用程序的主窗口（keyWindow）。
+ 主窗口会在视图层次结构中找到一个最合适的视图来处理触摸事件，这也是整个事件处理过程的第一步。
+ 找到合适的视图控件后，就会调用视图控件的touches方法来作具体的事件处理
+ 事件的传递:
+ 触摸事件的传递是从父控件传递到子控件
+ 也就是UIApplication->window->寻找处理事件最合适的view
+ 注 意: 如果父控件不能接受触摸事件，那么子控件就不可能接收到触摸事件
+ 
+ 1.首先判断主窗口（keyWindow）自己是否能接受触摸事件
+ 2.判断触摸点是否在自己身上
+ 3.子控件数组中从后往前遍历子控件，重复前面的两个步骤（所谓从后往前遍历子控件，就是首先查找子控件数组中最后一个元素，然后执行1、2步骤）
+ 4.view，比如叫做fitView，那么会把这个事件交给这个fitView，再遍历这个fitView的子控件，直至没有更合适的view为止。
+ 5.如果没有符合条件的子控件，那么就认为自己最合适处理这个事件，也就是自己是最合适的view
+ 
+ UIView不能接收触摸事件的三种情况：
+ 不允许交互：userInteractionEnabled = NO
+ 隐藏：如果把父控件隐藏，那么子控件也会隐藏，隐藏的控件不能接受事件
+ 透明度：如果设置一个控件的透明度<0.01，会直接影响子控件的透明度。alpha：0.0~0.01为透明
+ 
+ 寻找最合适的view底层剖析:
+ hitTest:withEvent:方法
+ pointInside方法
+ 
+ 拦截事件的处理:
+ 正因为hitTest：withEvent：方法可以返回最合适的view，所以可以通过重写hitTest：withEvent：方法，返回指定的view作为最合适的view。
+ 不管点击哪里，最合适的view都是hitTest：withEvent：方法中返回的那个view。
+ 通过重写hitTest：withEvent：，就可以拦截事件的传递过程，想让谁处理事件谁就处理事件
+ 
+ 事件传递给谁，就会调用谁的hitTest:withEvent:方法。
+ 如果hitTest:withEvent:方法中返回nil，那么调用该方法的控件本身和其子控件都不是最合适的view，也就是在自己身上没有找到更合适的view。那么最合适的view就是该控件的父控件
+
+ 技巧：想让谁成为最合适的view就重写谁自己的父控件的hitTest:withEvent:方法返回指定的子控件，或者重写自己的hitTest:withEvent:方法 return self。但是，建议在父控件的hitTest:withEvent:中返回子控件作为最合适的view
+ 
+ hitTest：withEvent：中return nil的意思是调用当前hitTest：withEvent：方法的view不是合适的view，子控件也不是合适的view
+ 
+ hit:withEvent:方法底层会调用pointInside:withEvent:方法判断点在不在方法调用者的坐标系上
+ 
+ pointInside:withEvent:方法：
+ pointInside:withEvent:方法判断点在不在当前view上（方法调用者的坐标系上）如果返回YES，代表点在方法调用者的坐标系上;返回NO代表点不在方法调用者的坐标系上，那么方法调用者也就不能处理事件
+ 
+ ###事件的响应###
+ 触摸事件处理的整体过程:
+ 1>用户点击屏幕后产生的一个触摸事件，经过一系列的传递过程后，会找到最合适的视图控件来处理这个事件2>找到最合适的视图控件后，就会调用控件的touches方法来作具体的事件处理touchesBegan…touchesMoved…touchedEnded…3>这些touches方法的默认做法是将事件顺着响应者链条向上传递（也就是touch方法默认不处理事件，只传递事件），将事件交给上一个响应者进行处理
+
+ 响应者链条：在iOS程序中无论是最后面的UIWindow还是最前面的某个按钮，它们的摆放是有前后关系的，一个控件可以放到另一个控件上面或下面，那么用户点击某个控件时是触发上面的控件还是下面的控件呢，这种先后关系构成一个链条就叫“响应者链”。也可以说，响应者链是由多个响应者对象连接起来的链条
+ 响应者对象：能处理事件的对象，也就是继承自UIResponder的对象
+
+ 1>如果当前view是控制器的view，那么控制器就是上一个响应者，事件就传递给控制器；如果当前view不是控制器的view，那么父视图就是当前view的上一个响应者，事件就传递给它的父视图
+ 2>在视图层次结构的最顶级视图，如果也不能处理收到的事件或消息，则其将事件或消息传递给window对象进行处理
+ 3>如果window对象也不处理，则其将事件或消息传递给UIApplication对象
+ 4>如果UIApplication也不能处理该事件或消息，则将其丢弃
+ 
+ 事件的传递和响应的区别：
+ 事件的传递是从上到下（父控件到子控件），事件的响应是从下到上（顺着响应者链条向上传递：子控件到父控件
+ */
+
+/*
+ __bridge只做类型转换，但是不修改对象（内存）管理权:
+ NSURL *url = [[NSURL alloc] initWithString:@"http://www.baidu.com"];
+ CFURLRef ref = (__bridge CFURLRef)url;
+ 
+ __bridge_retained（也可以使用CFBridgingRetain）将Objective-C的对象转换为Core Foundation的对象，同时将对象（内存）的管理权交给我们，后续需要使用CFRelease或者相关方法来释放对象
+ OC->CF
+ NSURL *url = [[NSURL alloc] initWithString:@"http://www.baidu.com"];
+ CFURLRef ref = (__bridge_retained CFURLRef)url;
+ CFRelease(ref);
+ 
+ __bridge_transfer（也可以使用CFBridgingRelease）将Core Foundation的对象转换为Objective-C的对象，同时将对象（内存）的管理权交给ARC
+ CF->OC
+ CFStringRef cfString= CFURLCreateStringByAddingPercentEscapes(
+ NULL,
+ (__bridge CFStringRef)text,
+ NULL,
+ CFSTR("!*’();:@&=+$,/?%#[]"), CFStringConvertNSStringEncodingToEncoding(NSUTF8StringEncoding));
+ NSString *ocString = (__bridge_transfer CFStringRef)cfString;
+ */
 
 // MQTT
 // https://www.runoob.com/w3cnote/mqtt-intro.html

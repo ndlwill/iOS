@@ -566,7 +566,8 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
     int length = sizeof(array) / sizeof(int);
 //    bubbleSort_C(array, length);
 //    selectionSort_C(array, length);
-    quickSort_C(array, 0, length - 1);
+    insertionSort_C(array, length);
+//    quickSort_C(array, 0, length - 1);
     for (int i = 0; i < length; i++) {
         printf("%d\n", array[i]);
     }
@@ -1941,6 +1942,39 @@ NSLog(@"viewDidLoad 22");
 //    });
     
     // TODO:start new test
+    
+    
+    
+    // ===test GCD===
+//    // 创建队列组
+//    dispatch_group_t group = dispatch_group_create();
+//    // 获取全局并发队列
+//    dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
+//
+//    dispatch_group_enter(group);
+//    dispatch_group_async(group, queue, ^{
+//        NSLog(@"before dispatch_group_async - 1");
+//        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//            NSLog(@"dispatch_group_async-1");
+//            dispatch_group_leave(group);
+//        });
+//    });
+//
+//    dispatch_group_enter(group);
+//    dispatch_group_async(group, queue, ^{
+//        NSLog(@"before dispatch_group_async - 2");
+//        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//            NSLog(@"dispatch_group_async-2");
+//            dispatch_group_leave(group);
+//        });
+//    });
+//
+//    // 当并发队列组中的任务执行完毕后才会执行这里的代码
+//    dispatch_group_notify(group, dispatch_get_main_queue(), ^{
+//        NSLog(@"dispatch_group_notify");
+//    });
+    
+
 }
 
 - (BOOL)runUntilBlock:(BOOL(^)())block timeout:(NSTimeInterval)timeout

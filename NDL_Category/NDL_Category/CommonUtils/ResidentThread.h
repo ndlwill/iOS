@@ -330,6 +330,10 @@ CHECK_FOR_FORK();
  [array enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
  // 这里被一个局部@autoreleasepool包围着
  }];
+ 
+ kCFRunLoopEntry(1)// 第一次进入会创建一个自动释放池kCFRunLoopBeforeWaiting(32)// 进入休眠状态前先销毁自动释放池，
+ 再创建一个新的自动释放池
+ kCFRunLoopExit(128)// 退出 RunLoop 时销毁最后一次创建的自动释放池
  */
 
 /*

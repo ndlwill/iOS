@@ -39,6 +39,11 @@ Copyright © 2014 AutoNavi. All Rights Reserved.
 Copyright © 2014 AutoNavi. All Rights Reserved.
 
 
+## CTMediator
+
+MIT
+
+
 ## CocoaLumberjack
 
 Software License Agreement (BSD License)
