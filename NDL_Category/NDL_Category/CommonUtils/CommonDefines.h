@@ -39,11 +39,12 @@
 /*
  传统路由方式JLRouter:
  保存一个全局的Map，key是url，value是对应存放block的数组，url和block都会常驻在内存中，当打开一个URL时，JLRoutes就可以遍历 , 这个全局的map，通过url来执行对应的block
+ 
  CTMediator:
  */
 
 /*
- 通信技术直面的是网络通信物理层 （交换机、路由器、天线、网络制式等）
+ 通信技术直面的是网络通信物理层 （交换机、路由器、天线等）
  */
 
 // 网口（interface）
@@ -52,11 +53,261 @@
 
 // WebRTC（网页实时通信Web Real-Time Communication）
 
-// 4分钟就是2个MSL，每个MSL是2分钟。MSL就是maximium segment lifetime——最长报文寿命
+
+// https://blog.csdn.net/whgtheone/article/category/7778545
+// https://www.imooc.com/article/29367
+// https://www.imooc.com/article/29368
+/*
+ ##建连接时SYN超时##
+ 
+ 如果server端接到了clien发的SYN后回了SYN-ACK后client掉线了，server端没有收到client回来的ACK，那么，这个连接处于一个中间状态，即没成功，也没失败。于是，server端如果在一定时间内没有收到的TCP会重发SYN-ACK。在Linux下，默认重试次数为5次，重试的间隔时间从1s开始每次都翻售，5次的重试时间间隔为1s, 2s, 4s, 8s, 16s，总共31s，第5次发出后还要等32s都知道第5次也超时了，所以，总共需要 1s + 2s + 4s+ 8s+ 16s + 32s = 2^6 -1 = 63s，TCP才会把断开这个连接
+ */
+
+/*
+ ##关于ISN的初始化##
+ 
+ ISN是不能hard code的，不然会出问题的——比如：如果连接建好后始终用1来做ISN，如果client发了30个segment过去，但是网络断了，于是 client重连，又用了1做ISN，但是之前连接的那些包到了，于是就被当成了新连接的包，此时，client的Sequence Number 可能是3，而Server端认为client端的这个号是30了
+ 
+ RFC793中说,ISN会和一个假的时钟绑在一起，这个时钟会在每4微秒对ISN做加一操作，直到超过2^32，又从0开始。这样，一个ISN的周期大约是4.55个小时。因为，我们假设我们的TCP Segment在网络上的存活时间不会超过Maximum Segment Lifetime（缩写为MSL），所以，只要MSL的值小于4.55小时，那么，我们就不会重用到ISN
+ 
+ MSL就是maximium segment lifetime——最长报文寿命
+ */
+
+/*
+ ###MSL 和 TIME_WAIT###
+ 
+ 从TIME_WAIT状态到CLOSED状态，有一个超时设置，这个超时设置是 2*MSL（RFC793定义了MSL为2分钟，Linux设置成了30s）
+ 
+ 1）TIME_WAIT确保有足够的时间让对端收到了ACK，如果被动关闭的那方没有收到Ack，就会触发被动端重发Fin，一来一去正好2个MSL
+ 2）有足够的时间让这个连接不会跟后面的连接混在一起
+ */
+
+/*
+ MARK:###TCP的RTT算法###
+ 好像就是在发送端发包时记下t0，然后接收端再把这个ack回来时再记一个t1，于是RTT = t1 – t0。没那么简单，这只是一个采样，不能代表普遍情况
+ 
+ 1.经典算法
+ 1）首先，先采样RTT，记下最近好几次的RTT值。
+ 2）然后做平滑计算SRTT（ Smoothed RTT），公式为：（其中的 α 取值在0.8 到 0.9之间，这个算法英文叫Exponential weighted moving average，中文叫：加权移动平均）
+ SRTT = ( α * SRTT ) + ((1- α) * RTT)
+ 3）开始计算RTO。公式如下：
+ RTO = min [ UBOUND,  max [ LBOUND,   (β * SRTT) ]  ]
+ 
+ 其中：
+ UBOUND是最大的timeout时间，上限值
+ LBOUND是最小的timeout时间，下限值
+ β 值一般在1.3到2.0之间
+ 
+ 2.Karn / Partridge 算法
+ 上面的这个算法在重传的时候会出有一个终极问题——你是用第一次发数据的时间和ack回来的时间做RTT样本值，还是用重传的时间和ACK回来的时间做RTT样本值
+ 
+ 这个算法的最大特点是——忽略重传，不把重传的RTT做采样
+ 这样一来，又会引发一个大BUG——如果在某一时间，网络闪动，突然变慢了，产生了比较大的延时，这个延时导致要重转所有的包（因为之前的RTO很小），于是，因为重转的不算，所以，RTO就不会被更新，这是一个灾难。 于是Karn算法用了一个取巧的方式——只要一发生重传，就对现有的RTO值翻倍（这就是所谓的 Exponential backoff），很明显，这种死规矩对于一个需要估计比较准确的RTT也不靠谱
+ 
+ 3.Jacobson / Karels 算法
+ 前面两种算法用的都是“加权移动平均”，这种方法最大的毛病就是如果RTT有一个大的波动的话，很难被发现，因为被平滑掉了
+ 
+ 这个算法引入了最新的RTT的采样和平滑过的SRTT的差距做因子来计算。
+ 公式如下：（其中的DevRTT是Deviation RTT的意思）
+ SRTT = SRTT + α (RTT – SRTT) ：计算平滑RTT；
+ DevRTT = (1-β)*DevRTT + β*(|RTT-SRTT|) ：计算平滑RTT和真实的差距（加权移动平均）；
+ RTO= μ * SRTT + ∂ *DevRTT ： 神一样的公式
+ 在Linux下，α = 0.125，β = 0.25， μ = 1，∂ = 4 ——这就是算法中的“调得一手好参数”
+ 这个算法在被用在今天的TCP协议中
+ */
+
+/*
+ MARK:###TCP 的滑动窗口协议###
+ TCP必需要解决的可靠传输以及包乱序（reordering）的问题，所以，TCP必需要知道网络实际的数据处理带宽或是数据处理速度，这样才不会引起网络拥塞，导致丢包
+ 
+ Sliding Window,TCP 头里有一个字段叫 Window，又叫 Advertised-Window，这个字段是接收端告诉发送端自己还有多少缓冲区可以接收数据。于是发送端就可以根据这个接收端的处理能力来发送数据，而不会导致接收端处理不过来
+ TCP通过Sliding Window来做流控（Flow Control）
+ 
+ TCP缓冲区:
+ 接收端LastByteRead指向了TCP缓冲区中读到的位置，NextByteExpected指向的地方是收到的连续包的最后一个位置，LastByteRcved指向的是收到的包的最后一个位置，我们可以看到中间有些数据还没有到达，所以有数据空白区
+ 发送端的LastByteAcked指向了被接收端Ack过的位置（表示成功发送确认），LastByteSent表示发出去了，但还没有收到成功确认的Ack，LastByteWritten指向的是上层应用正在写的地方
+ 
+ 接收端在给发送端回ACK中会汇报自己的AdvertisedWindow = MaxRcvBuffer – LastByteRcvd – 1
+ 而发送方会根据这个窗口来控制发送数据的大小，以保证接收方可以处理
+ 
+ 见图:
+ 黑模型就是滑动窗口
+ #1 已收到ack确认的数据。
+ #2 发还没收到ack的。
+ #3 在窗口中还没有发出的（接收方还有空间）。
+ #4 窗口以外的数据（接收方没空间）
+
+ Zero Window:
+ 如果Window变成0了，发送端就不发数据了
+ 接收方一会儿Window size 可用了，怎么通知发送端
+
+ TCP使用了Zero Window Probe技术，缩写为ZWP
+ 发送端在窗口变成0后，会发ZWP的包给接收方，让接收方来ack他的Window尺寸，一般这个值会设置成3次，第次大约30-60秒
+ 如果3次过后还是0的话，有的TCP实现就会发RST把链接断了
+ 
+ 最大传输单元（Maximum Transmission Unit，MTU）
+ 对于以太网来说，MTU是1500字节，除去TCP+IP头的40个字节，真正的数据传输可以有1460，这就是所谓的MSS（Max Segment Size）
+ 
+ Silly Window Syndrome就是“糊涂窗口综合症”:
+ 如果我们的接收方太忙了，来不及取走Receive Windows里的数据，那么，就会导致发送方越来越小。到最后，如果接收方腾出几个字节并告诉发送方现在有几个字节的window，而我们的发送方会义无反顾地发送这几个字节
+ 为了几个字节，要达上这么大的开销，这太不经济了
+ 避免对小的window size做出响应，直到有足够大的window size再响应，这个思路可以同时实现在sender和receiver两端
+ 在receiver端，如果收到的数据导致window size小于某个值，可以直接ack(0)回sender，这样就把window给关闭了，也阻止了sender再发数据过来，等到receiver端处理了一些数据后windows size 大于等于了MSS，或者，receiver buffer有一半为空，就可以把window打开让send 发送数据过来
+ 由Sender端引起,思路也是延时处理，他有两个主要的条件：1）要等到 Window Size>=MSS 或是 Data Size >=MSS，2）收到之前发送数据的ack回包，他才会发数据，否则就是在攒数据。
+ */
+
+/*
+ MARK:###拥塞控制###
+ 拥塞处理 – Congestion Handling
+ Sliding Window需要依赖于连接的发送端和接收端，其并不知道网络中间发生了什么
+ TCP通过一个timer采样了RTT并计算RTO
+ TCP不能忽略网络上发生的事情，而无脑地一个劲地重发数据
+ 
+ TCP 的拥塞控制相关过程:
+ TCP 的拥塞控制主要是四个算法：1）慢启动；2）拥塞避免；3）拥塞发生；4）快速恢复
+ cwnd 全称 Congestion Window
+ RTT(Round-Trip Time):往返时延。是指数据从网络一端传到另一端所需的时间
+ 
+ 慢启动算法:Slow Start
+ 慢启动的意思是，刚刚加入网络的连接，一点一点地提速
+ TCP在连接过程的三次握手完成后，开始传数据，并不是一开始向网络通道中发送大量的数据包，这样很容易导致网络中路由器缓存空间耗尽，从而发生拥塞
+ TCP使用了一个叫慢启动门限(ssthresh)的变量，一旦cwnd>=ssthresh（大多数TCP的实现，通常大小都是65536），慢启动过程结束，拥塞避免阶段开始
+ 1）连接建好的开始先初始化 cwnd = 1，表明可以传一个 MSS（Max Segment Size）大小的数据。
+ 2）每当收到一个 ACK，cwnd++; 呈线性上升。
+ 3）每当过了一个 RTT，cwnd = cwnd*2; 呈指数上升。
+ 4）还有一个 ssthresh（slow start threshold），是一个上限，当 cwnd >= ssthresh 时，就会进入「拥塞避免算法」。
+ 所以，我们可以看到，如果网速很快的话，ACK 也会返回得快，RTT 也会短，那么，这个慢启动就一点也不慢
+ 
+ 拥塞避免算法:
+ 拥塞避免：cwnd的值不再指数级往上升，开始加法增加。此时当窗口中所有的报文段都被确认时，cwnd的大小加1，cwnd的值就随着RTT开始线性增加，这样就可以避免增长过快导致网络拥塞，慢慢的增加调整到网络的最佳值
+ 一般来说 ssthresh 的值是 65535 字节，当 cwnd 达到这个值时后，算法如下：
+ 1）收到一个 ACK 时，cwnd = cwnd + 1/cwnd。
+ 2）当每过一个 RTT 时，cwnd = cwnd + 1。
+ 这样就可以避免增长过快导致网络拥塞，慢慢的增加调整到网络的最佳值。很明显，是一个线性上升的算法
+ 
+ 拥塞状态时的算法:
+ 当丢包的时候，会有以下两种情况
+ 1）等到RTO超时，重传数据包
+ sshthresh =  cwnd /2
+ cwnd 重置为 1
+ 进入慢启动过程
+ 2）Fast Retransmit快速重传算法，也就是在收到3个duplicate(完全一样的) ACK时就开启重传，而不用等到RTO超时
+ TCP Tahoe的实现和RTO超时一样。
+ TCP Reno的实现是:
+ cwnd = cwnd /2
+ sshthresh = cwnd
+ 进入快速恢复算法——Fast Recovery
+ 
+ 4.快速恢复算法 – Fast Recovery:
+ 快速重传和快速恢复算法一般同时使用
+ 
+ 进入Fast Recovery之前，cwnd 和 sshthresh已被更新：
+ cwnd = cwnd /2
+ sshthresh = cwnd
+ 
+ 真正的Fast Recovery算法如下：
+ cwnd = sshthresh  + 3 * MSS （3的意思是确认有3个数据包被收到了）
+ 重传Duplicated ACKs指定的数据包
+ 如果再收到 duplicated Acks，那么cwnd = cwnd +1
+ 如果收到了新的Ack，那么，cwnd = sshthresh ，然后就进入了拥塞避免的算法了。
+
+ TCP New Reno:
+ 当sender这边收到了3个Duplicated Acks，进入Fast Retransimit模式，开发重传重复Acks指示的那个包。如果只有这一个包丢了，那么，重传这个包后回来的Ack会把整个已经被sender传输出去的数据ack回来。如果没有的话，说明有多个包丢了。我们叫这个ACK为Partial ACK。
+ 一旦Sender这边发现了Partial ACK出现，那么，sender就可以推理出来有多个包被丢了，于是乎继续重传sliding window里未被ack的第一个包。直到再也收不到了Partial Ack，才真正结束Fast Recovery这个过程
+ */
+
+/*
+ MARK:###TCP重传机制###
+ 
+ TCP重传机制我们知道Timeout的设置对于重传非常重要
+ 设长了，重发就慢，丢了老半天才重发，没有效率，性能差；
+ 设短了，会导致可能并没有丢就重发。于是重发的就快，会增加网络拥塞，导致更多的超时，更多的超时导致更多的重发
+ 
+ 这个超时时间在不同的网络的情况下，根本没有办法设置一个死的值。只能动态地设置。 为了动态地设置，TCP引入了RTT——Round Trip Time，也就是一个数据包从发出去到回来的时间。这样发送端就大约知道需要多少的时间，从而可以方便地设置Timeout——RTO（Retransmission TimeOut），以让我们的重传机制更高效
+
+ TCP要保证所有的数据包都可以到达，所以，必需要有重传机制
+ TCP通过在发送数据时设置一个重传定时器来监控数据的丢失状态，如果重传定时器溢出时还没收到确认信号，则重传该数据
+ RTT(Round Trip Time)：一个连接的往返时间，即数据发送时刻到接收到确认的时刻的差值；
+ RTO(Retransmission Time Out)：重传超时时间，即从数据发送时刻算起，超过这个时间便执行重传。
+ RTT和RTO 的关系是：由于网络波动的不确定性，每个RTT都是动态变化的，所以RTO也应随着RTT动态变化
+ 
+ 
+ 接收端给发送端的Ack确认只会确认最后一个连续的包，比如，发送端发了1,2,3,4,5一共五份数据，接收端收到了1，2，于是回ack 3(对2的ack)，然后收到了4（注意此时3没收到），此时的TCP会怎么办？我们要知道，因为正如前面所说的，SeqNum和Ack是以字节数为单位，所以ack的时候，不能跳着确认，只能确认最大的连续收到的包，不然，发送端就以为之前的都收到了
+ 1.超时重传机制
+ 一种是不回ack，死等3，当发送方发现收不到3的ack超时后，会重传3。一旦接收方收到3后，会ack 回 4——意味着3和4都收到了
+ 这种方式会有比较严重的问题，那就是因为要死等3，所以会导致4和5即便已经收到了，而发送方也完全不知道发生了什么事，因为没有收到Ack，所以，发送方可能会悲观地认为也丢了，所以有可能也会导致4和5的重传
+ 对此有两种选择：
+ 一种是仅重传timeout的包。也就是第3份数据。
+ 另一种是重传timeout后所有的数据，也就是第3，4，5这三份数据
+ 这两种方式有好也有不好。第一种会节省带宽，但是慢，第二种会快一点，但是会浪费带宽，也可能会有无用功。但总体来说都不好。因为都在等timeout，timeout可能会很长
+ 2.快速重传机制
+ TCP引入了一种叫Fast Retransmit 的算法，不以时间驱动，而以数据驱动重传。也就是说，如果，包没有连续到达，就ack最后那个可能被丢了的包，如果发送方连续收到3次相同的ack，就重传。Fast Retransmit的好处是不用等timeout了再重传
+ 比如：如果发送方发出了1，2，3，4，5份数据，第一份先到送了，于是就ack回2，结果2因为某些原因没收到，3到达了，于是还是ack回2，后面的4和5都到了，但是还是ack回2，因为2还是没有收到，于是发送端收到了三个ack=2的确认，知道了2还没有到，于是就马上重转2。然后，接收端收到了2，此时因为3，4，5都收到了，于是ack回6
+ Fast Retransmit只解决了一个问题，就是timeout的问题，它依然面临一个艰难的选择，就是，是重传之前的一个还是重传所有的问题
+ 3.SACK 方法
+ 另外一种更好的方式叫：Selective Acknowledgment (SACK)
+ 这种方式需要在TCP头里加一个SACK的东西，ACK还是Fast Retransmit的ACK,SACK则是汇报收到的数据碎版
+ 
+ 在发送端就可以根据回传的SACK来知道哪些数据到了，哪些没有到。于是就优化了Fast Retransmit的算法
+ 这里还需要注意一个问题——接收方Reneging，所谓Reneging的意思就是接收方有权把已经报给发送端SACK里的数据给丢了。这样干是不被鼓励的，因为这个事会把问题复杂化了，但是，接收方这么做可能会有些极端情况，比如要把内存给别的更重要的东西。所以，发送方也不能完全依赖SACK，还是要依赖ACK，并维护Time-Out，如果后续的ACK没有增长，那么还是要把SACK的东西重传
+ 
+ 4.Duplicate SACK – 重复收到数据的问题
+ Duplicate SACK又称D-SACK，其主要使用了SACK来告诉发送方有哪些数据被重复接收了
+ 
+ D-SACK使用了SACK的第一个段来做标志：
+ 如果SACK的第一个段的范围被ACK所覆盖，那么就是D-SACK
+ 如果SACK的第一个段的范围被SACK的第二个段覆盖，那么就是D-SACK
+ 
+ ACK丢包:
+ 发送端重传了第一个数据包（3000-3499），于是接收端发现重复收到，于是回了一个SACK=3000-3500，因为ACK都到了4000意味着收到了4000之前的所有数据，所以这个SACK就是D-SACK--旨在告诉发送端我收到了重复的数据，而且我们的发送端还知道，数据包没有丢，丢的是ACK包
+ 
+ 网络延误:
+ 网络包（1000-1499）被网络给延误了，导致发送方没有收到ACK，而后面到达的三个包触发了“Fast Retransmit算法”，所以重传，但重传时，被延误的包又到了，所以，回了一个SACK=1000-1500，因为ACK已到了3000，所以，这个SACK是D-SACK——标识收到了重复的包
+ 发送端知道之前因为“Fast Retransmit算法”触发的重传不是因为发出去的包丢了，也不是因为回应的ACK包丢了，而是因为网络延时了
+ 
+ 
+ 引入了D-SACK，有这么几个好处：
+ 1）可以让发送方知道，是发出去的包丢了，还是回来的ACK包丢了。
+ 2）是不是自己的timeout太小了，导致重传。
+ 3）网络上出现了先发的包后到的情况（又称reordering）
+ 4）网络上是不是把我的数据包给复制了
+ */
+
 /*
  ##网络通信协议##
- 互联网的核心是一系列协议
  
+ 网络层的责任是提供点到点(hop by hop)的服务，而传输层（TCP/UDP）则提供端到端(end to end)的服务
+ 
+ 第四层——Transport层，IP在第三层——Network层，ARP在第二层——Data Link层，在第二层上的数据，我们叫Frame，在第三层上的数据叫Packet，第四层的数据叫Segment
+ 
+ TCP为传输控制层协议，为面向连接、可靠的、点到点的通信；
+ UDP为用户数据报协议，非连接的不可靠的点到多点的通信；
+ TCP侧重可靠传输，UDP侧重快速传输
+ 
+ TCP的包是没有IP地址的，那是IP层上的事，但是有源端口和目标端口
+ 
+ Sequence Number：是包的序号，用来解决网络包乱序（reordering）问题。
+ SeqNum的增加是和传输的字节数相关的
+ 
+ Acknowledgement Number：就是ACK——用于确认收到，用来解决不丢包的问题。
+ Window：又叫Advertised-Window，也就是著名的滑动窗口（Sliding Window），用于解决流控的。
+ TCP Flag ：也就是包的类型，主要是用于操控TCP的状态机的
+ 
+ 对于建链接的3次握手：主要是要初始化Sequence Number 的初始值。通信的双方要互相通知对方自己的初始化的Sequence Number（缩写为ISN：Inital Sequence Number）——所以叫SYN，全称Synchronize Sequence Numbers
+ 
+
+ TCP所谓的“连接”，其实只不过是在通讯的双方维护一个“连接状态”，让它看上去好像有连接一样。所以，TCP的状态变换是非常重要的
+ 
+ HTTP协议是基于TCP连接的，是应用层协议，主要解决如何包装数据。Socket是对TCP/IP协议的封装，Socket本身并不是协议，而是一个调用接口（API），通过Socket，我们才能使用TCP/IP协议
+ Socket包含进行网络通信必须的五种信息：连接使用的协议，本地主机的IP地址，本地进程的协议端口，远地主机的IP地址，远地进程的协议端口
+ 建立Socket连接至少需要一对套接字，其中一个运行于客户端，称为ClientSocket，另一个运行于服务器端，称为ServerSocket
+ 套接字之间的连接过程分为三个步骤：服务器监听，客户端请求，连接确认
+ 服务器监听：服务器端套接字并不定位具体的客户端套接字，而是处于等待连接的状态，实时监控网络状态，等待客户端的连接请求。
+ 客户端请求：指客户端的套接字提出连接请求，要连接的目标是服务器端的套接字。为此，客户端的套接字必须首先描述它要连接的服务器的套接字，指出服务器端套接字的地址和端口号，然后就向服务器端套接字提出连接请求
+ 连 接确认：当服务器端套接字监听到或者说接收到客户端套接字的连接请求时，就响应客户端套接字的请求，建立一个新的线程，把服务器端套接字的描述发给客户 端，一旦客户端确认了此描述，双方就正式建立连接。而服务器端套接字继续处于监听状态，继续接收其他客户端套接字的连接请求。
+ 
+ 
+ 互联网的核心是一系列协议
  "实体层":
  它就是把电脑连接起来的物理手段(把电脑连起来，可以用光缆、电缆、双绞线、无线电波等方式)
  它主要规定了网络的一些电气特性，作用是负责传送0和1的电信号

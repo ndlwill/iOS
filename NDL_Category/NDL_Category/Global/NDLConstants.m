@@ -6,6 +6,9 @@
 //  Copyright © 2018年 ndl. All rights reserved.
 //
 
+// 简历
+// https://www.jianshu.com/p/439fdef89e0e
+
 // swift vendor
 // https://github.com/SwiftOldDriver/SwiftMarch
 
@@ -13,14 +16,17 @@
 // https://github.com/zixun/CocoaChinaPlus
 // https://github.com/Light413/dctt
 // https://github.com/hrscy/TodayNews
+// https://github.com/spicyShrimp/U17
 
 // swift教程
 // http://www.swift51.com/swift4.0/chapter2/chapter2.html
+// https://developer.apple.com/swift/
 
 // swift第三方
 // RxSwift
 // https://www.jianshu.com/p/f61a5a988590
 // https://beeth0ven.github.io/RxSwift-Chinese-Documentation/
+// https://www.jianshu.com/u/5981a4f71db5
 
 // YTKNetwork是比较经典的利用OOP思想（面向对象）
 

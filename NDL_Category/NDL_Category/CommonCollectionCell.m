@@ -14,6 +14,7 @@
     [super awakeFromNib];
     
     self.contentView.backgroundColor = [UIColor cyanColor];
+    
 }
 
 @end

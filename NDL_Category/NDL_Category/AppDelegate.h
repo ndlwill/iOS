@@ -8,6 +8,12 @@
 
 #import <UIKit/UIKit.h>
 
+// 灭霸
+// https://juejin.im/post/5cc652adf265da03540316e3
+
+// 面向对象设计的六大设计原则
+// https://juejin.im/post/5b9526c1e51d450e69731dc2
+
 // ##Network##
 // https://github.com/kangzubin/XMNetworking
 
@@ -62,6 +68,7 @@
 // https://www.jianshu.com/p/1798ba01e9ef
 // https://zhuanlan.zhihu.com/c_154646059
 // https://hit-alibaba.github.io/interview/
+// https://www.jianshu.com/p/e709fde38de3
 // 各个大厂
 // https://www.jianshu.com/nb/34904451
 
@@ -346,4 +353,34 @@ ndlwill1020@gmail.com
  };
  
  而对于 B，先不要管 A a，也就是先去掉 A a 成员结构体 B 算出其为 16，所以最后结果为 16+16=32
+ */
+
+/*
+ 策略设计模式:
+ 概念：定义一系列的算法，并且将每个算法封装起来，算法之间还可以互相替换。这种设计模式称为策略模式。
+ 为了解决if-else和switch-case的问题
+ */
+
+// GPS定位轨迹抽稀之道格拉斯-普克（Douglas-Peuker)算法
+// https://www.jianshu.com/p/bf595477a124
+
+// 使用keychain需要导入Security框架
+// keychain保存更为安全，而且keychain里保存的信息不会因App被删除而丢失
+
+/*
+ ###断点续传###
+ https://dldir1.qq.com/qqfile/QQforMac/QQ_V5.4.0.dmg
+ 
+ 断点的由来是在下载过程中，将一个下载文件分成了多个部分，同时进行多个部分一起的下载，当 某个时间点，任务被暂停了，此时下载暂停的位置就是断点了
+ 续传就是当一个未完成的下载任务再次开始时，会从上次的断点继续传送
+ 
+ 使用多线程断点续传下载的时候，将下载或上传任务（一个文件或一个压缩包）人为的划分为几个部分，每一个部分采用一个线程进行上传或下载
+ 
+ 断点续传实质就是能记录上一次已下载完成的位置
+ 
+ 断点续传的过程
+ 1.断点续传需要在下载过程中记录每条线程的下载进度；
+ 2.每次下载开始之前先读取数据库，查询是否有未完成的记录，有就继续下载，没有则创建新记录插入数据库；
+ 3.在每次向文件中写入数据之后，在数据库中更新下载进度；
+ 4.下载完成之后删除数据库中下载记录
  */

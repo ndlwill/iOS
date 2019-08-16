@@ -15,9 +15,81 @@
 
 // [密码学] && 网络
 // https://github.com/halfrost/Halfrost-Field/tree/master/contents/Protocol
+
+/*
+ ##HTTP##
+ 无状态: 这一次请求和上一次请求是没有任何关系的
+ 
+ 客户端打开与服务器的连接发出请求到服务器响应客户端请求的全过程称之为会话
+ 会话跟踪指的是对同一个用户对服务器的连续的请求和接受响应的监视
+ 浏览器与服务器之间的通信是通过HTTP协议进行通信的，而HTTP协议是”无状态”的协议，它不能保存客户的信息，即一次响应完成之后连接就断开了，下一次的请求需要重新连接，这样就需要判断是否是同一个用户，所以才有会话跟踪技术来实现这种要求
+ 
+ 把www.zhihu.com/login.html和www.zhihu.com/index.html关联起来
+ 为了使某个域名下的所有网页能够共享某些数据，session和cookie出现了:
+ cookie: http://bubkoo.com/2014/04/21/http-cookies-explained/
+ 
+ 首先，客户端会发送一个http请求到服务器端。
+ 服务器端接受客户端请求后，建立一个session，并发送一个http响应到客户端，这个响应头，其中就包含Set-Cookie头部。该头部包含了sessionId。
+ Set-Cookie: value[; expires=date][; domain=domain][; path=path][; secure]
+ 在客户端发起的第二次请求，假如服务器给了set-Cookie，浏览器会自动在请求头中添加cookie
+ 服务器接收请求，分解cookie，验证信息，核对成功后返回response给客户端
+ 
+ session 有如用户信息档案表, 里面包含了用户的认证信息和登录状态等信息. 而 cookie 就是用户通行证
+ session存储于服务器，可以理解为一个状态列表，拥有一个唯一识别符号sessionId，通常存放于cookie中。服务器收到cookie后解析出sessionId，再去session列表中查找，才能找到相应session。依赖cookie
+ cookie类似一个令牌，装有sessionId，存储在客户端，浏览器通常会自动添加
+ 
+ form 发起的 POST 请求并不受到浏览器同源策略的限制，因此可以任意地使用其他域的 Cookie 向其他域发送 POST 请求，形成 CSRF 攻击
+ 
+ Cookie:
+ Cookie 是Web 服务器发送给客户端的一小段信息，客户端请求时可以读取该信息发送到服务器端，进而进行用户的识别。对于客户端的每次请求，服务器都会将 Cookie 发送到客户端,在客户端可以进行保存,以便下次使用。
+ 
+ 客户端可以采用两种方式来保存这个 Cookie 对象，一种方式是保存在客户端内存中，称为临时 Cookie，浏览器关闭后这个 Cookie 对象将消失。另外一种方式是保存在客户机的磁盘上，称为永久 Cookie。以后客户端只要访问该网站，就会将这个 Cookie 再次发送到服务器上，前提是这个 Cookie 在有效期内，这样就实现了对客户的跟踪。
+ 
+ Cookie 是可以被客户端禁用的
+ 
+ Session:
+ 每一个用户都有一个不同的 session，各个用户之间是不能共享的，是每个用户所独享的，在 session 中可以存放信息。
+ 
+ 在服务器端会创建一个 session 对象，产生一个 sessionID 来标识这个 session 对象，然后将这个 sessionID 放入到 Cookie 中发送到客户端，下一次访问时，sessionID 会发送到服务器，在服务器端进行识别不同的用户。
+ 
+ Session 的实现依赖于 Cookie，如果 Cookie 被禁用，那么 session 也将失效
+ */
+
+/*
+ ###token###
+ token 的认证方式类似于临时的证书签名, 并且是一种服务端无状态的认证方式, 非常适合于 REST API 的场景. 所谓无状态就是服务端并不会保存身份认证相关的数据
+ 
+ token 也称作令牌，由uid+time+sign[+固定参数]
+ uid: 用户唯一身份标识
+ time: 当前时间的时间戳
+ sign: 签名, 使用 hash/encrypt 压缩成定长的十六进制字符串，以防止第三方恶意拼接
+ 固定参数(可选): 将一些常用的固定参数加入到 token 中是为了避免重复查库
+ 
+ token在客户端一般存放于localStorage，cookie，或sessionStorage中。在服务器一般存于数据库中
+ 
+ token 的认证流程与cookie很相似:
+ 用户登录，成功后服务器返回Token给客户端。
+ 客户端收到数据后保存在客户端
+ 客户端再次访问服务器，将token放入headers中
+ 服务器端采用filter过滤器校验。校验成功则返回请求数据，校验失败则返回错误码
+ 
+ token是开发者为了防范csrf(CSRF（Cross-site request forgery）跨站请求伪造)而特别设计的令牌
+ */
+
 /*
  HTTPS:
  Http + 加密 + 认证 + 完整性保护 = Https
+ 
+ TLS 的基本过程:
+ 客户端发送一个 ClientHello 消息到服务器端，消息中同时包含了它的 Transport Layer Security (TLS) 版本，可用的加密算法和压缩算法。
+ 服务器端向客户端返回一个 ServerHello 消息，消息中包含了服务器端的 TLS 版本，服务器所选择的加密和压缩算法，以及数字证书认证机构（Certificate Authority，缩写 CA）签发的服务器公开证书，证书中包含了公钥。客户端会使用这个公钥加密接下来的握手过程，直到协商生成一个新的对称密钥。证书中还包含了该证书所应用的域名范围（Common Name，简称 CN），用于客户端验证身份。
+ 客户端根据自己的信任 CA 列表，验证服务器端的证书是否可信。如果认为可信（具体的验证过程在下一节讲解），客户端会生成一串伪随机数，使用服务器的公钥加密它。这串随机数会被用于生成新的对称密钥
+ 服务器端使用自己的私钥解密上面提到的随机数，然后使用这串随机数生成自己的对称主密钥
+ 客户端发送一个 Finished 消息给服务器端，使用对称密钥加密这次通讯的一个散列值
+ 服务器端生成自己的 hash 值，然后解密客户端发送来的信息，检查这两个值是否对应。如果对应，就向客户端发送一个 Finished 消息，也使用协商好的对称密钥加密
+ 从现在开始，接下来整个 TLS 会话都使用对称秘钥进行加密，传输应用层（HTTP）内容
+ 
+ 消息认证算法（TLS 的传输会使用 MAC(message authentication code) 进行完整性检查）
  
  HTTP缺点:
  Http协议使用明文传输，容易遭到窃听；

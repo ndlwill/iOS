@@ -8,6 +8,10 @@
 
 #import <Foundation/Foundation.h>
 
+/*
+ 对于数据量比较大的应用，可以采用分步加载数据的方式，或者采用 mmap 方式。mmap 是使用逻辑内存对磁盘文件进行映射，中间只是进行映射没有任何拷贝操作，避免了写文件的数据拷贝。 操作内存就相当于在操作文件，避免了内核空间和用户空间的频繁切换，能够提供高性能的写入速度。此外，mmap 可以保持数据的一致性，即使在对应的用户进程崩溃后，内存映射的文件仍然可以落盘。参见：mmap 实现数据一致性https://stackoverflow.com/questions/5902629/mmap-msync-and-linux-process-termination。因为，用户进程崩溃后，内核会托管 mmap 的交换区，保证对应的数据能够存盘。sqlite 里也使用 mmap 提高性能防止丢数据
+ */
+
 // 高级iOS 原理机制
 // https://satanwoo.github.io/tags/iOS/
 

@@ -25,6 +25,8 @@
 #import "Person.h"
 
 #import "CTMediator+ModuleA.h"
+#import "TestButton.h"
+#import "TestSubButton.h"
 
 void stackFrame (void) {
     /* Trigger a crash */
@@ -77,12 +79,15 @@ void stackFrame (void) {
     HighlightGradientProgressView *progressView = [[HighlightGradientProgressView alloc] initWithFrame:CGRectMake(0, 580, 300, 20) gradientColors:@[(__bridge id)[UIColor cyanColor].CGColor, (__bridge id)[UIColor yellowColor].CGColor, (__bridge id)[UIColor cyanColor].CGColor, (__bridge id)[UIColor yellowColor].CGColor, (__bridge id)[UIColor cyanColor].CGColor]];
     [self.view addSubview:progressView];
     
-    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
+    TestButton *button = [TestButton buttonWithType:UIButtonTypeCustom];
+    button.testName = @"123";
     [button setTitle:@"我是按钮" forState:UIControlStateNormal];
+    [button setTitle:@"-我是按钮-" forState:UIControlStateHighlighted];
     [button addTarget:self action:@selector(buttonDidClicked:) forControlEvents:UIControlEventTouchUpInside];
     button.backgroundColor = [UIColor redColor];
     button.frame = CGRectMake(0, 620, self.view.width, 40);
     [self.view addSubview:button];
+    NSLog(@"button.testName = %@", button.testName);
     
     // KVO-Block 
     self.person = [Person personWithName:@"ndl" age:20];
@@ -141,7 +146,7 @@ void stackFrame (void) {
      在ARC下，通常讲Block作为返回值的时候，编译器会自动加上copy，也就是自动生成复制到堆上的代码
      */
     // Block只捕获Block中会用到的变量。由于只捕获了自动变量(自动变量是以值传递方式传递到Block的构造函数里面)的值，并非内存地址，所以Block内部不能改变自动变量的值。Block捕获的外部变量可以改变值的是静态变量，静态全局变量，全局变量
-    // __block原理:__block修饰的变量被转化成了一个结构体，我们存放指针的方式就可以修改实际的值了
+    // __block原理:没有__block修饰，被block捕获，是值拷贝,__block修饰的变量被转化成了一个结构体，复制其引用地址,我们存放指针的方式就可以修改实际的值了
     int val = 1;
     void (^blk)(void) = ^{
         printf("%d\n", val);// Block保存了val的瞬间值,值拷贝
@@ -157,6 +162,9 @@ void stackFrame (void) {
     NSLog(@"%@", sum);// block is <__NSGlobalBlock__>
     sum(4.f, 5.f);
     
+    // block 使用 copy 是从 MRC遗留下来的“传统”,在 MRC 中,方法内部的 block 是在栈区的,使用 copy 可以把它放到堆区.在 ARC 中写不写都行：对于 block 使用 copy 还是 strong 效果是一样的,编译器自动对 block 进行了 copy 操作
+    // MRC 环境下：访问外界变量的 Block 默认存储栈中
+    // ARC 环境下：访问外界变量的 Block 默认存储在堆中（实际是放在栈区，然后ARC情况下自动又拷贝到堆区），自动释放
     // 如果是一个copy属性的block,它一定是NSMallocBlock.block堆内存的一个明显的特性就是:他会强引用block中的对象
     // 在处理对象时,block会malloc
     Person* model = [Person personWithName:@"ndl" age:21];
@@ -187,6 +195,12 @@ void stackFrame (void) {
     };
     testBlock();
     NSLog(@"mutaArr = %@", mutaArr);// test1: @"123", @"234"
+    
+    
+    __weak void (^weakBlock)(void) = ^ {
+        NSLog(@"123");
+    };
+    NSLog(@"匿名block = %@ weakBlock = %@", ^{NSLog(@"111");}, weakBlock);// 都是NSGlobalBlock
     
 //    NSURLProtocol
     
@@ -264,6 +278,30 @@ void stackFrame (void) {
 //    });
     
     
+    /*
+     NSDate 或 CFAbsoluteTimeGetCurrent 返回的系统时钟时间
+     从时钟偏移量的角度 mach_absolute_time() 和 CACurrentMediaTime 基于内建时钟.能够更精确的测试时间,并且不会根据外部的时间变化而变化.(例如,时区变化\夏时制),它和系统的upTime有关.系统重启后,CACurrentMediaTime 也会重新设置.
+     */
+    NSTimeInterval timeIntervalSinceReferenceDate = [[NSDate date] timeIntervalSinceReferenceDate];
+    NSDate *date = [NSDate date];
+    CFAbsoluteTime cfTime = CFAbsoluteTimeGetCurrent();
+    CFTimeInterval caTime = CACurrentMediaTime();
+    NSLog(@"timeIntervalSinceReferenceDate = %lf\ncfTime = %lf\ncaTime = %lf\ndate = %@", timeIntervalSinceReferenceDate, cfTime, caTime, date);
+    
+    dispatch_async(dispatch_get_global_queue(0, 0), ^{
+        // 延时函数，会在内部创建一个 NSTimer，然后添加到当前线程的RunLoop中。也就是如果当前线程没有开启RunLoop，该方法会失效
+        [self performSelector:@selector(test1) withObject:nil afterDelay:2];
+        // 如果RunLoop的mode中一个item都没有，RunLoop会退出。即在调用RunLoop的run方法后，由于其mode中没有添加任何item去维持RunLoop的事件循环，RunLoop随即还是会退出
+        // 所以我们自己启动RunLoop，一定要在添加item后
+        [[NSRunLoop currentRunLoop] run];// 这个不写上面的test1不执行
+        NSLog(@"after test1");
+        
+    });
+}
+
+- (void)test1
+{
+    NSLog(@"===test===");
 }
 
 - (void)func:(void (^)())funcBlock
@@ -377,11 +415,11 @@ void stackFrame (void) {
 //    [self dismissViewControllerAnimated:YES completion:nil];
 
     // tes map
-    BaseNavigationController *nav = [[BaseNavigationController alloc] initWithRootViewController:[TestMapViewController new]];
-    [self presentViewController:nav animated:YES completion:nil];
+//    BaseNavigationController *nav = [[BaseNavigationController alloc] initWithRootViewController:[TestMapViewController new]];
+//    [self presentViewController:nav animated:YES completion:nil];
     
     
-//    [self presentViewController:[[CTMediator sharedInstance] moduleA_TestViewController] animated:YES completion:nil];
+    [self presentViewController:[[CTMediator sharedInstance] moduleA_TestViewController] animated:YES completion:nil];
 }
 
 - (void)buttonDidTapped:(UITapGestureRecognizer *)gesture

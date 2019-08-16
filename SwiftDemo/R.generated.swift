@@ -16,6 +16,124 @@ struct R: Rswift.Validatable {
     try intern.validate()
   }
   
+  /// This `R.file` struct is generated, and contains static references to 8 files.
+  struct file {
+    /// Resource file `thanos_dust_1.mp3`.
+    static let thanos_dust_1Mp3 = Rswift.FileResource(bundle: R.hostingBundle, name: "thanos_dust_1", pathExtension: "mp3")
+    /// Resource file `thanos_dust_2.mp3`.
+    static let thanos_dust_2Mp3 = Rswift.FileResource(bundle: R.hostingBundle, name: "thanos_dust_2", pathExtension: "mp3")
+    /// Resource file `thanos_dust_3.mp3`.
+    static let thanos_dust_3Mp3 = Rswift.FileResource(bundle: R.hostingBundle, name: "thanos_dust_3", pathExtension: "mp3")
+    /// Resource file `thanos_dust_4.mp3`.
+    static let thanos_dust_4Mp3 = Rswift.FileResource(bundle: R.hostingBundle, name: "thanos_dust_4", pathExtension: "mp3")
+    /// Resource file `thanos_dust_5.mp3`.
+    static let thanos_dust_5Mp3 = Rswift.FileResource(bundle: R.hostingBundle, name: "thanos_dust_5", pathExtension: "mp3")
+    /// Resource file `thanos_dust_6.mp3`.
+    static let thanos_dust_6Mp3 = Rswift.FileResource(bundle: R.hostingBundle, name: "thanos_dust_6", pathExtension: "mp3")
+    /// Resource file `thanos_reverse_sound.mp3`.
+    static let thanos_reverse_soundMp3 = Rswift.FileResource(bundle: R.hostingBundle, name: "thanos_reverse_sound", pathExtension: "mp3")
+    /// Resource file `thanos_snap_sound.mp3`.
+    static let thanos_snap_soundMp3 = Rswift.FileResource(bundle: R.hostingBundle, name: "thanos_snap_sound", pathExtension: "mp3")
+    
+    /// `bundle.url(forResource: "thanos_dust_1", withExtension: "mp3")`
+    static func thanos_dust_1Mp3(_: Void = ()) -> Foundation.URL? {
+      let fileResource = R.file.thanos_dust_1Mp3
+      return fileResource.bundle.url(forResource: fileResource)
+    }
+    
+    /// `bundle.url(forResource: "thanos_dust_2", withExtension: "mp3")`
+    static func thanos_dust_2Mp3(_: Void = ()) -> Foundation.URL? {
+      let fileResource = R.file.thanos_dust_2Mp3
+      return fileResource.bundle.url(forResource: fileResource)
+    }
+    
+    /// `bundle.url(forResource: "thanos_dust_3", withExtension: "mp3")`
+    static func thanos_dust_3Mp3(_: Void = ()) -> Foundation.URL? {
+      let fileResource = R.file.thanos_dust_3Mp3
+      return fileResource.bundle.url(forResource: fileResource)
+    }
+    
+    /// `bundle.url(forResource: "thanos_dust_4", withExtension: "mp3")`
+    static func thanos_dust_4Mp3(_: Void = ()) -> Foundation.URL? {
+      let fileResource = R.file.thanos_dust_4Mp3
+      return fileResource.bundle.url(forResource: fileResource)
+    }
+    
+    /// `bundle.url(forResource: "thanos_dust_5", withExtension: "mp3")`
+    static func thanos_dust_5Mp3(_: Void = ()) -> Foundation.URL? {
+      let fileResource = R.file.thanos_dust_5Mp3
+      return fileResource.bundle.url(forResource: fileResource)
+    }
+    
+    /// `bundle.url(forResource: "thanos_dust_6", withExtension: "mp3")`
+    static func thanos_dust_6Mp3(_: Void = ()) -> Foundation.URL? {
+      let fileResource = R.file.thanos_dust_6Mp3
+      return fileResource.bundle.url(forResource: fileResource)
+    }
+    
+    /// `bundle.url(forResource: "thanos_reverse_sound", withExtension: "mp3")`
+    static func thanos_reverse_soundMp3(_: Void = ()) -> Foundation.URL? {
+      let fileResource = R.file.thanos_reverse_soundMp3
+      return fileResource.bundle.url(forResource: fileResource)
+    }
+    
+    /// `bundle.url(forResource: "thanos_snap_sound", withExtension: "mp3")`
+    static func thanos_snap_soundMp3(_: Void = ()) -> Foundation.URL? {
+      let fileResource = R.file.thanos_snap_soundMp3
+      return fileResource.bundle.url(forResource: fileResource)
+    }
+    
+    fileprivate init() {}
+  }
+  
+  /// This `R.image` struct is generated, and contains static references to 6 images.
+  struct image {
+    /// Image `baidu`.
+    static let baidu = Rswift.ImageResource(bundle: R.hostingBundle, name: "baidu")
+    /// Image `google`.
+    static let google = Rswift.ImageResource(bundle: R.hostingBundle, name: "google")
+    /// Image `juejin`.
+    static let juejin = Rswift.ImageResource(bundle: R.hostingBundle, name: "juejin")
+    /// Image `thanos_snap`.
+    static let thanos_snap = Rswift.ImageResource(bundle: R.hostingBundle, name: "thanos_snap")
+    /// Image `thanos_time`.
+    static let thanos_time = Rswift.ImageResource(bundle: R.hostingBundle, name: "thanos_time")
+    /// Image `wikipedia`.
+    static let wikipedia = Rswift.ImageResource(bundle: R.hostingBundle, name: "wikipedia")
+    
+    /// `UIImage(named: "baidu", bundle: ..., traitCollection: ...)`
+    static func baidu(compatibleWith traitCollection: UIKit.UITraitCollection? = nil) -> UIKit.UIImage? {
+      return UIKit.UIImage(resource: R.image.baidu, compatibleWith: traitCollection)
+    }
+    
+    /// `UIImage(named: "google", bundle: ..., traitCollection: ...)`
+    static func google(compatibleWith traitCollection: UIKit.UITraitCollection? = nil) -> UIKit.UIImage? {
+      return UIKit.UIImage(resource: R.image.google, compatibleWith: traitCollection)
+    }
+    
+    /// `UIImage(named: "juejin", bundle: ..., traitCollection: ...)`
+    static func juejin(compatibleWith traitCollection: UIKit.UITraitCollection? = nil) -> UIKit.UIImage? {
+      return UIKit.UIImage(resource: R.image.juejin, compatibleWith: traitCollection)
+    }
+    
+    /// `UIImage(named: "thanos_snap", bundle: ..., traitCollection: ...)`
+    static func thanos_snap(compatibleWith traitCollection: UIKit.UITraitCollection? = nil) -> UIKit.UIImage? {
+      return UIKit.UIImage(resource: R.image.thanos_snap, compatibleWith: traitCollection)
+    }
+    
+    /// `UIImage(named: "thanos_time", bundle: ..., traitCollection: ...)`
+    static func thanos_time(compatibleWith traitCollection: UIKit.UITraitCollection? = nil) -> UIKit.UIImage? {
+      return UIKit.UIImage(resource: R.image.thanos_time, compatibleWith: traitCollection)
+    }
+    
+    /// `UIImage(named: "wikipedia", bundle: ..., traitCollection: ...)`
+    static func wikipedia(compatibleWith traitCollection: UIKit.UITraitCollection? = nil) -> UIKit.UIImage? {
+      return UIKit.UIImage(resource: R.image.wikipedia, compatibleWith: traitCollection)
+    }
+    
+    fileprivate init() {}
+  }
+  
   /// This `R.storyboard` struct is generated, and contains static references to 2 storyboards.
   struct storyboard {
     /// Storyboard `LaunchScreen`.

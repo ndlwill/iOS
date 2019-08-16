@@ -42,6 +42,17 @@
 // NSURLErrorUnknown
 // ###使用协议提升拓展性### 或者 协议替换为配置对象
 
+
+/*
+ ###content-type###
+ 1）application/x-www-form-urlencoded：
+ 窗体数据被编码为名称/值对，这是标准且默认的编码格式。当action为get时候，客户端把form数据转换成一个字串append到url后面，用?分割。当action为post时候，浏览器把form数据封装到http body中，然后发送到server。
+ 2）multipart/form-data：
+ multipart表示的意思是单个消息头包含多个消息体的解决方案。multipart媒体类型对发送非文本的各媒体类型是有用的。一般多用于文件上传。
+ multipart/form-data只是multipart的一种。目前常用的有以下这些类型(注：任何一种执行时无法识别的multipart子类型都被视为子类型"mixed")
+ */
+
+
 // 协议 && 密码学
 // https://www.jianshu.com/u/12201cdd5d7a
 
