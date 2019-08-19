@@ -8,6 +8,14 @@
 
 #import <UIKit/UIKit.h>
 
+// ###视频###
+// https://www.jianshu.com/p/d7decff41920
+// DGCachePlayer
+// http://v4ttyey-10001453.video.myqcloud.com/Microblog/288-4-1452304375video1466172731.mp4
+
+// ###iOS博客###
+// https://js.aizhan.com/develop/ios/
+
 /*
  tableView:
  // EditingStyle  不写editingStyleForRowAtIndexPath:,默认UITableViewCellEditingStyleDelete  + canEditRowAtIndexPath:需要返回YES

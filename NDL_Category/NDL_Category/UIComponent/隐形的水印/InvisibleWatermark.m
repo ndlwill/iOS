@@ -86,9 +86,25 @@
     return newImage;
 }
 
+/*
+ 
+ 在小端模式中，低位字节放在低地址，高位字节放在高地址；在大端模式中，低位字节放在高地址，高位字节放在低地址
+ unsigned int value = 0x12345678
+ 内存地址    小端模式存放内容    大端模式存放内容
+ 0x4000    0x78    0x12
+ 0x4001    0x56    0x34
+ 0x4002    0x34    0x56
+ 0x4003    0x12    0x78
+ 
+ kCGImageAlphaPremultipliedLast >>>> R G B A
+ kCGImageAlphaPremultipliedFirst >>>> A R G B
+ 
+ typedef struct CGImage *CGImageRef;
+ CGImageRef 和 struct CGImage * 是完全等价的。这个结构用来创建像素位图，可以通过操作存储的像素位来编辑图片
+ */
 // RGB与16进制色互转
 // https://tool.css-js.com/rgba.html
-// ff1493 -> 255,20,147
+// 0x7C2219FF -> 124, 34, 25, 255(rgba)
 + (UIImage *)colorBumWatermarkImage:(UIImage *)watermarkImage
 {
     // raw pixels(原始像素) of the image
@@ -108,7 +124,7 @@
     // 创建像素层
     CGContextRef context = CGBitmapContextCreate(inputPixels, imageWidth, imageHeight,
                                                  bitsPerComponent, bytesPerRow, colorSpace,
-                                                 kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+                                                 kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);// kCGBitmapByteOrder32Little kCGBitmapByteOrder32Big kCGImageAlphaPremultipliedFirst kCGImageAlphaPremultipliedLast
     CGContextDrawImage(context, CGRectMake(0, 0, imageWidth, imageHeight), inputCGImage);
     
     // 像素处理
@@ -117,16 +133,19 @@
             @autoreleasepool {
                 UInt32 *currentPixel = inputPixels + (j * imageWidth) + i;
                 UInt32 currentPixelValue = *currentPixel;
+                // 124, 34, 25, 255(rgba) 0x7C2219FF 2082609663 自己已验证
+                // kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big 4279837308->ff19227c abgr
+                // kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Little 2082609663->7c2219ff rgba###
+                // kCGImageAlphaPremultipliedFirst|kCGBitmapByteOrder32Little 4286325273->ff7c2219 argb
+                // kCGImageAlphaPremultipliedFirst|kCGBitmapByteOrder32Big 421690623->19227cff bgra
+                NSLog(@"currentPixelValue = %u", (unsigned int)currentPixelValue);
                 UInt32 currentR, currentG, currentB, currentA;
 
+                // rgba
                 currentR = (currentPixelValue & 0x000000FF);
                 currentG = (currentPixelValue & 0x0000FF00) >> 8;
                 currentB = (currentPixelValue & 0x00FF0000) >> 16;
                 currentA = (currentPixelValue & 0xFF000000) >> 24;
-//                currentR = (currentPixelValue & 0xFF000000) >> 24;
-//                currentG = (currentPixelValue & 0x00FF0000) >> 16;
-//                currentB = (currentPixelValue & 0x0000FF00) >> 8;
-//                currentA = (currentPixelValue & 0x000000FF);
 
                 
                 UInt32 newR, newG, newB;
@@ -135,7 +154,6 @@
                 newB = [self blendingCalculation:currentB];
 
                 *currentPixel = (newR  | newG << 8 | newB << 16 | currentA << 24);
-//                *currentPixel = (newR << 24 | newG << 16 | newB << 8 | currentA);
             }
         }
     }

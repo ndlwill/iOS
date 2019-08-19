@@ -405,6 +405,7 @@ void stackFrame (void) {
 //    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
 //        NSLog(@"textContainer.size = %@", NSStringFromCGSize(self.textView.textContainer.size));
 //    });
+    
 }
 
 
@@ -415,11 +416,11 @@ void stackFrame (void) {
 //    [self dismissViewControllerAnimated:YES completion:nil];
 
     // tes map
-//    BaseNavigationController *nav = [[BaseNavigationController alloc] initWithRootViewController:[TestMapViewController new]];
-//    [self presentViewController:nav animated:YES completion:nil];
+    BaseNavigationController *nav = [[BaseNavigationController alloc] initWithRootViewController:[TestMapViewController new]];
+    [self presentViewController:nav animated:YES completion:nil];
     
     
-    [self presentViewController:[[CTMediator sharedInstance] moduleA_TestViewController] animated:YES completion:nil];
+//    [self presentViewController:[[CTMediator sharedInstance] moduleA_TestViewController] animated:YES completion:nil];
 }
 
 - (void)buttonDidTapped:(UITapGestureRecognizer *)gesture

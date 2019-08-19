@@ -18,4 +18,12 @@ class DustEffectView: UIView {
         super.init(coder: aDecoder)
     }
 
+    private func createDustImages(image: UIImage) -> [UIImage] {
+        var images = [UIImage]()
+        guard let inputCGImage = image.cgImage else { return images }
+        
+        
+        
+        return images
+    }
 }

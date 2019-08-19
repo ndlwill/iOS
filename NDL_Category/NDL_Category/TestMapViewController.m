@@ -74,11 +74,13 @@
     [self.view addSubview:button];
     
     // 343 x 111
-    UIImage *image = [UIImage imageNamed:@"couponBG"];
+//    UIImage *image = [UIImage imageNamed:@"couponBG"];
 //    UIImage *image = [UIImage imageNamed:@"welcome"];
+    UIImage *image = [UIImage ndl_imageWithColor:UIColorFromHex(0x7C2219) size:CGSizeMake(300, 110)];
     
     UIImageView *imageView = [[UIImageView alloc] initWithImage:image];
-    imageView.frame = CGRectMake(0, 100, 343, 111);
+//    imageView.frame = CGRectMake(0, 100, 343, 111);// for couponBG
+    imageView.frame = CGRectMake(0, 100, 300, 110);
 //    imageView.frame = self.view.bounds;
     [self.view addSubview:imageView];
     
