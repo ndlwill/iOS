@@ -19,19 +19,22 @@
 // 以folder方式添加文件，文件将被作为资源文件，不参与编译，图标为蓝色
 
 #pragma mark - 内联静态函数
-// 方法交换
+// 方法交换 Method Swizzling
 CG_INLINE BOOL
 ReplaceMethod(Class _class, SEL _originSelector, SEL _newSelector) {
     Method oriMethod = class_getInstanceMethod(_class, _originSelector);
     Method newMethod = class_getInstanceMethod(_class, _newSelector);
-    if (!newMethod) {
+    if (!newMethod) {// 新方法必须存在
         // class 里不存在该方法的实现
         return NO;
     }
+    // class_addMethod will fail if original method already exists
     BOOL isAddedMethod = class_addMethod(_class, _originSelector, method_getImplementation(newMethod), method_getTypeEncoding(newMethod));
     if (isAddedMethod) {
+        NSLog(@"original method not exists");
         class_replaceMethod(_class, _newSelector, method_getImplementation(oriMethod), method_getTypeEncoding(oriMethod));
     } else {
+        NSLog(@"original method already exists");
         method_exchangeImplementations(oriMethod, newMethod);
     }
     return YES;

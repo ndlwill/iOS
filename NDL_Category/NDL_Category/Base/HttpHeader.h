@@ -74,7 +74,6 @@
  GET比POST更不安全，因为参数直接暴露在URL上，所以不能用来传递敏感信息。
  GET参数通过URL传递，POST放在Request body中
  
- 
  */
 
 /*

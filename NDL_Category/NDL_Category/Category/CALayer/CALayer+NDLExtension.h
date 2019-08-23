@@ -65,6 +65,11 @@
  Animation:
  https://github.com/yixiangboy/IOSAnimationDemo
  */
+
+/*
+ CALayerDelegate:
+- (void)drawLayer:(CALayer *)layer inContext:(CGContextRef)ctx;
+ */
 @interface CALayer (NDLExtension)
 
 // 暂停CALayer的动画

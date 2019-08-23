@@ -27,11 +27,19 @@
 #import "CTMediator+ModuleA.h"
 #import "TestButton.h"
 #import "TestSubButton.h"
+#import "UIControl+TouchLimitation.h"
+
+static int count = 0;
 
 void stackFrame (void) {
     /* Trigger a crash */
     ((char *)NULL)[1] = 0;
 }
+
+typedef struct TestStruct{
+    int testInt;
+    int nextInt;
+}TS;
 
 @interface TestTVViewController () <UITextViewDelegate>
 
@@ -41,7 +49,12 @@ void stackFrame (void) {
 
 @property (nonatomic, strong) Person *person;
 
+@property (nonatomic, copy) void(^testBB)(void);
 
+@property (nonatomic, copy) NSString *tag;
+
+@property (nonatomic, weak) void(^weakBlock)(void);
+@property (nonatomic, copy) void(^strongBlock)(void);
 
 
 @end
@@ -51,6 +64,13 @@ void stackFrame (void) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor lightGrayColor];
+    
+    // 将结构体封装成NSValue对象
+    TS testStruct = {100, 200};
+    NSValue *structValue = [NSValue valueWithBytes:&testStruct objCType:@encode(TS)];
+    TS temp = {0};
+    [structValue getValue:&temp];
+    NSLog(@"testInt = %d nextInt = %d", temp.testInt, temp.nextInt);
     
     [self test];
     
@@ -86,6 +106,7 @@ void stackFrame (void) {
     [button addTarget:self action:@selector(buttonDidClicked:) forControlEvents:UIControlEventTouchUpInside];
     button.backgroundColor = [UIColor redColor];
     button.frame = CGRectMake(0, 620, self.view.width, 40);
+    button.acceptEventInterval = 3.0;
     [self.view addSubview:button];
     NSLog(@"button.testName = %@", button.testName);
     
@@ -147,6 +168,22 @@ void stackFrame (void) {
      */
     // Block只捕获Block中会用到的变量。由于只捕获了自动变量(自动变量是以值传递方式传递到Block的构造函数里面)的值，并非内存地址，所以Block内部不能改变自动变量的值。Block捕获的外部变量可以改变值的是静态变量，静态全局变量，全局变量
     // __block原理:没有__block修饰，被block捕获，是值拷贝,__block修饰的变量被转化成了一个结构体，复制其引用地址,我们存放指针的方式就可以修改实际的值了
+    // __block_impl  结构体中的 FuncPtr 函数指针，指向的就是我们的 Block 的具体实现。真正调用 Block 就是利用这个函数指针去调用的。
+    // 为什么能访问外部变量，就是因为将外部变量复制到了结构体中（上面的 int i），即自动变量会作为成员变量追加到 Block 结构体中
+    /*
+     具有 __block 修饰的变量，会生成一个 Block_byref_a_0 结构体来表示外部变量，然后再追加到 Block 结构体中，这里生成 Block_byref_a_0 这个结构体大概有两个原因：一个是抽象出一个结构体，可以让多个 Block 同时引用这个外部变量；另外一个好管理，因为 Block_byref_a_0 中有个非常重要的成员变量 forwarding  指针，这个指针非常重要（这个指针指向 Block_byref_a_0 结构体），这里是保证当我们将 Block 从栈拷贝到堆中，修改的变量都是同一份
+     
+     Block 从栈复制到堆上，__block 修饰的变量也会从栈复制到堆上；为了结构体 __block 变量无论在栈上还是在堆上，都可以正确的访问变量，我们需要 forwarding 指针
+     
+     在 Block 从栈复制到堆上的时候，原本栈上结构体的 forwarding 指针，会改变指向，直接指向堆上的结构体。这样子就可以保证之后我们都是访问同一个结构体中的变量，这里就是为什么 __block 修饰的变量，在 Block 内部中可以修改的原因了
+     */
+    // 对于全局区的 Block，是不存在作用域的问题，但是栈区 Block 不同，在作用域结束后就会 pop 出栈
+    /*
+     1.Block 内部没有引用外部变量，Block 在全局区，属于 GlobalBlock
+     2.Block 内部有外部变量：
+     a.引用全局变量、全局静态变量、局部静态变量：Block 在全局区，属于 GlobalBlock
+     b.引用普通外部变量，用 copy，strong 修饰的 Block 就存放在堆区，属于 MallocBlock；用 weak 修饰的Block 存放在栈区，属于 StackBlock
+     */
     int val = 1;
     void (^blk)(void) = ^{
         printf("%d\n", val);// Block保存了val的瞬间值,值拷贝
@@ -182,11 +219,39 @@ void stackFrame (void) {
     NSLog(@"myBlock = %@", myBlock);// __NSMallocBlock__
     
     
+    int (^staticBlock)(int) = ^(int num) {
+        return num * count;
+    };
+    NSLog(@"staticBlock = %@", staticBlock);// __NSGlobalBlock__
+    
     void (^nullBlock)() = ^ {
         
     };
     NSLog(@"nullBlock = %@", nullBlock);// __NSGlobalBlock__
     [self func:nullBlock];
+    
+    static int staticCount = 0;
+    void (^staticInMethodBlock)() = ^ {
+        staticCount = 1;
+    };
+    NSLog(@"staticInMethodBlock = %@", staticInMethodBlock);// __NSGlobalBlock__
+    
+    int weakInt = 0;
+    self.weakBlock = ^{
+        int value = weakInt + 1;
+        NSLog(@"===self.weakBlock===");
+    };
+    NSLog(@"weakBlock = %@", self.weakBlock);// 不引用普通外部变量，__NSGlobalBlock__，引用普通外部变量 __NSStackBlock__
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        self.weakBlock();// __NSGlobalBlock__: 调用打印log，__NSStackBlock__: 调用崩溃，因为作用域结束被系统释放
+    });
+    
+    // strong & copy 打印一致
+    int strongInt = 0;
+    self.strongBlock = ^{
+//        int value = strongInt + 1;
+    };
+    NSLog(@"strongBlock = %@", self.strongBlock);// 不引用普通外部变量,__NSGlobalBlock__,引用普通外部变量 __NSMallocBlock__
     
     NSMutableArray *mutaArr = [NSMutableArray arrayWithObject:@"123"];
     void (^testBlock)(void) = ^{
@@ -401,6 +466,43 @@ void stackFrame (void) {
 {
     [super viewDidAppear:animated];
     
+    NSLog(@"self retainCount = %ld self = %@", CFGetRetainCount((__bridge CFTypeRef)(self)), self);// 11 0x7fa5d0408930
+    __weak typeof(self) weakSelf = self;
+    NSLog(@"self retainCount = %ld", CFGetRetainCount((__bridge CFTypeRef)(self)));// 11
+    // self的引用计数+1，栈中的strongSelf_s作用域结束后被释放使得self的引用计数-1
+//    __strong typeof(self) strongSelf_ = weakSelf;
+    
+//    self.testBB = ^{
+//        // self
+////        NSLog(@"self retainCount = %ld", CFGetRetainCount((__bridge CFTypeRef)(self)));// 13
+////        self.tag = @"123";
+////        NSLog(@"self retainCount = %ld", CFGetRetainCount((__bridge CFTypeRef)(self)));// 13
+//
+//        // weakSelf
+//        NSLog(@"self retainCount = %ld weakSelf = %@", CFGetRetainCount((__bridge CFTypeRef)(weakSelf)), weakSelf);// 12 0x7fa5d0408930
+//        weakSelf.tag = @"123";
+//        NSLog(@"tag = %@", weakSelf.tag);// 123
+//    };
+//    self.testBB();
+    
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSLog(@"==========");
+        NSLog(@"self retainCount = %ld self = %@", CFGetRetainCount((__bridge CFTypeRef)(self)), self);//weakSelf 7, self 8
+    });
+    NSLog(@"after dispatch_after");
+    
+    // textView retainCount
+//    NSLog(@"textView retainCount = %ld", CFGetRetainCount((__bridge CFTypeRef)(self.textView)));// 3
+//    UITextView *temp = self.textView;
+//    NSLog(@"textView retainCount = %ld", CFGetRetainCount((__bridge CFTypeRef)(self.textView)));// 4
+//    __strong UITextView *temp1 = self.textView;
+//    NSLog(@"textView retainCount = %ld", CFGetRetainCount((__bridge CFTypeRef)(self.textView)));// 5
+//
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        NSLog(@"textView retainCount = %ld", CFGetRetainCount((__bridge CFTypeRef)(self.textView)));// 3
+//    });
+    
+    
     // textView :{0, 120, 375, 300}
 //    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
 //        NSLog(@"textContainer.size = %@", NSStringFromCGSize(self.textView.textContainer.size));
@@ -416,8 +518,8 @@ void stackFrame (void) {
 //    [self dismissViewControllerAnimated:YES completion:nil];
 
     // tes map
-    BaseNavigationController *nav = [[BaseNavigationController alloc] initWithRootViewController:[TestMapViewController new]];
-    [self presentViewController:nav animated:YES completion:nil];
+//    BaseNavigationController *nav = [[BaseNavigationController alloc] initWithRootViewController:[TestMapViewController new]];
+//    [self presentViewController:nav animated:YES completion:nil];
     
     
 //    [self presentViewController:[[CTMediator sharedInstance] moduleA_TestViewController] animated:YES completion:nil];

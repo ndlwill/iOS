@@ -8,6 +8,44 @@
 
 #import "DrawUtils.h"
 
+/*
+ ###Core Graphics###
+ Core Graphics Framework是一套基于C的API框架，使用了Quartz作为绘图引擎(QuartZ 2D).QuartZ 2D是苹果公司开发的一套API
+ 
+ ##Core Graphics API所有的操作都在一个上下文中进行##
+ 
+ 图片类型的上下文:
+ UIGraphicsBeginImageContextWithOptions
+ UIGraphicsGetImageFromCurrentImageContext函数可从当前上下文中获取一个UIImage对象
+ UIGraphicsEndImageContext函数关闭图形上下文
+ 
+ 利用cocoa为你生成的图形上下文。
+ 当你子类化了一个UIView并实现了自己的drawRect：方法后，一旦drawRect：方法被调用，Cocoa就会为你创建一个图形上下文
+ UIGraphicsGetCurrentContext
+ 
+ // 设置:
+ CGContextSetLineWidth
+ CGContextSetLineCap
+ CGContextSetLineDash
+ CGContextSetStrokeColorWithColor
+ CGContextSetFillColorWithColor
+ CGContextSetShadowWithColor
+ // path:
+ CGContextBeginPath
+ 
+ CGContextMoveToPoint
+ CGContextAddLineToPoint
+ CGContextAddArc
+ CGContextAddEllipseInRect
+ // 绘制:
+ CGContextStrokePath
+ 
+ CGContextFillPath
+ 
+ CGContextClosePath(context);
+ CGContextDrawPath(context, kCGPathFillStroke);
+ */
+
 @implementation DrawUtils
 
 #pragma mark - Public Methods

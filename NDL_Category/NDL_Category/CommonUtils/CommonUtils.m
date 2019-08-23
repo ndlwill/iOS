@@ -168,9 +168,13 @@
     
     NSLog(@"==========begin==========");
     for (int i = 0; i < count; i++) {
-        SEL selector = method_getName(methods[i]);
+        Method method = methods[i];
+        SEL selector = method_getName(method);
         NSString *selectorStr = NSStringFromSelector(selector);
-        NSLog(@"selectorStr = %@", selectorStr);
+        const char *cType = method_getTypeEncoding(method);
+        NSString *typeStr = [NSString stringWithUTF8String:cType];
+        IMP imp = method_getImplementation(method);
+        NSLog(@"selectorStr = %@ cType = %s typeStr = %@", selectorStr, cType, typeStr);
     }
     NSLog(@"==========end==========");
 }

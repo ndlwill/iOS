@@ -6,7 +6,7 @@
 //  Copyright © 2018年 ndl. All rights reserved.
 //
 
-// Tencent
+// ###Tencent腾讯###
 // https://github.com/Tencent/mars
 
 // 中间人攻击(Man-in-the-Middle attack，MITM)
@@ -34,7 +34,7 @@
  在客户端发起的第二次请求，假如服务器给了set-Cookie，浏览器会自动在请求头中添加cookie
  服务器接收请求，分解cookie，验证信息，核对成功后返回response给客户端
  
- session 有如用户信息档案表, 里面包含了用户的认证信息和登录状态等信息. 而 cookie 就是用户通行证
+ ##session 有如用户信息档案表, 里面包含了用户的认证信息和登录状态等信息. 而 cookie 就是用户通行证##
  session存储于服务器，可以理解为一个状态列表，拥有一个唯一识别符号sessionId，通常存放于cookie中。服务器收到cookie后解析出sessionId，再去session列表中查找，才能找到相应session。依赖cookie
  cookie类似一个令牌，装有sessionId，存储在客户端，浏览器通常会自动添加
  
@@ -77,7 +77,7 @@
  */
 
 /*
- HTTPS:
+ MARK:HTTPS:
  Http + 加密 + 认证 + 完整性保护 = Https
  
  TLS 的基本过程:
@@ -234,7 +234,7 @@
 @end
 
 /*
- ping:
+ MARK:ping:
  ping是用来探测本机与网络中另一主机之间是否可达的命令，如果两台主机之间ping不通，则表明这两台主机不能建立起连接
  
  ping 命令是基于 ICMP 协议来工作的，「 ICMP 」全称为 Internet 控制报文协议（Internet Control Message Protocol）。ping 命令会发送一份ICMP回显请求报文给目标主机，并等待目标主机返回ICMP回显应答。因为ICMP协议会要求目标主机在收到消息之后，必须返回ICMP应答消息给源主机，如果源主机在一定时间内收到了目标主机的应答，则表明两台主机之间网络是可达的

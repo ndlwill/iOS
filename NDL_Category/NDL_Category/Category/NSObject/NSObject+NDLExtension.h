@@ -7,6 +7,197 @@
 //
 
 #import <Foundation/Foundation.h>
+/*
+ MARK:block
+ 传进 Block 之前，把self转换成 weakSelf
+ 如果在 Block 执行完成之前，self 被释放了，weakSelf 也会变为 nil
+ _strong 确保在 Block 内，strongSelf 不会被释放
+ 内部的strongSelf是个局部变量 仅存在于栈中 当strongSelf.str 执行完 strongSelf就会回收
+ 
+ block内部的weakSelf有可能为self或者为nil
+ eg:AFNetworking
+ __weak __typeof(self)weakSelf = self;
+ AFNetworkReachabilityStatusBlock callback = ^(AFNetworkReachabilityStatus status) {
+ __strong __typeof(weakSelf)strongSelf = weakSelf;
+ 
+ strongSelf.networkReachabilityStatus = status;
+ if (strongSelf.networkReachabilityStatusBlock) {
+ strongSelf.networkReachabilityStatusBlock(status);
+ }
+ 
+ };
+ (比如当前界面正在加载网络数据, 而此时用户关闭了该界面). 这样在某些情况下代码会崩溃. 所以为了让self不为nil, 我们在block内部将weakSelf转成strongSelf. 当block结束时, 该strongSelf变量也会被自动释放. 既避免了循环引用, 又让self在block内部不为nil.
+ 
+ 外部的weakSelf是为了打破环，从而使得没有循环引用，而内部的strongSelf仅仅是个局部变量，存在栈中，会在block执行结束后回收，不会再造成循环引用
+ */
+
+/*
+ MARK:循环引用
+ 
+ 引起循环引用:
+ 1.对象相互引用
+ 2.block问题。
+ 3.多个对象相互持有形成一个封闭的环
+ 
+ 解决循环引用:
+ 第一个办法是「事前避免」，我们在会产生循环引用的地方使用 weak 弱引用，以避免产生循环引用
+ 第二个办法是「事后补救」，我们明确知道会存在循环引用，但是我们在合理的位置主动断开环中的一个引用，使得对象得以回收
+ 1.weakSelf
+ 2.断开循环链条
+ 在 YTKNetwork 库中，我们的每一个网络请求 API 会持有回调的 block，回调的 block 会持有 self，而如果 self 也持有网络请求 API 的话，我们就构造了一个循环引用。虽然我们构造出了循环引用，但是因为在网络请求结束时，网络请求 API 会主动释放对 block 的持有，因此，整个循环链条被解开，循环引用就被打破了，所以不会有内存泄漏问题
+ */
+
+/*
+ MARK:performSelector传递两个以上参数
+ 
+ 1.将所有参数放入一个字典／数组传过去
+ 2.使用objc_msgSend()传递
+ 3.NSInvocation
+ 
+ 传递结构体:
+ 将结构体封装成NSValue对象
+ */
+
+/*
+ MARK:Category 已验证
+ Category并没有覆盖主类的同名方法，只是Category的方法排在方法列表前面，而主类的方法被移到了方法列表的后面
+ */
+
+/*
+ MARK:方法交换
+ 1.method_exchangeImplementations(Method _Nonnull m1, Method _Nonnull m2)
+ 2.
+ 
+ class_getInstanceMethod(Class _Nullable cls, SEL _Nonnull name)
+ 
+ method_getImplementation(Method _Nonnull m)
+ 
+ // 给类添加一个新的方法和该方法的具体实现 返回值: yes-方法添加成功, no-方法添加失败
+ // IMP imp:
+ 1. C语言写法:（IMP）方法名
+ 2. OC的写法: class_getMethodImplementation(self,@selector(方法名：))
+ class_addMethod(Class _Nullable cls, SEL _Nonnull name, IMP _Nonnull imp,
+ const char * _Nullable types)
+ eg:
+ + (BOOL)resolveInstanceMethod:(SEL)sel
+ {
+ if (sel == @selector(drive))
+ {
+ class_addMethod([self class], sel, class_getMethodImplementation(self,@selector(startEngine:)), "v@:@");
+ return YES;
+ }
+ return [super resolveInstanceMethod:sel];
+ }
+ - (void)startEngine:(NSString *)brand
+ {
+
+ }
+
+ class_replaceMethod(Class _Nullable cls, SEL _Nonnull name, IMP _Nonnull imp,
+ const char * _Nullable types)
+
+ */
+
+/*
+ MARK:内存管理
+ - retainCount
+ __CFDoExternRefOperation
+ CFBasicHashGetCountOfKey
+ 
+ - retain
+ __CFDoExternRefOperation
+ CFBasicHashAddValue
+ 
+ - release
+ __CFDoExternRefOperation
+ CFBasicHashRemoveValue
+ (CFBasicHashRemoveValue返回0时，-release调用dealloc)
+ 
+ - (NSUInteger)retainCount  {
+ return (NSUInteger)__CFDoExternRefOperation(OPERATION_retainCount,self);
+ }
+ 
+ - (id)retain  {
+ return (id)__CFDoExternRefOperation(OPERATION_retain,self);
+ }
+ 
+ - (void)release  {
+ return __CFDoExternRefOperation(OPERATION_release,self);
+ }
+ 
+ 
+ int __CFDoExternRefOperation(uintptr_r op,id obj) {
+ CFBasicHashRef table = 取得对象对应的散列表(obj);
+ int count;
+ 
+ switch(op) {
+ case OPERATION_retainCount:
+ count = CFBasicHashGetCountOfKey(table,obj);
+ return count;
+ case OPERATION_retain:
+ CFBasicHashAddValue(table,obj);
+ return obj;
+ case OPERATION_release:
+ count = CFBasicHashRemoveValue(table,obj):
+ return 0 == count;
+ }
+ }
+ 
+ 采用散列表（引用计数表）来管理引用计数
+ */
+
+/*
+ MARK:autorelease
+ 作用是将对象放入自动释放池中，当自从释放池销毁时对自动释放池中的对象都进行一次release操作
+ */
+
+/*
+ MARK:内存分配（堆和栈）
+ 只有oc对象需要进行内存管理,任何继承了NSObject的对象
+ 非oc对象类型比如基本数据类型不需要进行内存管理
+ 
+ Objective-C的对象在内存中是以堆的方式分配空间的,并且堆内存是由你释放的，就是release
+ OC对象存放于堆里面(堆内存要程序员手动回收)
+ 非OC对象一般放在栈里面(栈内存会被系统自动回收)
+ 堆里面的内存是动态分配的，所以也就需要程序员手动的去添加内存、回收内存
+ 
+ 进程内存区域:
+ 代码区：代码段是用来存放可执行文件的操作指令（存放函数的二进制代码），也就是说是它是可执行程序在内存中的镜像
+ 
+ 全局（静态）区包含下面两个分区：
+ 数据区：数据段用来存放可执行文件中已初始化全局变量，换句话说就是存放程序静态分配的变量和全局变量。
+ BSS区：BSS段包含了程序中未初始化全局变量。
+ 
+ 常量区：常量存储区，这是一块比较特殊的存储区，他们里面存放的是常量，
+ 
+ 堆（heap）区：堆是由程序员分配和释放，用于存放进程运行中被动态分配的内存段，它大小并不固定，可动态扩张或缩减。当进程调用alloc等函数分配内存时，新分配的内存就被动态添加到堆上（堆被扩张）；当利用realse释放内存时，被释放的内存从堆中被剔除（堆被缩减），因为我们现在iOS基本都使用ARC来管理对象，所以不用我们程序员来管理，但是我们要知道这个对象存储的位置。
+ 
+ 栈（stack）区：栈是由编译器自动分配并释放，用户存放程序临时创建的局部变量，存放函数的参数值，局部变量等。也就是说我们函数括弧“{}”中定义的变量（但不包括static声明的变量，static意味这在数据段中存放变量）。除此以外在函数被调用时，其参数也会被压入发起调用的进程栈中，并且待到调用结束后，函数的返回值也会被存放回栈中。由于栈的先进后出特点，所以栈特别方便用来保存/恢复调用现场。从这个意义上将我们可以把栈看成一个临时数据寄存、交换的内存区
+ 
+ 栈是向低地址扩展的数据结构，是一块连续的内存的区域。堆是向高地址扩展的数据结构，是不连续的内存区域
+ */
+
+/*
+ MARK:isEqual方法:
+ 对于基本类型, ==运算符比较的是值; 对于对象类型, ==运算符比较的是对象的地址(即是否为同一对象)
+ 
+ UIColor *color1 = [UIColor colorWithRed:0.5 green:0.5 blue:0.5 alpha:1.0];
+ UIColor *color2 = [UIColor colorWithRed:0.5 green:0.5 blue:0.5 alpha:1.0];
+ NSLog(@"color1 == color2 = %@", color1 == color2 ? @"YES" : @"NO");
+ NSLog(@"[color1 isEqual:color2] = %@", [color1 isEqual:color2] ? @"YES" : @"NO");
+ 
+ 打印结果如下:
+ color1 == color2 = NO
+ [color1 isEqual:color2] = YES
+ ==运算符只是简单地判断是否是同一个对象, 而isEqual方法可以判断对象是否相同
+ UIColor, isEqual方法已经实现好了
+ 
+ 常见类型的isEqual方法还有NSString isEqualToString / NSDate isEqualToDate / NSArray isEqualToArray / NSDictionary isEqualToDictionary / NSSet isEqualToSet
+ 
+ 重写自定义对象的isEqual方法:
+ */
+
+// ###关联对象###
 // 在obj dealloc时候会调用object_dispose，检查有无关联对象，有的话_object_remove_assocations删除
 
 // 当在主线程上同步调度任务的时候才会出现死锁
@@ -168,6 +359,7 @@
  return NO;
  }
  */
+
 @interface NSObject (NDLExtension)
 
 // 模型转字典 // 针对一层模型
@@ -186,7 +378,7 @@
  */
 
 /*
- ###block原理###
+ MARK:###block原理###
  Block是将函数及其执行上下文封装起来的对象
  
  NSInteger num = 3;
