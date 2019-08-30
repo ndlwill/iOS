@@ -264,6 +264,7 @@
  */
 
 // 选择排序、冒泡排序、插入排序三种排序算法可以总结为：都将数组分为已排序部分和未排序部分
+// 依次比较两个相邻的元素，顺序不对就交换，直至没有相邻元素需要交换，也就是排序完成
 // {5, 18, 8 , 12, 25};
 void bubbleSort_C(int array[], int arrayLength)
 {
@@ -287,6 +288,7 @@ void bubbleSort_C(int array[], int arrayLength)
 }
 
 /*
+ 它的工作原理是每一次从待排序的数据元素中选出最小（或最大）的一个元素，存放在序列的起始位置，然后，再从剩余未排序元素中继续寻找最小（大）元素，然后放到已排序序列的末尾
 1. 设数组内存放了n个待排数字，数组下标从1开始，到n结束。
 2. i=1
 3. 从数组的第i个元素开始到第n个元素，寻找最小的元素。（具体过程为:先设arr[i]为最小，逐一比较，若遇到比之小的则交换）
@@ -339,13 +341,13 @@ void selectionSort_C(int array[], int arrayLength)
      */
 }
 
-// 
+//  插入排序的基本思想是：每步将一个待排序的记录，按其关键码值的大小插入前面已经排序的文件中适当位置上，直到全部插入完为止
 void insertionSort_C(int array[], int arrayLength)
 {
     for (int i = 1; i < arrayLength; i++) {
         int j = i;
         int temp = array[i];
-        // 循环比较排好序的
+        // 循环遍历排序好的，循环比较排好序的
         while (j > 0 && temp < array[j - 1]) {
             int sortedValue = array[j - 1];
             array[j - 1] = temp;

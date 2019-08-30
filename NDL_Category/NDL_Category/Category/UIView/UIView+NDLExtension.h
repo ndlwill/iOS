@@ -29,7 +29,7 @@
  */
 
 /*
- UIView从Draw到Render:
+ MARK:UIView从Draw到Render:
  1.每一个UIView都有一个layer，每一个layer都有个content，这个content指向的是一块缓存，叫做backing store。
  2.UIView的绘制和渲染是两个过程，当UIView被绘制时，CPU执行drawRect，通过context将数据写入backing store。
  3.当backing store写完后，通过render server交给GPU去渲染，将backing store中的bitmap数据显示在屏幕上

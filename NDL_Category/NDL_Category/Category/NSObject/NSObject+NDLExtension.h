@@ -7,6 +7,23 @@
 //
 
 #import <Foundation/Foundation.h>
+
+// MARK:SDWebImage
+// 解决tableView复用错乱问题：每次都会调UIImageView+WebCache文件中的sd_cancelImageLoadOperationWithKey
+
+// 浅拷贝：指针拷贝，复制一个新的指针，只想同一块内存区域
+// 深拷贝：内容拷贝，拷贝数据到一块新内存区域，指针指向拷贝的数据区
+
+/*
+ MARK:双指针
+ NSError都是用双重指针来传递
+ NSError *error;这个error是在栈中存放的，栈中数据作为形参会进行复制
+ 如果是以error作为形参，系统会进行复制得到一个新的指针，在方法里面对这个error的赋值是不能作用到外面那个error的。因此外层的还是一个指向nil的指针。
+ ###如果传递的是一个&error这个指针的地址，也就是指向指针的指针，方法里面进行取值操作就可以拿到外层那个error了###
+ */
+
+// __unsafe_unretained作用需要和weak对比，它不会引起对象的内部引用计数的变化，但是，当其指向的对象被销毁是__unsafe_unretained修饰的指针不会置为nil
+
 /*
  MARK:block
  传进 Block 之前，把self转换成 weakSelf
@@ -203,6 +220,7 @@
 // 当在主线程上同步调度任务的时候才会出现死锁
 
 /*
+ MARK:
  当参数obj为Object实例对象:
  object_getClass(obj)与[obj class]输出结果一直，均获得isa指针，即指向类对象的指针
  
@@ -273,10 +291,10 @@
 // extension 可以添加实例变量，而 category 是无法添加实例变量的（因为在运行期，对象的内存布局已经确定，如果添加实例变量就会破坏类的内部布局)
 // category 的方法没有「完全替换掉」原来类已经有的方法，也就是说如果 category 和原来类都有 methodA，那么 category 附加完成之后，类的方法列表里会有两个 methodA.category 的方法被放到了新方法列表的前面，而原来类的方法被放到了新方法列表的后面，这也就是我们平常所说的category 的方法会「覆盖」掉原来类的同名方法，这是因为运行时在查找方法的时候是顺着方法列表的顺序查找的，它只要一找到对应名字的方法，就会返回，不会管后面可能还有一样名字的方法。
 // 在类的 +load方法调用的时候，我们可以调用 category 中声明的方法.因为附加 category 到类的工作会先于 +load方法的执行
-// +load的执行顺序是先类，后 category，而 category 的+load 执行顺序是根据编译顺序决定的。虽然对于 +load的执行顺序是这样，但是对于「覆盖」掉的方法，则会先找到最后一个编译的 category 里的对应方法
+// +load的执行顺序是先类，子类，category，而 category 的+load 执行顺序是根据编译顺序决定的。虽然对于 +load的执行顺序是这样，但是对于「覆盖」掉的方法，则会先找到最后一个编译的 category 里的对应方法
 
 /*
- 关联对象:
+ MARK:关联对象:
  在 runtime 中所有的关联对象都由 AssociationsManager 管理。AssociationsManager 里面是由一个静态 AssociationsHashMap 来存储所有的关联对象的。这相当于把所有对象的关联对象都存在一个全局 map 里面。而 map 的 key 是这个对象的指针地址（任意两个不同对象的指针地址一定是不同的），而这个 map 的 value 又是另外一个 AssociationsHashMap，里面保存了关联对象的 KV 对。runtime 的销毁对象函数 objc_destructInstance里面会判断这个对象有没有关联对象，如果有，会调用 _object_remove_assocations 做关联对象的清理工作
  */
 
@@ -370,7 +388,7 @@
 @end
 
 /*
- ##弱引用管理##
+ MARK:##弱引用管理##
  添加weak变量:通过哈希算法位置查找添加。如果查找对应位置中已经有了当前对象所对应的弱引用数组，就把新的弱引用变量添加到数组当中；如果没有，就创建一个弱引用数组，并将该弱引用变量添加到该数组中
  
  当一个被weak修饰的对象被释放:
@@ -481,7 +499,7 @@
  */
 
 /*
- KVC:
+ MARK:KVC:
  
  + (BOOL)accessInstanceVariablesDirectly;
  //默认返回YES，表示如果没有找到Set<Key>方法的话，会按照_key，_iskey，key，iskey的顺序搜索成员，设置成NO就不这样搜索
@@ -627,9 +645,11 @@
 
 
 /*
- autorelease对象在什么时刻释放:
- 手动干预释放时机、系统自动去释放。
+ MARK:autorelease对象在什么时刻释放:
  
+ 用于自动对释放池内的对象进行引用计数-1的操作，即自动执行release方法
+ 
+ autorelease对象释放的时机:
  手动干预释放时机：手动指定 autoreleasepool 的 autorelease 对象，在当前作用域大括号结束时释放。
  系统自动去释放：不手动指定 autoreleasepool 的 autorelease 对象出了作用域之后，会被添加到最近一次创建的自动释放池中，并会在当前的 runloop 迭代结束时释放。而它能够释放的原因是系统在每个 runloop 迭代中都加入了自动释放池 Push 和 Pop。一个典型的例子是在一个类方法中创建一个对象并作为返回值，这时就需要将该对象放置到对应的 autoreleasepool 中
  
@@ -707,10 +727,16 @@
  App启动后，苹果在主线程 RunLoop 里注册了两个 Observer，其回调都是 _wrapRunLoopWithAutoreleasePoolHandler()
  第一个 Observer 监视的事件是 Entry(即将进入 Loop)，其回调内会调用 _objc_autoreleasePoolPush()创建自动释放池
  第二个 Observer 监视了两个事件： BeforeWaiting(准备进入休眠) 时调用_objc_autoreleasePoolPop()和 _objc_autoreleasePoolPush()释放旧的池并创建新池；Exit(即将退出 Loop) 时调用 _objc_autoreleasePoolPop()来释放自动释放池
+ 
+ 
+ 每当执行一个objc_autoreleasePoolPush调用时，向当前的AutoreleasePoolPage中add进一个哨兵对象
+ 根据传入的哨兵对象地址找到哨兵对象所处的page
+ 在当前page中，将晚于哨兵对象插入的所有autorelease对象都发送一次- release消息，并向回移动next指针到正确位置
+ 从最新加入的对象一直向前清理，可以向前跨越若干个page，直到哨兵所在的page
  */
 
 /*
- ##runloop##
+ MARK:##runloop##
  
  事件响应:
  苹果注册了一个 Source1 (基于 mach port 的) 用来接收系统事件，其回调函数为 __IOHIDEventSystemClientQueueCallback()
@@ -731,7 +757,7 @@
  当调用 NSObject 的 performSelector:afterDelay: 后，实际上其内部会创建一个 Timer 并添加到当前线程的 RunLoop 中。所以如果当前线程没有 RunLoop，则这个方法会失效。
  当调用 performSelector:onThread: 时，实际上其会创建一个 Timer 加到对应的线程去，同样的，如果对应线程没有 RunLoop 该方法也会失效
  
- GCD:
+ MARK:GCD:
  当调用 dispatch_async(dispatch_get_main_queue(), block) 时，libDispatch 会向主线程的 RunLoop 发送消息，RunLoop 会被唤醒，并从消息中取得这个 block，并在回调 __CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__() 里执行这个 block。但这个逻辑仅限于 dispatch 到主线程，dispatch 到其他线程仍然是由 libDispatch 处理的
  
  
@@ -750,7 +776,7 @@
  */
 
 /*
- ###runloop###
+ MARK:###runloop###
  RunLoop是通过内部维护的事件循环(Event Loop)来对事件/消息进行管理的一个对象
  对于RunLoop而言最核心的事情就是保证线程在没有消息的时候休眠，在有消息时唤醒，以提高程序性能
  

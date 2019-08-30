@@ -65,6 +65,8 @@
 // http://blog.it2048.cn/article_googlejx.html
 
 // ##面试##
+// ###https://www.jianshu.com/p/d884f3040fda
+// https://www.jianshu.com/p/d884f3040fda
 // https://www.jianshu.com/p/1798ba01e9ef
 // https://zhuanlan.zhihu.com/c_154646059
 // https://hit-alibaba.github.io/interview/
@@ -84,7 +86,7 @@
 // MARK:事件的传递和响应机制
 // https://www.jianshu.com/p/2e074db792ba
 /*
- ###事件的产生和传递###
+ MARK:###事件的产生和传递###
  
  事件的产生:
  发生触摸事件后，系统会将该事件加入到一个由UIApplication管理的事件队列中,为什么是队列而不是栈？因为队列的特点是FIFO，即先进先出，先产生的事件先处理才符合常理，所以把事件添加到队列。
@@ -169,7 +171,7 @@
 // https://www.runoob.com/w3cnote/mqtt-intro.html
 // https://mcxiaoke.gitbooks.io/mqtt-cn/content/
 /*
- MQTT（Message Queuing Telemetry Transport，消息队列遥测传输）是IBM开发的一个即时通讯协议
+ MARK:MQTT（Message Queuing Telemetry Transport，消息队列遥测传输）是IBM开发的一个即时通讯协议
  是轻量级基于代理的发布/订阅的消息传输协议。有可能成为物联网的重要组成部分
  该协议支持所有平台，几乎可以把所有联网物品和外部连接起来，被用来当做传感器的通信协议
  MQTT由于开放源代码，耗电量小等特点，将会在移动消息推送领域会有更多的贡献，在物联网(Internet of Thing)领域，传感器与服务器的通信，信息的收集

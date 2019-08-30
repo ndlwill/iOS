@@ -11,6 +11,8 @@
 
 #import "InvisibleWatermark.h"
 #import "ResidentThread.h"
+#import "GradientRingRatationView.h"
+#import "AnnoAnimationView.h"
 
 @interface TestMapViewController () <MAMapViewDelegate>
 {
@@ -104,11 +106,57 @@
         self.testName = @"123";
     });
     
-    // 已验证
+    // MARK:已验证
 //    WEAK_REF(self)
 //    _obj = [[NSNotificationCenter defaultCenter] addObserverForName:@"123" object:nil queue:nil usingBlock:^(NSNotification * _Nonnull note) {
 //        weak_self.testName = @"123";
 //    }];
+    
+    
+    // MARK:GradientRingRatationView
+    GradientRingRatationView *gradientRingRatationView = [[GradientRingRatationView alloc] initWithFrame:CGRectMake(30, kScreenHeight - 150, 100, 100) arcWidth:3.0 gradienColor:[UIColor redColor]];
+//    gradientRingRatationView.backgroundColor = [UIColor yellowColor];
+    [self.view addSubview:gradientRingRatationView];
+    
+    // MARK:AnnoAnimationView
+    AnnoAnimationView *annoAnimationView = [[AnnoAnimationView alloc] initWithFrame:CGRectMake(220, kScreenHeight - 150, 60, 84)];
+    annoAnimationView.tag = 100;
+    annoAnimationView.backgroundColor = [UIColor whiteColor];
+    [self.view addSubview:annoAnimationView];
+    
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSLog(@"=========================annoAnimationView start animation");
+        [annoAnimationView startAnimation];
+    });
+    
+    
+    // MARK:=====CALayer=====
+    CALayer *caLayer = [CALayer layer];
+    caLayer.backgroundColor = [UIColor redColor].CGColor;
+    // MARK:When setting the frame the `position' and `bounds.size' are changed to match the given frame
+    caLayer.frame = CGRectMake(30, self.view.height - 30 - 10, 100, 30);
+    [self.view.layer addSublayer:caLayer];
+    // layer frame = {{30, 627}, {100, 30}} bounds = {{0, 0}, {100, 30}}
+    NSLog(@"layer frame = %@ bounds = %@", NSStringFromCGRect(caLayer.frame), NSStringFromCGRect(caLayer.bounds));
+    
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        // update layer: frame = {{50, 627}, {100, 30}} bounds = {{0, 0}, {100, 30}}
+//        caLayer.position = CGPointMake(100, self.view.height - 30 - 10 + 15);
+        
+        // update layer: frame = {{40, 627}, {100, 30}} bounds = {{0, 0}, {100, 30}}
+//        caLayer.transform = CATransform3DMakeTranslation(10, 0, 0);// 会有平移隐式动画
+        
+        // 只有改变bounds才会真的改变bounds，其他的都是改变frame
+        // update layer: frame = {{20, 627}, {120, 30}} bounds = {{0, 0}, {120, 30}}
+//        caLayer.bounds = CGRectMake(0, 0, 120, 30);// 会有缩放隐式动画
+        
+        // update layer: frame = {{20, 627}, {120, 30}} bounds = {{0, 0}, {100, 30}}
+//        caLayer.transform = CATransform3DMakeScale(1.2, 1, 1);// 会有缩放隐式动画
+        
+        // update layer: frame = {{10, 627}, {120, 30}} bounds = {{0, 0}, {100, 30}}
+//        caLayer.transform = CATransform3DMakeAffineTransform(CGAffineTransformMake(1.2, 0, 0, 1.0, -10, 0));// 　缩放和平移
+        NSLog(@"update layer: frame = %@ bounds = %@", NSStringFromCGRect(caLayer.frame), NSStringFromCGRect(caLayer.bounds));
+    });
 }
 
 - (void)dealloc
@@ -131,9 +179,13 @@
 
 - (void)buttonDidClicked:(UIButton *)pSender
 {
-    self.carAnno.coordinate = coords1[0];
-    
-    [self.carAnno addMoveAnimationWithKeyCoordinates:coords1 count:sizeof(coords1) / sizeof(coords1[0]) withDuration:6.0 withName:nil completeCallback:nil];
+    NSLog(@"===buttonDidClicked===");
+    [[self.view viewWithTag:100] removeFromSuperview];
+
+    // ===test addMoveAnimationWithKeyCoordinates===
+//    self.carAnno.coordinate = coords1[0];
+//
+//    [self.carAnno addMoveAnimationWithKeyCoordinates:coords1 count:sizeof(coords1) / sizeof(coords1[0]) withDuration:6.0 withName:nil completeCallback:nil];
 }
 
 - (void)initCoordinates {
@@ -200,6 +252,25 @@
     }
     
     return nil;
+}
+
+- (void)mapView:(MAMapView *)mapView didAddAnnotationViews:(NSArray *)views
+{
+    for (MAAnnotationView *annoView in views) {
+        CGRect endFrame = annoView.frame;
+        annoView.y = annoView.y - kScreenHeight;
+        
+        // MARK:CASpringAnimation iOS9.0
+        [UIView animateWithDuration:0.45 delay:1.0 usingSpringWithDamping:0.8 initialSpringVelocity:3.0 options:UIViewAnimationOptionCurveEaseInOut animations:^{
+            [annoView setFrame:endFrame];
+        } completion:nil];
+        
+        //        [UIView beginAnimations:@"drop" context:NULL];
+        //        [UIView setAnimationDuration:0.45];
+        //        [UIView setAnimationCurve:UIViewAnimationCurveEaseInOut];
+        //        [annoView setFrame:endFrame];
+        //        [UIView commitAnimations];
+    }
 }
 
 

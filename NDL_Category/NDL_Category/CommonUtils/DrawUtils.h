@@ -133,7 +133,7 @@
  */
 
 /*
- ###https://www.csdn.net/gather_2c/MtjaEgzsNzg2Ni1ibG9n.html###
+ MARK:###https://www.csdn.net/gather_2c/MtjaEgzsNzg2Ni1ibG9n.html###
  位图（Bitmap），又称栅格图（英语：Raster graphics）或点阵图，是使用像素阵列(Pixel-array/Dot-matrix点阵)来表示的图像
  对于一个32位RGBA图像来说，则每个元素包含着三个颜色组件(R,G,B)和一个Alpha组件，每一个组件占8位（8bite = 1byte = 32 / 4）。这些像素集合起来就可以表示出一张图片
  

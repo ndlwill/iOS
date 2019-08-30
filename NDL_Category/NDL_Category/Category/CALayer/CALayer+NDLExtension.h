@@ -68,6 +68,7 @@
 
 /*
  CALayerDelegate:
+ 是一个绘制图层内容的代理方法,不应该将UIView对象设置为显示层的委托对象，这是因为UIView对象已经是隐式层的代理对象
 - (void)drawLayer:(CALayer *)layer inContext:(CGContextRef)ctx;
  */
 @interface CALayer (NDLExtension)

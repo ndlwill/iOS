@@ -431,7 +431,7 @@ static void save_crash_report (PLCrashReporter *reporter) {
     
 #endif
     
-    // =====crash=====
+    // MARK:=====crash=====
 //    NSSetUncaughtExceptionHandler(&uncaughtExceptionHandler);
     
     // 注册runloop观察者

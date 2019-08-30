@@ -133,12 +133,12 @@
             @autoreleasepool {
                 UInt32 *currentPixel = inputPixels + (j * imageWidth) + i;
                 UInt32 currentPixelValue = *currentPixel;
-                // 124, 34, 25, 255(rgba) 0x7C2219FF 2082609663 自己已验证
+                // MARK:124, 34, 25, 255(rgba) 0x7C2219FF 2082609663 自己已验证
                 // kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big 4279837308->ff19227c abgr
                 // kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Little 2082609663->7c2219ff rgba###
                 // kCGImageAlphaPremultipliedFirst|kCGBitmapByteOrder32Little 4286325273->ff7c2219 argb
                 // kCGImageAlphaPremultipliedFirst|kCGBitmapByteOrder32Big 421690623->19227cff bgra
-                NSLog(@"currentPixelValue = %u", (unsigned int)currentPixelValue);
+//                NSLog(@"currentPixelValue = %u", (unsigned int)currentPixelValue);
                 UInt32 currentR, currentG, currentB, currentA;
 
                 // rgba

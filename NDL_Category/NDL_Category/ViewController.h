@@ -9,7 +9,7 @@
 #import <UIKit/UIKit.h>
 
 /*
- ViewController生命周期
+ MARK:ViewController生命周期
  按照执行顺序排列：
  1. initWithCoder：通过nib文件初始化时触发。
  2. awakeFromNib：nib文件被加载的时候，会发生一个awakeFromNib的消息到nib文件中的每个对象。
@@ -25,7 +25,7 @@
  */
 
 /*
- 反射机制:
+ MARK:反射机制:
  
  class反射:
  通过类名的字符串形式实例化对象。
@@ -43,7 +43,7 @@
 // https://blog.csdn.net/qxuewei/
 
 /*
- Designated Initializer 指定初始化方法
+ MARK:Designated Initializer 指定初始化方法
  根据规范，通常选择一个接收参数最多的初始化方法作为指定初始化方法，真正的数据分配和其他相关初始化操作在这个方法中完成。而其他的初始化方法则作为便捷初始化方法去调用这个指定初始化方法
  便捷初始化方法也可以不直接调用指定初始化方法，它可以调用其他便捷初始化方法，但不管调用几层，最终是要调用到指定初始化方法的，因为真正的实现操作是在指定初始化方法中完成的
  
@@ -58,7 +58,7 @@
  2.TestLifeCircleViewController viewDidLayoutSubviews
  3.TestLifeCircleView layoutSubviews
  
- // view
+ // MARK:view:layoutSubviews
  // view的宽高改变 会调用view的layoutSubviews
  改变x,y 不会调用view的layoutSubviews
  
@@ -166,7 +166,7 @@ return nil;
  */
 
 /*
- UIView && CALayer
+ MARK:UIView && CALayer
  每一个单位区间其实都是一个梯形，也就是说我们只需要通过画一个三角形和一个矩形就可以画出一个单位区间
  
  layer内部维护着三分layer tree，分别是presentLayer Tree(动画树)，modeLayer Tree(模型树), Render Tree(渲染树)，在做 iOS动画的时候，我们修改动画的属性，在动画的其实是Layer的presentLayer的属性值，而最终展示在界面上的其实是提供View的modelLayer
@@ -178,7 +178,6 @@ return nil;
  每一个UIView都有一个layer，每一个layer都有个content，这个content指向的是一块缓存，叫做backing store。
  UIView的绘制和渲染是两个过程，当UIView被绘制时，CPU执行drawRect，通过context将数据写入backing store。
  当backing store写完后，通过render server交给GPU去渲染，将backing store中的bitmap数据显示在屏幕上
- 
  */
 
 /*

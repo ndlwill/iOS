@@ -56,7 +56,7 @@
     NSLog(@"testView.center = %@ position = %@ anchorPoint = %@ frame = %@", NSStringFromCGPoint(testView.center), NSStringFromCGPoint(testView.layer.position), NSStringFromCGPoint(testView.layer.anchorPoint), NSStringFromCGRect(testView.frame));// center属性是针对与frame属性的中心点坐标
     // 当frame变化时，bounds和center相应变化
     
-    // 改变锚点
+    // MARK:改变锚点
     testView.layer.anchorPoint = CGPointMake(0, 0);
     // (50, 84), (50, 84), (0, 0), frame = {{50, 84}, {100, 40}} 但视图显示的位置变化了，显示根据anchorPoint + position
     NSLog(@"testView.center = %@ position = %@ anchorPoint = %@ frame = %@", NSStringFromCGPoint(testView.center), NSStringFromCGPoint(testView.layer.position), NSStringFromCGPoint(testView.layer.anchorPoint), NSStringFromCGRect(testView.frame));
@@ -232,6 +232,9 @@
 //            }
 //        }
 //    });
+    
+    
+
 }
 
 - (void)viewWillDisappear:(BOOL)animated
