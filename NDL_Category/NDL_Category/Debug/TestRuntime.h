@@ -140,5 +140,5 @@ objc_ivar_list *ivars:属性列表
  当你向一个类发送消息时，runtime会在这个类的meta-class的方法列表中查找
  
  self 是指向于一个objc_object结构体的首地址
- 返回的是objc_class结构体的首地址，也就是self->isa的值
+ objc_class结构体的首地址，也就是self->isa的值
  */

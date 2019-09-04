@@ -65,7 +65,7 @@
  Xcode的console中有memory issuer的提示
  */
 
-// symbolicatecrash:
+// MARK:symbolicatecrash:
 // find /Applications/Xcode.app -name symbolicatecrash -type f
 // .ipa文件 右键 -> 打开方式 -> 归档实用工具(就是解压缩) 得到Payload文件夹 获取.dSYM文件
 // export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"

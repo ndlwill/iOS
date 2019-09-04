@@ -8,7 +8,7 @@
 
 #import "BaseViewController.h"
 #import "JSHandler.h"
-// 什么东西与文件内容相关呢？利用数据摘要算法 对文件求摘要信息，摘要信息与文件内容一一对应
+// https://mp.weixin.qq.com/s/rhYKLIbXOsUJC_n6dt9UfA
 
 //强制浏览器使用本地缓存（cache-control/expires）
 

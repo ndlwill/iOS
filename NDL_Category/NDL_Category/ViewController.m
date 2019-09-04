@@ -29,7 +29,7 @@
 #import "CommonDefines.h"
 #import "NDLFloatLayoutView.h"
 #import "NSString+NDLExtension.h"
-
+#import "TestAVFoundationViewController.h"
 #import "AutoSizingView.h"
 
 #import "PieView.h"
@@ -1920,9 +1920,10 @@ NSLog(@"viewDidLoad 22");
     
     // =====test navBar=====
     
-    // =====test TextView=====
+    // MARK:=====test TextView || TestAVFoundation=====
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [self presentViewController:[TestTVViewController new] animated:YES completion:nil];
+//        [self presentViewController:[TestTVViewController new] animated:YES completion:nil];
+        [self presentViewController:[TestAVFoundationViewController new] animated:YES completion:nil];
     });
     
     // test apm

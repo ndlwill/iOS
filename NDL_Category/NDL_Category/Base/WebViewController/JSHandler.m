@@ -60,9 +60,11 @@
 #pragma mark - WKScriptMessageHandler
 - (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message
 {
+    // message的body只能是 NSNumber, NSString, NSDate, NSArray, NSDictionary, NSNull这几种类型
     NSLog(@"presentingViewController = %@ navigationController = %@", self.vc.presentingViewController, self.vc.navigationController);
     UINavigationController *navigationVC = self.vc.navigationController;
-    // JS call Native
+    // JS call Native JS调用OC
+    // js会通过以下方法调用原生方法: window.webkit.messageHandlers.<#对象#>.postMessage(<#参数#>)
     // 返回
     if ([message.name isEqualToString:@"backPage"]) {
         if (navigationVC && navigationVC.viewControllers.firstObject != self.vc) {

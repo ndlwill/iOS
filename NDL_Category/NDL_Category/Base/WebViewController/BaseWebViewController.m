@@ -50,6 +50,7 @@
 
 - (void)dealloc
 {
+    NSLog(@"===BaseWebViewController dealloc===");
     [self.jsHandler removeAllScriptMessageHandlers];
     [self.webView removeObserver:self forKeyPath:@"estimatedProgress"];
 }
@@ -57,8 +58,15 @@
 #pragma mark - Private Methods
 - (void)_setupUI
 {
+    // 配置
     WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
-    configuration.preferences.javaScriptEnabled = YES;// 允许js交互
+    // 偏好设置
+    WKPreferences *preference = [[WKPreferences alloc] init];
+    preference.javaScriptCanOpenWindowsAutomatically = YES;
+    preference.javaScriptEnabled = YES;// 允许js交互
+    preference.minimumFontSize = 40.0;
+    configuration.preferences = preference;
+    //
     self.jsHandler = [[JSHandler alloc] initWithViewController:self configuration:configuration];
     
 
@@ -137,6 +145,14 @@
         [self.view addSubview:self.progressView];
     }
     
+    // 原生调用JavaScript的代码需要在页面加载完成之后，就是在 - webView:didFinishNavigation:代理方法里面
+    // native call js
+    // 此处是设置需要调用的js方法以及将对应的参数传入，需要以字符串的形式
+//    NSString *jsFunction = [NSString stringWithFormat:@"getAppConfig('%@')", @"111"];
+//    [self.webView evaluateJavaScript:jsFunction completionHandler:^(id _Nullable, NSError * _Nullable error) {
+//
+//    }];
+    
     // 请求url
     [self loadRequest];
 }
@@ -167,6 +183,11 @@
     // 添加请求头，服务端可以在这里取一些数据
     [request setValue:headerAESStr forHTTPHeaderField:@"header-encrypt-code"];
     [self.webView loadRequest:request];
+    
+    // MARK:iOS11以下版本的WKWebView都不支持POST请求的发送
+    // 使用JavaScript解决WKWebView无法发送POST参数问题
+    // https://www.jianshu.com/p/1e9fbbbb75f4
+    
     
     // 加载本地
     // 1.html文件
@@ -300,6 +321,13 @@
     self.title = webView.title;
     
     [self updateNavigationItems];
+}
+
+// 返回到上一个页面发现页面变空白了，或者从后台切会到前台后发现页面空白了 iOS9.0
+- (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView
+{
+    // reload URL
+    [webView reload];
 }
 
 @end

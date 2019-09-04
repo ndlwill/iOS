@@ -79,7 +79,7 @@
 //        [self dismissViewControllerAnimated:YES completion:nil];
 //    });
     
-    // Assets.xcassets里的图片只支持[UIImage imageNamed],不能从Bundle中加载.不能根据路径读取图片，因为图片会被打包在Assets.car文件中
+    // MARK:Assets.xcassets里的图片只支持[UIImage imageNamed],不能从Bundle中加载.不能根据路径读取图片，因为图片会被打包在Assets.car文件中
     UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(60, 600, 60, 60)];
     NSString *assetPath = [[NSBundle mainBundle] pathForResource:@"avatar" ofType:@"png"];// nil
     // /.../Bundle/Application/3FBC8440-CD34-43E3-BD2D-FB406E44F86A/NDL_Category.app/1024x1024.png

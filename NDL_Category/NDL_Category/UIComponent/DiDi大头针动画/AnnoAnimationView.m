@@ -136,8 +136,8 @@ static CGFloat const kAnimationDuration = 0.42;
     circleAnim.keyTimes = @[@(0), keyTime1, keyTime2, keyTime3, @(1)];
     circleAnim.timingFunction = timingFunction;
 //    circleAnim.timingFunctions = timingFunctions;
-    circleAnim.fillMode = kCAFillModeForwards;
-    circleAnim.removedOnCompletion = NO;
+//    circleAnim.fillMode = kCAFillModeForwards;
+//    circleAnim.removedOnCompletion = NO;
     [self.circleLayer addAnimation:circleAnim forKey:nil];
 
     // 1
@@ -165,8 +165,8 @@ static CGFloat const kAnimationDuration = 0.42;
     lineAnim.keyTimes = @[@(0), keyTime1, keyTime2, keyTime3, @(1)];
     lineAnim.timingFunction = timingFunction;
 //    lineAnim.timingFunctions = timingFunctions;
-    lineAnim.fillMode = kCAFillModeForwards;
-    lineAnim.removedOnCompletion = NO;
+//    lineAnim.fillMode = kCAFillModeForwards;
+//    lineAnim.removedOnCompletion = NO;
     [self.lineLayer addAnimation:lineAnim forKey:nil];
 }
 

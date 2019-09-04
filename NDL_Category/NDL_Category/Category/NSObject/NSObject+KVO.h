@@ -60,7 +60,7 @@ typedef void(^ChangedBlock)(NSString *keyPath, NSObject *observedObject, id oldV
 NS_ASSUME_NONNULL_END
 
 /*
- 对象的内存销毁时间表，分四个步骤:
+ MARK:对象的内存销毁时间表，分四个步骤:
  1.调用 -release ：引用计数变为零
  对象正在被销毁，生命周期即将结束.
  不能再有新的 __weak 弱引用，否则将指向 nil.

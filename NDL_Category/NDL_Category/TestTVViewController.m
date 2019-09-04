@@ -34,6 +34,7 @@
 #import "Object2.h"
 
 #import "NSString+Algorithm.h"
+#import "TestAVFoundationViewController.h"
 
 static int count = 0;
 
@@ -461,6 +462,18 @@ typedef struct TestStruct{
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         NSLog(@"after model count = %ld", CFGetRetainCount((__bridge CFTypeRef)(model)));
     });
+    
+    NSMutableArray *m_arr = [NSMutableArray arrayWithObject:@"123"];
+    NSLog(@"m_arr = %@", m_arr);// 123
+    void (^mArrBlock)(void) = ^ {
+        [m_arr addObject:@"234"];
+//        m_arr = [NSMutableArray arrayWithObject:@"txt"];// 报错 需要外部用__block
+    };
+    NSLog(@"m_arr = %@", m_arr);// [m_arr addObject:@"234"];: 123
+    mArrBlock();
+    NSLog(@"m_arr = %@", m_arr);// [m_arr addObject:@"234"];: 123, 234
+    // MARK:block在修改NSMutableArray，需不需要添加__block？:不需要
+    // block里只是复制了一份这个指针，两个指针指向同一个地址。所以，在block里面对指针指向内容做的修改，在block外面也一样生效
     
     //
     int multiplier = 7;

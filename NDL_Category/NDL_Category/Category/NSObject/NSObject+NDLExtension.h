@@ -8,6 +8,262 @@
 
 #import <Foundation/Foundation.h>
 
+/*
+ MARK:安装包优化
+ jpg资源图片的压缩比很小，每减少一张图片，就能减少ipa包的大小
+ compress png file: YES
+ 
+ 1.https://github.com/tinymind/LSUnusedResource检测没有使用到的图片
+ 2.二进制包优化
+ Write Link Map File
+ https://github.com/huanxsd/LinkMap
+ */
+
+/*
+ +load:
+ +load方法会在runtime加载类、分类时调用
+ 每个类、分类的+load，在程序运行过程中只调用一次
+ 调用顺序：
+ 1、先调用类的+load
+ √ 按照编译先后顺序调用（先编译，先调用）
+ √ 调用子类的+load之前会先调用父类的+load
+ 2、再调用分类的+load
+ √ 按照编译先后顺序调用（先编译，先调用）
+ +initialize:
+ +initialize方法会在类第一次接收到消息时调用
+ 调用顺序
+ 1、先调用父类的+initialize，再调用子类的+initialize
+ 2、(先初始化父类，再初始化子类，每个类只会初始化1次)
+ +initialize和+load的很大区别是，+initialize是通过objc_msgSend进行调用的，所以有以下特点
+ √ 如果子类没有实现+initialize，会调用父类的+initialize（所以父类的+initialize可能会被调用多次）
+ √ 如果分类实现了+initialize，就覆盖类本身的+initialize调用
+ */
+
+/*
+ 对象方法、属性、成员变量、协议信息，存放在class对象中
+ 类方法，存放在meta-class对象中
+ 成员变量的具体值，存放在instance对象中
+ */
+
+/*
+ 在NSOperationQueue中，我们可以随时取消已经设定要准备执行的任务(当然，已经开始的任务就无法阻止了)，而GCD没法停止已经加入queue的block(其实是有的，但需要许多复杂的代码)
+ 
+ 我们能将KVO应用在NSOperation中，可以监听一个Operation是否完成或取消，这样子能比GCD更加有效地掌控我们执行的后台任务
+ */
+
+/*
+ MARK:关联对象
+ 利用关联对象（AssociatedObject）给分类添加属性
+ 
+ objc_setAssociatedObject(id object, const void *key, id value, objc_AssociationPolicy policy);
+ 参数一：id object : 给哪个对象添加属性，这里要给自己添加属性，用self。
+ 参数二：void * == id key : 属性名，根据key获取关联对象的属性的值，在objc_getAssociatedObject中通过次key获得属性的值并返回。
+ 参数三：id value : 关联的值，也就是set方法传入的值给属性去保存。
+ 参数四：objc_AssociationPolicy policy : 策略，属性以什么形式保存
+ 
+ objc_getAssociatedObject(id object, const void *key);
+ 参数一：id object : 获取哪个对象里面的关联的属性。
+ 参数二：void * == id key : 什么属性，与objc_setAssociatedObject中的key相对应，即通过key值取出value
+ 
+ - (void)removeAssociatedObjects
+ {
+ // 移除所有关联对象
+ objc_removeAssociatedObjects(self);// 内部调用的是_object_remove_assocations函数,将object对象向对应的所有关联对象全部删除
+ }
+ 
+ 实现关联对象技术的核心对象有:
+ AssociationsManager
+ AssociationsHashMap
+ ObjectAssociationMap
+ ObjcAssociation
+ 
+ AssociationsManager类内部有一个static的AssociationsHashMap对象
+ AssociationsHashMap继承自unordered_map
+ 
+ ObjcAssociation类存储着_policy、_value，而这两个值我们可以发现正是我们调用objc_setAssociatedObject函数传入的值
+ 
+ object经过DISGUISE函数被转化为了disguised_ptr_t类型的disguised_object
+ DISGUISE函数其实仅仅对object做了位运算
+ disguised_object和ObjectAssociationMap则以key-value的形式对应存储在AssociationsHashMap中
+ 
+ 如果我们设置value为nil时，就会将关联对象从ObjectAssociationMap中移除
+ 
+ 在 runtime 中所有的关联对象都由 AssociationsManager 管理。AssociationsManager 里面是由一个静态 AssociationsHashMap 来存储所有的关联对象的。这相当于把所有对象的关联对象都存在一个全局 map 里面。
+ runtime 的销毁对象函数 objc_destructInstance里面会判断这个对象有没有关联对象，如果有，会调用 _object_remove_assocations 做关联对象的清理工作
+ 
+ 总结:
+ 一个实例对象就对应一个ObjectAssociationMap，而ObjectAssociationMap中存储着多个此实例对象的关联对象的key以及ObjcAssociation，为ObjcAssociation中存储着关联对象的value和policy策略
+ 
+ 关联对象并不是放在了原来的对象里面，而是自己维护了一个全局的map用来存放每一个对象及其对应关联属性表
+ 
+ 关联对象并不是存储在被关联对象本身内存中，而是存储在全局的统一的一个AssociationsManager中，如果设置关联对象为nil，就相当于是移除关联对象
+ */
+
+// 在分类中可以写@property添加属性，但是不会自动生成私有属性，也不会生成set,get方法的实现，只会生成set,get的声明，需要我们自己去实现
+
+/*
+ MARK:推送
+ iOS消息:透传消息，应用内消息
+ 消息通过SDK内部自行构建长连通道发送；
+ 只有App位于前台时该通道是激活的，App处于后台或关闭状态时长连通道关闭，消息无法送达；
+ 通过控制台排查系统 - 设备查询，可查看消息通道的在线/离线状态，可能有分钟级的延迟。
+ 
+ iOS通知:
+ 通知通过苹果APNs长连通道发送（非自建长连通道）；
+ iOS设备启动后，自动建立该APNs长连通道；
+ 在iOS设备设置中可选择关闭对应App的通知，可将该长连通道关闭，使通知无法送达；
+ iOS消息通道的在线/离线状态和通知无关，不会影响通知的送达
+ */
+
+/*
+ MARK:面试
+ retain, new, alloc, copy: +1
+ 
+ retain:
+ obj:objc_object sidetable:散列表
+ objc_storeStrong()->objc_retain(obj)->##obj->retain()###->rootRetain()->sidetable_retain()
+ retain做的操作
+ 1.哈希运算找到sidetable 2.取出refcont 3.refcont+=SIDE_TABLE_RC_ONE地址偏移
+ 
+ weak:
+ 引用计数不会+1
+ __weak typeof(self) weakSelf = self;
+ runtime会维护一张weak表（存储指向self的所有的weak指针）
+ weak表是哈希表 key-对象的地址 value-weak指针的地址（weak指针的地址的值就是self）
+ 
+ weak做的操作
+ objc_initWeak()初始化一个weak指针指向一个对象的地址->storeWeak()->weak_register_no_lock()->操作weak_table，通过hash运算找到弱引用表的起始地址
+ 
+ strongSelf:
+ 延长当前对象的生命周期
+ objc_storeStrong()
+ */
+
+/*
+ MARK:instruments
+ 常用的有:Leaks，Zombies，Core Animation，Time Profiler，Cocoa Layout，Energy Log，Network
+ 1.选中Color Blended Layers, 可以得到界面的红绿分布，其中红色的为透明部分，红色部分越多对性能影响越大
+ 2.监测离屏渲染：
+ Color Offscreen-Rendered Yellow
+ Color Hits Green and Misses Red
+ 3.Leaks
+ 4.Time Profiler
+ 5.Allocations
+ 
+ Hide System Libraries：隐藏系统库文件。过滤掉各种系统调用，只显示自己的代码调用
+ Top Functions：找到最耗时的函数或方法
+ Color Hits Green and Misses Red:图层缓存
+ 因此UIKit提供了API用于缓存这些Layer[layer setShouldRasterize:YES]，
+ 系统会将这些Layer缓存成Bitmap位图供渲染使用，如果失效时便丢弃这些Bitmap重新生成。所以绿色越多，红色越少越好
+ 
+ Color Misaligned Images:
+ 黄色或洋红色（Magenta）的图层标记，代表其像素不对齐
+ 不对齐：视图或图片的点数(point)，不能换算成整数的像素值（pixel），导致显示视图的时候需要对没对齐的边缘进行额外混合计算，影响性能
+ 洋红色：UIView的frame像素不对齐，即不能换算成整数像素值。
+ 黄色：UIImageView的图片像素大小与其frame.size不对齐，图片发生了缩放造成
+ 
+ 该图片@2x像素为128x128px，@3x像素为192x192px，仅当UIImageView的size为64x64的时候才没有像素不对齐。
+ 遇到这种情况需要严格约束Icon图片和UIImageView的尺寸
+ 还有种情况即图片是从服务端获取到的，大小不规则。直接在UIImageView上显示容易出现像素不对齐。
+ 解决方法：将下载到的图片，缩放到与UIImageView对应的尺寸，再显示出来
+ 
+ 将UIImage缩放到指定大小
+ @param boxSize 一般为UIImageView的size
+ @return 缩放后的UIImage
+- (UIImage *)imageShowInSize:(CGSize)boxSize {
+    if (CGSizeEqualToSize(boxSize, self.size)) {
+        return self;
+    }
+    
+    CGFloat screenScale = [[UIScreen mainScreen] scale];
+    CGFloat rate = MAX(boxSize.width / self.size.width, boxSize.height / self.size.height);
+    CGSize resize = CGSizeMake(self.size.width * rate , self.size.height * rate );
+    CGRect drawRect = CGRectMake(-(resize.width - boxSize.width) / 2.0 ,
+                                 -(resize.height - boxSize.height) / 2.0 ,
+                                 resize.width,
+                                 resize .height);
+    boxSize = CGSizeMake(boxSize.width, boxSize.height);
+    UIGraphicsBeginImageContextWithOptions(boxSize, YES, screenScale);
+    [self drawInRect:drawRect];
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
+ 可能需要根据UIImageView的contentMode属性调整缩放方式。
+ 该方法执行会花费一定的时间，在列表上显示需要缩放的图片，为了不影响列表滚动流程体验，该操作应放到非主线进行，并考虑将缩放后的结果缓存以便下次直接使用
+ 根据原始图片尺寸大小，当前状况是否明显影响列表滚动等具体情况再决定是否优化
+ 
+ 父视图的像素不对齐也会影响到子视图
+ 在使用Group Style的UITableview时，如果tableView:heightForHeaderInSection:回调返回0，系统会认为没有设置header的高度而重新提供一个默认的header高度，导致在UITableview中看到一个空白的header。
+ 一种简单但有隐患的处理方式，就是在回调里返回一个很小的高度，比如0.1、0.01，这样能达到隐藏header的效果，但也造成了此处的像素不对齐问题。
+ 解决方法：
+ - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
+ return CGFLOAT_MIN;
+ }
+ */
+
+/*
+ https://www.iqiyi.com/v_19rt52oxbs.html
+ MARK:性能优化
+ 1.instruments
+ 查看程序哪些部分最耗时，可以使用Time Profiler，要查看内存是否泄漏了，可以使用Leaks
+ 2.reuseIdentifier
+ 3.尽量把views设置为完全不透明
+ 对于屏幕上的每一个像素，GPU需要算出怎么混合这些纹理来得到像素RGB的值
+ 只要一个视图的不透明度小于1,就会导致blending.blending操作在iOS的图形处理器（GPU）中完成的,blending主要指的是混合像素颜色的计算
+ 我们把两个图层叠加在一起,如果第一个图层的有透明效果,则最终像素的颜色计算需要将第二个图层也考虑进来
+ 如果一个图层是完全不透明的,则系统直接显示该图层的颜色即可。而如果图层是带透明效果的,则会引入更多的计算,因为需要把下面的图层也包括进来,进行混合后颜色的计算
+ 
+ color blended layers红色区域表示图层发生了混合
+ Instrument-选中Core Animation-勾选Color Blended Layers
+ 避免图层混合:
+ 确保控件的opaque属性设置为true，确保backgroundColor和父视图颜色一致且不透明
+ 不要设置低于1的alpha值
+ 确保UIImage没有alpha通道
+ 
+ 离屏渲染:
+ 模拟器debug-选中color Offscreen - Renderd离屏渲染的图层高亮成黄 可能存在性能问题
+ 真机Instrument-选中Core Animation-勾选Color Offscreen-Rendered Yellow
+ 
+ 4.避免过于庞大的XIB
+ 当你加载一个XIB的时候所有内容都被放在了内存里。如果有一个不会即刻用到的view，你这就是在浪费宝贵的内存资源了
+ storyboard仅在需要时实例化一个view controller.
+ 5.不要阻塞主线程
+ 6.在Image Views中调整图片大小
+ 应保证图片的大小和UIImageView的大小相同
+ 如果图片是从远端服务加载的你不能控制图片大小，比如在下载前调整到合适大小的话，你可以在下载完成后，最好是用background thread，缩放一次，然后在UIImageView中使用缩放后的图片
+ 7.重用和延迟加载(lazy load) Views
+ (1)创建并隐藏这个view当这个screen加载的时候，当需要时显示它
+ (2)当需要时才创建并展示。
+ 每个方案都有其优缺点。 用第一种方案的话因为你需要一开始就创建一个view并保持它直到不再使用，这就会更加消耗内存。然而这也会使你的app操作更敏感因为当用户点击按钮的时候它只需要改变一下这个view的可见性。 第二种方案则相反-消耗更少内存，但是会在点击按钮的时候比第一种稍显卡顿
+ 8.Cache
+ (1)远端服务器的响应
+ (2)图片
+ (3)计算结果，比如UITableView的行高
+ 9.处理内存警告
+ 对内存警报的处理是很必要的，若不重视，你的app就可能被系统杀掉
+ 10.重用大开销对象
+ 一些objects的初始化很慢，比如NSDateFormatter和NSCalendar
+ 11.设定Shadow Path
+ 12.优化Table View
+ 13.使用Autorelease Pool
+ 
+ 14.APP的启动
+ APP的启动由dyld主导，将可执行文件加载到内存，顺便加载所有依赖的动态库
+ 
+ APP的启动 - runtime:并由runtime负责加载成objc定义的结构
+ 调用map_images进行可执行文件内容的解析和处理
+ 在load_images中调用call_load_methods，调用所有Class和Category的+load方法
+ 进行各种objc结构的初始化（注册Objc类 、初始化类对象等等）
+ 调用C++静态初始化器和attribute((constructor))修饰的函数
+ 到此为止，可执行文件和动态库中所有的符号(Class，Protocol，Selector，IMP，…)都已经按格式成功加载到内存中，被runtime 所管理
+ 
+ 所有初始化工作结束后，dyld就会调用main函数
+ 接下来就是UIApplicationMain函数，AppDelegate的application:didFinishLaunchingWithOptions:方法
+ 优化:
+ 在不影响用户体验的前提下，尽可能将一些操作延迟，不要全部都放在finishLaunching方法中
+ */
+
 // MARK:SDWebImage
 // 解决tableView复用错乱问题：每次都会调UIImageView+WebCache文件中的sd_cancelImageLoadOperationWithKey
 
@@ -26,6 +282,7 @@
 
 /*
  MARK:block
+ https://www.jianshu.com/p/4e79e9a0dd82
  传进 Block 之前，把self转换成 weakSelf
  如果在 Block 执行完成之前，self 被释放了，weakSelf 也会变为 nil
  _strong 确保在 Block 内，strongSelf 不会被释放
@@ -292,11 +549,6 @@
 // category 的方法没有「完全替换掉」原来类已经有的方法，也就是说如果 category 和原来类都有 methodA，那么 category 附加完成之后，类的方法列表里会有两个 methodA.category 的方法被放到了新方法列表的前面，而原来类的方法被放到了新方法列表的后面，这也就是我们平常所说的category 的方法会「覆盖」掉原来类的同名方法，这是因为运行时在查找方法的时候是顺着方法列表的顺序查找的，它只要一找到对应名字的方法，就会返回，不会管后面可能还有一样名字的方法。
 // 在类的 +load方法调用的时候，我们可以调用 category 中声明的方法.因为附加 category 到类的工作会先于 +load方法的执行
 // +load的执行顺序是先类，子类，category，而 category 的+load 执行顺序是根据编译顺序决定的。虽然对于 +load的执行顺序是这样，但是对于「覆盖」掉的方法，则会先找到最后一个编译的 category 里的对应方法
-
-/*
- MARK:关联对象:
- 在 runtime 中所有的关联对象都由 AssociationsManager 管理。AssociationsManager 里面是由一个静态 AssociationsHashMap 来存储所有的关联对象的。这相当于把所有对象的关联对象都存在一个全局 map 里面。而 map 的 key 是这个对象的指针地址（任意两个不同对象的指针地址一定是不同的），而这个 map 的 value 又是另外一个 AssociationsHashMap，里面保存了关联对象的 KV 对。runtime 的销毁对象函数 objc_destructInstance里面会判断这个对象有没有关联对象，如果有，会调用 _object_remove_assocations 做关联对象的清理工作
- */
 
 /*
  一个 Objective-C对象如何进行内存布局？（考虑有父类的情况）:
@@ -777,6 +1029,25 @@
 
 /*
  MARK:###runloop###
+ 
+ 事件解析:
+ Source0
+ 触摸事件处理
+ performSelector:onThread:
+ 
+ Source1
+ 基于Port的线程间通信
+ 系统事件捕捉
+ 
+ Timers
+ NSTimer
+ performSelector:withObject:afterDelay:
+ 
+ Observers
+ 用于监听RunLoop的状态
+ UI刷新（BeforeWaiting）
+ Autorelease pool（BeforeWaiting）
+ 
  RunLoop是通过内部维护的事件循环(Event Loop)来对事件/消息进行管理的一个对象
  对于RunLoop而言最核心的事情就是保证线程在没有消息的时候休眠，在有消息时唤醒，以提高程序性能
  
@@ -820,6 +1091,7 @@
  };
  
  CommonModes：一个 Mode 可以将自己标记为 Common 属性（通过将其 ModeName 添加到 RunLoop 的 commonModes 中）。每当 RunLoop 的内容发生变化时，RunLoop 都会自动将 _commonModeItems里的 Source/Observer/Timer 同步到具有 Common 标记的所有 Mode 里
+ 让事件同步到多个mode中
  应用场景举例：
  主线程的 RunLoop 里有两个预置的 Mode：kCFRunLoopDefaultMode 和 UITrackingRunLoopMode。这两个 Mode 都已经被标记为 Common 属性。DefaultMode 是 App 平时所处的状态，TrackingRunLoopMode 是追踪 ScrollView 滑动时的状态。当你创建一个 Timer 并加到 DefaultMode 时，Timer 会得到重复回调，但此时滑动一个 TableView 时，RunLoop 会将 mode 切换为 TrackingRunLoopMode，这时 Timer 就不会被回调，并且也不会影响到滑动操作，因为这个 Timer 作为一个 mode item 并没有被添加到 commonModeItems 里，所以它不会被同步到其他 Common Mode 里
  

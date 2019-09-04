@@ -150,7 +150,7 @@
 @end
 
 /*
- NSURLProtocol:
+ MARK:NSURLProtocol:
  决定请求是否需要当前协议对象处理的方法是：+ canInitWithRequest
  
  请求经过 + canInitWithRequest: 方法过滤之后，我们得到了所有要处理的请求，接下来需要对请求进行一定的操作，而这都会在 + canonicalRequestForRequest: 中进行

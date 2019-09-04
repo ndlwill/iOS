@@ -26,5 +26,8 @@ class TestViewController: UIViewController {
 //        var b = (rgba >> 8) & 0xff
 //        var a = rgba & 0xff
 //        print(r, g, b, a)
+        
+        
+        
     }
 }

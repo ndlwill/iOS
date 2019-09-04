@@ -31,6 +31,8 @@
 
 @property (nonatomic, strong) id obj;
 
+@property (nonatomic, copy) NSString *kvoStr;
+
 @end
 
 @implementation TestMapViewController
@@ -129,6 +131,15 @@
         [annoAnimationView startAnimation];
     });
     
+    UILabel *pLabel = [[UILabel alloc] init];
+    pLabel.backgroundColor = [UIColor redColor];
+    pLabel.text = @"tep我们hxt";
+    pLabel.textColor = [UIColor blackColor];
+    pLabel.layer.masksToBounds = YES;
+    [self.view addSubview:pLabel];
+    [pLabel sizeToFit];
+    pLabel.x = 30;
+    pLabel.y = kScreenHeight - 150 - 60;
     
     // MARK:=====CALayer=====
     CALayer *caLayer = [CALayer layer];
@@ -157,10 +168,103 @@
 //        caLayer.transform = CATransform3DMakeAffineTransform(CGAffineTransformMake(1.2, 0, 0, 1.0, -10, 0));// 　缩放和平移
         NSLog(@"update layer: frame = %@ bounds = %@", NSStringFromCGRect(caLayer.frame), NSStringFromCGRect(caLayer.bounds));
     });
+    
+    
+    // MARK:test kvo
+    /*
+     kvo对容器类的监听:
+     Person类中有属性NSMutableArray *array
+     NSMutableArray *tempArr = [p mutableArrayValueForKey:@"array"];
+     [tempArr addObject:@"11"];这样能触发
+     
+     [array addObject:@"11"];这样不能触发
+     */
+    
+    [self addObserver:self forKeyPath:@"kvoStr" options:NSKeyValueObservingOptionNew context:nil];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSLog(@"start kvo");
+        // automaticallyNotifiesObserversForKey返回NO: 不重写setter不能触发，重写setter添加willXX didXX能手动触发
+        // setter && kvc（底层也会先查找setter方法） 都可以触发kvo
+        self.kvoStr = @"123";// 没有重写setter通知触发一次，重写了并willXX didXX通知触发2次。涉及到kvo底层原理，会动态生成一个子类重写setter方法
+//        self.kvoStr = @"123";// 设置相同的值，也会触发，可在setter方法中添加判断然后过滤.
+        
+//        [self setValue:@"234" forKey:@"kvoStr"];
+        
+        // 直接访问成员变量 不能触发kvo
+//        [self changeKVOStr:@"345"];
+        
+        // 能触发kvo， automaticallyNotifiesObserversForKey返回NO也能触发，因为他有willXX didXX
+//        [self changeKVOStr1:@"345"];
+    });
+    
+    
+    // MARK:NSMutableURLRequest addValue && setValue
+    NSMutableURLRequest *request = [[NSMutableURLRequest alloc] initWithURL:[NSURL URLWithString:@""]];
+    [request addValue:@"123" forHTTPHeaderField:@"content-type"];
+    [request addValue:@"234" forHTTPHeaderField:@"content-type"];
+    [request setValue:@"tst" forHTTPHeaderField:@"test"];
+    [request setValue:@"txt" forHTTPHeaderField:@"test"];
+    /*
+     allHTTPHeaderFields = {
+     "Content-Type" = "123,234";
+     test = txt;
+     }
+     */
+    NSLog(@"allHTTPHeaderFields = %@", request.allHTTPHeaderFields);
+    
+    [NotificationCenter addObserver:self selector:@selector(handleInnerMessage:) name:@"InnerMessage" object:nil];
+    
+
+}
+
+- (void)handleInnerMessage:(NSNotification *)notification
+{
+    NSLog(@"thread = %@ userInfo = %@", [NSThread currentThread], notification.userInfo);
+}
+
+- (void)setKvoStr:(NSString *)kvoStr
+{
+//    if ([_kvoStr isEqualToString:kvoStr]) {
+//        return;
+//    }
+    
+    [self willChangeValueForKey:@"kvoStr"];
+    _kvoStr = kvoStr;
+    [self didChangeValueForKey:@"kvoStr"];
+}
+
+- (void)changeKVOStr:(NSString *)newKvoStr
+{
+    _kvoStr = newKvoStr;
+}
+
+- (void)changeKVOStr1:(NSString *)newKvoStr
+{
+    [self willChangeValueForKey:@"kvoStr"];// 记录旧值
+    _kvoStr = newKvoStr;
+    [self didChangeValueForKey:@"kvoStr"];// 触发observeValueForKeyPath
+}
+
+// 这个方法只和setter相关
+//+ (BOOL)automaticallyNotifiesObserversForKey:(NSString *)key
+//{
+//    if ([key isEqualToString:@"kvoStr"]) {
+//        return NO;// 表示不能自动发送通知
+//    }
+//
+//    return [super automaticallyNotifiesObserversForKey:key];
+//}
+
+
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary<NSKeyValueChangeKey,id> *)change context:(void *)context
+{
+    NSLog(@"newValue = %@", change[NSKeyValueChangeNewKey]);
 }
 
 - (void)dealloc
 {
+    [self removeObserver:self forKeyPath:@"kvoStr"];
     NSLog(@"TestMapViewController dealloc");
 }
 

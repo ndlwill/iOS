@@ -94,6 +94,7 @@
 #import <CrashReporter/CrashReporter.h>
 #import <sys/types.h>
 #import <sys/sysctl.h>
+#import "ResidentThread.h"
 
 // ===cocoapods===
 // https://www.jianshu.com/p/b2f391ba0287
@@ -111,6 +112,7 @@
 #define TEST test
 static const NSUInteger test = 100;
 
+static NSInteger messageId = 0;
 
 static NSInteger badgeCount = 0;
 
@@ -211,6 +213,8 @@ static void save_crash_report (PLCrashReporter *reporter) {
 
 @property (nonatomic, assign) BOOL isLaunchedByNotification;
 
+@property (nonatomic, strong) dispatch_queue_t serialQueue;
+
 @end
 
 /*
@@ -244,6 +248,8 @@ static void save_crash_report (PLCrashReporter *reporter) {
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
     NSLog(@"=====didFinishLaunchingWithOptions===== documentDir = %@", [NSString documentDir]);
+    
+    self.serialQueue = dispatch_queue_create("messageQueue", DISPATCH_QUEUE_SERIAL);
     
     // KSCrash:
     // https://github.com/kstenerud/KSCrash
@@ -424,6 +430,30 @@ static void save_crash_report (PLCrashReporter *reporter) {
     
     
     [NotificationCenter addObserver:self selector:@selector(systemClockDidChanged:) name:NSSystemClockDidChangeNotification object:nil];
+    
+    [NSTimer scheduledTimerWithTimeInterval:3.0 block:^(NSTimer * _Nonnull timer) {
+        messageId++;
+        
+        dispatch_async(self.serialQueue, ^{
+            [NotificationCenter postNotificationName:@"InnerMessage" object:nil userInfo:@{@"messageId": @(messageId)}];
+        });
+        
+//        [ResidentThread executeTask:^{
+//            [NotificationCenter postNotificationName:@"InnerMessage" object:nil userInfo:@{@"messageId": @(messageId)}];
+//        }];
+    } repeats:YES];
+    
+//    // block 主线程
+//    for (int i = 0 ; i < 1000000; i++) {
+//        dispatch_async(dispatch_get_global_queue(0, 0), ^{
+//            NSLog(@"cur thread = %@ i = %ld", [NSThread currentThread], i);
+//        });
+//
+//
+////        dispatch_async(self.serialQueue, ^{
+////            NSLog(@"cur thread = %@ i = %ld", [NSThread currentThread], i);
+////        });
+//    }
     
 #if CGFLOAT_IS_DOUBLE
     
