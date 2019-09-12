@@ -146,10 +146,14 @@ RxSwift最典型的特色就是解决Swift这门静态语言的响应能力，�
             observer.onNext("hello")
             observer.onCompleted()
             return Disposables.create()
-        }).subscribe(onNext: { (text) in
+        })
             
-            print("text1 = \(text)")
-        }, onError: nil, onCompleted: nil, onDisposed: nil).disposed(by: disposeBag)
+//            .subscribe(onNext: { (text) in
+//
+//            print("text1 = \(text)")
+//        }, onError: nil, onCompleted: nil, onDisposed: nil).disposed(by: disposeBag)
+        
+        
         
 //        observable.subscribe(onNext: { (text) in
 //            print("text1 = \(text)")
@@ -454,6 +458,8 @@ RxSwift最典型的特色就是解决Swift这门静态语言的响应能力，�
          }
          
          使用 Binder 创建观察者:
+         public struct Binder<Value>: ObserverType
+         
          相较于AnyObserver 的大而全，Binder 更专注于特定的场景。Binder 主要有以下两个特征：
          不会处理错误事件
          确保绑定都是在给定 Scheduler 上执行（默认 MainScheduler）
