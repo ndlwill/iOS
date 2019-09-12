@@ -428,6 +428,19 @@ static void save_crash_report (PLCrashReporter *reporter) {
     
 //    [Application isRegisteredForRemoteNotifications];// 8.0
     
+    // process message
+    [ResidentThread executeTask:^{
+        for (int i = 0; i < 30000; i++) {
+            NSLog(@"task1 = %d", i);
+        }
+    }];
+    
+    [ResidentThread executeTask:^{
+        for (int i = 0; i < 10; i++) {
+            NSLog(@"task2 = %d", i);
+        }
+    }];
+    
     
     [NotificationCenter addObserver:self selector:@selector(systemClockDidChanged:) name:NSSystemClockDidChangeNotification object:nil];
     

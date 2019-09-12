@@ -47,17 +47,28 @@ class ViewController: UIViewController {
          }
          // ###
          
+         create: Create.swift
+         返回AnonymousObservable(subscribe),将闭包保存在AnonymousObservable
          
          subscribe:
          // ObservableType+Extensions
-         ObservableType.subscribe
-         Producer.subscribe-> run
-         AnonymousObservable.run
+         ObservableType.subscribe() return AnonymousObservable(subscribe) 创建了匿名AnonymousObserver: observer1保存eventHandler闭包 （onNext，onError等被捕获进了eventHandler闭包，为了后面这些被执行）
+         Producer.subscribe(observer1)-> run(observer1)
+         AnonymousObservable.run->创建AnonymousObservableSink(observer1)
          AnonymousObservableSink.run
          // typealias Parent = AnonymousObservable<E>
-         parent._subscribeHandler(AnyObserver(self))
-         // AnyObserver 保存了一个信息 AnonymousObservableSink.on 函数，不是 AnonymousObservableSink
+         parent._subscribeHandler(AnyObserver(self)) 执行前面保存的闭包 创建了AnyObserver(self):即用AnonymousObservableSink初始化AnyObserver AnyObserver(是遵守ObserverType协议) self即AnonymousObservableSink(是遵守ObserverType协议)
          
+         // AnyObserver 保存了一个信息 AnonymousObservableSink.on 函数，不是 AnonymousObservableSink
+         public struct AnyObserver<Element> : ObserverType {
+         private let observer: EventHandler
+         public init<O : ObserverType>(_ observer: O) where O.E == Element {
+         self.observer = observer.on
+         }
+         public func on(_ event: Event<Element>) {
+         return self.observer(event)
+         }
+         }
          
          // =====observer=====
          class AnonymousObserver<ElementType> : ObserverBase<ElementType>
@@ -69,12 +80,14 @@ class ViewController: UIViewController {
          public struct AnyObserver<Element> : ObserverType
          
          发送响应:
-         // observer.onNext 的本质是: AnyObserver.onNext
-         AnyObserver.on->self.observer(event) self.observer 构造初始化就是：AnonymousObservableSink.on 函数
-         AnonymousObservableSink.on->forwardOn(event)
-         Sink.forwardOn->_observer.on(event)
-         ObserverBase.on
-         AnonymousObserver.onCore->_eventHandler(event) 执行AnonymousObserver的闭包（逻辑辗转回到了我们 订阅序列 时候创建的 AnonymousObserver 的参数闭包的调用）
+         observer.onNext 的本质是: AnyObserver(就是ObserverType).onNext->on(.next(element))
+         AnyObserver.on->self.observer(event) self.observer即AnonymousObservableSink.on函数
+         AnonymousObservableSink.on调用父类Sink的forwardOn(event)
+         Sink.forwardOn->_observer.on(event)  _observer即AnonymousObservableSink保存的observer ###即上面的observer1,即AnonymousObserver###
+         _observer没有实现on方法 就调用AnonymousObserver父类ObserverBase.on(Event)
+         on方法中调用onCore(event) onCore是抽象方法 即调用子类AnonymousObserver.onCore->_eventHandler(event) 把event传给AnonymousObserver，执行AnonymousObserver的闭包
+         （逻辑辗转回到了我们 订阅序列 时候创建的 AnonymousObserver 的参数闭包的调用）
+         然后执行闭包内相应的subscribe方法传入的onNext，onError等
          
          
          // ###
@@ -126,22 +139,44 @@ class ViewController: UIViewController {
 RxSwift最典型的特色就是解决Swift这门静态语言的响应能力，利用随时间维度序列变化为轴线，用户订阅关心能随轴线一直保活，达到订阅一次，响应一直持续
          */
         
-        // create: Create.swift  返回AnonymousObservable(subscribe),将闭包保存在AnonymousObservable
-        _ = Observable<String>.create({ (observer) -> Disposable in
+        
+        let observable = Observable<String>.create({ (observer) -> Disposable in
             
+            print("create: \(observer)")
             observer.onNext("hello")
+            observer.onCompleted()
             return Disposables.create()
         }).subscribe(onNext: { (text) in
             
-            print("text = \(text)")
-        }, onError: nil, onCompleted: nil, onDisposed: nil)
+            print("text1 = \(text)")
+        }, onError: nil, onCompleted: nil, onDisposed: nil).disposed(by: disposeBag)
+        
+//        observable.subscribe(onNext: { (text) in
+//            print("text1 = \(text)")
+//        }, onError: nil, onCompleted: nil, onDisposed: nil).disposed(by: disposeBag)
+
+//        observable.subscribe(onNext: { (text) in
+//            print("text2 = \(text)")
+//        }, onError: nil, onCompleted: nil, onDisposed: nil).disposed(by: disposeBag)
+        
+//        let observer = AnyObserver<String> { event in
+//
+//            print("\(event)")
+//        }
+//        print("observer: \(observer)")
+//        print(Unmanaged<AnyObject>.passUnretained(observer as AnyObject).toOpaque())
+//        observable.subscribe(observer).disposed(by: disposeBag)
+        // =============================
         
 //        _ = Observable<String>.create({ (observer) -> Disposable in
+//
 //            observer.onNext("hello")
 //            return Disposables.create()
 //        }).subscribe({ (event) in
+//
 //            print("event = \(event)")
-//        })
+//        }).disposed(by: disposeBag)
+        
         
         
         // TODO:==Observable==

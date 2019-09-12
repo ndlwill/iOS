@@ -167,6 +167,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         
+        let num: Int? = 1
+        switch num {
+        case .none:
+            print("nil")
+        case .some(let intNum):
+            print("intNum = \(intNum)")
+        }
+        
+        
+        
         return true
     }
 
