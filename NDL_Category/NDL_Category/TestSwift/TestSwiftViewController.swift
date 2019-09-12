@@ -1835,6 +1835,8 @@ till you come to the end; then stop."
         
         // TODO:===23.泛型
         // 泛型代码让你能够根据自定义的需求，编写出适用于任意类型、灵活可重用的函数及类型。它能让你避免代码的重复，用一种清晰和抽象的方式来表达代码的意图
+    
+        
         /*
          泛型函数:
          占位类型名（T），并用尖括号括起来（<T>）
@@ -1850,7 +1852,7 @@ till you come to the end; then stop."
          命名类型参数:
          请始终使用大写字母开头的驼峰命名法（例如 T 和 MyTypeParameter）来为类型参数命名，以表明它们是占位类型
          
-         泛型类型:
+         MARK:泛型类型:
          Swift 还允许你定义泛型类型。这些自定义类、结构体和枚举可以适用于任何类型
          struct Stack<Element> {
          var items = [Element]()
@@ -1866,7 +1868,7 @@ till you come to the end; then stop."
          stackOfStrings.push("uno")
          stackOfStrings.push("dos")
          
-         扩展一个泛型类型:
+         MARK:扩展一个泛型类型:
          当你扩展一个泛型类型的时候，你并不需要在扩展的定义中提供类型参数列表。原始类型定义中声明的类型参数列表在扩展中可以直接使用，并且这些来自原始类型中的参数名称会被用作原始定义中类型参数的引用
          extension Stack {
          var topItem: Element? {
@@ -1874,7 +1876,8 @@ till you come to the end; then stop."
          }
          }
          
-         类型约束:
+         MARK:类型约束:
+         字典的键的类型必须是可哈希（hashable）
          ##类型约束可以指定一个类型参数必须继承自指定类，或者符合一个特定的协议或协议组合##
          所有的 Swift 基本类型（例如 String、Int、Double 和 Bool）默认都是可哈希的,符合 Hashable 协议
          
@@ -1893,7 +1896,7 @@ till you come to the end; then stop."
          return nil
          }
          
-         关联类型:
+         MARK:关联类型:
          关联类型为##协议中的某个类型##提供了一个占位名（或者说别名），其代表的实际类型在协议被采纳时才会被指定。你可以通过  associatedtype 关键字来指定关联类型
          protocol Container {
          associatedtype ItemType

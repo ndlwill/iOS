@@ -37,4 +37,8 @@ class AnimatableSpriteLayer: CALayer {
         spriteFrameAnimation.calculationMode = CAAnimationCalculationMode.discrete
         add(spriteFrameAnimation, forKey: nil)
     }
+    
+    deinit {
+        print("AnimatableSpriteLayer deinit")
+    }
 }

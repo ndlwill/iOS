@@ -108,6 +108,53 @@
  如果在类前加上 @objcMembers，那么它、它的子类、扩展里的方法都会隐式的加上 @objc
  如果在扩展（extension）前加上 @objc，那么该扩展里的方法都会隐式的加上 @objc
  如果在扩展（extension）前加上 @nonobjc，那么该扩展里的方法都不会隐式的加上 @objc
+ 
+ MARK:单例
+ 1.静态常量
+ class MyClass {
+ static let shared = MyClass()
+ private init() { }
+ }
+ 
+ 2.全局变量
+ fileprivate let sharedInstance = MyClass()
+ class MyClass {
+ 
+ static var shared: MyClass {
+ return sharedInstance
+ }
+ 
+ fileprivate init() { }
+ }
+ */
+
+// MARK:swift源码解析
+// https://www.jianshu.com/u/a4b11b398b1e
+
+/*
+ MARK:Swift4.0
+ 
+ CaseInterable协议:
+ 
+ 检查序列元素是否符合条件:
+ let scores = [86, 88, 95, 92]
+ //返回一个BOOL
+ let passed = scores.allSatisfy({ $0 > 85 })
+ 
+ 布尔切换:
+ toggle()方法
+ 
+ #warning和#error编译指令:
+ */
+
+/*
+ MARK:static 与 class 的区别:
+ static 可以在类、结构体、或者枚举中使用。而 class 只能在类中使用。
+ static 可以修饰存储属性，static 修饰的存储属性称为静态变量(常量)。而 class 不能修饰存储属性。
+ static 修饰的计算属性不能被重写。而 class 修饰的可以被重写。
+ static 修饰的静态方法不能被重写。而 class 修饰的类方法可以被重写。
+ class 修饰的计算属性被重写时，可以使用 static 让其变为静态属性。
+ class 修饰的类方法被重写时，可以使用 static 让方法变为静态方法
  */
 
 import UIKit
@@ -119,11 +166,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        
-        self.window = UIWindow(frame: UIScreen.main.bounds)
-        let vc = TestViewController()
-        self.window?.rootViewController = vc
-        self.window?.makeKeyAndVisible()
         
         return true
     }

@@ -14,7 +14,8 @@ import RxDataSources
 import Moya
 import Alamofire
 
-
+// MARK:RxSwift
+// https://www.hangge.com/blog/cache/category_72_11.html
 class ViewController: UIViewController {
     
     let disposeBag = DisposeBag()
@@ -27,11 +28,127 @@ class ViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         
+        /*
+         MRAK:原理
+         打断点 查看调用堆栈
+         
+         // =====Observable=====
+         class AnonymousObservable<Element> : Producer
+         class Producer<Element> : Observable<Element>
+         class Observable<Element> : ObservableType
+         // ###
+         public protocol ObservableConvertibleType {
+         associatedtype E
+         func asObservable() -> Observable<E>
+         }
+         
+         public protocol ObservableType : ObservableConvertibleType {
+         func subscribe<O: ObserverType>(_ observer: O) -> Disposable where O.E == E
+         }
+         // ###
+         
+         
+         subscribe:
+         // ObservableType+Extensions
+         ObservableType.subscribe
+         Producer.subscribe-> run
+         AnonymousObservable.run
+         AnonymousObservableSink.run
+         // typealias Parent = AnonymousObservable<E>
+         parent._subscribeHandler(AnyObserver(self))
+         // AnyObserver 保存了一个信息 AnonymousObservableSink.on 函数，不是 AnonymousObservableSink
+         
+         
+         // =====observer=====
+         class AnonymousObserver<ElementType> : ObserverBase<ElementType>
+         class ObserverBase<ElementType> : Disposable, ObserverType
+         
+         final fileprivate class AnonymousObservableSink<O: ObserverType> : Sink<O>, ObserverType
+         class Sink<O : ObserverType> : Disposable
+         
+         public struct AnyObserver<Element> : ObserverType
+         
+         发送响应:
+         // observer.onNext 的本质是: AnyObserver.onNext
+         AnyObserver.on->self.observer(event) self.observer 构造初始化就是：AnonymousObservableSink.on 函数
+         AnonymousObservableSink.on->forwardOn(event)
+         Sink.forwardOn->_observer.on(event)
+         ObserverBase.on
+         AnonymousObserver.onCore->_eventHandler(event) 执行AnonymousObserver的闭包（逻辑辗转回到了我们 订阅序列 时候创建的 AnonymousObserver 的参数闭包的调用）
+         
+         
+         // ###
+         public protocol ObserverType {
+         associatedtype E
+         func on(_ event: Event<E>)
+         }
+         
+         extension ObserverType {
+         public func onNext(_ element: E) {
+         on(.next(element))
+         }
+
+         public func onCompleted() {
+         on(.completed)
+         }
+         
+         public func onError(_ error: Swift.Error) {
+         on(.error(error))
+         }
+         }
+         
+         public enum Event<Element> {
+         case next(Element)
+         case error(Swift.Error)
+         case completed
+         }
+
+         // ###
+         
+         public protocol Disposable {
+         func dispose()
+         }
+         
+         // do nothing
+         fileprivate struct NopDisposable : Disposable
+         
+         public struct Disposables {
+         }
+         
+         public protocol Cancelable : Disposable {
+         var isDisposed: Bool { get }
+         }
+         
+         public final class DisposeBag: DisposeBase
+         public class DisposeBase
+         
+         
+RxSwift最典型的特色就是解决Swift这门静态语言的响应能力，利用随时间维度序列变化为轴线，用户订阅关心能随轴线一直保活，达到订阅一次，响应一直持续
+         */
+        
+        // create: Create.swift  返回AnonymousObservable(subscribe),将闭包保存在AnonymousObservable
+        _ = Observable<String>.create({ (observer) -> Disposable in
+            
+            observer.onNext("hello")
+            return Disposables.create()
+        }).subscribe(onNext: { (text) in
+            
+            print("text = \(text)")
+        }, onError: nil, onCompleted: nil, onDisposed: nil)
+        
+//        _ = Observable<String>.create({ (observer) -> Disposable in
+//            observer.onNext("hello")
+//            return Disposables.create()
+//        }).subscribe({ (event) in
+//            print("event = \(event)")
+//        })
+        
+        
         // TODO:==Observable==
         /*
          Observable:可观察序列
-         它的作用就是可以异步地产生一系列的 Event（事件），即一个 Observable<T> 对象会随着时间推移不定期地发出 event(element : T) 这样一个东西
-         有了可观察序列，我们还需要有一个Observer（订阅者）来订阅它，这样这个订阅者才能收到 Observable<T> 不时发出的 Event
+         ###它的作用就是可以异步地产生一系列的 Event（事件），即一个 Observable<T> 对象会随着时间推移不定期地发出 event(element : T) 这样一个东西
+         有了可观察序列，我们还需要有一个Observer（订阅者）来订阅它，这样这个订阅者才能收到 Observable<T> 不时发出的 Event###
          
          Observable 是可以发出 3 种不同类型的  Event 事件:next,error,completed
          next：next事件就是那个可以携带数据 <T> 的事件，可以说它就是一个“最正常”的事件

@@ -66,6 +66,7 @@
  */
 
 #import "TestAVFoundationViewController.h"
+#import <AVFoundation/AVFoundation.h>
 
 @interface TestAVFoundationViewController ()
 
@@ -76,9 +77,158 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor lightGrayColor];
-    [self testGCD];
+//    [self testGCD];
 //    [self testGCD1];
+//    [self testBarrier];
+//    [self testBlockWait];
+//    [self testBlockNotify];
+//    [self testBlockCancel];
     
+    // 750 X 1334
+    NSString *imagePath = [[NSBundle mainBundle] pathForResource:@"testImage" ofType:@"jpg"];
+    UIImageView *imageView = [[UIImageView alloc] initWithImage:[UIImage imageWithContentsOfFile:imagePath]];
+    imageView.size = CGSizeMake(750 / 4.0, 1334 / 4.0);
+    imageView.center = CGPointMake(self.view.width / 2.0, self.view.height / 2.0);
+    [self.view addSubview:imageView];
+    
+    // MARK:test CGAffineTransform
+    /*
+     CGAffineTransform:
+     [ a b c d tx ty ]
+     
+     a  b  0
+     c  d  0
+     tx ty 1
+     
+                a  b  0
+     [x,y,1] *  c  d  0  = [x',y',1]
+                tx ty 1
+     
+     eg:
+     CGAffineTransformMake(0.2, 0, 0, 1, 0, 0);
+     View的frame原来的{{100，100}，{100，100}}变成了{{140，100}，{20，100}}
+     根据变换的transform我们知道 a = 0.2 , b = 0 , c = 0 , d = 1 , t.x = 0 , t.y = 0
+     x = 100 ,  y = 100
+     x` = ax + cy + tx = 0.2 * 100 + 0 * 100 + 0 = 20
+     y` = bx + dy + ty = 0 * 100 + 1 * 100 + 0 = 100
+     
+     x按照a值进行了比例缩放，y按照d的值进行比列缩放，最重要的是缩放的过程中View的point（中心点）是不会改变的
+     x会跟着tx进行x做表平移，y会跟着ty进行平移。这里的point（center）是跟着变换的
+     
+     a表示x水平方向的缩放，tx表示x水平方向的偏移
+     d表示y垂直方向的缩放，ty表示y垂直方向的偏移
+     如果b和c不为零的话，那么视图肯定发生了旋转
+     
+其中tx用来控制在x轴方向上的平移,ty用来控制在y轴方向上的平移;a用来控制在x轴方向上的缩放,d用来控制在y轴方向上的缩放;abcd共同控制旋转
+     
+     平移CGAffineTransformMakeTranslation原理
+     self.demoImageView.transform = CGAffineTransformMakeTranslation(100, 100);
+     self.demoImageView.transform = CGAffineTransformMake(1, 0, 0, 1, 100, 100);
+     缩放CGAffineTransformMakeScale原理
+     self.demoImageView.transform = CGAffineTransformMakeScale(2, 0.5);
+     self.demoImageView.transform = CGAffineTransformMake(2, 0, 0, 0.5, 0, 0);
+     旋转CGAffineTransformMakeRotation原理
+     self.demoImageView.transform = CGAffineTransformMakeRotation(M_PI*0.5);
+     self.demoImageView.transform = CGAffineTransformMake(cos(M_PI * 0.5), sin(M_PI * 0.5), -sin(M_PI * 0.5), cos(M_PI * 0.5), 0, 0);
+     初始状态CGAffineTransformIdentity原理
+     self.demoImageView.transform = CGAffineTransformIdentity;
+     self.demoImageView.transform = CGAffineTransformMake(1, 0, 0, 1, 0, 0);
+     */
+    
+    // 按x轴做翻转
+//    imageView.transform = CGAffineTransformMake(1.0, 0, 0, -1.0, 0, 0);
+    // 按x轴做翻转+缩放
+//    imageView.transform = CGAffineTransformMake(1.0, 0, 0, -1.2, 0, 0);
+    
+    // 旋转
+    // 顺时针旋转90度
+//    imageView.transform = CGAffineTransformMakeRotation(M_PI / 2.0);
+    
+    // 顺时针旋转90度 right
+//    imageView.transform = CGAffineTransformMake(0, 1.0, -1.0, 0, 0, 0);
+    
+    // 逆时针旋转90度 left
+//    imageView.transform = CGAffineTransformMake(0, -1.0, 1.0, 0, 0, 0);
+    
+    // up 没有变化
+//    imageView.transform = CGAffineTransformMake(1.0, 0.0, 0.0, 1.0, 0, 0);
+    
+    // xy翻转相当于 旋转180度 down
+    imageView.transform = CGAffineTransformMake(-1.0, 0.0, 0.0, -1.0, 0, 0);
+}
+
+- (void)testBlockCancel
+{
+    dispatch_queue_t queue = dispatch_queue_create("queue", DISPATCH_QUEUE_SERIAL);
+    dispatch_block_t block1 = dispatch_block_create(0, ^{
+        NSLog(@"block1 begin");
+        [NSThread sleepForTimeInterval:1];
+        NSLog(@"block1 done");
+    });
+    dispatch_block_t block2 = dispatch_block_create(0, ^{
+        NSLog(@"block2 ");
+    });
+    dispatch_async(queue, block1);
+    dispatch_async(queue, block2);
+    dispatch_block_cancel(block2);
+}
+
+- (void)testBlockNotify
+{
+    dispatch_queue_t queue = dispatch_queue_create("queue", DISPATCH_QUEUE_SERIAL);
+    dispatch_block_t previousBlock = dispatch_block_create(0, ^{
+        NSLog(@"previousBlock begin");
+        [NSThread sleepForTimeInterval:1];
+        NSLog(@"previousBlock done");
+    });
+    dispatch_async(queue, previousBlock);
+    dispatch_block_t notifyBlock = dispatch_block_create(0, ^{
+        NSLog(@"notifyBlock thread = %@", [NSThread currentThread]);
+    });
+    //当previousBlock执行完毕后，提交notifyBlock到global queue中执行
+    dispatch_block_notify(previousBlock, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), notifyBlock);
+}
+
+- (void)testBlockWait
+{
+    dispatch_queue_t queue = dispatch_queue_create("queue", DISPATCH_QUEUE_SERIAL);
+    dispatch_block_t block = dispatch_block_create(0, ^{
+        NSLog(@"before sleep");
+        [NSThread sleepForTimeInterval:1];
+        NSLog(@"after sleep");
+    });
+    dispatch_async(queue, block);
+    NSLog(@"main run task");
+    //等待前面的任务执行完毕
+    dispatch_block_wait(block, DISPATCH_TIME_FOREVER);
+//    dispatch_sync(queue, ^{
+//        NSLog(@"sync task: thread = %@", [NSThread currentThread]);// main
+//    });
+    NSLog(@"coutinue");
+}
+
+- (void)testBarrier
+{
+    dispatch_queue_t queue = dispatch_queue_create("Database_Queue", DISPATCH_QUEUE_CONCURRENT);
+    
+    dispatch_async(queue, ^{
+        NSLog(@"reading data1");
+    });
+    dispatch_async(queue, ^{
+        NSLog(@"reading data2");
+    });
+    // dispatch_barrier_sync
+    dispatch_barrier_async(queue, ^{
+        NSLog(@"writing data1");
+    });
+    NSLog(@"===after barrier===");
+    dispatch_async(queue, ^{
+        NSLog(@"reading data3");
+    });
+}
+
+- (void)testQos
+{
     
 }
 

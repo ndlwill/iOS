@@ -7,6 +7,166 @@
 //
 
 #import <Foundation/Foundation.h>
+
+/*
+ https://www.jianshu.com/p/f9e01c69a46f
+ MARK:GCD Qos
+ iOS8之后提供的新功能，苹果提供了几个Quality of Service枚举来使用:user interactive, user initiated, utility 和 background，通过这告诉系统我们在进行什么样的工作，然后系统会通过合理的资源控制来最高效的执行任务代码，其中主要涉及到CPU调度的优先级、IO优先级、任务运行在哪个线程以及运行的顺序等等，我们通过一个抽象的Quality of Service参数来表明任务的意图以及类别
+ 
+ NSQualityOfServiceUserInteractive
+ 与用户交互的任务，这些任务通常跟UI级别的刷新相关，比如动画，这些任务需要在一瞬间完成
+ NSQualityOfServiceUserInitiated
+ 由用户发起的并且需要立即得到结果的任务，比如滑动scroll view时去加载数据用于后续cell的显示，这些任务通常跟后续的用户交互相关，在几秒或者更短的时间内完成
+ NSQualityOfServiceUtility
+ 一些可能需要花点时间的任务，这些任务不需要马上返回结果，比如下载的任务，这些任务可能花费几秒或者几分钟的时间
+ NSQualityOfServiceBackground
+ 这些任务对用户不可见，比如后台进行备份的操作，这些任务可能需要较长的时间，几分钟甚至几个小时
+ NSQualityOfServiceDefault
+ 优先级介于user-initiated 和 utility，当没有 QoS信息时默认使用，开发者不应该使用这个值来设置自己的任务
+ 
+ global dispatch queues:
+ 系统给每个应用提供四个全局的并发队列，这四个队列分别有不同的优先级：高、默认、低以及后台，用户不能去创建全局队列，只能根据优先级去获取
+ 
+ 队列优先级:
+ dispatch_queue_create创建队列的优先级跟global dispatch queue的默认优先级一样，假如我们需要设置队列的优先级，可以通过dispatch_queue_attr_make_with_qos_class或者dispatch_set_target_queue方法
+ //指定队列的QoS类别为QOS_CLASS_UTILITY
+ dispatch_queue_attr_t queue_attr = dispatch_queue_attr_make_with_qos_class (DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY,-1);
+ dispatch_queue_t queue = dispatch_queue_create("queue", queue_attr);
+ 
+ dispatch_set_target_queue的第一个参数为要设置优先级的queue,第二个参数是对应的优先级参照物:
+ dispatch_queue_t serialQueue = dispatch_queue_create("com.example.MyQueue",NULL);
+ dispatch_queue_t globalQueue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND,0);
+ //serialQueue现在的优先级跟globalQueue的优先级一样
+ dispatch_set_target_queue(serialQueue, globalQueue);
+ 
+ ###dispatch_set_target_queue除了能用来设置队列的优先级之外，还能够创建队列的层次体系，当我们想让不同队列中的任务同步的执行时，我们可以创建一个串行队列，然后将这些队列的target指向新创建的队列即可###
+ dispatch_queue_t targetQueue = dispatch_queue_create("target_queue", DISPATCH_QUEUE_SERIAL);
+ dispatch_queue_t queue1 = dispatch_queue_create("queue1", DISPATCH_QUEUE_SERIAL);
+ dispatch_queue_t queue2 = dispatch_queue_create("queue2", DISPATCH_QUEUE_CONCURRENT);
+ dispatch_set_target_queue(queue1, targetQueue);
+ dispatch_set_target_queue(queue2, targetQueue);
+ dispatch_async(queue1, ^{
+ NSLog(@"do job1");
+ [NSThread sleepForTimeInterval:3.f];
+ });
+ dispatch_async(queue2, ^{
+ NSLog(@"do job2");
+ [NSThread sleepForTimeInterval:2.f];
+ });
+ dispatch_async(queue2, ^{
+ NSLog(@"do job3");
+ [NSThread sleepForTimeInterval:1.f];
+ });
+ 这些队列会同步的执行任务。
+ 
+ GCDTests[13323:569147] do job1
+ GCDTests[13323:569147] do job2
+ GCDTests[13323:569147] do job3
+ 
+ 为了防止文件读写导致冲突，我们会创建一个串行的队列，所有的文件操作都是通过这个队列来执行，比如FMDB，这样就可以避免读写冲突
+ 不过其实这样效率是有提升的空间的，当没有更新数据时，读操作其实是可以并行进行的，而写操作需要串行的执行
+ 
+ dispatch_queue_set_specific 、dispatch_get_specific
+ 这两个API类似于objc_setAssociatedObject跟objc_getAssociatedObject，FMDB里就用到这个来防止死锁
+ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey;
+ //创建一个串行队列来执行数据库的所有操作
+ _queue = dispatch_queue_create([[NSString stringWithFormat:@"fmdb.%@", self] UTF8String], NULL);
+ 
+ //通过key标示队列，设置context为self
+ dispatch_queue_set_specific(_queue, kDispatchQueueSpecificKey, (__bridge void *)self, NULL);
+ 
+ 当要执行数据库操作时，如果在queue里面的block执行过程中，又调用了 indatabase方法，需要检查是不是同一个queue，因为同一个queue的话会产生死锁情况
+ 
+ - (void)inDatabase:(void (^)(FMDatabase *db))block {
+ FMDatabaseQueue *currentSyncQueue = (__bridge id)dispatch_get_specific(kDispatchQueueSpecificKey);
+ assert(currentSyncQueue != self && "inDatabase: was called reentrantly on the same queue, which would lead to a deadlock");
+ }
+ 
+ 在某些场景下使用dispatch_apply会对性能有很大的提升
+ dispatch_apply(999, q, ^(size_t i){...});
+ 
+ dispatch_block_create_with_qos_class中指定QoS类别
+ 
+ dispatch_block_wait
+ 当需要等待前面的任务执行完毕时，我们可以使用dispatch_block_wait这个接口，设置等待时间DISPATCH_TIME_FOREVER会一直等待直到前面的任务完成
+ 
+ dispatch_block_notify
+ dispatch_block_notify当观察的某个block执行结束之后立刻通知提交另一特定的block到指定的queue中执行，该函数有三个参数，第一参数是需要观察的block，第二个参数是被通知block提交执行的queue，第三参数是当需要被通知执行的block
+ 
+ dispatch_block_cancel
+ 在iOS8之后，提交到gcd队列中的dispatch block也可取消了
+ 
+ Dispatch Group:
+ 当我们想在gcd queue中所有的任务执行完毕之后做些特定事情的时候，也就是队列的同步问题，如果队列是串行的话，那将该操作最后添加到队列中即可，但如果队列是并行队列的话，这时候就可以利用dispatch_group来实现了
+ dispatch_group_wait
+ dispatch_group_wait会同步地等待group中所有的block执行完毕后才继续执行
+ dispatch_group_notify
+ 功能与dispatch_group_wait类似，不过该过程是异步的，不会阻塞该线程
+ dispatch_group_enter dispatch_group_leave
+ dispatch_group_async(group, queue, ^{
+ });
+ 等价于
+ dispatch_group_enter(group);
+ dispatch_async(queue, ^{
+ 　　dispatch_group_leave(group);
+ });
+ 
+ Dispatch IO:
+ 读取一份较大文件的时候，多个线程同时去读肯定比一个线程去读的速度要快，要实现这样的功能可以通过dispatch io跟dispatch data来实现，通过dispatch io去读文件时，会使用global dispatch queue将一个文件按照一个指定的分块大小同时去读取数据
+ dispatch_async(queue, ^{ 读取0-99字节 });
+dispatch_async(queue, ^{读取100-199字节 });
+dispatch_async(queue, ^{读取200-299字节 });
+ 将文件分成一块一块并行的去读取，读取的数据通过Dispatch Data可以更为简单地进行结合和分割
+ dispatch_io_create
+ 生成Dispatch IO,指定发生错误时用来执行处理的Block,以及执行该Block的Dispatch Queue
+ dispatch_io_set_low_water
+ 设定一次读取的大小（分割的大小）
+ dispatch_io_read
+ 使用Global Dispatch Queue开始并列读取，当每个分割的文件块读取完毕时，会将含有文件数据的dispatch data返回到dispatch_io_read设定的block，在block中需要分析传递过来的dispatch data进行合并处理
+ 
+ Dispatch Source:
+ DISPATCH_SOURCE_TYPE_DATA_ADD   变量增加
+ DISPATCH_SOURCE_TYPE_DATA_OR    变量OR
+ DISPATCH_SOURCE_TYPE_MACH_SEND  Mach端口发送
+ DISPATCH_SOURCE_TYPE_MACH_RECV  Mach端口接收
+ DISPATCH_SOURCE_TYPE_MEMORYPRESSURE 内存压力情况变化
+ DISPATCH_SOURCE_TYPE_PROC       与进程相关的事件
+ DISPATCH_SOURCE_TYPE_READ       可读取文件映像
+ DISPATCH_SOURCE_TYPE_SIGNAL     接收信号
+ DISPATCH_SOURCE_TYPE_TIMER      定时器事件
+ DISPATCH_SOURCE_TYPE_VNODE      文件系统变更
+ DISPATCH_SOURCE_TYPE_WRITE      可写入文件映像
+ 
+ dispatch_source_create
+ dispatch_source_set_event_handler
+ dispatch_source_set_cancel_handler
+ dispatch_source_cancel
+ dispatch source timer不跟runloop关联
+ 
+ //如果dispatch source是本地变量，会被释放掉，需要这么声明
+ @property (nonatomic)dispatch_source_t timerSource;
+ 
+ //事件handler的处理队列
+ dispatch_queue_t queue = dispatch_queue_create("myqueue", NULL);
+ 
+ //
+ _timerSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+ 
+ //定时器间隔时间
+ uint64_t interval = 2 * NSEC_PER_SEC;
+ //设置定时器信息
+ dispatch_source_set_timer(_timerSource,DISPATCH_TIME_NOW, interval , 0);
+ 
+ //设置事件的处理handler
+ dispatch_source_set_event_handler(_timerSource, ^{
+ NSLog(@"receive time event");
+ //if (done)
+ //   dispatch_source_cancel(_timerSource);
+ });
+ //开始处理定时器事件，dispatch_suspend暂停处理事件
+ dispatch_resume(_timerSource);
+ */
+
 /*
  CFRunLoopRef源码:
  

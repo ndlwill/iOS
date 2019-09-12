@@ -8,7 +8,18 @@
 
 #import <UIKit/UIKit.h>
 
-// 灭霸
+/*
+ MARK:国外blog
+ https://www.raywenderlich.com/ios/
+ https://www.raywenderlich.com/30200/avfoundation-tutorial-adding-overlays-and-animations-to-videos
+ */
+
+/*
+ MARK:blog
+ https://www.jianshu.com/u/b0a8b4cbff94
+ */
+
+// ###灭霸###
 // https://juejin.im/post/5cc652adf265da03540316e3
 
 // 面向对象设计的六大设计原则
@@ -50,9 +61,6 @@
 // TTTAttributedLabel
 // https://github.com/samsoffes/sskeychain
 // https://github.com/calimarkus/JDStatusBarNotification
-
-// ##AV##
-// https://www.raywenderlich.com/30200/avfoundation-tutorial-adding-overlays-and-animations-to-videos
 
 // YXM
 // http://www.cnblogs.com/YouXianMing/archive/2016/01.html
@@ -199,6 +207,7 @@
 // Add Action->Debugger Command-> po "MyVar = \(MyVar)"
 
 /*
+ MARK:###git###
 Bitbucket:
 ndlwill1020@126.com
 gmail:

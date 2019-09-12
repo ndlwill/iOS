@@ -134,12 +134,14 @@ struct R: Rswift.Validatable {
     fileprivate init() {}
   }
   
-  /// This `R.storyboard` struct is generated, and contains static references to 2 storyboards.
+  /// This `R.storyboard` struct is generated, and contains static references to 3 storyboards.
   struct storyboard {
     /// Storyboard `LaunchScreen`.
     static let launchScreen = _R.storyboard.launchScreen()
     /// Storyboard `Main`.
     static let main = _R.storyboard.main()
+    /// Storyboard `Me`.
+    static let me = _R.storyboard.me()
     
     /// `UIStoryboard(name: "LaunchScreen", bundle: ...)`
     static func launchScreen(_: Void = ()) -> UIKit.UIStoryboard {
@@ -149,6 +151,11 @@ struct R: Rswift.Validatable {
     /// `UIStoryboard(name: "Main", bundle: ...)`
     static func main(_: Void = ()) -> UIKit.UIStoryboard {
       return UIKit.UIStoryboard(resource: R.storyboard.main)
+    }
+    
+    /// `UIStoryboard(name: "Me", bundle: ...)`
+    static func me(_: Void = ()) -> UIKit.UIStoryboard {
+      return UIKit.UIStoryboard(resource: R.storyboard.me)
     }
     
     fileprivate init() {}
@@ -176,6 +183,7 @@ struct _R: Rswift.Validatable {
     static func validate() throws {
       try launchScreen.validate()
       try main.validate()
+      try me.validate()
     }
     
     struct launchScreen: Rswift.StoryboardResourceWithInitialControllerType, Rswift.Validatable {
@@ -193,10 +201,24 @@ struct _R: Rswift.Validatable {
     }
     
     struct main: Rswift.StoryboardResourceWithInitialControllerType, Rswift.Validatable {
-      typealias InitialController = ViewController
+      typealias InitialController = UIKit.UINavigationController
       
       let bundle = R.hostingBundle
       let name = "Main"
+      
+      static func validate() throws {
+        if #available(iOS 11.0, *) {
+        }
+      }
+      
+      fileprivate init() {}
+    }
+    
+    struct me: Rswift.StoryboardResourceWithInitialControllerType, Rswift.Validatable {
+      typealias InitialController = MeViewController
+      
+      let bundle = R.hostingBundle
+      let name = "Me"
       
       static func validate() throws {
         if #available(iOS 11.0, *) {
