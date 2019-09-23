@@ -146,10 +146,16 @@ RxSwift最典型的特色就是解决Swift这门静态语言的响应能力，�
             observer.onNext("hello")
             observer.onCompleted()
             return Disposables.create()
-        }).subscribe(onNext: { (text) in
+        })
+        
+        
             
-            print("text1 = \(text)")
-        }, onError: nil, onCompleted: nil, onDisposed: nil).disposed(by: disposeBag)
+//            .subscribe(onNext: { (text) in
+//
+//            print("text1 = \(text)")
+//        }, onError: nil, onCompleted: nil, onDisposed: nil).disposed(by: disposeBag)
+        
+        
         
 //        observable.subscribe(onNext: { (text) in
 //            print("text1 = \(text)")
@@ -177,7 +183,59 @@ RxSwift最典型的特色就是解决Swift这门静态语言的响应能力，�
 //            print("event = \(event)")
 //        }).disposed(by: disposeBag)
         
+        // MARK:test BehaviorRelay(是作为 Variable 的替代者)
+//        let subject = BehaviorRelay<String>(value: "123")
+//        subject.accept("234")
+//        subject.asObservable().subscribe {
+//            print("result =", $0) // next(234)
+//        }.disposed(by: disposeBag)
         
+        // MARK:TEST flatmap
+//        let subject1 = BehaviorSubject(value: "111")
+//        let subject2 = BehaviorSubject(value: "222")
+//        let behaviorRelay = BehaviorRelay(value: subject1)
+////        print(behaviorRelay.value)
+////        behaviorRelay.asObservable().subscribe {
+////            print($0)// next(RxSwift.BehaviorSubject<Swift.String>)
+////        }.disposed(by: disposeBag)
+//
+//        behaviorRelay.asObservable().flatMap {
+//            $0
+//        }.subscribe {
+//            print("flatMap =", $0)// next(111)
+//        }.disposed(by: disposeBag)
+//
+//        behaviorRelay.accept(subject2)// next(222)
+//        subject1.onNext("111_Next")// next(111_Next)
+        
+        
+        // MARK:Test share
+        /*
+         订阅1: 0
+         订阅1: 1
+         订阅1: 2
+         订阅1: 3
+         订阅1: 4
+         订阅2: 3
+         订阅2: 4
+         订阅1: 5
+         订阅2: 5
+         订阅1: 6
+         订阅2: 6
+         */
+//        let interval1 = Observable<Int>.interval(1, scheduler: MainScheduler.instance)
+//            .share(replay: 2)
+//
+//        //第一个订阅者（立刻开始订阅）
+//        _ = interval1
+//            .subscribe(onNext: { print("订阅1: \($0)") })
+//
+//        //第二个订阅者（延迟5秒开始订阅）
+//        delay(5) {
+//            _ = interval1
+//                .subscribe(onNext: { print("订阅2: \($0)") })
+//        }
+    
         
         // TODO:==Observable==
         /*
@@ -454,6 +512,8 @@ RxSwift最典型的特色就是解决Swift这门静态语言的响应能力，�
          }
          
          使用 Binder 创建观察者:
+         public struct Binder<Value>: ObserverType
+         
          相较于AnyObserver 的大而全，Binder 更专注于特定的场景。Binder 主要有以下两个特征：
          不会处理错误事件
          确保绑定都是在给定 Scheduler 上执行（默认 MainScheduler）
@@ -576,7 +636,7 @@ RxSwift最典型的特色就是解决Swift这门静态语言的响应能力，�
          onError(:)：是 on(.error(:)) 的简便写法。该方法相当于 subject 接收到一个 .error 事件。
          onCompleted()：是 on(.completed)的简便写法。该方法相当于 subject 接收到一个 .completed 事件
          
-         PublishSubject:
+         MARK:PublishSubject:
          ###当订阅者订阅PublishSubject 时，只会收到订阅后Subject发出的新Event，而不会收到订阅之前发出的旧Event###
          let disposeBag = DisposeBag()
          
