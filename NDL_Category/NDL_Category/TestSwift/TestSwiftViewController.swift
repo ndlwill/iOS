@@ -6,6 +6,15 @@
 //  Copyright © 2019 ndl. All rights reserved.
 //
 
+// swift 编码规范
+// https://github.com/Artwalk/swift-style-guide/blob/master/README_CN.md
+
+// swiftLint
+// https://github.com/realm/SwiftLint/blob/master/README_CN.md
+
+// swiftyJSON
+// https://github.com/lingoer
+
 import Foundation
 import UIKit
 

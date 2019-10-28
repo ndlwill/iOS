@@ -6,6 +6,15 @@
 //  Copyright © 2019 dzcx. All rights reserved.
 //
 
+// =====github=====
+// https://github.com/devicekit/DeviceKit
+
+// 大哥blog: swift编程规范
+// https://note.u-inn.cn/ios-swift-style/
+
+// github swift demo
+// https://github.com/hilen/TSWeChat
+
 // RxSwift
 // https://www.jianshu.com/p/f61a5a988590
 
@@ -18,12 +27,46 @@
 // Moya-ObjectMapper
 // https://github.com/ivanbruel/Moya-ObjectMapper
 
-// RxSwiftCommunity
+// ###RxSwiftCommunity###
 // https://github.com/RxSwiftCommunity
 // RxAlamofire
 // https://github.com/RxSwiftCommunity/RxAlamofire
 // RxDataSources
 // https://github.com/RxSwiftCommunity/RxDataSources
+
+// Date
+// https://github.com/malcommac/SwiftDate
+
+// MARK: gitlab
+/**
+ Gitlab-CI是GitLab Continuous Integration（Gitlab持续集成）的简称
+ 持续集成是一个软件工程概念，表示不断的将代码集成到主干分支的行为
+ 每次我们集成代码的时候，我们希望系统能够帮助我们完成一些事情，比如说构建项目，打包，自动化测试等等，也就是所谓的持续递交
+ 
+ Gitlab-CI配置起来也很方便，只需要开启Gitlab-runner和书写.gitlab-ci.yml文件即可完成
+ Runner的作用是运行定义在.gitlab-ci.yml文件里的代码。Runner可以看做一种虚拟机
+ Runner分为两种，一种是可以作用于任何项目的Runner，叫做Shared Runner。还有一种只能作用于特定的项目，叫做Specified Runner
+ 如果若干个项目拥有相似的需求，那么就可以使用Shared Runner，避免使空闲的Runner过多。如果某个项目的CI活动非常频繁，那么可以考虑使用Specified Runner
+ 
+ 一般不要在安装了Gitlab的机器上面部署Runner，因为两者都会消耗大量的内存，会引起性能问题
+ 
+ https://docs.gitlab.com/runner/install/osx.html // runner
+ */
+
+// MARK: git
+/**
+ git push <远程主机名> <本地分支名>  <远程分支名>
+ 
+ git push origin master
+ 如果远程分支被省略，如上则表示将本地分支推送到与之存在追踪关系的远程分支（通常两者同名），如果该远程分支不存在，则会被新建
+ */
+
+// MARK: 原子操作
+/**
+ 对于一个资源，在写入或读取时，只允许在一个时刻一个角色进行操作，则为原子操作
+ 对于 let 声明的资源，永远是原子性的。
+ 对于 var 声明的资源，是非原子性的，对其进行读写时，必须使用一定的手段，确保其值的正确性
+ */
 
 /*
  RxSwift: 响应式编程
@@ -43,7 +86,8 @@
  let keyPath2 = keyPath1.appending(path: \.number)
  
  类与协议的组合类型:
- 在 Swift4 中，可以把类（Class）和协议（Protocol）用 & 组合在一起作为一个类型使用
+ #在 Swift4 中，可以把类（Class）和协议（Protocol）用 & 组合在一起作为一个类型使用
+ #在 Swift4 中, private 属性作用域扩大到 extension
  
  下标支持泛型:
  下标的返回类型支持泛型
@@ -131,8 +175,62 @@
 // MARK:swift源码解析
 // https://www.jianshu.com/u/a4b11b398b1e
 
+// MARK: Swift 3.0
+/**
+ 在 Swift 3 中，编译器会在很多地方为我们隐式的加上 @objc。
+ 当一个类继承于 NSObject，那么这个类的所有方法都会被隐式的加上 @objc。
+ class MyClass: NSObject {
+     func print() { } // 包含隐式的 @objc
+     func show() { } // 包含隐式的 @objc
+ }
+ 但这样做很多并不需要暴露给 Objective-C 也被加上了 @objc。而大量 @objc 会导致二进制文件大小的增加
+ 
+ swift 4.0
+ 在 Swift 4 中隐式 @objc 自动推断只会发生在下面这种必须要使用 @objc 的情况：
+ 覆盖父类的 Objective-C 方法
+ 符合一个 Objective-C 的协议
+ 
+ 大多数地方必须手工显示地加上 @objc。
+ class MyClass: NSObject {
+     @objc func print() { } //显示的加上 @objc
+     @objc func show() { } //显示的加上 @objc
+ }
+ 
+ 如果在类前加上 @objcMembers，那么它、它的子类、扩展里的方法都会隐式的加上 @objc。
+ @objcMembers
+ class MyClass: NSObject {
+     func print() { } //包含隐式的 @objc
+     func show() { } //包含隐式的 @objc
+ }
+  
+ extension MyClass {
+     func baz() { } //包含隐式的 @objc
+ }
+ 
+ 如果在扩展（extension）前加上 @objc，那么该扩展里的方法都会隐式的加上 @objc。
+ class SwiftClass { }
+  
+ @objc extension SwiftClass {
+     func foo() { } //包含隐式的 @objc
+     func bar() { } //包含隐式的 @objc
+ }
+ 
+ 如果在扩展（extension）前加上 @nonobjc，那么该扩展里的方法都不会隐式的加上 @objc。
+ @objcMembers
+ class MyClass : NSObject {
+     func wibble() { } //包含隐式的 @objc
+ }
+  
+ @nonobjc extension MyClass {
+     func wobble() { } //不会包含隐式的 @objc
+ }
+ 
+ */
+
 /*
  MARK:Swift4.0
+ 
+ Swift 的静态语言特性，每个函数的调用在编译期间就可以确定
  
  CaseInterable协议:
  
@@ -157,6 +255,17 @@
  class 修饰的类方法被重写时，可以使用 static 让方法变为静态方法
  */
 
+// MARK: 函数式编程
+/**
+ Functor 和 Monad 都是函数式编程的概念
+ 
+ Functor意味着实现了 map 方法，而Monad意味着实现了flatMap
+ 因此 Optional 类型和 Array 类型都既是 Functor 又是 Monad，与Result一样，它们都是一种复合类型，或者叫 Wrapper 类型
+ 
+ map 方法：传入的 transform 函数的 入参是 Wrapped 类型，返回的是 Wrapped 类型
+ flatMap 方法：传入的 transform 函数的 入参是 Wrapped 类型，返回的是 Wrapper 类型
+ */
+
 import UIKit
 
 @UIApplicationMain
@@ -174,7 +283,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         case .some(let intNum):
             print("intNum = \(intNum)")
         }
-        
         
         
         return true

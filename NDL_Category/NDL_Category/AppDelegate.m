@@ -1067,6 +1067,28 @@ static void runLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActi
 /*
  ==组件化==
  
+ // start
+ ==配置podspec文件并发布自己的源代码==
+ 
+ 创建 podsepc文件:
+ pod sepc create PodspecFileName
+ 创建tag号并push到远端:
+ 配置好podsepc文件后，接着创建一个tag号，这个tag好要与podspec中的version相对应。创建完tag号后，不要忘记push到远端
+ git tag 0.0.1
+ git push origin --tag
+ pod spec lint xxxx.podspec 来测试一下我们配置的podspec是否正确
+ 测试和创建CocoaPods账号:
+ 往CocoaPods上集成开源库，需要相关的CocoaPods账号。我们可以通过 pod trunk me来查看账号是否存在
+ pod trunk register XX@126.com 'ndl'
+ 注册完后，需要进入邮箱进行账号的激活
+ 再次进行trunk me测试
+ 发布:
+ pod trunk push xxxxx.podspce 将podspec文件发布到CocoaPods的Spec仓库中
+ 将我们创建和配置的xxxx.podspec文件发布到 CocoaPods的Specs仓库（https://github.com/CocoaPods/Specs.git）
+ 我们在发布我们的工程到CocoaPods的时，本质上是根据我们的工程名称创建相关的文件夹，然后根据我们的tag号创建子文件夹，然后在子文件夹中上传当前版本所对应的podspec文件
+ 仓库引用:
+ // end
+ 
  ##路由是组件化的中间件技术，他解决了我们组件化的耦合问题##
  当我们想跳转一个A页面的时候，通常来讲我们需要import A页面的头文件，在写相应的跳转方法，但是这样，我们就耦合了A文件，也就无法与之独立，如果A页面是其他业务的文件，那么我们将与其他业务耦合，这样千丝万缕的联系，使我们整个工程根本无法独立拆分
  
@@ -1077,11 +1099,13 @@ static void runLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActi
  功能组件也很好理解，比如我们项目中用到的轮播器、播放器、图片浏览器等都可以单独抽出功能组件
  业务组件间的通信。比如专题组件A、作者组件B、点击专题A组件中cell的作者头像图标跳转到B组件中“作者详情”的界面。这就是简单的组件间通信
  
+ ===创建私有的Specs仓库===
  -----远程索引库NDLSpecs:
  每创建一个组件都会带有一个 xxx.podspec 的索引文件。专门用来存放这些索引文件的库就叫做索引库
  
  -----本地索引库 （本地索引库就是用来存放本地索引文件的库）:
  pod repo 查看一下当前有哪些本地索引库（如果你之前没有创建过，应该只有一个master）
+ 
  通过pod repo add <本地索引库的名字（NDLSpecs）>  <远程索引库的地址（https://github.com/ndlwill/NDLSpecs.git）> ，创建本地索引库并和远程索引库做关联（注：本地索引库的名字建议和远程索引库起的名字一样）
  #message: Cloning spec repo `NDLSpecs` from `https://github.com/ndlwill/NDLSpecs.git`
  cd .cocoapods 进入本地索引库的物理地址
@@ -1109,6 +1133,8 @@ static void runLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActi
  git push --tags
  
  -----验证podspec索引文件是否正确:
+ (pod repo lint xxxxSpecsName 该Specs仓库是否可用)
+ 
  pod lib lint CategoryKit.podspec --verbose --allow-warnings （--sources='https://github.com/CocoaPods/Specs.git' 默认值）验证本地索引文件是否正确
  pod spec lint --verbose --allow-warnings 命令验证podspec索引文件（既验证本地同时验证远程的podspec）
  验证提交到代码仓库里的podspec是否正确
@@ -1165,3 +1191,8 @@ static void runLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActi
 
 // podspec编写
 // https://blog.csdn.net/zramals/article/details/81388703
+
+// MARK: Carthage
+/**
+ https://www.cnblogs.com/ludashi/p/9000571.html
+ */

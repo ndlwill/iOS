@@ -11,6 +11,8 @@
 NS_ASSUME_NONNULL_BEGIN
 
 /*
+ 默认情况下，导航栏（navigationBar）的背景是半透明的
+ 
  官方文档
  translucent:
  默认是YES
