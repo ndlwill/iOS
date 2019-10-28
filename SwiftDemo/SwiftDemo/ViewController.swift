@@ -86,7 +86,10 @@ import Alamofire
  */
 
 
-
+struct Sample {
+    var number: Int
+    var flag: Bool
+}
 
 class ViewController: UIViewController {
     
@@ -150,10 +153,145 @@ class ViewController: UIViewController {
             self.request2(string: $0)
         }
     }
+    
+    // MARK: 读取变量指向地址
+    func address(of object: UnsafeRawPointer) -> String {
+        let addr = Int(bitPattern: object)
+        return String(format: "%p", addr)
+    }
+    
 
     override func viewDidLoad() {
         super.viewDidLoad()
         self.view.backgroundColor = UIColor.cyan
+        
+        // MARK: 指针UnsafePointer
+        /**
+         官方将直接操作内存称为 “unsafe 特性”
+         在操作指针之前，需要理解几个概念：size、alignment、stride
+         MemoryLayout，可以检测某个类型的实际大小（size），内存对齐大小（alignment），以及实际占用的内存大小（步长：stride），其单位均为字节
+         
+         一般在移动指针的时候，对于特定类型，指针一次移动一个stride（步长），移动的范围，要在分配的内存范围内
+         
+         Pointer Name    Unsafe？    Write Access？    Collection    Strideable？    Typed？
+         UnsafeMutablePointer<T>    yes    yes    no    yes    yes
+         UnsafePointer<T>    yes    no    no    yes    yes
+         UnsafeMutableBufferPointer<T>    yes    yes    yes    no    yes
+         UnsafeBufferPointer<T>    yes    no    yes    no    yes
+         UnsafeRawPointer    yes    no    no    yes    no
+         UnsafeMutableRawPointer    yes    yes    no    yes    no
+         UnsafeMutableRawBufferPointer    yes    yes    yes    no    no
+         UnsafeRawBufferPointer    yes    no    yes    no    no
+
+         unsafe：不安全的
+         Write Access：可写入
+         Collection：像一个容器，可添加数据
+         Strideable：指针可使用 advanced 函数移动
+         Typed：是否需要指定类型（范型）
+         */
+        print(MemoryLayout<Int>.size)// 8
+        // 1.UnsafeMutableRawPointer
+        let int_count = 2 // 整数的个数
+        let stride = MemoryLayout<Int>.stride // 整数的步长
+        let align = MemoryLayout<Int>.alignment // 整数的内存对齐大小
+        let byteCount = stride * int_count // 实际需要的内存大小
+        // 原生(Raw)指针
+//        do {
+//            // 该指针可以用来读取和存储（改变）原生的字节
+//            let pointer = UnsafeMutableRawPointer.allocate(byteCount: byteCount, alignment: align)// 返回UnsafeMutableRawPointer
+//
+//            defer {
+//                pointer.deallocate()
+//            }
+//
+//            // 使用 storeBytes 和 load 方法存储和读取字节
+//            // 要存储的值, 值的类型
+//            pointer.storeBytes(of: 42, as: Int.self)
+//            // 使用原生指针，存储下一个值的时候需要移动一个步长（stride），也可以直接使用 + 运算符
+////            pointer.advanced(by: stride).storeBytes(of: 6, as: Int.self)
+//            (pointer + stride).storeBytes(of: 6, as: Int.self)
+//            // 读取第一个值
+//            let val1 = pointer.load(as: Int.self)
+//            // 读取第二个值
+//            let val2 = pointer.advanced(by: stride).load(as: Int.self)
+//            print("val1 = \(val1) val2 = \(val2)")
+//
+//            // UnsafeRawBufferPointer 类型以字节流的形式来读取内存
+//            // 缓冲类型指针使用了原生指针进行初始化
+//            let bufferPointer = UnsafeRawBufferPointer(start: pointer, count: byteCount)
+//            for (index, value) in bufferPointer.enumerated() {
+//                print("index = \(index) value = \(value)")
+//            }
+//        }
+        // 类型指针
+//        do {
+//            // 返回UnsafeMutablePointer<Pointee>
+//            // 因为通过给范型参数赋值，已经知道了要存储的数据类型，其alignment和stride就确定了，这时只需要再知道存储几个数据即可
+//            let pointer = UnsafeMutablePointer<Int>.allocate(capacity: int_count)
+//            // 这里还多了个初始化的过程，类型指针单单分配内存，还不能使用，还需要初始化
+//            pointer.initialize(repeating: 0, count: int_count)
+//
+//            defer {
+//                pointer.deinitialize(count: int_count)
+//                pointer.deallocate()
+//            }
+//
+//            // 类型指针的存储/读取值，不需要再使用storeBytes/load，Swift提供了一个以类型安全的方式读取和存储值--pointee
+//            pointer.pointee = 42
+////            pointer.advanced(by: 1).pointee = 6// 这里是按类型值的个数进行移动
+//            (pointer + 1).pointee = 6
+//            let val1 = pointer.pointee
+//            let val2 = pointer.advanced(by: 1).pointee
+//            print("val1 = \(val1) val2 = \(val2)")
+//
+//            let bufferPointer = UnsafeBufferPointer(start: pointer, count: int_count)
+//            for (index, value) in bufferPointer.enumerated() {
+//                print("index = \(index) value = \(value)")
+//            }
+//        }
+        // 原生指针转换为类型指针
+//        do {
+//            // 创建原生指针
+//            let rawPointer = UnsafeMutableRawPointer.allocate(byteCount: byteCount, alignment: align)
+//            defer {
+//                print("defer1")
+//                rawPointer.deallocate()
+//            }
+//            // 原生指针转换为类型指针，是通过调用内存绑定到特定的类型来完成的
+//            let typePointer = rawPointer.bindMemory(to: Int.self, capacity: int_count)
+//            typePointer.initialize(repeating: 0, count: int_count)
+//            defer {
+//                print("defer2")
+//                typePointer.deinitialize(count: int_count)
+//            }
+//            typePointer.pointee = 42
+//            typePointer.advanced(by: 1).pointee = 9
+//            let val1 = typePointer.pointee
+//            let val2 = typePointer.advanced(by: 1).pointee
+//
+//            let bufferPointer = UnsafeBufferPointer(start: typePointer, count: int_count)
+//            for (index, value) in bufferPointer.enumerated() {
+//                print("index =  \(index) value = \(value)")
+//            }
+//            // defer2->defer1
+//        }
+
+        
+        // MARK: copy on write
+        // Swift针对标准库中的集合类型（Array、Dictionary、Set）进行优化。当变量指向的内存空间并没有发生改变，进行拷贝时，只会进行浅拷贝。只有当值发生改变时才会进行深拷贝
+        // Array、Dictinary、Set每次进行修改前，都会通过类似isUniquelyReferencedNonObjC进行判断，判断是否是唯一的引用(即引用计数器为1)。若不为1，则创建新的类型值并返回。若是唯一的则直接赋值
+        var array1: [Int] = [0, 1, 2, 3]
+        var array2 = array1
+        print(address(of: &array1))
+        print(address(of: &array2))
+        // array1 array2地址相同
+        
+//        array2.append(4)
+        array2[0] = 100
+        // array1 array2地址不同
+        print(address(of: &array1))
+        print(address(of: &array2))
+        
 
         
         // UI for test rx
