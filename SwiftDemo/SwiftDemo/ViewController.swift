@@ -293,7 +293,6 @@ class ViewController: UIViewController {
         print(address(of: &array2))
         
 
-        
         // UI for test rx
         let button = UIButton(type: .custom)
         button.backgroundColor = UIColor.red

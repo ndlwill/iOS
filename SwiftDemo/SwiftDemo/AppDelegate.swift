@@ -296,6 +296,18 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             print("intNum = \(intNum)")
         }
         
+        DispatchQueue.global().async {
+            print("1.\(Thread.current)")
+        }
+        
+        DispatchQueue.global().async {
+            print("2.\(Thread.current)")
+        }
+        
+        DispatchQueue.global().async {
+            print("3.\(Thread.current)")
+        }
+        
         
         return true
     }
