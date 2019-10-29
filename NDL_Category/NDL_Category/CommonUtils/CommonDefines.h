@@ -10,6 +10,9 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
+// 命名神器
+// https://unbug.github.io/codelf/
+
 // PS: 混合模式
 // https://helpx.adobe.com/cn/photoshop/using/blending-modes.html
 
@@ -18,6 +21,7 @@
 
 // meituan
 // https://tech.meituan.com/
+// https://juejin.im/user/593fb40eda2f6000673bdc61/posts
 
 // Alibaba
 // https://github.com/alibaba/wax

@@ -14,19 +14,701 @@ import RxDataSources
 import Moya
 import Alamofire
 
-// MARK:RxSwift
+// MARK: statusBar
+// 默认情况下，顶部状态栏（statusBar）为 default 样式（文字为黑色），我们可以将其改为 light 样式（文字为白色）
+
+
 // https://www.hangge.com/blog/cache/category_72_11.html
+
+// MARK: RxSwift
+// https://www.jianshu.com/u/cea6393d7686
+// MARK: RxCocoa中对UIKit的Delegate的处理
+/**
+ scrollView.rx.didScroll:
+ 
+ NSObject被声明了实现ReactiveCompatible，因此UIScrollView也实现了该协议
+ 
+ scrollView的rx属性就是一个UISCrollView泛型的Reactive结构体，其base属性就是这个UIScrollView本身的实例
+ 
+ 在UIScrollView+Rx.swift文件里找到，是通过extension的where语法对UIScrollView泛型的Reactive添加的一个计算型属性
+ 
+ public var didScroll: ControlEvent<Void> {
+     let source = RxScrollViewDelegateProxy.proxy(for: base).contentOffsetPublishSubject
+     return ControlEvent(events: source)
+ }
+ 
+ source是通过一个对应UISrollView实例获得的RxScrollViewDelegateProxy的一个UIScrollView的contentOffset事件广播，函数最后再把这个广播封装成一个ControlEvent类型实例
+ 
+ 关键就在于RxScrollViewDelegateProxy
+ 
+ open class RxScrollViewDelegateProxy
+     : DelegateProxy<UIScrollView, UIScrollViewDelegate>
+     , DelegateProxyType
+ , UIScrollViewDelegate
+ RxScrollViewDelegateProxy继承了DelegateProxy，并实现了两个协议:DelegateProxyType,UIScrollViewDelegate
+ 
+ fileprivate var _contentOffsetPublishSubject: PublishSubject<()>?
+ ...
+ /// Optimized version used for observing content offset changes.
+ internal var contentOffsetPublishSubject: PublishSubject<()> {
+     if let subject = _contentOffsetPublishSubject {
+         return subject
+     }
+
+     let subject = PublishSubject<()>()
+     _contentOffsetPublishSubject = subject
+
+     return subject
+ }
+ 
+ public func scrollViewDidScroll(_ scrollView: UIScrollView) {
+     if let subject = _contentOffsetBehaviorSubject {
+         subject.on(.next(scrollView.contentOffset))
+     }
+     if let subject = _contentOffsetPublishSubject {
+         subject.on(.next(()))
+     }
+     self._forwardToDelegate?.scrollViewDidScroll?(scrollView)
+ }
+ 发送contentOffset的数值变化广播
+ 发送contentOffset变化的事件广播
+ 调用了_forwardToDelegate属性的另一个scrollViewDidScroll函数
+ 
+ 而_forwardToDelegate应该是开发者在外部设置的delegate
+ 即使开发者已经为一个UIScrollView设置了delegate（或者没有设置），也不会影响通过RxCocoa框架去订阅这个UIScrollView的事件。 而且可以有多个订阅者通过RxCocoa去订阅UIScrollView的回调事件，因为这里的Observable是广播类型
+ 
+ 代码RxScrollViewDelegateProxy.proxy(for: base)当中，proxy(for:)函数把一个RxScrollViewDelegateProxy绑定到一个UIScrollView上
+ proxy(for:)函数被定义在DelegateProxyType协议里，通过extension实现
+ 
+ RxCocoa可以让开发者跳过实现Delegate函数直接获取UIKit组件的回调，其实是通过runtime把一个已经实现了Delegate的Proxy绑定到了这个组件上
+ 
+ 如果在开发者设置订阅UIScrollView之前，UIScrollView已经有一个delegate，在这里就会把这个delegate托管给proxy，让proxy在收到UIScrollView回调的时候转发给delegate，而实际上UIScrollView此时的delegate指向的是proxy。通过proxy的forwardToDelegate可以找回这个在外部设置的delegate
+ */
+
+
+struct Sample {
+    var number: Int
+    var flag: Bool
+}
+
 class ViewController: UIViewController {
     
     let disposeBag = DisposeBag()
     
     enum MyError: Error {
-        case A
-        case B
+        case ErrorA
+        case ErrorB
     }
+    
+    func request1() -> Observable<String> {
+        print("===start request1===")
+        
+        return Observable<String>.create { [weak self] (observer) -> Disposable in
+            guard let self = self else { return Disposables.create() }
+            self.delay(3.0) {
+                print("on event request1")
+                observer.onNext("==request1==")
+//                observer.onCompleted()
+//                observer.onError(MyError.ErrorA)
+            }
+            
+            return Disposables.create()
+        }
+    }
+    
+    // request11 并行 request1
+    func request11() -> Observable<String> {
+        print("===start request11===")
+        
+        return Observable<String>.create { [weak self] (observer) -> Disposable in
+            guard let self = self else { return Disposables.create() }
+            self.delay(5.0) {
+                print("on event request11")
+                observer.onNext("==request11==")
+            }
+            
+            return Disposables.create()
+        }
+    }
+    
+    // request2 依赖 request1
+    func request2(string: String) -> Observable<String> {
+        print("===start request2 with: \(string)===")
+        
+        return Observable<String>.create { [weak self] (observer) -> Disposable in
+            guard let self = self else { return Disposables.create() }
+            self.delay(3.0) {
+                print("onNext request2")
+                observer.onNext("\(string)|==request2==")
+            }
+            
+            return Disposables.create()
+        }
+    }
+    
+    // request2 依赖 request1
+    // 聚合2个异步操作的Observable
+    func serialRequest() -> Observable<String> {
+        return self.request1().flatMap {
+            self.request2(string: $0)
+        }
+    }
+    
+    // MARK: 读取变量指向地址
+    func address(of object: UnsafeRawPointer) -> String {
+        let addr = Int(bitPattern: object)
+        return String(format: "%p", addr)
+    }
+    
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        self.view.backgroundColor = UIColor.cyan
+        
+        // MARK: 指针UnsafePointer
+        /**
+         官方将直接操作内存称为 “unsafe 特性”
+         在操作指针之前，需要理解几个概念：size、alignment、stride
+         MemoryLayout，可以检测某个类型的实际大小（size），内存对齐大小（alignment），以及实际占用的内存大小（步长：stride），其单位均为字节
+         
+         一般在移动指针的时候，对于特定类型，指针一次移动一个stride（步长），移动的范围，要在分配的内存范围内
+         
+         Pointer Name    Unsafe？    Write Access？    Collection    Strideable？    Typed？
+         UnsafeMutablePointer<T>    yes    yes    no    yes    yes
+         UnsafePointer<T>    yes    no    no    yes    yes
+         UnsafeMutableBufferPointer<T>    yes    yes    yes    no    yes
+         UnsafeBufferPointer<T>    yes    no    yes    no    yes
+         UnsafeRawPointer    yes    no    no    yes    no
+         UnsafeMutableRawPointer    yes    yes    no    yes    no
+         UnsafeMutableRawBufferPointer    yes    yes    yes    no    no
+         UnsafeRawBufferPointer    yes    no    yes    no    no
+
+         unsafe：不安全的
+         Write Access：可写入
+         Collection：像一个容器，可添加数据
+         Strideable：指针可使用 advanced 函数移动
+         Typed：是否需要指定类型（范型）
+         */
+        print(MemoryLayout<Int>.size)// 8
+        // 1.UnsafeMutableRawPointer
+        let int_count = 2 // 整数的个数
+        let stride = MemoryLayout<Int>.stride // 整数的步长
+        let align = MemoryLayout<Int>.alignment // 整数的内存对齐大小
+        let byteCount = stride * int_count // 实际需要的内存大小
+        // 原生(Raw)指针
+//        do {
+//            // 该指针可以用来读取和存储（改变）原生的字节
+//            let pointer = UnsafeMutableRawPointer.allocate(byteCount: byteCount, alignment: align)// 返回UnsafeMutableRawPointer
+//
+//            defer {
+//                pointer.deallocate()
+//            }
+//
+//            // 使用 storeBytes 和 load 方法存储和读取字节
+//            // 要存储的值, 值的类型
+//            pointer.storeBytes(of: 42, as: Int.self)
+//            // 使用原生指针，存储下一个值的时候需要移动一个步长（stride），也可以直接使用 + 运算符
+////            pointer.advanced(by: stride).storeBytes(of: 6, as: Int.self)
+//            (pointer + stride).storeBytes(of: 6, as: Int.self)
+//            // 读取第一个值
+//            let val1 = pointer.load(as: Int.self)
+//            // 读取第二个值
+//            let val2 = pointer.advanced(by: stride).load(as: Int.self)
+//            print("val1 = \(val1) val2 = \(val2)")
+//
+//            // UnsafeRawBufferPointer 类型以字节流的形式来读取内存
+//            // 缓冲类型指针使用了原生指针进行初始化
+//            let bufferPointer = UnsafeRawBufferPointer(start: pointer, count: byteCount)
+//            for (index, value) in bufferPointer.enumerated() {
+//                print("index = \(index) value = \(value)")
+//            }
+//        }
+        // 类型指针
+//        do {
+//            // 返回UnsafeMutablePointer<Pointee>
+//            // 因为通过给范型参数赋值，已经知道了要存储的数据类型，其alignment和stride就确定了，这时只需要再知道存储几个数据即可
+//            let pointer = UnsafeMutablePointer<Int>.allocate(capacity: int_count)
+//            // 这里还多了个初始化的过程，类型指针单单分配内存，还不能使用，还需要初始化
+//            pointer.initialize(repeating: 0, count: int_count)
+//
+//            defer {
+//                pointer.deinitialize(count: int_count)
+//                pointer.deallocate()
+//            }
+//
+//            // 类型指针的存储/读取值，不需要再使用storeBytes/load，Swift提供了一个以类型安全的方式读取和存储值--pointee
+//            pointer.pointee = 42
+////            pointer.advanced(by: 1).pointee = 6// 这里是按类型值的个数进行移动
+//            (pointer + 1).pointee = 6
+//            let val1 = pointer.pointee
+//            let val2 = pointer.advanced(by: 1).pointee
+//            print("val1 = \(val1) val2 = \(val2)")
+//
+//            let bufferPointer = UnsafeBufferPointer(start: pointer, count: int_count)
+//            for (index, value) in bufferPointer.enumerated() {
+//                print("index = \(index) value = \(value)")
+//            }
+//        }
+        // 原生指针转换为类型指针
+//        do {
+//            // 创建原生指针
+//            let rawPointer = UnsafeMutableRawPointer.allocate(byteCount: byteCount, alignment: align)
+//            defer {
+//                print("defer1")
+//                rawPointer.deallocate()
+//            }
+//            // 原生指针转换为类型指针，是通过调用内存绑定到特定的类型来完成的
+//            let typePointer = rawPointer.bindMemory(to: Int.self, capacity: int_count)
+//            typePointer.initialize(repeating: 0, count: int_count)
+//            defer {
+//                print("defer2")
+//                typePointer.deinitialize(count: int_count)
+//            }
+//            typePointer.pointee = 42
+//            typePointer.advanced(by: 1).pointee = 9
+//            let val1 = typePointer.pointee
+//            let val2 = typePointer.advanced(by: 1).pointee
+//
+//            let bufferPointer = UnsafeBufferPointer(start: typePointer, count: int_count)
+//            for (index, value) in bufferPointer.enumerated() {
+//                print("index =  \(index) value = \(value)")
+//            }
+//            // defer2->defer1
+//        }
+
+        
+        // MARK: copy on write
+        // Swift针对标准库中的集合类型（Array、Dictionary、Set）进行优化。当变量指向的内存空间并没有发生改变，进行拷贝时，只会进行浅拷贝。只有当值发生改变时才会进行深拷贝
+        // Array、Dictinary、Set每次进行修改前，都会通过类似isUniquelyReferencedNonObjC进行判断，判断是否是唯一的引用(即引用计数器为1)。若不为1，则创建新的类型值并返回。若是唯一的则直接赋值
+        var array1: [Int] = [0, 1, 2, 3]
+        var array2 = array1
+        print(address(of: &array1))
+        print(address(of: &array2))
+        // array1 array2地址相同
+        
+//        array2.append(4)
+        array2[0] = 100
+        // array1 array2地址不同
+        print(address(of: &array1))
+        print(address(of: &array2))
+        
+
+        // UI for test rx
+        let button = UIButton(type: .custom)
+        button.backgroundColor = UIColor.red
+        self.view.addSubview(button)
+        button.snp.makeConstraints { (make) in
+            make.center.equalTo(self.view)
+            make.size.equalTo(CGSize(width: 60, height: 40))
+        }
+        
+        let eventView = UIView()
+        eventView.isUserInteractionEnabled = false// 触摸相交部分，button能相应事件
+        eventView.backgroundColor = .yellow
+        self.view.addSubview(eventView)
+        eventView.snp.makeConstraints { (make) in
+            make.centerX.equalTo(self.view).offset(-40.0)
+            make.centerY.equalTo(self.view)
+            make.size.equalTo(CGSize(width: 80, height: 80))
+        }
+        
+        
+        // MARK: 笔记
+        /**
+         希望Service是MVVM中的ViewModel的辅助, ViewModel调用Service提供的函数, 而Service应该帮ViewModel处理好与UI无关的业务逻辑. 所以Service的函数应该返回Observable类型
+         */
+        
+        // MARK: ###错误相关###
+        /**
+         observer.onCompleted():
+         不会走这边的onCompleted回调
+         
+         observer.onNext("==request1==")
+         observer.onCompleted():
+         走onNext回调，不走onCompleted回调
+         
+         observer.onError:
+         没写catchErrorJustReturn，走onError回调
+         写了catchErrorJustReturn，走onNext和onCompleted回调
+         */
+//        button.rx.tap.flatMapLatest{
+//            self.request1()
+//        }
+//        .catchErrorJustReturn("NDL")
+//        .subscribe(onNext: { (str) in
+//            print("subscribe = \(str)")
+//        }, onError: { (error) in
+//            print("\(error)")
+//        }, onCompleted: {
+//            print("on completed")
+//        }).disposed(by: disposeBag)
+        
+        // MARK: ###test serial request###
+        // flatMapLatest: 没点击不执行闭包的方法
+        /*
+         observer.onNext:
+         或者
+         observer.onNext
+         observer.onCompleted():
+         ===start request1=== 过3秒到下一步
+         onNext request1
+         ===start request2 with: ==request1===== 过3秒到下一步
+         onNext request2
+         subscribe = ==request1==|==request2==
+         
+         observer.onCompleted():
+         点击报下面的log，再次点击也报下面的log
+         ===start request1===
+         on event request1
+         
+         observer.onError没有catchErrorJustReturn:
+         点击一次报下面的log，以后点击它再也不会发出 event 事件了
+         ===start request1===
+         on event request1
+         ErrorA
+         
+         observer.onError有catchErrorJustReturn:
+         点击一次报下面的log，以后点击它再也不会发出 event 事件了
+         ===start request1===
+         on event request1
+         subscribe = NDL
+         on completed
+         
+         observer.onError有catchError:
+         点击一次报下面的log，以后点击它再也不会发出 event 事件了
+         ===start request1===
+         on event request1
+         subscribe = ##ErrorA##
+         on completed
+         */
+//        button.rx.tap.flatMapLatest{
+//            self.request1()
+//        }.flatMapLatest{ str in
+//            self.request2(string: str)
+//        }
+////        .catchErrorJustReturn("NDL")
+//            .catchError({ (error) -> Observable<String> in
+//                return Observable.just("##\(error)##")
+//            })
+//        .subscribe(onNext: { (str) in
+//            print("subscribe = \(str)")
+//        }, onError: { (error) in
+//            print("\(error)")
+//        }, onCompleted: {
+//            print("on completed")
+//        }).disposed(by: disposeBag)
+        
+        // MARK: ###serial request 最终方案###
+        /**
+         observer.onNext:
+         ===start request1===
+         on event request1
+         ===start request2 with: ==request1=====
+         onNext request2
+         subscribe.onNext = ==request1==|==request2==
+         
+         observer.onError 没有catchError:点击按钮不能触发事件
+         ===start request1===
+         on event request1
+         subscribe.onError = ErrorA
+         
+         选用catchError. 而这样的话, subscribe函数的onError就永远都不会执行了, 等于是把Error的处理提前到了catchError
+         observer.onError & catchError:点击按钮还能触发事件
+         ===start request1===
+         on event request1
+         subscribe.onNext = ##ErrorA##
+         */
+        button.rx.tap
+            .flatMap {
+                self.serialRequest()
+                    .catchError { (error) -> Observable<String> in
+                        // 处理error，配合enum以及泛型更好地处理Error
+                        return Observable.just("##\(error)##")
+                    }
+            }.subscribe(onNext: { (str) in
+                print("subscribe.onNext = \(str)")
+            }, onError: { (error) in
+                print("subscribe.onError = \(error)")
+            }, onCompleted: {
+                print("subscribe.on completed")
+            }).disposed(by: disposeBag)
+        
+        // MARK: ###参考###
+        /**
+         适用于通用的场景
+         enum Result<T> {
+             case value(T)
+             case error(Error)
+         }
+         
+         // 改进后的fetch函数把[Device]和Error转换成Result
+         func rx_fetchTableViewData() -> Observable<Result> {
+             return self.rx_updateLocation()
+                        .flatMap({self.rx_fetchDevices(near: $0)})
+                        .map({Result.value($0)})
+                        .catchError({Observable.of(Result.error($0))})
+         }
+         // 统一处理Result
+         func handleResult(_ result: Result) {
+             switch result {
+                 case .value(let value):
+                     self.update(with: value)
+                 case .error(let error):
+                     self.handleError(error)
+             }
+         }
+         
+         self.tableView.rx_pullToRefresh
+         .flatMap({[unowned self] in self.rx_fetchTableViewData()})
+         .subscribe(onNext: {[weak self] in self?.handleResult($0)})
+         .disposed(by: self.disposeBag)
+         */
+        
+        // MARK: Delegate回调
+        /**
+         class ViewController: UIViewController {
+             func performSelect() {
+                 let modalViewController = ModalViewController()
+                 
+                 self.present(viewController: modalViewController, animated: true, completion: nil)
+                 
+                 modalViewController.rx_didSelect
+                     .subscribe(onNext: { [weak self] index in
+                         // 处理回调
+                         ...
+                     })
+             }
+         }
+         
+         class ModalViewController: UIViewController {
+             // PublishSubject不适合对外公开, 避免外部调用入口函数.
+             var rx_didSelect: Obsevable<Int> {
+                 return self.rx_internal_didSelect.asObservable()
+             }
+             private let rx_internal_didSelect: PublishSubject<Int> = PublishSubject()
+             ...
+             private func internalSelect(at index: Int) {
+                 self.rx_internal_didSelect.onNext(index)
+             }
+         }
+         */
+        
+    
+        
+        // MARK: ###test concurrent request###
+        // 没有subscribe(),这种样式他会执行方法,不执行方法返回中闭包的request
+        /**
+         ===start request1===
+         ===start request11===
+         */
+//        Observable.zip(request1(), request11()) {
+//            string1, string2 -> (String, String) in
+//            print("======")
+//            return (string1, string2)
+//        }
+        
+        // 没有subscribe(),不点击和点击按钮都什么都不执行
+//        button.rx.tap.flatMapLatest { _ in
+//                Observable.zip(self.request1(), self.request11()) {
+//                    string1, string2 -> (String, String) in
+//                    print("======")
+//                    return (string1, string2)
+//                }
+//        }
+        
+        
+        // 有subscribe(),这种样式他会执行方法,并执行方法返回中闭包的request
+        /**
+         ===start request1===
+         ===start request11===
+         
+         ##subscribe后才会有下面的打印##
+         onNext request1  3秒后打印这行
+         onNext request11 5秒后打印这行以及下面
+         ======
+         ==request1==###==request11==
+         */
+//        Observable.zip(request1(), request11()) {
+//            string1, string2 -> (String, String) in // in后面不是1句代码，这边必须写返回类型
+//            print("======")
+//            return (string1, string2)
+//        }.subscribe(onNext: { (tuple) in
+//            print(tuple.0 + "###" + tuple.1)
+//        }).disposed(by: disposeBag)
+        
+        // 有subscribe(),不点击按钮什么都不执行
+        /**
+         ##subscribe后才会有下面的打印##
+         点击按钮:
+        ===start request1===
+        ===start request11===
+        onNext request1  3秒后打印这行
+        onNext request11 5秒后打印这行以及下面
+        ======
+        ==request1==###==request11==
+        */
+//        button.rx.tap.flatMapLatest { _ in
+//                Observable.zip(self.request1(), self.request11()) {
+//                    string1, string2 -> (String, String) in
+//                    print("======")
+//                    return (string1, string2)
+//                }
+//        }.subscribe(onNext: { (tuple) in
+//                    print(tuple.0 + "###" + tuple.1)
+//                }).disposed(by: disposeBag)
+        
+        
+        // MARK: ###Observable###
+//        Observable<String>.create { (observer) -> Disposable in
+//            print("=======")// 被subscribe才会走这个闭包
+//            return Disposables.create()
+//        }.subscribe(onNext: { (str) in
+//            print("str = \(str)")
+//        }).disposed(by: disposeBag)
+        
+        
+        // MARK: 区别###concatMap && concat###
+//        let subject1 = BehaviorSubject(value: "1")
+//        let subject2 = BehaviorSubject(value: "2")
+//        let relay = BehaviorRelay(value: subject1)
+//
+//        relay.asObservable()
+////            .concatMap { $0 }
+//            .concat()
+//            .subscribe(onNext: {// 1, 1
+//            print($0)
+//        }).disposed(by: disposeBag)
+//        subject1.onNext("11")// 11, 11
+//        subject2.onNext("22")// 无, 无
+//        relay.accept(subject2)// 无, 无
+//        subject2.onNext("222")// 无, 无
+//        subject1.onNext("111")// 111, 111
+//        subject1.onCompleted()// 222, 222
+        
+        
+        // concat
+//        let subject1 = BehaviorSubject(value: "1")
+//        let subject2 = BehaviorSubject(value: "2")
+//        let relay = BehaviorRelay(value: subject1)
+//
+//        relay.asObservable()
+//            .concat()
+//            .subscribe(onNext: {// 1
+//                print($0)
+//            }).disposed(by: disposeBag)
+//
+//        subject2.onNext("22")// 无
+//        subject1.onNext("11")// 11
+//        subject1.onNext("111")// 111
+//        subject1.onCompleted()// 无
+//        relay.accept(subject2)// 22 accept的类型必须一致
+//        subject2.onNext("222")// 222
+        
+        
+        // concat(second)
+//        let subject1 = BehaviorSubject(value: "1")
+//        let subject2 = BehaviorSubject(value: "2")
+
+        // test1
+//        subject1.asObservable()
+//            .concat(subject2)
+//            .subscribe(onNext: {// 1
+//                print($0)
+//            }).disposed(by: disposeBag)
+//
+//        subject2.onNext("2222")// 无
+//        subject1.onNext("11")// 11
+//        subject1.onNext("111")// 111
+//        subject1.onCompleted()// 2222
+//        subject2.onNext("222")// 222
+        
+        // test2
+//        subject1.asObservable()
+//            .concat(Observable<String>.of("123456"))// String类型必须一致
+//            .subscribe(onNext: {// 1
+//                print($0)
+//            }).disposed(by: disposeBag)
+//
+//        subject1.onNext("11")// 11
+//        subject1.onNext("111")// 111
+//        subject1.onCompleted()// 123456
+
+        
+        // MARK: 区别###flatMap && flatMapLatest && flatMapFirst###
+//        let subject1 = BehaviorSubject(value: "1")
+//        let subject2 = BehaviorSubject(value: "2")
+//        let subject3 = BehaviorSubject(value: "3")
+//        let relay = BehaviorRelay(value: subject1)
+//
+//        relay.asObservable().flatMap {
+//            $0
+//        }.subscribe(onNext: {// 1, 1, 1
+//            print($0)
+//        }).disposed(by: disposeBag)
+//
+//        // flatMap, flatMapLatest, flatMapFirst
+//        subject1.onNext("11")// 11, 11, 11
+//        relay.accept(subject2)// 2, 2, 无
+//        subject2.onNext("22")// 22, 22, 无
+//        subject1.onNext("111")// 111, 无, 111
+//        relay.accept(subject3)// 3, 3, 无
+//        subject3.onNext("33")// 33, 33, 无
+//        subject2.onNext("222")// 222, 无, 无
+//        subject1.onNext("1111")// 1111, 无, 1111
+        
+        // MARK: 区别###withLatestFrom && flatMapLatest###
+        /**
+         withLatestFrom:
+         按钮没有tap就执行后面的request，点击即发送后面的onNext,不再request
+         不subscribe也会执行后面的request
+         button.rx.tap.withLatestFrom(BUAPI.getRentalServiceContract()).subscribe
+         
+         flatMapLatest:
+         按钮没有tap不执行request，点击一次就request一次
+         contractButton.rx.tap.flatMapLatest {
+             BUAPI.getRentalServiceContract()
+         }.subscribe
+         
+         ================
+         combineLatest:
+         */
+        
+        // withLatestFrom: 没点击就执行了闭包的方法
+//        button.rx.tap.withLatestFrom(self.request1()).subscribe(onNext: { (str) in
+//            print("str = \(str)")
+//        }, onError: { (error) in
+//
+//        }, onCompleted: {
+//
+//        }).disposed(by: disposeBag)
+        
+        // MARK: ==========###BehaviorRelay 相关操作 start###==========
+        // switchLatest:
+//        let subject1 = BehaviorSubject(value: "1")
+//        let subject2 = BehaviorSubject(value: "2")
+//        let relay = BehaviorRelay(value: subject1)
+//
+//        relay.asObservable()
+//            .switchLatest()
+//            .subscribe(onNext: {// 1
+//                print($0)
+//            }).disposed(by: disposeBag)
+//        subject1.onNext("11")// 11
+//        subject2.onNext("22")
+//        relay.accept(subject2)// 22
+//        subject1.onNext("111")
+//        subject2.onNext("222")// 222
+        
+        // flatMapLatest 与 flatMap 的唯一区别是:flatMapLatest 只会接收最新的 value 事件
+        
+        // MARK: ==========###BehaviorRelay 相关操作 end###==========
+        
+        // MARK:====================================================================
+        
+        // MARK:观察者
+        // 直接在 subscribe，bind 方法中创建观察者
+        // bind(to: observer)观察者
+        // 使用 Binder 创建观察者
         
         /*
          MRAK:原理

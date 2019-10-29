@@ -8,6 +8,9 @@
 
 #import <UIKit/UIKit.h>
 
+// MARK: 系统占有率
+// https://developer.apple.com/support/app-store/
+
 /*
  MARK:国外blog
  https://www.raywenderlich.com/ios/
@@ -90,6 +93,8 @@
 
 // 业务逻辑: 处理数据
 // 反序列化 / 数据解析 : 把服务器返回给客户端的二进制数据转换成客户端可以直接使用的OC对象
+
+// MARK: 组件化工具BeeHive
 
 // MARK:事件的传递和响应机制
 // https://www.jianshu.com/p/2e074db792ba
