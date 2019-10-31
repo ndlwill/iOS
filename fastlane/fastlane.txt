@@ -1,3 +1,13 @@
+https://www.jianshu.com/u/f4c316c8f777
+https://www.raywenderlich.com/778-fastlane-tutorial-getting-started#toc-anchor-004
+https://www.jianshu.com/p/19ae8cc865b0
+https://blog.csdn.net/kuangdacaikuang/article/category/7688799
+
+DZCX:
+team_id: 5LFLJM5R25
+
+up-to-date: 最新的
+
 cd 到工程所在的目录,fastlane init
 
 Gemfile ----- ##管理gem，定义了 gem 需要依赖的库文件##   显示本工程 fastlane 安装的插件和依赖包；
@@ -5,12 +15,24 @@ Gemfile.lock --- 记录gem 的版本和仓库信息；
 Appfile ---- 配置 App 的 bundle ID 、version、profile 文件等，以及 AppleID 账号相关等信息；
 Fastfile ---- 配置 fastlane 的各种 Action , 本工程使用的 fastlane 命令都在此处配置
 
-
+dotenv:
 使用 gem 工具 dotenv ，可以为 fastlane 指定环境变量
+默认会自动加载 fastlane 目录下的 .env 或者 .env.defalut 文件。在 fastlane 目录下，输入命令touch .env新建文件
 在 iOS 打不同包时，如果想要新建多个环境，可以在 fastlane 目录下，新建多个名称为 .env.xxx 的环境文件。
 然后通过为 fastlane 命令加参数的方式 fastlane lane命令 --env xxx就能切换到需要的环境
 
+执行 fastlane [lane-name] –env [envName] 来指定使用配置文件 .env.[envName]
+读取顺序是 .env -> .env.default -> .env. ，相同的变量名会被后面的覆盖 (注意是fastlane [lane-name])
+
 bundle exec fastlane
+
+=============================Command和Tool
+每一种Tool都代表fastlane的一个大的功能点
+比如cert用于证书相关，sigh用于签名相关，gym用于打包相关
+
+每一种Tool下都有多个Command
+把Tool看做是某个领域的专用工具，Command则是其中的一个操作
+
 
 =============================系统级lane
 执行顺序	方法名	说明
@@ -26,9 +48,7 @@ versioning: 用来修改build版本号和version版本号
 
 firim: 直接把AdHoc或者InHouse打包的ipa上传到fir.im，供测试下载
 
-=============================switch lane
-switch lane 指的是在一个lane中调用另一个lane
-
+=============================switch lane(指的是在一个lane中调用另一个lane)
 在fastlane中，并不是所有lane都能相互调用，需要满足下面两个条件之一：
 1.两个lane同属于同一个platform
 2.被调用的lane不属于任何platform
@@ -74,17 +94,201 @@ default_platform :ios
 =============================action
 action可以看作是fastlane中的功能模块，每一个action都有其特定的功能，它规定了功能的具体实现
 
-=============================用fastlane进行团队证书管理
+=============================用fastlane进行团队证书管理(cert, sigh, match)
 在使用fastlane管理证书前,要先注册一个私有的仓库
 match是fastlane的一个功能组件, 能自动从苹果官方上下载证书和pp文件同步到我们的git仓库中
 
 // 查看用法
 bundle exec fastlane action match 
 
-cert、sigh和match是Fastlane中的三个Tool，他们都是与证书相关的工具
+###cert、sigh和match是Fastlane中的三个Tool，他们都是与证书相关的工具###
 cert的作用是获取签名证书或删除过期的证书
 sigh的作用是管理配置文件(provisioning profile)，比如创建新的、修复过期的、删除本地的等
 match的主要作用是使用cert和sigh创建新的证书和配置文件，并它们放置在git上，然后重复使用
 
 cert这个Tool下定义了两个Command,分别是create和revoke_expired，其中create是默认Command
 除了在终端使用，cert还可以在lane中被当做action来调用
+
+cert证书:
+fastlane action cert // action
+fastlane cert help // tool
+当需要创建新的签名证书时，可以使用cert下的create这个Command，其具体的执行命令是fastlane cert creat
+因为create是默认命令，所以也可以使用fastlane cert
+
+if a new certificate needs to be created, cert will
+Create a new private key
+Create a new signing request
+Generate, downloads and installs the certificate
+Import all the generated files into your Keychain
+
+cert will never revoke your existing certificates. If you can't create any more certificates, 
+cert will raise an exception, which means, you have to revoke one of the existing certificates to make room for a new one
+
+Two-factor authentication for Apple ID:
+Two-factor authentication is an extra layer of security for your Apple ID designed to 
+ensure that you're the only person who can access your account, even if someone knows your password
+
+=============================eg
+default_platform :ios
+
+lane :build do
+    match(git_url: your_git_url)
+    gym(export_method: 'enterprise')
+end
+上述代码中的build是一个lane，match和gym都是action
+
+fastlane build
+fastlane build的完整命令
+fastlane fastlane trigger build
+第二个fastlane是默认的Tool，因为fastlane（第一个fastlane） build没有显式的指定Tool，所以使用的都是fastlane这个Tool，它是fastlane库中最重要的Tool
+
+trigger是fastlane这个Tool的默认命令，其作用是运行一个指定的lane，而fastlane这个Tool又是fastlane库的默认Tool
+所以一般在运行lane的时候，可以省略掉Tool和Command，只需要执行命令fastlane [platform_name] lane_name，如果设置了default_platform，platform_name也可以省略
+trigger的目的是去运行一个指定的lane，而运行lane的目的是去执行其中的action
+
+lane和action是trigger这个Command内部定义的领域名称，它们只能在trigger中使用.它们和Command不是同一个层次的
+只要说起lane和action，那么就默认了Tool是fastlane，Command是trigger
+当执行build这个lane之后，最终目的是去执行它包含的action，build内部包含了两个action，分别是match和gym，而这两个action最终会去调用它们同名的Tool
+其他所有的Tool都有其同名的action，通过在lane中添加action，可以调用其他所有的Tool
+fastlane还内置了其他很多action，比如关于git和pod的
+
+fastlane执行流程:
+1.解析Command
+2.执行Command
+
+fastlane [tool] [command] [args][--key value]
+tool和command指定使用的Tool和其Command
+args通常是一个或多个字符串组成的数组；类似--key value或-k value格式的组合会被当做option。
+args和option会被当做参数传给Command
+其中tool、command、args和option用[]包含起来，表示它们可以被省略
+
+1.获取ARGV
+例一：终端输入fastlane lane_name，则ARGV = ["lane_name"]；
+例二：终端输入fastlane cert --username "your_usernmae" --development false，则ARGV = ["cert", "--username", "your_username", "--development", "false"]
+2.解析Tool
+3.解析Command
+有个问题需要注意一下，当在终端输入fastlane match --type enterprise时，这条命令的初衷是想使用match这个Tool的默认Command:run
+但按照本步骤的方法，最终使用的是enterprise这个Command。所以在这里最好显示指定要使用的Command，fastlane match run --type enterprise
+4.解析command对应的option
+遍历ARGV，如果字符串是以--或-开头，则将此字符串对象和其后的字符串对象作为一对key-value值，并从ARGV中删除这两个对象。遍历完毕之后，将ARGV中剩余的的参数赋值给args
+例一：option等于nil，args等于lane_name
+例二：option等于{"username":"your_username", "development": false}，args等于nil
+5.执行command
+
+两个自定义action:
+-fastlane
+  -Fastfile
+  -actions
+    -example_action.rb
+    -example_action_second.rb
+
+fastfile:
+default_platform :ios
+
+platform :ios do
+    lane :test do |options|
+        puts "lane options #{options}"
+        example_action(foo:"ruby", bar:"ios")
+        example_action_second(foo:"ruby", bar:"ios")
+    end 
+end
+
+lane :test_without_platform do
+    puts "lane whithout platform"
+end
+
+example_action.rb:
+module Fastlane
+  module Actions
+    class ExampleActionAction < Action
+      def self.run(options)
+          binding.pry
+        puts "this is example_action action"  
+        puts options
+      end 
+
+      def self.is_supported?(platform)
+        true
+      end 
+
+      def self.available_options
+        []  
+      end 
+    end 
+  end 
+end
+
+example_action_second.rb:
+
+module Fastlane
+  module Actions
+    class ExampleActionSecondAction < Action
+      def self.run(options)
+        puts "this is example action second action, options:"
+        puts "foo:#{options[:foo]}"
+        puts "bar:#{options[:bar]}"
+      end
+
+      def self.is_supported?(platform)
+        true
+      end
+
+      def self.available_options
+          [
+            FastlaneCore::ConfigItem.new(key: :foo,
+                                     short_option: "-f",
+                                     description: "this is foo"),
+            FastlaneCore::ConfigItem.new(key: :bar,
+                                     short_option: "-b",
+                              description: "this is bar")
+          ]
+      end
+    end
+  end
+end
+
+执行Command:
+1.执行trigger
+在终端执行fastlane test key1:value1 key2:value2 --env local1,local2
+trigger支持两种option，分别是--env STRING[,STRING2]和disable_runner_upgrades，其中第一个option的作用是指定文件名，这些文件会被dotenv加载，用来配置环境变量
+在当前这个例子中，设置了--env local1,local2，如果.env.local1和.env.local2这两个文件存在于Fastfile所在的文件夹或其上级文件夹，则dotenv会去加载它们来设置环境变量
+（不管--env有没有设置，dotenv都默认加载.env和.env.default）
+
+当fastlane库执行这个block时，传入了两个参数，args和options
+通过解析命令字符串可知，其中args的值为["test", "key1:value1", "key2:value2"]
+options的值是一个Options类型的对象，且options.env 的值为 "local1,local2"
+2.解析lane
+将其中定义的lane转换成Fastlane::Lane类型的对象,并将这些对象保存在一个Hash类型的对象lanes中
+类Fastlane::Lane中定义的变量:
+module Fastlane
+  # Represents a lane
+  class Lane
+    attr_accessor :platform
+    attr_accessor :name
+    # @return [Array] 
+    attr_accessor :description
+    attr_accessor :block
+    # @return [Boolean] Is that a private lane that can't be called from the CLI?
+    attr_accessor :is_private
+  end
+end
+
+lanes保存了所有Fastlane::Lane类型的对象，它的具体结构如下：
+{
+  ios:          {
+                    test: Lane.new
+                },
+  nil:          {
+                    test_without_platform: lane.new
+                }
+}
+3.解析lane的options
+4.解析action
+5.解析action的options
+6.执行action
+
+
+
+
+=============================fastlane
+fastlane lane_name使用的是默认Tool的默认Command：trigger

@@ -160,10 +160,23 @@ class ViewController: UIViewController {
         return String(format: "%p", addr)
     }
     
+    lazy var testView: UIView = {
+        print("===lazy testView===")
+        let view = UIView()
+        view.backgroundColor = .red
+        return view
+    }()
 
     override func viewDidLoad() {
         super.viewDidLoad()
         self.view.backgroundColor = UIColor.cyan
+        
+        // !
+//        self.testView?.frame = CGRect(x: 0, y: 200, width: 50, height: 50)
+//        self.view.addSubview(self.testView)
+        // 推荐
+        self.testView.frame = CGRect(x: 0, y: 200, width: 50, height: 50)
+        self.view.addSubview(self.testView)
         
         // MARK: 指针UnsafePointer
         /**
@@ -291,7 +304,6 @@ class ViewController: UIViewController {
         // array1 array2地址不同
         print(address(of: &array1))
         print(address(of: &array2))
-        
 
         // UI for test rx
         let button = UIButton(type: .custom)
