@@ -76,6 +76,19 @@
  token是开发者为了防范csrf(CSRF（Cross-site request forgery）跨站请求伪造)而特别设计的令牌
  */
 
+// MARK: iOS Https 证书验证
+/**
+ 证书分为两种，一种是花钱向认证的机构购买的证书，服务端如果使用的是这类证书的话，那一般客户端不需要做什么，用HTTPS进行请求就行了，苹果内置了那些受信任的根证书的。另一种是自己制作的证书，使用这类证书的话是不受信任的（当然也不用花钱买），因此需要我们在代码中将该证书设置为信任证书
+ 
+ 自签名证书：
+ 把生成的.cer文件添加到项目中
+ AFNetworking首先需要配置AFSecurityPolicy类，AFSecurityPolicy类封装了证书校验的过程
+ 
+ AFSecurityPolicy *securityPolicy = [AFSecurityPolicy policyWithPinningMode:AFSSLPinningModeCertificate];
+ securityPolicy.allowInvalidCertificates = YES;//是否允许使用自签名证书
+ securityPolicy.validatesDomainName = NO;//是否需要验证域名，默认YES
+ */
+
 /*
  MARK:HTTPS
  
@@ -238,7 +251,7 @@
 @end
 
 /*
- MARK:ping:
+ MARK:ping
  ping是用来探测本机与网络中另一主机之间是否可达的命令，如果两台主机之间ping不通，则表明这两台主机不能建立起连接
  
  ping 命令是基于 ICMP 协议来工作的，「 ICMP 」全称为 Internet 控制报文协议（Internet Control Message Protocol）。ping 命令会发送一份ICMP回显请求报文给目标主机，并等待目标主机返回ICMP回显应答。因为ICMP协议会要求目标主机在收到消息之后，必须返回ICMP应答消息给源主机，如果源主机在一定时间内收到了目标主机的应答，则表明两台主机之间网络是可达的

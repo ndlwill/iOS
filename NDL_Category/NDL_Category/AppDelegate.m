@@ -428,18 +428,18 @@ static void save_crash_report (PLCrashReporter *reporter) {
     
 //    [Application isRegisteredForRemoteNotifications];// 8.0
     
-    // process message
-    [ResidentThread executeTask:^{
-        for (int i = 0; i < 30000; i++) {
-            NSLog(@"task1 = %d", i);
-        }
-    }];
-    
-    [ResidentThread executeTask:^{
-        for (int i = 0; i < 10; i++) {
-            NSLog(@"task2 = %d", i);
-        }
-    }];
+    // MARK: process message
+//    [ResidentThread executeTask:^{
+//        for (int i = 0; i < 30000; i++) {
+//            NSLog(@"task1 = %d", i);
+//        }
+//    }];
+//
+//    [ResidentThread executeTask:^{
+//        for (int i = 0; i < 10; i++) {
+//            NSLog(@"task2 = %d", i);
+//        }
+//    }];
     
     
     [NotificationCenter addObserver:self selector:@selector(systemClockDidChanged:) name:NSSystemClockDidChangeNotification object:nil];
@@ -1056,6 +1056,11 @@ static void runLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActi
     
 }
 
+//- (UIInterfaceOrientationMask)application:(UIApplication *)application supportedInterfaceOrientationsForWindow:(UIWindow *)window
+//{
+//    return UIInterfaceOrientationMaskAllButUpsideDown;
+//}
+
 @end
 
 
@@ -1068,7 +1073,7 @@ static void runLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActi
  ==组件化==
  
  // start
- ==配置podspec文件并发布自己的源代码==
+ MARK: ==配置podspec文件并发布自己的源代码==
  
  创建 podsepc文件:
  pod sepc create PodspecFileName
@@ -1099,7 +1104,17 @@ static void runLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActi
  功能组件也很好理解，比如我们项目中用到的轮播器、播放器、图片浏览器等都可以单独抽出功能组件
  业务组件间的通信。比如专题组件A、作者组件B、点击专题A组件中cell的作者头像图标跳转到B组件中“作者详情”的界面。这就是简单的组件间通信
  
- ===创建私有的Specs仓库===
+ 
+ 查看当前仓库对应的远程仓库地址:
+ git remote -v
+ 
+ 将本地的仓库地址指向github上创建的远程仓库地址:
+ git remote add origin https://XXX
+ 
+ pod repo remove master // 移除master
+ 
+ spec: [spek]
+ MARK: ===创建私有的Specs仓库===
  -----远程索引库NDLSpecs:
  每创建一个组件都会带有一个 xxx.podspec 的索引文件。专门用来存放这些索引文件的库就叫做索引库
  
@@ -1109,6 +1124,9 @@ static void runLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActi
  通过pod repo add <本地索引库的名字（NDLSpecs）>  <远程索引库的地址（https://github.com/ndlwill/NDLSpecs.git）> ，创建本地索引库并和远程索引库做关联（注：本地索引库的名字建议和远程索引库起的名字一样）
  #message: Cloning spec repo `NDLSpecs` from `https://github.com/ndlwill/NDLSpecs.git`
  cd .cocoapods 进入本地索引库的物理地址
+ 
+ 官方spec镜像
+ https://github.com/CocoaPods/Specs.git
  
  -----远程代码库 CategoryKit:
  不用勾选readme .gitignore选none
@@ -1130,13 +1148,20 @@ static void runLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActi
  git remote add origin 远程代码仓库地址(https://github.com/ndlwill/CategoryKit.git)
  git push origin master
  git tag 版本号 （注：这里的版本号必须和podspec里写的版本号一致）
+ 
+ git tag -a 1.0.0 -m "1.0.0版本”
+ 显示标签
+ $ git tag
+ 显示标签具体信息
+ $ git show 1.0.0
+ 
  git push --tags
  
  -----验证podspec索引文件是否正确:
  (pod repo lint xxxxSpecsName 该Specs仓库是否可用)
  
  pod lib lint CategoryKit.podspec --verbose --allow-warnings （--sources='https://github.com/CocoaPods/Specs.git' 默认值）验证本地索引文件是否正确
- pod spec lint --verbose --allow-warnings 命令验证podspec索引文件（既验证本地同时验证远程的podspec）
+ ###pod spec lint --verbose --allow-warnings 命令验证podspec索引文件（既验证本地同时验证远程的podspec）
  验证提交到代码仓库里的podspec是否正确
  --verbose 是为了打印更加详细的信息方便查看
  

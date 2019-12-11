@@ -6,16 +6,11 @@
 //  Copyright © 2019 ndl. All rights reserved.
 //
 
-/*
- __block:
- 编译器会将__block变量包装成一个对象
- 只要观察到该变量被 block 所持有，就将“外部变量”在栈中的内存地址放到了堆中。 进而在block内部也可以修改外部变量的值
- */
-
 // KVC的 keyPath中的集合运算符:
 // 集合运算符有@avg， @count ， @max ， @min ，@sum
 // 格式 @"@sum.age"
 
+// MARK: isa
 /*
  instance对象的isa指向class对象
  class对象的isa指向meta-class对象
@@ -62,20 +57,17 @@ NS_ASSUME_NONNULL_END
 /*
  MARK:对象的内存销毁时间表，分四个步骤:
  1.调用 -release ：引用计数变为零
- 对象正在被销毁，生命周期即将结束.
- 不能再有新的 __weak 弱引用，否则将指向 nil.
  调用 [self dealloc]
  
  2.父类调用 -dealloc
  继承关系中最直接继承的父类再调用 -dealloc
- 如果是 MRC 代码 则会手动释放实例变量们（iVars）
  继承关系中每一层的父类 都再调用 -dealloc
  
  3.NSObject 调 -dealloc
  只做一件事：调用 Objective-C runtime 中的 object_dispose() 方法
  
  4.调用 object_dispose()
- 为 C++ 的实例变量们（iVars）调用 destructors
+ 为 C++ 的实例变量们调用 destructors
  为 ARC 状态下的 实例变量们（iVars） 调用 -release
  解除所有使用 runtime Associate 方法关联的对象
  解除所有 __weak 引用

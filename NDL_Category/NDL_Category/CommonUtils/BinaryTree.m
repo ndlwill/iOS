@@ -112,7 +112,7 @@
 {
     if (rootNode) {
         if (handler) {
-            handler(rootNode);
+            handler(rootNode);// [traversalArray addObject:@(node.value)];
         }
         
         [self preOrderTraversalTree:rootNode.leftNode handler:handler];

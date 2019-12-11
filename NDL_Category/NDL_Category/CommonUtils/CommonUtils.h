@@ -185,7 +185,7 @@ void quickSort_C(int array[], int minIndex, int maxIndex);
 @end
 
 
-// GCD:
+// MARK: GCD
 // GCD也可以创建计时器，而且更为精确:
 //
 // -(void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
@@ -220,7 +220,7 @@ void quickSort_C(int array[], int minIndex, int maxIndex);
 //}
 
 /*
- MARK:线程与进程
+ MARK:===线程与进程===
  一个程序至少要有进城,一个进程至少要有一个线程
  进程有独立的地址空间，一个进程崩溃后，在保护模式的影响下不会对其他进程产生影响
  进程:资源分配的最小独立单元,进程是具有一定独立功能的程序

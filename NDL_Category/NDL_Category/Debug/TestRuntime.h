@@ -59,6 +59,7 @@ objc_ivar_list *ivars:属性列表
  */
 
 /*
+ MRAK: method_exchangeImplementations
  method_exchangeImplementations方法做的事情与如下的操作等价：
  IMP imp1 = method_getImplementation(m1);
  IMP imp2 = method_getImplementation(m2);
@@ -125,6 +126,7 @@ objc_ivar_list *ivars:属性列表
  */
 
 /*
+ Method Swizzling:
  每个 Class 结构体中都有一个 Dispatch Table 的成员变量，Dispatch Table 中建立了每个 SEL（方法名）和对应的 IMP（方法实现，指向 C 函数的指针）的映射关系，Method Swizzling 就是将原有的 SEL 和 IMP映射关系打破，并建立新的关联来达到方法替换的目的
  */
 @interface TestRuntime : NSObject

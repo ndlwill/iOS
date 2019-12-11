@@ -25,7 +25,7 @@
 #import "CustomViewController.h"
 #import "TestTVViewController.h"
 #import "NSArray+NDLExtension.h"
-
+#import "TestRotateViewController.h"
 #import "CommonDefines.h"
 #import "NDLFloatLayoutView.h"
 #import "NSString+NDLExtension.h"
@@ -49,6 +49,7 @@
 #import "LoadingView.h"
 #import "PhotoCell.h"
 #import "HorizontalLinearMiddleScaleLayout.h"
+#import "TestTabBarController.h"
 
 #import "TestXibView.h"
 #import "TextStrokeLabel.h"
@@ -127,6 +128,7 @@
 #import "NextRootViewController.h"
 
 #import "ThreeDTouchViewController.h"
+#import "InterviewViewController.h"
 
 #import "NDL_Category-Swift.h"
 
@@ -1920,11 +1922,27 @@ NSLog(@"viewDidLoad 22");
     
     // =====test navBar=====
     
-    // MARK:=====test TextView || TestAVFoundation=====
+//    // MARK:=====test TextView || TestAVFoundation=====
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+////        [self presentViewController:[TestTVViewController new] animated:YES completion:nil];
+//        [self presentViewController:[TestAVFoundationViewController new] animated:YES completion:nil];
+//    });
+    
+    // MARK: interview面试
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        NDLLog(@"===start interview===");
+//        [self presentViewController:[InterviewViewController new] animated:YES completion:nil];
+//    });
+    
+    // MARK: test Rotate ???
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-//        [self presentViewController:[TestTVViewController new] animated:YES completion:nil];
-        [self presentViewController:[TestAVFoundationViewController new] animated:YES completion:nil];
+        KeyWindow.rootViewController = [[BaseNavigationController alloc] initWithRootViewController:[TestRotateViewController new]];
     });
+    
+    // MARK: test tabBarVC
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        KeyWindow.rootViewController = [[TestTabBarController alloc] init];
+//    });
     
     // test apm
 //    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{

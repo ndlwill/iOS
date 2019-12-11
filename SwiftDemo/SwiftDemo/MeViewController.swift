@@ -49,6 +49,7 @@ class MeViewController: UIViewController {
          Date: Struct
          */
         // 1.AnyObject: The protocol to which all classes implicitly conform
+        
         // NSString 和 String 会自动bridge
         // NSDate 和 Date 可自动 bridge
         // Array 是值类型, struct

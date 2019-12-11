@@ -120,6 +120,21 @@
     [self popViewControllerAnimated:YES];
 }
 
+- (BOOL)shouldAutorotate
+{
+    return [self.visibleViewController shouldAutorotate];
+}
+
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations
+{
+    return [self.visibleViewController supportedInterfaceOrientations];
+}
+
+- (UIInterfaceOrientation)preferredInterfaceOrientationForPresentation
+{
+    return [self.visibleViewController preferredInterfaceOrientationForPresentation];
+}
+
 
 // TODO:============================我是分割线============================
 #pragma mark - UINavigationControllerDelegate

@@ -190,6 +190,7 @@ typedef struct TestStruct{
      */
     // 对于全局区的 Block，是不存在作用域的问题，但是栈区 Block 不同，在作用域结束后就会 pop 出栈
     /*
+     MARK: ===
      1.Block 内部没有引用外部变量，Block 在全局区，属于 GlobalBlock
      2.Block 内部有外部变量：
      a.引用全局变量、全局静态变量、局部静态变量：Block 在全局区，属于 GlobalBlock
@@ -290,6 +291,12 @@ typedef struct TestStruct{
      
      对象类型，struct __ViewController_viewDidLoad_block_desc_0多出了copy和dispose函数
      用来 Block 从栈复制到堆、堆上的 Block 废弃的时候分别调用
+     当block被copy到堆时
+     会调用block内部的copy函数
+     copy函数内部会调用_Block_object_assign函数
+     _Block_object_assign函数会对__block变量形成强引用
+
+如果block从堆上移除，会调用block内部的dispose函数，内部会调用_Block_object_dispose函数，这个函数会自动释放引用的auto变量
      
      原有的栈上的结构体指针被copy到了堆，
      同时，copy函数内部会将栈对象指向堆对象
@@ -557,7 +564,7 @@ typedef struct TestStruct{
     
 //    NSURLSession
 
-    // =====perform selector=====
+    // MARK: =====perform selector=====
     /*
     SEL selector = NSSelectorFromString(@"aTestMethod");
     // 1

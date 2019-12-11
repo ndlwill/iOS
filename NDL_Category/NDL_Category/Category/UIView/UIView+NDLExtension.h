@@ -20,7 +20,7 @@
  */
 
 /*
- mas_makeConstraints执行流程:
+ MARK: mas_makeConstraints执行流程:
  1.创建约束制造者MASConstraintMaker,绑定控件,生成了一个保存所有约束的数组
  2.执行mas_makeConstraints传入的block
  3.让约束制造者安装约束

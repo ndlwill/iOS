@@ -167,7 +167,6 @@ return nil;
 
 /*
  MARK:UIView && CALayer
- 每一个单位区间其实都是一个梯形，也就是说我们只需要通过画一个三角形和一个矩形就可以画出一个单位区间
  
  layer内部维护着三分layer tree，分别是presentLayer Tree(动画树)，modeLayer Tree(模型树), Render Tree(渲染树)，在做 iOS动画的时候，我们修改动画的属性，在动画的其实是Layer的presentLayer的属性值，而最终展示在界面上的其实是提供View的modelLayer
  

@@ -18,6 +18,13 @@
 // 以groups方式添加文件，文件参与编译 ，图标为黄色
 // 以folder方式添加文件，文件将被作为资源文件，不参与编译，图标为蓝色
 
+/**
+ struct objc_method {
+     SEL _Nonnull method_name                                 OBJC2_UNAVAILABLE;
+     char * _Nullable method_types                            OBJC2_UNAVAILABLE;
+     IMP _Nonnull method_imp                                  OBJC2_UNAVAILABLE;
+ }                                                            
+ */
 #pragma mark - 内联静态函数
 // 方法交换 Method Swizzling
 CG_INLINE BOOL

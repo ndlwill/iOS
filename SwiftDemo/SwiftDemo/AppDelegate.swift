@@ -6,6 +6,8 @@
 //  Copyright © 2019 dzcx. All rights reserved.
 //
 
+// MARK: swift查看内存地址小工具Mems
+// https://github.com/CoderMJLee/Mems.git
 
 // MARK: 工具
 // Zeplin Lookin3
@@ -282,6 +284,11 @@
  flatMap 方法：传入的 transform 函数的 入参是 Wrapped 类型，返回的是 Wrapper 类型
  */
 
+struct Point {
+    var x: Double
+    var y: Double
+}
+
 import UIKit
 
 @UIApplicationMain
@@ -291,6 +298,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        
+//        var arr1 : [Int] = [1, 2, 3] // ==1== ==2== ==3==
+        var arr1 : [Int]? = [1, 2, 3]// ==[1, 2, 3]==
+        arr1.map {
+            print("==\($0)==")
+        }
+
+        
         
         let num: Int? = 1
         switch num {
@@ -343,3 +358,73 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 }
 
+// MARK: 闭包(Closure)
+/**
+ 闭包有三种形式:
+ 全局函数，有名字的闭包并且不捕获任何值(定义的一般函数)
+ 嵌套函数，有名字的闭包，可以在闭包所在函数内部捕获值(函数里嵌套函数)
+ 闭包表达式，没有名字的闭包，使用简洁的语法，可以在包裹闭包的上下文捕获值(闭包)
+
+ //Global function
+ func block() {
+     print("block")    //block
+ }
+ 
+ //Nested function
+ func block(){
+     let name = "block"
+     func printStr() {
+         print(name)
+     }
+     printStr()
+ }
+ block()    //block
+ 
+ //Closure expression
+ let block = {
+     print("block")
+ }
+ block()    //block
+ 
+ 
+ func makeIncrementer(from start: Int, amount: Int) -> ()->Int {
+     var number = start
+     return {
+         number += amount
+         return number
+     }
+ }
+ let incrementer = makeIncrementer(from: 0, amount: 1)
+ incrementer()  //1
+ incrementer()  //2
+ incrementer()  //3
+ 每次调用incrementer()都会执行闭包里面的操作，而闭包的上下文就是makeIncrementer函数
+ 
+ //block
+ NSInteger number = 1;
+ NSMutableString *str = [NSMutableString stringWithString: @"hello"];
+ void(^block)() = ^{
+   NSLog(@"%@--%ld", str, number);
+ };
+ [str appendString: @" world!"];
+ number = 5;
+ block();    //hello world!--1
+ 
+ //closure
+ var str = "hello"
+ var number = 1
+ let block = {
+     print(str + "--" + " \(number)")
+ }
+ str.append(" world!")
+ number = 5
+ block()    //hello world!--5
+ 
+ 逃逸闭包，指的是当一个函数有闭包作为参数，但是闭包的执行比函数的执行要迟
+ 这个闭包的作用域本来是在当前函数里面的，然后它要逃出这个作用域，不想和函数同归于尽
+ 那么闭包怎么逃逸呢？最简单的方法是把闭包赋值给外面的变量
+ 
+ 如果逃逸闭包访问的是类里面的成员，必须带上self来访问
+ 
+ 自动闭包作为函数参数，不写"{}"，直接写返回值
+ */

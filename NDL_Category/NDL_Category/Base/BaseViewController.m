@@ -211,23 +211,27 @@
 }
 */
 
-// 屏幕旋转
+// MARK: 屏幕旋转
 /*
  // 屏幕旋转
+ // 第一个方法决定是否支持多方向旋转屏，如果返回NO则后面的两个方法都不会再被调用，而且只会支持默认的UIInterfaceOrientationMaskPortrait方向
 - (BOOL)shouldAutorotate
 {
     return NO;
 }
+ 
+ // 第二个方法直接返回支持的旋转方向，该方法在iPad上的默认返回值是UIInterfaceOrientationMaskAll，iPhone上的默认返回值是UIInterfaceOrientationMaskAllButUpsideDown
+ - (UIInterfaceOrientationMask)supportedInterfaceOrientations
+ {
+     return UIInterfaceOrientationMaskPortrait;
+ }
 
+ // 第三个方法返回最优先显示的屏幕方向，比如同时支持Portrait和Landscape方向，但想优先显示Landscape方向，那软件启动的时候就会先显示Landscape，在手机切换旋转方向的时候仍然可以在Portrait和Landscape之间切换
 - (UIInterfaceOrientation)preferredInterfaceOrientationForPresentation
 {
     return UIInterfaceOrientationPortrait;
 }
 
-- (UIInterfaceOrientationMask)supportedInterfaceOrientations
-{
-    return UIInterfaceOrientationMaskPortrait;
-}
  */
 
 

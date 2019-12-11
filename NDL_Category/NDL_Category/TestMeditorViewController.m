@@ -205,7 +205,7 @@
     [self.testCategory beReplacedMethod];// testReplaceImp
     [self.testCategory testReplaceImp];// testReplaceImp
     
-    // 生产者 && 消费者
+    // MARK: 生产者 && 消费者
 //    NSLog(@"=============================");
 //    self.sem = dispatch_semaphore_create(1);
 //    self.randoms = [NSMutableArray array];

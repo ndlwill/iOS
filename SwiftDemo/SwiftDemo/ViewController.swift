@@ -85,19 +85,62 @@ import Alamofire
  如果在开发者设置订阅UIScrollView之前，UIScrollView已经有一个delegate，在这里就会把这个delegate托管给proxy，让proxy在收到UIScrollView回调的时候转发给delegate，而实际上UIScrollView此时的delegate指向的是proxy。通过proxy的forwardToDelegate可以找回这个在外部设置的delegate
  */
 
+struct Person_NDL {
+    var name: String
+}
+
+class TestClo {
+    var name: String = ""
+}
+
+class Person_CC {
+    var desc: String = ""
+    var person: Person_NDL
+    
+    init(person: Person_NDL) {
+        self.person = person
+    }
+}
 
 struct Sample {
     var number: Int
     var flag: Bool
 }
 
+public class ListNode {
+    public var val: Int
+    public var next: ListNode?
+    public init(_ val: Int) {
+        self.val = val
+        self.next = nil
+    }
+}
+
 class ViewController: UIViewController {
+    
+    var str: String = ""
+    var closures: [() -> Void] = []
+    
+    let range = 0.0..<1.0 // 半开区间
+    let closedRange: ClosedRange = 0.0...1.0 // 闭区间
+    let countableRange: CountableRange = 0..<1 // Countable 半开区间
+    let countableClosedRange: CountableClosedRange = 0...1 // Countable 闭区间
     
     let disposeBag = DisposeBag()
     
     enum MyError: Error {
         case ErrorA
         case ErrorB
+    }
+    
+    func testClosure(block: @escaping () -> Void) {
+        self.closures.append(block)
+    }
+    
+    func test111() {
+        testClosure {
+            print(self.str)
+        }
     }
     
     func request1() -> Observable<String> {
@@ -166,10 +209,273 @@ class ViewController: UIViewController {
         view.backgroundColor = .red
         return view
     }()
+    
+    // MARK: ===leetcode算法===
+    // MARK: 两数之和
+    func twoSum(_ nums: [Int], _ target: Int) -> [Int] {
+        var dic = [Int:Int]()
+        for (index, value) in nums.enumerated() {
+            let diffValue = target - value
+            if let valueIndex = dic[diffValue] {
+                return [valueIndex, index]
+            }
+            
+            dic[value] = index
+        }
+        
+        return []
+    }
+    
+    // MARK: 两数相加
+    func addTwoNumbers(_ l1: ListNode?, _ l2: ListNode?) -> ListNode? {
+        let dummyHead: ListNode? = ListNode(0)
+        var value = 0
+        var curNode = dummyHead, node1 = l1, node2 = l2
+        while (node1 != nil || node2 != nil) {
+            let value1 = node1?.val ?? 0
+            let value2 = node2?.val ?? 0
+            let sum = value + value1 + value2
+            value = sum / 10
+            curNode?.next = ListNode(sum % 10)
+            curNode = curNode?.next
+            if node1 != nil {
+                node1 = node1?.next
+            }
+            
+            if node2 != nil {
+                node2 = node2?.next
+            }
+        }
+        if value > 0 {
+            curNode?.next = ListNode(value)
+        }
+        
+        return dummyHead?.next
+    }
+    // MARK: 只出现一次的数字 III    [1,2,1,3,2,5]
+    func singleNumber(_ nums: [Int]) -> [Int] {
+        var xor = 0
+        var result = Array(repeating: 0, count: 2)
+        for num in nums {
+            xor ^= num
+        }
+        // 取异或值最后一个二进制位为1的数字作为mask，如果是1则表示两个数字在这一位上不同
+        let mask = xor & (-xor)
+        
+        // 2.lowbit(s) = s & -s
+        // 3.用lowbit(s)将数组分成两组. 一组中,元素A[i] & lowbit(s) == lowbit(s), 即包含lowbit(s)的bit 1。两个不同数也一定分在不同组. 因为异或值s中的bit1就是因为两个数字的不同
+        // 4.同一组的元素再异或求出不同数字. 出现两次的数字, 肯定出现同一组, 异或后消除掉.
+        for (index, value) in nums.enumerated() {
+            print("value & mask = \(value & mask)")// 0,2,0,2,2,0
+            if (value & mask) == mask {
+                result[0] ^= value
+            } else {
+                result[1] ^= value
+            }
+        }
+        
+        return result
+    }
+    // MARK: 合并两个有序数组(双指针法,从后往前)
+    /**
+     初始化 nums1 和 nums2 的元素数量分别为 m 和 n。
+     你可以假设 nums1 有足够的空间（空间大小大于或等于 m + n）来保存 nums2 中的元素。
+     示例:
 
+     输入:
+     nums1 = [1,2,3,0,0,0], m = 3
+     nums2 = [2,5,6],       n = 3
+
+     输出: [1,2,2,3,5,6]
+     
+     时间复杂度 : O(n + m)
+     空间复杂度 : O(1)
+     */
+    func merge(_ nums1: inout [Int], _ m: Int, _ nums2: [Int], _ n: Int) {
+        var p1 = m - 1
+        var p2 = n - 1
+        var p = m + n - 1
+        
+        while (p1 >= 0 && p2 >= 0) {
+            if nums1[p1] < nums2[p2] {
+                nums1[p] = nums2[p2]
+                p2 -= 1
+            } else {
+                nums1[p] = nums1[p1]
+                p1 -= 1
+            }
+            
+            p -= 1
+        }
+        // 当p1 < 0，需要下面的操作
+        if p1 < 0 {
+            nums1.replaceSubrange(0...p2, with: nums2[0...p2])
+//            nums1.replaceSubrange(Range(0...p2), with: nums2[0...p2])
+        }
+    }
+    
+    // MARK: 数组拆分 I
+    /**
+     给定长度为 2n 的数组, 你的任务是将这些数分成 n 对, 例如 (a1, b1), (a2, b2), ..., (an, bn) ，使得从1 到 n 的 min(ai, bi) 总和最大
+
+     输入: [1,4,3,2]
+
+     输出: 4
+     解释: n 等于 2, 最大总和为 4 = min(1, 2) + min(3, 4)
+     
+     我们可以对给定数组的元素进行排序，并直接按排序顺序形成元素的配对。这将导致元素的配对，它们之间的差异最小，从而导致所需总和的最大化
+     */
+    func arrayPairSum(_ nums: [Int]) -> Int {
+        let sortedArray = nums.sorted()
+        
+        var sum = 0
+        for index in 0..<sortedArray.count {
+            if index % 2 == 0 {
+                sum += sortedArray[index]
+            }
+        }
+        
+        return sum
+    }
+    
+    // MARK: 删除排序数组中的重复项
+    /**
+     给定 nums = [0,0,1,1,1,2,2,3,3,4],
+
+     函数应该返回新的长度 5, 并且原数组 nums 的前五个元素被修改为 0, 1, 2, 3, 4
+     
+     双指针法
+     时间复杂度：O(n)
+     空间复杂度：O(1)
+     */
+    func removeDuplicates(_ nums: inout [Int]) -> Int {
+        if nums.count == 0 {
+            return 0
+        }
+        
+        var p1 = 0
+        for index in 1..<nums.count {
+            if nums[index] != nums[p1] {
+                p1 += 1
+                nums[p1] = nums[index]
+            }
+        }
+        return p1 + 1
+    }
+    
+    // MARK: 移除元素
+    /**
+     给定 nums = [0,1,2,2,3,0,4,2], val = 2,
+
+     函数应该返回新的长度 5, 并且 nums 中的前五个元素为 0, 1, 3, 0, 4
+     */
+    func removeElement(_ nums: inout [Int], _ val: Int) -> Int {
+        nums = nums.filter {
+            $0 != val
+        }
+        return nums.count
+    }
+    
+    // MARK: 时间复杂度： O(log2^n) 就要想到二分法
+    
+    // MARK: 斐波那契数
+    /**
+     斐波那契数，通常用 F(n) 表示，形成的序列称为斐波那契数列。该数列由 0 和 1 开始，后面的每一项数字都是前面两项数字的和。也就是：
+
+     F(0) = 0,   F(1) = 1
+     F(N) = F(N - 1) + F(N - 2), 其中 N > 1.
+     给定 N，计算 F(N)
+     */
+    func fib(_ N: Int) -> Int {
+        if N == 0 {
+            return 0
+        }
+
+        if N == 1 {
+            return 1
+        }
+        return fib(N - 1) + fib(N - 2)
+    }
+    
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         self.view.backgroundColor = UIColor.cyan
+        
+        // MARK: 值类型相关
+        var p1 = Person_NDL(name: "ndl")
+        var p2 = p1
+        // 0x7ffeeddef130
+        // 0x7ffeeddef120
+        print(address(of: &p1))
+        print(address(of: &p2))
+        print(Unmanaged<AnyObject>.passRetained(p1 as AnyObject).toOpaque())
+        // 如果值类型实例是一个类的一部分，值会和类一起存在堆中
+        var pp = Person_CC(person: p1)
+        print(Unmanaged<AnyObject>.passRetained(pp).toOpaque())// 0x00006000002fc5a0
+        print(pp) // <Person_CC: 0x00006000002fc5a0>
+        print(Unmanaged<AnyObject>.passRetained(pp.person as AnyObject).toOpaque())// 0x0000600002e28900
+        print(address(of: &pp))// 0x7ffeea469118
+        print(address(of: &pp.person))// 0x7ffeea469108
+        
+        // MARK: test closure
+//        var clo = TestClo()
+//        clo.name = "123"
+//        let blk = { [clo] in
+//            print(clo.name)
+//        }
+//        clo.name = "234"
+//        let newClo = TestClo()
+//        newClo.name = "ndl"
+//        clo = newClo
+//        blk()
+        
+//        var clo = 1
+//        let blk = { [clo] in
+//            print(clo)
+//        }
+//        clo = 2
+//        blk()
+        
+        var str: String = "ndl123will"
+        var nss = str as NSString
+        print(nss.character(at: 1))// 'd' = 100
+        
+        singleNumber([1,2,1,3,2,5])
+        
+        // MARK: 负数的二进制
+        /**
+         等于正数的二进制的反码加1
+         
+         5的二进制
+         00000000 00000000 00000000 00000101
+         --->反码
+         11111111 11111111 11111111 1111010
+         加1
+         11111111 11111111 11111111 1111011
+         */
+        
+        // 3: 011
+        // 5: 101
+        // 3 xor 5 = 110
+        var nums = [1, 3, 1, 2, 5, 2]
+        var xor = 0
+        for num in nums {
+            xor ^= num
+        }
+        print(xor)// 6 -> 二进制110
+        // 取异或值最后一个二进制位为1的数字作为mask，如果是1则表示两个数字在这一位上不同
+        print(xor & (-xor))// mask = 2 = (0110 & (1001 + 1 = 1010) = 0010)
+        
+        /**
+         eg: 4, 8
+         4 = 0100
+         8 = 1000
+         value = 4 xor 8 = 1100
+         value & (-value) = 1100 & (0011 + 1 = 0100) = 0100 ##最后一个二进制位为1的数字作为mask
+         */
+        
+        
         
         // !
 //        self.testView?.frame = CGRect(x: 0, y: 200, width: 50, height: 50)

@@ -6,6 +6,945 @@
 //  Copyright © 2019 ndl. All rights reserved.
 //
 
+// MARK: Swift Http
+// https://swift.gg/
+// https://github.com/ipader/SwiftGuide
+// http://www.swift51.com/swift4.0/chapter2/08_Enumerations.html
+
+// MARK: 值类型(Value types) & 引用类型(Reference types)
+/**
+ class Person {
+     var name: String
+  
+     init(name: String) {
+         self.name = name
+     }
+ }
+  
+ var var1 = Person(name: "John")
+ var var2 = var1
+ 
+ 指针是一个地址，指向某个内存，因此类的变量实际上是存储了实例的地址，当我们声明一个新的变量var2 = var1时，并没有创建一个新的实例，而是把var1实例的地址赋值给var2
+ 
+ 当我们创建一个类的实例时，系统会在堆中申请一个内存块用于存储实例本身。同时将把存储该实例的变量和堆中的地址存储在栈中
+ 
+ 
+ struct Person {
+     var name: String
+ }
+  
+ var var1 = Person(name: "John")
+ var1中存储的不是指向内存的指针，而是值
+ 
+ */
+
+// MARK: swift面试
+/**
+1. if let && guard let
+ if condition {
+ 
+ }
+ if let x = xx {
+ 
+ }
+ guard condition {
+ 
+ }
+ guard let x = xx {
+    return
+ }
+ 
+ guard可以使用return， throw提前退出
+ 
+ guard 和 if 类似, 不同的是, guard 总是有一个 else 语句, 如果表达式是假或者值绑定失败的时候, 会执行 else 语句, 且在 else 语句中一定要停止函数调用
+ 
+ 2.Swift提供了map、filter、reduce这三个高阶函数作为对容器的支持
+ map : 映射 ，将一个元素根据某个函数 映射 成另一个元素
+ map 方法获取一个闭包表达式作为其唯一参数。 数组中的每一个元素调用一次该闭包函数，并返回该元素所映射的值。
+ 简单说就是数组中每个元素通过某个方法进行转换，最后返回一个新的数组
+ 
+ filter : 过滤 ， 将一个元素传入闭包中，如果返回的是false ， 就过滤掉
+ filter 方法用于过滤元素，即筛选出数组元素中满足某种条件的元素。
+ 
+ flatMap 方法同 map 方法比较类似，只不过它返回后的数组中不存在 nil（自动把 nil 给剔除掉），同时它会把 Optional 解包
+ let array = ["Apple", "Orange", "Grape", ""]
+  
+ let arr1 = array.map { a -> Int? in
+     let length = a.count
+     guard length > 0 else { return nil }
+     return length
+ }
+ print("arr1:\(arr1)")
+  
+ let arr2 = array.flatMap { a-> Int? in
+     let length = a.count
+     guard length > 0 else { return nil }
+     return length
+ }
+ print("arr2:\(arr2)")
+
+ public func flatMap<ElementOfResult>(_ transform: (Element) throws -> ElementOfResult?) rethrows -> [ElementOfResult]
+ flatMap 还能把数组中存有数组的数组（二维数组、N维数组）一同打开变成一个新的数组。
+ let array = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+ let arr1 = array.map{ $0 }   // [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+ let arr2 = array.flatMap{ $0 } // [1, 2, 3, 4, 5, 6, 7, 8, 9]
+ 
+ ["1", "@", "2", "3", "a"].flatMap{Int($0)}
+ // [1, 2, 3]
+ ["1", "@", "2", "3", "a"].map{Int($0) ?? -1}
+ //[Optional(1), nil, Optional(2), Optional(3), nil]
+ 
+ func someFunc(_ array:[Int]) -> [Int] {
+     return array
+ }
+ [[1], [2, 3], [4, 5, 6]].map(someFunc)
+ // [[1], [2, 3], [4, 5, 6]]
+ [[1], [2, 3], [4, 5, 6]].flatMap(someFunc)
+ // [1, 2, 3, 4, 5, 6]
+ 
+ reduce ：合并
+ reduce 方法把数组元素组合计算为一个值，并且会接受一个初始值，这个初始值的类型可以和数组元素类型不同
+ func reduce<Result>(_ initialResult: Result, _ nextPartialResult: (Result, Element) throws -> Result) rethrows -> Result
+ initialResult为初始化的值，也是闭包Result第一次运行的值，Element就是要做处理的元素，处理后返回Result作为下次闭包的参数
+ let numbers = [1, 2, 3, 4]
+ let numberSum = numbers.reduce(0, { x, y in
+     x + y
+ })
+ 
+ ###FlatMap###
+ let optionalArray: [String?] = [``"AA"``, nil, ``"BB"``, ``"CC"``]
+ var optionalResult = optionalArray.flatMap{ $0 }
+ // 原始数组的类型是 [String?] 而 flatMap 调用后变成了 [String]
+ func flatMap(transform: (Self.Generator.Element) throws -> T?) -> [T]// 接收的闭包返回的是一个 Optional 值
+ 
+ func flatMap(transform: (Self.Generator.Element) -> S) -> [S.Generator.Element]// 将一个集合中的所有元素，添加到另一个集合
+ 
+ 3.guard
+ 可以理解为拦截，凡是不满足 guard 后面条件的，都不会再执行下面的代码
+ 
+ 'guard' body must not fall through, consider using a 'return' or 'throw' to exit the scope
+ 
+ 4.Optional类型解包
+ 如果在强制解包的时候,可选项变量是nil,在运行时就会崩溃(编译器不会报错)
+ 
+ 5.swift中的closure于OC中block的区别
+ closure是匿名函数 、block是一个结构体对象
+ 都能捕获变量
+ closure通过逃逸闭包来在block内部修改变量，block通过__block修饰符
+ 
+ closure:
+ 闭包表达式语法
+ { (parameters) -> return type in
+     statements
+ }
+ var names:[String] = ["B","A","C"];
+ names = names.sorted(by: {
+     (num1:String,num2:String) -> Bool in
+     return num1 < num2;
+ });
+ 
+ 闭包因为Swift中的类型检测机制，所以可以省掉写入-> Bool
+ var names:[String] = ["B","A","C"];
+ names = names.sorted(by: {
+     (name1,name2) in
+     return name1 < name2;
+ });
+ 单表达式闭包的隐式返回,单表达式的闭包可以省略掉return关键字
+ var names:[String] = ["B","A","C"];
+ names = names.sorted(by: {
+     (name1,name2) in name1 < name2;
+ });
+ 参数名称缩写,结合闭包中类型的检测，闭包中的参数名可以使用$0, $1, $2代替
+ var names:[String] = ["B","A","C"];
+ names = names.sorted(by: {
+     $0 < $1;
+ });
+ 操作方法(Operator Methods),可以直接用>,<表示比较结果
+ var names:[String] = ["B","A","C"];
+ names = names.sorted(by:<);
+ 尾随闭包:
+ 当闭包是函数中的最后一个参数时，函数调用可以省略掉参数标签的写法
+ 
+ 逃逸闭包:关键字@escaping修饰
+ 指的是当一个函数有闭包作为参数，但是闭包的执行比函数的执行要迟
+ var completionHandlers: [() -> Void] = []
+ func someFunctionWithEscapingClosure(completionHandler: @escaping () -> Void) {
+     completionHandlers.append(completionHandler)
+ }
+ 
+ Nonescaping:
+ func someFunctionWithNonescapingClosure(closure: () -> Void) {
+     closure()
+ }
+ 
+ 自动闭包:@autoclosure
+ 能动态的封装一个表达式为一个函数的参数，自动闭包不能带任何的参数
+ 
+ 
+ 6.throws 和 rethrows的用法与作用
+ 当闭包参数会抛出异常时 使用throws
+ 同时外部方法体返回结果需要 rethrows 异常
+ 
+ throws 用在函数上, 表示这个函数会抛出错误
+ 有两种情况会抛出错误,
+ 一种是直接使用 throw 抛出,
+ 另一种是调用其他抛出异常的函数时, 直接使用 try xx 没有处理异常
+ enum DivideError: Error {
+     case EqualZeroError;
+ }
+ func divide(_ a: Double, _ b: Double) throws -> Double {
+     guard b != Double(0) else {
+         throw DivideError.EqualZeroError
+     }
+     return a / b
+ }
+ func split(pieces: Int) throws -> Double {
+     return try divide(1, Double(pieces))
+ }
+ rethrows 与 throws 类似, 不过只适用于参数中有函数, 且函数会抛出异常的情况, rethrows 可以用 throws 替换
+ func processNumber(a: Double, b: Double, function: (Double, Double) throws -> Double) rethrows -> Double {
+     return try function(a, b)
+ }
+ 
+ 7.swift把struct作为数据模型
+ 全性： 因为 Struct 是用值类型传递的，它们没有引用计数。
+ 内存： 由于他们没有引用数，他们不会因为循环引用导致内存泄漏。
+ 速度： 值类型通常来说是以栈的形式分配的，而不是用堆。因此他们比 Class 要快很多!
+ 拷贝：Objective-C 里拷贝一个对象,你必须选用正确的拷贝类型（深拷贝、浅拷贝）,而值类型的拷贝则非常轻松！
+ 线程安全： 值类型是自动线程安全的
+ 
+
+ 8.struct与class 的区别
+ 堆区地址小于栈区地址
+ 
+ 结构体和类有很多相同点:
+ 属性：存储数据
+ 方法：提供一些功能
+ 下标：可以使用下标语法
+ 构造器：生成初始化值
+ 扩展：增加功能
+ 协议：提供某种通用功能
+ 
+ struct是值类型，class是引用类型。
+ 值类型在传递和赋值时将进行复制，而引用类型则只会使用引用对象的一个指向
+ 引用类型是在堆上，而值类型是在栈上进行存储和操作
+ 
+ struct也有这样几个优势：
+ 结构较小，适用于复制操作，相比于一个class的实例被多次引用更加安全。
+ 无序担心内存泄漏或者多线程冲突问题
+ 结构体会提供一个默认的构造函数
+ 
+ class有这几个功能struct没有的：
+ class可以继承，这样子类可以使用父类的特性和方法。
+ 类型转换可以在runtime的时候检查和解释一个实例的类型
+ 引用计数,对一个类的多次引用
+ 
+ 值类型的变量直接包含它们的数据，对于值类型都有它们自己的数据副本，因此对一个变量操作不可能影响另一个变量。
+ 引用类型的变量存储对他们的数据引用，因此后者称为对象，因此对一个变量操作可能影响另一个变量所引用的对象。
+ 二者的本质区别：struct是深拷贝，拷贝的是内容；class是浅拷贝，拷贝的是指针
+
+ mutating function： struct 和 class 的差別是 struct 的 function 要去改变 property 的值的时候要加上 mutating，而 class 不用。
+
+ 
+ 9.try？ 和 try！
+ 都用于处理可抛出异常的函数, 使用这两个关键字可以不用写 do catch
+ 
+ try? 在用于处理可抛出异常函数时, 如果函数抛出异常, 则返回 nil, 否则返回函数返回值的可选值
+ print(try? divide(2, 1))
+ // Optional(2.0)
+ print(try? divide(2, 0))
+ // nil
+ 
+ 而 try! 则在函数抛出异常的时候崩溃, 否则则返会函数返回值, 相当于(try? xxx)!
+ print(try! divide(2, 1))
+ // 2.0
+ print(try! divide(2, 0))
+ // 崩溃
+ 
+ 10.associatedtype 的作用
+ protocol 使用的泛型
+ protocol ListProtcol {
+     associatedtype Element
+     func push(_ element:Element)
+     func pop(_ element:Element) -> Element?
+ }
+ 实现协议的时候, 可以使用 typealias 指定为特定的类型, 也可以自动推断
+ class IntList: ListProtcol {
+     typealias Element = Int // 使用 typealias 指定为 Int
+     var list = [Element]()
+     func push(_ element: Element) {
+         self.list.append(element)
+     }
+     func pop(_ element: Element) -> Element? {
+         return self.list.popLast()
+     }
+ }
+ class DoubleList: ListProtcol {
+     var list = [Double]()
+     func push(_ element: Double) {// 自动推断
+         self.list.append(element)
+     }
+     func pop(_ element: Double) -> Double? {
+         return self.list.popLast()
+     }
+ }
+ 
+ 使用泛型也可以
+ class AnyList<T>: ListProtcol {
+     var list = [T]()
+     func push(_ element: T) {
+         self.list.append(element)
+     }
+     func pop(_ element: T) -> T? {
+         return self.list.popLast()
+     }
+ }
+
+ 可以使用 where 字句限定 Element 类型, 如:
+ extension ListProtcol where Element == Int {
+     func isInt() ->Bool {
+         return true
+     }
+ }
+
+ 11.final
+ final 用于限制继承和重写
+ 
+ 12.只有一个参数没有返回值闭包的别名
+ typealias SomeClosuerType = (String) -> (Void)
+ 
+ 13.Self
+ Self 通常在协议中使用, 用来表示实现者或者实现者的子类类型
+ protocol CopyProtocol {
+     func copy() -> Self
+ }
+ 
+ 如果是结构体去实现, 要将Self 换为具体的类型：
+ struct SomeStruct: CopyProtocol {
+     let value: Int
+     func copySelf() -> SomeStruct {
+         return SomeStruct(value: self.value)
+     }
+ }
+ 
+ 如果是类去实现, 则有点复杂, 需要有一个 required 初始化方法, 具体可以看这里 http://swifter.tips/use-self/
+ class SomeCopyableClass: CopyProtocol {
+     func copySelf() -> Self {
+         return type(of: self).init()
+     }
+     required init(){}
+ }
+ 
+ 14.dynamic 的作用
+ 由于 swift 是一个静态语言, 所以没有 Objective-C 中的消息发送这些动态机制, dynamic 的作用就是让 swift 代码也能有 Objective-C 中的动态机制, 常用的地方就是 KVO 了, 如果要监控一个属性, 则必须要标记为 dynamic
+ 
+ 15.将协议（protocol）中的部分方法设计成可选（optional)
+ 方法一.
+ @objc protocol SomeProtocol {
+   func requiredFunc()
+   @objc optional func optionalFunc()
+ }
+
+ 方法二.
+ protocol SomeProtocol {
+   func requiredFunc()
+   func optionalFunc()
+ }
+ extension SomeProtocol {
+   func optionalFunc() {
+     print(“Dumb Implementation”)
+   }
+ }
+ 
+ 16.@objc
+ Swift 的静态语言特性，每个函数的调用在编译期间就可以确定
+ Swift 类型的成员或者方法在编译时就已经决定，而运行时便不再需要经过一次查找，而可以直接使用
+ OC 中调用函数是在运行时通过发送消息调用的
+ 所以在编译期并不确定这个函数是否被调用到
+ 
+ 使用@objc修饰将暴露给Objective-C的类、方法、属性
+ 如果我们要使用 Objective-C 的代码或者特性来调用纯 Swift 的类型时候，我们会因为找不到所需要的这些运行时信息，而导致失败。为此，在 Swift 类型文件中，我们使用@objc修饰将暴露给Objective-C的类、方法、属性
+ 
+ 这个步骤只需要对那些不是继承自 NSObject 的类型进行，如果你用 Swift 写的 class 是继承自 NSObject 的话，Swift 会默认自动为所有的非 private 的类和成员加上 @objc
+ 对一个 NSObject 的子类，你只需要导入相应的头文件就可以在 Objective-C 里使用这个类了
+
+ @objc 用途是为了在 Objective-C 和 Swift 混编的时候, 能够正常调用 Swift 代码. 可以用于修饰类, 协议, 方法, 属性
+ 
+ Selector 中调用的方法需要在方法前声明 @objc，目的是允许这个函数在“运行时”通过 Objective-C 的消息机制调用
+ 
+ 用weak修饰协议时，协议前面要用@objc声明
+ @objc protocol MyDelegate{
+     func methold1()
+ }
+
+ class MyClass{
+     weak var delegate: MyDelegate?
+ }
+ 
+ 定义 delegate 协议中, 会将协议中的部分方法声明为可选方法, 需要用到@objc
+ 
+ 类前加上 @objcMembers，那么它及其子类、扩展里的方法都会隐式的加上 @objc
+ @objcMembers
+ class Person {
+
+ }
+ 
+ 如果此时在扩展里面不想加@objc，可以用@nonobjc修饰
+ @objcMembers
+ class Person {
+     func work(){}
+ }
+
+ @nonobjc extension Person{
+     func eat() { }
+     func sleep() { }
+ }
+
+ 扩展前加上 @objc，那么里面的方法都会隐式加上 @objc
+ class Person {
+     func work(){}
+ }
+
+ @objc extension Person{
+     func eat() { } //包含隐式的 @objc
+     func sleep() { } //包含隐式的 @objc
+ }
+ 
+ swift4.0
+ 在 Swift 4 中隐式 @objc 自动推断只会发生在下面这种必须要使用 @objc 的情况：
+ 覆盖父类的 Objective-C 方法
+ 符合一个 Objective-C 的协议
+ 
+ 大多数地方必须手工显示地加上 @objc。
+ class MyClass: NSObject {
+     @objc func print() { } //显示的加上 @objc
+     @objc func show() { } //显示的加上 @objc
+ }
+ 
+ 17.Optional（可选型）
+ Optional 是一个泛型枚举
+ enum Optional<Wrapped> {
+   case none
+   case some(Wrapped)
+ }
+ 使用 let someValue: Int? = nil 之外, 还可以使用let optional1: Optional<Int> = nil 来定义
+ 
+ 18.自定义下标获取
+ extension AnyList {
+     subscript(index: Int) -> T{
+         return self.list[index]
+     }
+     subscript(indexString: String) -> T?{
+         guard let index = Int(indexString) else {
+             return nil
+         }
+         return self.list[index]
+     }
+ }
+ 
+ 19.?? 的作用
+ 可选值的默认值, 当可选值为nil 的时候, 会返回后面的值. 如
+ let someValue = optional1 ?? 0
+ 
+ 20.lazy 的作用
+ 懒加载, 当属性要使用的时候, 才去完成初始化
+ class LazyClass {
+     lazy var someLazyValue: Int = {
+         print("lazy init value")
+         return 1
+     }()
+     var someNormalValue: Int = {
+         print("normal init value")
+         return 2
+     }()
+ }
+ 
+ 21.一个类型表示选项，可以同时表示有几个选项选中（类似 UIViewAnimationOptions ），用什么类型表示
+ 需要实现自 OptionSet, 一般使用 struct 实现
+ 由于 OptionSet 要求有一个不可失败的init(rawValue:) 构造器, 而 枚举无法做到这一点(枚举的原始值构造器是可失败的, 而且有些组合值, 是没办法用一个枚举值表示的)
+
+ struct SomeOption: OptionSet {
+     let rawValue: Int
+     static let option1 = SomeOption(rawValue: 1 << 0)
+     static let option2 =  SomeOption(rawValue:1 << 1)
+     static let option3 =  SomeOption(rawValue:1 << 2)
+ }
+ let options: SomeOption = [.option1, .option2]
+
+ 22.inout
+ 输入输出参数
+ func swap( a: inout Int, b: inout Int) {
+     let temp = a
+     a = b
+     b = temp
+ }
+ var a = 1
+ var b = 2
+ print(a, b)// 1 2
+ swap(a: &a, b: &b)
+ print(a, b)// 2 1
+ 
+ 23.Error 兼容 NSError
+ 其实直接转换就可以, 例如 SomeError.someError as NSError 但是这样没有错误码, 描述等等, 如果想和 NSError 一样有这些东西, 只需要实现 LocalizedError 和 CustomNSError 协议
+
+ enum SomeError: Error, LocalizedError, CustomNSError {
+     case error1, error2
+     public var errorDescription: String? {
+         switch self {
+         case .error1:
+             return "error description error1"
+         case .error2:
+             return "error description error2"
+         }
+     }
+     var errorCode: Int {
+         switch self {
+         case .error1:
+             return 1
+         case .error2:
+             return 2
+         }
+     }
+     public static var errorDomain: String {
+         return "error domain SomeError"
+     }
+     public var errorUserInfo: [String : Any] {
+         switch self {
+         case .error1:
+             return ["info": "error1"]
+         case .error2:
+             return ["info": "error2"]
+         }
+     }
+ }
+ 
+ 24.
+ [1, 2, 3].map{ $0 * 2 }
+ [1, 2, 3] 使用了, Array 实现的ExpressibleByArrayLiteral 协议, 用于接收数组的字面值
+ map{xxx} 使用了闭包作为作为最后一个参数时, 可以直接写在调用后面, 而且, 如果是唯一参数的话, 圆括号也可以省略
+ 闭包没有声明函数参数, 返回值类型, 数量, 依靠的是闭包类型的自动推断
+ 闭包中语句只有一句时, 自动将这一句的结果作为返回值
+ 0
+
+ 25.高阶函数
+ 一个函数如果可以以某一个函数作为参数, 或者是返回值, 那么这个函数就称之为高阶函数
+ 
+ 26.解决引用循环
+ 转换为值类型, 只有类会存在引用循环, 所以如果能不用类, 是可以解引用循环的,
+ delegate 使用 weak 属性.
+ 闭包中, 对有可能发生循环引用的对象, 使用 weak 或者 unowned, 修饰
+
+ 27.定义静态方法时关键字 static 和 class 有什么区别
+ static 定义的方法不可以被子类继承, class 则可以
+
+ class AnotherClass {
+     static func staticMethod(){}
+     class func classMethod(){}
+ }
+ class ChildOfAnotherClass: AnotherClass {
+     override class func classMethod(){}
+     //override static func staticMethod(){}// error
+ }
+
+ 28.数组都实现了哪些协议
+ MutableCollection, 实现了可修改的数组, 如 a[1] = 2
+ ExpressibleByArrayLiteral, 实现了数组可以从[1, 2, 3] 这种字面值初始化的能力
+
+ 29.autoclosure 的作用
+ 自动闭包, 会自动将某一个表达式封装为闭包
+ func autoClosureFunction(_ closure: @autoclosure () -> Int) {
+    closure()
+ }
+ autoClosureFunction(1)
+ 
+ 30.mutating
+ swift 中struct,enum 均可以包含类方法和实例方法,swift官方是不建议在struct,enum 的普通方法里修改属性变量,但是在func 前面添加 mutating 关键字之后就可以方法内修改
+
+ 对于protocol 方法也是适用的,mutating 可以修饰的代理方法,如果,struct,enum,class 实现协议之后可以在对应的 mutating 代理方法内修改本身的属性变量.(class 不影响,因为属性变量对于类的类方法,实例方法 是透明的,即随时都可以改变)
+
+ 31.如何让自定义对象支持字面量初始化
+ 有几个协议, 分别是
+ ExpressibleByArrayLiteral 可以由数组形式初始化
+ ExpressibleByDictionaryLiteral 可以由字典形式初始化
+ ExpressibleByNilLiteral 可以由nil 值初始化
+ ExpressibleByIntegerLiteral 可以由整数值初始化
+ ExpressibleByFloatLiteral 可以由浮点数初始化
+ ExpressibleByBooleanLiteral 可以由布尔值初始化
+ ExpressibleByUnicodeScalarLiteral
+ ExpressibleByExtendedGraphemeClusterLiteral
+ ExpressibleByStringLiteral
+ 这三种都是由字符串初始化, 上面两种包含有 Unicode 字符和特殊字符
+
+ 32.dynamic framework 和 static framework 的区别是什么
+ 静态库和动态库, 静态库是每一个程序单独打包一份, 而动态库则是多个程序之间共享
+
+ 33.一个函数的参数类型只要是数字（Int、Float）都可以，要怎么表示。
+ func isNumber<T : SignedNumber>(_ number : T){
+ print("yes, it is a number")
+ }
+ 
+ 34.mutating 的作用是什么
+ struct Person {
+
+   var name: String {
+       mutating get {
+           return store
+       }
+   }
+ }
+ mutating 表示这个方法会(有可能)修改这个结构体, 只有var 的结构体才能调用mutation的方法
+
+ 35.实现单例
+ class MyClass {
+
+     static let shared = MyClass()
+     private init() { }
+ }
+ 
+ 36.unowned和weak
+ Swift和Objective-C都是利用古老且有效的ARC（Automatic Reference Counting）来管理内存
+ 
+ 为了更方便的处理循环引用，Swift引入了一个新的概念，用于简化和更加明显的表达在闭包内部，外部变量的捕获：捕获列表（capture list）。使用捕获列表，可以在函数(闭包)的头部定义和指定那些需要用在内部的外部变量，并且指定引用类型(这里是指 unowned 和 weak）
+
+ 不使用捕获列表时，闭包将会创建一个外部变量的强引用。
+ var i1 = 1, i2 = 1
+ var fStrong = {
+     i1 += 1
+     i2 += 2
+ }
+ fStrong()
+ print(i1,i2) //Prints 2 and 3
+
+ 使用捕获列表，闭包内部会创建一个新的可用常量。如果没有指定常量修饰符，闭包将会简单地拷贝原始值到新的变量中，对于值类型和引用类型都是一样的。
+ var fCopy = { [i1] in
+     print(i1,i2)
+ }
+ fStrong()
+ print(i1,i2) //打印结果是 2 和 3
+ fCopy()  //打印结果是 1 和 3
+ 
+ 使用场景：
+ Swift使用自动引用计数（ARC）来管理应用程序的内存使用
+ 
+ 如果捕获（比如 self）可以被设置为 nil，也就是说它可能在闭包前被销毁，那么就要将捕获定义为 weak。
+ 如果它们一直是相互引用，即同时销毁的，那么就可以将捕获定义为 unowned
+ 
+ unowned: 原始实例永远不会为nil，闭包可以直接使用它，并且直接定义为显式解包可选值。当原始实例被析构后，在闭包中使用这个捕获值将导致崩溃
+ 
+ 如果捕获原始实例在使用过程中可能为 nil ，必须将引用声明为 weak， 并且在使用之前验证这个引用的有效性。
+
+ 
+ 
+ */
+
+// MARK: 内存分配
+/**
+ 值类型的内存分配:
+ 在 Swift 中定长的值类型都是保存在栈上的，操作时不会涉及堆上的内存。变长的值类型（字符串、集合类型是可变长度的值类型）会分配堆内存
+ 
+
+ struct Point {
+     var x: Double
+     var y: Double
+ }
+ let point1 = Point(x: 3, y: 5)
+ var point2 = point1
+  
+ print(point1)           // Point(x: 3.0, y: 5.0)
+ print(point2)           // Point(x: 3.0, y: 5.0)
+ 
+            栈
+ point1          x: 3.0
+          y: 5.0
+ point2          x: 3.0
+          y: 5.0
+ 如果尝试修改 point2 的属性，只会修改 point2 在栈上的地址中保存的 x 值，不会影响 point1 的值
+ 
+ 在需要该类型的实例是一个不可变对象时，使用 let 声明对象，即便对象的属性是可变的，但是对象整体是不可变的，所以不能修改实例的属性
+ 值类型的可变性和不可变性:
+ let point1 = Point(x: 3, y: 5)
+ print(point1.x, point1.y)           // 3.0  5.0
+ point1.x = 0                        // 编辑报错，因为 point1 是不可变的
+ 
+ 
+ //        因为赋值时是 “拷贝” 的，所以新对象的可变性限制不会影响旧对象。
+ let point1 = Point(x: 3, y: 5)
+ var point2 = point1                 // 赋值时发生拷贝
+  
+ print(point1.x, point1.y)           // 3.0  5.0
+ print(point2.x, point2.y)           // 3.0  5.0
+  
+ point2.x = 0                        // 编译通过，因为 point2 是可变的
+  
+ print(point1.x, point1.y)           // 3.0  5.0
+ print(point2.x, point2.y)           // 0.0  5.0
+ 
+ */
+
+// MARK: swift 算法
+// https://github.com/raywenderlich/swift-algorithm-club
+// MARK: swift 数据结构
+/**
+ Swift 语言提供Arrays、Sets和Dictionaries三种基本的集合类型用来存储集合数据。
+ 数组（Arrays）是有序数据的集。集合（Sets）是无序无重复数据的集。字典（Dictionaries）是无序的键值对的集
+ 
+ 把Arrays、Sets或Dictionaries分配成常量，那么它就是不可变的，它的大小和内容都不能被改变
+ 如果创建一个Arrays、Sets或Dictionaries并且把它分配成一个变量，这个集合将会是可变的
+ 
+ ===数组
+ 数组使用有序列表存储同一类型的多个值。相同的值可以多次出现在一个数组的不同位置中
+ 空数组：
+ var someInts = [Int]()
+ someInts.append(3)
+ // someInts 现在包含一个 Int 值
+ someInts = []
+ // someInts 现在是空数组
+ 
+ var threeDoubles = Array(repeating: 0.0, count: 3)
+ var anotherThreeDoubles = Array(repeating: 2.5, count: 3)
+ 数组相加
+ var sixDoubles = threeDoubles + anotherThreeDoubles
+ 
+ 数组字面量构造数组
+ var shoppingList: [String] = ["Eggs", "Milk"]
+ 
+ 使用数组的只读属性count来获取数组中的数据项数量
+ 
+ 使用布尔属性isEmpty作为一个缩写形式去检查count属性是否为0
+ 
+ 下标语法来获取数组中的数据项
+ var firstItem = shoppingList[0]
+ 
+ 下标来改变某个已有索引值对应的数据值：
+ shoppingList[0] = "Six eggs"
+ 
+ shoppingList.insert("Maple Syrup", at: 0)
+ 
+ let mapleSyrup = shoppingList.remove(at: 0)
+ 
+ shoppingList.removeLast()
+ 
+ 数组的遍历
+ for item in shoppingList {
+     print(item)
+ }
+ 
+ 如果我们同时需要每个数据项的值和索引值，可以使用enumerated()方法来进行数组遍历。enumerated()返回一个由每一个数据项索引值和数据值组成的元组。我们可以把这个元组分解成临时常量或者变量来进行遍历：
+ for (index, value) in shoppingList. enumerated() {
+     print("Item \(String(index + 1)): \(value)")
+ }
+ 
+ ===集合
+ 集合(Set)用来存储相同类型并且没有确定顺序的值
+ 
+ 集合类型的哈希值:
+ 一个类型为了存储在集合中，该类型必须是可哈希化的--也就是说，该类型必须提供一个方法来计算它的哈希值
+ 一个哈希值是Int类型的
+ 相等的对象哈希值必须相同，比如a==b,因此必须a.hashValue == b.hashValue
+ 
+ Swift 的所有基本类型(比如String,Int,Double和Bool)默认都是可哈希化的，可以作为集合的值的类型或者字典的键的类型。没有关联值的枚举成员值默认也是可哈希化的
+ 
+ 你可以使用你自定义的类型作为集合的值的类型或者是字典的键的类型，但你需要使你的自定义类型符合 Swift 标准库中的Hashable协议。符合Hashable协议的类型需要提供一个类型为Int的可读属性hashValue
+ 类型的hashValue属性返回的值不需要在同一程序的不同执行周期或者不同程序之间保持相同
+ 因为Hashable协议符合Equatable协议，所以遵循该协议的类型也必须提供一个"是否相等"运算符(==)的实现。这个Equatable协议要求任何符合==实现的实例间都是一种相等的关系。也就是说，对于a,b,c三个值来说，==的实现必须满足下面三种情况：
+ a == a(自反性)
+ a == b意味着b == a(对称性)
+ a == b && b == c意味着a == c(传递性)
+ 
+ 构造一个空的集合
+ var letters = Set<Character>()
+ letters.insert("a")
+ // letters 现在含有1个 Character 类型的值
+ letters = []
+ // letters 现在是一个空的 Set
+ 
+ 用数组字面量创建集合: (一个Set类型不能从数组字面量中被单独推断出来，因此Set类型必须显式声明)
+ var favoriteGenres: Set<String> = ["Rock", "Classical", "Hip hop"]
+ 
+ 找出一个Set中元素的数量，可以使用其只读属性count：
+ print("I have \(favoriteGenres.count) favorite music genres.")
+ 
+ 布尔属性isEmpty作为一个缩写形式去检查count属性是否为0：
+ if favoriteGenres.isEmpty {
+     print("As far as music goes, I'm not picky.")
+ } else {
+     print("I have particular music preferences.")
+ }
+ 
+ favoriteGenres.insert("Jazz")
+ 
+ favoriteGenres.remove("Rock")
+ 
+ removeAll()
+ 
+ favoriteGenres.contains("Funk")
+ 
+ for genre in favoriteGenres {
+     print("\(genre)")
+ }
+ 
+ for genre in favoriteGenres.sorted() {
+     print("\(genre)")
+ }
+ 
+ 使用intersection(_:)方法根据两个集合中都包含的值创建的一个新的集合。
+ 使用symmetricDifference(_:)方法根据在一个集合中但不在两个集合中的值创建一个新的集合。
+ 使用union(_:)方法根据两个集合的值创建一个新的集合。
+ 使用subtracting(_:)方法根据不在该集合中的值创建一个新的集合。
+ let oddDigits: Set = [1, 3, 5, 7, 9]
+ let evenDigits: Set = [0, 2, 4, 6, 8]
+ let singleDigitPrimeNumbers: Set = [2, 3, 5, 7]
+
+ oddDigits.union(evenDigits).sorted()
+ // [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+ oddDigits. intersection(evenDigits).sorted()
+ // []
+ oddDigits.subtracting(singleDigitPrimeNumbers).sorted()
+ // [1, 9]
+ oddDigits. symmetricDifference(singleDigitPrimeNumbers).sorted()
+ // [1, 2, 9]
+ 
+ 使用“是否相等”运算符(==)来判断两个集合是否包含全部相同的值。
+ 使用isSubset(of:)方法来判断一个集合中的值是否也被包含在另外一个集合中。
+ 使用isSuperset(of:)方法来判断一个集合中包含另一个集合中所有的值。
+ 使用isStrictSubset(of:)或者isStrictSuperset(of:)方法来判断一个集合是否是另外一个集合的子集合或者父集合并且两个集合并不相等。
+ 使用isDisjoint(with:)方法来判断两个集合是否不含有相同的值(是否没有交集)。
+ let houseAnimals: Set = ["🐶", "🐱"]
+ let farmAnimals: Set = ["🐮", "🐔", "🐑", "🐶", "🐱"]
+ let cityAnimals: Set = ["🐦", "🐭"]
+
+ houseAnimals.isSubset(of: farmAnimals)
+ // true
+ farmAnimals.isSuperset(of: houseAnimals)
+ // true
+ farmAnimals.isDisjoint(with: cityAnimals)
+ // true
+ 
+ ===字典
+ 一个字典的Key类型必须遵循Hashable协议，就像Set的值类型
+ 
+ 空字典：
+ var namesOfIntegers = [Int: String]()
+ 
+ namesOfIntegers[16] = "sixteen"
+ namesOfIntegers = [:]// 空字典
+ 
+ 用字典字面量创建字典
+ var airports: [String: String] = ["YYZ": "Toronto Pearson", "DUB": "Dublin"]
+ 
+ 只读属性count来获取某个字典的数据项数量：
+ print("The dictionary of airports contains \(airports.count) items.")
+ 
+ 布尔属性isEmpty作为一个缩写形式去检查count属性是否为0：
+ if airports.isEmpty {
+     print("The airports dictionary is empty.")
+ } else {
+     print("The airports dictionary is not empty.")
+ }
+ 
+ 使用下标语法来添加新的数据项
+ airports["LHR"] = "London"
+ 
+ 使用下标语法来改变特定键对应的值：
+ airports["LHR"] = "London Heathrow"
+ 
+ 如果有值存在于更新前，则这个可选值包含了旧值，否则它将会是nil
+ if let oldValue = airports.updateValue("Dublin Airport", forKey: "DUB") {
+     print("The old value for DUB was \(oldValue).")
+ }
+ 
+ 字典的下标访问会返回对应值的类型的可选值
+ if let airportName = airports["DUB"] {
+     print("The name of the airport is \(airportName).")
+ } else {
+     print("That airport is not in the airports dictionary.")
+ }
+ 
+ 使用下标语法来通过给某个键的对应值赋值为nil来从字典里移除一个键值对
+ airports["APL"] = "Apple Internation"
+ // "Apple Internation" 不是真的 APL 机场, 删除它
+ airports["APL"] = nil
+ // APL 现在被移除了
+ 
+ removeValue(forKey:)方法也可以用来在字典中移除键值对。这个方法在键值对存在的情况下会移除该键值对并且返回被移除的值或者在没有值的情况下返回nil：
+ if let removedValue = airports. removeValue(forKey: "DUB") {
+     print("The removed airport's name is \(removedValue).")
+ } else {
+     print("The airports dictionary does not contain a value for DUB.")
+ }
+ 
+ 字典遍历
+ 每一个字典中的数据项都以(key, value)元组形式返回
+ for (airportCode, airportName) in airports {
+     print("\(airportCode): \(airportName)")
+ }
+ 
+ 通过访问keys或者values属性，我们也可以遍历字典的键或者值：
+ for airportCode in airports.keys {
+     print("Airport code: \(airportCode)")
+ }
+ for airportName in airports.values {
+     print("Airport name: \(airportName)")
+ }
+ */
+
+// MARK:哈希表 Hash Table
+/**
+ 哈希表允许用户可以通过##键值key##存取对象
+ Swift内置的Dictionary类型的键值对必须遵守Hashable协议，因为它使用的就是哈希表
+ 
+ 哈希表就是一个数组。在起始时候，数组本身是空的。当我们想要储存一个数值的时候，我们会在哈希表里创建一个键值，这个键值是用来计算这个数值在数组中的索引，并指向数值。
+ hashTable["firstName"] = "Steve"
+
+ The hashTable array:
+ +--------------+
+ | 0:           |
+ +--------------+
+ | 1:           |
+ +--------------+
+ | 2:           |
+ +--------------+
+ | 3: firstName |---> Steve
+ +--------------+
+ | 4:           |
+ +--------------+
+ 键值firstName对应数组索引3
+ 
+ 哈希表取出键值firstName并且对本身的hashValue属性进行询问
+ "firstName".hashValue，它将会返回一个大整数 ：-4799450059917011053
+ 进行取绝对值，并对数值大小进行求余数。当前我们的数组大小为5，所以键值firstName的索引为abs(-4799450059917011053) % 5 = 3
+ 我们需要在哈希表里找一个元素，你必须把这个键值哈希化去得到一个索引值，然后去找到数组对应索引的数值
+ 插入，获取和删除都是O(1)
+ 
+ 因为我们是用数组大小对哈希值进行取模，有可能不同键值所得到的索引值相同，这里就是冲突
+ 
+ 键值lastName对应的索引也为3，但是我们并不想要重写索引3对应的数值。所以，我们用链接来处理冲突
+ buckets:
+ +-----+
+ |  0  |
+ +-----+     +----------------------------+
+ |  1  |---> | hobbies: Programming Swift |
+ +-----+     +----------------------------+
+ |  2  |
+ +-----+     +------------------+     +----------------+
+ |  3  |---> | firstName: Steve |---> | lastName: Jobs |
+ +-----+     +------------------+     +----------------+
+ |  4  |
+ +-----+
+ 通过使用链接，键值和它对应的数值不再直接存储在数组中。相反，每一个数组元素对应一串零个到多个的键值对
+ 这里的数组元素通常被称为篮子bucket而对应列表称为链条。这里我们有5个篮子，其中有2个篮子拥有链条。其他三个篮子为空
+ 
+ 从哈希表里获取数值：
+ let x = hashTable["lastName"]
+ 首先我们会对键值lastName哈希化来获取对应数组索引，也就是3。由于3号篮子有链条，我们进一步用键值lastName来获取最后的数值
+ 这个过程是通过字符比较来完成。哈希表对比了查找的键值与链条里的键值，最后返回了对应的数值
+ 链条的长度不可以太长因为会花费更多的时间来查看数据，最理想的情况是没有链条，但是在现实中是不可能的。所以我们采用这样的方法来避免冲突。当然，我们可以通过更高质量的哈希函数来保证哈希表的篮子数量，从而避免冲突
+ 
+ ###另一个可选链接方案是"开放赋值"。主要思想是：如果某一个数组索引已经被占用了，我们就使用索引对应的下一个索引或者上一个索引###
+ 
+ 
+ */
+
 // swift 编码规范
 // https://github.com/Artwalk/swift-style-guide/blob/master/README_CN.md
 
@@ -614,7 +1553,6 @@ till you come to the end; then stop."
         // 运算符方法
         // Swift 的 String 类型定义了关于大于号（>）的字符串实现
         names1.sorted(by: >)
-        
         
         /*
          闭包表达式语法

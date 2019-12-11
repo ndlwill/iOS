@@ -8,6 +8,9 @@
 
 #import <UIKit/UIKit.h>
 
+// MARK: appcenter.ms
+// https://appcenter.ms/
+
 // MARK: 系统占有率
 // https://developer.apple.com/support/app-store/
 
@@ -67,6 +70,9 @@
 
 // YXM
 // http://www.cnblogs.com/YouXianMing/archive/2016/01.html
+
+// MARK: 国外blog
+// https://nshipster.com/
 
 // ##美团##
 // http://www.jianshu.com/p/0ccf4ea14e79

@@ -46,7 +46,7 @@
  */
 
 /*
- 在NSOperationQueue中，我们可以随时取消已经设定要准备执行的任务(当然，已经开始的任务就无法阻止了)，而GCD没法停止已经加入queue的block(其实是有的，但需要许多复杂的代码)
+ 在NSOperationQueue中，我们可以随时取消已经设定要准备执行的任务(当然，已经开始的任务就无法阻止了)
  
  我们能将KVO应用在NSOperation中，可以监听一个Operation是否完成或取消，这样子能比GCD更加有效地掌控我们执行的后台任务
  */
@@ -82,7 +82,7 @@
  
  ObjcAssociation类存储着_policy、_value，而这两个值我们可以发现正是我们调用objc_setAssociatedObject函数传入的值
  
- object经过DISGUISE函数被转化为了disguised_ptr_t类型的disguised_object
+ object经过DISGUISE(伪装)函数被转化为了disguised_ptr_t类型的disguised_object
  DISGUISE函数其实仅仅对object做了位运算
  disguised_object和ObjectAssociationMap则以key-value的形式对应存储在AssociationsHashMap中
  
@@ -373,54 +373,6 @@
  */
 
 /*
- MARK:内存管理
- - retainCount
- __CFDoExternRefOperation
- CFBasicHashGetCountOfKey
- 
- - retain
- __CFDoExternRefOperation
- CFBasicHashAddValue
- 
- - release
- __CFDoExternRefOperation
- CFBasicHashRemoveValue
- (CFBasicHashRemoveValue返回0时，-release调用dealloc)
- 
- - (NSUInteger)retainCount  {
- return (NSUInteger)__CFDoExternRefOperation(OPERATION_retainCount,self);
- }
- 
- - (id)retain  {
- return (id)__CFDoExternRefOperation(OPERATION_retain,self);
- }
- 
- - (void)release  {
- return __CFDoExternRefOperation(OPERATION_release,self);
- }
- 
- 
- int __CFDoExternRefOperation(uintptr_r op,id obj) {
- CFBasicHashRef table = 取得对象对应的散列表(obj);
- int count;
- 
- switch(op) {
- case OPERATION_retainCount:
- count = CFBasicHashGetCountOfKey(table,obj);
- return count;
- case OPERATION_retain:
- CFBasicHashAddValue(table,obj);
- return obj;
- case OPERATION_release:
- count = CFBasicHashRemoveValue(table,obj):
- return 0 == count;
- }
- }
- 
- 采用散列表（引用计数表）来管理引用计数
- */
-
-/*
  MARK:autorelease
  作用是将对象放入自动释放池中，当自从释放池销毁时对自动释放池中的对象都进行一次release操作
  */
@@ -477,7 +429,7 @@
 // 当在主线程上同步调度任务的时候才会出现死锁
 
 /*
- MARK:
+ MARK: object_getClass
  当参数obj为Object实例对象:
  object_getClass(obj)与[obj class]输出结果一直，均获得isa指针，即指向类对象的指针
  
@@ -566,17 +518,20 @@
  */
 
 /*
+ MARK: struct category_t
  Category编译之后的底层结构是struct category_t，里面存储着分类的对象方法、类方法
  在程序运行的时候，runtime会将Category的数据，合并到类信息中（类对象、元类对象中）
  */
 
+// MARK: isKindOfClass 与 isMemberOfClass
 /*
  当你向一个对象发送消息时，runtime会在这个对象所属的那个类的方法列表中查找。
  当你向一个类发送消息时，runtime会在这个类的meta-class的方法列表中查找
  
  self和[self class]的区别，self 是指向于一个objc_object结构体的首地址， [self class]返回的是objc_class结构体的首地址，也就是self->isa的值
  
- 对于一个类对象来讲self返回的其实是一个指向objc_class对象的指针的地址；对于一个实例对象来讲self返回的其实是一个指向objc_object对象的指针地址
+ 对于一个类对象来讲self返回的其实是一个指向objc_class对象的指针的地址
+ 对于一个实例对象来讲self返回的其实是一个指向objc_object对象的指针地址
  
  + (Class)class {
  return self;
@@ -602,6 +557,7 @@
  return object_getClass((id)self) == cls;
  }
  
+ ######
  - (BOOL)isMemberOfClass:(Class)cls {
  return [self class] == cls;
  }
@@ -614,6 +570,7 @@
  return NO;
  }
  
+ ######
  - (BOOL)isKindOfClass:(Class)cls {
  for (Class tcls = [self class]; tcls; tcls = tcls->superclass) {
  if (tcls == cls) return YES;
@@ -745,6 +702,7 @@
  };
  该对象有个属性：num5，即我们用__block修饰的变量。
  这里__forwarding是指向自身的(栈block)
+ 
  另外,block里访问self或成员变量都会去截获self
  
  __block变量在copy时，由于__forwarding的存在，栈上的__forwarding指针会指向堆上的__forwarding变量，而堆上的__forwarding指针指向其自身，所以，如果对__block的修改，实际上是在修改堆上的__block变量
@@ -895,6 +853,18 @@
  }
  */
 
+// MARK: autorelease
+/**
+ 对象执行autorelease方法时会将对象添加到自动释放池中
+ 当自动释放池销毁时自动释放池中所有对象作release操作
+ 对象执行autorelease方法后自身引用计数器不会改变，而且会返回对象本身
+ 
+ autorelease 的优点
+ autorelease实际上只是把对release的调用延迟了，对于每一次autorelease系统只是把该对象放入了当前的autorelease pool中，当该pool被释放时，该pool中的所有对象会被调用Release
+ 因为只有在自动释放池销毁的时候它里面的对象才销毁，因此不用关心对象销毁的时间也就不用关心什么时候调用release
+ 
+ 自动释放池存储于内存中的栈中遵循"先进后出"原则
+ */
 
 /*
  MARK:autorelease对象在什么时刻释放:
@@ -902,8 +872,10 @@
  用于自动对释放池内的对象进行引用计数-1的操作，即自动执行release方法
  
  autorelease对象释放的时机:
- 手动干预释放时机：手动指定 autoreleasepool 的 autorelease 对象，在当前作用域大括号结束时释放。
- 系统自动去释放：不手动指定 autoreleasepool 的 autorelease 对象出了作用域之后，会被添加到最近一次创建的自动释放池中，并会在当前的 runloop 迭代结束时释放。而它能够释放的原因是系统在每个 runloop 迭代中都加入了自动释放池 Push 和 Pop。一个典型的例子是在一个类方法中创建一个对象并作为返回值，这时就需要将该对象放置到对应的 autoreleasepool 中
+ 手动干预释放时机：手动指定
+ autoreleasepool 的 autorelease 对象，在当前作用域大括号结束时释放。
+ 系统自动去释放：不手动指定
+ autoreleasepool 的 autorelease 对象出了作用域之后，会被添加到最近一次创建的自动释放池中，并会在当前的 runloop 迭代结束时释放。而它能够释放的原因是系统在每个 runloop 迭代中都加入了自动释放池 Push 和 Pop。一个典型的例子是在一个类方法中创建一个对象并作为返回值，这时就需要将该对象放置到对应的 autoreleasepool 中
  
  所以在每一次完整的 runloop 结束之前，对于的自动释放池里面的 autorelease 对象会被销毁。
  在 runloop 检测到事件并启动后，就会创建对应的自动释放池
@@ -1009,7 +981,7 @@
  当调用 NSObject 的 performSelector:afterDelay: 后，实际上其内部会创建一个 Timer 并添加到当前线程的 RunLoop 中。所以如果当前线程没有 RunLoop，则这个方法会失效。
  当调用 performSelector:onThread: 时，实际上其会创建一个 Timer 加到对应的线程去，同样的，如果对应线程没有 RunLoop 该方法也会失效
  
- MARK:GCD:
+ MARK:GCD
  当调用 dispatch_async(dispatch_get_main_queue(), block) 时，libDispatch 会向主线程的 RunLoop 发送消息，RunLoop 会被唤醒，并从消息中取得这个 block，并在回调 __CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__() 里执行这个 block。但这个逻辑仅限于 dispatch 到主线程，dispatch 到其他线程仍然是由 libDispatch 处理的
  
  
@@ -1090,8 +1062,13 @@
  ...
  };
  
- CommonModes：一个 Mode 可以将自己标记为 Common 属性（通过将其 ModeName 添加到 RunLoop 的 commonModes 中）。每当 RunLoop 的内容发生变化时，RunLoop 都会自动将 _commonModeItems里的 Source/Observer/Timer 同步到具有 Common 标记的所有 Mode 里
- 让事件同步到多个mode中
+ common modes:
+ 存储的被标记为common modes的模式
+ 
+ common mode items:
+ 当前运行在common mode模式下的CFRunLoopSource，CFRunLoopObserver，CFRunLoopTimer
+ 
+ CommonModes：一个 Mode 可以将自己标记为 Common 属性（通过将其 ModeName 添加到 RunLoop 的 commonModes 中）。每当 RunLoop 的内容发生变化时，RunLoop 都会自动将 _commonModeItems里的 Source/Observer/Timer 同步到具有 Common 标记的所有 Mode 里.让事件同步到多个mode中
  应用场景举例：
  主线程的 RunLoop 里有两个预置的 Mode：kCFRunLoopDefaultMode 和 UITrackingRunLoopMode。这两个 Mode 都已经被标记为 Common 属性。DefaultMode 是 App 平时所处的状态，TrackingRunLoopMode 是追踪 ScrollView 滑动时的状态。当你创建一个 Timer 并加到 DefaultMode 时，Timer 会得到重复回调，但此时滑动一个 TableView 时，RunLoop 会将 mode 切换为 TrackingRunLoopMode，这时 Timer 就不会被回调，并且也不会影响到滑动操作，因为这个 Timer 作为一个 mode item 并没有被添加到 commonModeItems 里，所以它不会被同步到其他 Common Mode 里
  
@@ -1130,6 +1107,9 @@
  UIInitializationRunLoopMode：在刚启动App时第进入的第一个 Mode，启动完成后就不再使用
  GSEventReceiveRunLoopMode：接受系统内部事件，通常用不到
  kCFRunLoopCommonModes：伪模式，不是一种真正的运行模式，是同步Source/Timer/Observer到多个Mode中
+ 
+ 被标记为Common Modes的模式:
+ kCFRunLoopDefaultMode，UITrackingRunLoopMode
  
  RunLoop通过mach_msg()函数接收、发送消息。它的本质是调用函数mach_msg_trap()，相当于是一个系统调用，会触发内核状态切换。在用户态调用 mach_msg_trap()时会切换到内核态
  
