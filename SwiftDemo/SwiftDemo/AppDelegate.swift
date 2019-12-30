@@ -292,6 +292,28 @@ struct Point {
 import UIKit
 
 @UIApplicationMain
+// markdown
+/**
+ # 一级标题
+ 1.
+ 2.
+ ## 二级标题
+ -
+ -
+ [官网](https:XXX) 链接
+ */
+
+// markup语法 只在playground中能用
+//: # 一级标题
+
+// MARK: swift支持多行注释的嵌套
+/*
+ 1
+ /*
+ ======
+ */
+ 2.
+ */
 class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
@@ -427,4 +449,135 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
  如果逃逸闭包访问的是类里面的成员，必须带上self来访问
  
  自动闭包作为函数参数，不写"{}"，直接写返回值
+ */
+
+// MARK: ---MJ---
+// MARK: swift
+/**
+ 2014.6月发布的
+ 2019.6 swift 5.1
+ 
+ swift5.1  Xcode11  macos10.14
+ 
+ OC的编译器前端是Clang，编译器后端是LLVM
+ Swift的编译器前端是swiftc，编译器后端是LLVM
+ 编译器前端：词法分析
+ 编译器后端：LLVM 生成对应平台的二进制代码
+ 
+ 想运行在ios系统，最终生成的是ARM架构的代码
+ 
+ 生成swift语法树
+ swiftc -dump-ast main.swift
+ 生成最简洁的sil代码
+ swiftc -emit-sil main.swift
+ 生成LLVM IR代码
+ swiftc -emit-ir main.swift -o main.ll
+ 生成汇编代码
+ swift -emit-assembly main.swift -o main.s
+ 
+ 对汇编代码进行分析，能真正掌握编程语言的本质
+ 
+ import PlaygroundSupport
+ PlaygroundPage.current.liveView = view
+ 
+ // 元祖
+ let tuple1 = (404, "Not Found")
+ let tuple2 = (code: 404, msg: "Not Found")
+ let (statusCode, statusMsg) = tuple1
+ let (statusCode, _) = tuple1
+ print(statusCode)
+ 
+ if 后面的条件只能是bool类型，不像oc里面 非0的就是true
+ 
+ // 不加var默认是let
+ for var i in 0...3 {
+ i+=5
+ print(i)
+ }
+ 
+ 区间运算符用在数组上,names是个数组
+ for name in names[0...3] {
+ 
+ }
+ 
+ 区间类型
+ ClosedRange: 1...3
+ Range: 1..<3
+ PartialRangeThrough: ...5
+ 
+ 带间隔的区间值
+ let hours = 11
+ let hourInterval = 2
+ 从4开始，累加2，不s超过11
+ for tickMark in stride(from: 4, through: hours, by: hourInterval) {
+ // 4,6,8,10
+ }
+ 
+ ASCII
+ "\0"..."~"
+ 
+ swicth默认可以不写break，并不会贯穿到后面
+ fallthrough实现贯穿效果
+ case，default后面至少要有一条语句，default不处理的话加break
+ 枚举类型可以不必使用default
+ 支持String，Character
+ 复合条件：case "jack", "rose":
+ 区间匹配：case 1..<5:
+ 元祖匹配:
+ let point = (1, 1)
+ case (0,0):
+ case (_, 0):
+ case (-2...2, -2...2): // 匹配这个
+ 值绑定: let point = (2, 0)
+ case (let x, 0): // 0匹配，把2赋值给x
+ case let (x, y):
+ where:
+ let point = (1, -1)
+ case let (x, y) where x == -y:
+ 
+ numbers是数组
+ for num in numbers where num > 0 {
+ 
+ }
+ 
+ 41:23
+ */
+
+// MARK: swift3.0
+/**
+ 去除了++，--
+ */
+
+// MARK: 字面量
+/**
+ 可存ASCII字符，Unicode字符
+ let ch: Character = ""
+ 
+ let doubleDecimal = 125.0 // 1.25e2 等价于1.25*(10^2)
+ 
+ // 16进制
+ 0xFp2 等价于 15*(2^2)
+ 
+ 1000000 等价于 100_0000
+ 
+ 000123.456
+ 
+ let array = [1, 2, 3]
+ */
+
+// MARK:类型转换
+/**
+ let int1: UInt16 = 2_000
+ let int2: UInt8 = 1
+ let int3 = int1 + UInt16(int2) // 把内存占用小的转成大的
+ */
+
+
+
+
+// MARK: ---汇编
+/**
+ 指令:
+ callq 表示函数调用
+ addq 加法
  */

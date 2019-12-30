@@ -169,6 +169,7 @@
 #import "DrawRectView.h"
 #import "MyOperation.h"
 #import "NDLDevice.h"
+#import <AFNetworking.h>
 
 @interface Sark : NSObject
 @end
@@ -243,6 +244,12 @@
     // frame = {{0, 100}, {75.5, 20.5}}
     NSLog(@"frame = %@", NSStringFromCGRect(label.frame));
     
+    // MARK: 后面全打印完，再打印111===，即这个viewDidLoad方法走完，再打印111===
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSLog(@"111===");
+    });
+    NSLog(@"222===");
+    
 //     self.view.layer.delegate
     // MARK: CALayerDelegate
 //     /* If defined, called by the default implementation of the -display
@@ -280,6 +287,7 @@
     [self testMemory];
     [self testBlock];
     [self testThread];
+    [self testVender];
     
     // MARK: test kvo
 //    self.device = [[NDLDevice alloc] init];
@@ -289,6 +297,7 @@
 //        NSLog(@"===change name===");
 //        self.device.deviceName = @"cc";
 //    });
+    
 }
 
 // MARK: kvo for NDLDevice
@@ -353,17 +362,26 @@
 
 - (void)testBlock {
     // MARK: 局部对象变量也是一样，截获的是值(相当于*指针)，而不是指针，在外部将其置为nil，对block没有影响，而该对象调用方法会影响
-//    NSMutableArray * arr = [NSMutableArray arrayWithObjects:@"1",@"2", nil];
-//    void(^block)(void) = ^{
-//        NSLog(@"%@",arr);// 1,2,3
-//        [arr addObject:@"4"];
-//        NSLog(@"after %@",arr);// 1,2,3,4
-//    };
-//
-//    [arr addObject:@"3"];
-//    arr = nil;
-//    block();
+    NSMutableArray * arr = [NSMutableArray arrayWithObjects:@"1",@"2", nil];
+    void(^block)(void) = ^{
+        NSLog(@"%@",arr);// 1,2,3
+        [arr addObject:@"4"];// 表示改变arr指向的值
+//        arr = [NSMutableArray arrayWithObject:@"111"];// 外面的需要__block,实质是改变arr的指向
+        NSLog(@"after %@",arr);// 1,2,3,4
+    };
+
+    [arr addObject:@"3"];
+    arr = nil;
+    block();
     
+//    __block NSArray *arr1 = [NSArray arrayWithObject:@"1"];
+//    void(^block1)(void) = ^{
+//        NSLog(@"%@",arr1);// 2
+//        arr1 = [NSArray arrayWithObject:@"3"];
+//        NSLog(@"after %@",arr1);// 3
+//    };
+//    arr1 = [NSArray arrayWithObject:@"2"];
+//    block1();
 }
 
 - (void)testThread {
@@ -848,6 +866,300 @@
 //    NSLog(@"Finish executing %@", NSStringFromSelector(_cmd));
 //}
 //@end
+
+- (void)testVender
+{
+    // MARK: ===AFNetworking
+    /**
+     1.调用父类初始化方法 (1.设置默认的configuration,配置我们的session  2.设置为delegate的操作队列并发的线程数量1，也就是串行队列 [因为NSURLSession初始化的时候，他要求他的delegateQueue为serialQueue]
+     3.默认response为json解析 4.设置securityPolicy为无条件信任证书https认证 5.网络状态监听 6.使用NSLock确保线程安全 7.异步的获取当前session的所有未完成的task)
+     2.给baseurl添加“/”
+     3.给requestSerializer、responseSerializer设置默认值
+     
+     2.0 用常驻线程
+     3.0 用NSOperationQueue
+     */
+    AFHTTPSessionManager *manager = [AFHTTPSessionManager manager];// 对应一个session
+    /**
+     1.返回一个task，然后开始网络请求(1.生成request[1.先调用AFHTTPRequestSerializer的requestWithMethod函数构建request,即通过请求序列化构建request
+     2.处理request构建产生的错误 – serializationError]，2.通过request生成task[给task添加代理])
+     
+     调用一个串行队列来创建dataTask
+     //使用session来创建一个NSURLSessionDataTask对象
+     dataTask = [self.session dataTaskWithRequest:request];
+     
+     AFHTTPRequestSerializer使用了KVO（kvo是响应式的）
+     
+     request封装: 1.请求头封装 2.请求参数封装
+     请求行 请求头 请求体
+     request（NSMutableURLRequest)： 设置请求行 请求头 以及处理请求参数 （1.get 将参数拼接到request的url上面 2.post 将参数设置到request的httpBody）
+     
+     get方法默认超时时间为60秒
+     
+     给task添加代理
+     task和delegate
+     AFURLSessionManagerTaskDelegate
+     AFURLSessionManagerTaskDelegate : NSObject <NSURLSessionTaskDelegate, NSURLSessionDataDelegate, NSURLSessionDownloadDelegate>
+     
+     manager->session
+     manager->task.id: delegate
+     delegate->(weak)manager
+     
+     为task设置关联的delegate
+     //将delegate存入字典，以taskid作为key，说明每个task都有各自的代理
+     self.mutableTaskDelegatesKeyedByTaskIdentifier[@(task.taskIdentifier)] = delegate;
+     
+     //设置这两个NSProgress对应的cancel、pause和resume这三个状态，正好对应session task的cancel、suspend和resume三个状态
+     
+     typedef NS_ENUM(NSInteger, NSURLSessionTaskState) {
+         NSURLSessionTaskStateRunning = 0,                     The task is currently being serviced by the session
+         NSURLSessionTaskStateSuspended = 1,
+         NSURLSessionTaskStateCanceling = 2,                   The task has been told to cancel.  The session will receive a URLSession:task:didCompleteWithError: message.
+         NSURLSessionTaskStateCompleted = 3,                  The task has completed and the session will receive no more delegate notifications
+     }
+     
+     通过内部类_AFURLSessionTaskSwizzling，方法交换task的resume 发送DidResume的通知 （发送task的状态）
+     */
+    [manager GET:@"" parameters:nil progress:^(NSProgress * _Nonnull downloadProgress) {
+        
+    } success:^(NSURLSessionDataTask * _Nonnull task, id  _Nullable responseObject) {
+        
+    } failure:^(NSURLSessionDataTask * _Nullable task, NSError * _Nonnull error) {
+        
+    }];
+    
+    /**
+     序列化:
+     @protocol AFURLRequestSerialization <NSObject, NSSecureCoding(安全归档，即存储，对象持久化), NSCopying>
+     
+     Post: 多表单
+     content-type: multipart/form-data: 多表单 eg:图片上传
+     [manager POST:@"http://114.215.186.169:9002/api/demo/test/file" parameters:dic constructingBodyWithBlock:^(id<AFMultipartFormData>  _Nonnull formData) {}
+     
+     ##用POST构建request，request为AFStreamingMultipartFormData的request，再用request构建NSURLSessionDataTask##
+     @property (nonatomic, strong) AFHTTPRequestSerializer <AFURLRequestSerialization> * requestSerializer;
+     requestSerializer构建request，用request构建AFStreamingMultipartFormData
+     AFStreamingMultipartFormData有NSMutableURLRequest *request属性
+     
+     multipart/form-data数据封装:
+     传的参数封装为body
+     AFStreamingMultipartFormData:的属性
+     boundary//分隔符
+     +
+     @interface AFMultipartBodyStream : NSInputStream <NSStreamDelegate>
+     的属性HTTPBodyParts
+     
+     params->AFQueryStringPair->NSData->mutableHeaders->(1.key-value  Content-Disposition: form-data; name="" 2.AFHTTPBodyPart 被添加到AFMultipartBodyStream中的HTTPBodyParts数组)
+     
+     [self.request setHTTPBodyStream:self.bodyStream];
+     [self.request setValue:[NSString stringWithFormat:@"multipart/form-data; boundary=%@", self.boundary] forHTTPHeaderField:@"Content-Type"];
+     [self.request setValue:[NSString stringWithFormat:@"%llu", [self.bodyStream contentLength]] forHTTPHeaderField:@"Content-Length"];
+     
+     拼接\r\n
+     '\r' 回车，回到当前行的行首，而不会换到下一行，如果接着输出的话，本行以前的内容会被逐一覆盖；
+     '\n' 换行，换到当前位置的下一行，而不会回到行首
+     
+     task resume会调用stream的read   然后建立连接到服务器
+     
+     
+     @protocol AFURLResponseSerialization <NSObject, NSSecureCoding, NSCopying>:
+     @interface AFHTTPResponseSerializer : NSObject <AFURLResponseSerialization>
+     请求成功 需要把response序列化 （因为耗时，所以开启异步线程）
+     1.先验证内容有效性，看能不能解析数据
+     2.验证状态码
+     3.解析
+     
+     常见错误码
+     -1011 ，-1016
+     */
+    
+    /**
+     HTTP:
+     
+     v1.1: keep-alive 被多个请求复用   缺点：客户端可以同时发送多个，服务器只能依次响应（即要等前一个返回给客户端才能响应下一个）
+     v2.0: 特性: 多工（同时响应多个请求，防止阻塞），头信息压缩，服务器自推送（只要建立连接，服务器能直接给客户端发送消息）
+     现在用的还是v1.1
+     
+     不验证身份： 会导致DOS攻击  直接通过野蛮手段残忍地耗尽被攻击对象的资源，目的是让目标计算机或网络无法提供正常的服务或资源访问，使目标系统服务系统停止响应甚至崩溃
+     
+     http缺点:
+     通讯使用明文（不加密），内容可能会被窃听
+     不验证通讯方的身份，有可能遭遇伪装
+     无法验证报文的完整性，可能遭篡改
+     
+     
+     AFSecurityPolicy:
+     自签证书存在项目本地：
+     AFSSLPinningModeNone: 不做本地证书验证，直接从客户端系统中的受信任颁发机构 CA 列表中去验证
+     AFSSLPinningModeCertificate: 会对服务器返回的证书同本地证书全部进行校验，通过则通过，否则不通过
+     
+     // 从cerSet证书集合取出公钥（Public Key）集合，打断点po publicKey<SecKeyRef>
+     AFSecurityPolicy *security = [AFSecurityPolicy policyWithPinningMode:AFSSLPinningModeCertificate withPinnedCertificates:cerSet];// 根据SSL验证模式和指定的证书集合创建实例
+     security.allowInvalidCertificates = YES;
+     security.validatesDomainName = NO;
+     如果想要实现自签名的HTTPS访问成功，必须设置pinnedCertificates，且不能使用defaultPolicy
+     如果不需要验证domain，就使用默认的BasicX509验证策略
+     
+     设置证书集合 如果是默认的 通过[self defaultPinnedCertificates]得到了
+     
+     单向认证：客户端认证服务端返回的信息（证书），认证服务器的合法性
+     只需要验证服务端证书是否安全（即https的单向认证，这是AF默认处理的认证方式）
+     
+     - (void)URLSession:(NSURLSession *)session
+     didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
+      completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NSURLCredential *credential))completionHandler
+     */
+    
+    /**
+     AFNetworkReachabilityManager: 通过block回调和通知返回状态
+     底层用的系统的SC（SystemConfiguration）框架
+     SCNetworkReachabilityRef
+     
+     添加到runloop就会一直被持有，不会被释放
+     flag->status
+     
+     
+     if (__IPHONE_10_0) {
+         [self cellularData];
+     }else{
+         [self startMonitoringNetwork];
+     }
+     如果选择了不允许网络，每次进app都无法请求网络，需要网络权限监控，让用户开启权限
+     网络权限监控
+     - (void)cellularData{
+         
+         CTCellularData *cellularData = [[CTCellularData alloc] init];
+         
+         cellularData.cellularDataRestrictionDidUpdateNotifier = ^(CTCellularDataRestrictedState state) {
+             
+             switch (state) {
+                 case kCTCellularDataRestrictedStateUnknown:
+                     NSLog(@"不明错误.....");
+                     break;
+                 case kCTCellularDataRestricted:
+                     NSLog(@"没有授权....");
+                     // 默认没有授权 ... 发起设置弹框
+                     break;
+                 case kCTCellularDataNotRestricted:
+                     NSLog(@"授权了////");
+                     [self startMonitoringNetwork];
+                     break;
+                 default:
+                     break;
+             }
+         };
+     }
+     
+     图片缓存:
+     @interface AFAutoPurgingImageCache : NSObject <AFImageRequestCache>
+     缓存容量100M 零界点60M
+     
+     创建了同步队列，实际创建的是并发队列，它使用了栅栏函数来同步并发队列
+     cachedImages 用了可变字典（内存缓存)
+     @property (nonatomic, strong) NSMutableDictionary <NSString* , AFCachedImage*> *cachedImages;
+     key: url
+     
+     addImage: withIdentity: 功能包含增加图片+自动清理
+     使用了dispatch_barrier_async
+     
+     self.currentMemoryUsage > self.memoryCapacity 需要清理内存
+     根据lastAccessDate排序图片
+     如果currentMemoryUsage=102 102-60=42 需要清理42（42是个大约数，不一定=42）
+     当清理的大小>=42则跳出循环，停止清理
+     */
+    
+    /**
+     图片下载:
+     @interface AFImageDownloader : NSObject
+     所有UIImageView对应一个单例的AFImageDownloader，其实UIBUtton也对应单例的AFImageDownloader，所有分类里的UI都是
+     
+     通过下载获得凭证receipt，可用他来取消下载
+     
+     downloader有imageCache这个属性和@property (nonatomic, strong) NSMutableDictionary *mergedTasks;
+     mergedTasks存储AFImageDownloaderMergedTask
+     AFImageDownloaderMergedTask有属性@property (nonatomic, strong) NSMutableArray <AFImageDownloaderResponseHandler*> *responseHandlers;
+     同一个图片，不同地方下载，只需要下载一次，复合操作类AFImageDownloaderMergedTask（去重类，避免重复下载）来处理
+     
+     dict缓存和NSCache不是一个概念
+     
+     配置NSURLCache进行磁盘缓存
+     NSURLCache缓存了从服务器返回的NSURLResponse对象
+     configuration.URLCache
+     
+     downloader的session的configure的 NSURLCache设置为
+     memory:20M disk:150M
+     
+     自定义NSOperation
+     @property (nonatomic, readwrite, getter=isExecuting) BOOL executing;
+     @property (nonatomic, readwrite, getter=isFinished) BOOL finished;
+     @property (nonatomic, readwrite, getter=isCancelled) BOOL cancelled;
+     // 因为父类的属性是Readonly的，重载时如果需要setter的话则需要手动合成。
+     @synthesize executing = _executing;
+     @synthesize finished = _finished;
+     @synthesize cancelled = _cancelled;
+     */
+    
+    /**
+     系统缓存NSURLCache：
+     该类通过将NSURLRequest对象映射到NSCachedURLResponse来实现对URL加载请求的响应缓存
+     该类同时提供了复合内存和磁盘缓存，而且允许自定义内存和磁盘缓存的大小
+     该类还允许自定义缓存的存储路径
+     在iOS 操作系统中，如果系统的磁盘运行空间不足时，系统可能会清理磁盘缓存，当时这一清理过程只会发生在应用没有运行的时候,所以可以理解为应用运行过程中，系统不会进行磁盘清理.
+     
+     系统也会自动生成一个全局的NSURLCache对象进行网络请求的缓存.默认内存缓存为512KB，磁盘缓存为10MB.
+     NSURLCache *cache = [NSURLCache sharedURLCache];
+     
+     手动设置全局请求缓存
+     当diskPath为nil时会使用系统默认的路径.
+         NSURLCache *cache = [[NSURLCache alloc] initWithMemoryCapacity:20 * 1000 * 1000 diskCapacity:50 * 1000 * 1000 diskPath:@"com.supportHongKong.police"];
+         [NSURLCache setSharedURLCache:cache];
+     
+     为某一类定义独立的请求缓存
+     [[NSURLCache alloc] initWithMemoryCapacity:20 * 1024 * 1024
+                                              diskCapacity:150 * 1024 * 1024
+                                                  diskPath:@"com.alamofire.imagedownloader"];
+     这样AFImageDownloader中所有的请求缓存都会保存在自定义的diskPath中，可以进行响应的操作而不会对全局的缓存产生影响
+     
+     
+     NSURLCache缓存获取
+     - (nullable NSCachedURLResponse *)cachedResponseForRequest:(NSURLRequest *)request;
+     在NSURLCache中是通过request来获取缓存的(实质还是资源链接url字符串)，这样我们就可以用获取到NSCachedURLResponse对象，进而获取到缓存的二进制数据
+     
+     
+     NSURLCache的磁盘存储路径: 使用默认路径：如果没有显式定义NSURLCache或者自定义时没有自定义有效diskPath，系统会默认将缓存保存保存在NSHomeDirectory()目录library/Caches/{bundleid}中；
+     使用自定义路径：如果显式定义了有效的diskPath，系统就会把请求缓存保存在NSHomeDirectory()目录library/Caches/{bundleid}/{diskPath}中
+     
+     会发现有一个Cache.db文件和fsCachedData的文件夹，证明缓存是以数据库的方式进行了保存
+     用DB Browser查看: http://www.sqlitebrowser.org/dl/
+     
+     request_object和response_object对应的类型都是BLOB类型
+     将二进制转为plist
+     plutil -convert binary1 -o request.plist request_object.bin
+     
+     在cfurl_cache_response中根据request_key(请求接口，即url)查到entry_ID；
+     在cfurl_cache_blob_data根据entry_ID找到response_object；
+     在cfurl_cache_receiver_data中根据entry_ID找到receiver_data
+     
+     拼接NSCacheURLResponse对象,至此我们就获取到了NSURLCache中的缓存
+     NSURLResponse *urlResponse = [[NSURLResponse alloc] initWithURL:request.URL MIMEType:[[request allHTTPHeaderFields] objectForKey:@"Accept"] expectedContentLength:[(NSData *)response_object length] textEncodingName:nil];
+      
+     NSCachedURLResponse *cachedURLResponse = [[NSCachedURLResponse alloc] initWithResponse:urlResponse data:receiver_data userInfo:nil storagePolicy:NSURLCacheStorageAllowed];
+     
+     
+     使用NSURLCache好处:
+     最大的好处莫过于你完全不用管理内存和磁盘上的缓存，只需要设置磁盘缓存的最大值即可，至于何时清理如何清理，完全不用去考虑；
+     系统实现的请求缓存策略会充分考虑系统的开销，存取的效率等因素，相对来讲，安全性和效率都会比较有保证.
+     
+     使用NSURLCache缺点:
+
+     最明显的优势也往往会成为缺点，因为可以干预的操作就会变少，不能按照自己的需要去实现个性化的清理等操作；
+     内存缓存使用的是缓存的二进制数据，使用时每次都需要进行重新转化成指定的对象，带来不必要的系统开销.
+     
+     沙盒tmp:
+     里边放置的是不需要一直持有的数据.你应该在不需要的时候删除它.当然,系统也可能会在你的app不运行时删除掉它.
+     这个文件中的东西不会备份在iTunes和iCloud
+     */
+}
 
 // MARK: kvo for NSOperation
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary<NSKeyValueChangeKey,id> *)change context:(void *)context
@@ -1957,6 +2269,36 @@ for (NSInteger i = 0; i < 100; i++) {
 
 // MARK: Block
 /**
+ block本质是对象，底层源码他有isa指针，它是个struct Block_layout {
+ void *isa;
+ int32_t flags;
+ void (*invoke)(void *, ...); 执行block
+ ...
+ ...
+ struct Block_descriptor_1 *descriptor;
+ }
+ 
+ void(*testBlock)(void) = ^ {
+ 
+ }
+ struct Block_layout *customBlock = (__bridge struct Block_layout *)testBlock;
+ customBlock->invoke(customBlock);
+ block的方法签名信息：
+ if (customBlock->flags & BLOCK_MAS_SIGNATURE) {
+ // 通过地址偏移
+ void *desc = customBlock->descriptor;// 拿到descriptor结构体的首地址
+ 
+ }
+ 
+ Aspects：
+ hook一个selector->aspect_add
+ AspectsIdentifier 代表一个hook
+ AspectsContainer 容器
+ 
+ 方法签名信息:没有参数，没有返回值v@:
+ block 签名信息: v@? (@?表示block)
+ 
+ 
  MARK: ---1.Block变量截获
  static NSInteger num3 = 300;
 
@@ -2165,6 +2507,430 @@ for (NSInteger i = 0; i < 100; i++) {
 
 // MARK: Runtime
 /**
+ c,c++,汇编实现的api， 给oc提供了运行时功能
+ 
+ xcrun-sdk iphoneos clang -arch arm64 -rewrite-objc main.m -o main.cpp
+ clang -rewrite-objc main.m -o main.cpp
+ 
+ 任何的方法调用都会编译成objc_msgSend（消息接收者，方法编号-字符串【方法名字】）
+ oc对象本质是结构体
+ 方法的本质是发送消息
+ 
+ runtime的3种调用方式：
+ 1.runtime api eg: sel_registerName
+ 2.NSObject api
+ 3.oc上层写法  eg: @selector()
+ 
+ @selector() 等价与 sel_registerName
+ 
+ 对象方法
+ objc_msgSend(person, sel_registerName("walk"))
+ 
+ 类方法
+ objc_msgSend(objc_getClass("Person"), sel_registerName("walk1"))
+ 
+ 向父类发消息（对象方法）
+ struct objc_super mySuper;
+ mySuper.receiver = person;// person对象 是Person类的对象
+ mySuper.super_class = class_getSuperClass([person class]);// 因为对象方法存在对象所属的类
+ objc_msgSendSuper(&mySuper,  @selector(run))
+ 
+ 向父类发消息（类方法）
+ struct objc_super myClassSuper;
+ mySuper.receiver = [person class]
+ mySuper.super_class = class_getSuperclass(object_getClass([person class]));// 因为类方法存在对象所属类的元类
+ objc_msgSendSuper(&myClassSuper,  @selector(run1))
+ 
+ 两种方式找方法实现（通过sel找imp）：
+ 1.快速 缓存里查找 （哈希表查找,汇编中查找CacheLoopup NORMAL// calls imp or objc_msgSend_uncached）
+ 汇编:
+ CacheHit
+ CheckMiss->objc_msgSend_uncached->MethodTableLookup->__class_lookupMethodAndLoadCache3
+ 从汇编__class_lookupMethodAndLoadCache3跳转到c/c++的_class_lookupMethodAndLoadCache3，前面是__开头，后面是_开头
+ _class_lookupMethodAndLoadCache3这个就返回IMP，即return lookUpImpOrForward()
+ 2.慢速
+ 从自己类 Try this class's cache->Try this class's method lists
+ //
+ ->父类->NSObject 这个流程 （如果找到，缓存中存一份）
+ lookUpImpOrForward->cache_getImp 因为多线程问题，所以还得查一下，可能其他线程也调用了这个方法，这样的话缓存里面就已经有了->找自己:getMethodNoSuper_nolock,如果找到，log_and_fill_cache
+ //
+ ->找父亲.....NSObject
+ Try superclass caches and method lists
+ for (Class curCLass = cls->superclass; curClass != nil; curClass = curClass->superclass) {
+ imp = cache_getImp(curClass, sel);
+ if (imp) {
+ if(imp != (IMP)_objc_msgForward_impcache) {
+ log_and_fill_cache()
+ goto done;
+ }
+ }
+ getMethodNoSuper_nolock()
+ }
+ 
+ 动态方法解析
+ No implementation found.try method resolver ##once##
+ _class_resolveMethod() 判断cls是否是元类
+ if (不是metaClass) {
+    _class_resolveInstanceMethod()->lookupImpOrNil()这个找的是cls的元类是否实现了+ (BOOL)resolverInstanceMethod:(SEL)sel，因为类方法存在元类
+ ->loopUpImpOrForward() 主要是查找resolverInstanceMethod
+ 因为NSObject默认实现了resolverInstanceMethod返回NO，所以不会照成这个loopUpImpOrForward死递归查找
+ }else {
+    _class_resolveClassMethod()// 元类的类方法，类方法是元类的实例方法
+再调
+ _class_resolveInstanceMethod()// 类的实例方法
+ }
+ + (BOOL)resolverInstanceMethod:(SEL)sel{
+ 
+ }
+ + (BOOL)resolverClassMethod:(SEL)sel{
+ 
+ }
+ 
+
+ 
+ 消息转发
+ No implementation found, and method resolver didnt help.Use forwarding
+ imp = (IMP)_objc_msgForward_impcache;
+ cache_fill(cls, sel, imp, inst);
+ 
+ extern void instrumentObjcMessageSends(BOOL);// 用于打印信息
+ main() {
+ instrumentObjcMessageSends(YES);
+ [Person walk];
+ instrumentObjcMessageSends(NO);
+ }
+ 
+ // objc源码
+ IMP lookUpImpOrNil() {
+ IMP imp = lookUpImpOrForward()
+ if (imp == _objc_msgForward_impcache) return nil;
+ else return imp;
+ }
+ 
+ 
+ lldb:bt
+ libobjc.A.dylib XXX方法 这个要去objc源码中查看
+ 
+ 汇编比c/c++快
+ 
+ 汇编: _objc_msgSend
+ 汇编有寄存器，可以用来存储
+ 
+ MARK: ---alloc
+ Person *p = [Person alloc];
+ Person *p1 = [p init];
+ Person *p2 = [p init];
+ 
+ p,p1,p2的地址一致
+ 
+ lldb: register read
+ 
+ Symbolic bp(符号断点)
+ 
+ alloc->[NSObject alloc]: _objc_rootAlloc(self)->callAlloc->class_createInstance->_class_createInstanceForZone(1.cls->instanceSize 内存大小 2.calloc 3.obj->initInstanceIsa) 就创建了实例对象
+ init直接返回实例对象，啥也没做 为了让子类重写init方法，做相应的初始化
+ 
+ llvm编译器优化: optimize
+ 
+ 8的倍数算法
+ int func(int num) {
+    return (num + (8-1) >> 3 << 3);// 2的3次方等于8
+  }
+ 
+ 
+ lldb objc源码
+ 
+ libobjc
+ libmalloc:
+ LGPerson *objc = [LGPerson alloc];// name,age isa=8 + age= 4内存对齐转为=>8+name=8 = 24  //内存对齐：高效，以空间换时间
+ NSLog(@"%zu",class_getInstanceSize([objc class])); // 24 对象内存占用24
+ void *p = calloc(1, 24);
+ NSLog(@"%lu",malloc_size(p));// 32    内存对齐，系统开辟32，按照16倍数对齐
+ 
+ //查看对象内存分布
+ lldb: x 对象地址（0x2818b2020）
+ 0x2818b2020: 16位 8+8
+ 0x2818b2030: 16位 8+8 eg: 80 40 29 04 01 00 00 00 代表NString *name
+ p 0x0104294080
+ p (NSString *)0x0104294080
+ 
+ po和p打印的不一样
+ p/x按16进制输出
+ 
+ MARK: ---类对象
+ 只有一个类对象
+ 
+ union联合体:
+ 数据共享一片内存
+ 一个属性 代表不同意思 eg:上下左右 通过0000 1111加算法调整
+ 
+ objc_class : objc_object{
+    // Class ISA;
+    Class superclass;// 8字节
+    cache_t cache;// 16
+    class_data_bits_t bits;
+ // 指针偏移 因为能拿到类对象的指针，通过指针偏移拿到数据
+    class_rw_t *data() {
+    return bits.data();
+    }
+ }
+ 
+ lldb: image list 和类对象的地址做差，然后在Mach-O中查看 .app文件
+ 
+ eg:类对象地址0x000012e0
+ 则bits地址等于类对象地址0x000012e0偏移+ 8 + 8 + 16 = 32个字节：p (class_data_bits_t *)0x00001300
+ 得到$0= 0x......
+ p $0->data()得到 class_rw_t *data
+ 
+ 实例方法的types = "v16@0:8"    imp(id self, SEL _cmd) 表示参数总共占16个字节，@(id)从0开始 :(SEL)从8开始
+ 
+ Method method1 = class_getInstanceMethod([Person class], @selector(instanceMethod));// 类对象拿实例方法
+ // 这个类方法是元类的实例方法
+ Method method2 = class_getInstanceMethod(objc_getMetaClass("Person"), @selector(classMethod));// 元类对象拿类方法
+ 
+ // class_getMethodImplementation底层实现是找IMP没找到返回_objc_msgForward
+ IMP imp1 = class_getMethodImplementation([Person class], @selector(instanceMethod));// 能真正拿到
+ IMP imp2 = class_getMethodImplementation([Person class], @selector(classMethod));// 拿到的_objc_msgForward的IMP
+ IMP imp3 = class_getMethodImplementation(objc_getMetaClass("Person"), @selector(instanceMethod));// 拿到的_objc_msgForward的IMP
+ IMP imp4 = class_getMethodImplementation(objc_getMetaClass("Person"), @selector(classMethod));// 能真正拿到
+ 
+ // 这两个能拿到 并且返回的指针是一样的 class_getClassMethod的底层实现是return class_getInstanceMethod(cls->getMeta(), sel)
+ // getMeta() {
+    if(isMetaClass()) return (Class)this;
+    else return this->ISA();
+  }
+ Method method1 = class_getClassMethod([Person class], @selector(classMethod));
+ Method method2 = class_getClassMethod(objc_getMetaClass("Person"), @selector(classMethod));
+ 
+ //加载类，加载分类  添加属性，添加方法，添加协议都会调用attachLists
+ attachLists():
+ attachCategories()->attachLists
+ 
+ MARK: ---objc_init
+ 库是一种可执行代码，二进制
+ 静态库: .a  .lib  在链接阶段，将目标文件.o与引用的库一起打包成可执行文件，静态链接
+ 
+ 动态库: .so  .framework  在运行程序的时候被加载进去
+ 优点：
+ 减少打包app的体积
+ 共享内存
+ 热更新，更新动态库
+ 不稳定，不安全
+ UIKit就是动态库，libsystem里面有libdispatch
+ runtime在libobjc.dylib里面
+ 
+ 编译过程:
+ 源文件 .h,.m 比如写了UIView->预编译 比如宏->编译->汇编->链接 UIKit库，.a,.lib,.so->可执行文件
+ 
+ dyld动态链接器，dyld开源的
+ _dyld_start->libdispatch_init->_objc_init->main
+ app加载过程:
+ app启动后交给dyld去做剩余的工作->加载libsystem->runtime向dyld注册回调函数 (_dyld_objc_notify_register(&map_images, load_images, unmap_image)) 仅供objc运行时使用
+ 比如加载镜像文件的回调（加载可能成功或失败）
+ { // ImageLoader循环加载image
+ ->加载image(image相当于是库)
+ ->执行map_images Load_images
+ }
+ ->调用main函数
+ 
+ map_images函数:##主要功能，初始化类:realizeClass 设置rw，ro，处理分类:把分类中的方法，协议，属性添加到类中去##
+ 初始化哈希表，把类，方法编号，协议，分类加到哈希表，并设置rw，ro,通过attachLists（类加载,加载到内存）
+ _read_images
+ 类 gdb_objc_realizes_classes(哈希表) key: 类名 value:class
+ 方法 nameSelectors(哈希表)  key: 方法名 value:SEL
+ 协议 protocol_map(哈希表)  key: 协议名 value:protocol_t
+ 
+ addClassTableEntry(cls) 然后 realizeClass(cls)->methodizeClass(cls)->attachLists 方法列表，属性列表，协议列表
+ 
+ load_images:
+ load_images->prepare_load_methods()加载load,里面用到了递归，先父后子  call_load_methods()调用load方法->call_class_loads()  call_category_loads()
+ 
+ load方法调用顺序:
+ 先父类，再子类，再分类
+ add_classs_to_loadable_list            Loadable_classes                call_class_loads
+                        =>                                      =>
+ add_category_to_loadable_list          loadable_categories         call_category_loads
+ 
+ initialize方法: 消息发送
+ 调用顺序: 先父后子
+ 如果父类的分类实现了，则先分类后子类（分类能覆盖原类，分类与分类之间也是有相应的覆盖）
+ 
+ _objc_msgSend_uncached->_class_lookupMethodAndLoadCache->lookupImpOrForward->_class_initialize递归调用 然后call_initialize->[Person initialize]
+ 
+ 
+ // 先执行testClassMethod(因为调用load之前，类的方法已经被加载了，所以可以调这个testClassMethod)，再进入main函数
+ @interface Person : NSObject
+ - (void)testInstanceMethod;
+ + (void)testClassMethod;
+ @end
+ @implementation Person (Extension)
+ + (void)load
+ {
+     [self testClassMethod];
+ }
+ @end
+ 
+ // 因为父类load比子类先调，所以调的时候还没有方法交换
+ @implementation Person
+ + (void)load
+ {
+     [TestPerson testClassMethod];// 打印的是testClassMethod
+ }
+ + (void)testClassMethod
+ {
+     NSLog(@"testClassMethod");
+ }
+ @end
+ @interface TestPerson : Person
+
+ @end
+ @implementation TestPerson
+ + (void)load
+ {
+     ReplaceMethod(self, @selector(testClassMethod), @selector(ndl_testClassMethod));
+ }
+ + (void)ndl_testClassMethod
+ {
+     NSLog(@"ndl_testClassMethod");
+ }
+ @end
+ 
+ 方法交换的坑:
+ 方法交换实质是交换imp,oriSel的imp是newSel的newSelImp
+ Student: Person
+ // 当方法交换为这样时:
+ + (void)lg_methodSwizzlingWithClass:(Class)cls oriSEL:(SEL)oriSEL swizzledSEL:(SEL)swizzledSEL{
+     
+     if (!cls) NSLog(@"传入的交换类不能为空");
+
+     Method oriMethod = class_getInstanceMethod(cls, oriSEL);
+     Method swiMethod = class_getInstanceMethod(cls, swizzledSEL);
+     method_exchangeImplementations(oriMethod, swiMethod);
+ }
+ 子类没有重写父类的实例方法instanceMethod，子类交换了父类的实例方法，用ndl_instanceMethod
+ 子类调用instanceMethod实际调用了ndl_instanceMethod
+ 父类调用instanceMethod，则导致崩溃，因为父类没有ndl_instanceMethod，找不到ndl_instanceMethod的IMP
+ 解决崩溃：
+ 1.+ (void)lg_betterMethodSwizzlingWithClass:(Class)cls oriSEL:(SEL)oriSEL swizzledSEL:(SEL)swizzledSEL{
+     
+     if (!cls) NSLog(@"传入的交换类不能为空");
+     
+     Method oriMethod = class_getInstanceMethod(cls, oriSEL);
+     Method swiMethod = class_getInstanceMethod(cls, swizzledSEL);
+     // 一般交换方法: 交换自己有的方法 -- 走下面 因为自己有意味添加方法失败
+     // 交换自己没有实现的方法:
+     //   首先第一步:会先尝试给自己添加要交换的方法 :personInstanceMethod (SEL) -> swiMethod(IMP)
+     //   然后再将父类的IMP给swizzle  personInstanceMethod(imp) -> swizzledSEL
+     //oriSEL:personInstanceMethod
+     BOOL didAddMethod = class_addMethod(cls, oriSEL, method_getImplementation(swiMethod), method_getTypeEncoding(swiMethod));
+     if (didAddMethod) {
+         class_replaceMethod(cls, swizzledSEL, method_getImplementation(oriMethod), method_getTypeEncoding(oriMethod));// 子类没有重写父类的方法走这边
+     }else{
+         method_exchangeImplementations(oriMethod, swiMethod);// 父类走这边
+     }
+ }
+ 也相当于给子类添加instanceMethod方法
+ 2.子类重写父类的instanceMethod，这样方法交换只影响子类
+ 推荐第一种，更完善的方法交换。但两者的最终结果是一致的
+ 
+ // 父类子类都没实现helloword 导致的坑
+ LGStudent *s = [[LGStudent alloc] init];
+ [s helloword];
+ @interface LGStudent : LGPerson
+ - (void)helloword;
+ @end
+ @implementation LGStudent
+
+ @end
+ @implementation LGStudent (LG)
+
+ + (void)load{
+     static dispatch_once_t onceToken;
+     dispatch_once(&onceToken, ^{
+         
+         [LGRuntimeTool lg_betterMethodSwizzlingWithClass:self oriSEL:@selector(helloword) swizzledSEL:@selector(lg_studentInstanceMethod)];
+
+     });
+ }
+
+ helloworld(SEL)->lg_studentInstanceMethod(imp)
+ lg_studentInstanceMethod(SEL)-//>hellopworld(imp) 交换不成功 找不到hellopworld的imp所以走自己的imp即lg_studentInstanceMethod(imp)，导致不断的打印LGStudent分类添加的lg对象方法
+ - (void)lg_studentInstanceMethod{
+     NSLog(@"LGStudent分类添加的lg对象方法:%s",__func__);
+     [self lg_studentInstanceMethod];
+ }
+ @end
+ // 从而得出最终的方法交换
+ + (void)lg_bestMethodSwizzlingWithClass:(Class)cls oriSEL:(SEL)oriSEL swizzledSEL:(SEL)swizzledSEL{
+     
+     if (!cls) NSLog(@"传入的交换类不能为空");
+     
+     Method oriMethod = class_getInstanceMethod(cls, oriSEL);
+     Method swiMethod = class_getInstanceMethod(cls, swizzledSEL);
+     if (!oriMethod) {
+         class_addMethod(cls, oriSEL, method_getImplementation(swiMethod), method_getTypeEncoding(swiMethod));
+         method_setImplementation(swiMethod, imp_implementationWithBlock(^(id self, SEL _cmd){ }));
+     }
+
+     BOOL didAddMethod = class_addMethod(cls, oriSEL, method_getImplementation(swiMethod), method_getTypeEncoding(swiMethod));
+     if (didAddMethod) {
+         class_replaceMethod(cls, swizzledSEL, method_getImplementation(oriMethod), method_getTypeEncoding(oriMethod));
+     }else{
+         method_exchangeImplementations(oriMethod, swiMethod);
+     }
+ }
+ 
+ struct objc_method {
+     SEL _Nonnull method_name                                 OBJC2_UNAVAILABLE;
+     char * _Nullable method_types                            OBJC2_UNAVAILABLE;
+     IMP _Nonnull method_imp                                  OBJC2_UNAVAILABLE;
+ }
+ 
+
+ 
+ MARK: ---runtime面试
+ method_swizzling  要放在load方法执行，因为load方法他在main函数之前执行，并且是自动执行的，而且具有唯一性，不会被覆盖（分类覆盖原类方法）
+ 
+ #import <objc/runtime.h>
+ objc_getClass("__NSArrayI")
+ 
+ 如果主动调用load，相当于方法又换回去了，给load方法加上dispatch_once保证只交换一次
+ 
+ MARK: ---消息发送流程
+ objc_msgSend->lookupImpOrForward
+ lookupImpOrForward没有找到imp会调_class_resolveMethod,给你动态添加方法的机会
+ _class_resolveMethod根据判断cls是否是元类，分别调用_class_resolveInstanceMethod或者_class_resolveClassMethod
+ _class_resolveInstanceMethod->loopupImpOrNil 查找的是添加方法的imp
+ _objc_msgForward_impcache
+ loopupImpOrNil 方法的
+ 
+ 每个oc方法都有两个隐式参数id self, SEL _cmd
+ 
+ Man的test没有实现
+ ((void(*)(id, SEL))_objc_msgForward)([Man new], @selector(test))调用不会走resolveInstanceMethod这是他与objc_msgSend的区别，他会走
+ forwardingTargetForSelector 和 forwardInvocation（这两个才是真正的消息转发）
+ 如果Man的test实现了
+ ((void(*)(id, SEL))_objc_msgForward)([Man new], @selector(test))调用的话，他不管你的方法有没有实现，都会走消息转发
+ _objc_msgForward是个IMP调用它会触发消息转发流程
+ 
+ JSPath就用到了_objc_msgForward
+ Aspects用了_objc_msgForward达到方法交换的目的
+ 
+ Person类有个类方法testClass（从元类里面找，沿着继承链一直找到根元类），没有实现，有个Person的分类实现了testClass的实例方法
+ 调用[Person testClass]会调用testClass实例方法
+ 因为根元类的父类指向根类NSObject，查看有没有同名的实例方法实现。最终都是经过NSObject，从而进入消息转发流程
+ 
+ MARK: ---[self class]&&[super class]
+ Man: Person
+ 在Man调用[self class]&&[super class]
+ object_getClass(obj)=>obj->getIsa
+ 
+ objc_msgSend(self, sel_registerName("class"))
+ objc_msgSendSuper({self, class_getSuperclass(objc_getClass("Man"))}, sel_registerName("class"))
+ 我的理解是：都没重写class，最终调用NSObject的class即object_getClass(obj)，obj都是self，即都得到Man
+ 
+ 
+ 
  MARK: ---1.objc对象的isa的指针指向什么
  指向他的类对象,从而可以找到对象上的方法
  
@@ -2846,4 +3612,165 @@ for (NSInteger i = 0; i < 100; i++) {
  cell.layer.rasterizationScale=[[UIScreenmainScreen]scale]
  
 
+ */
+
+/**
+ MARK: ===进阶
+ MARK: ---runloop
+ 它是一个对象，他是运行循环，使程序进入do...while循环
+ 消息机制处理模式，消息交给runloop处理
+ void CFRunLoopRun(void)
+ 
+ 作用：
+ 保持程序的持续运行
+ 处理app中的各种事件（触摸，定时器，performSelector）
+ 节约cpu资源，提高程序的性能，该做事就做事，该休息就休息
+ 
+ port:端口
+ 
+ timer:
+ __CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__，它是个静态方法  表示runloop正在调用一个定时器的回调函数，然后走timer的回调
+ 
+ performSelector:afterDelay: 也是__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__
+ 
+ dispatch_async(mainQueue, {}): 一定要mainQueue，__CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__
+ 
+ __CFRUNLOOP_IS_CALLING_OUT_TO_AN_OBSERVER_CALLBACK_FUNCTION__// onserver
+ __CFRUNLOOP_IS_CALLING_OUT_TO_A_BLOCK__//block
+ __CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE0_PERFORM_FUNCTION__// 相应source0
+ __CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE1_PERFORM_FUNCTION__// source1
+ 
+ CF框架是开源的
+ lldb: bt打印堆栈
+ 
+ CFMutableDictionaryRef:
+ 线程: 对应runloop
+ 
+ 通过线程创建runloop
+ CFRunLoopRef mainLoop = _CFRunLoopCreate(pthread_main_thread_np())
+ 
+ struct __CFRunLoop {
+ __CFPort _wakeUpPort;// used for CFRunLoopWakeUp
+ }
+ 
+ 子线程的runloop默认不开启
+ timer依赖于runloop
+ // timer加入的mode和我们现在的runloop mode相等 || (timer加入的mode == kCFRunLoopCommonModes && rl->commonModes 包含当前的mode)
+ [[NSRunLoop currentRunLoop] addTimer: forMode:]
+ CFRunLoopAddItemsToCommonModes->根据判断匹配调用CFRunLoopAddTimer()（或者CFRunLoopAddSource,CFRunLoopAddObserver）->把timer#加#到commonModeItems
+ RunLoopRun->RunLoopRunSpecific->__CFRunLoopDoBlocks() while循环item这边是#用#
+ 
+ 联合体节省内存
+ typedef union {
+ int a;
+ float b;
+ } UnionType;
+ 
+ UnionType type;
+ type.a = 10;
+ &type.a 和&type.b地址一样
+ sizeof(UnionType) = 4
+ 原理可利用位域得到值
+ 
+ source0: 回调函数指针 标记signal为待处理，调用wakeup唤醒runloop处理事件。处理app内部事件
+ source1: mach_port & 回调函数指针。port:线程间通讯
+ 
+ 
+ 可以通过临时变量控制线程退出，从而控制runloop（因为timer是基于runloop的），runloop没有意义了，timer也就没有意义了
+ */
+// MARK: ---weak底层
+/**
+ SideTable 散列表
+ objc_initWeak->storeWeak->_class_initialize
+ ->1.weak_unregister_no_lock 2.weak_register_no_lock
+ 
+ weak_register_no_lock->1.(weak_entry_for_referent , append_referrer) 2.(weak_entry_t,  weak_grow_maybe, weak_entry_insert)
+ 
+ oldObject: id referent_id
+ location: id *referrer_id
+ objc_object *referent = (objc_object *)referent_id
+ 
+ weak_entry_for_referent: 从weakTable(weak_table_t)中根据referent(objc_object)得到entry（weak_entry_t）
+ 
+ weak_unregister_no_lock:移除oldObj
+ 
+ 散列表->entry->weak引用对象
+ entry哈希表
+ weak_register_no_lock:注册newObj
+ if (entry = weak_entry_for_referent(weak_table, referent)) {
+ append_referrer(entry, referrer)
+ } else {
+ weak_entry_t new_entry(referent, referrer);
+ weak_grow_maybe(weak_table)
+ weak_entry_insert(weak_table, &new_entry)
+ }
+ 
+ 通过SideTable找到weak_table
+ weak_table根据referent找到或者创建weak_entry_t
+ 找到，然后append_referrer(entry, referrer)将新弱引用的对象加进去entry
+ 没找到，最后weak_entry_insert把entry加入到weak_table
+ 
+ sidetable_clearDeallocating()->weak_clear_no_lock
+ 
+ referrers = entry->referrers;
+ 
+ objc_object **referrer = referrers[i];
+ if (referrer) {
+ if(*referrer == referent) {
+ **referrer = nil;
+ }
+ }
+ weak_entry_remove(weak_table, entry)
+ */
+
+// MARK: ---性能优化
+/**
+ MARK: ---内存管理
+ 内存布局:
+ 
+ */
+
+
+// MARK: ---flutter
+/**
+ 打开文件时提示【文件已损坏，请移至废纸篓】
+ 打开文件时提示【文件来自身份不明的开发者】
+ 系统是OS Sierra(10.12)以上
+ sudo spctl --master-disable
+ 
+ App 在macOS Catalina下提示已损坏无法打开解决办法
+ sudo xattr -d com.apple.quarantine /Applications/xxxx.app
+ 重启App
+ 
+ https://flutterchina.club/
+ https://github.com/flutter/flutter/releases
+ 
+ VSCode:
+ Extensions: Install Extension->flutter
+ View->Command Palette->Flutter: Run Flutter Doctor
+ View->Command Palette->Flutter: New Project
+ 
+ unzip ~/Downloads/flutter_macos_v1.12.13+hotfix.5-stable.zip
+ 
+ flutter doctor
+ 升级flutter sdk:
+ flutter upgrade
+ 
+ 支持热重载: r
+ restart: R
+ 
+ flutter create flutter_demo
+ cd flutter_demo->flutter run
+ flutter run -d "iPhone X"
+ 
+ rm /opt/flutter/bin/cache/lockfile
+ 
+ Widget(部件):
+ 有状态的Stateful
+ 无状态的Stateless
+ 
+ class MyWidget extends StatelessWidget {
+ // build
+ }
+ 
  */

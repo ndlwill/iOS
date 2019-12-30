@@ -6,6 +6,26 @@
 //  Copyright © 2019 ndl. All rights reserved.
 //
 
+// MARK: ===logic
+// MARK: ---AVFoundation用来媒体捕捉
+/**
+ 照片/视频捕捉功能
+ 
+ 小视频/直播
+ 
+ 捕捉会话：AVCaptureSession
+ 捕捉设备：摄像头，麦克风
+ 捕捉设备的输入：AVCaptureDeviceInput
+ 捕捉设备的输出：AVCaptureOutput 是一个抽象类
+ AVCaptureStillImageOutput
+ AVCaptureMovieFileOutput
+ AVCaptureAudioDataOutput
+ AVCaptureVideoDataOutput
+ 
+ 捕捉连接：AVCaptureConnection
+ 捕捉预览：AVCaptureVideoPreviewLayer
+ */
+
 /*
  CoreAudio:
  MIDI:电脑可以将来源于键盘乐器的声音信息转化为数字信息存入电脑

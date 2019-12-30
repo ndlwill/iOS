@@ -1929,15 +1929,15 @@ NSLog(@"viewDidLoad 22");
 //    });
     
     // MARK: interview面试
-//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-//        NDLLog(@"===start interview===");
-//        [self presentViewController:[InterviewViewController new] animated:YES completion:nil];
-//    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NDLLog(@"===start interview===");
+        [self presentViewController:[InterviewViewController new] animated:YES completion:nil];
+    });
     
     // MARK: test Rotate ???
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        KeyWindow.rootViewController = [[BaseNavigationController alloc] initWithRootViewController:[TestRotateViewController new]];
-    });
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        KeyWindow.rootViewController = [[BaseNavigationController alloc] initWithRootViewController:[TestRotateViewController new]];
+//    });
     
     // MARK: test tabBarVC
 //    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{

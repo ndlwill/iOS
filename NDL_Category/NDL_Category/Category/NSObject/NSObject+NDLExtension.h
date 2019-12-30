@@ -21,7 +21,6 @@
 
 /*
  +load:
- +load方法会在runtime加载类、分类时调用
  每个类、分类的+load，在程序运行过程中只调用一次
  调用顺序：
  1、先调用类的+load
@@ -522,6 +521,9 @@
  Category编译之后的底层结构是struct category_t，里面存储着分类的对象方法、类方法
  在程序运行的时候，runtime会将Category的数据，合并到类信息中（类对象、元类对象中）
  */
+
+// objc_getClass(“NDLPerson”) -> NDLPerson类
+// object_getClass(self)  返回的是对象的isa指针
 
 // MARK: isKindOfClass 与 isMemberOfClass
 /*
