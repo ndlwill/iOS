@@ -397,6 +397,14 @@ class ViewController: UIViewController {
         return fib(N - 1) + fib(N - 2)
     }
     
+    // MARK: ==Test Nav==
+    @IBAction func testNav(_ sender: Any) {
+//        let vc = BaseNavigationController(rootViewController: TestNav1ViewController())
+//        vc.modalPresentationStyle = .fullScreen
+//        self.present(vc, animated: true, completion: nil)
+        
+        self.present(TestDismiss1ViewController(), animated: true, completion: nil)
+    }
     
     override func viewDidLoad() {
         super.viewDidLoad()

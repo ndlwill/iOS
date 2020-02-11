@@ -86,7 +86,7 @@ struct R: Rswift.Validatable {
     fileprivate init() {}
   }
   
-  /// This `R.image` struct is generated, and contains static references to 6 images.
+  /// This `R.image` struct is generated, and contains static references to 8 images.
   struct image {
     /// Image `baidu`.
     static let baidu = Rswift.ImageResource(bundle: R.hostingBundle, name: "baidu")
@@ -94,6 +94,10 @@ struct R: Rswift.Validatable {
     static let google = Rswift.ImageResource(bundle: R.hostingBundle, name: "google")
     /// Image `juejin`.
     static let juejin = Rswift.ImageResource(bundle: R.hostingBundle, name: "juejin")
+    /// Image `nav_btn_back_nor`.
+    static let nav_btn_back_nor = Rswift.ImageResource(bundle: R.hostingBundle, name: "nav_btn_back_nor")
+    /// Image `nav_btn_back_pre`.
+    static let nav_btn_back_pre = Rswift.ImageResource(bundle: R.hostingBundle, name: "nav_btn_back_pre")
     /// Image `thanos_snap`.
     static let thanos_snap = Rswift.ImageResource(bundle: R.hostingBundle, name: "thanos_snap")
     /// Image `thanos_time`.
@@ -114,6 +118,16 @@ struct R: Rswift.Validatable {
     /// `UIImage(named: "juejin", bundle: ..., traitCollection: ...)`
     static func juejin(compatibleWith traitCollection: UIKit.UITraitCollection? = nil) -> UIKit.UIImage? {
       return UIKit.UIImage(resource: R.image.juejin, compatibleWith: traitCollection)
+    }
+    
+    /// `UIImage(named: "nav_btn_back_nor", bundle: ..., traitCollection: ...)`
+    static func nav_btn_back_nor(compatibleWith traitCollection: UIKit.UITraitCollection? = nil) -> UIKit.UIImage? {
+      return UIKit.UIImage(resource: R.image.nav_btn_back_nor, compatibleWith: traitCollection)
+    }
+    
+    /// `UIImage(named: "nav_btn_back_pre", bundle: ..., traitCollection: ...)`
+    static func nav_btn_back_pre(compatibleWith traitCollection: UIKit.UITraitCollection? = nil) -> UIKit.UIImage? {
+      return UIKit.UIImage(resource: R.image.nav_btn_back_pre, compatibleWith: traitCollection)
     }
     
     /// `UIImage(named: "thanos_snap", bundle: ..., traitCollection: ...)`
