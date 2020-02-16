@@ -809,7 +809,65 @@ Rn(∂)  = q'  =  nxny(1-cos∂)-nzsin∂ ny2(1-con∂)+cos∂ nynz(1-cos∂)-nx
         (k-1)nxnz (k-1)nynz 1+(k-1)nz2
  
  MARK: ==OpenGL ES (OpenGL for Embedded Systems)
+ 顶点着⾊器:
+ 1. 着⾊器程序—描述顶点上执⾏操作的顶点着色器程序源代码/可执⾏文件
+ 2.顶点着⾊器输⼊(属性) — 用顶点数组提供每个顶点的数据
+ 3.统一变量(uniform)—顶点/⽚元着色器使⽤的不变数据
+ 4. 采样器—代表顶点着⾊器使用纹理的特殊统一变量类型.
  
+ 顶点着⾊器 业务:
+ 1. 矩阵变换位置
+ 2.计算光照公式⽣成逐顶点颜⾊
+ 3.生成/变换纹理坐标
+ 
+ eg:
+ attribute vec4 position;
+ attribute vec2 textCoordinate;
+ uniform mat4 rotateMatrix;
+ varying lowp vec2 varyTextCoord;
+ void main()
+ {
+ varyTextCoord = textCoordinate;
+ vec4 vPos = position;
+ vPos = vPos * rotateMatrix;
+ gl_Position = vPos;
+ }
+ 
+ 顶点着⾊器之后,下一个阶段就是图元装配
+ 图元(Primitive): 点,线,三⻆形等
+ 图元装配: 将顶点数据计算成一个个图元.在这个阶段会执行裁剪、透视分割和 Viewport变换操作
+ 将顶点着⾊器的输出值执⾏裁剪、透视分割、视口变换 后进入光栅化阶段
+ 
+ 光栅化:
+ 在这个阶段绘制对应的图元(点/线/三⻆形). 光栅化就是将图元转化成⼀组二维⽚段 的过程.⽽这些转化的⽚段将由⽚元着⾊器处理.这些二维⽚段就是屏幕上可绘制的像 素.
+ 
+ 片段着⾊器/片元着⾊器:
+ 1. 着⾊器程序—描述片段上执行操作的着⾊器程序源代码/可执⾏文件
+ 2.输⼊变量— 光栅化单元⽤插值为每个⽚段生成的顶点着⾊器输出
+ 3.统⼀变量(uniform)—顶点/⽚元着⾊器使⽤的不变数据
+ 4. 采样器—代表片元着⾊器使⽤纹理的特殊统一变量类型
+ 
+ ⽚元着⾊器 业务:
+ 1. 计算颜⾊
+ 2. 获取纹理值
+ 3. 往像素点中填充颜色值(纹理值/颜⾊值);
+ 总结: 它可以⽤于图片/视频/图形中每个像素的颜⾊填充(⽐如给视频添加滤镜,实际 上就是将视频中每个图⽚的像素点颜⾊\色填充进行修改.)
+ 
+ eg:
+ varying lowp vec2 varyTextCoord;
+ uniform sampler2D colorMap;
+ void main()
+ {
+ gl_FragColor = texture2D(colorMap, varyTextCoord);
+ }
+ 
+ 逐⽚段操作:
+ 像素归属测试: 确定帧缓存区中位置(Xw,Yw)的像素目前是不是归属于OpenGL ES所 有.
+ 例如,如果一个显示OpenGL ES帧缓存区View被另外一个View 所遮蔽.
+ 则窗⼝系统可以确定被遮蔽的像素不属于OpenGL ES上下文.从⽽不全显示这些像素.
+ ⽽像素归 属测试是OpenGL ES 的⼀部分,它不由开发者人为控制,而是由OpenGL ES 内部进行
+ 
+ 裁剪测试: 裁剪测试确定(Xw,Yw)是否位于作为OpenGL ES状态的一部分裁剪矩形范围 内.如果该片段位于裁剪区域之外,则被抛弃
  
  
  */
