@@ -321,6 +321,17 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         
+        var dic = ["key": "value"]
+        if dic is Any {
+            print("dic is Any")
+        }
+
+        let ocDic = dic as NSDictionary
+        
+        if dic is AnyObject {
+            print("dic is AnyObject")
+        }
+        
 //        var arr1 : [Int] = [1, 2, 3] // ==1== ==2== ==3==
         var arr1 : [Int]? = [1, 2, 3]// ==[1, 2, 3]==
         arr1.map {
