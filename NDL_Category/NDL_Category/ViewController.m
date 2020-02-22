@@ -130,6 +130,9 @@
 #import "ThreeDTouchViewController.h"
 #import "InterviewViewController.h"
 
+#import "TestOpenGLESViewController.h"
+#import "OpenGLES1Controller.h"
+
 #import "NDL_Category-Swift.h"
 
 typedef id (^WeakReference)(void);
@@ -1929,10 +1932,22 @@ NSLog(@"viewDidLoad 22");
 //    });
     
     // MARK: interview面试
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        NDLLog(@"===start interview===");
+//        [self presentViewController:[InterviewViewController new] animated:YES completion:nil];
+//    });
+    
+    // MARK: ===test opengles==
+    /**
+     TestOpenGLESViewController
+     OpenGLES1Controller
+     */
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        NDLLog(@"===start interview===");
-        [self presentViewController:[InterviewViewController new] animated:YES completion:nil];
+        OpenGLES1Controller *vc = [[OpenGLES1Controller alloc] init];
+        vc.modalPresentationStyle = UIModalPresentationFullScreen;
+        [self presentViewController:vc animated:YES completion:nil];
     });
+    
     
     // MARK: test Rotate ???
 //    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
