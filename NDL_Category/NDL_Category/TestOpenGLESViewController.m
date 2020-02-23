@@ -193,8 +193,112 @@ constantColor 不提供每个顶点颜色数据时使⽤常量颜⾊(黑色)
  准备绘制效果:
  - prepareToDraw 准备渲染效果
  
+ MARK: ==OpenGL ES 错误处理==
  
+ MARK: ==OpenGL ES==
+ OpenGL ES 1.X :针对固定功能流水管线硬件
+ OpenGL ES 2.X :针对可编程流⽔管线硬件
+ OpenGL ES 3.X :OpenGL ES 2.0的扩展
  
+ MARK: ==GLSL==
+用EAGL 创建屏幕上的渲染表⾯
+加载顶点/片元着⾊器
+创建一个程序对象,并链接顶点/⽚元着⾊器,并链接程序对象
+设置视⼝
+清除颜色缓存区
+渲染简单图元
+使颜⾊缓存区的内容在EAGL 窗⼝表现呈现
+ 
+ MARK: ==着⾊器与程序==
+需要创建2个基本对象才能⽤着⾊器进⾏渲染: 着⾊器对象和程序对象.
+ 
+获取链接后着⾊器对象的⼀般过程包括6个步骤:
+创建⼀个顶点着⾊器对象和一个⽚段着⾊器对象
+将源代码链接到每个着⾊器器对象
+编译着⾊器对象
+创建一个程序对象
+将编译后的着⾊器对象连接到程序对象
+链接程序对象
+ 
+ ==创建与编译一个着⾊器==
+ GLuint glCreateShader(GLenum type);
+ type — 创建着⾊器的类型,GL_VERTEX_SHADER 或者GL_FRAGMENT_SHADER
+ 返回值 — 是指向新着⾊器对象的句柄.可以调用glDeleteShader 删除
+ 
+ void glDeleteShader(GLuint shader);
+ shader — 要删除的着色器对象句柄
+ 
+ void glShaderSource(GLuint shader , GLSizei count ,const GLChar * const *string, const GLint *length);
+ shader — 指向着⾊器对象的句柄
+ count — 着⾊器源字符串的数量,着⾊器可以由多个源字符串组成,但是每个着⾊器只有一个main函数
+ string — 指向保存数量的count 的着⾊器源字符串的数组指针
+ length — 指向保存每个着⾊器字符串⼤小且元素数量为count 的整数数组指针
+ 
+ void glCompileShader(GLuint shader);
+ shader — 需要编译的着⾊器对象句柄
+ 
+ void glGetShaderiv(GLuint shader , GLenum pname , GLint *params );
+ shader — 需要编译的着⾊器对象句柄
+ pname — 获取的信息参数,可以为 GL_COMPILE_STATUS/GL_DELETE_STATUS/ GL_INFO_LOG_LENGTH/GL_SHADER_SOURCE_LENGTH/ GL_SHADER_TYPE
+ params — 指向查询结果的整数存储位置的指针.
+ 
+ void glGetShaderInfolog(GLuint shader , GLSizei maxLength, GLSizei *length , GLChar *infoLog);
+ shader — 需要获取信息⽇志的着⾊器对象句柄
+ maxLength — 保存信息⽇志的缓存区⼤小
+ length — 写入的信息⽇志的长度(减去null 终⽌符); 如果不需要知道⻓度. 这个参数可以为Null
+ infoLog — 指向保存信息⽇志的字符缓存区的指针
+ 
+ ==创建与链接程序==
+ GLUint glCreateProgram( )
+ 创建⼀个程序对象
+ 返回值: 返回⼀个执行新程序对象的句柄
+ 
+ void glDeleteProgram( GLuint program )
+ program : 指向需要删除的程序对象句柄
+ 
+ //着⾊器与程序连接/附着
+ void glAttachShader( GLuint program , GLuint shader );
+ program : 指向程序对象的句柄
+ shader : 指向程序连接的着⾊器对象的句柄
+ 
+ //断开连接
+ void glDetachShader(GLuint program);
+ program : 指向程序对象的句柄
+ shader : 指向程序断开连接的着⾊器对象句柄
+ 
+glLinkProgram(GLuint program)
+ program: 指向程序对象句柄
+ 
+ 链接程序之后, 需要检查链接是否成功. 你可以使⽤glGetProgramiv 检查链接状态:
+ void glGetProgramiv (GLuint program,GLenum pname, GLint *params);
+ program: 需要获取信息的程序对象句柄
+ pname : 获取信息的参数,可以是:
+ GL_ACTIVE_ATTRIBUTES
+ GL_ACTIVE_ATTRIBUTES_MAX_LENGTH
+ GL_ACTIVE_UNIFORM_BLOCK
+ GL_ACTIVE_UNIFORM_BLOCK_MAX_LENGTH
+ GL_ACTIVE_UNIFROMS
+ GL_ACTIVE_UNIFORM_MAX_LENGTH
+ GL_ATTACHED_SHADERS
+ GL_DELETE_STATUS
+ GL_INFO_LOG_LENGTH
+ GL_LINK_STATUS
+ GL_PROGRAM_BINARY_RETRIEVABLE_HINT
+ GL_TRANSFORM_FEEDBACK_BUFFER_MODE
+ GL_TRANSFORM_FEEDBACK_VARYINGS
+ GL_TRANSFORM_FEEDBACK_VARYING_MAX_LENGTH
+ GL_VALIDATE_STATUS
+ params : 指向查询结果整数存储位置的指针
+ 
+ 从程序信息⽇志中获取信息
+ void glGetPorgramInfoLog( GLuint program ,GLSizei maxLength, GLSizei *length , GLChar *infoLog )
+ program : 指向需要获取信息的程序对象句柄
+ maxLength : 存储信息⽇志的缓存区⼤小
+ length : 写⼊的信息日志长度(减去null 终⽌符),如果不需要知道⻓度,这个参数可以为Null.
+ infoLog : 指向存储信息⽇志的字符缓存区的指针
+ 
+ void glUseProgram(GLuint program)
+ program: 设置为活动程序的程序对象句柄.
  
  */
 

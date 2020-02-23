@@ -819,6 +819,7 @@ Rn(∂)  = q'  =  nxny(1-cos∂)-nzsin∂ ny2(1-con∂)+cos∂ nynz(1-cos∂)-nx
  1. 矩阵变换位置
  2.计算光照公式⽣成逐顶点颜⾊
  3.生成/变换纹理坐标
+ 总结: 它可以⽤于执行⾃定义计算,实施新的变换,照明或者传统的固定功能所不允许 的基于顶点的效果
  
  eg:
  attribute vec4 position;
@@ -833,6 +834,7 @@ Rn(∂)  = q'  =  nxny(1-cos∂)-nzsin∂ ny2(1-con∂)+cos∂ nynz(1-cos∂)-nx
  gl_Position = vPos;
  }
  
+ 图元装配:
  顶点着⾊器之后,下一个阶段就是图元装配
  图元(Primitive): 点,线,三⻆形等
  图元装配: 将顶点数据计算成一个个图元.在这个阶段会执行裁剪、透视分割和 Viewport变换操作
@@ -860,6 +862,8 @@ Rn(∂)  = q'  =  nxny(1-cos∂)-nzsin∂ ny2(1-con∂)+cos∂ nynz(1-cos∂)-nx
  {
  gl_FragColor = texture2D(colorMap, varyTextCoord);
  }
+ 
+ 顶点着色器和片段着色器只完成计算功能，逐⽚段操作才完成填充功能
  
  逐⽚段操作:
  像素归属测试: 确定帧缓存区中位置(Xw,Yw)的像素目前是不是归属于OpenGL ES所 有.
