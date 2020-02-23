@@ -132,6 +132,8 @@
 
 #import "TestOpenGLESViewController.h"
 #import "OpenGLES1Controller.h"
+#import "OpenGLES2Controller.h"
+#import "CCViewController.h"
 
 #import "NDL_Category-Swift.h"
 
@@ -1941,9 +1943,10 @@ NSLog(@"viewDidLoad 22");
     /**
      TestOpenGLESViewController
      OpenGLES1Controller
+     OpenGLES2Controller
      */
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        OpenGLES1Controller *vc = [[OpenGLES1Controller alloc] init];
+        CCViewController *vc = [[CCViewController alloc] init];
         vc.modalPresentationStyle = UIModalPresentationFullScreen;
         [self presentViewController:vc animated:YES completion:nil];
     });

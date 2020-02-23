@@ -20,6 +20,14 @@
  因为每个窗⼝系统都有不同的定义,所以EGL提供基本的不透明类型—EGLDisplay,
  这 个类型封装了所有系统相关性,⽤于和原生窗⼝系统接⼝
  
+ EGL的主要功能如下:
+1. 和本地窗口系统(native windowing system)通讯;
+2. 查询可⽤的配置;
+3. 创建OpenGL ES可用的“绘图表面”(drawing surface);
+4. 同步不同类别的API之间的渲染，⽐如在OpenGL ES和OpenVG之间同步，或者在
+OpenGL和本地窗口的绘图命令之间;
+5. 管理“渲染资源”，比如纹理映射(rendering map)
+ 
  OpenGL ES是基于C的API
  作为C API，它与Objective-C Cocoa Touch应⽤程序⽆缝集成。OpenGL ES规范没有定义窗口层
  相反，托管操作系统必须提供函数来创建一个接受命令的OpenGL ES 渲染上下⽂和⼀个帧缓冲区,其中写入任何绘图命令的结果
