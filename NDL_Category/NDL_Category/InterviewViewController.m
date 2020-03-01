@@ -3723,7 +3723,210 @@ for (NSInteger i = 0; i < 100; i++) {
  weak_entry_remove(weak_table, entry)
  */
 
-// MARK: ---性能优化
+// MARK: ---LG_多线程
+/**
+ 线程的定义：
+ 线程是进程的基本执行单元，一个进程的所有任务都在线程中执行
+ 进程要想执行任务，必须得有线程，进程至少要有一条线程
+ 程序启动会默认开启一条线程，这条线程被称为主线程或 UI 线程
+ 
+ 进程的定义：
+ 进程是指在系统中正在运行的一个应用程序
+ 每个进程之间是独立的，每个进程均运行在其专用的且受保护的内存
+ 
+ 终端: kill 线程号
+ 
+ 进程与线程的关系:
+ 地址空间：同一进程的线程共享本进程的地址空间，而进程之间则是独立的地址空间。
+ 资源拥有：同一进程内的线程共享本进程的资源如内存、I/O、cpu等，但是进程之间的资源是独立的。
+
+ 一个进程崩溃后，在保护模式下不会对其他进程产生影响，但是一个线程崩溃整个进程都死掉。所以多进程要比多线程健壮。
+ 进程切换时，消耗的资源大，效率高。所以涉及到频繁的切换时，使用线程要好于进程。同样如果要求同时进行并且又要共享某些变量的并发操作，只能用线程不能用进程
+ 执行过程：每个独立的进程有一个程序运行的入口、顺序执行序列和程序入口。但是线程不能独立执行，必须依存在应用程序中，由应用程序提供多个线程执行控制。
+ 线程是处理器调度的基本单位，但是进程不是。
+
+ 多线程的意义:
+ * 优点
+   * 能适当提高程序的执行效率
+   * 能适当提高资源的利用率（CPU，内存）
+   * 线程上的任务执行完成后，线程会自动销毁
+ * 缺点
+    * 开启线程需要占用一定的内存空间（默认情况下，每一个线程都占 512 KB）
+    * 如果开启大量的线程，会占用大量的内存空间，降低程序的性能
+    * 线程越多，CPU 在调用线程上的开销就越大
+    * 程序设计更加复杂，比如线程间的通信、多线程的数据共享
+    
+ UI为什么要在主线程更新？
+ UIKit 线程不安全，需要按照苹果的设计和标准
+ 
+ 耗时操作会阻塞主线程
+ 
+ C与OC的桥接： __bridge只做类型转换，但是不修改对象（内存）管理权；
+
+ __bridge_retained（也可以使用CFBridgingRetain）将Objective-C的对象转换为Core Foundation的对象，同时将对象（内存）的管理权交给我们，后续需要使用CFRelease或者相关方法来释放对象；
+
+ __bridge_transfer（也可以使用CFBridgingRelease）将Core Foundation的对象转换为Objective-C的对象，同时将对象（内存）的管理权交给ARC
+ 
+ 互斥锁小结：
+   * 保证锁内的代码，同一时间，只有一条线程能够执行！
+   * 互斥锁的锁定范围，应该尽量小，锁定范围越大，效率越差！
+
+ * 互斥锁参数
+   * 能够加锁的任意 NSObject 对象
+   * 注意：锁对象一定要保证所有的线程都能够访问
+   * 如果代码中只有一个地方需要加锁，大多都使用 self，这样可以避免单独再创建一个锁对象
+   
+ ##GCD可以通过信号量（dispatch_semaphore_create(value) 控制有几条线程可以并发执行）控制并发数##
+ 
+ 
+ nonatomic 非原子属性
+ atomic 原子属性(线程安全)，针对多线程设计的，默认值
+
+ 保证同一时间只有一个线程能够写入(但是同一个时间多个线程都可以取值)
+ atomic 本身就有一把锁(自旋锁)
+ 单写多读：单个线程写入，多个线程可以读取// 读写锁，写会影响读，读不会影响写
+
+ atomic：线程安全，需要消耗大量的资源
+ nonatomic：非线程安全，适合内存小的移动设备
+ 
+ 线程和Runloop的关系：
+ 1：runloop与线程是一一对应的，一个runloop对应一个核心的线程，为什么说是核心的，是因为runloop是可以嵌套的，但是核心的只能有一个，他们的关系保存在一个全局的字典里。
+ 2：runloop是来管理线程的，当线程的runloop被开启后，线程会在执行完任务后进入休眠状态，有了任务就会被唤醒去执行任务。
+ 3：runloop在第一次获取时被创建，在线程结束时被销毁。
+ 4：对于主线程来说，runloop在程序一启动就默认创建好了。
+ 5：对于子线程来说，runloop是懒加载的，只有当我们使用的时候才会创建，所以在子线程用定时器要注意：确保子线程的runloop被创建，不然定时器不会回调。timer依赖runloop
+
+ runloop（do..while循环）通过dict[线程的指针] 创建的，管理线程里面的任务。保证线程不退出
+ 
+ 优先级高不一定先执行
+
+ 线程执行完，不会被销毁，过会会被线程池回收，线程池中这条线程很久没被调度就会被回收。
+ 
+ MARK: ==LG_GCD==
+ 全称是 Grand Central Dispatch
+ 纯 C 语言，提供了非常多强大的函数
+ GCD 是苹果公司为多核的并行运算提出的解决方案
+ GCD 会自动管理线程的生命周期（创建线程、调度任务、销毁线程）
+
+ ##将==任务==添加到==队列==，并且指定==执行任务的函数==##
+ 异步是多线程的代名词
+ 
+ 这边的队列：fifo 先进先执行，任务执行依赖于线程，线程依赖于cpu调度
+ 
+ __block int a = 0// 将a从栈区拷贝一份到struct 结构体里包含了a的指针和a的值
+ 
+ // 1， 5 后面顺序不定
+ dispatch_queue_t queue = dispatch_queue_create("cooci", DISPATCH_QUEUE_CONCURRENT);
+     NSLog(@"1");
+     dispatch_async(queue, ^{
+         NSLog(@"2");
+         NSLog(@"4");
+     });
+     
+     dispatch_async(queue, ^{
+             NSLog(@"22");
+             NSLog(@"44");
+         });
+     NSLog(@"5");
+ 
+ // 肯定1 后面顺序不定
+ dispatch_queue_t queue = dispatch_queue_create("cooci", DISPATCH_QUEUE_CONCURRENT);
+ NSLog(@"1");
+ dispatch_async(queue, ^{
+     NSLog(@"2");
+     dispatch_async(queue, ^{
+         NSLog(@"3");
+     });
+     NSLog(@"4");
+ });
+ NSLog(@"5");
+ 
+ // 4,3的顺序是肯定的
+ dispatch_queue_t queue = dispatch_queue_create("cooci", DISPATCH_QUEUE_SERIAL);
+ NSLog(@"1");
+ dispatch_async(queue, ^{
+     NSLog(@"2");
+     dispatch_async(queue, ^{
+         NSLog(@"3");
+     });
+     NSLog(@"4");
+ });
+ NSLog(@"5");
+ 
+ 栅栏函数 dispatch_barrier_async:
+ 最直接的作用: 控制任务执行顺序,同步，保证线程安全
+ dispatch_barrier_async    前面的任务执行完毕才会来到这里
+ dispatch_barrier_sync        作用相同,但是这个会堵塞线程,影响后面的任务执行
+ 非常重要的一点:  栅栏函数只能控制##同一并发队列(自定义的)##,不利于封装
+
+ ###可变数组 线程不安全：###
+ dispatch_queue_t concurrentQueue = dispatch_queue_create("cooci", DISPATCH_QUEUE_CONCURRENT);
+ // signal SIGABRT -- 线程BUG
+ for (int i = 0; i<2000; i++) {
+     dispatch_async(concurrentQueue, ^{
+         NSString *imageName = [NSString stringWithFormat:@"%d.jpg", (i % 10)];
+         NSURL *url = [[NSBundle mainBundle] URLForResource:imageName withExtension:nil];
+         NSData *data = [NSData dataWithContentsOfURL:url];
+         UIImage *image = [UIImage imageWithData:data];
+ 
+        // [self.mArray addObject:image]; 会崩溃
+        // 解决方案： 或者用锁@synchronized (self)
+         dispatch_barrier_async(concurrentQueue, ^{
+             [self.mArray addObject:image];
+         });
+     });
+ }
+ 
+ 调度组：
+ 最直接的作用: 控制任务执行顺序
+ dispatch_group_create     创建组
+ dispatch_group_async       进组任务
+ dispatch_group_notify    进组任务执行完毕通知
+ dispatch_group_wait        进组任务执行等待时间
+
+ // 底层实现：进组底层signal（不能<1否则崩溃） 会+1，一直循环判断信号是否等于0，等于0就group_wakeup->dispatch_group_notify
+ dispatch_group_enter        进组
+ dispatch_group_leave        出组
+
+ 信号量dispatch_semaphore_t：
+ dispatch_semaphore_create            创建信号量
+ dispatch_semaphore_wait                信号量等待
+ dispatch_semaphore_signal            信号量释放
+ 同步当锁,和控制GCD最大并发数
+
+ Dispatch_source：
+ dispatch_source_create                        创建源
+ dispatch_source_set_event_handler        设置源事件回调
+ dispatch_source_merge_data                源事件设置数据
+ dispatch_source_get_data                获取源事件数据
+ dispatch_resume                                继续
+ dispatch_suspend                            挂起
+ 
+ @property (nonatomic, strong) dispatch_source_t source;
+ // 参数4: 可以传Null，默认为全局队列
+ self.source = dispatch_source_create(DISPATCH_SOURCE_TYPE_DATA_ADD, 0, 0, dispatch_get_main_queue());
+ dispatch_source_set_event_handler(self.source, ^{
+     NSUInteger value = dispatch_source_get_data(self.source); // 取回来值 1 响应式
+ });
+ 
+ // 在任一线程上调用它的的一个函数 dispatch_source_merge_data 后，会执行 Dispatch Source 事先定义好的句柄（可以把句柄简单理解为一个 block ）
+ 这个过程叫 Custom event ,用户事件。是 dispatch source 支持处理的一种事件
+ //句柄是一种指向指针的指针  它指向的就是一个类或者结构，它和系统有很密切的关系
+ - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event{
+ dispatch_async(self.queue, ^{
+     dispatch_source_merge_data(self.source, 1); // source 值响应
+ });
+ }
+ 
+ // 封装了source ， 和 runloop source不一样
+ dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+     
+ });
+
+runloop用到了gcd的source（dispatch_source_t）
+ */
+
+// MARK: ---LG_性能优化
 /**
  MARK: ---内存管理
  内存布局:
@@ -3731,7 +3934,7 @@ for (NSInteger i = 0; i < 100; i++) {
  */
 
 
-// MARK: ---flutter
+// MARK: ---LG_flutter
 /**
  打开文件时提示【文件已损坏，请移至废纸篓】
  打开文件时提示【文件来自身份不明的开发者】

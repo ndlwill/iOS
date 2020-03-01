@@ -1,9 +1,19 @@
 内购商品一共有四种类型:
 消耗型:可以购买多次，多次结果累加，并且在App内作为“货币”消耗。典型的是虚拟货币，用户先通过IAP购买虚拟货币，再消耗虚拟货币购买商品。
 非消耗型:只能购买一次，可跨设备使用，业务场景较少。典型的是图书App中的一本电子书，或者游戏中的一个关卡。
+无法被消耗的商品，比如一些教育型APP中的课程, 再比如一些赛车游戏中的赛道, 
+这类商品需要在审核添加恢复购买按钮, 用于用户购买过后再误删除或其他原因卸载APP后的恢复流程, 否则提交审核会被拒绝
+我们发现你们的app包含内购功能，却没有给用户提供一个“恢复购买”的按钮。用户可以使用“恢复购买”功能保持对已购买内容的访问。例如，当他们升级到新手机时，他们不会丢失在旧手机上购买的所有商品。
 自动续期订阅:和时间相关的服务，在有效期内用户可享受服务，要到期的时候自动扣费。典型的是连续包月的会员。
 非续期订阅:和时间相关的服务，但是不会自动扣费。典型的是一个月会员
 
+恢复购买：
+订阅型和非消耗型的商品才有恢复状态
+app账户a 用appleid购买了vip，app账户b登录用同一个appleid恢复购买，后端会做处理。b为vip，a为普通用户
+
+App 专用共享密钥：
+App 专用共享密钥是用于接收此 App 自动续订订阅收据的唯一代码
+官方文档说秘钥仅仅用在自动续订上面
 
 //沙盒测试环境验证
 #define SANDBOX     @"https://sandbox.itunes.apple.com/verifyReceipt"
@@ -14,8 +24,49 @@
 沙盒情况:5次续订(一共6条收据)后自动取消
 1月10日订阅的连续包月，1月15日从包月切换到了包年，那么在2月10日的时候会扣掉一年的钱
 
+订阅后,每次成功续期,打开App后会走- (void)paymentQueue:(SKPaymentQueue *)queue updatedTransactions:(NSArray<SKPaymentTransaction *> *)transactions回调方法,
+因此启动就要监听[[SKPaymentQueue defaultQueue] addTransactionObserver:self];
+
+
 测试:
 Apple有两套内购Server：sandbox和production。
 只有从App Store上下载的才会走production环境，可以App审核通过后，用redeem码兑换来测试真金白银购买。
 平时插线和testflight的包都是走sandbox。
 想要在sandbox购买需要先在iTunes Connect中注册“沙箱技术测试员”，当然如果Apple Id在内部测试组里，也可以直接走sandbox购买
+
+服务器验证：
+/**
+* 21000 App Store不能读取你提供的JSON对象
+* 21002 receipt-data域的数据有问题
+* 21003 receipt无法通过验证
+* 21004 提供的shared secret不匹配你账号中的shared secret
+* 21005 receipt服务器当前不可用
+* 21006 receipt合法，但是订阅已过期。服务器接收到这个状态码时，receipt数据仍然会解码并一起发送
+* 21007 receipt是Sandbox receipt，但却发送至生产系统的验证服务
+* 21008 receipt是生产receipt，但却发送至Sandbox环境的验证服务
+*/
+Apple会返回以下四个数据给应用：
+productIdentifier:cosmosbox.strikehero.gems60
+state: Purchased
+receipt: 
+ewoJInNpZ25hdHVyZSIgPSAiQXF1M3JiR1grbmJMeGVvZS9VZGlMa3dQWVlBdkQr
+VTE1L1NRL2Y0cGZlaFlBOWFaVGhSbTNMVXpHc25TUGd3aVBoMmsxSTVFaVpweGp6
+aEZsS0JDVXBPeHEyWFk5N1lHUGUzMFo0cThMRllDZWJPeHFzWlJaUU01N2xtZFo0
+bDN6eHNnaWpGemFiYkRXLzM4cm1EeXFTT0FSYzRES3dXTGFpc2EzYUY5d2JwbUFB
+QURWekNDQTFNd2dnSTdvQU1DQVFJQ0NCdXA0K1BBaG0vTE1BMEdDU3FHU0liM0RR
+RUJCUVVBTUg4eEN6QUpCZ05WQkFZVEFsVlRNUk13RVFZRFZRUUtEQXBCY0hCc1pT
+//receipt省略几十行
+transactionIdentifier: 1000000160385706 // 交易标识符
+
+交易状态: state
+Purchased	购买成功
+Restored	恢复购买
+Failed	失败
+Deferred	等待确认，儿童模式需要询问家长同意
+
+自动订阅： 
+func paymentQueue(_ queue: SKPaymentQueue, updatedTransactions transactions: [SKPaymentTransaction]) {
+[D][Purchase] Transaction Purchased, 
+Product Identifier: com.fvcorp.group.auto.m1.AJSPremium 
+Optional("1000000632060487")  Optional("1000000623879269")
+}

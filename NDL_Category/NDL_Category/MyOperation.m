@@ -31,7 +31,7 @@
     for (int i = 0; i<1000; i++) {
         NSLog(@"任务2-%d--%@",i,[NSThread currentThread]);
     }
-    
+
     if(self.isCancelled) return;
     
     NSLog(@"+++++++++++++++++++++++++++++++++");
