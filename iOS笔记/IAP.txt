@@ -21,11 +21,22 @@ App 专用共享密钥是用于接收此 App 自动续订订阅收据的唯一�
 #define AppStore    @"https://buy.itunes.apple.com/verifyReceipt"
 
 续订: 
+后续续费都是Apple自动完成的，一般在要过期的前24小时开始，苹果会尝试扣费，扣费成功的话 会在APP下次启动的时候主动推送给APP
 沙盒情况:5次续订(一共6条收据)后自动取消
 1月10日订阅的连续包月，1月15日从包月切换到了包年，那么在2月10日的时候会扣掉一年的钱
 
 订阅后,每次成功续期,打开App后会走- (void)paymentQueue:(SKPaymentQueue *)queue updatedTransactions:(NSArray<SKPaymentTransaction *> *)transactions回调方法,
 因此启动就要监听[[SKPaymentQueue defaultQueue] addTransactionObserver:self];
+
+lists the compressed duration times：
+Actual duration	Test duration
+1 week	3 minutes
+1 month	5 minutes
+2 months	10 minutes
+3 months	15 minutes
+6 months	30 minutes
+1 year	1 hour
+
 
 
 测试:
@@ -64,9 +75,76 @@ Restored	恢复购买
 Failed	失败
 Deferred	等待确认，儿童模式需要询问家长同意
 
-自动订阅： 
+// debug:
+// transaction.transactionIdentifier - transaction.original?.transactionIdentifier
+// 3月
+[D][Purchase] Transaction Purchased, 
+Product Identifier: com.fvcorp.group.auto.m03.AJSPremium Optional("1000000640254989")  Optional("1000000632743590")
+// 1月
+[D][Purchase] Transaction Purchased, 
+Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000640254989")  Optional("1000000632743590")
+// 1月续订
+[D][Purchase] Transaction Purchased, 
+Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000640258620")  Optional("1000000632743590")
+
+==========自动订阅： 
+[[SKPaymentQueue defaultQueue] addTransactionObserver:self];
+因为自动订阅类型，除了第一次购买行为是用户主动触发的。后续续费都是 Apple 自动完成的，一般在要过期的前 24 小时开始，苹果会尝试扣费，扣费成功的话会在 APP 下次启动的时候主动推送给 APP。
+所以，APP 启动的时候一定要添加上面的那句话
+
+
 func paymentQueue(_ queue: SKPaymentQueue, updatedTransactions transactions: [SKPaymentTransaction]) {
 [D][Purchase] Transaction Purchased, 
 Product Identifier: com.fvcorp.group.auto.m1.AJSPremium 
 Optional("1000000632060487")  Optional("1000000623879269")
 }
+
+================已验证
+购买产品，弹出输入密码，购买弹窗时，杀死app，下次打开app会走
+func paymentQueue(_ queue: SKPaymentQueue, updatedTransactions transactions: [SKPaymentTransaction]) 的SKPaymentTransactionState.failed
+因为杀死app时没finishTransaction(transaction)
+
+============error
+if let skError = transaction.error as? SKError {
+}
+
+取模运算：Modulus Operation
+取余运算：Remainder Operation
+
+=====================订阅变化后->苹果订阅服务器通知app服务器设置
+https://help.apple.com/app-store-connect/#/dev0067a330b
+
+https://developer.apple.com/documentation/storekit/in-app_purchase/subscriptions_and_offers/enabling_server-to-server_notifications?preferredLanguage=occ
+
+
+=====================自动订阅归属的问题：
+a. 苹果设计自动订阅的初衷是 ，订阅一个服务， 这个服务需要跟着 Apple ID走。
+说白了，就是你A设备 用了Apple账号100001购买了，你换了B设备 用Apple账号100001登录app store，你同样能享受到服务。
+国外的一些音乐类型、杂志报刊等用的比较多，游戏类的少，苹果自己的Apple music也有自动订阅（首创）。
+
+b. 目前国内的一些应用或是游戏，希望的是自动订阅 关联的是 APP的 user id ，而不是Apple ID。
+说白了，就是你购买了一个自动订阅服务，我不管你哪个apple id 支付的， 但是只能我一个 APP的 唯一用户可以享受服务。
+这时候就需要APP自身做处理了，就是记住首次购买的transaction-id，并且绑定某个用户。
+以后自动续费的话，都会有original-transaction-id，这个id 是第一次购买的transaction-id，根据这个服务器可以联系初始购买的服务。
+有点描述偏了，当transaction-id绑定了用户，再次收到其它用户transaction-id请求时候，视情况处理了。（你也可以根据unique-vendor-identifier处理）
+
+=====================是否需要实现restoreCompletedTransactions ？
+答案：视需求吧。有少量文章说2014年起苹果审核严格了，必须要有一个按钮实现restoreCompletedTransactions。另外，我听百度一位同学说，爱奇艺2015年因为这个被拒过。但是，目前来看很多使用了订阅的应用或是游戏，并没有这个功能。
+我是感觉，看需求了。订阅 是跟着 userid 唯一呢？ 还是跟着apple id 呢？在国内，一般都是前者。
+
+=====================关于掉单的问题
+答案：一定要在服务器校验完票据后，客户端收到服务器的反馈结果后再：
+[[SKPaymentQueue defaultQueue] finishTransaction: transaction];
+
+
+=====================自己的服务器怎么处理苹果的续订？
+答：
+首先用户第一次购买订阅，server需要把票据存储（最好把过期时间也记录一下，字段record_expires_date），苹果会通知我们的server的，其中notification_type 对应值为 INITIAL_BUY。
+
+服务器需要做个定期（每天）检测，检测目前已有的所有订阅订单是否过期，如果发现过期了，就去苹果服务器验证receipt，其中苹果返回的latest_receipt_info 字段，会告诉最新的订阅订单情况，你可以校验expires-date与当前时间比较，判断该订阅有没有续订成功，并同时更新上述让记录的record_expires_date字段.
+
+我们为什么做上述的处理？大家都知道苹果服务器会在订阅过期的前一天，对用户进行自动扣费，如果扣费成功了，苹果服务器并不会通知我们的服务器，这是重点。不过有个特例，如果苹果订阅过期前一天扣费失败了，苹果服务器后面几天还会尝试对用户自动扣费，如果后面扣费成功了（这时候用户实际状态是没有续订成功），苹果会通知我们的server的，其中notification_type 对应值为 RENEWAL,对于RENEWAL我们还是需要给用户更新为正在订阅的状态。
+
+正式环境下，用户主动取消订阅，苹果会通知我们的server的，其中notification_type 对应值为 CANCEL，我们需要更新用户订阅的状态为取消。
+
+总结，对于自动续订订阅，我们自己的服务器完全可以与apple server的交互应对用户的订阅状态，只需要确定客户端传来的用户第一次购买， user id 对应 original-transaction-id的关系。后面的续订，取消，变更套餐，完全不依赖于客户端传来的信息。

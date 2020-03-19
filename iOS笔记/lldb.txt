@@ -1,4 +1,76 @@
+1.
 // 打印视图层级结构
 po self.view.recursiveDescription // 这是私有api,所以要手敲出来,没有提示
+// 打印视图控制器的层级结构
+OC
+(lldb) po [UIWindow valueForKeyPath:@"keyWindow.rootViewController._printHierarchy"]
+Swift
+(lldb) po UIWindow.valueForKeyPath("keyWindow.rootViewController._printHierarchy")
+
+2.设置断点
+breakpoint set --file main.m --line 12
+
+3.执行替代代码
+expression命令不仅会改变调试器中的值，还改变了程序中的实际值
+(lldb) exp a = 10
+(NSInteger) $0 = 10
+(lldb) exp b = 100
+(NSInteger) $1 = 100
+
+e声明的都是$开头的变量。我们在使用时也需要加上$符号
+(lldb) e let $arr = ["a", "b", "c"] 
+(lldb) p $arr
+
+expression的简写有exp, e。可以用expression来声明新的变量，也可以改变已有变量的值
+
+4.print
+print命令会打印出对象的类型和相关属性.
+print命令的别名有prin, pri, p
+po命令对于继承自NSObject的对象，会打印出description中的内容,类似于print函数, 对于struct, 会打印出属性
+
+5.image命令可以用来寻找栈地址对应的代码位置
+NSArray *arr = @[@"a", @"b"];
+NSLog(@"%@", arr[2]);
+
+*** Terminating app due to uncaught exception 'NSRangeException', reason: '*** -[__NSArrayI objectAtIndexedSubscript:]: index 2 beyond bounds [0 .. 1]'
+*** First throw call stack:
+(
+    0   CoreFoundation                      0x000000011045d12b __exceptionPreprocess + 171
+    1   libobjc.A.dylib                     0x000000010faf1f41 objc_exception_throw + 48
+    2   CoreFoundation                      0x000000011049d0cc _CFThrowFormattedException + 194
+    3   CoreFoundation                      0x0000000110510890 +[__NSArrayI allocWithZone:] + 0
+    4   LCCustomTools_OC                    0x000000010f1cf878 -[AppDelegate application:didFinishLaunchingWithOptions:] + 184
+    5   UIKit                               0x0000000110fe5bca -[UIApplication _handleDelegateCallbacksWithOptions:isSuspended:restoreState:] + 299
+    6   UIKit                               0x0000000110fe7648 -[UIApplication _callInitializationDelegatesForMainScene:transitionContext:] + 4113
+    7   UIKit                               0x0000000110fecaeb -[UIApplication _runWithMainScene:transitionContext:completion:] + 1720
+...
+
+可以知道问题出在[AppDelegate application:didFinishLaunchingWithOptions:], 但是不知道具体在哪一行
+通过以下命令找到出错位置
+(lldb) image lookup --address 0x000000010f1cf878（崩溃文件从前到后的第一个地址）
+      Address: LCCustomTools_OC[0x0000000100009878] (LCCustomTools_OC.__TEXT.__text + 32824)
+      Summary: LCCustomTools_OC`-[AppDelegate application:didFinishLaunchingWithOptions:] + 184 at AppDelegate.m:30
+问题出在30行
 
 
+=========================================调试技巧
+1.signal SIGABRT
+这是一个信号, SIG是所有unix信号的前缀名, ABRT是abort program的简称.
+当操作系统发现不安全的情况时, 如UIKit 等框架通常会在特定的前提条件没有满足或一些糟糕的情况出现时调用 C 函数 abort （由它来发送此信号）
+方法1. 打开全局断点
+方法2. 运用LLDB的调试指令, 直接寻找引发错误的内存地址
+image lookup --address XXXXXX
+
+2.EXC_BAD_ACCESS(Zombie Objects)
+EXC_BAD_ACCESS，指向某块内存发送消息，但是该内存无法响应对应的消息指令。比如, 向一个已经释放的对象发送消息, 就会报此错误
+为了精确定位到到底是哪里的坏内存被访问了, 在Product -> Scheme -> Edict Scheme中, 勾选Zombie Objects
+
+堆内存溢出:
+Product -> Scheme -> Edict Scheme中,勾选Address Sanitizer
+Use-after-free, 野指针问题, 访问已释放的内存区域
+Heap buﬀer overﬂow, 堆内存溢出
+Stack buﬀer overﬂow, 栈内存溢出
+Global variable overﬂow, 全局变量溢出
+
+Memory Leak (内存泄露):
+Xcode -> Open Developer Tool -> Instrument, 打开Instrument
