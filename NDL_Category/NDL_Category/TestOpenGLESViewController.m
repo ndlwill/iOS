@@ -210,11 +210,18 @@ constantColor 不提供每个顶点颜色数据时使⽤常量颜⾊(黑色)
 使颜⾊缓存区的内容在EAGL 窗⼝表现呈现
  
  MARK: ==着⾊器与程序==
+着⾊器与程序对象
+创建和编译着⾊器
+创建并链接程序
+获取和设置统一变量
+获取和设置属性
+着⾊器编译器与程序⼆进制代码
+ 
 需要创建2个基本对象才能⽤着⾊器进⾏渲染: 着⾊器对象和程序对象.
  
 获取链接后着⾊器对象的⼀般过程包括6个步骤:
 创建⼀个顶点着⾊器对象和一个⽚段着⾊器对象
-将源代码链接到每个着⾊器器对象
+将源代码链接到每个着⾊器对象
 编译着⾊器对象
 创建一个程序对象
 将编译后的着⾊器对象连接到程序对象
@@ -300,6 +307,22 @@ glLinkProgram(GLuint program)
  void glUseProgram(GLuint program)
  program: 设置为活动程序的程序对象句柄.
  
+ MARK:==FrameBuffer 和 RenderBuffer==
+
+ MARK: ==uniform==
+ uniform:
+ 外部（客户端，oc代码）程序传递到vertex和fragment
+ 1.通过接口glUniformXXXXX提供赋值功能
+ 2.类似于const作用，被uniform修饰的变量，就不会怎么修改。只能用不能修改
+ 
+ attribute:
+ 只能在顶点着色器
+ 
+ varying:
+ 中间传递（顶点和片元之间进行传递）
+ 
+ // 内建函数：读取纹素
+ texture2D(colorMap, varyTextCoord);
  */
 
 #import "TestOpenGLESViewController.h"

@@ -134,6 +134,7 @@
 #import "OpenGLES1Controller.h"
 #import "OpenGLES2Controller.h"
 #import "CCViewController.h"
+#import "GLSL1ViewController.h"
 
 #import "NDL_Category-Swift.h"
 
@@ -1945,9 +1946,10 @@ NSLog(@"viewDidLoad 22");
      OpenGLES1Controller
      OpenGLES2Controller
      CCViewController
+     GLSL1ViewController
      */
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        CCViewController *vc = [[CCViewController alloc] init];
+        GLSL1ViewController *vc = [[GLSL1ViewController alloc] init];
         vc.modalPresentationStyle = UIModalPresentationFullScreen;
         [self presentViewController:vc animated:YES completion:nil];
     });
