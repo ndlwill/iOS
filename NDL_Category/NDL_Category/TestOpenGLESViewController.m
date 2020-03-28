@@ -323,6 +323,12 @@ glLinkProgram(GLuint program)
  
  // 内建函数：读取纹素
  texture2D(colorMap, varyTextCoord);
+ 
+ MARK: ==GLSL==
+ shader:类似于C编译器
+ program：类似于C链接器
+ glLinkProgram：操作产生最后的可执行程序，它包含最后可以在硬件上执行的硬件指令。
+
  */
 
 #import "TestOpenGLESViewController.h"

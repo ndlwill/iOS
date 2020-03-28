@@ -108,17 +108,28 @@
         0.5f, -0.5f, -1.0f,     1.0f, 0.0f,
     };
     
+    //    GLfloat attrArr[] =
+    //    {
+    //        0.5f, -0.5f, 0.0f,     1.0f, 0.0f,
+    //        -0.5f, 0.5f, 0.0f,     0.0f, 1.0f,
+    //        -0.5f, -0.5f, 0.0f,    0.0f, 0.0f,
+    //
+    //        0.5f, 0.5f, 0.0f,      1.0f, 1.0f,
+    //        -0.5f, 0.5f, 0.0f,     0.0f, 1.0f,
+    //        0.5f, -0.5f, 0.0f,     1.0f, 0.0f,
+    //    };
+    
+    // 方法5
 //    GLfloat attrArr[] =
 //    {
-//        0.5f, -0.5f, 0.0f,     1.0f, 0.0f,
-//        -0.5f, 0.5f, 0.0f,     0.0f, 1.0f,
-//        -0.5f, -0.5f, 0.0f,    0.0f, 0.0f,
-//        
-//        0.5f, 0.5f, 0.0f,      1.0f, 1.0f,
-//        -0.5f, 0.5f, 0.0f,     0.0f, 1.0f,
-//        0.5f, -0.5f, 0.0f,     1.0f, 0.0f,
+//        0.5f, -0.5f, -1.0f,     1.0f, 1.0f,
+//        -0.5f, 0.5f, -1.0f,     0.0f, 0.0f,
+//        -0.5f, -0.5f, -1.0f,    0.0f, 1.0f,
+//
+//        0.5f, 0.5f, -1.0f,      1.0f, 0.0f,
+//        -0.5f, 0.5f, -1.0f,     0.0f, 0.0f,
+//        0.5f, -0.5f, -1.0f,     1.0f, 1.0f,
 //    };
-    
     
     //7.-----处理顶点数据--------
     //(1)顶点缓存区
@@ -171,19 +182,56 @@
     //10.加载纹理
     [self setupTexture:@"kunkun"];
     
-    //11. 设置纹理采样器 sampler2D
+    //11. 设置纹理采样器 sampler2D i表示int  采样第0个纹理，对应glBindTexture(GL_TEXTURE_2D, 0);的0
+    // glUniform1i(glGetUniformLocation(self.myPrograme, "colorMap"), 0);这段代码可以注释，因为默认激活了纹理0
     glUniform1i(glGetUniformLocation(self.myPrograme, "colorMap"), 0);
     
-    //12.绘图
+    // 解决纹理翻转(方法1)
+//    [self rotateTextureImage];
+    
+    //12.数组绘图
     glDrawArrays(GL_TRIANGLES, 0, 6);
     
     //13.从渲染缓存区显示到屏幕上
     [self.myContext presentRenderbuffer:GL_RENDERBUFFER];
+}
+
+-(void)rotateTextureImage
+{
+    //注意，想要获取shader里面的变量，这里记得要在glLinkProgram后面，后面，后面！
+    //1. rotate等于shaderv.vsh中的uniform属性，rotateMatrix
+    GLuint rotate = glGetUniformLocation(self.myPrograme, "rotateMatrix");
+    
+    //2.获取渲旋转的弧度
+    float radians = 180 * 3.14159f / 180.0f;
+   
+    //3.求得弧度对于的sin\cos值
+    float s = sin(radians);
+    float c = cos(radians);
+    
+    //4.因为在3D课程中用的是横向量，在OpenGL ES用的是列向量
+    /*
+     参考Z轴旋转矩阵
+     */
+    GLfloat zRotation[16] = {
+        c,-s,0,0,
+        s,c,0,0,
+        0,0,1,0,
+        0,0,0,1
+    };
+    
+    //5.设置旋转矩阵
+    /*
+     glUniformMatrix4fv (GLint location, GLsizei count, GLboolean transpose, const GLfloat* value)
+     location : 对于shader 中的ID
+     count : 个数
+     transpose : 转置
+     value : 指针
+     */
+    glUniformMatrix4fv(rotate, 1, GL_FALSE, zRotation);
     
     
 }
-
-
 
 //从图片中加载纹理
 - (GLuint)setupTexture:(NSString *)fileName {
@@ -225,6 +273,11 @@
      参数3：绘制的图片
      */
     CGRect rect = CGRectMake(0, 0, width, height);
+    
+    // 方法2
+//    CGContextTranslateCTM(spriteContext, 0, rect.size.height);
+//    CGContextScaleCTM(spriteContext, 1.0, -1.0);
+//    CGContextDrawImage(spriteContext, rect, spriteImage);
    
     //6.使用默认方式绘制
     CGContextDrawImage(spriteContext, rect, spriteImage);
@@ -232,6 +285,8 @@
     //7、画图完毕就释放上下文
     CGContextRelease(spriteContext);
     
+    // 激活纹理
+//    glActiveTexture(GL_TEXTURE0);
     //8、绑定纹理到默认的纹理ID（
     glBindTexture(GL_TEXTURE_2D, 0);
     
