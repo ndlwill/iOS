@@ -1,0 +1,71 @@
+----------------------------------------------------js call oc：
+<html> <header> <meta http-equiv="Content-Type" content="text/html; charset=utf-8" /> <script type="text/javascript"> function showAlert(message){ alert(message); } function loadURL(url) { var iFrame; iFrame = document.createElement("iframe"); iFrame.setAttribute("src", url); iFrame.setAttribute("style", "display:none;"); iFrame.setAttribute("height", "0px"); iFrame.setAttribute("width", "0px"); iFrame.setAttribute("frameborder", "0"); document.body.appendChild(iFrame); // 发起请求后这个 iFrame 就没用了，所以把它从 dom 上移除掉 iFrame.parentNode.removeChild(iFrame); iFrame = null; } function firstClick() { loadURL("firstClick://shareClick?title=分享的标题&content=分享的内容&url=链接地址&imagePath=图片地址"); } </script> </header> <body> <h2> 这里是第一种方式 </h2> <br/> <br/> <button type="button" onclick="firstClick()">Click Me!</button> </body> </html>
+
+- (BOOL)webView:(UIWebView *)webView shouldStartLoadWithRequest:(NSURLRequest *)request navigationType:(UIWebViewNavigationType)navigationType { NSURL * url = [request URL]; if ([[url scheme] isEqualToString:@"firstclick"]) { NSArray *params =[url.query componentsSeparatedByString:@"&"]; NSMutableDictionary *tempDic = [NSMutableDictionary dictionary]; for (NSString *paramStr in params) { NSArray *dicArray = [paramStr componentsSeparatedByString:@"="]; if (dicArray.count > 1) { NSString *decodeValue = [dicArray[1] stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding]; [tempDic setObject:decodeValue forKey:dicArray[0]]; } } UIAlertView *alertView = [[UIAlertView alloc] initWithTitle:@"方式一" message:@"这是OC原生的弹出窗" delegate:self cancelButtonTitle:@"收到" otherButtonTitles:nil]; [alertView show]; NSLog(@"tempDic:%@",tempDic); return NO; } return YES; }
+
+
+
+1.JS中的firstClick,在拦截到的url scheme全都被转化为小写。
+2.html中需要设置编码，否则中文参数可能会出现编码问题。
+3.JS用打开一个iFrame的方式替代直接用document.location的方式，以避免多次请求，被替换覆盖的问题
+
+=======================================================
+在iOS 7之后，apple添加了一个新的库JavaScriptCore，用来做JS交互，因此JS与原生OC交互也变得简单了许多
+
+JSContext *context = [self.webView valueForKeyPath:@"documentView.webView.mainFrame.javaScriptContext"];
+
+再然后定义好JS需要调用的方法，例如JS要调用share方法：
+则可以在UIWebView加载url完成后，在其代理方法中添加要调用的share方法
+- (void)webViewDidFinishLoad:(UIWebView *)webView 
+{ 
+JSContext *context = [self.webView valueForKeyPath:@"documentView.webView.mainFrame.javaScriptContext"]; 
+
+//定义好JS要调用的方法, share就是调用的share方法名 
+context[@"share"] = ^() { NSLog(@"+++++++Begin Log+++++++"); 
+NSArray *args = [JSContext currentArguments]; 
+
+dispatch_async(
+dispatch_get_main_queue(), ^{ 
+UIAlertView *alertView = [[UIAlertView alloc] initWithTitle:@"方式二" message:@"这是OC原生的弹出窗" delegate:self cancelButtonTitle:@"收到" otherButtonTitles:nil]; 
+[alertView show]; }); 
+for (JSValue *jsVal in args) 
+{
+ NSLog(@"%@", jsVal.toString); 
+} 
+NSLog(@"-------End Log-------"); 
+}; 
+}
+
+
+
+<html> <header> <meta http-equiv="Content-Type" content="text/html; charset=utf-8" /> <script type="text/javascript"> function secondClick() { share('分享的标题','分享的内容','图片地址'); } function showAlert(message){ alert(message); } </script> </header> <body> <h2> 这里是第二种方式 </h2> <br/> <br/> <button type="button" onclick="secondClick()">Click Me!</button> </body> </html>
+
+----------------------------------------------------OC call JS
+该方法会同步返回一个字符串，因此是一个同步方法，可能会阻塞UI
+
+NSString *jsStr = [NSString stringWithFormat:@"showAlert('%@')",@"这里是JS中alert弹出的message"]; 
+[_webView stringByEvaluatingJavaScriptFromString:jsStr];
+
+
+
+=============================================
+JSContext *context = [self.webView valueForKeyPath:@"documentView.webView.mainFrame.javaScriptContext"]; 
+NSString *textJS = @"showAlert('这里是JS中alert弹出的message')"; 
+[context evaluateScript:textJS];
+
+stringByEvaluatingJavaScriptFromString是一个同步的方法，使用它执行JS方法时，如果JS 方法比较耗的时候，会造成界面卡顿。
+尤其是js 弹出alert 的时候。
+alert 也会阻塞界面，等待用户响应，而stringByEvaluatingJavaScriptFromString又会等待js执行完毕返回。
+这就造成了死锁。
+官方推荐使用WKWebView的evaluateJavaScript:completionHandler:代替这个方法。
+其实我们也有另外一种方式，自定义一个延迟执行alert 的方法来防止阻塞，然后我们调用自定义的alert 方法。
+同理，耗时较长的js 方法也可以放到setTimeout 中。
+function asyncAlert(content) {
+    setTimeout(function(){
+         alert(content);
+         },1);
+}
+
+
+
+

@@ -1,0 +1,110 @@
+NSImage *image = [[NSImage alloc]initWithContentsOfURL:_sourceURL];  
+
+-(unsigned charchar *)convertSourceImageToBitmapRGBA:(NSImage *)image  
+{  
+    //由NSImage创建CGImageRef  
+    struct CGImageSource* source = CGImageSourceCreateWithData((__bridge CFDataRef)[image TIFFRepresentation], NULL);  
+    NSDictionary* options = [NSDictionary dictionaryWithObjectsAndKeys:  
+                             (id)kCFBooleanFalse, (id)kCGImageSourceShouldCache,  
+                             (id)kCFBooleanTrue, (id)kCGImageSourceShouldAllowFloat,  
+                             nil nil];  
+    CGImageRef imageRef =  CGImageSourceCreateImageAtIndex(source, 0, (CFDictionaryRef)options);  
+      
+    //由CGImageRef创建CGContextRef  
+    CGContextRef context = [self newBitmapRGBA8ContextFromImage:imageRef];  
+    if (!context) {  
+        NSLog(@"picProcessing::convertSourceImageToBitmapRGBA:failed to create a context!");  
+        return nil;  
+    }  
+      
+    //获取CGImageRef的宽高，并将CGImageRef画到CGContextRef中，以获取rawdata  
+    imageWidth = CGImageGetWidth(imageRef);  
+    imageHeight = CGImageGetHeight(imageRef);  
+    bytesPerRow = CGBitmapContextGetBytesPerRow(context);  
+    contextLength = bytesPerRow*imageHeight;  
+    CGRect imgRect = CGRectMake(0, 0, imageWidth, imageHeight);  
+    CGContextDrawImage(context, imgRect, imageRef);  
+      
+    //获取CGContextRef中的rawdata的指针  
+    unsigned charchar * bitmapData = CGBitmapContextGetData(context);  
+      
+    //dump测试用  
+    NSString *dumpPath = [NSString stringWithFormat:@"/Users/hbw/Desktop/dump_test/%zux%zu.rgb",imageWidth,imageHeight];  
+    [self dumpTheRawdataToDestination:dumpPath pointer:bitmapData];  
+      
+    return bitmapData;  
+}  
+
+
+-(CGContextRef)newBitmapRGBA8ContextFromImage:(CGImageRef)image  
+{  
+    CGContextRef context = NULL;  
+    CGColorSpaceRef colorSpace;  
+    uint32_t *bitmapData;  
+      
+    size_t bitsPerPixel = 32;  
+    size_t bitsPerComponent = 8;  
+    size_t bytesPerPixel = bitsPerPixel / bitsPerComponent;  
+      
+    size_t width = CGImageGetWidth(image);  
+    size_t height = CGImageGetHeight(image);  
+      
+    size_t bytesperRow = width * bytesPerPixel;  
+    size_t bufferLength = bytesperRow * height;  
+      
+    colorSpace = CGColorSpaceCreateDeviceRGB();  
+      
+    if(!colorSpace) {  
+        NSLog(@"Error allocating color space RGB\n");  
+        return NULL;  
+    }  
+      
+    // Allocate memory for image data  
+    bitmapData = (uint32_t *)malloc(bufferLength);  
+      
+    if(!bitmapData) {  
+        NSLog(@"Error allocating memory for bitmap\n");  
+        CGColorSpaceRelease(colorSpace);  
+        return NULL;  
+    }  
+      
+    //Create bitmap context  
+      
+    context = CGBitmapContextCreate(bitmapData,  
+                                    width,  
+                                    height,  
+                                    bitsPerComponent,  
+                                    bytesperRow,  
+                                    colorSpace,  
+                                    kCGImageAlphaPremultipliedLast);    // RGBA  
+    if(!context) {  
+        free(bitmapData);  
+        NSLog(@"picProcessing::newBitmapRGBA8ContextFromImage:Bitmap context not created");  
+    }  
+      
+    CGColorSpaceRelease(colorSpace);  
+      
+    return context;  
+}  
+
+
+======================================================图像解码
+1、CGContextDrawImage方式（CoreGraphics）
+    它接受一个原始的位图参数 imageRef ，最终返回一个新的解压缩后的位图 newImage ，中间主要经过了以下三个步骤：
+使用 CGBitmapContextCreate 函数创建一个位图上下文；
+使用 CGContextDrawImage 函数将原始位图绘制到上下文中；
+使用 CGBitmapContextCreateImage 函数创建一张新的解压缩后的位图。
+ 
+2、CGImageGetDataProvider方式（ImageIO）
+1.CGImageSourceCreateWithData(data) 创建ImageSource。
+2.CGImageSourceCreateImageAtIndex(source) 创建一个未解码的 CGImage。
+3.CGImageGetDataProvider(image) 获取这个图片的数据源。
+4.CGDataProviderCopyData(provider) 从数据源获取直接解码的数据。
+ImageIO 解码发生在最后一步，这样获得的数据是没有经过颜色类型转换的原生数据（比如灰度图像）。
+  1．NSString *resource = [[NSBundlemainBundle] pathForResource:@"the_red_batman"ofType:@"png"];
+    2. NSData *data = [NSData  dataWithContentsOfFile:resource options:0error:nil];
+    3. CFDataRef  dataRef = (__bridge CFDataRef)data;
+    4. CGImageSourceRef source =CGImageSourceCreateWithData(dataRef, nil);
+    5. CGImageRef cgImage =CGImageSourceCreateImageAtIndex(source, 0, nil);
+    6. CFDataRef rawData =CGDataProviderCopyData(CGImageGetDataProvider(cgImage));
+    7.UIImage *image = [UIImageimageWithCGImage:cgImage];

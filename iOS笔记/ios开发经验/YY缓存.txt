@@ -1,0 +1,357 @@
+内存缓存YYMemoryCache
+磁盘缓存YYDiskCache
+YYDiskCache 实现了 LRU 淘汰算法、更快的数据统计，更多的容量控制选项
+
+存储的单元是_YYLinkedMapNode,除了key和value外,还存储了它的前后Node的地址_prev,_next.
+整个实现基于_YYLinkedMap,它是一个双向链表,除了存储了字典_dic外,还存储了头结点和尾节点
+有新数据了插入链表头部,访问过的数据结点移到头部,内存紧张时把尾部的结点移除.就这样实现了淘汰算法.
+- (instancetype)init {  
+    self = super.init;  
+    pthread_mutex_init(&_lock, NULL);  //初始化互斥锁的方法  ，在dealloc方法中进行回收  
+    _lru = [_YYLinkedMap new];  
+    _queue = dispatch_queue_create("com.ibireme.cache.memory", DISPATCH_QUEUE_SERIAL);  
+      
+    _countLimit = NSUIntegerMax;  
+    _costLimit = NSUIntegerMax;  
+    _ageLimit = DBL_MAX;  
+    _autoTrimInterval = 5.0;  
+    _shouldRemoveAllObjectsOnMemoryWarning = YES;  
+    _shouldRemoveAllObjectsWhenEnteringBackground = YES;  
+      
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_appDidReceiveMemoryWarningNotification) name:UIApplicationDidReceiveMemoryWarningNotification object:nil];   //注册内存警告的通知，方便回收  
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_appDidEnterBackgroundNotification) name:UIApplicationDidEnterBackgroundNotification object:nil];   //注册程序进入后台的通知，可以回收内存。  
+      
+    [self _trimRecursively];  
+    return self;  
+}  
+
+
+删除某个值的操作
+- (void)removeObjectForKey:(id)key {  
+    if (!key) return;    
+    pthread_mutex_lock(&_lock); //加锁，保证线程安全  
+    _YYLinkedMapNode *node = CFDictionaryGetValue(_lru->_dic, (__bridge const voidvoid *)(key)); //获取对应key的node  
+    if (node) {  
+        [_lru removeNode:node];         //移除这个节点  
+        if (_lru->_releaseAsynchronously) {   //判断当前是异步线程还是多线程  
+            dispatch_queue_t queue = _lru->_releaseOnMainThread ? dispatch_get_main_queue() : YYMemoryCacheGetReleaseQueue();  //  
+            dispatch_async(queue, ^{  
+                [node class]; //hold and release in queue  
+            });  
+        } else if (_lru->_releaseOnMainThread && !pthread_main_np()) {  
+            dispatch_async(dispatch_get_main_queue(), ^{  
+                [node class]; //hold and release in queue  
+            });  
+        }  
+    }  
+    pthread_mutex_unlock(&_lock);  //解锁  
+}  
+
+
+增加一对键值
+<span style="font-family:Open Sans, sans-serif;color:#373737;">- (void)setObject:(id)object forKey:(id)key withCost:(NSUInteger)cost {  
+    if (!key) return;  
+    if (!object) {  
+        [self removeObjectForKey:key];  
+        return;  
+    }  
+    pthread_mutex_lock(&_lock); //加锁  
+    _YYLinkedMapNode *node = CFDictionaryGetValue(_lru->_dic, (__bridge const voidvoid *)(key)); //取出对应key的node  
+    NSTimeInterval now = CACurrentMediaTime();   //保存一个时间戳，把最新的修改时间或添加保存进入node中。  
+    if (node) {   //存在的操作  
+        _lru->_totalCost -= node->_cost;   //把原有缓存内存开销减去  
+        _lru->_totalCost += cost;          //加入新的内存开销  
+        node->_cost = cost;                //指定内存开销  
+        node->_time = now;                 //修改的最新时间  
+        node->_value = object;             // 赋值  
+        [_lru bringNodeToHead:node];       // 修改操作，</span><span style="font-family:Helvetica Neue, Helvetica, STheiti, 微软雅黑, 黑体, Arial, Tahoma, sans-serif, serif;color:#252525;">把修改node放到双链表的头部。</span><span style="font-family:Open Sans, sans-serif;color:#373737;">  
+    } else { //不存在次node的操作  
+        node = [_YYLinkedMapNode new];    //创建一个 </span><span style="color: rgb(55, 55, 55); font-family: 'Open Sans', sans-serif;">_YYLinkedMapNode</span><span style="font-family:Open Sans, sans-serif;color:#373737;">  
+        node->_cost = cost;                        
+        node->_time = now;  
+        node->_key = key;  
+        node->_value = object;  
+        [_lru insertNodeAtHead:node];        //插入操作，把最新的node放到双链表的头部       
+    }  
+    if (_lru->_totalCost > _costLimit) { //如果内存花销超出了最大限制的内存大小  
+        dispatch_async(_queue, ^{  
+            [self trimToCost:_costLimit];             //删除双链表的尾部节点  
+        });  
+    }  
+    if (_lru->_totalCount > _countLimit) {   //如果超出缓存数量，也是</span><span style="color: rgb(55, 55, 55); font-family: 'Open Sans', sans-serif;">删除双链表的尾节点</span><span style="font-family:Open Sans, sans-serif;color:#373737;">  
+        _YYLinkedMapNode *node = [_lru removeTailNode];  
+        if (_lru->_releaseAsynchronously) { //当前线程的判断  
+            dispatch_queue_t queue = _lru->_releaseOnMainThread ? dispatch_get_main_queue() : YYMemoryCacheGetReleaseQueue();  
+            dispatch_async(queue, ^{  
+                [node class]; //hold and release in queue  
+            });  
+        } else if (_lru->_releaseOnMainThread && !pthread_main_np()) {  
+            dispatch_async(dispatch_get_main_queue(), ^{  
+                [node class]; //hold and release in queue  
+            });  
+        }  
+    }  
+    pthread_mutex_unlock(&_lock);   //解锁  
+}  
+
+查询某个key
+- (id)objectForKey:(id)key {  
+    if (!key) return nil;  
+    pthread_mutex_lock(&_lock);  //加锁  
+    _YYLinkedMapNode *node = CFDictionaryGetValue(_lru->_dic, (__bridge const voidvoid *)(key));  
+    if (node) {  
+        node->_time = CACurrentMediaTime();  //更改当前node的时间  
+        [_lru bringNodeToHead:node]; //把查找到的node,移到双向链表的头部  
+    }  
+    pthread_mutex_unlock(&_lock); //解锁  
+    return node ? node->_value : nil;  //利用三目运算符，进行返回value or nil。  
+}  
+
+ 1. 插入： 没有对应key,只需要把新的数据插入到双链表的头部
+  2. 替换： 有对应的key, 修改时间，value,并把数据移到双链表的头部，加上是否超出内存大小限制，是否超出文件数量限制，如果有，就移除双链表的尾节点。
+  3. 查找： 有对应的key，返回值，并修改node的time,并把数据移到双链表的头部， 无对应的key,返回nil  
+
+
+硬盘缓存(YYDiskCache)
+采用的是文件和数据库相互配合的方式.
+有一个参数inlineThreshold,默认20KB,小于它存数据库,大于它存文件.能获得效率的提高.
+key:path,value:cache存储在NSMapTable里.根据path获得cache,进行一系列的set,get,remove操作
+更底层的是YYKVStorage,它能直接对sqlite和文件系统进行读写.
+每次内存超过限制时,select key, filename, size from manifest order by last_access_time desc limit ?1
+会根据时间排序来删除最近不常用的数据.
+硬盘访问的时间比较长,如果用OSSpinLockLock锁会造成CPU消耗过大,所以用的dispatch_semaphore_wait来做.
+YYDiskCache的核心部分是YYKVStorage.
+YYKVStorage解析:不直接使用，通过YYDiskCache调用。 
+
+1. 新增OR替换操作
+
+[objc] view plain copy
+
+ 
+- (BOOL)saveItem:(YYKVStorageItem *)item {  
+    return [self saveItemWithKey:item.key value:item.value filename:item.filename extendedData:item.extendedData];  
+}  
+  
+- (BOOL)saveItemWithKey:(NSString *)key value:(NSData *)value {  
+    return [self saveItemWithKey:key value:value filename:nil extendedData:nil];  
+}  
+  
+- (BOOL)saveItemWithKey:(NSString *)key value:(NSData *)value filename:(NSString *)filename extendedData:(NSData *)extendedData {  
+    if (key.length == 0 || value.length == 0) return NO;  
+    if (_type == YYKVStorageTypeFile && filename.length == 0) {  
+        return NO;  
+    }  
+      
+    if (filename.length) {   //保存文件操作  
+        if (![self _fileWriteWithName:filename data:value]) {         //保存到文件  
+            return NO;  
+        }  
+        if (![self _dbSaveWithKey:key value:value fileName:filename extendedData:extendedData]) {   //保存到数据库如果失败，就删除掉这个文件名的文件  
+            [self _fileDeleteWithName:filename];  
+            return NO;  
+        }  
+        return YES;  
+    } else {  
+        if (_type != YYKVStorageTypeSQLite) {   //文件保存方式  
+            NSString *filename = [self _dbGetFilenameWithKey:key];  //获取文件名  
+            if (filename) {   
+                [self _fileDeleteWithName:filename];         //删除这个文件  
+            }  
+        }  
+        return [self _dbSaveWithKey:key value:value fileName:nil extendedData:extendedData];  //保存到数据库  
+    }  
+}  
+文件保存操作
+[objc] view plain copy
+
+ 
+- (BOOL)_fileWriteWithName:(NSString *)filename data:(NSData *)data {  
+    NSString *path = [_dataPath stringByAppendingPathComponent:filename];  
+    return [data writeToFile:path atomically:NO];      //写入文件  
+}  
+
+数据库保存操作
+[objc] view plain copy
+
+ 
+- (BOOL)_dbSaveWithKey:(NSString *)key value:(NSData *)value fileName:(NSString *)fileName extendedData:(NSData *)extendedData {  
+    NSString *sql = @"insert or replace into manifest (key, filename, size, inline_data, modification_time, last_access_time, extended_data) values (?1, ?2, ?3, ?4, ?5, ?6, ?7);";  
+    sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];          //把sql编译成二进制 ，stmt辅助类型  
+    if (!stmt) return NO;  
+      
+    int timestamp = (int)time(NULL);  
+    sqlite3_bind_text(stmt, 1, key.UTF8String, -1, NULL);    //绑定key  
+    sqlite3_bind_text(stmt, 2, fileName.UTF8String, -1, NULL);  //绑定 filename  
+    sqlite3_bind_int(stmt, 3, (int)value.length);               //绑定value  
+    if (fileName.length == 0) {  
+        sqlite3_bind_blob(stmt, 4, value.bytes, (int)value.length, 0);  
+    } else {  
+        sqlite3_bind_blob(stmt, 4, NULL, 0, 0);  
+    }  
+    sqlite3_bind_int(stmt, 5, timestamp);  
+    sqlite3_bind_int(stmt, 6, timestamp);  
+    sqlite3_bind_blob(stmt, 7, extendedData.bytes, (int)extendedData.length, 0);  
+    //以上都是绑定各种参数  
+    int result = sqlite3_step(stmt);       //执行sql语句  
+    if (result != SQLITE_DONE) {  
+        if (_errorLogsEnabled) NSLog(@"%s line:%d sqlite insert error (%d): %s", __FUNCTION__, __LINE__, result, sqlite3_errmsg(_db));  
+        return NO;  
+    }  
+    return YES;  
+}  
+
+2. 查找操作
+[objc] view plain copy
+
+ 
+- (YYKVStorageItem *)getItemForKey:(NSString *)key {  
+    if (key.length == 0) return nil;  
+    YYKVStorageItem *item = [self _dbGetItemWithKey:key excludeInlineData:NO];  //从数据库返回对应的对象  
+    if (item) {  
+        [self _dbUpdateAccessTimeWithKey:key];           //更新这个key对应的对象时间  
+        if (item.filename) {  
+            item.value = [self _fileReadWithName:item.filename];       //从文件中取得对应key的value,并赋值  
+            if (!item.value) {<span style="white-space:pre">                  </span>       //如果value不存在，就把对应的key删除掉  
+                [self _dbDeleteItemWithKey:key];  
+                item = nil;  
+            }  
+        }  
+    }  
+    return item;  
+}  
+
+数据库查询操作
+[objc] view plain copy
+
+ 
+- (YYKVStorageItem *)_dbGetItemWithKey:(NSString *)key excludeInlineData:(BOOL)excludeInlineData {  
+    NSString *sql = excludeInlineData ? @"select key, filename, size, modification_time, last_access_time, extended_data from manifest where key = ?1;" : @"select key, filename, size, inline_data, modification_time, last_access_time, extended_data from manifest where key = ?1;";                                                //sql语句拼接，通过key去查看对应的YYKVStorageItem.          
+    sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];      
+    if (!stmt) return nil;  
+    sqlite3_bind_text(stmt, 1, key.UTF8String, -1, NULL);              //绑定参数  
+    YYKVStorageItem *item = nil;  
+    int result = sqlite3_step(stmt);  
+    if (result == SQLITE_ROW) {                                 //查询成功的值  
+        item = [self _dbGetItemFromStmt:stmt excludeInlineData:excludeInlineData];       //通过这个方法把打包好的YYKVStorageItem,进行赋值返回  
+    } else {  
+        if (result != SQLITE_DONE) {  
+            if (_errorLogsEnabled) NSLog(@"%s line:%d sqlite query error (%d): %s", __FUNCTION__, __LINE__, result, sqlite3_errmsg(_db));  
+        }  
+    }  
+    return item;  
+}  
+
+文件查询操作
+[objc] view plain copy
+
+ 
+- (NSData *)_fileReadWithName:(NSString *)filename {  
+    NSString *path = [_dataPath stringByAppendingPathComponent:filename];   //通过文件名，拼接路径  
+    NSData *data = [NSData dataWithContentsOfFile:path];                    //返回对应的data  
+    return data;  
+}  
+
+
+
+3. 删除操作
+[objc] view plain copy
+
+ 
+- (BOOL)removeItemForKey:(NSString *)key {  
+    if (key.length == 0) return NO;  
+    switch (_type) {  
+        case YYKVStorageTypeSQLite: {  
+            return [self _dbDeleteItemWithKey:key];  //数据库缓存  
+        } break;  
+        case YYKVStorageTypeFile:  
+        case YYKVStorageTypeMixed: {  
+            NSString *filename = [self _dbGetFilenameWithKey:key]; //获取文件名  
+            if (filename) {  
+                [self _fileDeleteWithName:filename];   //文件缓存  
+            }  
+            return [self _dbDeleteItemWithKey:key];    //数据库缓存  
+        } break;  
+        default: return NO;  
+    }  
+}  
+数据库缓存删除
+[objc] view plain copy
+
+ 
+- (BOOL)_dbDeleteItemWithKey:(NSString *)key {  
+    NSString *sql = @"delete from manifest where key = ?1;";  //删除sql语句  
+    sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];           //二进制数据库辅助类型stmt  
+    if (!stmt) return NO;  
+    sqlite3_bind_text(stmt, 1, key.UTF8String, -1, NULL);     //参数绑定  
+    
+    int result = sqlite3_step(stmt);                          //执行   
+    if (result != SQLITE_DONE) {                              //结果 SQLITE_DONE 为成功  
+        if (_errorLogsEnabled) NSLog(@"%s line:%d db delete error (%d): %s", __FUNCTION__, __LINE__, result, sqlite3_errmsg(_db));  
+        return NO;  
+    }  
+    return YES;  
+}  
+文件缓存
+[objc] view plain copy
+
+ 
+- (BOOL)_fileDeleteWithName:(NSString *)filename {  
+    NSString *path = [_dataPath stringByAppendingPathComponent:filename];  
+    return [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];   //删除操作  
+}  
+===========================YYCache
+@interface YYCache : NSObject  
+// 读取当前数据库名称  
+@property (copy, readonly) NSString *name;  
+  
+@property (strong, readonly) YYMemoryCache *memoryCache; <span style="font-family: Arial, Helvetica, sans-serif;">//内存缓存</span>  
+@property (strong, readonly) YYDiskCache *diskCache;     //<span style="font-family: Arial, Helvetica, sans-serif;">文件缓存</span>  
+  
+// 可通过下面三种方法来实例化YYCache对象  
+- (nullable instancetype)initWithName:(NSString *)name;  
+- (nullable instancetype)initWithPath:(NSString *)path NS_DESIGNATED_INITIALIZER;  
++ (nullable instancetype)cacheWithPath:(NSString *)path;  
+  
+// 禁止通过下面两个方式实例化对象  
+- (instancetype)init UNAVAILABLE_ATTRIBUTE;  
++ (instancetype)new __attribute__((unavailable("new方法不可用，请用initWithName:")));  
+  
+// 通过key判断是否缓存了某个东西，第二个法是异步执行,异步回调  
+- (BOOL)containsObjectForKey:(NSString *)key;  
+- (void)containsObjectForKey:(NSString *)key withBlock:(nullable void(^)(NSString *key, BOOL contains))block;  
+  
+// 读--通过key读取缓存，第二个法是异步执行,异步回调  
+- (nullable id<NSCoding>)objectForKey:(NSString *)key;  
+- (void)objectForKey:(NSString *)key withBlock:(nullable void(^)(NSString *key, id<NSCoding> object))block;  
+  
+// 增、改--缓存对象(可缓存遵从NSCoding协议的对象)，第二个法是异步执行,异步回调  
+- (void)setObject:(nullable id<NSCoding>)object forKey:(NSString *)key;  
+- (void)setObject:(nullable id<NSCoding>)object forKey:(NSString *)key withBlock:(nullable void(^)(void))block;  
+  
+// 删--删除缓存  
+- (void)removeObjectForKey:(NSString *)key;  
+- (void)removeObjectForKey:(NSString *)key withBlock:(nullable void(^)(NSString *key))block;  
+- (void)removeAllObjects;  
+- (void)removeAllObjectsWithBlock:(void(^)(void))block;  
+- (void)removeAllObjectsWithProgressBlock:(nullable void(^)(int removedCount, int totalCount))progress  
+                                 endBlock:(nullable void(^)(BOOL error))end;  
+  
+@end  
+
+
+// 0.初始化YYCache  
+    YYCache *cache = [YYCache cacheWithName:@"myFirstDb"];  
+    // 1.缓存普通字符  
+    [cache setObject:@"缓存" forKey:@"savaKey"];  
+    NSString *name = (NSString *)[cache objectForKey:@"savaKey"];  //根据key取value  
+    NSLog(@"name: %@", name);  
+    // 2.缓存模型  （model需要遵循NSCoding协议）  
+    [cache setObject:model forKey:@"user"];  
+      
+    // 异步缓存  
+    [cache setObject:array forKey:@"user" withBlock:^{  
+    }];  
+    //读取  
+    [cache objectForKey:@"user" withBlock:^(NSString * _Nonnull key, id<NSCoding>  _Nonnull object) {  
+         //读取后操作   
+     }];   

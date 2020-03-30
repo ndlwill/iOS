@@ -328,7 +328,111 @@ glLinkProgram(GLuint program)
  shader:类似于C编译器
  program：类似于C链接器
  glLinkProgram：操作产生最后的可执行程序，它包含最后可以在硬件上执行的硬件指令。
-
+ 
+ bool, int, uint, float
+ uint uValue = 3929u;
+ float fValue = 3.14159f;
+ 
+ vec4 v;
+ vec4 v1 = vec4(1,2,3,4);
+ vec4 v2 = vec4(1,2,3,4);
+ v = v1 + v2;
+ v += vec4(10, 10, 10, 10);
+ 
+ // x,y,z,w
+ v.x = 3.0f;
+ v.xy = vec2(3.0f, 4.0f)
+ 
+ // r, g, b, a
+ v.r = 1.0f;
+ v.rgba = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+ 
+ // s,t,p,q
+ v.st = vec2(1.0f, 0.0f);
+ v.st = v2.xt // 不可以
+ v.st = v1.xy// 可以，但没有开发意义
+ 
+ // 向量支持调换swizzle，2个或2个以上的向量进行交换
+ v1.rgba = v2.bgra
+ 
+ v1.r = v2.b
+ v1.g = v2.g
+ v1.b = v2.r
+ v1.a = v2.a
+ 
+ v1.x = v2.x + 5.0f;
+ v1.xyz = v2.xyz + vec3(5.0f, 4.0f, 3.0f)
+ 
+ // 矩阵只有浮点类型
+ mat4 m1,m2,m3;
+ // 单元矩阵
+ mat4 m4 = mat4(1.0f)
+ m1 = m2 * m3
+ 
+ const float zero = 0.0
+ 
+ struct Test {
+ vec4 color;
+ float start;
+ float end;
+ }test;
+ 
+ test = Test(vec4(1.0, 0.0, 0.0, 1.0), 0.5, 2.0)
+ vec4 color1 = test.color
+ 
+ float a[4] = float[](1.0, 2.0 ,3.0, 4.0)
+ vec2 c[2] = vec2[2](vec2(1.0, 2.0), vec2(3.0, 4.0))
+ 
+ 函数：
+ in： 没有指定时，默认限定修饰符。传递进入函数中，函数不能对其进行修改
+ inout：可以在函数中进行修改
+ out：函数返回时，可以将其修改
+ 
+ vec4 myFunc(inout float myFloat, out vec4 m1, mat4 m2) {
+ 
+ }
+ 
+ 循环只支持while ，do..while, for
+但是OpenGLES开发中尽量降低循环使用
+ 
+ MARK: ==基本图形硬件流⽔线设计==
+ 应⽤程序层 -> 硬件抽象层 -> 硬件层GPU
+ 应⽤程序层主要与内存，CPU打交道。在阶段的末端，⼏何体的数据(顶点坐标，法向量，纹理坐标，纹理)等通过
+数据总线传送到图形硬件
+ 硬件抽象层，使⽤的是OpenGL。主要是⼀些API等的调⽤
+ 
+ ###片元着色器只是对颜色进行计算，得到对应像素点的颜色。填充不是它干的。###
+ 
+ 着⾊器器其实就是⼀段在GPU运行的程序
+ 渲染流⽔线分为两种，其中一种为可编程渲染流⽔线。另外一种为固定渲染流⽔线。(也称 可编程管线或固定管线，管线就是流水线的意思)
+ 渲染流⽔线可否编程，取决于程序猿能 否在顶点着⾊器以及⽚段着⾊器上进行编码
+ 
+ GPU图形渲染管线：
+ 应用程序阶段->几何阶段->光栅阶段
+ 
+ MARK: ==CPU 与 GPU 之间的关系==
+ GPU具有⾼并⾏的结构，所以在处理理图形数据和复杂算法⽐比CPU更更加有效率
+ 动态随机存取存储器（Dynamic Random Access Memory，DRAM)
+ CPU在执⾏任务的时候，一个时刻只会处理一个数据，不存在真正意义上的并⾏，而GPU则有多个处理器核，在⼀个时刻可以并⾏处理多个数据
+ 
+ MARK: ==几何处理阶段==
+ 几何阶段主要负责大部分多边形操作和顶点操作，包括顶点着色、坐标变换、生成图元、投影、
+ 裁剪、屏幕映射等过程，其中顶点着色、坐标变换由顶点着色器完成
+ 1.顶点着色器
+ 2.⽣成图元
+ 3.投影
+ 4.裁切
+ 5.屏幕映射
+  
+屏幕映射：
+这个阶段是不可配置也不可编程的。主要用来实现图元的坐标转换到屏幕坐标
+ 
+ 透视投影
+ 透视投影的视锥体又称为视景体、平截头体
+ 平⾏投影
+ 
+ n :近平⾯距离 f :远平面距离
+ 
  */
 
 #import "TestOpenGLESViewController.h"

@@ -1,0 +1,65 @@
+http://blog.csdn.net/xiaochong2154/article/details/44886973
+
+利用NSProxy实现消息转发
+
+NSProxy没有父类，是顶级类(根类)，跟NSObject同等地位。
+NSProxy和NSObject都实现了“NSObject Protocol”。
+NSProxy设计时就是以“抽象类”设计的，专门为转发消息而生。
+
+实现要求:
+继承NSProxy的子类要实现自己的初始化方法，如“init”、“initWith”。
+重写“ - forwardInvocation: ”和“ - methodSignatureForSelector: ”方法，完成消息转发
+
+
+- (void)registerHttpProtocol:(Protocol *)httpProtocol handler:(id)handler {
+    unsigned int numberOfMethods = 0;
+
+    //Get all methods in protocol
+    struct objc_method_description *methods = protocol_copyMethodDescriptionList(
+            httpProtocol, YES, YES, &numberOfMethods);
+
+    //Register protocol methods
+    for (unsigned int i = 0; i < numberOfMethods; i++) {
+        struct objc_method_description method = methods[i];
+        [_selToHandlerMap setValue:handler forKey:NSStringFromSelector(method.name)];
+    }
+}
+
+
+//获取Method signature
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)sel {
+
+    //获取method的字符串表示
+    NSString *methodsName = NSStringFromSelector(sel);
+
+    //查找对应实现类对象
+    id handler = [_selToHandlerMap valueForKey:methodsName];
+
+    //再次检查handler是否可以相应此消息
+    if (handler != nil && [handler respondsToSelector:sel]) {
+        return [handler methodSignatureForSelector:sel];
+    } else {
+        return [super methodSignatureForSelector:sel];
+    }
+}
+
+//转发方法消息
+- (void)forwardInvocation:(NSInvocation *)invocation {
+    NSString *methodsName = NSStringFromSelector(invocation.selector);
+    id handler = [_selToHandlerMap valueForKey:methodsName];
+
+    if (handler != nil && [handler respondsToSelector:invocation.selector]) {
+        [invocation invokeWithTarget:handler];
+    } else {
+        [super forwardInvocation:invocation];
+    }
+}
+
+
+//初始化，注册Protocol对应的实现类对象
+[[HttpProxy sharedInstance] registerHttpProtocol:@protocol(UserHttpHandler) handler:[UserHttpHandlerImp new]];
+[[HttpProxy sharedInstance] registerHttpProtocol:@protocol(CommentHttpHandler) handler:[CommentHttpHandlerImp new]];
+
+//调用
+[[HttpProxy sharedInstance] getUserWithID:@100];
+[[HttpProxy sharedInstance] getCommentsWithDate:[NSDate new]];

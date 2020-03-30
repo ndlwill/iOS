@@ -1,0 +1,147 @@
+==========================================================UIWebView
+self.webView = [[UIWebView alloc] initWithFrame:self.view.frame]; [self.view addSubview:self.webView]; NSURL *htmlURL = [[NSBundle mainBundle] URLForResource:@"index.html" withExtension:nil]; NSURLRequest *request = [NSURLRequest requestWithURL:htmlURL]; // UIWebView 滚动的比较慢，这里设置为正常速度 self.webView.scrollView.decelerationRate = UIScrollViewDecelerationRateNormal; [self.webView loadRequest:request];
+
+
+这里不要为UIWebView设置代理，因为在创建WebViewJavascriptBridge的时候，UIWebView的代理已经被赋值给了WebViewJavascriptBridge
+因为WebViewJavascriptBridge实例，在控制器中多个地方用到，因此最好定义一个property或者实例变量存起来。
+
+
+_webViewBridge = [WebViewJavascriptBridge bridgeForWebView:self.webView];
+ // {setWebViewDelegate}这个方法，可以将UIWebView的代理，从_webViewBridge中再传递出来。 
+ // 所以如果你要在控制器中实现UIWebView的代理方法时，添加下面这样代码，否则可以不写。 
+ [_webViewBridge setWebViewDelegate:self];
+
+注册js 要调用的Native 功能
+
+
+
+- (void)registerNativeFunctions { 
+[self registScanFunction]; 
+[self registShareFunction]; 
+[self registLocationFunction]; 
+[self regitstBGColorFunction]; 
+[self registPayFunction]; 
+[self registShakeFunction]; } 
+
+第二个参数handler，是个block，也就是Native 实现的功能
+- (void)registShareFunction { // 所有JS 需要调用的原生功能都要先用registerHandler注册一下 [_webViewBridge registerHandler:@"shareClick" handler:^(id data, WVJBResponseCallback responseCallback) { // data 的类型与 JS中传的参数有关 NSDictionary *tempDic = data; // 在这里执行分享的操作 NSString *title = [tempDic objectForKey:@"title"]; NSString *content = [tempDic objectForKey:@"content"]; NSString *url = [tempDic objectForKey:@"url"]; // 将分享的结果返回到JS中 NSString *result = [NSString stringWithFormat:@"分享成功:%@,%@,%@",title,content,url]; responseCallback(result); }]; }
+
+由于WebViewJavascriptBridge也是拦截URL来实现的调用原生功能
+
+这个方法的参数是一个function，这个方法的作用主要是在第一次加载HTML的时候起作用，
+目的是加载一次wvjbscheme://__BRIDGE_LOADED__，来触发往HTML中注入一些已经写好的JS方法
+function setupWebViewJavascriptBridge(callback) {
+    if (window.WebViewJavascriptBridge) { return callback(WebViewJavascriptBridge); }
+    if (window.WVJBCallbacks) { return window.WVJBCallbacks.push(callback); }
+    window.WVJBCallbacks = [callback];
+    var WVJBIframe = document.createElement('iframe');
+    WVJBIframe.style.display = 'none';
+    WVJBIframe.src = 'wvjbscheme://__BRIDGE_LOADED__';
+    document.documentElement.appendChild(WVJBIframe);
+    setTimeout(function() { document.documentElement.removeChild(WVJBIframe) }, 0)
+}
+
+添加完setupWebViewJavascriptBridge方法，需要在JS中主动调用一次该方法：
+setupWebViewJavascriptBridge(function(bridge) {
+     bridge.registerHandler('testJavascriptHandler', function(data, responseCallback) {
+        alert('JS方法被调用:'+data);
+        responseCallback('js执行过了');
+     })
+})
+Native 需要调用的 JS 功能，也是需要先注册，然后再执行的。如果Native 需要调用的JS 功能有多个，那么这些功能都要在这里先注册，注册之后才能够被Native 调用
+
+1、首先调用setupWebViewJavascriptBridge，第一次执行的时候，由于window.WebViewJavascriptBridge和window.WVJBCallbacks都不存在，所以会继续往下执行，将参数callback（它是一个function）装进数组赋值给window.WVJBCallbacks。
+js 支持动态添加属性 并赋值，这里window.WVJBCallbacks = [callback];就是动态添加属性，并赋值。 另外js中的全局变量都可以使用window.xxxx来调用;动态添加的属性也可以不加window.，直接使用。
+2、WebViewJavascriptBridge 帮助JS调用Native的url 有两种，一种是wvjbscheme://__BRIDGE_LOADED__；而另一种是wvjbscheme://__WVJB_QUEUE_MESSAGE__。前者只有在调用setupWebViewJavascriptBridge的时候执行一次，一般来说这个url 如果没有页面应该只会执行一次。第二种url所有js调用Native 功能时，都会使用到。
+3、在拦截到自定义的url 时，WebViewJavascriptBridge分了三种情况，如果是wvjbscheme://__BRIDGE_LOADED__,就往HMTL 中注入已经写好的js，这个js 在WebViewJavascriptBridge_JS中；如果是wvjbscheme://__WVJB_QUEUE_MESSAGE__,那就利用stringByEvaluatingJavaScriptFromString，取回调用js中callHandler传进去的参数。
+然后再从WebViewJavascriptBridge之前保存的Native 方法对应的block，调用对应的block。
+
+
+调用Native 功能
+利用之前注入的JS方法callHandler 就可以调用Native 功能了。
+示例代码如下：
+function shareClick() {
+    var params = {'title':'测试分享的标题','content':'测试分享的内容','url':'http://www.baidu.com'};
+    WebViewJavascriptBridge.callHandler('shareClick',params,function(response) {
+         alert(response);
+        document.getElementById("returnValue").value = response;
+     });
+}
+
+
+
+
+
+Native 调用 js 功能###
+Native 调用js 的功能，也需要先在js 中为要调用的功能注册一个别名。
+6.1 js 注册Native 要调用的功能 
+示例代码：
+setupWebViewJavascriptBridge(function(bridge) {
+     bridge.registerHandler('testJSFunction', function(data, responseCallback) {
+        alert('JS方法被调用:'+data);
+        responseCallback('js执行过了');
+     })
+    // 注册其他的功能
+    //bridge.regsiterHandler.....
+})
+
+Native 调用功能的别名handlerName 
+示例代码：
+//    // 如果不需要参数，不需要回调，使用这个
+//    [_webViewBridge callHandler:@"testJSFunction"];
+//    // 如果需要参数，不需要回调，使用这个
+//    [_webViewBridge callHandler:@"testJSFunction" data:@"一个字符串"];
+    // 如果既需要参数，又需要回调，使用这个
+    [_webViewBridge callHandler:@"testJSFunction" data:@"一个字符串" responseCallback:^(id responseData) {
+        NSLog(@"调用完JS后的回调：%@",responseData);
+    }];
+
+
+JS 有动态参数的特性，调用js 的方法，可以传0个参数，1个参数，N个参数都可以。
+例如，我们在js中定义一个test()方法，我们可以调用test()，来执行这个方法；如果有参数要传进来，也可以调用test(xxx)；如果有多个参数，那么就用test(xxx,xxx)。当然如果我们定义的参数是test(a,b,c)，也可以少传参数，或者不传参数调用test()。
+
+
+
+
+
+==========================================================WKWebView
+WKWebView使用的是WKWebViewJavascriptBridge
+
+不用再设置WKWebView 的navigationDelegate
+
+- (void)initWKWebView { WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init]; configuration.userContentController = [WKUserContentController new]; WKPreferences *preferences = [WKPreferences new]; preferences.javaScriptCanOpenWindowsAutomatically = YES; preferences.minimumFontSize = 30.0; configuration.preferences = preferences; self.webView = [[WKWebView alloc] initWithFrame:self.view.frame configuration:configuration]; NSString *urlStr = [[NSBundle mainBundle] pathForResource:@"index.html" ofType:nil]; NSString *localHtml = [NSString stringWithContentsOfFile:urlStr encoding:NSUTF8StringEncoding error:nil]; NSURL *fileURL = [NSURL fileURLWithPath:urlStr]; [self.webView loadHTMLString:localHtml baseURL:fileURL]; self.webView.UIDelegate = self; [self.view addSubview:self.webView]; }
+
+创建WebViewJavascriptBridge实例
+_webViewBridge = [WKWebViewJavascriptBridge bridgeForWebView:self.webView]; // 如果控制器里需要监听WKWebView 的`navigationDelegate`方法，就需要添加下面这行。 [_webViewBridge setWebViewDelegate:self];
+
+注册 js 要调用的Native 功能
+- (void)registerNativeFunctions { [self registScanFunction]; [self registShareFunction]; [self registLocationFunction]; [self regitstBGColorFunction]; [self registPayFunction]; [self registShakeFunction]; } // 注册的获取位置信息的Native 功能 - (void)registLocationFunction { [_webViewBridge registerHandler:@"locationClick" handler:^(id data, WVJBResponseCallback responseCallback) { // 获取位置信息 NSString *location = @"广东省深圳市南山区学府路XXXX号"; // 将结果返回给js responseCallback(location); }]; }
+
+
+在HTML添加关键的js
+
+function setupWebViewJavascriptBridge(callback) { if (window.WebViewJavascriptBridge) { return callback(WebViewJavascriptBridge); } if (window.WVJBCallbacks) { return window.WVJBCallbacks.push(callback); } window.WVJBCallbacks = [callback]; var WVJBIframe = document.createElement('iframe'); WVJBIframe.style.display = 'none'; WVJBIframe.src = 'wvjbscheme://__BRIDGE_LOADED__'; document.documentElement.appendChild(WVJBIframe); setTimeout(function() { document.documentElement.removeChild(WVJBIframe) }, 0) }
+
+然后在js 中要主动调用一次上述的setupWebViewJavascriptBridge。
+setupWebViewJavascriptBridge(function(bridge) {
+
+      // 这里注册Native 要调用的js 功能。
+     bridge.registerHandler('testJSFunction', function(data, responseCallback) {
+        alert('JS方法被调用:'+data);
+        responseCallback('js执行过了');
+     })
+     // 如果要有其他Native 调用的js 功能，在这里按照上面的格式添加。
+})
+
+
+主动调用setupWebViewJavascriptBridge有两个目的：
+1、执行一次wvjbscheme://__BRIDGE_LOADED__请求。
+2、注册Native 要调用的js 功能。
+
+执行wvjbscheme://__BRIDGE_LOADED__，然后在WKWebView 的navigationDelegate方法中拦截该URL 
+
+
+在js 中调用 Native 功能
+例如我想要利用Native 获取定位信息，那么在HTML中添加一个按钮，onclick事件是locationClick()
+function locationClick() { WebViewJavascriptBridge.callHandler('locationClick',null,function(response) { alert(response); document.getElementById("returnValue").value = response; }); }
+

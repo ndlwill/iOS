@@ -1,0 +1,101 @@
+http://www.jianshu.com/u/95d5ea0acd19
+
+view重写touch方法 不加super touchBegin view就把事件拦截了
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    NSLog(@"view touch");
+}
+
+view重写touch方法 加super touchBegin view就调用系统的处理，把事件传给下个响应者，并加上自己的处理Log(@"view touch");
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+	[super touchBegin...];
+    NSLog(@"view touch");
+}
+不重写touch这个方法就是系统默认处理方法,把事件传给下个响应者
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+	[super touchBegin...];
+}
+
+
+
+1.将redView的尺寸调大，使它超过父视图lightGrayView
+点击超出的部分，点击事件并没有被redView响应，而是被后面的控制器的view响应。因为pointInSide不在lightGrayView上
+默认状态下，子视图的响应范围不会超过它的父视图。
+2.在touesBegan方法中调用super方法下，当前响应touch方法的视图的父视图也会响应touch方法
+
+hitTest和pointInside方法的关系：
+一个视图的hitTest方法首先调用，hitTest方法在判断视图满足可以成为响应者的基本条件（透明度(self.alpha > 0.01)、是否隐藏，是否响应触摸事件）后，调用它的pointInside方法。如果pointInside方法返回为true（即touch的点在该视图的响应范围内），那么就继续判断该视图是否有子视图，如果有子视图，则调用子视图的hitTest方法。直到所有子视图的hitTest方法调用完毕，最后将结果递归调用回父视图。所有视图的hitTest方法返回值为递归的最终结果。
+
+
+==================
+层级结构
+gray 
+	red
+	green  （red green有相交部分 ，red green都在gray区域内）
+yellow
+
+将yellowView的pointInside返回参数修改为true，点击LightGrayView和它的子视图：
+yellow会截取和它平级的在它之前添加的视图的点击事件。
+
+点击red，red&green没有相交的部分
+- (void)drawRect:(CGRect)rect { [super drawRect:rect]; NSString *index = @"2"; [index drawInRect:CGRectMake(rect.origin.x + 220, rect.origin.y, 20, 20) withAttributes:@{NSForegroundColorAttributeName:[UIColor blackColor], NSFontAttributeName:[UIFont systemFontOfSize:18]}]; } 
+- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event { NSLog(@"lightGray view inside"); BOOL isInside = [super pointInside:point withEvent:event]; NSLog(@"lightGray view is inside: %zd", isInside); return isInside; } 
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event { NSLog(@"lightGray view hit"); UIView *view = [super hitTest:point withEvent:event]; //UIView *view = [self jkr_hitTest:point withEvent:event]; NSLog(@"lightGray view hit: %@", view); return view; } 
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { NSLog(@"lightGray view touchBegan"); [super touchesBegan:touches withEvent:event]; } - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { NSLog(@"lightGray view touchCancelled"); [super touchesCancelled:touches withEvent:event]; } 
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { NSLog(@"lightGray view touchMoved"); [super touchesMoved:touches withEvent:event]; } 
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { NSLog(@"lightGray view touchEnded"); [super touchesEnded:touches withEvent:event]; }
+
+
+yellow view hit 
+yellow view inside 
+yellow view is inside: 0 
+yellow view hit: (null) 
+lightGray view hit 
+lightGray view inside
+lightGray view is inside: 1 
+green view hit 
+green view inside 
+green view is inside: 0 
+green view hit: (null) 
+red view hit 
+red view inside 
+red view is inside: 1 
+red view hit: <RedView: 0x7fb058c07ea0; frame = (0 0; 196 100); autoresize = RM+BM; layer = <CALayer: 0x60000003e940>> 
+lightGray view hit: <RedView: 0x7fb058c07ea0; frame = (0 0; 196 100); autoresize = RM+BM; layer = <CALayer: 0x60000003e940>> 
+red view touchBegan 
+lightGray view touchBegan 
+rootView touchBegan 
+red view touchEnded 
+lightGray view touchEnded 
+rootView view touchEnded
+递归调用
+
+
+视图可以响应触摸事件的条件
+1，透明度不低于0.01
+2，hidden为NO
+3，userInteractionEnabled为YES
+
+
+#import <UIKit/UIKit.h> @interface UIView (HitTest) - (UIView *)jkr_hitTest:(CGPoint)point withEvent:(UIEvent *)event; @end #import "UIView+HitTest.h" @implementation UIView (HitTest) - (UIView *)jkr_hitTest:(CGPoint)point withEvent:(UIEvent *)event { if (self.alpha <= 0.01 || self.hidden || self.userInteractionEnabled == false) { return nil; } UIView *lastResultView = nil; if ([self pointInside:point withEvent:event]) { lastResultView = self; NSArray *subViews = [[self.subviews reverseObjectEnumerator] allObjects]; if (subViews.count) { for (id view in subViews) { CGPoint convertPoint = [self convertPoint:point toView:view]; UIView *currentResultView = [view hitTest:convertPoint withEvent:event]; if (currentResultView) { lastResultView = currentResultView; break; } } return lastResultView; } else { return lastResultView; } } return nil; } @end
+
+一个视图的hitTest方法首先调用，hitTest方法在判断视图满足可以成为响应者的基本条件（透明度、是否隐藏，是否响应触摸事件）后
+调用它的pointInside方法。如果pointInside方法返回为true（即touch的点在该视图的响应范围内），
+那么就继续判断该视图是否有子视图，如果有子视图，
+则调用子视图的hitTest方法。直到所有子视图的hitTest方法调用完毕，
+最后将结果递归调用回父视图。所有视图的hitTest方法返回值为递归的最终结果
+
+
+###
+系统遍历响应者时，是否遍历一个视图的子视图前提是该视图pointInside方法的调用的结果
+如果直接修改这视图的hitTest方法的返回值，确没有调用该视图的super方法和pointInside方法，那么这个视图的子视图就不会被遍历到，该视图会拦截所有子视图的touch事件响应
+
+
+遍历递归的返回结果是由子视图传递到父视图，
+如果修改了父视图的hitTest方法，如果点击了子视图，
+那么该父视图的hitTest返回值会替换掉子视图的返回值，导致最终hitTest返回结果是父视图返回的值
+
+直接修改hitTest的值，在响应者遍历的时候，会一定程度的打乱递归返回结果的逻辑。
+如果要修改一个视图的响应范围或者屏蔽touch事件，最好是修改pointInside的值。
+
+###
+pointInside方法中的point的坐标并不是以屏幕为参照系，而是以当前视图为参照系

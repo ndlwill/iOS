@@ -7,7 +7,7 @@ void main()
     
 }
 
-// 方法3
+// method3
 //varying lowp vec2 varyTextCoord;
 //uniform sampler2D colorMap;
 //

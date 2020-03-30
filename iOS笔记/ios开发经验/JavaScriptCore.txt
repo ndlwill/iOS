@@ -1,0 +1,98 @@
+JavaScriptCore iOS7.0
+
+JS与OC交互的库
+
+
+JSVirtualMachine 
+JSVirtualMachine看名字直译是JS 虚拟机，也就是说JavaScript是在一个虚拟的环境中执行，而JSVirtualMachine为其执行提供底层资源
+
+一个JSVirtualMachine实例，代表一个独立的JavaScript对象空间，并为其执行提供资源。它通过加锁虚拟机，保证JSVirtualMachine是线程安全的，如果要并发执行JavaScript，那我们必须创建多个独立的JSVirtualMachine实例，在不同的实例中执行JavaScript。
+通过alloc/init就可以创建一个新的JSVirtualMachine对象。但是我们一般不用新建JSVirtualMachine对象，因为创建JSContext时，如果我们不提供一个特性的JSVirtualMachine，内部会自动创建一个JSVirtualMachine对象
+
+
+JSContext 
+JSContext是为JavaScript的执行提供运行环境，所有的JavaScript的执行都必须在JSContext环境中。JSContext也管理JSVirtualMachine中对象的生命周期。每一个JSValue对象都要强引用关联一个JSContext。当与某JSContext对象关联的所有JSValue释放后，JSContext也会被释放。
+创建一个JSContext对象的方式有：
+// 1.这种方式需要传入一个JSVirtualMachine对象，如果传nil，会导致应用崩溃的。
+JSVirtualMachine *JSVM = [[JSVirtualMachine alloc] init];
+JSContext *JSCtx = [[JSContext alloc] initWithVirtualMachine:JSVM];
+
+// 2.这种方式，内部会自动创建一个JSVirtualMachine对象，可以通过JSCtx.virtualMachine
+// 看其是否创建了一个JSVirtualMachine对象。
+JSContext *JSCtx = [[JSContext alloc] init];
+
+// 3. 通过webView的获取JSContext。
+JSContext *context = [self.webView valueForKeyPath:@"documentView.webView.mainFrame.javaScriptContext"];
+
+JSValue都是通过JSContext返回或者创建的，并没有构造方法。JSValue包含了每一个JavaScript类型的值，通过JSValue可以将Objective-C中的类型转换为JavaScript中的类型，也可以将JavaScript中的类型转换为Objective-C中的类型。
+
+JSExport 
+JSExport是一个协议类，但是该协议并没有任何属性和方法。
+我们可以自定义一个协议类，继承自JSExport。无论我们在JSExport里声明的属性，实例方法还是类方法，继承的协议都会自动的提供给任何 JavaScript 代码。
+So，我们只需要在自定义的协议类中，添加上属性和方法就可以了。
+
+function shareClick() { share('测试分享的标题','测试分享的内容','url=http://www.baidu.com'); } 
+function shareResult(channel_id,share_channel,share_url) { var content = channel_id+","+share_channel+","+share_url; asyncAlert(content); document.getElementById("returnValue").value = content; }
+function locationClick() { getLocation(); } 
+function setLocation(location) { asyncAlert(location); document.getElementById("returnValue").value = location; }
+
+js call oc
+#pragma mark - UIWebViewDelegate - (void)webViewDidFinishLoad:(UIWebView *)webView { NSLog(@"webViewDidFinishLoad"); [self addCustomActions]; }
+
+- (void)addCustomActions { JSContext *context = [self.webView valueForKeyPath:@"documentView.webView.mainFrame.javaScriptContext"]; [self addScanWithContext:context]; [self addLocationWithContext:context]; [self addSetBGColorWithContext:context]; [self addShareWithContext:context]; [self addPayActionWithContext:context]; [self addShakeActionWithContext:context]; [self addGoBackWithContext:context]; }
+
+- (void)addShareWithContext:(JSContext *)context { __weak typeof(self) weakSelf = self; context[@"share"] = ^() { NSArray *args = [JSContext currentArguments]; if (args.count < 3) { return ; } NSString *title = [args[0] toString]; NSString *content = [args[1] toString]; NSString *url = [args[2] toString]; // 在这里执行分享的操作... // 将分享结果返回给js NSString *jsStr = [NSString stringWithFormat:@"shareResult('%@','%@','%@')",title,content,url]; [[JSContext currentContext] evaluateScript:jsStr]; }; }
+
+而且在block内不要使用外部的context 以及JSValue，都会导致循环引用。如果要使用context 可以使用[JSContext currentContext]。
+
+
+OC调用JS
+
+调用JS中payResult方法的示例代码：
+NSString *jsStr = [NSString stringWithFormat:@"payResult('%@')",@"支付成功"];
+[[JSContext currentContext] evaluateScript:jsStr];
+
+
+JSContext *context = [self.webView valueForKeyPath:@"documentView.webView.mainFrame.javaScriptContext"]; 
+[context[@"payResult"] callWithArguments:@[@"支付弹窗"]];
+
+在执行原生OC方法之后，想要在OC执行完操作后，将结果回调给JS时，可以这样写：
+- (void)addPayActionWithContext:(JSContext *)context
+{
+    context[@"payAction"] = ^() {
+        NSArray *args = [JSContext currentArguments];
+
+        if (args.count < 4) {
+            return ;
+        }
+
+        NSString *orderNo = [args[0] toString];
+        NSString *channel = [args[1] toString];
+        long long amount = [[args[2] toNumber] longLongValue];
+        NSString *subject = [args[3] toString];
+
+        // 支付操作
+        NSLog(@"orderNo:%@---channel:%@---amount:%lld---subject:%@",orderNo,channel,amount,subject);
+        // 将支付结果返回给js
+        [[JSContext currentContext][@"payResult"] callWithArguments:@[@"支付成功"]];
+    };
+}
+
+在OC中如何往JS环境中添加一个变量，便于后续在JS中使用呢？
+JSContext *context = [[JSContext alloc] init];
+[context evaluateScript:@"var arr = [3, 4, 'abc'];"];
+
+JSContext *context = [self.webView valueForKeyPath:@"documentView.webView.mainFrame.javaScriptContext"]; [context evaluateScript:@"var arr = [3, 4, 'abc'];"];
+
+OC中想要取出arr，只需要这样：
+JSValue *value = context[@"arr"];
+
+
+JSExport 主要是用于将OC中定义的Model类等引入到JavaScript中，便于在JS中使用这种对象和对象的属性、方法。
+JSExport的大致使用流程是：
+1.创建一个自定义协议XXXExport 继承自JSExport。
+2.在自定义的XXXExport中添加JS里需要调用的属性和方法。
+3.在自定义的Model类中实现XXXExport中的属性的get/set方法以及定义的方法。
+4.通过JSContext将Model类或者Model类的实例插入到JavaScript中。
+
+

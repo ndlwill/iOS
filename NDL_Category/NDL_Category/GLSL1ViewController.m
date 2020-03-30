@@ -9,6 +9,7 @@
 
 #import "GLSL1ViewController.h"
 #import "OpenGLESView.h"
+#import "IndexedArrayDrawView.h"
 
 @interface GLSL1ViewController ()
 
@@ -20,13 +21,16 @@
 
 - (void)loadView {
     
-    self.view = [[OpenGLESView alloc] initWithFrame:CGRectMake(0, 0, kScreenWidth, kScreenHeight)];
+//    self.view = [[OpenGLESView alloc] initWithFrame:CGRectMake(0, 0, kScreenWidth, kScreenHeight)];
+    self.view = [[IndexedArrayDrawView alloc] initWithFrame:CGRectMake(0, 0, kScreenWidth, kScreenHeight)];
 }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
     
-    self.myView = (OpenGLESView *)self.view;
+//    self.myView = (OpenGLESView *)self.view;
+    // 索引数组绘图
+    self.myView = (IndexedArrayDrawView *)self.view;
 }
 
 

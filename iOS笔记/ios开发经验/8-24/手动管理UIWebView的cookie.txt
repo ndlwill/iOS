@@ -1,0 +1,56 @@
+实际例子描述：在App里内嵌一个UIWebView，通过UIWebView打开http://weibo.com 微博首页，
+在UIWebView里登录我的账号，登录成功后kill App，再次启动App打开UIWebView时微博仍为登录状态。
+实现这个Demo的整体业务代码很简单，主要是怎么实现“再次启动App打开UIWebView时微博仍为登录状态”。
+这就涉及到UIWebView的cookie问题。
+
+Session、Cookie
+客户端(包括浏览器)连接某网站(服务器)进行数据交换时，服务器给客户端分配一个数据交换的环境，
+保存着相关的状态(登录状态、记住用户名密码等)，称之为会话即Session，每个Session都会有唯一的session id。 
+在客户端(包括浏览器)不断开连接的情况下这个session会一直在服务器保持着，直到连接断开或会话建立的过程长时间没有数据交换即超时。 
+Session是客户端第一次请求时在服务器创建的，Session维持的过程中(未断开连接)，客户端肯定会发起多次数据请求，那么对同一服务器的多次请求时，
+服务器怎么知道各个请求是否是属于同一Sessioin的呢？ 这时需要客户端的辅助，这个辅助机制称之为Cookie机制，
+浏览器的cookie机制都是这么做的，
+我详细说一下：客户端收到服务器的第一次响应时，服务器会把session id通过response返回给客户端， 
+客户端收到这个session id后把它存在客户端本地，以后客户端所有向服务器发起的请求都要带着这个session id， 
+这样服务器就知道这些请求都是属于同一个session，那么这些请求都可以共享这个Session状态(登录状态、记住用户名密码等)。 
+所谓Cookie就是存在本地的若干数据，如session id等其它一些需要临时存在本地以后请求需要的数据。 
+所以，一个Session对应一个session id，一个Session对应多个request, 一个request对应多个cookie，session id可以做为其中的一个cookie。
+另外，我们还会遇到浏览器的Cookie被禁用的情况(即浏览器不支持存cookie)。
+这种情况下，对网站的所有请求都必须在url里带着session id，以前是浏览器自动把session id放到请求的header里的。
+
+实际例子的解决方案
+在UIWebView里登录成功后，把Session id作为cookie保存到客户端本地，以后对微博网站的所有请求都把存在本地的session id这个cookie传给服务器。代码如下
+第一部分
+[self restoreCookieIfNeeded];
+[self.webView loadRequest:request];
+
+第二部分
+- (void)webViewDidFinishLoad:(UIWebView *)webView {
+    [self saveSessionIDCookie];
+}
+
+第三部分
+- (void)saveSessionIDCookie {
+    NSArray *nCookies = [[NSHTTPCookieStorage sharedHTTPCookieStorage] cookies];
+    NSHTTPCookie *cookie = nil;
+    for (id cObj in nCookies) {
+        if ([cObj isKindOfClass:[NSHTTPCookie class]]){
+            cookie = (NSHTTPCookie *)cObj;
+            if (!!cookie && [cookie.name isEqualToString:PHPSESSID]) {
+                NSString *savePath = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask, YES) objectAtIndex:0];
+                NSString *saveFile = [savePath stringByAppendingPathComponent:PHPSESSID];
+                [NSKeyedArchiver archiveRootObject:cookie toFile:saveFile];
+            }
+            NSLog(@"cookie properties: %@", cookie.properties);
+        }
+    }
+}
+
+- (void)restoreCookieIfNeeded {
+    NSString *savePath = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask, YES) objectAtIndex:0];
+    NSString *saveFile = [savePath stringByAppendingPathComponent:PHPSESSID];
+    NSHTTPCookie *sessionIDCookie = [NSKeyedUnarchiver unarchiveObjectWithFile:saveFile];
+    if (!!sessionIDCookie) {
+        [[NSHTTPCookieStorage sharedHTTPCookieStorage] setCookie:sessionIDCookie];
+    }
+}

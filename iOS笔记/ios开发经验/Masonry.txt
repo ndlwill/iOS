@@ -1,0 +1,160 @@
+在使用Masonry添加约束之前，需要在addSubview之后才能使用，否则会导致崩溃
+
+mas_makeConstraints()    添加约束
+mas_remakeConstraints()  移除之前的约束，重新添加新的约束
+mas_updateConstraints()  更新约束
+ 
+equalTo()       参数是对象类型，一般是视图对象或者mas_width这样的坐标系对象
+mas_equalTo()   和上面功能相同，参数可以传递基础数据类型对象，可以理解为比上面的API更强大
+ 
+width()         用来表示宽度，例如代表view的宽度
+mas_width()     用来获取宽度的值。和上面的区别在于，一个代表某个坐标系对象，一个用来获取坐标系对象的值
+
+// 定义这个常量，就可以不用在开发过程中使用"mas_"前缀。
+#define MAS_SHORTHAND
+// 定义这个常量，就可以让Masonry帮我们自动把基础数据类型的数据，自动装箱为对象类型。
+#define MAS_SHORTHAND_GLOBALS
+
+
+make.top.and.bottom.equalTo(self.containerView).with.offset(padding);
+其内部代码实现，实际上就是直接将self返回。
+- (MASConstraint *)with {
+    return self;
+}
+
+[self.tableView mas_makeConstraints:^(MASConstraintMaker *make) {
+        make.edges.equalTo(self.view);
+    }];
+
+
+关于更新约束布局相关的API，主要用以下四个API：
+- (void)updateConstraintsIfNeeded  调用此方法，如果有标记为需要重新布局的约束，则立即进行重新布局，内部会调用updateConstraints方法
+- (void)updateConstraints          重写此方法，内部实现自定义布局过程
+- (BOOL)needsUpdateConstraints     当前是否需要重新布局，内部会判断当前有没有被标记的约束
+- (void)setNeedsUpdateConstraints  标记需要进行重新布局
+关于UIView重新布局相关的API，主要用以下三个API：
+- (void)setNeedsLayout  标记为需要重新布局
+- (void)layoutIfNeeded  查看当前视图是否被标记需要重新布局，有则在内部调用layoutSubviews方法进行重新布局
+- (void)layoutSubviews  重写当前方法，在内部完成重新布局操作
+
+/** 
+ 设置yellow视图和self.view等大，并且有10的内边距。
+ 注意根据UIView的坐标系，下面right和bottom进行了取反。所以不能写成下面这样，否则right、bottom这两个方向会出现问题。
+ make.edges.equalTo(self.view).with.offset(10);
+ 
+ 除了下面例子中的offset()方法，还有针对不同坐标系的centerOffset()、sizeOffset()、valueOffset()之类的方法。
+ */
+[self.yellowView mas_makeConstraints:^(MASConstraintMaker *make) {
+    make.left.equalTo(self.view).with.offset(10);
+    make.top.equalTo(self.view).with.offset(10);
+    make.right.equalTo(self.view).with.offset(-10);
+    make.bottom.equalTo(self.view).with.offset(-10);
+}];
+通过insets简化设置内边距的方式
+// 下面的方法和上面例子等价，区别在于使用insets()方法。
+[self.blueView mas_makeConstraints:^(MASConstraintMaker *make) {
+    // 下、右不需要写负号，insets方法中已经为我们做了取反的操作了。
+    make.edges.equalTo(self.view).with.insets(UIEdgeInsetsMake(10, 10, 10, 10));
+}];
+
+
+
+更新约束
+// 设置greenView的center和size，这样就可以达到简单进行约束的目的
+[self.greenView mas_makeConstraints:^(MASConstraintMaker *make) {
+    make.center.equalTo(self.view);
+    // 这里通过mas_equalTo给size设置了基础数据类型的参数，参数为CGSize的结构体
+    make.size.mas_equalTo(CGSizeMake(300, 300));
+}];
+ 
+// 为了更清楚的看出约束变化的效果，在显示两秒后更新约束。
+dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.f * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    [self.greenView mas_updateConstraints:^(MASConstraintMaker *make) {
+        make.centerX.equalTo(self.view).offset(100);
+        make.size.mas_equalTo(CGSizeMake(100, 100));
+    }];
+});
+
+
+大于等于和小于等于某个值的约束
+[self.textLabel mas_makeConstraints:^(MASConstraintMaker *make) {
+    make.center.equalTo(self.view);
+    // 设置宽度小于等于200
+    make.width.lessThanOrEqualTo(@200);
+    // 设置高度大于等于10
+    make.height.greaterThanOrEqualTo(@(10));
+}];
+
+
+使用基础数据类型当做参数
+/** 
+ 如果想使用基础数据类型当做参数，Masonry为我们提供了"mas_xx"格式的宏定义。
+ 这些宏定义会将传入的基础数据类型转换为NSNumber类型，这个过程叫做封箱(Auto Boxing)。
+  
+ "mas_xx"开头的宏定义，内部都是通过MASBoxValue()函数实现的。
+ 这样的宏定义主要有四个，分别是mas_equalTo()、mas_offset()和大于等于、小于等于四个。
+ */
+[self.redView mas_makeConstraints:^(MASConstraintMaker *make) {
+    make.center.equalTo(self.view);
+    make.width.mas_equalTo(100);
+    make.height.mas_equalTo(100);
+}];
+
+
+设置约束比例
+// 设置当前约束值乘以多少，例如这个例子是redView的宽度是self.view宽度的0.2倍。
+[self.redView mas_makeConstraints:^(MASConstraintMaker *make) {
+    make.center.equalTo(self.view);
+    make.height.mas_equalTo(30);
+    make.width.equalTo(self.view).multipliedBy(0.2);
+}];
+
+
+
+子视图等高
+/** 
+ 下面的例子是通过给equalTo()方法传入一个数组，设置数组中子视图及当前make对应的视图之间等高。
+ 
+ 需要注意的是，下面block中设置边距的时候，应该用insets来设置，而不是用offset。
+ 因为用offset设置right和bottom的边距时，这两个值应该是负数，所以如果通过offset来统一设置值会有问题。
+ */
+CGFloat padding = LXZViewPadding;
+[self.redView mas_makeConstraints:^(MASConstraintMaker *make) {
+    make.left.right.top.equalTo(self.view).insets(UIEdgeInsetsMake(padding, padding, 0, padding));
+    make.bottom.equalTo(self.blueView.mas_top).offset(-padding);
+}];
+ 
+[self.blueView mas_makeConstraints:^(MASConstraintMaker *make) {
+    make.left.right.equalTo(self.view).insets(UIEdgeInsetsMake(0, padding, 0, padding));
+    make.bottom.equalTo(self.yellowView.mas_top).offset(-padding);
+}];
+ 
+/** 
+ 下面设置make.height的数组是关键，通过这个数组可以设置这三个视图高度相等。其他例如宽度之类的，也是类似的方式。
+ */
+[self.yellowView mas_makeConstraints:^(MASConstraintMaker *make) {
+    make.left.right.bottom.equalTo(self.view).insets(UIEdgeInsetsMake(0, padding, padding, padding));
+    make.height.equalTo(@[self.blueView, self.redView]);
+}];
+
+
+子视图垂直居中
+/** 
+ 要求：(这个例子是在其他人博客里看到的，然后按照要求自己写了下面这段代码)
+ 两个视图相对于父视图垂直居中，并且两个视图以及父视图之间的边距均为10，高度为150，两个视图宽度相等。
+ */
+CGFloat padding = 10.f;
+[self.blueView mas_makeConstraints:^(MASConstraintMaker *make) {
+    make.centerY.equalTo(self.view);
+    make.left.equalTo(self.view).mas_offset(padding);
+    make.right.equalTo(self.redView.mas_left).mas_offset(-padding);
+    make.width.equalTo(self.redView);
+    make.height.mas_equalTo(150);
+}];
+ 
+[self.redView mas_makeConstraints:^(MASConstraintMaker *make) {
+    make.centerY.equalTo(self.view);
+    make.right.equalTo(self.view).mas_offset(-padding);
+    make.width.equalTo(self.blueView);
+    make.height.mas_equalTo(150);
+}];

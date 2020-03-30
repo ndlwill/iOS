@@ -1,0 +1,94 @@
+iOS 8中推出了WKWebView
+
+只有app 不需要兼容iOS 7及以下的时候才可以使用
+
+WKWebView的创建有几点不同：
+1.初始化多了个configuration参数，当然这个参数我们也可以不传，直接使用默认的设置就好。
+2.WKWebView的代理有两个navigationDelegate和UIDelegate。
+我们要拦截URL，就要通过navigationDelegate的一个代理方法来实现。
+如果在HTML中要使用alert等弹窗，就必须得实现UIDelegate的相应代理方法。
+
+
+WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init]; 
+configuration.userContentController = [WKUserContentController new]; 
+
+WKPreferences *preferences = [WKPreferences new]; 
+preferences.javaScriptCanOpenWindowsAutomatically = YES; 
+preferences.minimumFontSize = 30.0; 
+configuration.preferences = preferences; 
+
+self.webView = [[WKWebView alloc] initWithFrame:self.view.frame configuration:configuration]; 
+NSString *urlStr = [[NSBundle mainBundle] pathForResource:@"index.html" ofType:nil]; 
+NSURL *fileURL = [NSURL fileURLWithPath:urlStr]; 
+[self.webView loadFileURL:fileURL allowingReadAccessToURL:fileURL]; 
+self.webView.navigationDelegate = self; 
+[self.view addSubview:self.webView];
+
+---------------------------------------------------------------------------------------
+使用WKNavigationDelegate中的代理方法，拦截自定义的URL来实现JS调用OC方法。
+#pragma mark - WKNavigationDelegate
+- (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler
+{
+    NSURL *URL = navigationAction.request.URL;
+    NSString *scheme = [URL scheme];
+    if ([scheme isEqualToString:@"haleyaction"]) {
+        [self handleCustomAction:URL];
+        decisionHandler(WKNavigationActionPolicyCancel);
+        return;
+    }
+    decisionHandler(WKNavigationActionPolicyAllow);
+}
+
+如果实现了这个代理方法，就必须得调用decisionHandler这个block，否则会导致app 崩溃。block参数是个枚举类型，WKNavigationActionPolicyCancel代表取消加载，相当于UIWebView的代理方法return NO的情况；WKNavigationActionPolicyAllow代表允许加载，相当于UIWebView的代理方法中 return YES的情况
+
+- (void)handleCustomAction:(NSURL *)URL { NSString *host = [URL host]; if ([host isEqualToString:@"scanClick"]) { NSLog(@"扫一扫"); } else if ([host isEqualToString:@"shareClick"]) { [self share:URL]; } else if ([host isEqualToString:@"getLocation"]) { [self getLocation]; } else if ([host isEqualToString:@"setColor"]) { [self changeBGColor:URL]; } else if ([host isEqualToString:@"payAction"]) { [self payAction:URL]; } else if ([host isEqualToString:@"shake"]) { [self shakeAction]; } else if ([host isEqualToString:@"goBack"]) { [self goBack]; } }
+
+WKWebView 提供了一个新的方法evaluateJavaScript:completionHandler:，实现OC 调用JS 等场景
+
+- (void)getLocation { // 获取位置信息 // 将结果返回给js NSString *jsStr = [NSString stringWithFormat:@"setLocation('%@')",@"广东省深圳市南山区学府路XXXX号"]; [self.webView evaluateJavaScript:jsStr completionHandler:^(id _Nullable result, NSError * _Nullable error) { NSLog(@"%@----%@",result, error); }]; }
+
+
+如果在WKWebView中使用alert、confirm 等弹窗，就得实现WKWebView的WKUIDelegate中相应的代理方法。
+例如，我在JS中要显示alert 弹窗，就必须实现如下代理方法，否则alert 并不会弹出。
+#pragma mark - WKUIDelegate
+- (void)webView:(WKWebView *)webView runJavaScriptAlertPanelWithMessage:(NSString *)message initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(void))completionHandler
+{
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"提醒" message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:^(UIAlertAction * _Nonnull action) {
+        completionHandler();
+    }]];
+
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+
+JS调用OC
+除了拦截URL之外，还有一种简单的方式。
+那就是利用WKWebView的新特性MessageHandler来实现JS调用原生方法。
+
+要使用MessageHandler功能，就必须要实现WKScriptMessageHandler协议
+
+WKUserContentController对象可以添加多个scriptMessageHandler
+
+// 这是创建configuration 的过程 WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init]; WKPreferences *preferences = [WKPreferences new]; preferences.javaScriptCanOpenWindowsAutomatically = YES; preferences.minimumFontSize = 40.0; configuration.preferences = preferences; - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; // addScriptMessageHandler 很容易导致循环引用 // 控制器 强引用了WKWebView,WKWebView copy(强引用了）configuration， configuration copy （强引用了）userContentController // userContentController 强引用了 self （控制器） [self.webView.configuration.userContentController addScriptMessageHandler:self name:@"ScanAction"]; [self.webView.configuration.userContentController addScriptMessageHandler:self name:@"Location"]; [self.webView.configuration.userContentController addScriptMessageHandler:self name:@"Share"]; [self.webView.configuration.userContentController addScriptMessageHandler:self name:@"Color"]; [self.webView.configuration.userContentController addScriptMessageHandler:self name:@"Pay"]; [self.webView.configuration.userContentController addScriptMessageHandler:self name:@"Shake"]; [self.webView.configuration.userContentController addScriptMessageHandler:self name:@"GoBack"]; [self.webView.configuration.userContentController addScriptMessageHandler:self name:@"PlaySound"]; }
+
+addScriptMessageHandler很容易引起循环引用
+
+- (void)viewWillDisappear:(BOOL)animated { [super viewWillDisappear:animated]; // 因此这里要记得移除handlers [self.webView.configuration.userContentController removeScriptMessageHandlerForName:@"ScanAction"]; [self.webView.configuration.userContentController removeScriptMessageHandlerForName:@"Location"]; [self.webView.configuration.userContentController removeScriptMessageHandlerForName:@"Share"]; [self.webView.configuration.userContentController removeScriptMessageHandlerForName:@"Color"]; [self.webView.configuration.userContentController removeScriptMessageHandlerForName:@"Pay"]; [self.webView.configuration.userContentController removeScriptMessageHandlerForName:@"Shake"]; [self.webView.configuration.userContentController removeScriptMessageHandlerForName:@"GoBack"]; [self.webView.configuration.userContentController removeScriptMessageHandlerForName:@"PlaySound"]; }
+
+self.webView = [[WKWebView alloc] initWithFrame:self.view.frame configuration:configuration]; NSString *urlStr = [[NSBundle mainBundle] pathForResource:@"index.html" ofType:nil]; NSURL *fileURL = [NSURL fileURLWithPath:urlStr]; [self.webView loadFileURL:fileURL allowingReadAccessToURL:fileURL]; self.webView.navigationDelegate = self; self.webView.UIDelegate = self; [self.view addSubview:self.webView];
+
+
+#pragma mark - WKScriptMessageHandler
+- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message { // message.body -- Allowed types are NSNumber, NSString, NSDate, NSArray,NSDictionary, and NSNull. if ([message.name isEqualToString:@"ScanAction"]) { NSLog(@"扫一扫"); } else if ([message.name isEqualToString:@"Location"]) { [self getLocation]; } else if ([message.name isEqualToString:@"Share"]) { [self shareWithParams:message.body]; } else if ([message.name isEqualToString:@"Color"]) { [self changeBGColor:message.body]; } else if ([message.name isEqualToString:@"Pay"]) { [self payWithParams:message.body]; } else if ([message.name isEqualToString:@"Shake"]) { [self shakeAction]; } else if ([message.name isEqualToString:@"GoBack"]) { [self goBack]; } else if ([message.name isEqualToString:@"PlaySound"]) { [self playSound:message.body]; } }
+
+WKScriptMessage有两个关键属性name 和 body。
+因为我们给每一个OC 方法取了一个name，那么我们就可以根据name 来区分执行不同的方法。body 中存着JS 要给OC 传的参数
+
+
+
+// 传null function scanClick() { window.webkit.messageHandlers.ScanAction.postMessage(null); } 
+// 传字典 function shareClick() { window.webkit.messageHandlers.Share.postMessage({title:'测试分享的标题',content:'测试分享的内容',url:'http://www.baidu.com'}); } 
+// 传字符串 function playSound() { window.webkit.messageHandlers.PlaySound.postMessage('shake_sound_male.wav'); } 
+// 传数组 function colorClick() { window.webkit.messageHandlers.Color.postMessage([67,205,128,0.5]); }
+

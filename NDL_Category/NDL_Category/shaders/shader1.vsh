@@ -9,7 +9,7 @@ void main()
 }
 
 
-// 解决纹理翻转(方法1)
+// method1
 //attribute vec4 position;
 //attribute vec2 textCoordinate;
 //uniform mat4 rotateMatrix;
@@ -26,7 +26,7 @@ void main()
 //    gl_Position = vPos;
 //}
 
-// 方法4
+// method4
 //attribute vec4 position;
 //attribute vec2 textCoordinate;
 //varying lowp vec2 varyTextCoord;

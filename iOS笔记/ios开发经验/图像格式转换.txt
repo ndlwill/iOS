@@ -1,0 +1,111 @@
+1. 其他格式转为UIImage
+1.1 CVImageBufferRef (RGB)转为UIImage
+- (UIImage *)imageFromRGBImageBuffer:(CVImageBufferRef)imageBuffer {
+    CVPixelBufferLockBaseAddress(imageBuffer, 0);
+    void *baseAddress = CVPixelBufferGetBaseAddress(imageBuffer);
+    size_t bytesPerRow = CVPixelBufferGetBytesPerRow(imageBuffer);
+    size_t width = CVPixelBufferGetWidth(imageBuffer);
+    size_t height = CVPixelBufferGetHeight(imageBuffer);
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(baseAddress, width, height, 8,bytesPerRow, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+    CGImageRef quartzImage = CGBitmapContextCreateImage(context);
+    CVPixelBufferUnlockBaseAddress(imageBuffer,0);
+    CGContextRelease(context);
+    CGColorSpaceRelease(colorSpace);
+    UIImage *image = [UIImage imageWithCGImage:quartzImage];
+    CGImageRelease(quartzImage);
+    return (image);
+}
+1.2 CVImageBufferRef (YUV)转为UIImage
+- (UIImage *)imageFromYUVImageBuffer:(CVImageBufferRef)imageBuffer {
+    CVPixelBufferLockBaseAddress(imageBuffer, 0);
+    size_t bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(imageBuffer, 0);
+    size_t width = CVPixelBufferGetWidthOfPlane(imageBuffer, 0);
+    size_t height = CVPixelBufferGetHeightOfPlane(imageBuffer, 0);
+    void *lumaAddress = CVPixelBufferGetBaseAddress(imageBuffer);
+    CGColorSpaceRef rgbSpace = CGColorSpaceCreateDeviceGray();
+    CGContextRef context = CGBitmapContextCreate(lumaAddress, width, height, 8, bytesPerRow, rgbSpace, kCGBitmapByteOrderDefault );
+    CGImageRef imageRef = CGBitmapContextCreateImage(context);
+    CGContextRelease(context);
+    CVPixelBufferUnlockBaseAddress(imageBuffer, 0);
+    UIImage *image = [UIImage imageWithCGImage:imageRef];
+    CGImageRelease(imageRef);
+    return image;
+}
+1.3 纹理 (Texture)转为UIImage
+- (UIImage *)imageFromTextureWithwidth:(int)width height:(int)height {
+    // glActiveTexture(GL_TEXTURE1); 先绑定某个纹理
+    int size = width * height * 4;
+    GLubyte *buffer = malloc(size);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+    CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, buffer, size, NULL);
+    int bitsPerComponent = 8;
+    int bitsPerPixel = 32;
+    int bytesPerRow = 4 * width;
+    CGColorSpaceRef colorSpaceRef = CGColorSpaceCreateDeviceRGB();
+    CGBitmapInfo bitmapInfo = kCGBitmapByteOrderDefault;
+    CGColorRenderingIntent renderingIntent = kCGRenderingIntentDefault;
+    CGImageRef imageRef = CGImageCreate(width, height, bitsPerComponent, bitsPerPixel, bytesPerRow, colorSpaceRef, bitmapInfo, provider, NULL, NO, renderingIntent);
+    UIImage *image = [UIImage imageWithCGImage:imageRef];
+    free(buffer);
+    return image;
+}
+1.4 data (RGB)转为UIImage
+- (UIImage *)imageFromRGBData:(void *)data width:(int)width height:(int)height {
+    CGColorSpaceRef rgbSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(data, width, height, 8, width*4, rgbSpace, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little );
+    CGImageRef imageRef = CGBitmapContextCreateImage(context);
+    CGContextRelease(context);
+    UIImage *image = [UIImage imageWithCGImage:imageRef];
+    CGImageRelease(imageRef);
+    return image;
+}
+1.5 data (Y)转为UIImage
+- (UIImage *)imageFromYData:(void *)data width:(int)width height:(int)height {
+    CGColorSpaceRef rgbSpace = CGColorSpaceCreateDeviceGray();
+    CGContextRef context = CGBitmapContextCreate(data, width, height, 8, width, rgbSpace, kCGBitmapByteOrderDefault );
+    CGImageRef imageRef = CGBitmapContextCreateImage(context);
+    CGContextRelease(context);
+    UIImage *image = [UIImage imageWithCGImage:imageRef];
+    CGImageRelease(imageRef);
+    return image;
+}
+2. UIImage转为其他格式
+2.1 UIImage转为CVPixelBufferRef(RGB)
+- (CVPixelBufferRef)imageToRGBPixelBuffer:(UIImage *)image {
+    CGSize frameSize = CGSizeMake(CGImageGetWidth(image.CGImage),CGImageGetHeight(image.CGImage));
+    NSDictionary *options =
+    [NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithBool:YES],kCVPixelBufferCGImageCompatibilityKey,[NSNumber numberWithBool:YES],kCVPixelBufferCGBitmapContextCompatibilityKey,nil];
+    CVPixelBufferRef pxbuffer = NULL;
+    CVReturn status =
+    CVPixelBufferCreate(kCFAllocatorDefault, frameSize.width, frameSize.height,kCVPixelFormatType_32BGRA, (__bridge CFDictionaryRef)options, &pxbuffer);
+    NSParameterAssert(status == kCVReturnSuccess && pxbuffer != NULL);
+    CVPixelBufferLockBaseAddress(pxbuffer, 0);
+    void *pxdata = CVPixelBufferGetBaseAddress(pxbuffer);
+    CGColorSpaceRef rgbColorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(pxdata, frameSize.width, frameSize.height,8, CVPixelBufferGetBytesPerRow(pxbuffer),rgbColorSpace,(CGBitmapInfo)kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+    CGContextDrawImage(context, CGRectMake(0, 0, CGImageGetWidth(image.CGImage),CGImageGetHeight(image.CGImage)), image.CGImage);
+    CGColorSpaceRelease(rgbColorSpace);
+    CGContextRelease(context);
+    CVPixelBufferUnlockBaseAddress(pxbuffer, 0);
+    return pxbuffer;
+}
+2.2 UIImage转为CVPixelBufferRef(YUV)
+- (CVPixelBufferRef)imageToYUVPixelBuffer:(UIImage *)image {
+    CGSize frameSize = CGSizeMake(CGImageGetWidth(image.CGImage), CGImageGetHeight(image.CGImage));
+    NSDictionary *options = [NSDictionary dictionaryWithObjectsAndKeys:
+                             [NSNumber numberWithBool:YES],kCVPixelBufferCGImageCompatibilityKey,
+                             [NSNumber numberWithBool:YES],kCVPixelBufferCGBitmapContextCompatibilityKey,nil];
+    CVPixelBufferRef pxbuffer = NULL;
+    CVPixelBufferCreate(kCFAllocatorDefault, frameSize.width, frameSize.height,kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, (__bridge CFDictionaryRef)options,&pxbuffer);
+    CVPixelBufferLockBaseAddress(pxbuffer, 0);
+    void *pxdata = CVPixelBufferGetBaseAddressOfPlane(pxbuffer,0);
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceGray();
+    CGContextRef context = CGBitmapContextCreate(pxdata, frameSize.width, frameSize.height,8,CVPixelBufferGetBytesPerRowOfPlane(pxbuffer, 0),colorSpace,kCGImageAlphaNone);
+    CGContextDrawImage(context, CGRectMake(0, 0, CGImageGetWidth(image.CGImage),CGImageGetHeight(image.CGImage)), image.CGImage);
+    CGColorSpaceRelease(colorSpace);
+    CGContextRelease(context);
+    CVPixelBufferUnlockBaseAddress(pxbuffer, 0);
+    return pxbuffer;
+}
+

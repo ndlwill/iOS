@@ -1,0 +1,51 @@
+OpenGL ES程序来处理图片：
+1、初始化OpenGL ES环境，编译、链接顶点着色器和片元着色器；
+2、缓存顶点、纹理坐标数据，传送图像数据到GPU；
+3、绘制图元到特定的帧缓存；
+4、在帧缓存取出绘制的图像。
+GPUImageFilter负责的是第一、二、三步。
+GPUImageFramebuffer负责是第四步
+
+CVPixelBufferGetBaseAddress可以获得图像数据
+
+在访问CPU的像素数据之前，必须调用CVPixelBufferLockBaseAddress，并在访问后调用CVPixelBufferUnlockBaseAddress
+
+GPUImage的四大输入基础类，都可以作为响应链的起点。这些基础类会把图像作为纹理，传给OpenGL ES处理，然后把纹理传递给响应链的下一个对象。
+GPUImageVideoCamera 摄像头-视频流
+GPUImageStillCamera 摄像头-照相
+GPUImagePicture 图片
+GPUImageMovie 视频
+
+GPUImageFilter就是用来接收源图像，通过自定义的顶点、片元着色器来渲染新的图像，并在绘制完成后通知响应链的下一个对象。
+GPUImageFramebuffer就是用来管理纹理缓存的格式与读写帧缓存的buffer
+
+GPUImageVideoCamera是GPUImageOutput的子类，提供来自摄像头的图像数据作为源数据，一般是响应链的源头
+
+GPUImageView是响应链的终点，一般用于显示GPUImage的图像
+
+采用YUV色彩空间的重要性是它的亮度信号Y和色度信号U、V是分离的。如果只有Y信号分量而没有U、V分量，那么这样表示的图像就是黑白灰度图像
+
+============================================================GPUImageVideoCamera
+- (void)viewDidLoad {
+    [super viewDidLoad];
+
+    self.mGPUVideoCamera = [[GPUImageVideoCamera alloc] initWithSessionPreset:AVCaptureSessionPreset640x480 cameraPosition:AVCaptureDevicePositionBack];
+    self.mGPUImageView.fillMode = kGPUImageFillModeStretch;//kGPUImageFillModePreserveAspectRatioAndFill;
+    GPUImageSepiaFilter* filter = [[GPUImageSepiaFilter alloc] init];
+    [self.mGPUVideoCamera addTarget:filter];
+    [filter addTarget:self.mGPUImageView];
+
+    //[self.mGPUVideoCamera addTarget:self.mGPUImageView];
+    [self.mGPUVideoCamera startCameraCapture];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(deviceOrientationDidChange:) name:UIDeviceOrientationDidChangeNotification object:nil];
+}
+
+
+
+- (void)deviceOrientationDidChange:(NSNotification *)notification {
+    UIInterfaceOrientation orientation = (UIInterfaceOrientation)[UIDevice currentDevice].orientation;
+    self.mGPUVideoCamera.outputImageOrientation = orientation;
+}
+
+============================================================GPUImagePicture
+GPUImagePicture是PGUImage的图像处理类，继承GPUImageOutput，一般作为响应链的源头
