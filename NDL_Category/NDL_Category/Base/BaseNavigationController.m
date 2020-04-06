@@ -33,13 +33,14 @@
     // 当导航栏用在BaseNavigationController中, appearance设置才会生效
     //    UINavigationBar *bar = [UINavigationBar appearanceWhenContainedIn:[self class], nil];
     
+    // 设置的navigationItem.title
     UINavigationBar *bar = [UINavigationBar appearance];
     // 使得self.navigationBar.translucent = NO
 //    [bar setBackgroundImage:[UIImage ndl_imageWithColor:[UIColor ndl_randomColor] size:CGSizeMake(1.0, 1.0)] forBarMetrics:UIBarMetricsDefault];
     
     [bar setTitleTextAttributes:@{NSFontAttributeName : [UIFont boldSystemFontOfSize:20]}];
     
-    // 设置item
+    // 设置UIBarButtonItem 的 item
     UIBarButtonItem *item = [UIBarButtonItem appearance];
     // UIControlStateNormal
     NSMutableDictionary *itemAttrs = [NSMutableDictionary dictionary];

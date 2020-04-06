@@ -201,6 +201,8 @@ static void save_crash_report (PLCrashReporter *reporter) {
 
 @interface AppDelegate () <PKPushRegistryDelegate, UNUserNotificationCenterDelegate>
 
+@property (nonatomic, copy) NSString *identifier;
+
 @property (nonatomic, assign) UIBackgroundTaskIdentifier bgTask;
 
 // test bgTask
@@ -839,6 +841,10 @@ static void runLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActi
             [self.timer invalidate];
         }
     }];
+    
+    
+    // 实现如下代码，才能使程序处于后台时被杀死，调用applicationWillTerminate:方法
+    [[UIApplication sharedApplication] beginBackgroundTaskWithExpirationHandler:^(){}];
 }
 
 - (void)applicationWillEnterForeground:(UIApplication *)application {
@@ -887,6 +893,7 @@ static void runLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActi
  */
 - (void)applicationWillTerminate:(UIApplication *)application {
     NSLog(@"AppDelegate applicationWillTerminate");
+    NSLog(@"程序被杀死，applicationWillTerminate");
 
     [XLogManager close];
 }
@@ -1060,6 +1067,13 @@ static void runLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActi
 //{
 //    return UIInterfaceOrientationMaskAllButUpsideDown;
 //}
+
+
+// 后台下载
+- (void)application:(UIApplication *)application handleEventsForBackgroundURLSession:(NSString *)identifier completionHandler:(void (^)(void))completionHandler{
+    
+    self.identifier = identifier;
+}
 
 @end
 

@@ -3926,6 +3926,289 @@ for (NSInteger i = 0; i < 100; i++) {
 runloop用到了gcd的source（dispatch_source_t）
  */
 
+// MARK: ===LG_网络==
+/**
+ wireshark
+ 
+ ipv4:32位
+ ipv6:128位
+ 
+ MTU：最大传输单元 576-1500字节
+ tcp:20 ip:20 头帧大小
+ MSS：最大分段大小 576 - 20 - 20 = 536 取536的倍数
+ 分段传输
+ ----------------------------------------
+ UIWebView:
+ - (void)webViewDidFinishLoad:(UIWebView *)webView{
+     // tittle
+     NSString *tittle = [webView stringByEvaluatingJavaScriptFromString:@"document.title"];
+ }
+ 
+ 
+ <head>
+     <meta charset="UTF-8">
+     <title>OC与JS交互</title>
+     <script>
+         function showAlert(name){
+             alert(name);
+             return function handle(str){
+                     alert('我是一个弹窗'+name+str);
+                     return name + '返回给OC';
+                 }
+             }
+     </script>
+ </head>
+ [self.webView stringByEvaluatingJavaScriptFromString:@"showAlert('111')('222')"];
+ 
+ js调OC: 可通过url拦截
+ 
+ js: <a href="lgedu:///getSum/helloword/js">点击跳转效应OC方法</a>
+ (NSURLRequest *)request:
+ request.URL.pathComponents
+ 
+ JavaScriptCore:
+ - (void)webViewDidFinishLoad:(UIWebView *)webView{
+     //JSContext就为其提供着运行环境 H5上下文
+     JSContext *jsContext = [self.webView valueForKeyPath:@"documentView.webView.mainFrame.javaScriptContext"];
+     self.jsContext = jsContext;
+ 
+     // 提供全局变量
+ [self.jsContext evaluateScript:@"var arr = [3, 'Cooci', 'abc'];"];
+ 
+ // 因为是全局变量 可以直接获取
+ JSValue *arrValue = self.jsContext[@"arr"];
+ 
+ self.jsContext[@"showDict"] = ^(JSValue *value) {
+     
+     NSArray *args = [JSContext currentArguments];
+     JSValue *dictValue = args[0];
+     NSDictionary *dict = dictValue.toDictionary;
+     NSLog(@"%@",dict);
+     
+     // 模拟用
+     int num = [[arrValue.toArray objectAtIndex:0] intValue];
+     num += 10;
+     NSLog(@"arrValue == %@   num == %d",arrValue.toArray,num);
+     dispatch_async(dispatch_get_main_queue(), ^{
+         weakSelf.showLabel.text = dict[@"name"];
+     });
+ };
+ 
+ //异常收集
+ self.jsContext.exceptionHandler = ^(JSContext *context, JSValue *exception) {
+     weakSelf.jsContext.exception = exception;
+     NSLog(@"exception == %@",exception);
+ };
+     
+     // 保存一段代码块
+     //JS-OC
+     jsContext[@"showMessage"] = ^{
+         // 参数 (JS 带过来的)
+         NSArray *args = [JSContext currentArguments];
+         NSLog(@"args = %@",args);
+        NSLog(@"currentThis   = %@",[JSContext currentThis]);// [object window]
+        
+ JSValue *cValue = [JSContext currentCallee];
+ NSLog(@"cValue = %@",cValue);
+ 
+        // OC-JS
+        NSDictionary *dict = @{@"name":@"cooci",@"age":@18};
+        [[JSContext currentContext][@"ocCalljs"] callWithArguments:@[dict,@"咸鱼"]];// 传以数组形式包装的参数
+     };
+ 
+ // JS 操作对象
+ KC_JSObject *kcObject = [[KC_JSObject alloc] init];
+ self.jsContext[@"kcObject"] = kcObject;
+ NSLog(@"kcObject == %d",[kcObject getSum:20 num2:40]);
+ 
+ }
+ 
+ function openAlbumImage(){
+     getImage();
+     kcObject.letJSImage('123');
+     alert(kcObject.getSum(10,20));
+ }
+ 
+ 
+ #import <JavaScriptCore/JavaScriptCore.h>
+
+ @protocol KCProtocol <JSExport>
+
+ - (void)letShowImage;
+ // 协议 - 协议方法
+ JSExportAs(getS, -(int)getSum:(int)num1 num2:(int)num2);
+
+ @end
+
+ @interface KC_JSObject : NSObject<KCProtocol>
+ @end
+ 
+ @implementation KC_JSObject;
+ - (void)letShowImage{
+     NSLog(@"打开相册,上传图片");
+ }
+
+ - (int)getSum:(int)num1 num2:(int)num2{
+     // 传的参数少的话：int (nil) - jsvalue (0)
+     return num1+num2;
+ }
+
+ @end
+ 
+ - (NSString *)removeSpaceAndNewline:(NSString *)str
+ {
+     NSString *temp = [str stringByReplacingOccurrencesOfString:@" " withString:@""];
+     temp = [temp stringByReplacingOccurrencesOfString:@"\r" withString:@""];
+     temp = [temp stringByReplacingOccurrencesOfString:@"\n" withString:@""];
+     return temp;
+ }
+ 
+ ----------------------------------------
+ WKWebView:
+ - (void)viewDidLoad {
+     [super viewDidLoad];
+     
+     WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
+     NSString *jScript = @"var meta = document.createElement('meta'); meta.setAttribute('name', 'viewport'); meta.setAttribute('content', 'width=device-width'); document.getElementsByTagName('head')[0].appendChild(meta);";
+     WKUserScript *wkUScript = [[WKUserScript alloc] initWithSource:jScript injectionTime:WKUserScriptInjectionTimeAtDocumentEnd forMainFrameOnly:YES];
+     WKUserContentController *wkUController = [[WKUserContentController alloc] init];
+     [wkUController addUserScript:wkUScript];
+     configuration.userContentController = wkUController;
+     
+     self.webView = [[WKWebView alloc] initWithFrame:self.view.frame configuration:configuration];
+     self.webView.navigationDelegate = self;
+     self.webView.UIDelegate = self;
+     [self.view addSubview:self.webView];
+     
+     NSString *urlStr = [[NSBundle mainBundle] pathForResource:@"index.html" ofType:nil];
+     NSURL *fileURL = [NSURL fileURLWithPath:urlStr];
+     [self.webView loadFileURL:fileURL allowingReadAccessToURL:fileURL];
+     
+ }
+ 
+ NSString *jsStr2 = @"var arr = [3, 'Cooci', 'abc']; ";
+ [self.webView evaluateJavaScript:jsStr2 completionHandler:^(id _Nullable result, NSError * _Nullable error) {
+     NSLog(@"%@----%@",result, error);
+ }];
+ 
+ NSString *jsStr = [NSString stringWithFormat:@"showAlert('%@')",@"登陆成功"];
+ [self.webView evaluateJavaScript:jsStr completionHandler:^(id _Nullable result, NSError * _Nullable error) {
+     NSLog(@"%@----%@",result, error);
+ }];
+ 
+ // url拦截
+ - (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler
+ {
+     NSURL *URL = navigationAction.request.URL;
+     NSString *scheme = [URL scheme];
+     if ([scheme isEqualToString:@"lgedu"]) {
+         NSString *host = [URL host];
+         if ([host isEqualToString:@"jsCallOC"]) {
+             NSMutableDictionary *temDict = [self decoderUrl:URL];
+             NSString *username = [temDict objectForKey:@"username"];
+             NSString *password = [temDict objectForKey:@"password"];
+             NSLog(@"%@---%@",username,password);
+         }else{
+             NSLog(@"不明地址 %@",host);
+         }
+         decisionHandler(WKNavigationActionPolicyCancel);
+         return;
+     }
+     decisionHandler(WKNavigationActionPolicyAllow);
+ }
+ 
+ #pragma mark - 解析URL地址
+ - (NSMutableDictionary *)decoderUrl:(NSURL *)URL{
+     NSArray *params =[URL.query componentsSeparatedByString:@"&"];
+     NSMutableDictionary *tempDic = [NSMutableDictionary dictionary];
+     for (NSString *paramStr in params) {
+         NSArray *dicArray = [paramStr componentsSeparatedByString:@"="];
+         if (dicArray.count > 1) {
+             NSString *decodeValue = [dicArray[1] stringByRemovingPercentEncoding];
+             [tempDic setObject:decodeValue forKey:dicArray[0]];
+         }
+     }
+     return tempDic;
+ }
+ 
+ 构成循环引用
+ //self - webView - configuration - userContentController - self
+ - (void)viewWillAppear:(BOOL)animated{
+     [super viewWillAppear:animated];
+     [self.webView.configuration.userContentController addScriptMessageHandler:self name:@"messgaeOC"];
+ }
+// 必须写
+ - (void)viewWillDisappear:(BOOL)animated{
+     [super viewWillDisappear:animated];
+     [self.webView.configuration.userContentController removeScriptMessageHandlerForName:@"messgaeOC"];
+ }
+ 
+ - (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message{
+     if (message.name) {
+     }
+     
+     NSLog(@"message == %@ --- %@",message.name,message.body);
+ }
+ 
+ function messgaeHandle(){
+     window.webkit.messageHandlers.messgaeOC.postMessage("Cooci 消息");
+ }
+ 
+ ----------------------------------------
+ WebViewJavascriptBridge:
+ self.wjb = [WebViewJavascriptBridge bridgeForWebView:self.webView];
+ // 如果你要在VC中实现 UIWebView的代理方法 就实现下面的代码(否则省略)
+ [self.wjb setWebViewDelegate:self];
+ 
+ [self.wjb registerHandler:@"jsCallsOC" handler:^(id data, WVJBResponseCallback responseCallback) {
+     NSLog(@"currentThread == %@",[NSThread currentThread]);
+     
+     NSLog(@"data == %@ -- %@",data,responseCallback);
+ }];
+ 
+ dispatch_async(dispatch_get_global_queue(0, 0), ^{
+     [self.wjb callHandler:@"OCCallJSFunction" data:@"oc调用JS咯" responseCallback:^(id responseData) {
+         NSLog(@"currentThread == %@",[NSThread currentThread]);
+         
+         NSLog(@"调用完JS后的回调：%@",responseData);
+     }];
+ });
+ 
+ <script>
+    
+    function setupWebViewJavascriptBridge(callback) {
+        if (window.WebViewJavascriptBridge) { return callback(WebViewJavascriptBridge); }
+        if (window.WVJBCallbacks) { return window.WVJBCallbacks.push(callback); }
+        window.WVJBCallbacks = [callback];
+        var WVJBIframe = document.createElement('iframe');
+        WVJBIframe.style.display = 'none';
+        WVJBIframe.src = 'wvjbscheme://__BRIDGE_LOADED__';
+        document.documentElement.appendChild(WVJBIframe);
+        setTimeout(function() { document.documentElement.removeChild(WVJBIframe) }, 0)
+    }
+ 
+     setupWebViewJavascriptBridge(function(bridge) {
+      // JS 被调用的方法  OCCallJSFunction 定义的标识
+         bridge.registerHandler('OCCallJSFunction', function(data, responseCallback) {
+             alert('JS方法被调用:'+data);
+             responseCallback('js执行过了');
+         })
+      })
+                              
+                              
+      function showWBJ(){
+          WebViewJavascriptBridge.callHandler('jsCallsOC', {'Cooci': '18'}, function(response) {
+               alert(response);
+           })
+      }
+    
+ </script>
+ 
+ 编辑器:
+ ZSSRichTextEditor
+ 
+ */
+
 // MARK: ---LG_性能优化
 /**
  MARK: ---内存管理

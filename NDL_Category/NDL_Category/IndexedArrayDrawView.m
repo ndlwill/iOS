@@ -367,8 +367,8 @@
     glAttachShader(program, fragShader);
     
     //释放不需要的shader
-    glDeleteProgram(verShader);
-    glDeleteProgram(fragShader);
+    glDeleteShader(verShader);
+    glDeleteShader(fragShader);
     
     return program;
     
