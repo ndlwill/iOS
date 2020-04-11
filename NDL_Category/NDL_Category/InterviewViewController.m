@@ -4204,7 +4204,7 @@ runloop用到了gcd的source（dispatch_source_t）
     
  </script>
  
- 编辑器:
+ ##编辑器:##
  ZSSRichTextEditor
  
  */
@@ -4213,7 +4213,49 @@ runloop用到了gcd的source（dispatch_source_t）
 /**
  MARK: ---内存管理
  内存布局:
+ 0xc0000000 = 3221225472 让他除以1024再除以1024再除以1024 = 3
  
+ BSS段:未初始化的全局变量，静态变量 （静态区）
+ 数据段: 初始化的全局变量，静态变量 （常量区）
+ text:程序代码，加载到内存中
+ 
+ 栈区内存地址:⼀般为:0x7开头
+ 堆区内存地址:一般为:0x6开头
+ 数据段，BSS内存地址:一般为:0x1开头
+ 
+ TaggedPointer: 小对象 NSNumber，NSDate
+ 标记，编码，解码
+ ～：按位取反
+ <<: 左移
+ ^:异或
+ TaggedPointer它是一个值，不是真正的对象
+ objc_msgSend 如果是对象是nil或者taggedPointer就直接返回
+ 
+ 它的地址就代表了 = 值+类型（类型:地址最后位，即最右边）
+ 
+ [NSString stringWithFormat:@"abc"]// NSTaggedPointerString
+ 
+ 源码：
+ objc_setProperty() ->reallySetProperty() 里面有objc_retain()和objc_release(oldValue)  他们里面都有obj->isTaggedPointer()的判断 retain的话直接返回，没有引用计数的处理
+ 
+ NONPOINTER_ISA:⾮指针型isa
+ union isa_t {
+    isa位域
+ }
+ 共64位
+ 1位：nonpointer:表示是否对 isa 指针开启指针优化 0:纯isa指针，1:不止是类对象地址,isa 中包含了类信息、对象的引用计数等
+ 1位：has_assoc:关联对象标志位，0没有，1存在
+ 1位：has_cxx_dtor:该对象是否有 C++ 或者 Objc 的析构器,如果有析构函数,则需要做析构逻辑, 如果没有,则可以更快的释放对象
+ 33位：shiftcls:
+ 存储类指针的值。开启指针优化的情况下，在 arm64 架构中有 33 位用来存储类指针。
+ 6位：magic:⽤于调试器判断当前对象是真的对象还是没有初始化的空间
+ 1位：weakly_referenced:志对象是否被指向或者曾经指向一个 ARC 的弱变量，没有弱引⽤的对象可以更快释放。
+ 1位：deallocating:标志对象是否正在释放内存
+ 1位：has_sidetable_rc:当对象引⽤技术⼤于 10 时，则需要借⽤该变量存储进位
+ 19位：extra_rc:当表示该对象的引用计数值，实际上是引用计数值减 1， 例如，如果对象的引用计数为 10，那么 extra_rc 为 9。如果引用计数⼤于 10， 则需要使用到has_sidetable_rc。
+ 
+ 散列表:引用计数表，弱引用表
+ 获取散列表: 源码array[indexOfPointer].value
  */
 
 
