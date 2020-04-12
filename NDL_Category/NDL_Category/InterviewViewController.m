@@ -4207,6 +4207,211 @@ runloop用到了gcd的source（dispatch_source_t）
  ##编辑器:##
  ZSSRichTextEditor
  
+ ---------------------------------------
+ WK:
+ get cookie:
+ NSHTTPCookieStorage *storages = [NSHTTPCookieStorage sharedHTTPCookieStorage];
+ for (NSHTTPCookie *cookie in [storages cookies]) {
+     NSLog(@"%@",cookie);
+ }
+ 
+ set cookie:
+ - (void)setCookieWithDomain:(NSString*)domainValue
+                 sessionName:(NSString *)name
+                sessionValue:(NSString *)value
+                 expiresDate:(NSDate *)date{
+     
+     NSURL *url = [NSURL URLWithString:domainValue];
+     NSString *domain = [url host];
+     
+     //创建字典存储cookie的属性值
+     NSMutableDictionary *cookieProperties = [NSMutableDictionary dictionary];
+     //设置cookie名
+     [cookieProperties setObject:name forKey:NSHTTPCookieName];
+     //设置cookie值
+     [cookieProperties setObject:value forKey:NSHTTPCookieValue];
+     //设置cookie域名
+     [cookieProperties setObject:domain forKey:NSHTTPCookieDomain];
+     //设置cookie路径 一般写"/"
+     [cookieProperties setObject:@"/" forKey:NSHTTPCookiePath];
+     //设置cookie版本, 默认写0
+     [cookieProperties setObject:@"0" forKey:NSHTTPCookieVersion];
+     //设置cookie过期时间
+     if (date) {
+         [cookieProperties setObject:date forKey:NSHTTPCookieExpires];
+     }else{
+         [cookieProperties setObject:[NSDate dateWithTimeIntervalSince1970:([[NSDate date] timeIntervalSince1970]+365*24*3600)] forKey:NSHTTPCookieExpires];
+     }
+     [[NSUserDefaults standardUserDefaults] setObject:cookieProperties forKey:@"app_cookies"];
+     //删除原cookie, 如果存在的话
+     NSArray * arrayCookies = [[NSHTTPCookieStorage sharedHTTPCookieStorage] cookies];
+     for (NSHTTPCookie * cookice in arrayCookies) {
+         [[NSHTTPCookieStorage sharedHTTPCookieStorage] deleteCookie:cookice];
+
+     }
+     //使用字典初始化新的cookie
+     NSHTTPCookie *newcookie = [NSHTTPCookie cookieWithProperties:cookieProperties];
+     //使用cookie管理器 存储cookie
+     [[NSHTTPCookieStorage sharedHTTPCookieStorage] setCookie:newcookie];
+ }
+ 
+ [self setCookieWithDomain:@"http://www.baidu.com" sessionName:@"cooci_token_UIWebView" sessionValue:@"123456789" expiresDate:nil];
+ NSDictionary *headerDict = [NSHTTPCookie requestHeaderFieldsWithCookies:[NSHTTPCookieStorage sharedHTTPCookieStorage].cookies];
+ NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"http://www.baidu.com"]];
+ request.allHTTPHeaderFields = headerDict;
+ [self.webView loadRequest:request];
+ 
+ WK请求，沙盒会有WebKit的文件夹
+ 
+ 这样加载wk带不上cookie的问题：
+ self.webView = [[WKWebView alloc] initWithFrame:self.view.bounds configuration:configuration];
+ self.webView.navigationDelegate = self;
+ [self.view addSubview:self.webView];
+ NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"http://www.baidu.com"]];
+ [self.webView loadRequest:request];
+ 
+ 这样加载wk能带上cookie：但是点击进入下级页面，跨域（就是路由变了）请求就又丢了
+ self.webView = [[WKWebView alloc] initWithFrame:self.view.bounds configuration:configuration];
+ self.webView.navigationDelegate = self;
+ [self.view addSubview:self.webView];
+ [self.webView loadRequest:[self cookieAppendRequest]];
+ 
+ // 手动加入cookie
+ - (NSURLRequest *)cookieAppendRequest{
+     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"http://www.baidu.com"]];
+     NSArray *cookies = [NSHTTPCookieStorage sharedHTTPCookieStorage].cookies;
+     //Cookies数组转换为requestHeaderFields
+     NSDictionary *requestHeaderFields = [NSHTTPCookie requestHeaderFieldsWithCookies:cookies];
+     //设置请求头
+     request.allHTTPHeaderFields = requestHeaderFields;
+     NSLog(@"%@",request.allHTTPHeaderFields);
+     return request;
+ }
+ 
+ // 跨域请求就又丢了cookie的处理
+ - (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
+     
+     [[WKCookieManager shareManager] fixNewRequestCookieWithRequest:navigationAction.request];
+     decisionHandler(WKNavigationActionPolicyAllow);
+ }
+ 
+ 还可以通过注入脚本的方式：但推荐上面的方法
+ WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
+ WKUserContentController *contoller = [[WKUserContentController alloc] init];
+ [contoller addUserScript:[[WKCookieManager shareManager] futhureCookieScript]];
+ configuration.userContentController = contoller;
+ self.webView = [[WKWebView alloc] initWithFrame:self.view.bounds configuration:configuration];
+ self.webView.navigationDelegate = self;
+ [self.view addSubview:self.webView];
+ [self.webView loadRequest:[self cookieAppendRequest]];
+ 
+ 也可以处理cookie 但这个是iOS11才有
+ ##WKWebsiteDataStore##
+ 
+ 构建HTTP网络框架：
+ url处理 // 百分号编码
+ URL编码(URL encoding)也称为百分号编码(Percent-encoding)
+ 
+ URI的字符类型：
+ URI所允许的字符分成保留与未保留：
+ 保留字符是那些具有特殊含义的字符. 例如, /字符用于URL不同部分的分节符(https://www.baidu.com/news)
+ 未保留字符没有这些特殊含义. 百分号编码把保留字符表示为特殊字符序列, 根据URI的版本的不同略有变化
+ 下面是 RFC 3986的保留字符, 与未保留字符:
+ 保留: ! * ' ( ) ; : @ & = + $ , / ? # [ ]
+ 未保留: A B C D E F G H I J K L M N O P Q R S T U V W X Y Z a b c d e f g h i j k l m n o p q r s t u v w x y z 0 1 2 3 4 5 6 7 8 9 - _ . ~
+ 除此之外, URI中的其它字符必须用百分号编码.
+
+ 在URL中?key1=val1&key2=val2中的val1中如果有保留字符&或者*,那么这里保留字符用于其他目的, 需要编码
+ 
+ 百分号编码一个保留字符, 首先需要把该字符的ASCII的值表示为两个16进制的数字, 然后在其前面放置转义字符("%"), 置入URI中的相应位置. (对于非ASCII字符, 需要转换为UTF-8字节序, 然后每个字节按照上述方式表示.)
+ !   #   $   &   '   (   )   *   +   ,   /   :   ;   =   ?   @   [   ]
+ %21 %23 %24 %26 %27 %28 %29 %2A %2B %2C %2F %3A %3B %3D %3F %40 %5B %5D
+
+ 在URI的查询部分(?字符后的部分)中, 例如/仍然是保留字符但是没有特殊含义, 除非一个特定的URI有其它规定. 该/字符在没有特殊含义时不需要百分号编码.例如https://www.baidu.com/news?name=p/p&age=13, 其中name=p/p中的/是保留字符但是没有特殊含义, 在实际使用中可以不用给它进行百分号编码.
+
+ 未保留字符不需要百分号编码
+ 
+ iOS中：
+ HTTP协议里面在URL中传递参数,是在?后面使用key=value这种键值对方式, 如果有多个参数传递, 就需要用&进行分割, 例如?key1=val1&key2=val2&key3=val3, 当服务器收到请求以后, 会用&分割出每个key=value参数, 然后用=分割出具体的键值
+ 现在如果在我们的参数key-value中就有=或者&怎么办? 这样后台在解析参数的时候, 就会产生歧义. 因此解决方法就是对参数进行百分号编码
+ 
+ stringByAddingPercentEscapesUsingEncoding
+ 当URL中有汉字时候, 用上面的方法, 会将汉字转化成 unicode 编码的结果, 但是对于复杂场景这个方法并不能满足需求, 例如&符号
+ NSString *queryWord = @"汉字&ss";
+ NSString *urlString = [NSString stringWithFormat:@"https://www.baidu.com/s?ie=UTF-8&wd=%@", queryWord];
+ NSString *escapedString = [urlString stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+ NSLog(@"%@", escapedString); // https://www.baidu.com/s?ie=UTF-8&wd=%E6%B1%89%E5%AD%97&ss
+ 这个实例在开发中很常见(我们项目中是将某个人的昵称当做参数传递给后台), 后台在收到这种被转义以后的URL取得的参数如下:
+ ["ie": "UTF-8", "wd" : "汉字", "ss": nil]
+ 因为stringByAddingPercentEscapesUsingEncoding方法并不会对&字符进行百分号编码
+ 
+ iOS中正确的使用百分号编码：
+ 如果要想自己控制哪些内容被编码, 哪些内容不会被编码, iOS提供了另外一个方法 -- stringByAddingPercentEncodingWithAllowedCharacters:
+ 这个方法会对字符串进行更彻底的转义，但是需要传递一个参数: 这个参数是一个字符集，表示: 在进行转义过程中，不会对这个字符集中包含的字符进行转义, 而保持原样保留下来
+ NSString *queryWord = @"汉字&ss";
+ NSString *escapedQueryWord = [queryWord stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet letterCharacterSet]];
+ NSLog(@"%@", escapedQueryWord); // %E6%B1%89%E5%AD%97%26ss
+ NSString *urlString = [NSString stringWithFormat:@"https://www.baidu.com/s?ie=UTF-8&wd=%@", escapedQueryWord];
+ NSLog(@"%@", urlString); // https://www.baidu.com/s?ie=UTF-8&wd=%E6%B1%89%E5%AD%97%26ss
+ 传递参数[NSCharacterSet letterCharacterSet]来保证字母不被转义。所以被转义之后的参数值是：%E6%B1%89%E5%AD%97%26ss，这样&就能够正确被百分号编码
+ 
+ 如果实际场景中, 可能出现如下情况:
+ https://www.baidu.com/s?person[contact]=13801001234&person[address]=北京&habit[]=游泳&habit[]=骑行
+ 此时, 需要自己构建 AllowedCharacters, 因为其中的[和]是不需要转意的
+ NSMutableCharacterSet *mutableCharSet = [[NSMutableCharacterSet alloc] init];
+ [mutableCharSet addCharactersInString:@"[]"]; // 允许'['和']'不被转义
+ NSCharacterSet *charSet = mutableCharSet.copy;
+ NSMutableString *mutableString = [NSMutableString string];
+ for (unit in queryString) {
+     NSString *escapedField = [unit.field stringByAddingPercentEncodingWithAllowedCharacters:charSet];
+     NSString *escapedValue = [unit.value stringByAddingPercentEncodingWithAllowedCharacters:charSet];
+     [mutableString addFormat:@"%@=%@", escapedField, escapedValue];
+ }
+ 构建AllowedCharacters的NSCharacterSet
+ 针对参数的k-v值, 进行遍历, 将针对key和value分别调用stringByAddingPercentEncodingWithAllowedCharacters进行百分号编码.
+ 用@"?%@=%@&%@=%@"进行kv参数拼接, 和不同参数的拼接
+ 
+ percent-escaped string:百分比转义字符串
+ 
+ AFNetworking的处理:
+ @{
+     @"name": @"小A",
+     @"phone": @{@"mobile": @"xx", @"home": @"xx"},
+     @"families": @[@"father", @"mother"],
+     @"nums": [NSSet setWithObjects:@"1", @"2", nil],
+ };
+ ->
+ @[
+      field: @"name", value: @"小A",
+      field: @"phone[mobile]", value: @"xx",
+      field: @"phone[home]", value: @"xx",
+      field: @"families[]", value: @"father",
+      field: @"families[]", value: @"mother",
+      field: @"nums", value: @"1",
+      field: @"nums", value: @"2",
+ ]
+ ->
+ name=%E5%B0%8FA&phone[mobile]=xx&phone[home]=xx&families[]=father&families[]=mother&nums=1&num=2
+ 
+ @{
+     @"does_not_include": @"/?",
+     @"space": @" ",
+     @"GeneralDelimitersToEncode": @":#[]@",
+     @"SubDelimitersToEncode": @"!$&'()*+,;=",
+ };
+ ->
+ @[
+      field: @"does_not_include", value: @"/?",
+      field: @"space", value: @" ",
+      field: @"GeneralDelimitersToEncode", value: @":#[]@",
+      field: @"SubDelimitersToEncode", value: @"!$&'()*+,;=",
+ ]
+ ->
+ https://www.baidu.com?GeneralDelimitersToEncode=%3A%23%5B%5D%40&SubDelimitersToEncode=%21%24%26%27%28%29%2A%2B%2C%3B%3D&does_not_include=/?&space=%20
+ 
+ -> URL Decode以后
+ https://www.baidu.com?GeneralDelimitersToEncode=:#[]@&SubDelimitersToEncode=!$&'()*+,;=&does_not_include=/?&space=
+ 
  */
 
 // MARK: ---LG_性能优化
