@@ -4412,6 +4412,21 @@ runloop用到了gcd的source（dispatch_source_t）
  -> URL Decode以后
  https://www.baidu.com?GeneralDelimitersToEncode=:#[]@&SubDelimitersToEncode=!$&'()*+,;=&does_not_include=/?&space=
  
+ ------------------------------------------
+ 终端命令:
+ rvictl -x device_uuid 关闭虚拟网卡
+ rvictl -s device_uuid 建立虚拟网卡
+ 
+ // netCAT 监听8041，充当服务器
+ nc -lk 8041
+ 
+ UDP(⽤户数据报协议) 只管发送，不确认对方是否接收到 将数据及源和⽬的封装成数据包中，不需要建立连接 每个数据报的⼤小限制在64K之内 因为无需连接，因此是不可靠协议 不需要建立连接，速度快
+ 应用场景:多媒体教室/⽹络流媒体
+ 
+TCP(传输控制协议) 建立连接，形成传输数据的通道 在连接中进行大数据传输(数据⼤小不收限制) 通过三次握⼿完成连接，是可靠协议，安全送达 必须建⽴连接，效率会稍低
+ 
+ 数据在两个 Socket 间通过 IO 传输
+ 
  */
 
 // MARK: ---LG_性能优化
