@@ -1,0 +1,100 @@
+这个翻译过来就是通用链接。
+如果设备里安装了你的app，用户点击一个Universal Links链接时，会直接跳转到你的app，无需通过safari中间中转。
+如果设备里没有安装你的app，点击Universal Links时，会在safari里打开你的链接。
+
+与URL scheme相比，Universal Links有以下特点:
+1.Uique(独特). 不像url scheme，别人的app不能声明你的Universal Links,因为你自己app的Universal Links都是指向你自己网站的标准http或者https链接。
+2.Secure(安全). 当用户安装你的应用程序时，iOS会检查你已上传到Web服务器的apple-app-site-association文件，以确保你的网站允许您的应用程序代表你的网站打开URL。只有你有权利创建和上传此文件到你自己的web服务器，因此你的网站与应用程序的关联是有安全保障的。
+3.Flexible(灵活). 即使未安装您的应用程序，Universal Links也可以使用。如果未安装您的应用程序，则按用户期望，点击指向您网站的链接可在Safari中打开内容。
+4.Simple(简单). Universal Links链接可以在app和网站都能生效
+5.Private(私人的). 其他应用程序可以与您的应用程序通信，而无需知道您的应用程序是否已安装。
+
+通用链接可让用户在点击WKWebView和Safari页面中的指向您网站的链接时打开您的应用程序，
+此外，这些链接还会导致调用openURL:，例如在Mail，Messages和其他应用程序中点击的链接。
+
+当用户在Safari中浏览您的网站时，他们点击指向当前网页所在域中URL的通用链接，iOS会尊重该用户最有可能的意图，并在Safari中打开该链接。如果用户点击指向其他域中URL的通用链接，iOS将在您的应用中打开该链接。
+对于运行9.0之前的iOS版本的用户，点击指向您网站的通用链接可在Safari中打开该链接。
+
+
+
+
+app 如何支持Universal Links:
+1.你的web服务器（域名）需要支持https
+2.你app支持Associated Domains
+3.Xcode工程里选择Signing&Capabilities,并且点击+ Capability添加Associated Domians
+4.在 Associated Domians里点击+添加Domains内容格式如下：
+applinks:我的网站域名。 比如百度的：applinks:www.baidu.com
+5.创建apple-app-site-association文件，无后缀名！文件内容如下：
+{
+    "applinks": {
+        "apps": [],
+        "details": [
+            {
+                "appID": "9JA89QQLNQ.com.apple.wwdc",
+                "paths": [ "/wwdc/news/", "/videos/wwdc/2015/*"]
+            },
+            {
+                "appID": "ABCD1234.com.apple.wwdc",
+                "paths": [ "*" ]
+            }
+        ]
+    }
+}
+
+apps必须有，并且值为空数组。
+details里列出自己网站想支持的app内容，值是数组
+appID:的值格式如下：<开发者账号teamID.你app的bundleID>
+paths:值是数组，里面的内容，是自己想支持的路径，可以使用通配符*或者单个匹配字符?
+6.把apple-app-site-association文件上传到web服务器根目录下。
+比如你的网站是cn.bing.com,就放在这个目录下即可
+
+也可以把apple-app-site-association文件上传到根目录的.well-known目录下
+上传完成之后：可以通过https链接直接访问不要有重定向。
+https://<domain>/apple-app-site-association or https://<domain>/.well-known/apple-app-site-association
+
+苹果也提供了网站验证apple-app-site-association文件是否放置正确有效
+https://search.developer.apple.com/appsearch-validation-tool/
+验证时，搜索框里输入的内容注意这个格式:
+https://<domain>/paths，paths就是你在apple-app-site-association文件里配置的路径
+
+7.app delegate里需要处理UserActivity 对象
+
+func application(_ application: UIApplication,
+                 continue userActivity: NSUserActivity,
+                 restorationHandler: @escaping ([Any]?) -> Void) -> Bool
+{
+    guard userActivity.activityType == NSUserActivityTypeBrowsingWeb,
+        let incomingURL = userActivity.webpageURL,
+        let components = NSURLComponents(url: incomingURL, resolvingAgainstBaseURL: true),
+        let path = components.path,
+        let params = components.queryItems else {
+            return false
+    }
+    
+    print("path = \(path)")
+    
+    if let albumName = params.first(where: { $0.name == "albumname" } )?.value,
+        let photoIndex = params.first(where: { $0.name == "index" })?.value {
+        
+        print("album = \(albumName)")
+        print("photoIndex = \(photoIndex)")
+        return true
+        
+    } else {
+        print("Either album name or photo index missing")
+        return false
+    }
+}
+
+8.配置参数
+当你使用微信的sdk直接授权登录时，注册时一般都会加入Universal Links,如下所示
+[WXApi registerApp:APP_ID universalLink:UNIVERSAL_LINK];
+
+通过友盟做微信第三方登录，需要在友盟里配置微信的Universal Links:
+//配置universal links相关参数//这里参数是[AnyHasable:Any],所以要rawValue代替
+UMSocialGlobal.shareInstance()?.universalLinkDic = [
+    UMSocialPlatformType.wechatSession.rawValue:"https://xxxx/"
+]
+//友盟中，微信登录相关信息初始化
+UMSocialGlobal.shareInstance()?.isUsingHttpsWhenShareContent = false // 当前网络请求是否用https
+UMSocialManager.default()?.setPlaform(.wechatSession, appKey: whWeChatAppId, appSecret: whWeChatAppSerect, redirectURL: "https://www.umeng.com/social")//注册微信

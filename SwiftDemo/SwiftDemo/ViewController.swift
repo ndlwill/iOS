@@ -126,6 +126,8 @@ class ViewController: UIViewController {
     let countableRange: CountableRange = 0..<1 // Countable 半开区间
     let countableClosedRange: CountableClosedRange = 0...1 // Countable 闭区间
     
+    var test111VC: Test111ViewController?
+    
     let disposeBag = DisposeBag()
     
     enum MyError: Error {
@@ -10166,6 +10168,10 @@ RxSwift最典型的特色就是解决Swift这门静态语言的响应能力，�
         }
     }
     
+    @IBAction func test111DidClicked(_ sender: Any) {
+        self.test111VC = Test111ViewController()
+        self.test111VC?.count = 100
+    }
     
 }
 

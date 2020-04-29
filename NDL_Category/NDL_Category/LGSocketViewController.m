@@ -113,6 +113,11 @@
      */
     
     while (1) {
+        if (!self.clinenId) {
+            NSLog(@"断开了不能接受");
+            break;
+        }
+        
         uint8_t buffer[1024];
         ssize_t recvLen = recv(self.clinenId, buffer, sizeof(buffer), 0);
         if (recvLen == 0) {

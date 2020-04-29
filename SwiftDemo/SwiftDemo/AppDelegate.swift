@@ -293,6 +293,20 @@ struct Point {
     var y: Double
 }
 
+struct TestPoint {
+    let x: Double
+    let y: Double
+    let isFilled: Bool
+}
+
+enum Season{
+    case spring(Int,Int,Int),
+         summer(String,String,String),
+         autumn(Bool,Bool,Bool),
+         winter(Int,Int),
+         unknown(Bool)
+}
+
 import UIKit
 
 @UIApplicationMain
@@ -322,28 +336,104 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
 
-
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // MARK: deinit
+        /**
+         先UIViewController deinit->再它里面的view deinit
+         */
         
-        var dic = ["key": "value"]
-        if dic is Any {
-            print("dic is Any")
-        }
+        // MARK:MemoryLayout-内存中的布局
+        /**
+         汇编中MOV为赋值指令，MOV后面的字母为操作数长度，b（byte）为一个字节
+         $代表着字面量，%开头的是CPU的寄存器
+         movb $0x2, 0x500f(%rip)这一句汇编代码的意思就是将2这个常量赋值给寄存器%rip中的地址加上0x500f
+         
+         callq 0x100002700: 就是调用0x100002700所在的函数
+         
+         callq  *0x78(%rcx)// 将%rcx的值加上0x78，得出一个函数地址值，并且调用这个函数
+         
+         枚举:
+         枚举的内存大小受关联值的影响，也就是说枚举的关联值是存储在枚举内部的:
+         以Season枚举为例子:
+         枚举值分配的空间是按照最大的枚举值来分配的，Season类型的枚举summer(String,String,String)需要占用49个字节（一个Stirng占16个字节，3 * 16 + 1 = 49）
+         所以Season会给所有的枚举值分配49个字节，并在第49个字节存放枚举值。
+         由于内存对齐长度为8个字节，系统分配的内存必须为8的倍数。所以系统会分配56个字节给Season类型的枚举值。
+         
+         结论: 单个枚举所占空间是按照枚举关联值所占字节总和最高的枚举字节数+1个字节的方式来分配的。
+         在没有关联值的情况下，枚举在内存中占1个字节且所占内存的大小不受原始值影响。
+         关联值会保存在枚举的内存中，影响着枚举所占内存的大小。
+         
+         类:
+         class Animal{
+             var age:Int = 0
+             var height:Int = 10
+             init() {
+             }
+         }
+         var animal = Animal.init()
+         size: 8
+         stride: 8
+         alignment: 8
+         无论往Person对象中增加还是减少存储属性，通过MemoryLayout类方法打印出的内存占用都是8个字节，这是因为Animal对象存储在堆中
+         animal变量内部保存着Animal对象的内存地址
+         MemoryLayout打印的是animal这个变量所占用的内存，所以无论如何打印出来的都是swift指针大小，也就是8个字节
+         
+         如何查看Animal对象的大小呢?
+         通过汇编查看:
+         movq %rax, 0x4cd2(%rip) // 赋值
+         lldb: register read rax
+         得到Animal对象地址值
+         
+         Animal对象实际占用24个字节，由于堆空间内存对齐的长度为16个字节，意味着Animal对象占用的内存必须为16的倍数，所以系统实际给Animal对象分配了32个字节
+         前8个字节是类型信息，第9～16个字节保存的是引用计数
+         第17～24个字节保存着age变量
+         
+         结论: class的对象的前8个字节保存着type的meta data，其中包括了方法的地址
+         由于类的实例对象保存在堆空间中，系统需要通过检查引用计数的情况来确定是否需要回收对象（ARC中系统已经帮我们处理堆内存的管理，程序员不需要关心引用计数，但这并不代表引用计数不存在），所以对象中需要留出8个字节保存引用计数情况。类可以被继承，由于面向对象语言的多态特性，在调用类的实例对象方法时，编译器需要动态地获取对象方法所在的函数地址，所以需要留出8个字节保存类的类型信息，比如对象方法的地址就保存在类型信息中。
+         所以当类的实例对象在调用对象方法时，性能的开销相比结构体以及枚举调用方法要大，因为多态的存在，系统会先找到该对象的前8个字节（type meta data）加上一个偏移值得到函数的地址，再找到这个函数去调用。
+         
+         结构体:
+         struct Person {
+             var age:Int = 10
+             var man:Bool = true
+             func test() {
+                 print("test")
+             }
+         }
+         let per = Person()
+         size: 16
+         stride: 9
+         alignment: 8
+         
+         由于结构体是值类型，相较于类而言其不能被子类继承，也不需要引用计数来管理其内存的释放。
+         所以在存储属性相同的情况下，结构体的内存要比类小。
+         结构体由于不能继承，其方法地址在编译的时候就能确定。
+         */
+        let size = MemoryLayout<TestPoint>.size// 17
+        let stride = MemoryLayout<TestPoint>.stride// 24
+        let alignment = MemoryLayout<TestPoint>.alignment// 8
+        
+        
+        
+        
+        
+        let str = "123"
+        let s = str.subString(from: 1, length: 6)
+        let subStr = str.prefix(4)
+        
+        
+//        print("\()")
 
-        let ocDic = dic as NSDictionary
-        
-        if dic is AnyObject {
-            print("dic is AnyObject")
-        }
-        
-//        var arr1 : [Int] = [1, 2, 3] // ==1== ==2== ==3==
-        var arr1 : [Int]? = [1, 2, 3]// ==[1, 2, 3]==
+        // 数组map
+//        var arr1 : [Int] = [1, 2, 3] // print: ==1== ==2== ==3==
+        // 可选类型map
+        var arr1 : [Int]? = [1, 2, 3]// print: ==[1, 2, 3]==
         arr1.map {
             print("==\($0)==")
         }
 
         
-        
+        // 可选类型
         let num: Int? = 1
         switch num {
         case .none:
@@ -352,6 +442,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             print("intNum = \(intNum)")
         }
         
+        // 会创建多个线程
         DispatchQueue.global().async {
             print("1.\(Thread.current)")
         }
@@ -558,11 +649,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
  41:23
  */
 
-// MARK: swift3.0
-/**
- 去除了++，--
- */
-
 // MARK: 字面量
 /**
  可存ASCII字符，Unicode字符
@@ -586,7 +672,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
  let int2: UInt8 = 1
  let int3 = int1 + UInt16(int2) // 把内存占用小的转成大的
  */
-
 
 
 

@@ -142,6 +142,11 @@ typedef id (^WeakReference)(void);
 
 // TODO: Import
 @interface ViewController () <UITextViewDelegate, UICollectionViewDelegate, UICollectionViewDataSource, ABPeoplePickerNavigationControllerDelegate, CLLocationManagerDelegate, UITabBarControllerDelegate, UIViewControllerPreviewingDelegate, CLLocationManagerDelegate>
+{
+    void *queueKey;
+    dispatch_queue_t testQueue;
+}
+
 @property (weak, nonatomic) IBOutlet UIButton *rightButton;
 
 @property (weak, nonatomic) UIView *touchView;
@@ -449,6 +454,102 @@ static NSDateFormatter *dateFormatter_ = nil;
     
     NSLog(@"===Home viewDidAppear p_ndl = %@ dic_ndl = %@", self.p_ndl, [self.p_dic objectForKey:@"ndl"]);
     
+    
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSLog(@"test dispatch_get_specific");
+        
+        /**
+         // dispatch_get_specific就是在当前队列中取出标识,如果是在当前队列就执行，非当前队列，就同步执行，防止死锁
+         - (void)performBlock1:(dispatch_block_t)block {
+            if (dispatch_get_specific(TreadSafetyQueueKey)) {
+                block();
+            } else {
+                dispatch_sync(_safetyQueue, block);
+            }
+         }
+         
+         理解下dispatch_get_specific：
+         线程是代码执行的路径，队列则是用于保存以及管理任务的，线程负责去队列中取任务进行执行
+         
+         /// 在主线程中获取当前线程和当前队列
+         - (void)testSyncGCD {
+             dispatch_queue_t queue = dispatch_queue_create("queue", NULL);
+             dispatch_sync(queue, ^{
+                 NSLog(@"currentThread: %@\n currentQueue: %@",[NSThread currentThread], dispatch_get_current_queue());
+             });
+           
+         }
+         currentThread: <NSThread: 0x610000071b00>{number = 1, name = main}
+         currentQueue: <OS_dispatch_queue: queue[0x6080001627c0]>
+         由于当前是在主队列中执行的，而dispatch_get_current_queue()是新创建的queu，虽然是同步执行，但并不是同一个queue，所以不会造成同步死锁的
+         
+         
+         /// 在子线程中获取当前线程和当前队列
+         - (void)testAsyncGCD {
+             dispatch_queue_t queue = dispatch_queue_create("queue1", DISPATCH_QUEUE_CONCURRENT);
+             dispatch_async(queue, ^{
+                 NSLog(@"currentThread: %@\n currentQueue: %@",[NSThread currentThread], dispatch_get_current_queue());
+             });
+             
+         }
+         // 注意:此处执行到dispatch_get_current_queue()时会挂
+         crash的原因: 将打印的日志提交到queue队列，但系统会创建辅助线程从queue中取出任务进行执行，但是当执行dispatch_get_current_queue(), 当前的queue恰好是dispatch_get_current_queue()时就会同步阻塞会导致死锁
+
+         
+         有时候我们很希望知道当前执行的queue是谁，比如设定操作数组就要在某个队列中执行。如果可以知道当前工作的queue是谁，就可以很方便的指定一段代码操作在特定的queue中执行。
+         /// 给队列标记，通过标记获取队列，执行任务，解决线程安全问题
+         - (void)testGCDSpecific {
+             dispatch_queue_t queue = dispatch_queue_create("specific", DISPATCH_QUEUE_CONCURRENT);
+             void *queueSpecificKey = &queueSpecificKey;
+             void *queueContext = (__bridge void *)self;
+             // 使用dispatch_queue_set_specific 标记队列
+             dispatch_queue_set_specific(queue, queueSpecificKey, queueContext, NULL);
+             
+             dispatch_async(queue, ^{
+                 dispatch_block_t block = ^{
+                     NSLog(@"currentThread: %@\n ",[NSThread currentThread]);
+                 };
+                 
+                 // dispatch_get_specific就是在当前队列中取出标识,如果是在当前队列就执行，非当前队列，就同步执行，防止死锁
+                 if (dispatch_get_specific(queueSpecificKey)) {
+                     block();
+                 } else {
+                     dispatch_sync(queue, block);
+                 }
+             });
+             
+         }
+         */
+        
+//        queueKey = &queueKey;
+//        testQueue = dispatch_queue_create("serial queeu", NULL);
+//        dispatch_queue_set_specific(testQueue, queueKey, (__bridge void *)self, NULL);
+//
+//        if (testQueue == dispatch_get_specific(queueKey)) {
+//            NSLog(@"=====");
+//        } else {
+//            NSLog(@"!=====");
+//        }
+        
+        dispatch_queue_t queue = dispatch_queue_create("specific", DISPATCH_QUEUE_CONCURRENT);
+        void *queueSpecificKey = &queueSpecificKey;
+        void *queueContext = (__bridge void *)self;
+        // 使用dispatch_queue_set_specific 标记队列
+        dispatch_queue_set_specific(queue, queueSpecificKey, queueContext, NULL);
+        
+        dispatch_async(queue, ^{
+            dispatch_block_t block = ^{
+                NSLog(@"currentThread: %@\n ",[NSThread currentThread]);
+            };
+            
+            // dispatch_get_specific就是在当前队列中取出标识,如果是在当前队列就执行，非当前队列，就同步执行，防止死锁
+            if (dispatch_get_specific(queueSpecificKey)) {
+                block();
+            } else {
+                dispatch_sync(queue, block);
+            }
+        });
+    });
 }
 
 
@@ -548,6 +649,7 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
 }
 
 - (void)viewDidLoad {
+    
     Person *person111 = nil;
     NSLog(@"age = %ld", person111.age);// 0
     
@@ -1948,11 +2050,11 @@ NSLog(@"viewDidLoad 22");
      CCViewController
      GLSL1ViewController
      */
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        GLSL1ViewController *vc = [[GLSL1ViewController alloc] init];
-        vc.modalPresentationStyle = UIModalPresentationFullScreen;
-        [self presentViewController:vc animated:YES completion:nil];
-    });
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        GLSL1ViewController *vc = [[GLSL1ViewController alloc] init];
+//        vc.modalPresentationStyle = UIModalPresentationFullScreen;
+//        [self presentViewController:vc animated:YES completion:nil];
+//    });
     
     
     // MARK: test Rotate ???

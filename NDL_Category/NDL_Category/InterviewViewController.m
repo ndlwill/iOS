@@ -3214,7 +3214,7 @@ for (NSInteger i = 0; i < 100; i++) {
  由于内存操作的原因，分类的方法会排在方法列表最前面，所以分类方法会优先于原类方法的调用（所谓的分类方法覆盖，本质是排序超前）
  
  
- Category 在编译过后，是在什么时机与原有的类合并到一起的？
+ MARK: Category 在编译过后，是在什么时机与原有的类合并到一起的：
  程序启动后，通过编译之后，Runtime 会进行初始化，调用 _objc_init。
  然后会 map_images。
  接下来调用 map_images_nolock。
@@ -3721,6 +3721,146 @@ for (NSInteger i = 0; i < 100; i++) {
  }
  }
  weak_entry_remove(weak_table, entry)
+ */
+
+// MARK: ---LG_runtime
+/**
+ Runtime有两个版本：
+ 一个是Legacy版本(早期版本) 。
+ 一个是Modern版本(现行版本)。
+
+ 早期版本对应的编程接口：Objective-C 1.0
+ 现行版本对应的编程接口：Objective-C 2.0
+ 
+ clang -rewrite-objc main.m -o test.cpp
+
+oc对象本质是结构体
+ objc_getClass("Person")
+ 
+ class_getSuperclass([inst class])
+ 
+ object_getClass([inst class])
+ 
+ // 这个是c函数，用汇编实现的
+ objc_msgSend:发消息要先去找方法
+ 1.快速：缓存查找cache_t(哈希表) 汇编
+ 2.慢速：c,c++  lookup
+ _objc_msgSend源码分析：汇编部分
+ LNilOrTagged
+ LGetIsaDone->
+ CacheLookup NORMAL (calls imp or objc_msgSend_uncached)->
+ 1.CacheHit->TailCallCachedImp
+ 2.CheckMiss->__objc_msgSend_uncached->MethodTableLookup(__class_lookupMethodAndLoadCache3跳转到c,c++ lookup)->TailCallFunctionPointer
+ 3.add
+ 
+ // ##双下划线-单下划线##
+ 从汇编__class_lookupMethodAndLoadCache3跳转到c，c++的_class_lookupMethodAndLoadCache3
+ ->lookupImpOrForward
+ ->cache_getImp (参数no 肯定不走这个)
+ ->checkIsKnownClass 不是的话就fatal_error
+ ->(cls->isRealized 判断类是否实现)
+ ->没有就走realizeClass // Data赋值
+ ->(cls->isInitialized)
+ ->没有就走_class_initialize
+ retry:
+ 又会cache_getImp 因为remap(cls) 会重映射
+ ->没用的话进行漫长过程的查找方法
+ Try this class's method lists:
+ method = getMethodNoSuper_nolock(cls, sel) { methodList: cls->data()->methods.beginLists() ---- cls->data()->methods.endLists() 这个返回查找 search_method_list()}
+ if (method) {
+ log_and_fill_cache()
+ }
+ 
+ Try superclass caches and method lists:
+ // 一直找直到NSObject
+ for (Class curClass = cls->superclass; curClass != nil; curClass = curClass->superclass){
+ imp = cache_getImp(curClass, sel)
+ if(imp){
+ if(imp!= (IMP)_objc_msgForward_impcache) {
+ log_and_fill_cache()
+ }
+ }
+ 
+ method = getMethodNoSuper_nolock(curClass, sel)
+ if (method) {
+ log_and_fill_cache()
+ imp = method->imp
+ }
+ }
+ 
+ // ###动态方法解析###
+ No implementation found.Try method resolver once:
+ _class_resolverMethod() {
+ if (!cls->isMetaClass())// 不是元类
+ // try [cls resolveInstanceMethod:sel]
+ _class_resolveInstanceMethod()
+ } else {
+ // 如果类方法没有实现: try [nonMetaClass resolverClassMethod:sel] and [cls resolveInstanceMethod:sel]
+ // Person(类方法) - 元类(实例方法) - 根元类(实例方法) - NSObject(实例方法)
+ _class_resolveClassMethod()
+ 
+ if(!lookUpImpOrNil()){
+ _class_resolveInstanceMethod()
+ }
+ }
+ 
+ // ###_class_resolveInstanceMethod它的实现###
+ _class_resolveInstanceMethod(){
+ // 后3个参数：initialize，cache，resolver
+ if(!lookupImpOrNil(cls->ISA(), SEL_resolveInstanceMethod, cls, NO, YES, NO)) {
+ // resolver not implemented
+ return
+ }
+ 
+ BOOL (*msg)(Class, SEL, SEL) = (typeof(msg))objc_msgSend;
+ // 系统帮忙发送了一次消息
+ bool resolved = msg(cls, SEL_resolveInstanceMethod, sel)
+
+ IMP imp = lookupImpOrNil(cls, sel, inst, NO, YES, NO)
+ }
+ 
+ No implementation found, and method resolver didn't help. Use forwarding
+ imp = (IMP)_objc_msgForward_impcache
+ cache_fill()
+ 
+断点调试:
+ bt
+ 
+ eg:
+ // 添加方法的实现
+ + (BOOL)resolveInstanceMethod:(SEL)sel{
+     if (sel == @selector(run)) {
+         // 我们动态解析我们的 对象方法
+         NSLog(@"对象方法解析走这里");
+         SEL readSEL = @selector(readBook);
+         Method readM= class_getInstanceMethod(self, readSEL);
+         IMP readImp = method_getImplementation(readM);
+         const char *type = method_getTypeEncoding(readM);
+         return class_addMethod(self, sel, readImp, type);
+     }
+     return [super resolveInstanceMethod:sel];
+ }
+ 
+ + (BOOL)resolveClassMethod:(SEL)sel{
+     if (sel == @selector(walk)) {
+         // 我们动态解析我们的 对象方法
+         NSLog(@"类方法解析走这里");
+         SEL hellowordSEL = @selector(helloWord);
+         // 类方法就存在我们的元类的方法列表
+ 
+         // 类 的 类方法 && 元类 的 对象实例方法  两者是一样的
+ //这两行是一样的
+         // Method hellowordM= class_getClassMethod(self, hellowordSEL);// 或者下面这行
+         Method hellowordM= class_getInstanceMethod(object_getClass(self), hellowordSEL);
+ 
+         IMP hellowordImp = method_getImplementation(hellowordM);
+         const char *type = method_getTypeEncoding(hellowordM);
+         NSLog(@"%s",type);
+         return class_addMethod(object_getClass(self), sel, hellowordImp, type);
+     }
+     return [super resolveClassMethod:sel];
+ }
+ 
  */
 
 // MARK: ---LG_多线程
@@ -4431,6 +4571,54 @@ TCP(传输控制协议) 建立连接，形成传输数据的通道 在连接中�
  1.标识符用来分割数据
  2.数据长度+数据类型+数据 （推荐）
  
+ ====================CocoaAsyncSocket源码解析
+ localhost与127.0.0.1的区别:
+ localhost也叫local ，正确的解释是:本地服务器 127.0.0.1
+ 
+ localhot(local)是不经网卡传输！这点很重要，它不受网络防火墙和网卡相关的的限制。
+ 127.0.0.1是通过网卡传输，依赖网卡，并受到网络防火墙和网卡相关的限制。
+ 本机IP 也是通过网卡传输的，依赖网卡，并受到网络防火墙和网卡相关的限制。
+ 但是本机IP与127.0.0.1的区别是： 127.0.0.1 只能通过本机访问，而本机IP通过本机访问也能通过外部访问
+ 
+ localhost不会解析成ip，也不会占用网卡、网络资源。
+ 
+ 环回地址是主机用于向自身发送通信的一个特殊地址（也就是一个特殊的目的地址）。
+ 
+ localhost 是一个域名，在过去它指向 127.0.0.1 这个IP地址。在操作系统支持 ipv6 后，它同时还指向ipv6 的地址 [::1]
+ 
+ loopback 是一个特殊的网络接口(可理解成虚拟网卡)
+ 
+ ###
+ 整个127.* 网段通常被用作 loopback 网络接口的默认地址，按惯例通常设置为 127.0.0.1。这个地址在其他计算机上不能访问，就算你想访问，访问的也是自己，因为每台带有TCP/IP协议栈的设备基本上都有 localhost/127.0.0.1。
+ ###
+ 
+ 当IP层接收到目的地址为127.0.0.1
+ （准确的说是：网络号为127的IP）的数据包时，不调用网卡驱动进行二次封装，而是立即转发到本机IP层进行处理，由于不涉及底层操作。因此，ping 127.0.0.1一般作为测试本机TCP/IP协议栈正常与否的判断之一。
+ 
+ 本机地址通常指的是绑定在物理或虚拟网络接口上的IP地址，可供其他设备访问到。
+ 
+ 127.0.0.1 是绑定在 loopback 接口上的地址，如果服务端套接字绑定在它上面，你的客户端程序就只能在本机访问。
+ 
+ - (NSString *)blockReturn {
+     //创建信号量
+     dispatch_semaphore_t signal = dispatch_semaphore_create(0);
+     __block NSString *str = @"sst";
+ // block异步性
+     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+         str = @"SunSatan";
+         //信号量+1
+         dispatch_semaphore_signal(signal);
+     });
+     //信号量等待
+     dispatch_semaphore_wait(signal, DISPATCH_TIME_FOREVER);
+     return str;
+ }
+ 不加信号量可能返回的str = @"sst"
+ 
+ // block中使用return ，宏定义 -- 预编译 -- return（return是函数） -  提前准备好，防止编译器走到这块时（代码段被编译时未识别return）直接跳过往下执行
+ #define return_from_block  return
+ 
+ 0.0.0.0为广播地址
  */
 
 // MARK: ---LG_性能优化
