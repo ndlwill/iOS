@@ -332,9 +332,32 @@ import UIKit
  */
  2.
  */
+
+// MARK: Bool
+/**
+ /*
+ C语言和OC并没有真正的Bool类型
+ C语言的Bool类型非0即真
+ OC中if可以是任何整数(非0即真),
+ OC语言的Bool类型是typedef signed char BOOL;
+
+ Swift引入了真正的Bool类型
+ Bool true false
+ Swift中的if的条件只能是一个Bool的值或者是返回值是Bool类型的表达式(==/!=/>/<等等)
+ */
+ */
+
 class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
+    
+    func incrementor(ptr: UnsafeMutablePointer<Int>) {
+        ptr.pointee += 1
+    }
+    
+    func incrementor1(num: inout Int) {
+        num += 1
+    }
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // MARK: deinit
@@ -413,10 +436,165 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         let stride = MemoryLayout<TestPoint>.stride// 24
         let alignment = MemoryLayout<TestPoint>.alignment// 8
         
+        // MARK: 指针UnsafePointer和托管Unmanaged
+        /**
+         但是Swift的&操作和C语言不同的一点是，Swift不允许直接获取对象的指针，比如下面的代码就会编译不通过。
+         let a = NSData()
+         let b = &a //编译出错
+         
+         UnsafePointer<T> 是不可变的。当然对应地，它还有一个可变变体，UnsafeMutablePointer<T>
+         C 中的指针都会被以这两种类型引入到 Swift 中：C 中 const 修饰的指针对应 UnsafePointer (最常见的应该就是 C 字符串的 const char * 了)
+         对于一个 UnsafePointer<T> 类型，我们可以通过 pointee 属性对其进行取值
+         如果这个指针是可变的 UnsafeMutablePointer<T> 类型，我们还可以通过 pointee 对它进行赋值
+         
+         UnsafeMutablePointer:我们如果想要新建一个指针，需要做的是使用 allocate(capacity:) 这个类方法。该方法根据参数 capacity: Int 向系统申请 capacity 个数的对应泛型类型的内存
+         
+         Swift 中存在表示一组连续数据指针的 UnsafeBufferPointer<T>
+         
+         托管: TestPointerViewController.swift
+         https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFMemoryMgmt/Concepts/Ownership.html
+         
+         当我们从CF函数中获取到Unmanaged<T>对象的时候，我们需要调用takeRetainedValue或者takeUnretainedValue获取到对象T
+         如果一个函数名中包含Create或Copy，则调用者获得这个对象的同时也获得对象所有权，返回值Unmanaged需要调用takeRetainedValue()方法获得对象。调用者不再使用对象时候，Swift代码中不需要调用CFRelease函数放弃对象所有权，这是因为Swift仅支持ARC内存管理
+         如果一个函数名中包含Get，则调用者获得这个对象的同时不会获得对象所有权，返回值Unmanaged需要调用takeUnretainedValue()方法获得对象
+         */
+        
+        var aa = 10
+        // 这里和 C 的指针使用类似，我们通过在变量名前面加上 & 符号就可以将指向这个变量的指针传递到接受指针作为参数的方法中去
+        incrementor(ptr: &aa)
+        print("aa = \(aa)")// 11
+        // 与这种做法类似的是使用 Swift 的 inout 关键字。我们在将变量传入 inout 参数的函数时，同样也使用 & 符号表示地址。不过区别是在函数体内部我们不需要处理指针类型，而是可以对参数直接进行操作
+        incrementor1(num: &aa)
+        print("aa = \(aa)")// 12
+        
+        // 指针初始化和内存管理
+        var intPtr = UnsafeMutablePointer<Int>.allocate(capacity: 1)
+        // 内存进行了分配，并且值已经被初始化. 这种状态下的指针是可以保证正常使用的
+        intPtr.initialize(to: 10)// 在完成初始化后，我们就可以通过 pointee 来操作指针指向的内存值了
+        intPtr.pointee = 11
+        print(intPtr, intPtr.pointee)// 地址， 11
+        
+        // 注意其实在这里对于 Int 这样的在 C 中映射为 int 的 “平凡值” 来说，deinitialize 并不是必要的，因为这些值被分配在常量段上。但是对于像类的对象或者结构体实例来说，如果不保证初始化和摧毁配对的话，是会出现内存泄露的。所以没有特殊考虑的话，不论内存中到底是什么，保证 initialize: 和 deinitialize 配对会是一个好习惯。
+        let rawPtr: UnsafeMutableRawPointer = intPtr.deinitialize(count: 1)
+        print(intPtr, intPtr.pointee, rawPtr)
+        intPtr.deallocate()
+        
+        // ======
+        let intPointer = UnsafeMutablePointer<Int>.allocate(capacity: 4)
+        for i in 0..<4 {
+            (intPointer + i).initialize(to: i)
+        }
+        print(intPointer.pointee)
+        intPointer.deallocate()
         
         
         
         
+        // MARK: "@"
+        /**
+         @IBOutlet
+         如果你用@IBOutlet属性标记一个属性，那么Interface Builder（IB）将识别那个变量，并且你将能够通过提供的“outlet”机制将你的源代码与你的XIB或者Storyboard连接起来
+         
+         @IBAction
+         @IBAction同样是连接代码和Interface Builder的桥梁，只不过@IBAction连接的是func函数，而不是属性。被标记的方法将直接接收由用户界面触发的事件。
+         
+         @IBInspectable
+         我们经常用Interface Builder的属性编辑面板对控件的属性进行设置，但是还有一些属性并没有暴露在Interface Builder的设置面板中。用@IBInspectable标记一个NSCodable的属性将会使它可以很容易地在Interface Builder的属性面板编辑器中进行编辑
+         
+         @IBDesignable
+         当给一个UIView的子类应用@IBDesignable时，这个类就可以显示在Interface Builder中，使我们的代码变得“所见即所写”，我们对代码的修改也可以实时的反馈在Interface Builder中。
+         
+         @UIApplicationMain
+         这个属性使被标记的类作为本应用的代理。通常来说，这个代理类都是系统自动创建的AppDelegate.swift文件。
+         
+         @available
+         通过@available使得被标记的方法或属性适用于不同的平台或系统版本。
+         @available(swift 4.1)
+         @available(iOS 11, *)
+         
+         @objcMembers
+         通常在项目中如果想把Swift写的API暴露给Objective-C调用，需要增加@objc。这个@objcMembers是一个便捷方法来标记一个类的全部方法都加上@objc。不过这个属性会引起性能问题。
+         
+         @escaping
+
+         如果你希望被标记的值可以存储起来以便后续代码继续使用，你可以将闭包的参数标记为@escaping，换句话说，被标记的值的可以超越原来的生命周期范围，被外界调用。
+         
+         @discardableResult
+         默认情况下，如果调用一个函数，但函数的返回值并未使用，那么编译器会发出警告。你可以通过给func使用@discardableResult来抑制警告。
+         
+         @autoclosure
+         如果一个func有一个闭包参数，这个闭包参数没有形参但有返回类型。@autoclosure可以神奇地把这样的func转换成有一个参数且这个参数的类型就是闭包的返回值类型的func。这样的好处是在调用这个带闭包的func时，传的实参不用非得是闭包类型，只要是闭包返回值类型的就可以了，@autoclosure会自动把这个值转换成闭包类型。
+         
+         @objc: TestClass.swift
+         这个属性就是关联Swift对象和OC对象的桥梁。你还可以通过@objc提供一个标识符，这个标识符就是对应到OC中的类或方法。
+         
+         @nonobjc
+         使用这个属性来禁止隐式添加@objc属性。@nonobjc告诉编译器当前声明的内容不能在OC中使用
+         
+         @convention特性是在 Swift 2.0 中引入的，用于修饰函数类型，它指出了函数调用的约定
+         @convention(swift) : 表明这个是一个swift的闭包
+         @convention(block) ：表明这个是一个兼容oc的block的闭包
+         @convention(c) : 表明这个是兼容c的函数指针的闭包。
+
+         它用来修饰func，而且它还带有一个参数，这个参数的取值一般是：swift、c、block。被修饰的func可以用来匹配其他语言平台的函数指针类型的形参
+         1. 当调用C函数的时候，可以传入被@convention(c)修饰的swift函数，来匹配C函数形参中的函数指针。
+         2. 当调用OC方法的时候，可以传入被@convention(block)修饰的swift函数，来匹配OC方法形参中的block参数。
+         
+         CGFloat myCFunc(CGFloat (callback)(CGFloat x, CGFloat y)) {
+            return callback(1.1, 2.2)
+         }
+         
+         let swiftCallback: @convention(c) (CGFloat, CGFloat) -> CGFloat = {
+            (x, y) -> CGFloat in
+            return x + y
+         }
+         
+         let result = myCFunc( swiftCallback )// 3.3
+         */
+        
+        // MARK: String
+        /**
+         NSString对象使用UTF-16编码
+         
+         endIndex是最后一个元素后边的那个元素，因此不能直接访问，否则会崩溃。
+         不同的字符可能需要不同数量的内存来存储，因此为了确定哪个Character位于特定位置，您必须从每个Unicode标量的开始或结尾处遍历String。因此，Swift字符串不能用整数值索引。(不能用整数下标随机访问)
+         
+         Swift标准库只支持的三种下标访问String字符串的方法:
+         Range<String.Index>：元素为String.Index类型的Range（开区间）
+         String.Index：String.Index元素
+         ClosedRange<String.Index>：元素为String.Index类型的CloseRange（闭区间）
+         
+         Swift的String类型是基于Unicode标量建立的，先来介绍一下Unicode和Unicode标量
+         人类使用的文字和符号要想被计算机所理解必须要经过编码，Unicode就是其中的一种编码标准。
+         码点：Unicode标准为世界上几乎所有的书写系统里所使用的每一个字符或符号定义了一个唯一的数字。这个数字叫做码点（code points），以U+xxxx这样的格式写成，格式里的xxxx代表四到六个十六进制的数。例如U+0061表示小写的拉丁字母(LATIN SMALL LETTER A)("a")，U+1F425表示小鸡表情(FRONT-FACING BABY CHICK) ("🐥")
+
+         编码格式：通过字符到码点之间的映射，人们得以用统一的方式表示符号，但还需要定义另一种编码来确定码点与其存储在内存和硬盘中的值的对应关系。有三种Unicode支持的编码格式：
+
+         UTF-8：表示一个码点需要1～4个八位的码元。利用字符串的utf8属性进行访问。
+         UTF-16：用一或两个16位的码元表示一个吗点。利用字符串的utf16属性进行访问。
+         21位的 Unicode 标量值集合，也就是字符串的UTF-32编码格式，用21位的码元表示一个码点。利用字符串的unicodeScalars属性进行访问。
+         
+         如“é”, “김”, and “🇮🇳”是作为独立的character存在的，这些独立的character可能是由多个Unicode码点组成的。
+         */
+        let testStr = "abc123"
+        print("start = \(testStr[testStr.startIndex])")// a
+        let endIndex = testStr.index(before: testStr.endIndex)// 最后一个元素
+        let endValue: Character = testStr[endIndex]
+        print("endValue = \(endValue)")
+//        print("end = \(testStr[testStr.endIndex])")// Fatal error: String index is out of bounds
+        
+        let string = "e\u{301}" // é
+        let charFromNSString = (string as NSString).character(at: 0)  //101 说明此方法的索引对象是字符串对应的UTF-16码元。所以返回了索引为0的码元，即101.对于这种情况OC中有专门的字符串正规化处理办法，也可以判断一个字符的码元长度
+        let charFromString = string[string.startIndex]  //é
+        
+        let enclosedEAcute: Character = "\u{E9}\u{20DD}"
+        // enclosedEAcute 是 é⃝
+        let regionalIndicatorForUS: Character = "\u{1F1FA}\u{1F1F8}"
+        // regionalIndicatorForUS 是 🇺🇸
+        print("enclosedEAcute = \(enclosedEAcute) regionalIndicatorForUS = \(regionalIndicatorForUS)")
+        
+        
+        // ===========================
         let str = "123"
         let s = str.subString(from: 1, length: 6)
         let subStr = str.prefix(4)
@@ -624,6 +802,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
  
  swicth默认可以不写break，并不会贯穿到后面
  fallthrough实现贯穿效果
+ 如果使用了fallthrough 语句，则会继续执行之后的 case 或 default 语句，不论条件是否满足都会执行。
  case，default后面至少要有一条语句，default不处理的话加break
  枚举类型可以不必使用default
  支持String，Character

@@ -663,6 +663,12 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
     NSLog(@"===ViewController viewDidLoad===");
     NSLog(@"date = %@ ceil = %lf", [NSDate date], ceil(6.3));// 7.0
     
+    BOOL testBool = YES;
+
+    bool cBool = false;
+    cBool = testBool;
+    
+    
 #pragma mark - crash
     // ###crash###
     //-[__NSPlaceholderDictionary initWithObjects:forKeys:count:]

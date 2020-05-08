@@ -3755,25 +3755,28 @@ oc对象本质是结构体
  
  // ##双下划线-单下划线##
  从汇编__class_lookupMethodAndLoadCache3跳转到c，c++的_class_lookupMethodAndLoadCache3
- ->lookupImpOrForward
+ ->lookupImpOrForward(Class cls, SEL sel, id inst) ### cls是类的话，inst是实例对象。cls是元类的话，inst是类对象并且object_getClass(inst) == cls,object_getClassName(inst) == "Student",class_getName(cls) == "Student"。
  ->cache_getImp (参数no 肯定不走这个)
  ->checkIsKnownClass 不是的话就fatal_error
  ->(cls->isRealized 判断类是否实现)
  ->没有就走realizeClass // Data赋值
  ->(cls->isInitialized)
  ->没有就走_class_initialize
+ 
  retry:
+ // ###Try this class's cache###
  又会cache_getImp 因为remap(cls) 会重映射
- ->没用的话进行漫长过程的查找方法
- Try this class's method lists:
+ ->没有的话进行漫长过程的查找方法
+ // ###Try this class's method lists:###
  method = getMethodNoSuper_nolock(cls, sel) { methodList: cls->data()->methods.beginLists() ---- cls->data()->methods.endLists() 这个返回查找 search_method_list()}
  if (method) {
  log_and_fill_cache()
  }
  
- Try superclass caches and method lists:
+ // ###Try superclass caches and method lists:###
  // 一直找直到NSObject
  for (Class curClass = cls->superclass; curClass != nil; curClass = curClass->superclass){
+ // Superclass cache
  imp = cache_getImp(curClass, sel)
  if(imp){
  if(imp!= (IMP)_objc_msgForward_impcache) {
@@ -3781,6 +3784,7 @@ oc对象本质是结构体
  }
  }
  
+ // Superclass method list
  method = getMethodNoSuper_nolock(curClass, sel)
  if (method) {
  log_and_fill_cache()
@@ -3788,40 +3792,174 @@ oc对象本质是结构体
  }
  }
  
- // ###动态方法解析###
+ // ###动态方法解析### 通过一个变量控制，只会走一次动态方法解析
  No implementation found.Try method resolver once:
  _class_resolverMethod() {
  if (!cls->isMetaClass())// 不是元类
  // try [cls resolveInstanceMethod:sel]
- _class_resolveInstanceMethod()
+ _class_resolveInstanceMethod() // 如果是对象方法走这个,它的实现里面的bool resolved = msg(cls, SEL_resolveInstanceMethod, sel)的cls是类对象
  } else {
  // 如果类方法没有实现: try [nonMetaClass resolverClassMethod:sel] and [cls resolveInstanceMethod:sel]
  // Person(类方法) - 元类(实例方法) - 根元类(实例方法) - NSObject(实例方法)
  _class_resolveClassMethod()
  
  if(!lookUpImpOrNil()){
- _class_resolveInstanceMethod()
+ _class_resolveInstanceMethod()// 它的实现里面的bool resolved = msg(cls, SEL_resolveInstanceMethod, sel)的cls是元类
  }
  }
  
  // ###_class_resolveInstanceMethod它的实现###
  _class_resolveInstanceMethod(){
  // 后3个参数：initialize，cache，resolver
- if(!lookupImpOrNil(cls->ISA(), SEL_resolveInstanceMethod, cls, NO, YES, NO)) {
+ if(!lookupImpOrNil(cls->ISA(), SEL_resolveInstanceMethod, cls, NO, YES, NO)) {// ###
  // resolver not implemented
- return
+ return;
  }
- 
  BOOL (*msg)(Class, SEL, SEL) = (typeof(msg))objc_msgSend;
  // 系统帮忙发送了一次消息
- bool resolved = msg(cls, SEL_resolveInstanceMethod, sel)
-
+ bool resolved = msg(cls, SEL_resolveInstanceMethod, sel)// 可以在这块动态添加方法，然后下一步就能找到imp了,###这个cls是类对象
  IMP imp = lookupImpOrNil(cls, sel, inst, NO, YES, NO)
  }
  
- No implementation found, and method resolver didn't help. Use forwarding
+ // ###_class_resolveClassMethod它的实现###
+ _class_resolveClassMethod() {
+ if(!loopUpImpOrNil()){
+ return
+ }
+ BOOL (*msg)(Class, SEL, SEL) = (typeof(msg))objc_msgSend;
+ bool resolved = msg(_class_getNonMetaClass(cls, inst), SEL_resolveInstanceMethod, sel)
+ IMP imp = lookupImpOrNil(cls, sel, inst, NO, YES, NO)
+ }
+ 
+ // ###_class_getNonMetaClass的实现###
+ Class _class_getNonMetaClass(Class cls, id obj){
+ cls = getNonMetaClass(cls, obj);
+ return cls;
+ }
+ 
+ // ###getNonMetaClass的实现###
+ Class getNonMetaClass(Class metacls, id inst){
+ // metacls：元类
+ // inst：类对象
+ // return cls itself if it's already a ##non-meta class##(表示不是元类的类, 即NSObject)
+ if(!metacls->isMetaClass()) return metacls;
+ 
+ // 表示metacls是根元类
+ if(metacls->ISA() == metacls){
+ Class cls = metacls->superclass;
+ if (cls->ISA() == metacls) return cls;
+ }
+ 
+ // 类对象
+ if(inst) {
+ Class cls = (Class)inst;
+ realizeClass(cls);
+ 
+ while(cls && cls->ISA() != metacls){
+ cls = cls->superclass;
+ realizeClass(cls);
+ }
+ 
+ if(cls) {
+ assert(!cls->isMetaClass());
+ assert(cls->ISA() == metacls);
+ return cls;
+ }
+ }
+ 
+ }
+ 
+ NSString *str = nil;
+ NSAssert(str != nil, @"str不能为空");
+ 
+ //======================源码
+ // ###isMetaClass的实现###
+ bool isMetaClass() {
+     assert(this);
+     assert(isRealized());
+     return data()->ro->flags & RO_META;
+ }
+ Class getMeta() {
+     if (isMetaClass()) return (Class)this;
+     else return this->ISA();
+ }
+ bool isRootClass() {
+     return superclass == nil;
+ }
+ bool isRootMetaclass() {
+     return ISA() == (Class)this;
+ }
+ bool isRealized() {
+     return data()->flags & RW_REALIZED;
+ }
+ bool isInitialized() {
+     return getMeta()->data()->flags & RW_INITIALIZED;
+ }
+ 
+ struct objc_class : objc_object{
+ class_data_bits_t bits;    // class_rw_t * plus custom rr/alloc flags
+ class_rw_t *data() {
+     return bits.data();
+ }
+ }
+ 
+ LGStudent *stu = [[LGStudent alloc] init];
+ BOOL flag1 = class_isMetaClass([stu class]);// NO
+ BOOL flag = class_isMetaClass([LGStudent class]);// NO
+ //======================
+ 
+ // ###lookUpImpOrNil的实现###
+ IMP lookUpImpOrNil() {
+ IMP imp = lookUpImpOrForward();
+ if(imp == _objc_msgForward_impcache) return nil;
+ else return imp
+ }
+ 
+ ##给NSObject的分类添加_class_resolveInstanceMethod的实现（即动态添加方法）可以让任何类没实现的方法不崩溃##
+ 或者
+ @interface Person : NSObject
+ + (void)lg_message;
+ @end
+ Person没有实现这个类方法
+ 但NSObject的分类实现了这个方法的实例方法的话，也就不会崩溃
+ @implementation NSObject (LG)
+ - (void)lg_message{
+     NSLog(@"LG = %s",__func__);
+ }
+ @end
+ 
+ // ###消息转发###
+ No implementation found, and method resolver didn't help. Use forwarding:
  imp = (IMP)_objc_msgForward_impcache
  cache_fill()
+ 
+ 
+ // 单下划线变双下划线
+ imp = (IMP)_objc_msgForward_impcache又会走到汇编__objc_msgForward_impcache(即快速转发)
+ ->__objc_msgForward
+ ->__objc_msgForward_handler 系统有默认的处理: objc_defaultForwardHandler 这里面就会打印unrecognized selector sent to instance XX(no message forward handler is installed )  class_isMetaClass(object_getClass(self)) ? '+' : '-', object_getClassName(self), sel_getName(sel), self
+ 
+ // ###class_getClassMethod的实现###
+ Method class_getClassMethod(Class cls,SEL sel){
+ return class_getInstanceMethod(cls->getMeta(), sel)
+ }
+ 
+ 打印方法调用过程log可通过: 文件在/private/tmp/msgSends-XXX
+ extern void instrumentObjcMessageSends(BOOL);
+ 
+ instrumentObjcMessageSends(YES);
+ [Person walk];// 通过消息转发
+ instrumentObjcMessageSends(NO);
+ 
+ // ###objc_object::ISA()###
+ Class objc_object::ISA() {
+ return (Class)(isa.bits & ISA_MASK)
+ }
+ 
+ 类方法的查找流程和实例方法的查找流程不一样。
+ 实例方法查找->类->父类->NSObject
+ 类方法查找->元类->元类的父类->根元类->NSObject（它的类方法存在根元类，相当于是根元类的实例方法）
+ 类方法可以在NSObject以类方法实现（最好）也可以以对象方法实现
  
 断点调试:
  bt
@@ -3859,6 +3997,350 @@ oc对象本质是结构体
          return class_addMethod(object_getClass(self), sel, hellowordImp, type);
      }
      return [super resolveClassMethod:sel];
+ }
+ 
+ // CoreFoundation库路径
+ ###/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/Library/CoreSimulator/Profiles/Runtimes/iOS.simruntime/Contents/Resources/RuntimeRoot/System/Library/Frameworks/CoreFoundation.framework###
+ */
+
+// MARK: ---LG_runloop
+/**
+ Runloop的作用:
+ 保持程序的持续运行
+ 处理APP中的各种事件（触摸、定时器、performSelector）
+ 节省cpu资源、提供程序的性能：该做事就做事，该休息就休息
+ 
+ void CFRunLoopRun(void) {
+ int32_t result;
+ do {
+ result = CFRunLoopSpecific()
+ }while (result != kCFRunLoopRunStopped && result != kCFRunLoopRunFinished )
+ }
+ 
+ // 调用block
+ block应用：__CFRUNLOOP_IS_CALLING_OUT_TO_A_BLOCK__
+ // performSelector:withObject:afterDelay 底层也是走的这个__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__
+ 调用timer：__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__
+ 响应source0：__CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE0_PERFORM_FUNCTION__
+ 响应source1： __CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE1_PERFORM_FUNCTION__
+ // dispatch_async(dispatch_get_main_queue(), {})
+ GCD主队列：__CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__
+ observer源：__CFRUNLOOP_IS_CALLING_OUT_TO_AN_OBSERVER_CALLBACK_FUNCTION__
+
+ CFRunLoopSpecific
+ ->__CFRunLoopRun
+ ->__CFRunLoopDoTimers
+ ->__CFRunLoopDoTimer
+ ->__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__
+ 
+ ###CFRunLoopSpecific的实现###
+ CFRunLoopSpecific(){
+ CFRunLoopModeRef currentMode = __CFRunLoopFindMode(rl, modeName, false);
+ 
+ int32_t result = kCFRunLoopRunFinished;
+ if (currentMode->_observerMask & kCFRunLoopEntry ) __CFRunLoopDoObservers(rl, currentMode, kCFRunLoopEntry);
+ result = __CFRunLoopRun(rl, currentMode, seconds, returnAfterSourceHandled, previousMode);
+ if (currentMode->_observerMask & kCFRunLoopExit ) __CFRunLoopDoObservers(rl, currentMode, kCFRunLoopExit);
+ }
+ 
+ ###__CFRunLoopRun的实现###
+ __CFRunLoopRun() {
+ int32_t retVal = 0;
+ do {
+ // ##2
+ if (rlm->_observerMask & kCFRunLoopBeforeTimers) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeTimers);
+ // ##3
+ if (rlm->_observerMask & kCFRunLoopBeforeSources) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeSources);
+ // ##4
+ Boolean sourceHandledThisLoop = __CFRunLoopDoSources0(rl, rlm, stopAfterHandle);
+ if (sourceHandledThisLoop) {
+     __CFRunLoopDoBlocks(rl, rlm);
+ }
+ 
+ if (MACH_PORT_NULL != dispatchPort && !didDispatchPortLastTime) {
+ #if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+             msg = (mach_msg_header_t *)msg_buffer;
+ // ##5
+             if (__CFRunLoopServiceMachPort(dispatchPort, &msg, sizeof(msg_buffer), &livePort, 0)) {
+                 goto handle_msg;// ##9
+             }
+ #elif DEPLOYMENT_TARGET_WINDOWS
+             if (__CFRunLoopWaitForMultipleObjects(NULL, &dispatchPort, 0, 0, &livePort, NULL)) {
+                 goto handle_msg;
+             }
+ #endif
+         }
+ 
+ // ##6
+ if (!poll && (rlm->_observerMask & kCFRunLoopBeforeWaiting)) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeWaiting);
+ 
+ #if USE_DISPATCH_SOURCE_FOR_TIMERS
+         do {
+             if (kCFUseCollectableAllocator) {
+                 objc_clear_stack(0);
+                 memset(msg_buffer, 0, sizeof(msg_buffer));
+             }
+             msg = (mach_msg_header_t *)msg_buffer;
+ // ##7
+             __CFRunLoopServiceMachPort(waitSet, &msg, sizeof(msg_buffer), &livePort, poll ? 0 : TIMEOUT_INFINITY);// 会走mach_msg_trap
+             
+             if (modeQueuePort != MACH_PORT_NULL && livePort == modeQueuePort) {
+                 // Drain the internal queue. If one of the callout blocks sets the timerFired flag, break out and service the timer.
+                 while (_dispatch_runloop_root_queue_perform_4CF(rlm->_queue));
+                 if (rlm->_timerFired) {
+                     // Leave livePort as the queue port, and service timers below
+                     rlm->_timerFired = false;
+                     break;
+                 } else {
+                     if (msg && msg != (mach_msg_header_t *)msg_buffer) free(msg);
+                 }
+             } else {
+                 // Go ahead and leave the inner loop.
+                 break;
+             }
+         } while (1);
+ #else
+         if (kCFUseCollectableAllocator) {
+             objc_clear_stack(0);
+             memset(msg_buffer, 0, sizeof(msg_buffer));
+         }
+         msg = (mach_msg_header_t *)msg_buffer;
+         __CFRunLoopServiceMachPort(waitSet, &msg, sizeof(msg_buffer), &livePort, poll ? 0 : TIMEOUT_INFINITY);
+ #endif
+ 
+ // ##8
+ if (!poll && (rlm->_observerMask & kCFRunLoopAfterWaiting)) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopAfterWaiting);
+ 
+ handle_msg:;// ##9
+ __CFRunLoopSetIgnoreWakeUps(rl);
+ 
+ }while (0 == retVal);
+ }
+ 
+ CFMutableDictionaryRef:
+ 线程->runloop
+ 
+ runloop根据线程创建
+ __CFRunloop底层是结构体
+ 
+ CFRunloop-CFRunlopMode // 1-n 但runloop只能在一个mode下运行
+mode里面有很多items
+ 
+ rl: runloop rlm: runloopMode
+ CFSetRef commonModes = rl->_commonModes
+ CFStringRef curMode = rlm->_name
+ 遍历items分别调用使用:
+ while(item){
+ doit = item的mode(加入到runloop的item的mode，比如timer的mode)==curMode（表示现在runloop的mode） || (item的mode == kCFRunloopCommonModes && SetContainsValue(commonModes, curMode))
+ if(doit){
+ // 调用类似__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__()的函数
+ }
+ }
+ 
+ CFRunLoopAddTimer
+ CFRunLoopAddObserver
+ CFRunLoopAddSource
+ CFSetAddValue(rl->_commonModeItems, rlt)
+
+ 
+ [[NSRunLoop currentRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];的addTimer的底层
+ ->__CFRunLoopAddItemsToCommonMode
+ ->CFRunLoopAddTimer(rl, rlt, modeName){// rlt = CFRunloopTimerRef
+ if(modeName == KCFRunLoopCommonModes){
+ // 把timer（即item）添加到commonModeItems
+ } else {
+ 
+ }
+ 
+ }
+ 
+ // CF_Timer
+ - (void)cfTimerDemo{
+     CFRunLoopTimerContext context = {
+         0,
+         ((__bridge void *)self),
+         NULL,
+         NULL,
+         NULL
+     };
+     CFRunLoopRef rlp = CFRunLoopGetCurrent();
+ 
+      参数一:用于分配对象的内存
+      参数二:在什么是触发 (距离现在)
+      参数三:每隔多少时间触发一次
+      参数四:未来参数
+      参数五:CFRunLoopObserver的优先级 当在Runloop同一运行阶段中有多个CFRunLoopObserver 正常情况下使用0
+      参数六:回调,比如触发事件,我就会来到这里
+      参数七:上下文记录信息
+     CFRunLoopTimerRef timerRef = CFRunLoopTimerCreate(kCFAllocatorDefault, 0, 1, 0, 0, lgRunLoopTimerCallBack, &context);
+     CFRunLoopAddTimer(rlp, timerRef, kCFRunLoopDefaultMode);
+ }
+
+ void lgRunLoopTimerCallBack(CFRunLoopTimerRef timer, void *info){
+     NSLog(@"%@---%@",timer,info);
+ }
+ 
+ // CF_Observer
+ - (void)cfObseverDemo{
+     
+     CFRunLoopObserverContext context = {
+         0,
+         ((__bridge void *)self),
+         NULL,
+         NULL,
+         NULL
+     };
+     CFRunLoopRef rlp = CFRunLoopGetCurrent();
+     
+      参数一:用于分配对象的内存
+      参数二:你关注的事件
+           kCFRunLoopEntry=(1<<0),
+           kCFRunLoopBeforeTimers=(1<<1),
+           kCFRunLoopBeforeSources=(1<<2),
+           kCFRunLoopBeforeWaiting=(1<<5),
+           kCFRunLoopAfterWaiting=(1<<6),
+           kCFRunLoopExit=(1<<7),
+           kCFRunLoopAllActivities=0x0FFFFFFFU
+      参数三:CFRunLoopObserver是否循环调用
+      参数四:CFRunLoopObserver的优先级 当在Runloop同一运行阶段中有多个CFRunLoopObserver 正常情况下使用0
+      参数五:回调,比如触发事件,我就会来到这里
+      参数六:上下文记录信息
+
+     CFRunLoopObserverRef observerRef = CFRunLoopObserverCreate(kCFAllocatorDefault, kCFRunLoopAllActivities, YES, 0, lgRunLoopObserverCallBack, &context);
+     CFRunLoopAddObserver(rlp, observerRef, kCFRunLoopDefaultMode);
+ }
+
+ void lgRunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivity activity, void *info){
+     NSLog(@"%lu-%@",activity,info);
+ }
+ 
+ RunLoopObserver监听runloop的状态
+ 
+ // 成员享有同一个地址，节省内存
+ typedef union{
+     char a;
+     float b;
+ } UnionType;
+ 
+ UnionType type;
+ type.a = 10;
+ //地址一样
+ NSLog(@"a=%p",&type.a);
+ NSLog(@"b=%p",&type.b);
+ NSLog(@"%zd",sizeof(UnionType));// 4
+ 位域
+ 
+ struct __CFRunLoopSource {
+ union {
+ CFRunLoopSourceContext version0;
+ CFRunLoopSourceContext version1;
+ }_context;
+ }
+ 
+ source0 （处理app内部事件和app管理的事务（输入源触摸事件UIEvent，CFSocket等等））包含回调函数指针 不能主动触发，signal source0标记为待处理，wakeup唤醒runloop去处理事件
+ source1 （处理port，线程之间通讯）包含mach_port & 回调函数指针
+ 
+ // source0
+ - (void)source0Demo{
+     
+     CFRunLoopSourceContext context = {
+         0,
+         NULL,
+         NULL,
+         NULL,
+         NULL,
+         NULL,
+         NULL,
+         schedule,
+         cancel,
+         perform,
+     };
+      
+      参数一:传递NULL或kCFAllocatorDefault以使用当前默认分配器。
+      参数二:优先级索引，指示处理运行循环源的顺序。这里我传0为了的就是自主回调
+      参数三:为运行循环源保存上下文信息的结构
+      
+     CFRunLoopSourceRef source0 = CFRunLoopSourceCreate(CFAllocatorGetDefault(), 0, &context);
+     CFRunLoopRef rlp = CFRunLoopGetCurrent();
+     // source --> runloop 指定了mode  那么此时我们source就进入待绪状态
+     CFRunLoopAddSource(rlp, source0, kCFRunLoopDefaultMode);
+     // 一个执行信号
+     CFRunLoopSourceSignal(source0);
+     // 唤醒 run loop 防止沉睡状态
+     CFRunLoopWakeUp(rlp);
+     // 取消 移除
+     CFRunLoopRemoveSource(rlp, source0, kCFRunLoopDefaultMode);
+     CFRelease(rlp);
+ }
+ 
+ void schedule(void *info, CFRunLoopRef rl, CFRunLoopMode mode){
+     NSLog(@"准备代发");
+ }
+
+ void perform(void *info){
+     NSLog(@"执行吧,骚年");
+ }
+
+ void cancel(void *info, CFRunLoopRef rl, CFRunLoopMode mode){
+     NSLog(@"取消了,终止了!!!!");
+ }
+ 
+ // port
+ <NSPortDelegate>
+ @property (nonatomic, strong) NSPort* subThreadPort;
+ @property (nonatomic, strong) NSPort* mainThreadPort;
+ 
+ - (void)setupPort{
+     
+     self.mainThreadPort = [NSPort port];
+     self.mainThreadPort.delegate = self;
+     // port - source1 -- runloop
+     [[NSRunLoop currentRunLoop] addPort:self.mainThreadPort forMode:NSDefaultRunLoopMode];
+
+     [self task];
+ }
+
+ - (void) task {
+     NSThread *thread = [[NSThread alloc] initWithBlock:^{
+         self.subThreadPort = [NSPort port];
+         self.subThreadPort.delegate = self;
+         
+         [[NSRunLoop currentRunLoop] addPort:self.subThreadPort forMode:NSDefaultRunLoopMode];
+         [[NSRunLoop currentRunLoop] run];
+     }];
+     
+     [thread start];
+ }
+ 
+ - (void)handlePortMessage:(id)message {
+     NSLog(@"%@", [NSThread currentThread]); // 3 1
+
+     unsigned int count = 0;
+     Ivar *ivars = class_copyIvarList([message class], &count);
+     for (int i = 0; i<count; i++) {
+         
+         NSString *name = [NSString stringWithUTF8String:ivar_getName(ivars[i])];
+ //        NSLog(@"%@",name);
+     }
+     
+     sleep(1);
+     if (![[NSThread currentThread] isMainThread]) {
+
+         NSMutableArray* components = [NSMutableArray array];
+         NSData* data = [@"word" dataUsingEncoding:NSUTF8StringEncoding];
+         [components addObject:data];
+
+         [self.mainThreadPort sendBeforeDate:[NSDate date] components:components from:self.subThreadPort reserved:0];
+     }
+ }
+ 
+ - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+     
+     NSMutableArray* components = [NSMutableArray array];
+     NSData* data = [@"hello" dataUsingEncoding:NSUTF8StringEncoding];
+     [components addObject:data];
+     // 子线程发消息给主线程
+     [self.subThreadPort sendBeforeDate:[NSDate date] components:components from:self.mainThreadPort reserved:0];
  }
  
  */
@@ -4033,6 +4515,12 @@ oc对象本质是结构体
  dispatch_semaphore_wait                信号量等待
  dispatch_semaphore_signal            信号量释放
  同步当锁,和控制GCD最大并发数
+ 
+ 1.dispatch_semaphore_create：创建一个Semaphore并初始化信号的总量
+ 2.dispatch_semaphore_signal：发送一个信号，让信号总量加1
+ 3.dispatch_semaphore_wait：可以使总信号量减1，当信号总量为0时就会一直等待（阻塞所在线程），否则就可以正常执行。
+ dispatch_semaphore_wait的返回值也为long型。当其返回0时表示在timeout之前，该函数所处的线程被成功唤醒。
+ 当其返回不为0时，表示timeout发生。
 
  Dispatch_source：
  dispatch_source_create                        创建源
