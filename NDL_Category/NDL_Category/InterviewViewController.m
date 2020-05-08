@@ -3214,7 +3214,7 @@ for (NSInteger i = 0; i < 100; i++) {
  由于内存操作的原因，分类的方法会排在方法列表最前面，所以分类方法会优先于原类方法的调用（所谓的分类方法覆盖，本质是排序超前）
  
  
- Category 在编译过后，是在什么时机与原有的类合并到一起的？
+ MARK: Category 在编译过后，是在什么时机与原有的类合并到一起的：
  程序启动后，通过编译之后，Runtime 会进行初始化，调用 _objc_init。
  然后会 map_images。
  接下来调用 map_images_nolock。
@@ -3723,15 +3723,1443 @@ for (NSInteger i = 0; i < 100; i++) {
  weak_entry_remove(weak_table, entry)
  */
 
-// MARK: ---性能优化
+// MARK: ---LG_runtime
 /**
- MARK: ---内存管理
- 内存布局:
+ Runtime有两个版本：
+ 一个是Legacy版本(早期版本) 。
+ 一个是Modern版本(现行版本)。
+
+ 早期版本对应的编程接口：Objective-C 1.0
+ 现行版本对应的编程接口：Objective-C 2.0
+ 
+ clang -rewrite-objc main.m -o test.cpp
+
+oc对象本质是结构体
+ objc_getClass("Person")
+ 
+ class_getSuperclass([inst class])
+ 
+ object_getClass([inst class])
+ 
+ // 这个是c函数，用汇编实现的
+ objc_msgSend:发消息要先去找方法
+ 1.快速：缓存查找cache_t(哈希表) 汇编
+ 2.慢速：c,c++  lookup
+ _objc_msgSend源码分析：汇编部分
+ LNilOrTagged
+ LGetIsaDone->
+ CacheLookup NORMAL (calls imp or objc_msgSend_uncached)->
+ 1.CacheHit->TailCallCachedImp
+ 2.CheckMiss->__objc_msgSend_uncached->MethodTableLookup(__class_lookupMethodAndLoadCache3跳转到c,c++ lookup)->TailCallFunctionPointer
+ 3.add
+ 
+ // ##双下划线-单下划线##
+ 从汇编__class_lookupMethodAndLoadCache3跳转到c，c++的_class_lookupMethodAndLoadCache3
+ ->lookupImpOrForward(Class cls, SEL sel, id inst) ### cls是类的话，inst是实例对象。cls是元类的话，inst是类对象并且object_getClass(inst) == cls,object_getClassName(inst) == "Student",class_getName(cls) == "Student"。
+ ->cache_getImp (参数no 肯定不走这个)
+ ->checkIsKnownClass 不是的话就fatal_error
+ ->(cls->isRealized 判断类是否实现)
+ ->没有就走realizeClass // Data赋值
+ ->(cls->isInitialized)
+ ->没有就走_class_initialize
+ 
+ retry:
+ // ###Try this class's cache###
+ 又会cache_getImp 因为remap(cls) 会重映射
+ ->没有的话进行漫长过程的查找方法
+ // ###Try this class's method lists:###
+ method = getMethodNoSuper_nolock(cls, sel) { methodList: cls->data()->methods.beginLists() ---- cls->data()->methods.endLists() 这个返回查找 search_method_list()}
+ if (method) {
+ log_and_fill_cache()
+ }
+ 
+ // ###Try superclass caches and method lists:###
+ // 一直找直到NSObject
+ for (Class curClass = cls->superclass; curClass != nil; curClass = curClass->superclass){
+ // Superclass cache
+ imp = cache_getImp(curClass, sel)
+ if(imp){
+ if(imp!= (IMP)_objc_msgForward_impcache) {
+ log_and_fill_cache()
+ }
+ }
+ 
+ // Superclass method list
+ method = getMethodNoSuper_nolock(curClass, sel)
+ if (method) {
+ log_and_fill_cache()
+ imp = method->imp
+ }
+ }
+ 
+ // ###动态方法解析### 通过一个变量控制，只会走一次动态方法解析
+ No implementation found.Try method resolver once:
+ _class_resolverMethod() {
+ if (!cls->isMetaClass())// 不是元类
+ // try [cls resolveInstanceMethod:sel]
+ _class_resolveInstanceMethod() // 如果是对象方法走这个,它的实现里面的bool resolved = msg(cls, SEL_resolveInstanceMethod, sel)的cls是类对象
+ } else {
+ // 如果类方法没有实现: try [nonMetaClass resolverClassMethod:sel] and [cls resolveInstanceMethod:sel]
+ // Person(类方法) - 元类(实例方法) - 根元类(实例方法) - NSObject(实例方法)
+ _class_resolveClassMethod()
+ 
+ if(!lookUpImpOrNil()){
+ _class_resolveInstanceMethod()// 它的实现里面的bool resolved = msg(cls, SEL_resolveInstanceMethod, sel)的cls是元类
+ }
+ }
+ 
+ // ###_class_resolveInstanceMethod它的实现###
+ _class_resolveInstanceMethod(){
+ // 后3个参数：initialize，cache，resolver
+ if(!lookupImpOrNil(cls->ISA(), SEL_resolveInstanceMethod, cls, NO, YES, NO)) {// ###
+ // resolver not implemented
+ return;
+ }
+ BOOL (*msg)(Class, SEL, SEL) = (typeof(msg))objc_msgSend;
+ // 系统帮忙发送了一次消息
+ bool resolved = msg(cls, SEL_resolveInstanceMethod, sel)// 可以在这块动态添加方法，然后下一步就能找到imp了,###这个cls是类对象
+ IMP imp = lookupImpOrNil(cls, sel, inst, NO, YES, NO)
+ }
+ 
+ // ###_class_resolveClassMethod它的实现###
+ _class_resolveClassMethod() {
+ if(!loopUpImpOrNil()){
+ return
+ }
+ BOOL (*msg)(Class, SEL, SEL) = (typeof(msg))objc_msgSend;
+ bool resolved = msg(_class_getNonMetaClass(cls, inst), SEL_resolveInstanceMethod, sel)
+ IMP imp = lookupImpOrNil(cls, sel, inst, NO, YES, NO)
+ }
+ 
+ // ###_class_getNonMetaClass的实现###
+ Class _class_getNonMetaClass(Class cls, id obj){
+ cls = getNonMetaClass(cls, obj);
+ return cls;
+ }
+ 
+ // ###getNonMetaClass的实现###
+ Class getNonMetaClass(Class metacls, id inst){
+ // metacls：元类
+ // inst：类对象
+ // return cls itself if it's already a ##non-meta class##(表示不是元类的类, 即NSObject)
+ if(!metacls->isMetaClass()) return metacls;
+ 
+ // 表示metacls是根元类
+ if(metacls->ISA() == metacls){
+ Class cls = metacls->superclass;
+ if (cls->ISA() == metacls) return cls;
+ }
+ 
+ // 类对象
+ if(inst) {
+ Class cls = (Class)inst;
+ realizeClass(cls);
+ 
+ while(cls && cls->ISA() != metacls){
+ cls = cls->superclass;
+ realizeClass(cls);
+ }
+ 
+ if(cls) {
+ assert(!cls->isMetaClass());
+ assert(cls->ISA() == metacls);
+ return cls;
+ }
+ }
+ 
+ }
+ 
+ NSString *str = nil;
+ NSAssert(str != nil, @"str不能为空");
+ 
+ //======================源码
+ // ###isMetaClass的实现###
+ bool isMetaClass() {
+     assert(this);
+     assert(isRealized());
+     return data()->ro->flags & RO_META;
+ }
+ Class getMeta() {
+     if (isMetaClass()) return (Class)this;
+     else return this->ISA();
+ }
+ bool isRootClass() {
+     return superclass == nil;
+ }
+ bool isRootMetaclass() {
+     return ISA() == (Class)this;
+ }
+ bool isRealized() {
+     return data()->flags & RW_REALIZED;
+ }
+ bool isInitialized() {
+     return getMeta()->data()->flags & RW_INITIALIZED;
+ }
+ 
+ struct objc_class : objc_object{
+ class_data_bits_t bits;    // class_rw_t * plus custom rr/alloc flags
+ class_rw_t *data() {
+     return bits.data();
+ }
+ }
+ 
+ LGStudent *stu = [[LGStudent alloc] init];
+ BOOL flag1 = class_isMetaClass([stu class]);// NO
+ BOOL flag = class_isMetaClass([LGStudent class]);// NO
+ //======================
+ 
+ // ###lookUpImpOrNil的实现###
+ IMP lookUpImpOrNil() {
+ IMP imp = lookUpImpOrForward();
+ if(imp == _objc_msgForward_impcache) return nil;
+ else return imp
+ }
+ 
+ ##给NSObject的分类添加_class_resolveInstanceMethod的实现（即动态添加方法）可以让任何类没实现的方法不崩溃##
+ 或者
+ @interface Person : NSObject
+ + (void)lg_message;
+ @end
+ Person没有实现这个类方法
+ 但NSObject的分类实现了这个方法的实例方法的话，也就不会崩溃
+ @implementation NSObject (LG)
+ - (void)lg_message{
+     NSLog(@"LG = %s",__func__);
+ }
+ @end
+ 
+ // ###消息转发###
+ No implementation found, and method resolver didn't help. Use forwarding:
+ imp = (IMP)_objc_msgForward_impcache
+ cache_fill()
+ 
+ 
+ // 单下划线变双下划线
+ imp = (IMP)_objc_msgForward_impcache又会走到汇编__objc_msgForward_impcache(即快速转发)
+ ->__objc_msgForward
+ ->__objc_msgForward_handler 系统有默认的处理: objc_defaultForwardHandler 这里面就会打印unrecognized selector sent to instance XX(no message forward handler is installed )  class_isMetaClass(object_getClass(self)) ? '+' : '-', object_getClassName(self), sel_getName(sel), self
+ 
+ // ###class_getClassMethod的实现###
+ Method class_getClassMethod(Class cls,SEL sel){
+ return class_getInstanceMethod(cls->getMeta(), sel)
+ }
+ 
+ 打印方法调用过程log可通过: 文件在/private/tmp/msgSends-XXX
+ extern void instrumentObjcMessageSends(BOOL);
+ 
+ instrumentObjcMessageSends(YES);
+ [Person walk];// 通过消息转发
+ instrumentObjcMessageSends(NO);
+ 
+ // ###objc_object::ISA()###
+ Class objc_object::ISA() {
+ return (Class)(isa.bits & ISA_MASK)
+ }
+ 
+ 类方法的查找流程和实例方法的查找流程不一样。
+ 实例方法查找->类->父类->NSObject
+ 类方法查找->元类->元类的父类->根元类->NSObject（它的类方法存在根元类，相当于是根元类的实例方法）
+ 类方法可以在NSObject以类方法实现（最好）也可以以对象方法实现
+ 
+断点调试:
+ bt
+ 
+ eg:
+ // 添加方法的实现
+ + (BOOL)resolveInstanceMethod:(SEL)sel{
+     if (sel == @selector(run)) {
+         // 我们动态解析我们的 对象方法
+         NSLog(@"对象方法解析走这里");
+         SEL readSEL = @selector(readBook);
+         Method readM= class_getInstanceMethod(self, readSEL);
+         IMP readImp = method_getImplementation(readM);
+         const char *type = method_getTypeEncoding(readM);
+         return class_addMethod(self, sel, readImp, type);
+     }
+     return [super resolveInstanceMethod:sel];
+ }
+ 
+ + (BOOL)resolveClassMethod:(SEL)sel{
+     if (sel == @selector(walk)) {
+         // 我们动态解析我们的 对象方法
+         NSLog(@"类方法解析走这里");
+         SEL hellowordSEL = @selector(helloWord);
+         // 类方法就存在我们的元类的方法列表
+ 
+         // 类 的 类方法 && 元类 的 对象实例方法  两者是一样的
+ //这两行是一样的
+         // Method hellowordM= class_getClassMethod(self, hellowordSEL);// 或者下面这行
+         Method hellowordM= class_getInstanceMethod(object_getClass(self), hellowordSEL);
+ 
+         IMP hellowordImp = method_getImplementation(hellowordM);
+         const char *type = method_getTypeEncoding(hellowordM);
+         NSLog(@"%s",type);
+         return class_addMethod(object_getClass(self), sel, hellowordImp, type);
+     }
+     return [super resolveClassMethod:sel];
+ }
+ 
+ // CoreFoundation库路径
+ ###/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/Library/CoreSimulator/Profiles/Runtimes/iOS.simruntime/Contents/Resources/RuntimeRoot/System/Library/Frameworks/CoreFoundation.framework###
+ */
+
+// MARK: ---LG_runloop
+/**
+ Runloop的作用:
+ 保持程序的持续运行
+ 处理APP中的各种事件（触摸、定时器、performSelector）
+ 节省cpu资源、提供程序的性能：该做事就做事，该休息就休息
+ 
+ void CFRunLoopRun(void) {
+ int32_t result;
+ do {
+ result = CFRunLoopSpecific()
+ }while (result != kCFRunLoopRunStopped && result != kCFRunLoopRunFinished )
+ }
+ 
+ // 调用block
+ block应用：__CFRUNLOOP_IS_CALLING_OUT_TO_A_BLOCK__
+ // performSelector:withObject:afterDelay 底层也是走的这个__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__
+ 调用timer：__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__
+ 响应source0：__CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE0_PERFORM_FUNCTION__
+ 响应source1： __CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE1_PERFORM_FUNCTION__
+ // dispatch_async(dispatch_get_main_queue(), {})
+ GCD主队列：__CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__
+ observer源：__CFRUNLOOP_IS_CALLING_OUT_TO_AN_OBSERVER_CALLBACK_FUNCTION__
+
+ CFRunLoopSpecific
+ ->__CFRunLoopRun
+ ->__CFRunLoopDoTimers
+ ->__CFRunLoopDoTimer
+ ->__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__
+ 
+ ###CFRunLoopSpecific的实现###
+ CFRunLoopSpecific(){
+ CFRunLoopModeRef currentMode = __CFRunLoopFindMode(rl, modeName, false);
+ 
+ int32_t result = kCFRunLoopRunFinished;
+ if (currentMode->_observerMask & kCFRunLoopEntry ) __CFRunLoopDoObservers(rl, currentMode, kCFRunLoopEntry);
+ result = __CFRunLoopRun(rl, currentMode, seconds, returnAfterSourceHandled, previousMode);
+ if (currentMode->_observerMask & kCFRunLoopExit ) __CFRunLoopDoObservers(rl, currentMode, kCFRunLoopExit);
+ }
+ 
+ ###__CFRunLoopRun的实现###
+ __CFRunLoopRun() {
+ int32_t retVal = 0;
+ do {
+ // ##2
+ if (rlm->_observerMask & kCFRunLoopBeforeTimers) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeTimers);
+ // ##3
+ if (rlm->_observerMask & kCFRunLoopBeforeSources) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeSources);
+ // ##4
+ Boolean sourceHandledThisLoop = __CFRunLoopDoSources0(rl, rlm, stopAfterHandle);
+ if (sourceHandledThisLoop) {
+     __CFRunLoopDoBlocks(rl, rlm);
+ }
+ 
+ if (MACH_PORT_NULL != dispatchPort && !didDispatchPortLastTime) {
+ #if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+             msg = (mach_msg_header_t *)msg_buffer;
+ // ##5
+             if (__CFRunLoopServiceMachPort(dispatchPort, &msg, sizeof(msg_buffer), &livePort, 0)) {
+                 goto handle_msg;// ##9
+             }
+ #elif DEPLOYMENT_TARGET_WINDOWS
+             if (__CFRunLoopWaitForMultipleObjects(NULL, &dispatchPort, 0, 0, &livePort, NULL)) {
+                 goto handle_msg;
+             }
+ #endif
+         }
+ 
+ // ##6
+ if (!poll && (rlm->_observerMask & kCFRunLoopBeforeWaiting)) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeWaiting);
+ 
+ #if USE_DISPATCH_SOURCE_FOR_TIMERS
+         do {
+             if (kCFUseCollectableAllocator) {
+                 objc_clear_stack(0);
+                 memset(msg_buffer, 0, sizeof(msg_buffer));
+             }
+             msg = (mach_msg_header_t *)msg_buffer;
+ // ##7
+             __CFRunLoopServiceMachPort(waitSet, &msg, sizeof(msg_buffer), &livePort, poll ? 0 : TIMEOUT_INFINITY);// 会走mach_msg_trap
+             
+             if (modeQueuePort != MACH_PORT_NULL && livePort == modeQueuePort) {
+                 // Drain the internal queue. If one of the callout blocks sets the timerFired flag, break out and service the timer.
+                 while (_dispatch_runloop_root_queue_perform_4CF(rlm->_queue));
+                 if (rlm->_timerFired) {
+                     // Leave livePort as the queue port, and service timers below
+                     rlm->_timerFired = false;
+                     break;
+                 } else {
+                     if (msg && msg != (mach_msg_header_t *)msg_buffer) free(msg);
+                 }
+             } else {
+                 // Go ahead and leave the inner loop.
+                 break;
+             }
+         } while (1);
+ #else
+         if (kCFUseCollectableAllocator) {
+             objc_clear_stack(0);
+             memset(msg_buffer, 0, sizeof(msg_buffer));
+         }
+         msg = (mach_msg_header_t *)msg_buffer;
+         __CFRunLoopServiceMachPort(waitSet, &msg, sizeof(msg_buffer), &livePort, poll ? 0 : TIMEOUT_INFINITY);
+ #endif
+ 
+ // ##8
+ if (!poll && (rlm->_observerMask & kCFRunLoopAfterWaiting)) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopAfterWaiting);
+ 
+ handle_msg:;// ##9
+ __CFRunLoopSetIgnoreWakeUps(rl);
+ 
+ }while (0 == retVal);
+ }
+ 
+ CFMutableDictionaryRef:
+ 线程->runloop
+ 
+ runloop根据线程创建
+ __CFRunloop底层是结构体
+ 
+ CFRunloop-CFRunlopMode // 1-n 但runloop只能在一个mode下运行
+mode里面有很多items
+ 
+ rl: runloop rlm: runloopMode
+ CFSetRef commonModes = rl->_commonModes
+ CFStringRef curMode = rlm->_name
+ 遍历items分别调用使用:
+ while(item){
+ doit = item的mode(加入到runloop的item的mode，比如timer的mode)==curMode（表示现在runloop的mode） || (item的mode == kCFRunloopCommonModes && SetContainsValue(commonModes, curMode))
+ if(doit){
+ // 调用类似__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__()的函数
+ }
+ }
+ 
+ CFRunLoopAddTimer
+ CFRunLoopAddObserver
+ CFRunLoopAddSource
+ CFSetAddValue(rl->_commonModeItems, rlt)
+
+ 
+ [[NSRunLoop currentRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];的addTimer的底层
+ ->__CFRunLoopAddItemsToCommonMode
+ ->CFRunLoopAddTimer(rl, rlt, modeName){// rlt = CFRunloopTimerRef
+ if(modeName == KCFRunLoopCommonModes){
+ // 把timer（即item）添加到commonModeItems
+ } else {
+ 
+ }
+ 
+ }
+ 
+ // CF_Timer
+ - (void)cfTimerDemo{
+     CFRunLoopTimerContext context = {
+         0,
+         ((__bridge void *)self),
+         NULL,
+         NULL,
+         NULL
+     };
+     CFRunLoopRef rlp = CFRunLoopGetCurrent();
+ 
+      参数一:用于分配对象的内存
+      参数二:在什么是触发 (距离现在)
+      参数三:每隔多少时间触发一次
+      参数四:未来参数
+      参数五:CFRunLoopObserver的优先级 当在Runloop同一运行阶段中有多个CFRunLoopObserver 正常情况下使用0
+      参数六:回调,比如触发事件,我就会来到这里
+      参数七:上下文记录信息
+     CFRunLoopTimerRef timerRef = CFRunLoopTimerCreate(kCFAllocatorDefault, 0, 1, 0, 0, lgRunLoopTimerCallBack, &context);
+     CFRunLoopAddTimer(rlp, timerRef, kCFRunLoopDefaultMode);
+ }
+
+ void lgRunLoopTimerCallBack(CFRunLoopTimerRef timer, void *info){
+     NSLog(@"%@---%@",timer,info);
+ }
+ 
+ // CF_Observer
+ - (void)cfObseverDemo{
+     
+     CFRunLoopObserverContext context = {
+         0,
+         ((__bridge void *)self),
+         NULL,
+         NULL,
+         NULL
+     };
+     CFRunLoopRef rlp = CFRunLoopGetCurrent();
+     
+      参数一:用于分配对象的内存
+      参数二:你关注的事件
+           kCFRunLoopEntry=(1<<0),
+           kCFRunLoopBeforeTimers=(1<<1),
+           kCFRunLoopBeforeSources=(1<<2),
+           kCFRunLoopBeforeWaiting=(1<<5),
+           kCFRunLoopAfterWaiting=(1<<6),
+           kCFRunLoopExit=(1<<7),
+           kCFRunLoopAllActivities=0x0FFFFFFFU
+      参数三:CFRunLoopObserver是否循环调用
+      参数四:CFRunLoopObserver的优先级 当在Runloop同一运行阶段中有多个CFRunLoopObserver 正常情况下使用0
+      参数五:回调,比如触发事件,我就会来到这里
+      参数六:上下文记录信息
+
+     CFRunLoopObserverRef observerRef = CFRunLoopObserverCreate(kCFAllocatorDefault, kCFRunLoopAllActivities, YES, 0, lgRunLoopObserverCallBack, &context);
+     CFRunLoopAddObserver(rlp, observerRef, kCFRunLoopDefaultMode);
+ }
+
+ void lgRunLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivity activity, void *info){
+     NSLog(@"%lu-%@",activity,info);
+ }
+ 
+ RunLoopObserver监听runloop的状态
+ 
+ // 成员享有同一个地址，节省内存
+ typedef union{
+     char a;
+     float b;
+ } UnionType;
+ 
+ UnionType type;
+ type.a = 10;
+ //地址一样
+ NSLog(@"a=%p",&type.a);
+ NSLog(@"b=%p",&type.b);
+ NSLog(@"%zd",sizeof(UnionType));// 4
+ 位域
+ 
+ struct __CFRunLoopSource {
+ union {
+ CFRunLoopSourceContext version0;
+ CFRunLoopSourceContext version1;
+ }_context;
+ }
+ 
+ source0 （处理app内部事件和app管理的事务（输入源触摸事件UIEvent，CFSocket等等））包含回调函数指针 不能主动触发，signal source0标记为待处理，wakeup唤醒runloop去处理事件
+ source1 （处理port，线程之间通讯）包含mach_port & 回调函数指针
+ 
+ // source0
+ - (void)source0Demo{
+     
+     CFRunLoopSourceContext context = {
+         0,
+         NULL,
+         NULL,
+         NULL,
+         NULL,
+         NULL,
+         NULL,
+         schedule,
+         cancel,
+         perform,
+     };
+      
+      参数一:传递NULL或kCFAllocatorDefault以使用当前默认分配器。
+      参数二:优先级索引，指示处理运行循环源的顺序。这里我传0为了的就是自主回调
+      参数三:为运行循环源保存上下文信息的结构
+      
+     CFRunLoopSourceRef source0 = CFRunLoopSourceCreate(CFAllocatorGetDefault(), 0, &context);
+     CFRunLoopRef rlp = CFRunLoopGetCurrent();
+     // source --> runloop 指定了mode  那么此时我们source就进入待绪状态
+     CFRunLoopAddSource(rlp, source0, kCFRunLoopDefaultMode);
+     // 一个执行信号
+     CFRunLoopSourceSignal(source0);
+     // 唤醒 run loop 防止沉睡状态
+     CFRunLoopWakeUp(rlp);
+     // 取消 移除
+     CFRunLoopRemoveSource(rlp, source0, kCFRunLoopDefaultMode);
+     CFRelease(rlp);
+ }
+ 
+ void schedule(void *info, CFRunLoopRef rl, CFRunLoopMode mode){
+     NSLog(@"准备代发");
+ }
+
+ void perform(void *info){
+     NSLog(@"执行吧,骚年");
+ }
+
+ void cancel(void *info, CFRunLoopRef rl, CFRunLoopMode mode){
+     NSLog(@"取消了,终止了!!!!");
+ }
+ 
+ // port
+ <NSPortDelegate>
+ @property (nonatomic, strong) NSPort* subThreadPort;
+ @property (nonatomic, strong) NSPort* mainThreadPort;
+ 
+ - (void)setupPort{
+     
+     self.mainThreadPort = [NSPort port];
+     self.mainThreadPort.delegate = self;
+     // port - source1 -- runloop
+     [[NSRunLoop currentRunLoop] addPort:self.mainThreadPort forMode:NSDefaultRunLoopMode];
+
+     [self task];
+ }
+
+ - (void) task {
+     NSThread *thread = [[NSThread alloc] initWithBlock:^{
+         self.subThreadPort = [NSPort port];
+         self.subThreadPort.delegate = self;
+         
+         [[NSRunLoop currentRunLoop] addPort:self.subThreadPort forMode:NSDefaultRunLoopMode];
+         [[NSRunLoop currentRunLoop] run];
+     }];
+     
+     [thread start];
+ }
+ 
+ - (void)handlePortMessage:(id)message {
+     NSLog(@"%@", [NSThread currentThread]); // 3 1
+
+     unsigned int count = 0;
+     Ivar *ivars = class_copyIvarList([message class], &count);
+     for (int i = 0; i<count; i++) {
+         
+         NSString *name = [NSString stringWithUTF8String:ivar_getName(ivars[i])];
+ //        NSLog(@"%@",name);
+     }
+     
+     sleep(1);
+     if (![[NSThread currentThread] isMainThread]) {
+
+         NSMutableArray* components = [NSMutableArray array];
+         NSData* data = [@"word" dataUsingEncoding:NSUTF8StringEncoding];
+         [components addObject:data];
+
+         [self.mainThreadPort sendBeforeDate:[NSDate date] components:components from:self.subThreadPort reserved:0];
+     }
+ }
+ 
+ - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+     
+     NSMutableArray* components = [NSMutableArray array];
+     NSData* data = [@"hello" dataUsingEncoding:NSUTF8StringEncoding];
+     [components addObject:data];
+     // 子线程发消息给主线程
+     [self.subThreadPort sendBeforeDate:[NSDate date] components:components from:self.mainThreadPort reserved:0];
+ }
  
  */
 
+// MARK: ---LG_多线程
+/**
+ 线程的定义：
+ 线程是进程的基本执行单元，一个进程的所有任务都在线程中执行
+ 进程要想执行任务，必须得有线程，进程至少要有一条线程
+ 程序启动会默认开启一条线程，这条线程被称为主线程或 UI 线程
+ 
+ 进程的定义：
+ 进程是指在系统中正在运行的一个应用程序
+ 每个进程之间是独立的，每个进程均运行在其专用的且受保护的内存
+ 
+ 终端: kill 线程号
+ 
+ 进程与线程的关系:
+ 地址空间：同一进程的线程共享本进程的地址空间，而进程之间则是独立的地址空间。
+ 资源拥有：同一进程内的线程共享本进程的资源如内存、I/O、cpu等，但是进程之间的资源是独立的。
 
-// MARK: ---flutter
+ 一个进程崩溃后，在保护模式下不会对其他进程产生影响，但是一个线程崩溃整个进程都死掉。所以多进程要比多线程健壮。
+ 进程切换时，消耗的资源大，效率高。所以涉及到频繁的切换时，使用线程要好于进程。同样如果要求同时进行并且又要共享某些变量的并发操作，只能用线程不能用进程
+ 执行过程：每个独立的进程有一个程序运行的入口、顺序执行序列和程序入口。但是线程不能独立执行，必须依存在应用程序中，由应用程序提供多个线程执行控制。
+ 线程是处理器调度的基本单位，但是进程不是。
+
+ 多线程的意义:
+ * 优点
+   * 能适当提高程序的执行效率
+   * 能适当提高资源的利用率（CPU，内存）
+   * 线程上的任务执行完成后，线程会自动销毁
+ * 缺点
+    * 开启线程需要占用一定的内存空间（默认情况下，每一个线程都占 512 KB）
+    * 如果开启大量的线程，会占用大量的内存空间，降低程序的性能
+    * 线程越多，CPU 在调用线程上的开销就越大
+    * 程序设计更加复杂，比如线程间的通信、多线程的数据共享
+    
+ UI为什么要在主线程更新？
+ UIKit 线程不安全，需要按照苹果的设计和标准
+ 
+ 耗时操作会阻塞主线程
+ 
+ C与OC的桥接： __bridge只做类型转换，但是不修改对象（内存）管理权；
+
+ __bridge_retained（也可以使用CFBridgingRetain）将Objective-C的对象转换为Core Foundation的对象，同时将对象（内存）的管理权交给我们，后续需要使用CFRelease或者相关方法来释放对象；
+
+ __bridge_transfer（也可以使用CFBridgingRelease）将Core Foundation的对象转换为Objective-C的对象，同时将对象（内存）的管理权交给ARC
+ 
+ 互斥锁小结：
+   * 保证锁内的代码，同一时间，只有一条线程能够执行！
+   * 互斥锁的锁定范围，应该尽量小，锁定范围越大，效率越差！
+
+ * 互斥锁参数
+   * 能够加锁的任意 NSObject 对象
+   * 注意：锁对象一定要保证所有的线程都能够访问
+   * 如果代码中只有一个地方需要加锁，大多都使用 self，这样可以避免单独再创建一个锁对象
+   
+ ##GCD可以通过信号量（dispatch_semaphore_create(value) 控制有几条线程可以并发执行）控制并发数##
+ 
+ 
+ nonatomic 非原子属性
+ atomic 原子属性(线程安全)，针对多线程设计的，默认值
+
+ 保证同一时间只有一个线程能够写入(但是同一个时间多个线程都可以取值)
+ atomic 本身就有一把锁(自旋锁)
+ 单写多读：单个线程写入，多个线程可以读取// 读写锁，写会影响读，读不会影响写
+
+ atomic：线程安全，需要消耗大量的资源
+ nonatomic：非线程安全，适合内存小的移动设备
+ 
+ 线程和Runloop的关系：
+ 1：runloop与线程是一一对应的，一个runloop对应一个核心的线程，为什么说是核心的，是因为runloop是可以嵌套的，但是核心的只能有一个，他们的关系保存在一个全局的字典里。
+ 2：runloop是来管理线程的，当线程的runloop被开启后，线程会在执行完任务后进入休眠状态，有了任务就会被唤醒去执行任务。
+ 3：runloop在第一次获取时被创建，在线程结束时被销毁。
+ 4：对于主线程来说，runloop在程序一启动就默认创建好了。
+ 5：对于子线程来说，runloop是懒加载的，只有当我们使用的时候才会创建，所以在子线程用定时器要注意：确保子线程的runloop被创建，不然定时器不会回调。timer依赖runloop
+
+ runloop（do..while循环）通过dict[线程的指针] 创建的，管理线程里面的任务。保证线程不退出
+ 
+ 优先级高不一定先执行
+
+ 线程执行完，不会被销毁，过会会被线程池回收，线程池中这条线程很久没被调度就会被回收。
+ 
+ MARK: ==LG_GCD==
+ 全称是 Grand Central Dispatch
+ 纯 C 语言，提供了非常多强大的函数
+ GCD 是苹果公司为多核的并行运算提出的解决方案
+ GCD 会自动管理线程的生命周期（创建线程、调度任务、销毁线程）
+
+ ##将==任务==添加到==队列==，并且指定==执行任务的函数==##
+ 异步是多线程的代名词
+ 
+ 这边的队列：fifo 先进先执行，任务执行依赖于线程，线程依赖于cpu调度
+ 
+ __block int a = 0// 将a从栈区拷贝一份到struct 结构体里包含了a的指针和a的值
+ 
+ // 1， 5 后面顺序不定
+ dispatch_queue_t queue = dispatch_queue_create("cooci", DISPATCH_QUEUE_CONCURRENT);
+     NSLog(@"1");
+     dispatch_async(queue, ^{
+         NSLog(@"2");
+         NSLog(@"4");
+     });
+     
+     dispatch_async(queue, ^{
+             NSLog(@"22");
+             NSLog(@"44");
+         });
+     NSLog(@"5");
+ 
+ // 肯定1 后面顺序不定
+ dispatch_queue_t queue = dispatch_queue_create("cooci", DISPATCH_QUEUE_CONCURRENT);
+ NSLog(@"1");
+ dispatch_async(queue, ^{
+     NSLog(@"2");
+     dispatch_async(queue, ^{
+         NSLog(@"3");
+     });
+     NSLog(@"4");
+ });
+ NSLog(@"5");
+ 
+ // 4,3的顺序是肯定的
+ dispatch_queue_t queue = dispatch_queue_create("cooci", DISPATCH_QUEUE_SERIAL);
+ NSLog(@"1");
+ dispatch_async(queue, ^{
+     NSLog(@"2");
+     dispatch_async(queue, ^{
+         NSLog(@"3");
+     });
+     NSLog(@"4");
+ });
+ NSLog(@"5");
+ 
+ 栅栏函数 dispatch_barrier_async:
+ 最直接的作用: 控制任务执行顺序,同步，保证线程安全
+ dispatch_barrier_async    前面的任务执行完毕才会来到这里
+ dispatch_barrier_sync        作用相同,但是这个会堵塞线程,影响后面的任务执行
+ 非常重要的一点:  栅栏函数只能控制##同一并发队列(自定义的)##,不利于封装
+
+ ###可变数组 线程不安全：###
+ dispatch_queue_t concurrentQueue = dispatch_queue_create("cooci", DISPATCH_QUEUE_CONCURRENT);
+ // signal SIGABRT -- 线程BUG
+ for (int i = 0; i<2000; i++) {
+     dispatch_async(concurrentQueue, ^{
+         NSString *imageName = [NSString stringWithFormat:@"%d.jpg", (i % 10)];
+         NSURL *url = [[NSBundle mainBundle] URLForResource:imageName withExtension:nil];
+         NSData *data = [NSData dataWithContentsOfURL:url];
+         UIImage *image = [UIImage imageWithData:data];
+ 
+        // [self.mArray addObject:image]; 会崩溃
+        // 解决方案： 或者用锁@synchronized (self)
+         dispatch_barrier_async(concurrentQueue, ^{
+             [self.mArray addObject:image];
+         });
+     });
+ }
+ 
+ 调度组：
+ 最直接的作用: 控制任务执行顺序
+ dispatch_group_create     创建组
+ dispatch_group_async       进组任务
+ dispatch_group_notify    进组任务执行完毕通知
+ dispatch_group_wait        进组任务执行等待时间
+
+ // 底层实现：进组底层signal（不能<1否则崩溃） 会+1，一直循环判断信号是否等于0，等于0就group_wakeup->dispatch_group_notify
+ dispatch_group_enter        进组
+ dispatch_group_leave        出组
+
+ 信号量dispatch_semaphore_t：
+ dispatch_semaphore_create            创建信号量
+ dispatch_semaphore_wait                信号量等待
+ dispatch_semaphore_signal            信号量释放
+ 同步当锁,和控制GCD最大并发数
+ 
+ 1.dispatch_semaphore_create：创建一个Semaphore并初始化信号的总量
+ 2.dispatch_semaphore_signal：发送一个信号，让信号总量加1
+ 3.dispatch_semaphore_wait：可以使总信号量减1，当信号总量为0时就会一直等待（阻塞所在线程），否则就可以正常执行。
+ dispatch_semaphore_wait的返回值也为long型。当其返回0时表示在timeout之前，该函数所处的线程被成功唤醒。
+ 当其返回不为0时，表示timeout发生。
+
+ Dispatch_source：
+ dispatch_source_create                        创建源
+ dispatch_source_set_event_handler        设置源事件回调
+ dispatch_source_merge_data                源事件设置数据
+ dispatch_source_get_data                获取源事件数据
+ dispatch_resume                                继续
+ dispatch_suspend                            挂起
+ 
+ @property (nonatomic, strong) dispatch_source_t source;
+ // 参数4: 可以传Null，默认为全局队列
+ self.source = dispatch_source_create(DISPATCH_SOURCE_TYPE_DATA_ADD, 0, 0, dispatch_get_main_queue());
+ dispatch_source_set_event_handler(self.source, ^{
+     NSUInteger value = dispatch_source_get_data(self.source); // 取回来值 1 响应式
+ });
+ 
+ // 在任一线程上调用它的的一个函数 dispatch_source_merge_data 后，会执行 Dispatch Source 事先定义好的句柄（可以把句柄简单理解为一个 block ）
+ 这个过程叫 Custom event ,用户事件。是 dispatch source 支持处理的一种事件
+ //句柄是一种指向指针的指针  它指向的就是一个类或者结构，它和系统有很密切的关系
+ - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event{
+ dispatch_async(self.queue, ^{
+     dispatch_source_merge_data(self.source, 1); // source 值响应
+ });
+ }
+ 
+ // 封装了source ， 和 runloop source不一样
+ dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+     
+ });
+
+runloop用到了gcd的source（dispatch_source_t）
+ */
+
+// MARK: ===LG_网络==
+/**
+ wireshark
+ 
+ ipv4:32位
+ ipv6:128位
+ 
+ MTU：最大传输单元 576-1500字节
+ tcp:20 ip:20 头帧大小
+ MSS：最大分段大小 576 - 20 - 20 = 536 取536的倍数
+ 分段传输
+ ----------------------------------------
+ UIWebView:
+ - (void)webViewDidFinishLoad:(UIWebView *)webView{
+     // tittle
+     NSString *tittle = [webView stringByEvaluatingJavaScriptFromString:@"document.title"];
+ }
+ 
+ 
+ <head>
+     <meta charset="UTF-8">
+     <title>OC与JS交互</title>
+     <script>
+         function showAlert(name){
+             alert(name);
+             return function handle(str){
+                     alert('我是一个弹窗'+name+str);
+                     return name + '返回给OC';
+                 }
+             }
+     </script>
+ </head>
+ [self.webView stringByEvaluatingJavaScriptFromString:@"showAlert('111')('222')"];
+ 
+ js调OC: 可通过url拦截
+ 
+ js: <a href="lgedu:///getSum/helloword/js">点击跳转效应OC方法</a>
+ (NSURLRequest *)request:
+ request.URL.pathComponents
+ 
+ JavaScriptCore:
+ - (void)webViewDidFinishLoad:(UIWebView *)webView{
+     //JSContext就为其提供着运行环境 H5上下文
+     JSContext *jsContext = [self.webView valueForKeyPath:@"documentView.webView.mainFrame.javaScriptContext"];
+     self.jsContext = jsContext;
+ 
+     // 提供全局变量
+ [self.jsContext evaluateScript:@"var arr = [3, 'Cooci', 'abc'];"];
+ 
+ // 因为是全局变量 可以直接获取
+ JSValue *arrValue = self.jsContext[@"arr"];
+ 
+ self.jsContext[@"showDict"] = ^(JSValue *value) {
+     
+     NSArray *args = [JSContext currentArguments];
+     JSValue *dictValue = args[0];
+     NSDictionary *dict = dictValue.toDictionary;
+     NSLog(@"%@",dict);
+     
+     // 模拟用
+     int num = [[arrValue.toArray objectAtIndex:0] intValue];
+     num += 10;
+     NSLog(@"arrValue == %@   num == %d",arrValue.toArray,num);
+     dispatch_async(dispatch_get_main_queue(), ^{
+         weakSelf.showLabel.text = dict[@"name"];
+     });
+ };
+ 
+ //异常收集
+ self.jsContext.exceptionHandler = ^(JSContext *context, JSValue *exception) {
+     weakSelf.jsContext.exception = exception;
+     NSLog(@"exception == %@",exception);
+ };
+     
+     // 保存一段代码块
+     //JS-OC
+     jsContext[@"showMessage"] = ^{
+         // 参数 (JS 带过来的)
+         NSArray *args = [JSContext currentArguments];
+         NSLog(@"args = %@",args);
+        NSLog(@"currentThis   = %@",[JSContext currentThis]);// [object window]
+        
+ JSValue *cValue = [JSContext currentCallee];
+ NSLog(@"cValue = %@",cValue);
+ 
+        // OC-JS
+        NSDictionary *dict = @{@"name":@"cooci",@"age":@18};
+        [[JSContext currentContext][@"ocCalljs"] callWithArguments:@[dict,@"咸鱼"]];// 传以数组形式包装的参数
+     };
+ 
+ // JS 操作对象
+ KC_JSObject *kcObject = [[KC_JSObject alloc] init];
+ self.jsContext[@"kcObject"] = kcObject;
+ NSLog(@"kcObject == %d",[kcObject getSum:20 num2:40]);
+ 
+ }
+ 
+ function openAlbumImage(){
+     getImage();
+     kcObject.letJSImage('123');
+     alert(kcObject.getSum(10,20));
+ }
+ 
+ 
+ #import <JavaScriptCore/JavaScriptCore.h>
+
+ @protocol KCProtocol <JSExport>
+
+ - (void)letShowImage;
+ // 协议 - 协议方法
+ JSExportAs(getS, -(int)getSum:(int)num1 num2:(int)num2);
+
+ @end
+
+ @interface KC_JSObject : NSObject<KCProtocol>
+ @end
+ 
+ @implementation KC_JSObject;
+ - (void)letShowImage{
+     NSLog(@"打开相册,上传图片");
+ }
+
+ - (int)getSum:(int)num1 num2:(int)num2{
+     // 传的参数少的话：int (nil) - jsvalue (0)
+     return num1+num2;
+ }
+
+ @end
+ 
+ - (NSString *)removeSpaceAndNewline:(NSString *)str
+ {
+     NSString *temp = [str stringByReplacingOccurrencesOfString:@" " withString:@""];
+     temp = [temp stringByReplacingOccurrencesOfString:@"\r" withString:@""];
+     temp = [temp stringByReplacingOccurrencesOfString:@"\n" withString:@""];
+     return temp;
+ }
+ 
+ ----------------------------------------
+ WKWebView:
+ - (void)viewDidLoad {
+     [super viewDidLoad];
+     
+     WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
+     NSString *jScript = @"var meta = document.createElement('meta'); meta.setAttribute('name', 'viewport'); meta.setAttribute('content', 'width=device-width'); document.getElementsByTagName('head')[0].appendChild(meta);";
+     WKUserScript *wkUScript = [[WKUserScript alloc] initWithSource:jScript injectionTime:WKUserScriptInjectionTimeAtDocumentEnd forMainFrameOnly:YES];
+     WKUserContentController *wkUController = [[WKUserContentController alloc] init];
+     [wkUController addUserScript:wkUScript];
+     configuration.userContentController = wkUController;
+     
+     self.webView = [[WKWebView alloc] initWithFrame:self.view.frame configuration:configuration];
+     self.webView.navigationDelegate = self;
+     self.webView.UIDelegate = self;
+     [self.view addSubview:self.webView];
+     
+     NSString *urlStr = [[NSBundle mainBundle] pathForResource:@"index.html" ofType:nil];
+     NSURL *fileURL = [NSURL fileURLWithPath:urlStr];
+     [self.webView loadFileURL:fileURL allowingReadAccessToURL:fileURL];
+     
+ }
+ 
+ NSString *jsStr2 = @"var arr = [3, 'Cooci', 'abc']; ";
+ [self.webView evaluateJavaScript:jsStr2 completionHandler:^(id _Nullable result, NSError * _Nullable error) {
+     NSLog(@"%@----%@",result, error);
+ }];
+ 
+ NSString *jsStr = [NSString stringWithFormat:@"showAlert('%@')",@"登陆成功"];
+ [self.webView evaluateJavaScript:jsStr completionHandler:^(id _Nullable result, NSError * _Nullable error) {
+     NSLog(@"%@----%@",result, error);
+ }];
+ 
+ // url拦截
+ - (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler
+ {
+     NSURL *URL = navigationAction.request.URL;
+     NSString *scheme = [URL scheme];
+     if ([scheme isEqualToString:@"lgedu"]) {
+         NSString *host = [URL host];
+         if ([host isEqualToString:@"jsCallOC"]) {
+             NSMutableDictionary *temDict = [self decoderUrl:URL];
+             NSString *username = [temDict objectForKey:@"username"];
+             NSString *password = [temDict objectForKey:@"password"];
+             NSLog(@"%@---%@",username,password);
+         }else{
+             NSLog(@"不明地址 %@",host);
+         }
+         decisionHandler(WKNavigationActionPolicyCancel);
+         return;
+     }
+     decisionHandler(WKNavigationActionPolicyAllow);
+ }
+ 
+ #pragma mark - 解析URL地址
+ - (NSMutableDictionary *)decoderUrl:(NSURL *)URL{
+     NSArray *params =[URL.query componentsSeparatedByString:@"&"];
+     NSMutableDictionary *tempDic = [NSMutableDictionary dictionary];
+     for (NSString *paramStr in params) {
+         NSArray *dicArray = [paramStr componentsSeparatedByString:@"="];
+         if (dicArray.count > 1) {
+             NSString *decodeValue = [dicArray[1] stringByRemovingPercentEncoding];
+             [tempDic setObject:decodeValue forKey:dicArray[0]];
+         }
+     }
+     return tempDic;
+ }
+ 
+ 构成循环引用
+ //self - webView - configuration - userContentController - self
+ - (void)viewWillAppear:(BOOL)animated{
+     [super viewWillAppear:animated];
+     [self.webView.configuration.userContentController addScriptMessageHandler:self name:@"messgaeOC"];
+ }
+// 必须写
+ - (void)viewWillDisappear:(BOOL)animated{
+     [super viewWillDisappear:animated];
+     [self.webView.configuration.userContentController removeScriptMessageHandlerForName:@"messgaeOC"];
+ }
+ 
+ - (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message{
+     if (message.name) {
+     }
+     
+     NSLog(@"message == %@ --- %@",message.name,message.body);
+ }
+ 
+ function messgaeHandle(){
+     window.webkit.messageHandlers.messgaeOC.postMessage("Cooci 消息");
+ }
+ 
+ ----------------------------------------
+ WebViewJavascriptBridge:
+ self.wjb = [WebViewJavascriptBridge bridgeForWebView:self.webView];
+ // 如果你要在VC中实现 UIWebView的代理方法 就实现下面的代码(否则省略)
+ [self.wjb setWebViewDelegate:self];
+ 
+ [self.wjb registerHandler:@"jsCallsOC" handler:^(id data, WVJBResponseCallback responseCallback) {
+     NSLog(@"currentThread == %@",[NSThread currentThread]);
+     
+     NSLog(@"data == %@ -- %@",data,responseCallback);
+ }];
+ 
+ dispatch_async(dispatch_get_global_queue(0, 0), ^{
+     [self.wjb callHandler:@"OCCallJSFunction" data:@"oc调用JS咯" responseCallback:^(id responseData) {
+         NSLog(@"currentThread == %@",[NSThread currentThread]);
+         
+         NSLog(@"调用完JS后的回调：%@",responseData);
+     }];
+ });
+ 
+ <script>
+    
+    function setupWebViewJavascriptBridge(callback) {
+        if (window.WebViewJavascriptBridge) { return callback(WebViewJavascriptBridge); }
+        if (window.WVJBCallbacks) { return window.WVJBCallbacks.push(callback); }
+        window.WVJBCallbacks = [callback];
+        var WVJBIframe = document.createElement('iframe');
+        WVJBIframe.style.display = 'none';
+        WVJBIframe.src = 'wvjbscheme://__BRIDGE_LOADED__';
+        document.documentElement.appendChild(WVJBIframe);
+        setTimeout(function() { document.documentElement.removeChild(WVJBIframe) }, 0)
+    }
+ 
+     setupWebViewJavascriptBridge(function(bridge) {
+      // JS 被调用的方法  OCCallJSFunction 定义的标识
+         bridge.registerHandler('OCCallJSFunction', function(data, responseCallback) {
+             alert('JS方法被调用:'+data);
+             responseCallback('js执行过了');
+         })
+      })
+                              
+                              
+      function showWBJ(){
+          WebViewJavascriptBridge.callHandler('jsCallsOC', {'Cooci': '18'}, function(response) {
+               alert(response);
+           })
+      }
+    
+ </script>
+ 
+ ##编辑器:##
+ ZSSRichTextEditor
+ 
+ ---------------------------------------
+ WK:
+ get cookie:
+ NSHTTPCookieStorage *storages = [NSHTTPCookieStorage sharedHTTPCookieStorage];
+ for (NSHTTPCookie *cookie in [storages cookies]) {
+     NSLog(@"%@",cookie);
+ }
+ 
+ set cookie:
+ - (void)setCookieWithDomain:(NSString*)domainValue
+                 sessionName:(NSString *)name
+                sessionValue:(NSString *)value
+                 expiresDate:(NSDate *)date{
+     
+     NSURL *url = [NSURL URLWithString:domainValue];
+     NSString *domain = [url host];
+     
+     //创建字典存储cookie的属性值
+     NSMutableDictionary *cookieProperties = [NSMutableDictionary dictionary];
+     //设置cookie名
+     [cookieProperties setObject:name forKey:NSHTTPCookieName];
+     //设置cookie值
+     [cookieProperties setObject:value forKey:NSHTTPCookieValue];
+     //设置cookie域名
+     [cookieProperties setObject:domain forKey:NSHTTPCookieDomain];
+     //设置cookie路径 一般写"/"
+     [cookieProperties setObject:@"/" forKey:NSHTTPCookiePath];
+     //设置cookie版本, 默认写0
+     [cookieProperties setObject:@"0" forKey:NSHTTPCookieVersion];
+     //设置cookie过期时间
+     if (date) {
+         [cookieProperties setObject:date forKey:NSHTTPCookieExpires];
+     }else{
+         [cookieProperties setObject:[NSDate dateWithTimeIntervalSince1970:([[NSDate date] timeIntervalSince1970]+365*24*3600)] forKey:NSHTTPCookieExpires];
+     }
+     [[NSUserDefaults standardUserDefaults] setObject:cookieProperties forKey:@"app_cookies"];
+     //删除原cookie, 如果存在的话
+     NSArray * arrayCookies = [[NSHTTPCookieStorage sharedHTTPCookieStorage] cookies];
+     for (NSHTTPCookie * cookice in arrayCookies) {
+         [[NSHTTPCookieStorage sharedHTTPCookieStorage] deleteCookie:cookice];
+
+     }
+     //使用字典初始化新的cookie
+     NSHTTPCookie *newcookie = [NSHTTPCookie cookieWithProperties:cookieProperties];
+     //使用cookie管理器 存储cookie
+     [[NSHTTPCookieStorage sharedHTTPCookieStorage] setCookie:newcookie];
+ }
+ 
+ [self setCookieWithDomain:@"http://www.baidu.com" sessionName:@"cooci_token_UIWebView" sessionValue:@"123456789" expiresDate:nil];
+ NSDictionary *headerDict = [NSHTTPCookie requestHeaderFieldsWithCookies:[NSHTTPCookieStorage sharedHTTPCookieStorage].cookies];
+ NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"http://www.baidu.com"]];
+ request.allHTTPHeaderFields = headerDict;
+ [self.webView loadRequest:request];
+ 
+ WK请求，沙盒会有WebKit的文件夹
+ 
+ 这样加载wk带不上cookie的问题：
+ self.webView = [[WKWebView alloc] initWithFrame:self.view.bounds configuration:configuration];
+ self.webView.navigationDelegate = self;
+ [self.view addSubview:self.webView];
+ NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"http://www.baidu.com"]];
+ [self.webView loadRequest:request];
+ 
+ 这样加载wk能带上cookie：但是点击进入下级页面，跨域（就是路由变了）请求就又丢了
+ self.webView = [[WKWebView alloc] initWithFrame:self.view.bounds configuration:configuration];
+ self.webView.navigationDelegate = self;
+ [self.view addSubview:self.webView];
+ [self.webView loadRequest:[self cookieAppendRequest]];
+ 
+ // 手动加入cookie
+ - (NSURLRequest *)cookieAppendRequest{
+     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"http://www.baidu.com"]];
+     NSArray *cookies = [NSHTTPCookieStorage sharedHTTPCookieStorage].cookies;
+     //Cookies数组转换为requestHeaderFields
+     NSDictionary *requestHeaderFields = [NSHTTPCookie requestHeaderFieldsWithCookies:cookies];
+     //设置请求头
+     request.allHTTPHeaderFields = requestHeaderFields;
+     NSLog(@"%@",request.allHTTPHeaderFields);
+     return request;
+ }
+ 
+ // 跨域请求就又丢了cookie的处理
+ - (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
+     
+     [[WKCookieManager shareManager] fixNewRequestCookieWithRequest:navigationAction.request];
+     decisionHandler(WKNavigationActionPolicyAllow);
+ }
+ 
+ 还可以通过注入脚本的方式：但推荐上面的方法
+ WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
+ WKUserContentController *contoller = [[WKUserContentController alloc] init];
+ [contoller addUserScript:[[WKCookieManager shareManager] futhureCookieScript]];
+ configuration.userContentController = contoller;
+ self.webView = [[WKWebView alloc] initWithFrame:self.view.bounds configuration:configuration];
+ self.webView.navigationDelegate = self;
+ [self.view addSubview:self.webView];
+ [self.webView loadRequest:[self cookieAppendRequest]];
+ 
+ 也可以处理cookie 但这个是iOS11才有
+ ##WKWebsiteDataStore##
+ 
+ 构建HTTP网络框架：
+ url处理 // 百分号编码
+ URL编码(URL encoding)也称为百分号编码(Percent-encoding)
+ 
+ URI的字符类型：
+ URI所允许的字符分成保留与未保留：
+ 保留字符是那些具有特殊含义的字符. 例如, /字符用于URL不同部分的分节符(https://www.baidu.com/news)
+ 未保留字符没有这些特殊含义. 百分号编码把保留字符表示为特殊字符序列, 根据URI的版本的不同略有变化
+ 下面是 RFC 3986的保留字符, 与未保留字符:
+ 保留: ! * ' ( ) ; : @ & = + $ , / ? # [ ]
+ 未保留: A B C D E F G H I J K L M N O P Q R S T U V W X Y Z a b c d e f g h i j k l m n o p q r s t u v w x y z 0 1 2 3 4 5 6 7 8 9 - _ . ~
+ 除此之外, URI中的其它字符必须用百分号编码.
+
+ 在URL中?key1=val1&key2=val2中的val1中如果有保留字符&或者*,那么这里保留字符用于其他目的, 需要编码
+ 
+ 百分号编码一个保留字符, 首先需要把该字符的ASCII的值表示为两个16进制的数字, 然后在其前面放置转义字符("%"), 置入URI中的相应位置. (对于非ASCII字符, 需要转换为UTF-8字节序, 然后每个字节按照上述方式表示.)
+ !   #   $   &   '   (   )   *   +   ,   /   :   ;   =   ?   @   [   ]
+ %21 %23 %24 %26 %27 %28 %29 %2A %2B %2C %2F %3A %3B %3D %3F %40 %5B %5D
+
+ 在URI的查询部分(?字符后的部分)中, 例如/仍然是保留字符但是没有特殊含义, 除非一个特定的URI有其它规定. 该/字符在没有特殊含义时不需要百分号编码.例如https://www.baidu.com/news?name=p/p&age=13, 其中name=p/p中的/是保留字符但是没有特殊含义, 在实际使用中可以不用给它进行百分号编码.
+
+ 未保留字符不需要百分号编码
+ 
+ iOS中：
+ HTTP协议里面在URL中传递参数,是在?后面使用key=value这种键值对方式, 如果有多个参数传递, 就需要用&进行分割, 例如?key1=val1&key2=val2&key3=val3, 当服务器收到请求以后, 会用&分割出每个key=value参数, 然后用=分割出具体的键值
+ 现在如果在我们的参数key-value中就有=或者&怎么办? 这样后台在解析参数的时候, 就会产生歧义. 因此解决方法就是对参数进行百分号编码
+ 
+ stringByAddingPercentEscapesUsingEncoding
+ 当URL中有汉字时候, 用上面的方法, 会将汉字转化成 unicode 编码的结果, 但是对于复杂场景这个方法并不能满足需求, 例如&符号
+ NSString *queryWord = @"汉字&ss";
+ NSString *urlString = [NSString stringWithFormat:@"https://www.baidu.com/s?ie=UTF-8&wd=%@", queryWord];
+ NSString *escapedString = [urlString stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+ NSLog(@"%@", escapedString); // https://www.baidu.com/s?ie=UTF-8&wd=%E6%B1%89%E5%AD%97&ss
+ 这个实例在开发中很常见(我们项目中是将某个人的昵称当做参数传递给后台), 后台在收到这种被转义以后的URL取得的参数如下:
+ ["ie": "UTF-8", "wd" : "汉字", "ss": nil]
+ 因为stringByAddingPercentEscapesUsingEncoding方法并不会对&字符进行百分号编码
+ 
+ iOS中正确的使用百分号编码：
+ 如果要想自己控制哪些内容被编码, 哪些内容不会被编码, iOS提供了另外一个方法 -- stringByAddingPercentEncodingWithAllowedCharacters:
+ 这个方法会对字符串进行更彻底的转义，但是需要传递一个参数: 这个参数是一个字符集，表示: 在进行转义过程中，不会对这个字符集中包含的字符进行转义, 而保持原样保留下来
+ NSString *queryWord = @"汉字&ss";
+ NSString *escapedQueryWord = [queryWord stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet letterCharacterSet]];
+ NSLog(@"%@", escapedQueryWord); // %E6%B1%89%E5%AD%97%26ss
+ NSString *urlString = [NSString stringWithFormat:@"https://www.baidu.com/s?ie=UTF-8&wd=%@", escapedQueryWord];
+ NSLog(@"%@", urlString); // https://www.baidu.com/s?ie=UTF-8&wd=%E6%B1%89%E5%AD%97%26ss
+ 传递参数[NSCharacterSet letterCharacterSet]来保证字母不被转义。所以被转义之后的参数值是：%E6%B1%89%E5%AD%97%26ss，这样&就能够正确被百分号编码
+ 
+ 如果实际场景中, 可能出现如下情况:
+ https://www.baidu.com/s?person[contact]=13801001234&person[address]=北京&habit[]=游泳&habit[]=骑行
+ 此时, 需要自己构建 AllowedCharacters, 因为其中的[和]是不需要转意的
+ NSMutableCharacterSet *mutableCharSet = [[NSMutableCharacterSet alloc] init];
+ [mutableCharSet addCharactersInString:@"[]"]; // 允许'['和']'不被转义
+ NSCharacterSet *charSet = mutableCharSet.copy;
+ NSMutableString *mutableString = [NSMutableString string];
+ for (unit in queryString) {
+     NSString *escapedField = [unit.field stringByAddingPercentEncodingWithAllowedCharacters:charSet];
+     NSString *escapedValue = [unit.value stringByAddingPercentEncodingWithAllowedCharacters:charSet];
+     [mutableString addFormat:@"%@=%@", escapedField, escapedValue];
+ }
+ 构建AllowedCharacters的NSCharacterSet
+ 针对参数的k-v值, 进行遍历, 将针对key和value分别调用stringByAddingPercentEncodingWithAllowedCharacters进行百分号编码.
+ 用@"?%@=%@&%@=%@"进行kv参数拼接, 和不同参数的拼接
+ 
+ percent-escaped string:百分比转义字符串
+ 
+ AFNetworking的处理:
+ @{
+     @"name": @"小A",
+     @"phone": @{@"mobile": @"xx", @"home": @"xx"},
+     @"families": @[@"father", @"mother"],
+     @"nums": [NSSet setWithObjects:@"1", @"2", nil],
+ };
+ ->
+ @[
+      field: @"name", value: @"小A",
+      field: @"phone[mobile]", value: @"xx",
+      field: @"phone[home]", value: @"xx",
+      field: @"families[]", value: @"father",
+      field: @"families[]", value: @"mother",
+      field: @"nums", value: @"1",
+      field: @"nums", value: @"2",
+ ]
+ ->
+ name=%E5%B0%8FA&phone[mobile]=xx&phone[home]=xx&families[]=father&families[]=mother&nums=1&num=2
+ 
+ @{
+     @"does_not_include": @"/?",
+     @"space": @" ",
+     @"GeneralDelimitersToEncode": @":#[]@",
+     @"SubDelimitersToEncode": @"!$&'()*+,;=",
+ };
+ ->
+ @[
+      field: @"does_not_include", value: @"/?",
+      field: @"space", value: @" ",
+      field: @"GeneralDelimitersToEncode", value: @":#[]@",
+      field: @"SubDelimitersToEncode", value: @"!$&'()*+,;=",
+ ]
+ ->
+ https://www.baidu.com?GeneralDelimitersToEncode=%3A%23%5B%5D%40&SubDelimitersToEncode=%21%24%26%27%28%29%2A%2B%2C%3B%3D&does_not_include=/?&space=%20
+ 
+ -> URL Decode以后
+ https://www.baidu.com?GeneralDelimitersToEncode=:#[]@&SubDelimitersToEncode=!$&'()*+,;=&does_not_include=/?&space=
+ 
+ ------------------------------------------
+ 终端命令:
+ rvictl -x device_uuid 关闭虚拟网卡
+ rvictl -s device_uuid 建立虚拟网卡
+ 
+ // netCAT 监听8041，充当服务器
+ nc -lk 8041
+ 
+ UDP(⽤户数据报协议) 只管发送，不确认对方是否接收到 将数据及源和⽬的封装成数据包中，不需要建立连接 每个数据报的⼤小限制在64K之内 因为无需连接，因此是不可靠协议 不需要建立连接，速度快
+ 应用场景:多媒体教室/⽹络流媒体
+ 
+TCP(传输控制协议) 建立连接，形成传输数据的通道 在连接中进行大数据传输(数据⼤小不收限制) 通过三次握⼿完成连接，是可靠协议，安全送达 必须建⽴连接，效率会稍低
+ 
+ 数据在两个 Socket 间通过 IO 传输
+ 
+ socket数据处理：
+ 1.标识符用来分割数据
+ 2.数据长度+数据类型+数据 （推荐）
+ 
+ ====================CocoaAsyncSocket源码解析
+ localhost与127.0.0.1的区别:
+ localhost也叫local ，正确的解释是:本地服务器 127.0.0.1
+ 
+ localhot(local)是不经网卡传输！这点很重要，它不受网络防火墙和网卡相关的的限制。
+ 127.0.0.1是通过网卡传输，依赖网卡，并受到网络防火墙和网卡相关的限制。
+ 本机IP 也是通过网卡传输的，依赖网卡，并受到网络防火墙和网卡相关的限制。
+ 但是本机IP与127.0.0.1的区别是： 127.0.0.1 只能通过本机访问，而本机IP通过本机访问也能通过外部访问
+ 
+ localhost不会解析成ip，也不会占用网卡、网络资源。
+ 
+ 环回地址是主机用于向自身发送通信的一个特殊地址（也就是一个特殊的目的地址）。
+ 
+ localhost 是一个域名，在过去它指向 127.0.0.1 这个IP地址。在操作系统支持 ipv6 后，它同时还指向ipv6 的地址 [::1]
+ 
+ loopback 是一个特殊的网络接口(可理解成虚拟网卡)
+ 
+ ###
+ 整个127.* 网段通常被用作 loopback 网络接口的默认地址，按惯例通常设置为 127.0.0.1。这个地址在其他计算机上不能访问，就算你想访问，访问的也是自己，因为每台带有TCP/IP协议栈的设备基本上都有 localhost/127.0.0.1。
+ ###
+ 
+ 当IP层接收到目的地址为127.0.0.1
+ （准确的说是：网络号为127的IP）的数据包时，不调用网卡驱动进行二次封装，而是立即转发到本机IP层进行处理，由于不涉及底层操作。因此，ping 127.0.0.1一般作为测试本机TCP/IP协议栈正常与否的判断之一。
+ 
+ 本机地址通常指的是绑定在物理或虚拟网络接口上的IP地址，可供其他设备访问到。
+ 
+ 127.0.0.1 是绑定在 loopback 接口上的地址，如果服务端套接字绑定在它上面，你的客户端程序就只能在本机访问。
+ 
+ - (NSString *)blockReturn {
+     //创建信号量
+     dispatch_semaphore_t signal = dispatch_semaphore_create(0);
+     __block NSString *str = @"sst";
+ // block异步性
+     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+         str = @"SunSatan";
+         //信号量+1
+         dispatch_semaphore_signal(signal);
+     });
+     //信号量等待
+     dispatch_semaphore_wait(signal, DISPATCH_TIME_FOREVER);
+     return str;
+ }
+ 不加信号量可能返回的str = @"sst"
+ 
+ // block中使用return ，宏定义 -- 预编译 -- return（return是函数） -  提前准备好，防止编译器走到这块时（代码段被编译时未识别return）直接跳过往下执行
+ #define return_from_block  return
+ 
+ 0.0.0.0为广播地址
+ */
+
+// MARK: ---LG_性能优化
+/**
+ MARK: ---内存管理
+ 内存布局:
+ 0xc0000000 = 3221225472 让他除以1024再除以1024再除以1024 = 3
+ 
+ BSS段:未初始化的全局变量，静态变量 （静态区）
+ 数据段: 初始化的全局变量，静态变量 （常量区）
+ text:程序代码，加载到内存中
+ 
+ 栈区内存地址:⼀般为:0x7开头
+ 堆区内存地址:一般为:0x6开头
+ 数据段，BSS内存地址:一般为:0x1开头
+ 
+ TaggedPointer: 小对象 NSNumber，NSDate
+ 标记，编码，解码
+ ～：按位取反
+ <<: 左移
+ ^:异或
+ TaggedPointer它是一个值，不是真正的对象
+ objc_msgSend 如果是对象是nil或者taggedPointer就直接返回
+ 
+ 它的地址就代表了 = 值+类型（类型:地址最后位，即最右边）
+ 
+ [NSString stringWithFormat:@"abc"]// NSTaggedPointerString
+ 
+ 源码：
+ objc_setProperty() ->reallySetProperty() 里面有objc_retain()和objc_release(oldValue)  他们里面都有obj->isTaggedPointer()的判断 retain的话直接返回，没有引用计数的处理
+ 
+ NONPOINTER_ISA:⾮指针型isa
+ union isa_t {
+    isa位域
+ }
+ 共64位
+ 1位：nonpointer:表示是否对 isa 指针开启指针优化 0:纯isa指针，1:不止是类对象地址,isa 中包含了类信息、对象的引用计数等
+ 1位：has_assoc:关联对象标志位，0没有，1存在
+ 1位：has_cxx_dtor:该对象是否有 C++ 或者 Objc 的析构器,如果有析构函数,则需要做析构逻辑, 如果没有,则可以更快的释放对象
+ 33位：shiftcls:
+ 存储类指针的值。开启指针优化的情况下，在 arm64 架构中有 33 位用来存储类指针。
+ 6位：magic:⽤于调试器判断当前对象是真的对象还是没有初始化的空间
+ 1位：weakly_referenced:志对象是否被指向或者曾经指向一个 ARC 的弱变量，没有弱引⽤的对象可以更快释放。
+ 1位：deallocating:标志对象是否正在释放内存
+ 1位：has_sidetable_rc:当对象引⽤技术⼤于 10 时，则需要借⽤该变量存储进位
+ 19位：extra_rc:当表示该对象的引用计数值，实际上是引用计数值减 1， 例如，如果对象的引用计数为 10，那么 extra_rc 为 9。如果引用计数⼤于 10， 则需要使用到has_sidetable_rc。
+ 
+ 散列表:引用计数表，弱引用表
+ 获取散列表: 源码array[indexOfPointer].value
+ */
+
+
+// MARK: ---LG_flutter
 /**
  打开文件时提示【文件已损坏，请移至废纸篓】
  打开文件时提示【文件来自身份不明的开发者】

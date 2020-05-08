@@ -1,0 +1,254 @@
+内购商品一共有四种类型:
+消耗型:可以购买多次，多次结果累加，并且在App内作为“货币”消耗。典型的是虚拟货币，用户先通过IAP购买虚拟货币，再消耗虚拟货币购买商品。
+非消耗型:只能购买一次，可跨设备使用，业务场景较少。典型的是图书App中的一本电子书，或者游戏中的一个关卡。
+无法被消耗的商品，比如一些教育型APP中的课程, 再比如一些赛车游戏中的赛道, 
+这类商品需要在审核添加恢复购买按钮, 用于用户购买过后再误删除或其他原因卸载APP后的恢复流程, 否则提交审核会被拒绝
+我们发现你们的app包含内购功能，却没有给用户提供一个“恢复购买”的按钮。用户可以使用“恢复购买”功能保持对已购买内容的访问。例如，当他们升级到新手机时，他们不会丢失在旧手机上购买的所有商品。
+自动续期订阅:和时间相关的服务，在有效期内用户可享受服务，要到期的时候自动扣费。典型的是连续包月的会员。
+非续期订阅:和时间相关的服务，但是不会自动扣费。典型的是一个月会员
+
+像一些游戏中的金币，宝石的交易都是采用IAP支付。
+苹果官方规定，当APP涉及到虚拟货币的交易时，只能使用IAP进行支付，否则会在APP审核过程中被拒绝。
+而我们许多生活应用使用微信支付、支付宝支付却仍可通过审核，是因为都用于现实物品的交易。此外苹果会收取虚拟货币盈利的百分之30。
+
+
+恢复购买：
+订阅型和非消耗型的商品才有恢复状态
+app账户a 用appleid购买了vip，app账户b登录用同一个appleid恢复购买，后端会做处理。b为vip，a为普通用户
+
+App 专用共享密钥：
+App 专用共享密钥是用于接收此 App 自动续订订阅收据的唯一代码
+官方文档说秘钥仅仅用在自动续订上面
+
+//沙盒测试环境验证
+#define SANDBOX     @"https://sandbox.itunes.apple.com/verifyReceipt"
+//正式环境验证
+#define AppStore    @"https://buy.itunes.apple.com/verifyReceipt"
+
+续订: 
+后续续费都是Apple自动完成的，一般在要过期的前24小时开始，苹果会尝试扣费，扣费成功的话 会在APP下次启动的时候主动推送给APP
+沙盒情况:5次续订(一共6条收据)后自动取消
+1月10日订阅的连续包月，1月15日从包月切换到了包年，那么在2月10日的时候会扣掉一年的钱
+
+订阅后,每次成功续期,打开App后会走- (void)paymentQueue:(SKPaymentQueue *)queue updatedTransactions:(NSArray<SKPaymentTransaction *> *)transactions回调方法,
+因此启动就要监听[[SKPaymentQueue defaultQueue] addTransactionObserver:self];
+
+lists the compressed duration times：
+Actual duration	Test duration
+1 week	3 minutes
+1 month	5 minutes
+2 months	10 minutes
+3 months	15 minutes
+6 months	30 minutes
+1 year	1 hour
+
+
+
+测试:
+Apple有两套内购Server：sandbox和production。
+只有从App Store上下载的才会走production环境，可以App审核通过后，用redeem码兑换来测试真金白银购买。
+平时插线和testflight的包都是走sandbox。
+想要在sandbox购买需要先在iTunes Connect中注册“沙箱技术测试员”，当然如果Apple Id在内部测试组里，也可以直接走sandbox购买
+
+服务器验证：
+/**
+* 21000 App Store不能读取你提供的JSON对象
+* 21002 receipt-data域的数据有问题
+* 21003 receipt无法通过验证
+* 21004 提供的shared secret不匹配你账号中的shared secret
+* 21005 receipt服务器当前不可用
+* 21006 receipt合法，但是订阅已过期。服务器接收到这个状态码时，receipt数据仍然会解码并一起发送
+* 21007 receipt是Sandbox receipt，但却发送至生产系统的验证服务
+* 21008 receipt是生产receipt，但却发送至Sandbox环境的验证服务
+*/
+Apple会返回以下四个数据给应用：
+productIdentifier:cosmosbox.strikehero.gems60
+state: Purchased
+receipt: 
+ewoJInNpZ25hdHVyZSIgPSAiQXF1M3JiR1grbmJMeGVvZS9VZGlMa3dQWVlBdkQr
+VTE1L1NRL2Y0cGZlaFlBOWFaVGhSbTNMVXpHc25TUGd3aVBoMmsxSTVFaVpweGp6
+aEZsS0JDVXBPeHEyWFk5N1lHUGUzMFo0cThMRllDZWJPeHFzWlJaUU01N2xtZFo0
+bDN6eHNnaWpGemFiYkRXLzM4cm1EeXFTT0FSYzRES3dXTGFpc2EzYUY5d2JwbUFB
+QURWekNDQTFNd2dnSTdvQU1DQVFJQ0NCdXA0K1BBaG0vTE1BMEdDU3FHU0liM0RR
+RUJCUVVBTUg4eEN6QUpCZ05WQkFZVEFsVlRNUk13RVFZRFZRUUtEQXBCY0hCc1pT
+//receipt省略几十行
+transactionIdentifier: 1000000160385706 // 交易标识符
+
+交易状态: state
+Purchased	购买成功
+Restored	恢复购买
+Failed	失败
+Deferred	等待确认，儿童模式需要询问家长同意
+
+// debug:
+// transaction.transactionIdentifier - transaction.original?.transactionIdentifier
+// 3月
+[D][Purchase] Transaction Purchased, 
+Product Identifier: com.fvcorp.group.auto.m03.AJSPremium Optional("1000000640254989")  Optional("1000000632743590")
+// 1月
+[D][Purchase] Transaction Purchased, 
+Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000640254989")  Optional("1000000632743590")
+// 1月续订
+[D][Purchase] Transaction Purchased, 
+Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000640258620")  Optional("1000000632743590")
+
+==================================自动订阅： 
+[[SKPaymentQueue defaultQueue] addTransactionObserver:self];
+因为自动订阅类型，除了第一次购买行为是用户主动触发的。
+后续续费都是 Apple 自动完成的，一般在要过期的前 24 小时开始，苹果会尝试扣费，扣费成功的话会在 APP 下次启动的时候主动推送给 APP。
+所以，APP 启动的时候一定要添加上面的那句话
+
+######
+在第一次订阅或者恢复订阅(也就是停止连续订阅后又买了)
+tran.originalTransaction.transactionIdentifier,这个标识符是绑定该appleID的,可以和App server的用户系统绑定起来,之后会继续用到.
+但是这么做一旦用户使用一个appleId给多个账户充值,就会出现一对多的情况,因此这么解决
+首先如果订阅不取消,是不能再购买订阅的,iOS会提示已经购买了该订阅.
+然后,如果取消了一个userid下的订阅,使用另一个userid购买订阅,后台在拿到original_transaction_id的时候,去数据
+库查询有没有绑定了这个original_transaction_id的userid,有的话,删除绑定,
+这样就可以维持original_transaction_id和userid一对一的绑定,之后恢复订阅也会给这个新的userid恢复.
+
+另外每次交易都有一个transactionIdentifier
+for (SKPaymentTransaction * tran in transactions) {
+    NSString *tranId = tran.transactionIdentifier;
+}
+这是每笔交易的票据号,需要传给后台
+
+前面说到的传给App server的transactionIdentifier,需要作为唯一的票据号去验证,
+首先对于非连续订阅的其他类型:
+都是单笔交易,每次拿到的都是新的凭证,因此in_app里都是有对应票据的,而且我发现非连续订阅的票据有时候不会在latest_receipt_info中出现, 因此这些类型是遍历in_app里的票据
+如果找到transactionIdentifier相同的,那么本次交易就是有效的
+
+然后对于连续订阅型:
+1.第一次对账
+遍历latest_receipt_info里的票据,如果transactionIdentifier相同,
+那么本次交易就是有效的,找到对应的票据后,其中最关键的是expires_date_ms这个时间戳,
+这个和expires_date字符串不相符, expires_date是GMT时间,少8个小时,而expires_date_ms转换后是正常的,因此不用把这个时间戳再加8小时.
+
+2.之后的对账
+由于苹果会在到期前充值,充值失败也会有回调通知,所以当数据库中的时间到期后,再去用之前存的凭据调用对账接口,
+然后遍历latest_receipt_info根据product_id,也就是商品id,把连续订阅的票据筛选出来
+现在筛选出来的这些就是所有的此商品的订阅票据了,而且顺序是按照时间排序的,新的在后面,如果不放心,可以自己根据里面的expires_date_ms(或者其他时间戳)再排序,然后创建订单,更新过期时间等等操作
+
+状态回调(apple 调用App server的接口):
+server to server的回调
+
+第一个是首次订阅成功
+第二个是取消了订阅
+第三个是恢复了订阅
+第四个也是恢复了订阅,在sandbox测试时,6次收据之后,重新订阅,就会是这个状态
+第五个也是取消了订阅,在sandbox测试时,6次收据之后,就会变成这个状态
+第六个是各种状态改变下都会调用,比如说首次购买会收到两次回调,一个是INITIAL_BUY一个是DID_CHANGE_RENEWAL_STATUS
+
+区分CANCLE收据:
+（1）.切换成档位产生CANCLE通知： "notification_type":"CANCEL" "auto_renew_status":"true";
+（2）.取消订阅且切换了档位产生CANCLE通知： "notification_type":"CANCEL" "auto_renew_status":"false"
+（3）.正常的退款CANCEL通知："notification_type":"CANCEL" "auto_renew_status":"false" "cancellation_date_ms":"1566487449000"
+
+用户无操作自动订阅通知：
+如果您阅读了RENEWAL事件的描述，您将注意到 - “过期订阅的自动续订成功。检查订阅到期日期以确定下一个续订日期和时间。”
+通常，iTunes会在计划自动续订订阅到期前一天尝试向用户帐户收费。
+如果续订成功，则没有服务器到服务器通知，因为自动续订订阅未进入过期状态。
+但是，在少数情况下，iTunes无法续订订阅（通常与信用卡服务器存在连接问题）并且在expiration_date通过之前未续订自动续订订阅，
+从技术上讲，自动续订订阅被视为“过期”。
+出于这个原因，提出了建议 - “检查订阅到期日期以确定下一个续订日期和时间”。
+
+被退款订单的唯一标识是：它带有一个cancellation_date字段。
+
+auto_renew_status是false,表示续订取消,并且返回了上一次的凭证,可以获取到期时间,
+并且返回了最关键的original_transaction_id,通过这个可以确定是哪个用户做了取消操作
+
+使用了这种方法去标记订阅的有效期:
+首次订阅后App中得到receiveString和,App server存储receiveString和transactionId,绑定用户账户,
+之后App server去调用验证收据接口,根据,获得original_transaction_id绑定用户,并且拿到过期时间,存储下来
+快要过期时,App server再去调用收据接口,拿到最新的过期时间,然后更新
+如果收到了Apple关于订阅取消的通知(DID_CHANGE_RENEWAL_STATUS并且auto_renew_status是false),一样是根据original_transaction_id更新到期时间
+如果收到了apple关于恢复订阅的通知,也一样是根据original_transaction_id更新到期时间
+
+内购必须可以不登录购买
+充值界面需要显示出自动续期订阅的说明,以及相关服务的协议(如会员)的链接,还有自动续期订阅的协议的链接
+
+in_app与latest_receipt_info:
+测试时发现，这两个字段的数值几乎相同，不过有几点需要注意：
+（1）自动续订订阅类型，在到期后会再生成一条购买记录，这条记录会出现在last_receipt_info里，但不会出现在in_app里
+（2）自动续订订阅类型可以配置试用，试用记录只有在latest_receipt_info里，is_trial_period字段才是true
+（3）消耗型购买记录有可能不会出现在latest_receipt_info，因此需要检查in_app来确保校验正确
+
+用户取消订阅:
+购买了一个订阅后得全额付款，只有通过联系苹果客服服务才能退款。 
+比如，如果用户意外买错了产品，客服中心可以取消该交易并退款。 用户不能在订阅周期中间改变注意不支付剩余的订阅。
+要想确认某次交易是否已经被取消，在收据 (receipt) 中查找 Cancellation Date (取消日期)字段。 
+如果该字段有日期，不管该订阅的过期日期是什么，该交易都已经被取消---取消交易就是跟没有购买过一样。
+
+
+######
+
+(凭证)是可以一直使用的,但是一直使用同一个(凭证),拿到的JSON里receipt -> in_app不会变化,
+latest_receipt_info会随着续期的期数而变化,并且会越来越多
+
+func paymentQueue(_ queue: SKPaymentQueue, updatedTransactions transactions: [SKPaymentTransaction]) {
+[D][Purchase] Transaction Purchased, 
+Product Identifier: com.fvcorp.group.auto.m1.AJSPremium 
+Optional("1000000632060487")  Optional("1000000623879269")
+}
+
+================验证字段的含义说明
+https://developer.apple.com/library/archive/releasenotes/General/ValidateAppStoreReceipt/Chapters/ReceiptFields.html#//apple_ref/doc/uid/TP40010573-CH106-SW2
+
+================已验证
+购买产品，弹出输入密码，购买弹窗时，杀死app，下次打开app会走
+func paymentQueue(_ queue: SKPaymentQueue, updatedTransactions transactions: [SKPaymentTransaction]) 的SKPaymentTransactionState.failed
+因为杀死app时没finishTransaction(transaction)
+
+============error
+if let skError = transaction.error as? SKError {
+}
+
+取模运算：Modulus Operation
+取余运算：Remainder Operation
+
+=====================订阅变化后->苹果订阅服务器通知app服务器设置
+https://help.apple.com/app-store-connect/#/dev0067a330b
+
+https://developer.apple.com/documentation/storekit/in-app_purchase/subscriptions_and_offers/enabling_server-to-server_notifications?preferredLanguage=occ
+
+
+=====================自动订阅归属的问题：
+a. 苹果设计自动订阅的初衷是 ，订阅一个服务， 这个服务需要跟着 Apple ID走。
+说白了，就是你A设备 用了Apple账号100001购买了，你换了B设备 用Apple账号100001登录app store，你同样能享受到服务。
+国外的一些音乐类型、杂志报刊等用的比较多，游戏类的少，苹果自己的Apple music也有自动订阅（首创）。
+
+b. 目前国内的一些应用或是游戏，希望的是自动订阅 关联的是 APP的 user id ，而不是Apple ID。
+说白了，就是你购买了一个自动订阅服务，我不管你哪个apple id 支付的， 但是只能我一个 APP的 唯一用户可以享受服务。
+这时候就需要APP自身做处理了，就是记住首次购买的transaction-id，并且绑定某个用户。
+以后自动续费的话，都会有original-transaction-id，这个id 是第一次购买的transaction-id，根据这个服务器可以联系初始购买的服务。
+有点描述偏了，当transaction-id绑定了用户，再次收到其它用户transaction-id请求时候，视情况处理了。（你也可以根据unique-vendor-identifier处理）
+
+=====================是否需要实现restoreCompletedTransactions ？
+答案：视需求吧。有少量文章说2014年起苹果审核严格了，必须要有一个按钮实现restoreCompletedTransactions。另外，我听百度一位同学说，爱奇艺2015年因为这个被拒过。
+但是，目前来看很多使用了订阅的应用或是游戏，并没有这个功能。
+我是感觉，看需求了。订阅 是跟着 userid 唯一呢？ 还是跟着apple id 呢？在国内，一般都是前者。
+
+=====================关于掉单的问题
+答案：一定要在服务器校验完票据后，客户端收到服务器的反馈结果后再：
+[[SKPaymentQueue defaultQueue] finishTransaction: transaction];
+
+=====================自己的服务器怎么处理苹果的续订？
+答：
+首先用户第一次购买订阅，server需要把票据存储（最好把过期时间也记录一下，字段record_expires_date），
+苹果会通知我们的server的，其中notification_type 对应值为 INITIAL_BUY。
+
+服务器需要做个定期（每天）检测，检测目前已有的所有订阅订单是否过期，如果发现过期了，
+就去苹果服务器验证receipt，其中苹果返回的latest_receipt_info 字段，会告诉最新的订阅订单情况，你可以校验expires-date与当前时间比较，判断该订阅有没有续订成功，并同时更新上述让记录的record_expires_date字段.
+
+我们为什么做上述的处理？大家都知道苹果服务器会在订阅过期的前一天，对用户进行自动扣费，如果扣费成功了，
+苹果服务器并不会通知我们的服务器，这是重点。
+不过有个特例，如果苹果订阅过期前一天扣费失败了，苹果服务器后面几天还会尝试对用户自动扣费，
+如果后面扣费成功了（这时候用户实际状态是没有续订成功），苹果会通知我们的server的，其中notification_type 对应值为 RENEWAL,
+对于RENEWAL我们还是需要给用户更新为正在订阅的状态。
+
+正式环境下，用户主动取消订阅，苹果会通知我们的server的，其中notification_type 对应值为 CANCEL，
+我们需要更新用户订阅的状态为取消。
+
+总结，对于自动续订订阅，我们自己的服务器完全可以与apple server的交互应对用户的订阅状态，
+只需要确定客户端传来的用户第一次购买， user id 对应 original-transaction-id的关系。
+后面的续订，取消，变更套餐，完全不依赖于客户端传来的信息。

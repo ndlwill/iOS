@@ -159,7 +159,7 @@ void draw()
 //    glFlush();
     
 }
-
+// MARK: 绘制图形
 int main(int argc,const char *argv[])
 {
 

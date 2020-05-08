@@ -10,7 +10,7 @@
 
 /*
  https://www.jianshu.com/p/f9e01c69a46f
- MARK:GCD Qos
+ MARK:===GCD Qos===
  iOS8之后提供的新功能，苹果提供了几个Quality of Service枚举来使用:user interactive, user initiated, utility 和 background，通过这告诉系统我们在进行什么样的工作，然后系统会通过合理的资源控制来最高效的执行任务代码，其中主要涉及到CPU调度的优先级、IO优先级、任务运行在哪个线程以及运行的顺序等等，我们通过一个抽象的Quality of Service参数来表明任务的意图以及类别
  
  NSQualityOfServiceUserInteractive

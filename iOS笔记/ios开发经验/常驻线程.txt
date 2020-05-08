@@ -1,0 +1,135 @@
+iOS中开启一个常驻线程，网上最常见的就是在子线程中开启一个runloop，然后给runloop添加一个port或者timer
+- (void)viewDidLoad { [super viewDidLoad]; self.thread = [[NSThread alloc] initWithBlock:^{ [[NSRunLoop currentRunLoop] addPort:[NSPort port] forMode:NSDefaultRunLoopMode]; [[NSRunLoop currentRunLoop] run]; }]; [self.thread start]; } - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self performSelector:@selector(testMethod) onThread:self.thread withObject:nil waitUntilDone:YES]; } - (void)testMethod { NSLog(@"%@", [NSThread currentThread]); } - (void)dealloc { NSLog(@"Thread isExecuting: %zd", [self.thread isExecuting]); NSLog(@"Thread isFinished: %zd", [self.thread isFinished]); NSLog(@"Thread isCancelled: %zd", [self.thread isCancelled]); NSLog(@"dealloc"); }
+推出控制器后线程没有关闭
+
+
+
+==========================
+NSRunloop下子线程常驻和关闭方案
+@property (nonatomic, strong) NSThread *thread;
+...
+static BOOL stop;
+static BOOL doMethod;
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    stop = NO;
+    self.thread = [[NSThread alloc] initWithBlock:^{
+        @autoreleasepool {
+            NSLog(@"开启了一个子线程：%@", [NSThread currentThread]);
+            [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer * _Nonnull timer) {
+                NSLog(@"Time action : %@", [NSThread currentThread]);
+                // 如果开关关闭就停止runloop
+                if (stop) {
+                    NSLog(@"移除runloop的source");
+                    [timer invalidate];
+                } else if (doMethod) {
+                    [self testMethod];
+                }
+            }];
+            [[NSRunLoop currentRunLoop] run];
+            NSLog(@"Runloop finish");
+        }
+    }];
+    [self.thread start];
+}
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    // 在自定义的常住线程中处理一个操作
+    doMethod = YES;
+}
+
+- (void)testMethod {
+    NSLog(@"在自定义的子线程中异步处理了一个耗时操作 : %@", [NSThread currentThread]);
+    sleep(3.0);
+    // 处理完操作后关闭常住线程
+    NSLog(@"处理完耗时操作后关闭常住线程");
+    stop = YES;
+}
+
+- (void)dealloc {
+    NSLog(@"Thread isExecuting: %zd", [self.thread isExecuting]);
+    NSLog(@"Thread isFinished: %zd", [self.thread isFinished]);
+    NSLog(@"Thread isCancelled: %zd", [self.thread isCancelled]);
+    NSLog(@"dealloc");
+}
+
+======================
+CFRunLoopRef下子线程常驻和关闭方案
+@property (nonatomic, strong) NSThread *thread;
+...
+static BOOL stop;
+static BOOL doingMethod;
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    stop = NO;
+    doingMethod = NO;
+    // 创建一个常驻线程
+    self.thread = [[NSThread alloc] initWithBlock:^{
+        CFRunLoopSourceContext context = {0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
+        CFRunLoopSourceRef source = CFRunLoopSourceCreate(kCFAllocatorDefault, 0, &context);
+        // 给runloop添加一个自定义source
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopDefaultMode);
+        // 给runloop添加一个状态监听者
+        CFRunLoopObserverRef observer = CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault, kCFRunLoopAllActivities, YES, 0, ^(CFRunLoopObserverRef observer, CFRunLoopActivity activity) {
+            switch (activity) {
+                case kCFRunLoopBeforeWaiting:
+                    NSLog(@"即将进入睡眠");
+                    // 当runloop进入空闲时，即方法执行完毕后，判断runloop的开关，如果关闭就执行关闭操作
+                {
+                    if (stop) {
+                        NSLog(@"关闭runloop");
+                        // 移除runloop的source
+                        CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, kCFRunLoopDefaultMode);
+                        CFRelease(source);
+                        // 没有source的runloop是可以通过stop方法关闭的
+                        CFRunLoopStop(CFRunLoopGetCurrent());
+                    }
+                }
+                    break;
+                case kCFRunLoopExit:
+                    NSLog(@"退出");
+                    break;
+                default:
+                    break;
+            }
+        });
+        CFRunLoopAddObserver(CFRunLoopGetCurrent(), observer, kCFRunLoopCommonModes);
+        CFRunLoopRun();
+        CFRelease(observer);
+        NSLog(@"Runloop finish");
+    }];
+    [self.thread start];
+}
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if (!doingMethod) {
+        doingMethod = YES;
+        // 在该线程中异步执行一个方法
+        [self performSelector:@selector(testMethod) onThread:self.thread withObject:nil waitUntilDone:YES];
+    }
+}
+
+- (void)testMethod {
+    NSLog(@"在自定义的子线程中异步处理了一个耗时操作 : %@", [NSThread currentThread]);
+    sleep(3.0);
+    // 处理完操作后关闭常住线程
+    NSLog(@"处理完耗时操作后关闭常住线程");
+    stop = YES;
+}
+
+- (void)dealloc {
+    NSLog(@"Thread isExecuting: %zd", [self.thread isExecuting]);
+    NSLog(@"Thread isFinished: %zd", [self.thread isFinished]);
+    NSLog(@"Thread isCancelled: %zd", [self.thread isCancelled]);
+    NSLog(@"dealloc");
+}
+
+1，开启一个子线程
+2，为子线程添加一个runloop
+3，为runloop添加一个source
+4，为runloop添加一个observer
+5，外部设置一个runloop开关
+当runloop进入空闲状态时，判断开关状态，如果开关为关闭状态，则移除runloop的source，没有了source的runloop是可以通过CFRunLoopStop方法关闭的。runloop关闭后，runloop的run方法后的的log就有了输出。并且在控制器推出的时候，可以看到线程的状态为finished
+

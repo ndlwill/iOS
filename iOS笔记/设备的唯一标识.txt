@@ -1,0 +1,86 @@
+1.UDID(Unique Device Identifier)
+它就是苹果iOS设备的唯一识别码，它由40位16进制数的字母和数字组成（越狱的设备通过某些工具可以改变设备的UDID）
+苹果从iOS5开始就移除了通过代码访问UDID的权限
+
+2.UUID(Universally Unique Identifier)
+苹果公司建议使用UUID为应用生成唯一标识字符串
+获得的UUID值系统没有存储, 而且每次调用得到UUID，系统都会返回一个新的唯一标示符
+如果你希望存储这个标示符，那么需要自己将其存储到NSUserDefaults, Keychain, Pasteboard或其它地方
+
+CFUUID:每次调用CFUUIDCreate，系统都会返回一个新的唯一标示符
+CFUUIDRef cfuuid = CFUUIDCreate(kCFAllocatorDefault);
+NSString *cfuuidString = (NSString*)CFBridgingRelease(CFUUIDCreateString(kCFAllocatorDefault, cfuuid));
+
+NSUUID:
+NSString *uuid = [[NSUUID UUID] UUIDString];
+
+3.Open UDID
+OpenUDID利用了一个非常巧妙的方法在不同程序间存储标示符 — 在粘贴板中用了一个特殊的名称来存储标示符。
+通过这种方法，别的程序（同样使用了OpenUDID）知道去什么地方获取已经生成的标示符（而不用再生成一个新的）
+而且根据贡献者的代码和方法，和一些开发者的经验，如果把使用了OpenUDID方案的应用全部都删除，再重新获取OpenUDID，此时的OpenUDID就跟以前的不一样
+
+4.MAC Address
+MAC(Medium/Media Access Control)地址，用来表示互联网上每一个站点的标识符，采用十六进制数表示，共六个字节（48位）。
+前三个字节是由IEEE的注册管理机构 RA负责给不同厂家分配的代码(高位24位)，也称为“编制上唯一的标识符” （Organizationally Unique Identifier)，
+后三个字节(低位24位)由各厂家自行指派给生产的适配器接口，称为扩展标识符（唯一性）
+
+MAC地址在网络上用来区分设备的唯一性，接入网络的设备都有一个MAC地址，他们肯定都是不同的，是唯一的
+一部iPhone上可能有多个MAC地址，包括WIFI的、SIM的等，但是iTouch和iPad上就有一个WIFI的，因此只需获取WIFI的MAC地址就好了，也就是en0的地址
+
+MAC地址就如同我们身份证上的身份证号码，具有全球唯一性。这样就可以非常好的标识设备唯一性，类似与苹果设备的UDID号
+用途有：
+(1) 用于一些统计与分析目的，利用用户的操作习惯和数据更好的规划产品；
+(2) 作为用户ID来唯一识别用户，可以用游客身份使用app又能在服务器端保存相应的信息，省去用户名、密码等注册过程。
+
+使用Mac地址生成设备的唯一标识呢？
+主要分三种：
+1、直接使用“MAC Address”
+2、使用“MD5(MAC Address)”
+3、使用“MD5(Mac Address+bundle_id)”获得“机器＋应用”的唯一标识（bundle_id 是应用的唯一标识）
+
+而MAC地址跟UDID一样，存在隐私问题
+
+5.广告标示符（IDFA-identifierForIdentifier）
+广告标示符，在同一个设备上的所有App都会取到相同的值，是苹果专门给各广告提供商用来追踪用户而设的
+但好在Apple默认是允许追踪的，而且一般用户都不知道有这么个设置，所以基本上用来监测推广效果
+
+提供了一个方法advertisingIdentifier，通过调用该方法会返回一个NSUUID实例，最后可以获得一个UUID，由系统存储着的
+#import <AdSupport/AdSupport.h>
+NSString *adId = [[[ASIdentifierManager sharedManager] advertisingIdentifier] UUIDString];
+
+不过即使这是由系统存储的，但是有几种情况下，会重新生成广告标示符。
+(1)如果用户完全重置系统(设置程序 -> 通用 -> 还原 -> 还原位置与隐私) ，这个广告标示符会重新生成。
+(2)另外如果用户明确的还原广告(设置程序-> 通用 -> 关于本机 -> 广告 -> 还原广告标示符) ，那么广告标示符也会重新生成。
+
+关于广告标示符的还原，有一点需要注意：如果程序在后台运行，此时用户“还原广告标示符”，然后再回到程序中，此时获取广 告标示符并不会立即获得还原后的标示符。
+必须要终止程序，然后再重新启动程序，才能获得还原后的广告标示符。
+
+所以IDFA也不可以作为获取唯一标识的方法，来识别用户
+
+6.Vendor标示符 (IDFV-identifierForVendor)
+Vendor标示符，是给Vendor标识用户用的，每个设备在所属同一个Vender的应用里，都有相同的值。
+其中的Vender是指应用提供商，但准确点说，是通过BundleID的反转的前两部分进行匹配，如果相同就是同一个Vender，
+例如对于com.taobao.app1, com.taobao.app2 这两个BundleID来说，就属于同一个Vender，共享同一个IDFV的值。
+和IDFA不同的是，IDFV的值是一定能取到的，所以非常适合于作为内部用户行为分析的主id，来标识用户
+
+NSString *strIDFV = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
+如果用户将属于此Vender的所有App卸载，则IDFV的值会被重置，即再重装此Vender的App，IDFV的值和之前不同
+
+
+#####正确的获取设备的唯一标识#####
+将获取的UUID永久存储在设备的KeyChain中, 这个方法在应用第一次启动时, 将获取的UUID存储进KeyChain中, 
+每次取的时候, 检查本地钥匙串中有没有, 如果没有则需要将获取的UUID存储进去。
+当你重启设备, 卸载应用再次安装,都不影响, 只是当设备刷机时, KeyChain会清空, 才会消失, 才会失效。
+
+钥匙串:
+在应用间利用KeyChain共享数据
+可以把KeyChain理解为一个Dictionary，所有数据都以key-value的形式存储，可以对这个Dictionary进行add、update、get、delete这四个操作
+
+对于每一个应用来说，KeyChain都有两个访问区，私有区和公共区。
+私有区是一个sandbox，本程序存储的任何数据都对其他程序不可见。
+而要想在将存储的内容放在公共区，需要先声明公共区的名称，官方文档管这个名称叫“keychain access group”，
+声明的方法是新建一个plist文件，名字随便起
+
+“yourAppID.com.yourCompany.whatever”就是你要起的公共区名称
+苹果限制了你只能同公司的产品共享KeyChain数据，别的公司访问不了你公司产品的KeyChain
+keychain里保存的信息不会因App被删除而丢失

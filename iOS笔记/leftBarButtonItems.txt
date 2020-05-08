@@ -1,0 +1,120 @@
+控制导航leftBarButtonItems:
+
+iOS11 之后NavigationBar的层级发生了较大变化
+
+结论：
+默认情况下，在320、375宽度的屏幕上，第一个按钮距离屏幕左边界的宽度是16，在414第一个按钮距离屏幕左边界的宽度是20。
+默认情况下，在320、375宽度的屏幕上，BarButtonItems之间的间距是8，在414宽度的屏幕上，BarButtonItems之间的间距是10。
+iOS11 , 所有Items都包括在 _UIButtonBarStackView 下，控制它的X坐标即可控制左边距。
+iOS9，所有Item都在NavigationBar下，统计并排，所以控制左边距，只需要控制第一个元素的左边距。
+
+iOS 9 item（a,b）
+计算items之间的元素距离就是计算b,的x坐标位置
+
+iOS 11
+通过Xcode可以看出UIView(b)的宽度，坐标刚好符合 a c 之间的间隔，
+但是通过修改b的宽度确实无法实现修改items之间的间隔。只能通过修改 _UITAMICAdaptorView的x坐标来改边items之间的间距
+
+
+====================================================
+UINavigationController *nav = [[UINavigationController alloc] initWithNavigationBarClass:[CustomUINavigationBar class] toolbarClass:nil];
+
+self.navigationItem.leftBarButtonItems = @[leftBar, leftBar1];
+CustomUINavigationBar *navbar = (CustomUINavigationBar *)self.navigationController.navigationBar;
+navbar.leftValue = 10;
+[navbar setItemsSpace:0];
+
+---------------------------------
+
+@interface CustomUINavigationBar : UINavigationBar
+@property (nonatomic,assign) CGFloat leftValue;
+- (void)setItemsSpace:(CGFloat)space;
+@end
+
+#define SCREEN_WIDTH [UIScreen mainScreen].bounds.size.width
+@interface CustomUINavigationBar()
+@property (nonatomic, assign)CGFloat spaceBetweenItems;
+@end
+
+@implementation CustomUINavigationBar
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self) {
+        self.spaceBetweenItems = -1024;
+    }
+    return self;
+}
+
+// 我觉得放layoutsubviews
+- (void)drawRect:(CGRect)rect {
+    [super drawRect:rect];
+    
+    if ([UIDevice currentDevice].systemVersion.floatValue >= 11.0) {
+        for (UIView *view in self.subviews) {
+            for (UIView *subView in view.subviews) {
+                if ([NSStringFromClass(subView.class) isEqualToString:@"_UIButtonBarStackView"]) {
+                    
+                    NSInteger count = 0;
+                    for(int i= 1; i<subView.subviews.count; i++) {
+                        UIView *t_subview = subView.subviews[i];
+                        if ([NSStringFromClass(t_subview.class) isEqualToString:@"_UITAMICAdaptorView"] ) {
+                            count ++;
+                            if (SCREEN_WIDTH == 414) {
+                                t_subview.frame = CGRectMake(t_subview.frame.origin.x - (10-self.spaceBetweenItems), t_subview.frame.origin.y, t_subview.frame.size.width, t_subview.frame.size.height);
+                            }else{
+                                t_subview.frame = CGRectMake(t_subview.frame.origin.x - (8-self.spaceBetweenItems), t_subview.frame.origin.y, t_subview.frame.size.width, t_subview.frame.size.height);
+                            }
+                        }
+                    }
+                    
+                    if (SCREEN_WIDTH == 414) {
+                        subView.frame = CGRectMake(self.leftValue, subView.frame.origin.y, subView.frame.size.width - (count-1)*(10 - _spaceBetweenItems), subView.frame.size.height);
+                    }else{
+                        subView.frame = CGRectMake(self.leftValue, subView.frame.origin.y, subView.frame.size.width - (count-1)*(8 - _spaceBetweenItems), subView.frame.size.height);
+                    }
+                    
+                    
+                }
+            }
+            
+        }
+    }else{
+        for (int i=0; i<self.subviews.count; i++) {
+            
+            UIView *t_view = self.subviews[i];
+            NSString *class = NSStringFromClass(t_view.class);
+          //_UINavigationBarBackIndicatorView 通过层级结构可以看出有这个view, 在这个不做任何修改，保持系统原样。
+            if ([class isEqualToString:@"_UINavigationBarBackIndicatorView"]) {
+                return;
+            }
+            if (i==0) {
+                t_view.frame = CGRectMake(self.leftValue, t_view.frame.origin.y, t_view.frame.size.width, t_view.frame.size.height);
+            }else{
+                if (SCREEN_WIDTH == 414) {
+                        t_view.frame = CGRectMake((t_view.frame.origin.x-20+self.leftValue)-(10-self.spaceBetweenItems), t_view.frame.origin.y, t_view.frame.size.width, t_view.frame.size.height);
+                }else{
+                        t_view.frame = CGRectMake((t_view.frame.origin.x-16+self.leftValue) -(8-self.spaceBetweenItems), t_view.frame.origin.y, t_view.frame.size.width, t_view.frame.size.height);
+                }
+            }
+            
+        }
+    }
+}
+
+-(CGFloat)spaceBetweenItems {
+    if (_spaceBetweenItems == -1024) {
+        if (SCREEN_WIDTH == 414) {
+            return 10;
+        } else {
+            return 8;
+        }
+    }else{
+        return _spaceBetweenItems;
+    }
+    
+}
+- (void)setItemsSpace:(CGFloat)space {
+    self.spaceBetweenItems = space;
+}

@@ -1,0 +1,148 @@
+NSStream，NSInputStream，NSOutputStream
+使用这些类的实例，你可以读或者写数据从文件或者应用程序的内存。
+你也可使用在基于socket连接的网络中使用这些对象和远程主机交换数据。
+你也可继承stream类而获取专有的stream操作。
+常见的Stream应用场景有：读/写取文件，socket通信, 从NSData中读/写数据, 写数据到buffer中。
+
+NSInputStream：NSStream的子类，用于读取输入
+NSOutputStream：NSSTream的子类，用于写输出
+
+NSInputStream:
+NSInputStream 是输入流，对客户端而言，就是读数据
+
+
+@interface ViewController ()<NSStreamDelegate>
+@property (nonatomic,strong)NSInputStream *istream;
+@end
+
+@implementation ViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    //获取所读文件的路径   
+    NSString *path = [[NSBundle mainBundle] pathForResource:@"init" ofType:@"json"];
+    [self setUpStreamForFile:path];
+}
+
+-(void)setUpStreamForFile:(NSString *)path
+{
+    //创建NSInputStream
+    self.istream = [[NSInputStream alloc] initWithFileAtPath:path];
+    // 设置delegate
+    self.istream.delegate = self;
+    // 加入到Runloop中
+    [self.istream scheduleInRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+    // 打开流
+    [self.istream open];
+}
+
+- (void)stream:(NSStream *)aStream handleEvent:(NSStreamEvent)eventCode;
+{
+    switch (eventCode) {
+        // 有数据可读
+        case NSStreamEventHasBytesAvailable:
+        {
+            //读取数据并打印
+            NSMutableData *data = [[NSMutableData alloc] init];
+            uint8_t buf[2048];
+            NSInteger len = 0;
+            len = [(NSInputStream *)aStream read:buf maxLength:2048];
+            if (len) {
+                [data appendBytes:(const void *)buf length:len];
+                NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+                NSLog(@"%@", str);
+            }else{
+                NSLog(@"no buffer");
+            }
+            break;
+        }
+        //读到了流的结尾
+        case NSStreamEventEndEncountered:{
+            // 关闭流
+            [aStream close];
+            [aStream removeFromRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+            aStream = nil;
+            break;
+        }
+            
+        default:
+            break;
+    }
+}
+
+NSOutputStream
+NSOutputStream是输入流，对于客户端而言，就是写数据。
+
+@interface ViewController ()<NSStreamDelegate>
+{
+    NSString *pathtxt;
+}
+@property (nonatomic,strong)NSOutputStream *ostream;
+@property (nonatomic,strong)NSData *data;
+@property (nonatomic,assign)NSInteger readBytes;
+@property (nonatomic,assign)NSInteger byteIndex;
+
+@end
+
+@implementation ViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    NSString *path = [[NSBundle mainBundle] pathForResource:@"init" ofType:@"json"];
+    self.data = [NSData dataWithContentsOfFile:path];
+    pathtxt =  NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
+    //建议这个路径一定要是沙盒中的路径，放在工程目录里面是无法写入数据的。
+    pathtxt =  [pathtxt stringByAppendingPathComponent:@"cache.json"];
+    [self createOutputStream];
+}
+
+
+-(void)createOutputStream
+{
+    self.ostream = [[NSOutputStream alloc] initToFileAtPath:pathtxt append:YES];
+    self.ostream.delegate = self;
+    [self.ostream scheduleInRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+    [self.ostream open];
+}
+
+
+
+- (void)stream:(NSStream *)aStream handleEvent:(NSStreamEvent)eventCode;
+{
+    switch (eventCode) {
+        case NSStreamEventHasSpaceAvailable:
+        {
+            self.readBytes += self.byteIndex;
+            NSUInteger data_len = [_data length];
+            NSUInteger len = (data_len - self.readBytes >= 1024) ? 1024 : (data_len - self.readBytes);
+            uint8_t buf[len];
+            [self.data getBytes:buf range:NSMakeRange(self.readBytes, len)];
+            len = [(NSOutputStream *)aStream write:buf maxLength:sizeof(buf)];
+            self.byteIndex = len;
+            break;
+        }
+        case NSStreamEventEndEncountered:
+        {
+            [aStream close];
+            [aStream removeFromRunLoop:[NSRunLoop currentRunLoop]
+                              forMode:NSDefaultRunLoopMode];
+            aStream = nil; // oStream is instance variable
+            break;
+        }
+
+        default:
+            break;
+    }
+}
+
+RunLoop的作用
+我们都知道RunLoop可以保留线程不释放，有任务的时候执行，没有任务的时候休息并且不阻塞UI线程。
+我们在对流进行读／写操作时候，如果没有runloop我们需要一次性将流中的数据读完或者写完，这显然是不现实的，
+那么我们可以通过另一种方式进行分段读取
+
+每次读取一定的字节并记录读取的位置，直到读取完毕
+最好的方法还是使用runloop监听数据源是否可读/写。
+
+===========================================

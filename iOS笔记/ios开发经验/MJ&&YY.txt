@@ -1,0 +1,152 @@
+@interface UserDTO : NSObject 
+@property (nonatomic, copy) NSString *name; #字符串 
+@property (nonatomic, assign) NSInteger age; #基本属性 
+@property (nonatomic, strong) BookDTO *book; #自定义的模型 
+@property (nonatomic, strong) NSArray *books; #自定义模型数组 
+@end
+
+
+@interface BookDTO : NSObject
+@property (nonatomic, copy) NSString *bookName;
+@end
+
+# MJExtension 
++ (NSDictionary *)mj_objectClassInArray
+{ 
+return @{@"books" : [BookDTO class]}; 
+}
+
+# YYModel 
++ (nullable NSDictionary<NSString *, id> *)modelContainerPropertyGenericClass
+{ 
+return @{@"books" : [BookDTO class]}; 
+}
+
+UserDTO *dto = [UserDTO yy_modelWithDictionary:dic];
+    
+UserDTO *dto = [UserDTO mj_objectWithKeyValues:dic];
+
+========================================================YYModel
+// 将 JSON (NSData,NSString,NSDictionary) 转换为 Model:
+# json转模型 + (instancetype)yy_modelWithJSON:(id)json; 
+# 字典转模型 + (instancetype)yy_modelWithDictionary:(NSDictionary *)dictionary ; 
+
+# 下面两者是属性值在两个dic与模型之间的转化方法
+- (BOOL)modelCustomTransformFromDictionary:(NSDictionary *)dic ； 
+- (BOOL)modelCustomTransformToDictionary:(NSMutableDictionary *)dic；
+
+
+
+# 模型转字符串 - (NSString *)yy_modelToJSONString 
+
+
+
+# 声明数组、字典或者集合里的元素类型时要重写 + (nullable NSDictionary<NSString *, id> *)modelContainerPropertyGenericClass； 
+# 字典里的key值与模型的属性值不一致要重复 + (nullable NSDictionary<NSString *, id> *)modelCustomPropertyMapper; 
+
+JSON/Dictionary
+Model
+
+NSString
+NSNumber,NSURL,SEL,Class
+
+NSNumber
+NSString
+
+NSString/NSNumber
+C number (BOOL,int,float,NSUInteger,UInt64,…)
+NaN and Inf will be ignored
+
+NSString
+NSDate parsed with these formats:
+yyyy-MM-dd
+yyyy-MM-dd HH:mm:ss
+yyyy-MM-dd’T’HH:mm:ss
+yyyy-MM-dd’T’HH:mm:ssZ
+EEE MMM dd HH:mm:ss Z yyyy 
+
+NSDate
+NSString formatted with ISO8601:
+“YYYY-MM-dd’T’HH:mm:ssZ”
+
+NSValue
+struct (CGRect,CGSize,…)
+
+NSNull
+nil,0
+
+“no”,”false”,…
+@(NO),0
+
+“yes”,”true”,…
+@(YES),1
+
+
+模型代码：
+@property (nonatomic, copy) NSString *name;
+@property (nonatomic, assign) uint64_t pages;
+@property (nonatomic, strong) NSDate *publishDate;
+执行代码：
+ NSDictionary *dic = @{
+                          @"name": @"Harry Potter",
+                          @"pages": @(512),
+                          @"publishDate": @"2010-01-01"
+                          };
+YYBook *book1 = [YYBook yy_modelWithDictionary:dic];
+
+
+模型代码：
+@property (nonatomic, assign) uint64_t rid;
+@property (nonatomic, copy) NSString *name;
+@property (nonatomic, strong) NSDate *createTime;
+@property (nonatomic, strong) YYUser *owner;  #自定义模型
+执行代码：
+NSDictionary *dic = @{
+                      @"rid": @(123456789),
+                      @"name": @"YYKit",
+                      @"createTime" : @"2011-06-09T06:24:26Z",
+                      @"owner": @{
+                              @"uid" : @(989898),
+                              @"name" : @"mawenxing"
+                              }
+                      };
+
+YYRepo *repo1 = [YYRepo yy_modelWithDictionary:dic];
+
+
+
+
+# YYAlbum.h 
+@property (nonatomic, copy) NSString *name; 
+@property (nonatomic, strong) NSArray *photos; # Array<YYPhoto> 
+@property (nonatomic, strong) NSDictionary *likedUsers; # Key:name(NSString) Value:user(YYUser) 
+@property (nonatomic, strong) NSSet *likedUserIds; # Set<NSNumber> # YYPhoto.h 
+@property (nonatomic, copy) NSString *url; @property (nonatomic, copy) NSString *desc; 
+
+# YYAlbum.m #把数组里面带有对象的类型专门按照这个方法，这个格式写出来 
+-(nullable NSDictionary<NSString *, id> *)modelContainerPropertyGenericClass
+{ 
+return @{ @"photos" : YYPhoto.class, @"likedUsers" : YYUser.class, @"likedUserIds" : NSNumber.class }; }
+
+
+
+
+# YYMessage.h 
+@property (nonatomic, assign) uint64_t messageId; 
+@property (nonatomic, strong) NSString *content; 
+@property (nonatomic, strong) NSDate *time; 
+
+# YYMessage.m 
+/*! * 1.该方法是 `字典里的属性Key` 和 `要转化为模型里的属性名` 不一样 而重写的 * 前：模型的属性 后：字典里的属性 */ 
++ (nullable NSDictionary<NSString *, id> *)modelCustomPropertyMapper{ return @{@"messageId":@"i", @"content":@"c", @"time":@"t"}; } 
+
+/*! * 2. 下面的两个方法 `字典里值`与`模型的值`类型不一样`需要转换`而重写的方法 * NSDate *time dic[@"t"]是double类型的的秒数 */ 
+/// Dic -> model 
+- (BOOL)modelCustomTransformFromDictionary:(NSDictionary *)dic { self.time = (NSDate *)[NSDate dateWithTimeIntervalSince1970:[dic[@"t"] doubleValue]/1000]; return YES; } 
+/// model -> Dic 
+- (BOOL)modelCustomTransformToDictionary:(NSMutableDictionary *)dic { dic[@"t"] = @([self.time timeIntervalSince1970] * 1000).description; return YES; }
+
+NSDictionary *dic = @{@"i":@2000000001, @"c":@"Hello", @"t":@1437237598000}; 
+YYMessage *message = [YYMessage yy_modelWithDictionary:dic]; 
+
+

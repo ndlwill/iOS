@@ -1,0 +1,129 @@
+先建一个类继承自NSObject，遵循UITableviewDataSource，并定义一个block，写两个对象方法，定义一个数组
+
+#import <UIKit/UIKit.h> 
+typedef void (^MutiCatagoryTableViewCellConfigureBlock)(id cell, id item); 
+@interface XSMutiCatagoryTableViewDataSource : NSObject <UITableViewDataSource> 
+@property (nonatomic, copy) NSArray *items; 
+- (id)initWithItems:(NSArray *)items cellIdentifier:(NSString *)cellIdentifier configureCellBlock:(MutiCatagoryTableViewCellConfigureBlock)configureCellBlock; 
+- (id)itemAtIndexPath:(NSIndexPath *)indexPath; 
+@end
+
+#import "XSMutiCatagoryTableViewDataSource.h" 
+@interface XSMutiCatagoryTableViewDataSource () 
+@property (nonatomic, copy) NSString *cellIdentifier; 
+@property (nonatomic, copy) MutiCatagoryTableViewCellConfigureBlock configureCellBlock; 
+@end 
+
+@implementation XSMutiCatagoryTableViewDataSource 
+
+- (id)initWithItems:(NSArray *)items cellIdentifier:(NSString *)cellIdentifier configureCellBlock:(MutiCatagoryTableViewCellConfigureBlock)configureCellBlock 
+{ self = [super init]; if (self) { self.items = items; self.cellIdentifier = cellIdentifier; self.configureCellBlock = configureCellBlock; } return self; } 
+
+#pragma mark - public methods 
+- (id)itemAtIndexPath:(NSIndexPath *)indexPath { return self.items[(NSUInteger)indexPath.row]; } 
+#pragma mark - UITableViewDataSource 
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section 
+{ return [self.items count]; } 
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath 
+{ UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:self.cellIdentifier forIndexPath:indexPath]; id item = [self itemAtIndexPath:indexPath]; self.configureCellBlock(cell, item); return cell; } @end
+
+
+
+
+#import "XSMutiCatagoryTableViewDataSource.h" @interface XSMutiCatagoryViewController () <UITableViewDelegate> @property (strong, nonatomic) XSMutiCatagoryTableViewDataSource *mutiCatagoryTableViewDataSource; @property (strong, nonatomic) UITableView *tableView; @property (strong, nonatomic) MenuBridge *menuBridge;//数据源 @end @implementation XSMutiCatagoryViewController #pragma mark - life cycle - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; CGFloat height = [UIScreen mainScreen].bounds.size.height; CGFloat width = [UIScreen mainScreen].bounds.size.width; self.tableView.frame = CGRectMake(0,64, width / 4, height-49-64); } - (void)viewDidLoad { [super viewDidLoad]; [self.view addSubview:self.tableView]; [self loadMenuData]; } #pragma mark - http menthods - (void)loadMenuData { __weak typeof(self) weakSelf = self; [MBProgressHUD showHUDAddedTo:self.view animated:YES]; XSAPIManager *manager = [XSAPIManager manager]; [manager GET:url parameters:parameters success:^(id responseObject) { //NSLog(@"分类页tableview数据%@",responseObject); weakSelf.menuBridge = [MenuBridge mj_objectWithKeyValues:responseObject]; if (weakSelf.menuBridge.data.count > 0) { weakSelf.mutiCatagoryTableViewDataSource.items = weakSelf.menuBridge.data; [weakSelf.tableView reloadData]; [weakSelf.tableView selectRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0] animated:YES scrollPosition:UITableViewScrollPositionBottom]; [weakSelf tableView:weakSelf.tableView didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0]]; } [MBProgressHUD hideAllHUDsForView:weakSelf.view animated:YES]; } failure:^(NSError *error) { [MBProgressHUD hideAllHUDsForView:weakSelf.view animated:YES]; }]; } #pragma mark - getters and setters - (UITableView *)tableView { if (_tableView == nil) { _tableView = [[UITableView alloc] init]; _tableView.backgroundColor = MENU_COLOR; _tableView.separatorColor = OTHER_SEPARATOR_COLOR; [_tableView registerNib:[UINib nibWithNibName:@"XSMutiCatagoryTableViewCell" bundle:nil] forCellReuseIdentifier:tableCellId]; _tableView.delegate = self; _tableView.dataSource = self.mutiCatagoryTableViewDataSource; _tableView.rowHeight = 49.0f; } return _tableView; } - (XSMutiCatagoryTableViewDataSource *)mutiCatagoryTableViewDataSource { if (_mutiCatagoryTableViewDataSource == nil) { _mutiCatagoryTableViewDataSource = [[XSMutiCatagoryTableViewDataSource alloc] initWithItems:self.menuBridge.data cellIdentifier:tableCellId configureCellBlock:^(XSMutiCatagoryTableViewCell *cell, Menu *item) { [cell configureForMenuItem:item]; }]; } return _mutiCatagoryTableViewDataSource; }
+
+
+
+----------------------------------------------------------------
+#import <Foundation/Foundation.h>  
+#import <UIKit/UIKit.h>  
+/** 
+ *  tableview 的 data source 抽出类 
+ */  
+  
+typedef void (^cellBackBlock)(id cell , id data);  
+  
+@interface MyDataSource : NSObject<UITableViewDataSource>  
+/** 
+ *  初始化方法 
+ * 
+ *  @param array      数据源 
+ *  @param identifier 重用标示 与 类名一致 
+ * 
+ *  @return 遵循了uitableview datasource 的对象， 并且实现了 datasource方法 
+ */  
+-(id)initWithItems:(NSArray *)array cellIdentifier:(NSString *)identifier andCallBack:cellBackBlock;  
+@end  
+
+
+#import "MyDataSource.h"  
+//#import "ThreeTableViewCell.h"  
+//#import "SecondTableViewCell.h"  
+  
+@interface MyDataSource(){  
+    NSArray *_items;  
+    NSString       *_identifier;  
+    cellBackBlock  myTestBlock;  
+}  
+  
+@end  
+  
+@implementation MyDataSource  
+  
+-(id)initWithItems:(NSArray *)array cellIdentifier:(NSString *)identifier andCallBack:cellBackBlock{  
+      
+    self = [super init];  
+    if (self) {  
+        _items = [NSMutableArray arrayWithArray:array];  
+        _identifier = identifier;  
+        myTestBlock = cellBackBlock;  
+    }  
+    return self;  
+}  
+  
+-(NSInteger)numberOfSectionsInTableView:(UITableView *)tableView{  
+    return 1;  
+}  
+  
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {  
+    return _items.count;  
+}  
+  
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {  
+      
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:_identifier];  
+      
+    if (cell == nil) {  
+          
+          
+//        二种加载方式  
+//        从XIB 中加载  
+        cell = [[NSBundle mainBundle]loadNibNamed:_identifier owner:self options:nil][0];  
+          
+//        代码加载  
+//        cell = [[NSClassFromString(_identifier) alloc]  
+//                initWithStyle:UITableViewCellStyleValue1  
+//                reuseIdentifier:_identifier];  
+          
+        cell.accessoryType = UITableViewCellAccessoryNone;  
+        cell.backgroundColor = [UIColor whiteColor];  
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;  
+    }  
+    id theme = _items[indexPath.row];  
+      
+    myTestBlock(cell,theme);  
+    return cell;  
+}  
+@end  
+
+
+void (^myCallBackBlock)(id cell , id data) = ^(id cell ,id data){  
+      //cell数据的填充方法  
+      SecondTableViewCell *cell2 = (SecondTableViewCell *)cell;  
+      [cell2 setDataByModel:data];  
+  };  
+    
+  _datasource = [[MyDataSource alloc]initWithItems:_dataArray cellIdentifier:@"SecondTableViewCell" andCallBack:myCallBackBlock];  
+  _tableView.dataSource = _datasource;  
+  [_tableView reloadData];  

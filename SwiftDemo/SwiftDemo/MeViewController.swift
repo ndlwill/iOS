@@ -67,6 +67,46 @@ class MeViewController: UIViewController {
 //        self.navigationController?.navigationBar.backItem?.backBarButtonItem = UIBarButtonItem(title: "22", style: .plain, target: self, action: nil)
 //        self.navigationController?.navigationBar.topItem?.backBarButtonItem = UIBarButtonItem(title: "11", style: .plain, target: self, action: nil)
         
+        // MARK: ==Range==
+        /**
+         String.Index
+         String.Index表示一个位置，使用String与String.Index可以获取该位置的Character
+         */
+        let testRangeStr = "12345678"
+        print("testRangeStr.startIndex = \(testRangeStr.startIndex)")
+        print("testRangeStr.endIndex = \(testRangeStr.endIndex)")
+        
+        // swift 4.2
+        let startIndex = testRangeStr.startIndex
+        var endIndex = testRangeStr.endIndex // 直接使用testRangeStr[endIndex]报错
+        endIndex = testRangeStr.index(endIndex, offsetBy: -1)
+        let zeroIndex = String.Index.init(encodedOffset: 0)
+        let fiveIndex = String.Index.init(encodedOffset: 5)
+        print("zeroValue = \(testRangeStr[zeroIndex]) fiveValue = \(testRangeStr[fiveIndex])")// 1, 6
+        print("startValue = \(testRangeStr[startIndex]) endValue = \(testRangeStr[endIndex])")// 1, 8
+        
+//        let zeroIndex = String.Index.init(utf16Offset: <#T##Int#>, in: <#T##StringProtocol#>)
+        
+        // MARK: ==NSRange==
+        let swiftStr = "123 jhsyi123"
+        let testStr = (swiftStr as NSString)
+        print("\(testStr.range(of: "123"))")
+        print("\(testStr.range(of: "123", options: .backwards))")
+        
+        let regex = try? NSRegularExpression(pattern: "123", options: .caseInsensitive)
+        if let regexp = regex {
+            print("\(regexp.stringByReplacingMatches(in: swiftStr, options: .reportProgress, range: NSRange(location: 0, length: swiftStr.count), withTemplate: "www"))")
+            
+            let result: [NSTextCheckingResult] = regexp.matches(in: swiftStr, options: .reportProgress, range: NSRange(location: 0, length: swiftStr.count))
+            print("\(result)")
+        }
+        
+
+        
+        // MARK: ==swift 5新特性==
+//        let rowNumber = 4
+//        rowNumber.isMultiple(of: 2)
+        
         // MARK: 泛型应用
         /**
          public protocol UserDefaultable {

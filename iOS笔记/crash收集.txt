@@ -1,0 +1,198 @@
+会引发程序运行崩溃基本有两种情况：
+1.c++语言层面的错误，比如野指针，除零，内存访问异常等, 这种可以通过信号机制来捕获, 判断信号
+2.未捕获异常(Uncaught Exception), 可以通过捕获这个异常来做判断.
+Uncaught Exception
+1.NSException对象
+(1) reason：崩溃原因。
+(2) callStackSymbols：调用堆栈。
+(3) name：崩溃名称
+(4) userInfo：崩溃对象。
+
+情况一: 通过try - catch 捕获抛出的异常
+这种只能对特定代码做异常捕获, 捕获完之后, exception不会抛出, 程序继续运行
+情况二: 通过 NSSetUncaughtExceptionHandler 设置异常捕获
+这种异常捕获完之后, 因为 exception 本质上来说没有被处理, 程序一样会崩溃
+
+Signal信号：
+static int s_fatal_signals[] = {
+    SIGABRT,
+    SIGBUS,
+    SIGFPE,
+    SIGILL,
+    SIGSEGV,
+    SIGTRAP,
+    SIGTERM,
+    SIGKILL,
+};
+static int s_fatal_signal_num = sizeof(s_fatal_signals) / sizeof(s_fatal_signals[0]);
+
++(void)startCrashLog
+{
+    for(int i = 0; i < s_fatal_signal_num; i++) {
+        signal(s_fatal_signals[i], SignalHandler);
+    }
+}
+
+// 处理捕获的信号值, 每一个信号对应一种错误
+void SignalHandler(int signal){
+    NSLog(@"signal: %d", signal);
+
+  // 可以在这里面通过backtrace, 包装堆栈信息和信号值, 再做分析, 我觉得意义不是很大
+    void* callstack[128];
+    int frames = backtrace(callstack, 128);
+    char **strs = backtrace_symbols(callstack, frames);
+    int I;
+    NSMutableArray *backtrace = [NSMutableArray arrayWithCapacity:frames];
+    for (i = 0;i < 4;i++){
+        [backtrace addObject:[NSString stringWithUTF8String:strs[i]]];
+    }
+    backtrace addObject:[NSString stringWithFormat:@"signal: %d", signal];
+    free(strs);
+
+    NSLog(@"=====>>>>>堆栈<<<<<=====\n%@",backtrace);
+}
+
+[NSThread callStackSymbols]
+通过调用callStackSymbols 可以看到当前线程的堆栈信息,
+在底层是通过 backtrace 和 backtrace_symbols 函数打印调用栈信息
+backtrace函数用来获取当前线程的调用堆栈, 获取的信息将会被存放在buffer中,它是一个指针数组
+backtrace_symbols将从backtrace函数获取的信息转化为一个字符串数组,
+
+
+=============================
+设备上直接查看:
+路径：设置 -> 隐私 -> 分析 -> 分析数据
+
+xcode:
+Window -> Devices and Simulators -> 选中设备 -> View Device Logs
+Window -> Organizer -> 选择项目 -> Tab选择Crashes
+Xcode的Organizer内置了symbolicatecrash，所以我们才可以直接看到符号化的崩溃堆栈日志
+
+第三方平台：bugly
+代码捕获crash，监听NSSetUncaughtExceptionHandler和signal事件
+第三方工具KSCrash、plcrashreporter
+
+crash一般产生自 iOS 的微内核 Mach，然后在 BSD 层转换成 UNIX SIGABRT 信号，以标准 POSIX 信号的形式提供给用户。
+NSException 是使用者在处理 App 逻辑时，用编程的方法抛出
+
+Unix 信号捕获。对于Mach 异常，操作系统会将其转换为对应的 Unix信号，可以通过注册signalHandler的方式来做信号异常。
+signal(SIGABRT, SignalExceptionHandler) 
+
+NSException 捕获。应用层，通过 NSUncaughtExceptionHandler 捕获，因为堆栈中不会有出错代码，所以需要获取NSException对象中的reason,name,callStackSymbols。
+然后把细节写入Crash日志，上传到后台做数据分析.
+NSSetUncaughtExceptionHandler(UncaughtExceptionHandler)
+
+debug模式下，signal监听无效问题:
+在debug模式下，如果你触发了signal崩溃，那么应用会直接崩溃到主函数，断点都没用，此时没有任何log信息显示出来，
+如果你想看log信息的话，你需要在会crash的那行代码上打断点，
+然后在console中输入pro hand -p true -s false SIGABRT命令(SIGABRT只是示例，应输对应的信号错误)
+
+冲突：
+当项目中存在多个crash收集框架时往往会存在冲突。
+因为不管是对于 Signal 捕获还是 NSException 捕获都会存在 handler 覆盖的问题，应该先判断handler是否存在，
+如果存在刚 保存handler，处理完自己的 handler 后，再把这个 handler 抛出去，供前面的注册者处理
+
+堆栈收集：
+无论Unix 信号捕获，还是NSException 捕获，都只能获取到当前线程的堆栈，如果想获取所有线程的堆栈，
+可以考虑用这个框架：BSBacktraceLogger
+
+堆栈符号解析：
+无论是采用何种方式收集到的崩溃信息，都会面临同一个问题，堆栈大概率是没有被符号化过的，
+对于开发者来说，是根本看不懂的，那就无从谈起问题的定位了。这个时候就需要进行堆栈符号化了
+堆栈符号化还原有三种常见的方法：
+1.symbolicatecrash
+2.mac 下的 atos 工具
+3.通过 dSYM 文件提取地址和符号的对应关系，进行符号还原
+获取dSYM文件：xcode菜单栏Window -> Organizer -> 选择项目 -> Tab选择Crashes -> achieve包 -> show in finder -> 右键显示包内容 -> 打开dSYMs文件夹
+
+// 未符号化前
+Thread 0 name:  Dispatch queue: com.apple.main-thread
+Thread 0 Crashed:
+0   libobjc.A.dylib                 0x000000018b816f30 0x18b7fc000 + 110384 (objc_msgSend + 16)
+1   UIKit                           0x0000000192e0a79c 0x192c05000 + 2119580 (<redacted> + 72)
+2   UIKit                           0x0000000192c4db48 0x192c05000 + 297800 (<redacted> + 312)
+3   UIKit                           0x0000000192c4d988 0x192c05000 + 297352 (<redacted> + 160)
+4   QuartzCore                      0x00000001900d6404 0x18ffc5000 + 1119236 (<redacted> + 260)
+ 
+// 符号化后
+Thread 0 name:  Dispatch queue: com.apple.main-thread
+Thread 0 Crashed:
+0   libobjc.A.dylib                 0x000000018b816f30 objc_msgSend + 16
+1   UIKit                           0x0000000192e0a79c -[UISearchDisplayController _sendDelegateDidBeginDidEndSearch] + 72
+2   UIKit                           0x0000000192c4db48 -[UIViewAnimationState sendDelegateAnimationDidStop:finished:] + 312
+3   UIKit                           0x0000000192c4d988 -[UIViewAnimationState animationDidStop:finished:] + 160
+4   QuartzCore                      0x00000001900d6404 CA::Layer::run_animation_callbacks(void*) + 260
+
+=========================symbolicatecrash
+symbolicatecrash是Xcode自带的一个分析工具，可以通过崩溃日志和应用的.dSYM文件定位发生崩溃的位置，把crash日志中的一堆地址替换成代码相应位置
+Xcode->Window->Devices and Simulators->真机->View Device Logs看到的crash日志，就是通过symbolicatecrash分析出来的
+
+1.find /Applications/Xcode.app -name symbolicatecrash -type f获取symbolicatecrash的文件路径
+2.
+获取.dSYM文件
+Xcode->Archive ,包内容dSYMs文件夹的.dSYM文件
+3.report.crash文件
+
+3个放入Crash文件夹
+cd到Crash文件夹
+
+export DEVELOPER_DIR=/Applications/XCode.app/Contents/Developer
+./symbolicatecrash ./*.crash ./*.app.dSYM > symbol.crash
+
+./*.crash是当前目录下的.crash文件，这里指report.crash
+symbol.crash是解析后的日志文件
+
+=========================.dSYM文件
+https://bugly.qq.com/docs/user-guide/symbol-configuration-ios/?v=20180913155123#dsym_1
+
+debugger Symbols 的简称
+.dSYM文件是一个符号表文件, 这里面包含了一个16进制的保存函数地址映射信息的中转文件, 所有Debug的symbols都在这个文件中(包括文件名、函数名、行号等).
+一般Xcode项目每次编译后, 都会产生一个新的.dSYM文件和.app文件, 这两者有一个共同的UUID
+
+项目编译完dSYM文件和app文件在同一个目录
+选中xx.app文件, 鼠标右键 Show in Finder, 查看原目录
+Xcode Debug 编译默认不会生成.dSYM文件, Release 编译才会生成
+
+----------如果App已经上架到AppStore后, .dSYM 文件遗失, 可以去哪里找呢?
+1.通过Xcode: 在Xcode 顶部菜单栏: Window -> Organizer 窗口,
+选择Archives便签,找到归档包,
+右键找到对应的文件所在目录,
+对归档包, 显示包内容, 就可以找到 dSYMs 文件.
+2.在iTunes Connect,
+找到上传App的构建版本, 查看构建版本详细信息, 就可以下载.dSYM信息
+
+找到.dSYM文件后, 如果需要查看UUID的话, 在文件所在目录下, 输入以下指令:
+dwarfdump --uuid TestAvoidCrash.app.dSYM/
+dwarfdump --uuid TestAvoidCrash.app/TestAvoidCrash
+
+----------.dSYM文件怎么用?
+atos 是一个可以把地址转换为函数名（包括行号）的工具, 它和dwarfdump 为mac os自带工具
+
+$atos -o Your.app.dSYM/Contents/Resources/DWARF/Your -arch arm64 -l 0x18381e225 0x18381eda4
+atos -o Your.app.dSYM/Contents/Resources/DWARF/Your -arch [CPU架构] -l [load Address] [address]
+loadAddress: 是运行时起始地址, 在 + 号前面
+address: 运行时堆栈地址, 
+运行时堆栈地址 = 运行时起始地址 + 偏移量
+
+我们可以通过Xcode菜单栏中Window -> Device and Simulator -> View logs 查看手机运行crash log
+第一次加载的时候是未被符号话的
+由于Xcode内置了symbolicatecrash 工具, 所以过了一会这个log会显示出函数调用信息
+
+======================bugly
+----------什么是符号表？
+符号表是内存地址与函数名、文件名、行号的映射表。符号表元素如下所示：
+<起始地址> <结束地址> <函数> [<文件名:行号>]
+
+----------为什么要配置符号表？
+为了能快速并准确地定位用户APP发生Crash的代码位置，Bugly使用符号表对APP发生Crash的程序堆栈进行解析和还原
+
+为了方便找回Crash对应的dSYM文件和还原堆栈，建议每次构建或者发布APP版本的时候，备份好dSYM文件
+
+----------XCode编译后没有生成dSYM文件？
+XCode Release编译默认会生成dSYM文件，而Debug编译默认不会生成，对应的Xcode配置如下：
+XCode -> Build Settings -> Code Generation -> Generate Debug Symbols -> Yes
+XCode -> Build Settings -> Build Option -> Debug Information Format -> DWARF with dSYM File
+
+----------如何查看dSYM文件的UUID？
+通过命令查看UUID
+xcrun dwarfdump --uuid <dSYM文件>

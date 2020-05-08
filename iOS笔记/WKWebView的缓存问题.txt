@@ -1,0 +1,82 @@
+WKWebView提供的实现了的缓存策略:
+NSURLRequestUseProtocolCachePolicy//默认的缓存策略
+NSURLRequestReloadIgnoringCacheData//重新请求忽略缓存
+NSURLRequestReturnCacheDataElseLoad//有缓存就返回缓存,没有就请求,需要对缓存过期进行额外处理
+NSURLRequestReturnCacheDataDontLoad//只会读取缓存
+目前项目中是不使用缓存,采用NSURLRequestReloadIgnoringCacheData策略
+
+//设置缓存的请求策略和超时时间
+NSURLRequest * urlReuqest = [[NSURLRequest alloc]initWithURL:[NSURL URLWithString:_urlStr] cachePolicy:1 timeoutInterval:30.0f];
+[_webView loadRequest:urlReuqest];
+
+缓存路径:
+Library->WebKit->包名->WebsiteData->LocalStorage
+Library->Caches->包名->WebKit->NetworkCache
+Library->Cookies
+web缓存主要存在于这三个文件夹
+访问百度的话,Cookie文件夹中还会有一个cookie文件,咱们的项目中cookie文件夹是空,前端哥们说是没有使用cookie
+默认情况下,不论设置的何种缓存策略,当加载页面的时候,就会缓存下来一些web资源
+
+也可以设置压根不允许下载任何web资源:
+WKWebViewConfiguration *configuration = [WKWebViewConfiguration new];
+configuration.websiteDataStore = [WKWebsiteDataStore nonPersistentDataStore];
+
+
+缓存清理:
+WKWebView,在iOS9以后提供了缓存管理类WKWebsiteDataStore.iOS9以前只能手动移除文件
+该类提供了api获取web缓存数据类型
+[WKWebsiteDataStore allWebsiteDataTypes]; 
+
+支持的web缓存类型有:
+{(
+    WKWebsiteDataTypeDiskCache,
+    WKWebsiteDataTypeOfflineWebApplicationCache,
+    WKWebsiteDataTypeMemoryCache,
+    WKWebsiteDataTypeLocalStorage,
+    WKWebsiteDataTypeCookies,
+    WKWebsiteDataTypeSessionStorage,
+    WKWebsiteDataTypeIndexedDBDatabases,
+    WKWebsiteDataTypeWebSQLDatabases
+)}
+
+
+清除缓存的api:
+根据缓存类型和记录移除
+NSSet *types = [WKWebsiteDataStore allWebsiteDataTypes];
+NSDate *sinceDate = [NSDate dateWithTimeIntervalSince1970:0];
+// 这是删除所有缓存和cookie的
+[[WKWebsiteDataStore defaultDataStore]removeDataOfTypes:types forDataRecords:self.records    completionHandler:^{
+    NSLog(@"清除record完成");
+}];
+
+
+可以调用
+- (void)fetchDataRecordsOfTypes:(NSSet<NSString *> *)dataTypes completionHandler:(void (^)(NSArray<WKWebsiteDataRecord *> *))completionHandler方法获取浏览记录,然后通过对域名的筛选决定如何删除缓存
+
+all record:(
+    "<WKWebsiteDataRecord: 0x60400013c480; displayName = baidu.com; dataTypes = { Disk Cache, Memory Cache, Cookies }>",
+    "<WKWebsiteDataRecord: 0x60400013b3a0; displayName = bdstatic.com; dataTypes = { Disk Cache }>"
+)
+
+
+根据类型和修改日期清除缓存:
+[[WKWebsiteDataStore defaultDataStore]removeDataOfTypes:types modifiedSince:sinceDate completionHandler:^{
+    NSLog(@"清除完成");
+}];
+
+WKWebView清除缓存只能iOS9开始使用
+
+app端能做的:
+设置缓存策略,决定是否使用缓存(即使允许加载缓存,离线的时候,也只能显示页面,具体的数据缓存需要web端实现)
+精确控制缓存(需要使用NSURLSession或者NSURLConnection的相关方法)URLSession:dataTask:willCacheResponse:completionHandler:,connection:willCacheResponse:,不过目前没有用到URLSession,直接loadRequest.
+同服务器进行交互(缓存过期,以及源端资源更新),下面是几个相关的请求和响应头
+(1) Cache-Control:max-age=xxxx,指明缓存过期时间
+在第一次请求到服务器资源的时候，服务器需要使用Cache-Control这个响应头来指定缓存策略，它的格式如下：Cache-Control:max-age=xxxx，这个头指指明缓存过期的时间
+
+(2)Last-Modified/If-Modified-Since,标识资源最后修改时间
+Last-Modified 是由服务器返回响应头，标识资源的最后修改时间.
+If-Modified-Since 则由客户端发送，标识客户端所记录的，资源的最后修改时间。服务器接收到带有该请求头的请求时，会使用该时间与资源的最后修改时间进行对比，如果发现资源未被修改过，则直接返回HTTP 304而不返回包体，告诉客户端直接使用本地的缓存。否则响应完整的消息内容。
+
+(3) Etag/If-None-Match,标识资源是否更新
+Etag 由服务器发送，告之当资源在服务器上的一个唯一标识符。
+客户端请求时，如果发现资源过期(使用Cache-Control的max-age)，发现资源具有Etag声明，这时请求服务器时则带上If-None-Match头，服务器收到后则与资源的标识进行对比，决定返回200或者304。

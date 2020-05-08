@@ -1,0 +1,102 @@
+$99这种账号可以用来上传App Store提审并发布:
+这种账号有个人和公司的区别
+个人账号：在上架App Store后，开发者直接显示申请人姓名，每一种Apple产品，均有各类设备各100台测试权限。iPhone、iPad、Mac等。
+
+公司账号：上架App Store的App开发者显示公司，公司账号下，可以添加多个测试子账号，支持Xcode在真机测试，但是子账号没有上传App Store权限。
+与个人账号权限类似，均有各类设备各100台测试机权限，iPhone、iPad、Mac等。公司申请需要邓白氏号，而个人不需要。
+
+$299这种账号只能用于企业内部使用，测试设备无限，但是不能用来上传app store, 
+也就是常说的in-house证书（用这种证书打出来的包能在任何iOS设备上运行，不需要苹果的验证、签名）。
+2017年开始，苹果对这类证书的申请极为严格，一般的公司基本申请不成功，申请时长也从以前的一个多月延长到半年-1年不等。
+原因大家的能想到，因为可以避开苹果的审核，发布app的内容也不受限制，常见于博彩app，金融类app
+（Apple对此类app审核及其严格，涉及一些国家的法律法规）等等
+
+99美元的可以配置Ad-Hoc证书、发布证书（提审AppStore的证书）
+299美元的可以配置Ad-Hoc证书、In-House证书，不能配置提审AppStore的证书。
+
+Ad Hoc - $99, $299
+发布到指定设备
+100台，由于苹果的限制，在开发者网站上只能添加100台设备
+
+In House：是指企业内部发布，仅限企业内部人员使用。
+不能发布到Apple Store进行销售。
+可以将包放到一个网址，下载后就能直接安装。
+
+ps: 如果app的内容比较敏感，或者一直上架被拒，可以建议客户考虑使用企业号代签方式发布
+
+============================iOS相关
+Certificates(证书,包括开发、发布证书)
+作用: 这.cer文件格式的证书是让开发者使用的设备（也就是你的Mac）有真机调试，发布APP的权限
+
+Provisioning Profiles(描述文件,简称PP)
+.mobileprovision文件格式的配置文件是让开发者的项目（APP）能有真机调试，发布的权限。
+
+各种证书的有效期:
+个人帐号开发证书发布证书有效期都是1年，描述文件也全是1年有效期。
+
+各种证书过期后的后果:
+
+
+
+
+============================mac下查看.mobileprovision文件及钥匙串中证书.cer文件
+钥匙串（Keychain）实质上就是一个用于存放证书、密钥、密码等安全认证实体的仓库，在计算机中保存为一个.keychain的文件
+
+1.mobileprovision文件查看:
+.mobileprovision是ios开发中的设备描述文件，里面有证书信息、调试设备的UUID信息、bundle identifier等
+因为配置文件可能很多，所以需要找到自己要的那个配置，这里通过比对TeamName来匹配配置文件
+
+// cd的目录为xcode配置的profile配置文件目录
+cd /Users/ndl/Library/MobileDevice/Provisioning Profiles
+for file in $(ls *)
+do
+    if [[ $(/usr/libexec/PlistBuddy -c "Print TeamName" /dev/stdin <<< $(/usr/bin/security cms -D -i ${file})) == "${TeamName}" ]]
+    then
+        profile=${file}
+    #else
+    fi
+done
+ExpirationDate=`/usr/libexec/PlistBuddy -c "Print ExpirationDate" /dev/stdin <<< $(/usr/bin/security cms -D -i xxxx.mobileprovision)`
+/usr/libexec/PlistBuddy -c "Print Entitlements:com.apple.developer.team-identifier" /dev/stdin <<< $(/usr/bin/security cms -D -i ${file})
+
+使用mac自带security命令行:
+cms: Encode or decode CMS messages.
+find-identity: Find an identity (certificate + private key) 查找证书
+-a  指定键值对属性
+[-c name]
+
+security cms -D -i XXX.mobileprovision
+
+security list-keychains
+
+查找证书的过期时间:
+2.钥匙串中证书.cer文件查看
+需要右键将其导出成.p12文件，之后将.p12文件转成.pem文件
+openssl pkcs12 -in xxx.p12 -out xxx.pem -nodes
+
+查看钥匙链下的证书:
+security find-identity
+security find-identity -p codesigning /Users/ndl/Library/Keychains/login.keychain// 不包含推送证书
+
+// ##推荐##
+直接查找证书导并出为pem文件:
+security find-certificate -a -c "iPhone xxxx" -p > cert.pem
+查看pem证书的具体信息:
+openssl x509 -in cert.pem -noout -text
+查看证书的过期时间:
+openssl x509 -in cert.pem -noout -dates
+
+比较当前时间和证书时间来判断是否过期:
+主要用了date命令，将证书的时间转换成秒，然后当前时间转换成秒后进行减法，可以计算出还有多少天过期
+
+查看当天日期:
+date
+date +%s
+
+=========================openssl
+openssl pkcs12 -clcerts -nokeys -in temp.p12 -out cert.pem -passin pass:1
+
+1.-in后面为要转换的.p12文件
+2.-out后面为要输出的pem的文件名字，以.pem结尾
+3.-nokeys表示不对pem文件设置密码
+4.-passin pass:xxx：输入.p12文件的密码

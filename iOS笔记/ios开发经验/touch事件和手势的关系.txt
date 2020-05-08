@@ -1,0 +1,105 @@
+手势和touch事件的先后关系：
+层级结构
+gray 
+	red
+	green  （red green都在gray区域内）
+yellow
+
+点击RedView
+yellow view is inside: 0 
+yellow view hit: (null) 
+lightGray view is inside: 1 
+green view is inside: 0 
+green view hit: (null) 
+red view is inside: 1 
+red view hit: <RedView: 0x7fb33a509680; frame = (0 0; 196 100); autoresize = RM+BM; layer = <CALayer: 0x600000033420>> lightGray view hit: <RedView: 0x7fb33a509680; frame = (0 0; 196 100); autoresize = RM+BM; layer = <CALayer: 0x600000033420>> 
+red view touchBegan 
+lightGray view touchBegan 
+rootView touchBegan 
+Tap action 
+red view touchCancelled 
+lightGray view touchCancelled 
+rootView view touchCancelled
+手势方法在所有响应视图的touchBegan方法执行后调用，并且手势方法执行后，所有响应视图的touch事件全部取消
+
+================================
+@implementation JKRTapGestureRecognizer 
+- (instancetype)initWithTarget:(id)target action:(SEL)action { self = [super initWithTarget:target action:action]; self.delegate = self; return self; } 
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer { NSLog(@"RecognizerShouldBegin"); return YES; } 
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { NSLog(@"tapgesture touchBegan"); [super touchesBegan:touches withEvent:event]; } 
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { NSLog(@"tapgesture touchCancelled"); [super touchesCancelled:touches withEvent:event]; } 
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { NSLog(@"tapgesture touchMoved"); [super touchesMoved:touches withEvent:event]; } 
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { NSLog(@"tapgesture touchEnded"); [super touchesEnded:touches withEvent:event]; } @end
+
+LightGrayView添加手势的类型为自定义手势，点击RedView
+red view hit: <RedView: 0x7f9ce840aab0; frame = (0 0; 196 100); autoresize = RM+BM; layer = <CALayer: 0x60800002d480>> 2017-03-21 16:01:33.589 JKRUIResponderDemo[35855:3086959] 
+lightGray view hit: <RedView: 0x7f9ce840aab0; frame = (0 0; 196 100); autoresize = RM+BM; layer = <CALayer: 0x60800002d480>> 
+tapgesture touchBegan 
+red view touchBegan 
+lightGray view touchBegan 
+rootView touchBegan 
+tapgesture touchEnded 
+RecognizerShouldBegin 
+Tap action 
+red view touchCancelled 
+lightGray view touchCancelled 
+rootView view touchCancelled
+手势的touch事件是优先于视图的touch事件触发
+tap手势是在tap手势的touchEnded方法之后才触发手势的识别和响应方法的处理，在手势处理后，视图的touch事件就会取消
+
+结论：
+默认情况下，当一个touch事件发生后，如果touch事件响应者中有视图添加了手势，那么就优先处理添该视图的手势对象中的touch相关方法来处理，视图的touch事件在手势的touch事件之后处理。如果手势事件识别出来，那么手势事件之后的视图的touch事件就会取消
+
+
+将LightGrayView的pointInside方法返回值设置为NO，点击RedView观察输出可以发现，当视图无法成为touch事件的响应者的时候，它的手势也是无法识别的
+视图的手势的能够响应的前提是该视图能够成为touch事件的响应者
+
+
+
+
+delaysTouchesBegan参数的作用
+该属性默认设置为NO，视图的touchesBegan方法会在手势的touchBegan事件之后执行；
+视图touchesMoved方法会在手势的touchesMoved方法后执行，
+视图的touchesEnded方法会在手势的touchesEnded方法后执行。
+在哪个touch方法中手势识别到并成功处理，并且cancelsTouchesInView为默认值YES，
+那么视图会调用touchesCancelled方法取消touch事件。
+该属性如果设置为YES，那么视图的触摸事件一定是在手势的touchEnded方法之后才确认是否去执行，如果手势没有识别到，就执行视图的touch方法。如果手势识别到并成功处理并且cancelsTouchesInView属性为YES，那么视图的touch方法都不会被执行
+
+
+cancelsTouchesInView的作用
+该属性默认设置为YES，视图的手势在识别并处理后，会取消视图的touch事件。
+该属性如果设置为NO，那么视图的手势在识别并处理后，不会取消视图的touch事件，视图的touch事件继续执行
+
+
+
+处理tap手势和touchesBegan之间的冲突:
+1.手势虽然touch方法的处理优先级高于视图，但是手势还是不能够拦截视图的touchesBegan方法的
+设置delaysTouchesBegan为YES，让视图的touchesBegan方法等待到手势事件处理完毕执行touchesEnded方法后才能调用：
+panGesture.delaysTouchesBegan = YES;
+
+pan手势和touchesMoved手势之间的冲突:
+观察输出发现当pan手势开始第一次调用滑动方法的时候，视图的touch事件被取消了
+
+设置pan.cancelsTouchesInView = NO;
+这个属性的做用就是决定是否当手势关联的方法调用的时候，调用视图的touchesCancelled:withEvent:方法取消视图的touch事件，默认值为YES
+
+
+=====================================================
+创建两个tap手势给RedView添加上，一个做单击处理，一个做双击处理：
+    UITapGestureRecognizer *singleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(singleAction)];
+    [self.RedView addGestureRecognizer:singleTap];
+
+    UITapGestureRecognizer *doubleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(doubleAction)];
+    doubleTap.numberOfTapsRequired = 2;
+    [self.RedView addGestureRecognizer:doubleTap];
+//处理方法
+- (void)singleAction {
+    NSLog(@"single action");
+}
+
+- (void)doubleAction {
+    NSLog(@"double action");
+}
+要让两个手势区分开来用如下方法：
+[singleTap requireGestureRecognizerToFail:doubleTap];
+即让双击手势不成功识别的情况下才回调用单击手势

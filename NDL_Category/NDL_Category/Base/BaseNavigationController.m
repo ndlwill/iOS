@@ -33,13 +33,14 @@
     // 当导航栏用在BaseNavigationController中, appearance设置才会生效
     //    UINavigationBar *bar = [UINavigationBar appearanceWhenContainedIn:[self class], nil];
     
+    // 设置的navigationItem.title
     UINavigationBar *bar = [UINavigationBar appearance];
     // 使得self.navigationBar.translucent = NO
 //    [bar setBackgroundImage:[UIImage ndl_imageWithColor:[UIColor ndl_randomColor] size:CGSizeMake(1.0, 1.0)] forBarMetrics:UIBarMetricsDefault];
     
     [bar setTitleTextAttributes:@{NSFontAttributeName : [UIFont boldSystemFontOfSize:20]}];
     
-    // 设置item
+    // 设置UIBarButtonItem 的 item
     UIBarButtonItem *item = [UIBarButtonItem appearance];
     // UIControlStateNormal
     NSMutableDictionary *itemAttrs = [NSMutableDictionary dictionary];
@@ -110,6 +111,39 @@
     
     // 如果边缘右滑移除控制器的功能失效，清空代理(让导航控制器重新设置这个功能)
 //    self.interactivePopGestureRecognizer.delegate = nil;// 设置了viewController.navigationItem.leftBarButtonItem需要设置这个
+    
+    /**
+     po self.interactivePopGestureRecognizer
+     =>
+     _UIParallaxTransitionPanGestureRecognizer isKindOf UIScreenEdgePanGestureRecognizer
+     
+     po self.interactivePopGestureRecognizer?.delegate
+     =>_UINavigationInteractiveTransition
+     
+     (action=handleNavigationTransition:, target=<_UINavigationInteractiveTransition>)
+     */
+    
+    /*
+     统一设置返回按钮后,启用全屏滑动返回
+     1,遵守协议 UIGestureRecognizerDelegate
+     2,创建pan手势
+     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self.interactivePopGestureRecognizer.delegate action:@selector(handleNavigationTransition:)];
+     //添加手势
+     [self.view addGestureRecognizer:pan];
+     
+     3,设置代理
+     pan.delegate = self;
+     
+     4,禁用屏幕边缘返回手势
+     self.interactivePopGestureRecognizer.enabled = NO;
+     
+     5,实现代理方法
+     -(BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch{
+     
+     //防止根控制器启用滑动返回
+     return self.childViewControllers.count > 1;
+     }
+     */
 }
 
 #pragma mark - Private Methods

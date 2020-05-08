@@ -134,6 +134,8 @@ class ViewController: UIViewController {
     let countableRange: CountableRange = 0..<1 // Countable 半开区间
     let countableClosedRange: CountableClosedRange = 0...1 // Countable 闭区间
     
+    var test111VC: Test111ViewController?
+    
     let disposeBag = DisposeBag()
     
     enum MyError: Error {
@@ -405,6 +407,14 @@ class ViewController: UIViewController {
         return fib(N - 1) + fib(N - 2)
     }
     
+    // MARK: ==Test Nav==
+    @IBAction func testNav(_ sender: Any) {
+//        let vc = BaseNavigationController(rootViewController: TestNav1ViewController())
+//        vc.modalPresentationStyle = .fullScreen
+//        self.present(vc, animated: true, completion: nil)
+        
+        self.present(TestDismiss1ViewController(), animated: true, completion: nil)
+    }
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -10166,6 +10176,10 @@ RxSwift最典型的特色就是解决Swift这门静态语言的响应能力，�
         }
     }
     
+    @IBAction func test111DidClicked(_ sender: Any) {
+        self.test111VC = Test111ViewController()
+        self.test111VC?.count = 100
+    }
     
 }
 
