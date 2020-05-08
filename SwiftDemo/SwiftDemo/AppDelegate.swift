@@ -479,6 +479,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         print(intPtr, intPtr.pointee, rawPtr)
         intPtr.deallocate()
         
+        print("\(Int.max)")
+        
         // ======
         let intPointer = UnsafeMutablePointer<Int>.allocate(capacity: 4)
         for i in 0..<4 {

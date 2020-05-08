@@ -14,6 +14,14 @@ import RxDataSources
 import Moya
 import Alamofire
 
+// MARK: Void
+/*
+ 它只不过是一个空元组
+ typealias Void = ()
+ 
+ 非正式类型不能被扩展。Void 是一个空元组，而由于元组是非正式类型，所以你不能给 Void 添加方法、属性或者遵从协议
+ */
+
 // MARK: statusBar
 // 默认情况下，顶部状态栏（statusBar）为 default 样式（文字为黑色），我们可以将其改为 light 样式（文字为白色）
 
