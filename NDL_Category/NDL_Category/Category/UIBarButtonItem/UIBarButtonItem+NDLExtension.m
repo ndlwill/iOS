@@ -21,6 +21,7 @@
     }
     CGSize imageSize = button.currentBackgroundImage.size;
     button.bounds = CGRectMake(0, 0, imageSize.width, imageSize.height);
+    
     [button addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
     return [[self alloc] initWithCustomView:button];
 }

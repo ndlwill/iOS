@@ -321,6 +321,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         
+        print("\(Int.max)")
+        
 //        var arr1 : [Int] = [1, 2, 3] // ==1== ==2== ==3==
         var arr1 : [Int]? = [1, 2, 3]// ==[1, 2, 3]==
         arr1.map {
