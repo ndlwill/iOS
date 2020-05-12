@@ -25,6 +25,8 @@
 #import "Book.h"
 #import "TestModelController.h"
 
+const CGFloat kTestFloat = 108.8;
+
 @interface SecondViewController () <CAAnimationDelegate>
 
 @property (nonatomic, strong) UISearchBar *searchBar;

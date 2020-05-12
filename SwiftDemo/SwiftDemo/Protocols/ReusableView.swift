@@ -6,12 +6,12 @@
 //  Copyright © 2020 AiJiaSu Inc. All rights reserved.
 //
 
-protocol ReusableView: class {
-    static var defaultReusableID: String { get }
-}
-
-extension ReusableView where Self: UIView {
-    static var defaultReusableID: String {
-        return NSStringFromClass(self)
-    }
-}
+//protocol ReusableView: class {
+//    static var defaultReusableID: String { get }
+//}
+//
+//extension ReusableView where Self: UIView {
+//    static var defaultReusableID: String {
+//        return NSStringFromClass(self)
+//    }
+//}
