@@ -348,6 +348,229 @@ import Accelerate
  */
  */
 
+// MARK:static、const、extern
+/**
+ static关键字：
+ 修饰局部变量时：
+ 1、使得局部变量只初始化一次
+ 2、局部变量在程序中只有一份内存
+ 3、局部变量作用域不变，但是生命周期改变了（程序结束才能销毁）
+ 修饰全局变量：
+ 1、全局变量的作用域仅限当前文件，外部类是不可以访问到该全局变量的。
+ 
+ 被const修饰的变量是只读的：
+ 基本数据类型：
+ int const a = 10; 和const int b = 20; 效果是一样的 只读常量
+ 指针类型：
+ NSString *p;
+ *p是地址中的值，p是指针地址。
+ NSString const *p 表示地址中的值没法改变，但是指针的指向可以改变；
+ 而 NSString *const p 表示指针的指向不能改变，但是地址里的内容是可以改变的
+ 
+ extern 外部常量的最佳方法：
+ extern const 关键字，表示这个变量已经声明，只是引用，且不可修改
+ .m文件中定义的常量，用const修饰代表常量。其中const CGFloat a = 10.f; 和 CGFloat const a = 10.f;两种写法是一样的，都代表a值为常量，不可修改。但是外部可通过extern CGFloat a;引用该变量
+ 全局变量若只想被该文件所持有，不希望被外界引用，则用static修饰，也就是static const CGFloat a = 10.f;和 static CGFloat const a = 10.f；
+ */
+
+// MARK: 大佬优化blog
+/**
+ https://juejin.im/user/5b9b0ef16fb9a05d353c6418/posts
+ 冷启动优化
+ https://juejin.im/post/5e4bbbe15188254945385eb5
+ 
+ 
+ 
+ 
+ MLeaksFinder 是 WeRead 团队开源的iOS内存泄漏检测工具
+ https://github.com/Tencent/MLeaksFinder
+ */
+
+// MARK: ==Charles==
+/**
+ 设置网络，进行抓包:
+ 将移动设备和电脑设备设置为同一个网络，即连接同一个Wi-Fi。
+ 利用电脑查询IP地址
+ 设置移动设备的网络代理模式 进入连接的无线网的高级模式
+ 进入HTTP代理模式，然后选择手动，并在服务器中填写自己查到的IP地址，然后在端口中填写8888，最后存储设置。
+
+ */
+
+// MARK: ==离屏渲染 （Offscreen rendering）==
+/**
+ iOS 9.0 之前UIimageView跟UIButton设置圆角都会触发离屏渲染。
+ iOS 9.0 之后UIButton设置圆角会触发离屏渲染，而UIImageView里png图片设置圆角不会触发离屏渲染了，如果设置其他阴影效果之类的还是会触发离屏渲染的
+ 1.通过设置layer的属性
+ maskToBounds会触发离屏渲染，GPU在当前屏幕缓冲区外新开辟了一个渲染缓冲区进行工作，也就是离屏渲染，这会给我们带来额外的性能损耗，如果这样的圆角操作达到一定数量，会触发缓冲区的频繁合并和上下文的频繁切换，性能的代价会宏观的表现在用户体验上<掉帧>
+ 
+ 对于文本视图实现圆角（UILabel, UIView, UITextField, UITextView）
+ 均只进行cornerRadius设置，不进行masksToBounds的设置
+ 对于UILabel, UIView, UITextField来说，实现了圆角的设置，并没有产生离屏渲染；
+ 而对于UITextView，产生了离屏渲染
+ 
+ 2.使用贝塞尔曲线UIBezierPath和Core Graphics框架画出一个圆角
+ UIImageView *imageView = [[UIImageView alloc]initWithFrame:CGRectMake(100, 100, 100, 100)];
+  imageView.image = [UIImage imageNamed:@"TestImage.jpg"];
+  // 开始对imageView进行画图
+  UIGraphicsBeginImageContextWithOptions(imageView.bounds.size, NO, 0.0);
+  // 使用贝塞尔曲线画出一个圆形图
+  [[UIBezierPath bezierPathWithRoundedRect:imageView.bounds cornerRadius:imageView.frame.size.width] addClip];
+  [imageView drawRect:imageView.bounds];
+  imageView.image = UIGraphicsGetImageFromCurrentImageContext();
+  // 结束画图
+  UIGraphicsEndImageContext();
+  [self.view addSubview:imageView];
+ 
+ UIGraphicsBeginImageContextWithOption(CGSize size, BOOL opaque, CGFloat scale)各参数的含义：
+ size ---新创建的文图上下文大小
+ opaque --- 透明开关，如果图形完全不用透明，设置为YES以优化位图的存储。
+ scale --- 缩放因子。虽然这里可以用[UIScreen mainScreen].scale来获取，但实际上设为0后，系统会自动设置正确的比例
+
+  3.使用Core Graphics框架画出一个圆角
+ UIImageView *imageView = [[UIImageView alloc]initWithFrame:CGRectMake(100, 200, 100, 100)];
+ imageView.image = [UIImage imageNamed:@"TestImage.jpg"];
+
+ // 开始对imageView进行画图
+ UIGraphicsBeginImageContextWithOptions(imageView.bounds.size, NO, 0.0);
+
+ // 获取图形上下文
+ CGContextRef ctx = UIGraphicsGetCurrentContext();
+
+ // 设置一个范围
+ CGRect rect = CGRectMake(0, 0, imageView.frame.size.width, imageView.frame.size.height);
+
+ // 根据一个rect创建一个椭圆
+ CGContextAddEllipseInRect(ctx, rect);
+
+ // 裁剪
+ CGContextClip(ctx);
+
+ // 讲原照片画到图形上下文
+ [imageView.image drawInRect:rect];
+
+ // 从上下文上获取裁剪后的照片
+ UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+
+ // 关闭上下文
+ UIGraphicsEndImageContext();
+ imageView.image = image;
+ [self.view addSubview:imageView];
+
+  4.使用CAShapeLayer和UIBezierPath设置圆角
+ UIImageView *imageView = [[UIImageView alloc]initWithFrame:CGRectMake(100, 200, 100, 100)];
+ imageView.image = [UIImage imageNamed:@"TestImage.jpg"];
+ UIBezierPath *maskPath = [UIBezierPath bezierPathWithRoundedRect:imageView.bounds byRoundingCorners:UIRectCornerAllCorners
+ cornerRadii:imageView.bounds.size];
+ CAShapeLayer *maskLayer = [[CAShapeLayer alloc]init];
+ // 设置大小
+ maskLayer.frame = imageView.bounds;
+ // 设置图形样子
+ maskLayer.path = maskPath.CGPath;
+ imageView.layer.mask = maskLayer;
+ [self.view addSubview:imageView];
+ 第四种方法并不可取，存在离屏渲染.掉帧更加严重。基本上不能使用
+ 
+ 5.混合图层
+ 在需要裁剪的视图上面添加一层视图，以达到圆角的效果
+ - (void)drawRoundedCornerImage {
+     UIImageView *iconImgV = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, 200, 200)];
+     iconImgV.image = [UIImage imageNamed:@"icon"];
+     [self.view addSubview:iconImgV];
+     
+     [iconImgV mas_makeConstraints:^(MASConstraintMaker *make) {
+         make.size.mas_equalTo(iconImgV.size);
+         make.top.equalTo(self.view.mas_top).offset(500);
+         make.centerX.equalTo(self.view);
+     }];
+     
+     UIImageView *imgView = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, 200, 200)];
+     [self.view addSubview:imgView];
+     
+     [imgView mas_makeConstraints:^(MASConstraintMaker *make) {
+         make.size.mas_equalTo(imgView.size);
+         make.top.equalTo(iconImgV.mas_top);
+         make.leading.equalTo(iconImgV.mas_leading);
+     }];
+     
+     // 圆形
+     imgView.image = [self drawCircleRadius:100 outerSize:CGSizeMake(200, 200) fillColor:[UIColor whiteColor]];
+ }
+
+ // 绘制圆形
+ - (UIImage *)drawCircleRadius:(float)radius outerSize:(CGSize)outerSize fillColor:(UIColor *)fillColor {
+     UIGraphicsBeginImageContextWithOptions(outerSize, false, [UIScreen mainScreen].scale);
+     
+     // 1、获取当前上下文
+     CGContextRef contextRef = UIGraphicsGetCurrentContext();
+     
+     //2.描述路径
+     // ArcCenter:中心点 radius:半径 startAngle起始角度 endAngle结束角度 clockwise：是否逆时针
+     UIBezierPath *bezierPath = [UIBezierPath bezierPathWithArcCenter:CGPointMake(outerSize.width * 0.5, outerSize.height * 0.5) radius:radius startAngle:0 endAngle:M_PI * 2 clockwise:NO];
+     [bezierPath closePath];
+     
+     // 3.外边
+     [bezierPath moveToPoint:CGPointMake(0, 0)];
+     [bezierPath addLineToPoint:CGPointMake(outerSize.width, 0)];
+     [bezierPath addLineToPoint:CGPointMake(outerSize.width, outerSize.height)];
+     [bezierPath addLineToPoint:CGPointMake(0, outerSize.height)];
+     [bezierPath addLineToPoint:CGPointMake(0, 0)];
+     [bezierPath closePath];
+     
+     //4.设置颜色
+     [fillColor setFill];
+     [bezierPath fill];
+     
+     CGContextDrawPath(contextRef, kCGPathStroke);
+     UIImage *antiRoundedCornerImage = UIGraphicsGetImageFromCurrentImageContext();
+     UIGraphicsEndImageContext();
+     
+     return antiRoundedCornerImage;
+ }
+
+
+ 
+ 在Application这一层中主要是CPU在操作，而到了Render Server这一层，CoreAnimation会将具体操作转换成发送给GPU的draw calls（以前是call OpenGL ES，现在慢慢转到了Metal），显然CPU和GPU双方同处于一个流水线中，协作完成整个渲染工作。
+
+ 离屏渲染的定义:
+ 如果要在显示屏上显示内容，我们至少需要一块与屏幕像素数据量一样大的frame buffer，作为像素数据存储区域，而这也是GPU存储渲染结果的地方。如果有时因为面临一些限制，无法把渲染结果直接写入frame buffer，而是先暂存在另外的内存区域，之后再写入frame buffer，那么这个过程被称之为离屏渲染。
+ 
+ CPU”离屏渲染“
+ 如果我们在UIView中实现了drawRect方法，就算它的函数体内部实际没有代码，系统也会为这个view申请一块内存区域，等待CoreGraphics可能的绘画操作。
+ 对于类似这种“新开一块CGContext来画图“的操作，有很多文章和视频也称之为“离屏渲染”（因为像素数据是暂时存入了CGContext，而不是直接到了frame buffer）
+ 其实所有CPU进行的光栅化操作（如文字渲染、图片解码），都无法直接绘制到由GPU掌管的frame buffer，只能暂时先放在另一块内存之中，说起来都属于“离屏渲染”。
+ CPU渲染并非真正意义上的离屏渲染
+ 
+ 另一个证据是，如果你的view实现了drawRect，此时打开Xcode调试的“Color offscreen rendered yellow”开关，你会发现这片区域不会被标记为黄色，说明Xcode并不认为这属于离屏渲染
+ 
+ 其实通过CPU渲染就是俗称的“软件渲染”，而真正的离屏渲染发生在GPU
+ 
+ 主要的渲染操作都是由CoreAnimation的Render Server模块，通过调用显卡驱动所提供的OpenGL/Metal接口来执行的。
+ 通常对于每一层layer，Render Server会遵循“画家算法”，按次序输出到frame buffer，后一层覆盖前一层，就能得到最终的显示结果
+ 在iOS中，设备主存和GPU的显存共享物理内存，这样可以省去一些数据传输开销
+ 
+ 作为“画家”的GPU虽然可以一层一层往画布上进行输出，但是无法在某一层渲染完成之后，再回过头来擦除/改变其中的某个部分——因为在这一层之前的若干层layer像素数据，已经在渲染中被永久覆盖了。这就意味着，对于每一层layer，要么能找到一种通过单次遍历就能完成渲染的算法，要么就不得不另开一块内存，借助这个临时中转区域来完成一些更复杂的、多次的修改/剪裁操作。
+ 
+ 如果要绘制一个带有圆角并剪切圆角以外内容的容器，就会触发离屏渲染
+ 
+ https://zhuanlan.zhihu.com/p/72653360
+ */
+
+
+// MARK: swift 常用第三方库
+/**
+ https://www.jianshu.com/p/f4282df18537
+ 
+ */
+
+// MARK: Swift 常用UI
+/**
+ // UI库
+ https://github.com/Ramotion/swift-ui-animation-components-and-libraries
+ 
+ // tab-bar
+ https://github.com/Ramotion/animated-tab-bar
+ */
+
 class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?

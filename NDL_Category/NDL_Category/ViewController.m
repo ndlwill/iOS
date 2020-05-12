@@ -694,6 +694,28 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
     
     // count
     NSLog(@"count = %lu",(unsigned long)mutSet.count);
+    // MARK: ==NS_OPTIONS==
+    NSInteger shareTypes1 = HIShareTypeMaskUndefined;
+    // “|”按位或运算符，因为这样的运算任意一种组合的值都是唯一的，shareTypes1是只包含HIShareTypeMaskTwitter的运算结果， shareTypes2是HIShareTypeMaskTwitter和HIShareTypeMaskFacebook的组合
+    shareTypes1 = shareTypes1 | HIShareTypeMaskTwitter;
+    NSInteger shareTypes2 = shareTypes1 | HIShareTypeMaskFacebook;
+    NSInteger shareTypes3 = shareTypes2 | HIShareTypeMaskGoogle;
+    NSLog(@"%ld",(long)shareTypes1);// 1
+    NSLog(@"%ld",(long)shareTypes2);// 3
+    NSLog(@"%ld",(long)shareTypes3);// 7
+    // 若要判断某个组合中是否包含一个或多个枚举值，那就需要用到“&”按位与运算符
+    if (shareTypes3 & HIShareTypeMaskTwitter) {
+        NSLog(@"111");// 111
+    }
+
+    if (shareTypes3 & shareTypes2) {
+        NSLog(@"222");// 222
+    }
+
+    if (shareTypes3 & HIShareTypeMaskWeChat) {
+        NSLog(@"333");// 不打印
+    }
+
     
     
 #pragma mark - crash

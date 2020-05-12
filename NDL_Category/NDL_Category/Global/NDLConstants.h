@@ -94,6 +94,13 @@ CGFloatGetCenter(CGFloat parent, CGFloat child) {
     return flat((parent - child) / 2.0);
 }
 
+typedef NS_OPTIONS(NSUInteger, HIShareTypeMask) {
+    HIShareTypeMaskUndefined = 0x0,
+    HIShareTypeMaskTwitter = 0x1,
+    HIShareTypeMaskFacebook = 0x1 << 1,
+    HIShareTypeMaskGoogle = 0x01 << 2,
+    HIShareTypeMaskWeChat = 0x01 << 3
+};
 
 // 气泡框箭头方向
 typedef NS_ENUM(NSInteger, BubbleFrameArrowDirection) {
