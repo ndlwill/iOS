@@ -10,6 +10,112 @@
 // xcrun -sdk iphoneos clang -arch arm64 -rewrite-objc main.m -o main-arm64.cpp
 // 把cpp文件直接拽入Xcode，为了不显示报错信息，我们不让它参与编译
 
+// MARK: Hash 在 iOS 中的应用
+/**
+ iOS系统API给我们提供一个自动过滤重复元素的容器 NSMutableSet/NSSet
+ 当我们向该实例对象中添加字符串时，如果重复添加两个相同的字符串，集合中只会保留一个。
+ 但是对于自定义一个类如Person，如果想利用NSMutableSet/NSSet来过滤重复元素（如多个Person实例的uid相同），我们必须要同时实现- (BOOL)isEqual:和- (NSUInteger)hash这两个方法。
+ 两个相等的实例，他们的hash值一定相等。但是hash值相等的两个实例，不一定相等
+ 
+ OC 中 == 运算符判断的是指针是否相等, 而 isEqual 方法内部除了判断指针是否相等，还要判断对象的属性是否相等
+ 
+ 但对于自定义类型来说, 做判等时通常需要重写isEqual方法。
+ @interface Person : NSObject
+ @property (nonatomic, copy) NSString *name;
+ @property (nonatomic, strong) NSDate *birthday;
+ @end
+ - (BOOL)isEqual:(id)object {
+     if (self == object) {
+         return YES;
+     }
+
+     if (![object isKindOfClass:[Person class]]) {
+         return NO;
+     }
+
+     return [self isEqualToPerson:object];
+ }
+
+ - (BOOL)isEqualToPerson:(Person *)person {
+     if (!person) {
+         return NO;
+     }
+
+     BOOL haveEqualNames = (!self.name && !person.name) || [self.name isEqualToString:person.name];
+     BOOL haveEqualBirthdays = (!self.birthday && !person.birthday) || [self.birthday isEqualToDate:person.birthday];
+
+     return haveEqualNames && haveEqualBirthdays;
+ }
+
+ - (NSUInteger)hash
+ 如果在 Person 类中重写- (NSUInteger)hash方法，该方法只在 Person 实例对象被添加至NSSet或将Person实例对象设置为NSDictionary的key 时会调用
+ 
+ hash方法和判等的关系？
+ 为了优化判等的效率, 基于 hash 的 NSSet 和 NSDictionary 在判断成员是否相等时, 通常会这样做:
+
+ 首先判断 hash 值是否和目标 hash 值相等。如果相同再进行对象之后的判等逻辑, 作为判等的结果； 如果不等, 直接判断为不相等。
+ 
+ Person 类正确的 Hash 实现方法应该是借助位运算:
+ - (NSUInteger)hash {
+     return [self.name hash] ^ [self.birthday hash];
+ }
+ 
+ 
+ 实现- (BOOL)isEqual: 和 - (NSUInteger)hash方法，实现过滤自定义实例的功能:
+ @interface Person : NSObject
+
+ @property (nonatomic, assign) NSInteger uid;
+ @property (nonatomic, strong) NSString *name;
+
+ - (instancetype)initWithID:(NSInteger)uid name:(NSString *)name;
+
+ @end
+ 
+ #import "Person.h"
+
+ @implementation Person
+
+ - (instancetype)initWithID:(NSInteger)uid name:(NSString *)name{
+     if (self = [super init]) {
+         self.uid = uid;
+         self.name = name;
+     }
+     return self;
+ }
+
+ - (BOOL)isEqual:(Person *)object{
+     BOOL result;
+     if (self == object) {
+         result = YES;
+     }else{
+         if (object.uid == self.uid) {
+             result = YES;
+         }else{
+             result = NO;
+         }
+     }
+     NSLog(@"%@ compare with %@ result = %@",self,object,result ? @"Equal":@"NO Equal");
+     return result;
+ }
+
+ - (NSUInteger)hash{
+     NSUInteger hashValue = self.uid;
+     //在这里只需要比较uid就行。这样的话就满足如果两个实例相等，那么他们的 hash 一定相等，但反过来hash值相等，那么两个实例不一定相等。但是在 Person 这个实例中，hash值相等那么实例一定相等。（不考虑继承之类的）
+     NSLog(@"hash = %lu,addressValue = %lu,address = %p",(NSUInteger)hashValue,(NSUInteger)self,self);
+     // 如果返回的 值 与  之前返回的值不一样  则不会继续判断 isEqual 方法
+     return hashValue;
+ }
+
+
+ - (NSString *)description{
+     return [NSString stringWithFormat:@"%p(%ld,%@)",self,self.uid,self.name];
+ }
+
+
+ @end
+ 
+ */
+
 // MARK: 图形图像渲染原理
 /**
  可视化应用程序都是由 CPU 和 GPU 协作执行的

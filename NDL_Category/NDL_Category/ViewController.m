@@ -5,7 +5,7 @@
 //  Created by ndl on 2017/9/14.
 //  Copyright © 2017年 ndl. All rights reserved.
 //
-
+#import "TestEqualPerson.h"
 #import "ViewController.h"
 #import "Person.h"
 #import "ChildObject.h"
@@ -667,6 +667,33 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
 
     bool cBool = false;
     cBool = testBool;
+    
+    // MARK: ===dispatch==
+//    dispatch_sync(<#dispatch_queue_t  _Nonnull queue#>, <#^(void)block#>)
+//    dispatch_async(<#dispatch_queue_t  _Nonnull queue#>, <#^(void)block#>)
+    
+    // TestEqualPerson
+    NSMutableSet *mutSet = [NSMutableSet set];
+    
+    Person *person1 = [[TestEqualPerson alloc] initWithID:1 name:@"nihao"];
+    NSLog(@"begin add %@",person1);
+    [mutSet addObject:person1];
+    person1.name = @"nihaoma";
+    [mutSet addObject:person1];
+    
+    Person *person2 = [[TestEqualPerson alloc] initWithID:1 name:@"wohao"];
+    NSLog(@"begin add %@",person2);
+    [mutSet addObject:person2];
+    
+    // count 上述的两次操作  只会保留第一次操作结果
+    NSLog(@"count = %lu",(unsigned long)mutSet.count);
+    
+    Person *person3 = [[TestEqualPerson alloc] initWithID:2 name:@"tahao"];
+    NSLog(@"begin add %@",person3);
+    [mutSet addObject:person3];
+    
+    // count
+    NSLog(@"count = %lu",(unsigned long)mutSet.count);
     
     
 #pragma mark - crash
