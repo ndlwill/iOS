@@ -6,8 +6,8 @@
 //  Copyright © 2020 AiJiaSu Inc. All rights reserved.
 //
 
-//import UIKit
-//
+import UIKit
+
 //typealias ClickHandler = (() -> Void)
 //
 //class CountDownButton: UIButton {

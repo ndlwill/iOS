@@ -325,6 +325,7 @@ enum Season{
 }
 
 import UIKit
+import Accelerate
 
 @UIApplicationMain
 // markdown
@@ -757,6 +758,50 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         print(intPointer.pointee)
         intPointer.deallocate()
         
+        // MARK: 指向数组的指针
+        /**
+         在 Swift 中将一个数组作为参数传递到 C API 时，Swift 已经帮助我们完成了转换
+         
+         public func vDSP_vadd(_ __A: UnsafePointer<Float>, _ __IA: vDSP_Stride, _ __B: UnsafePointer<Float>, _ __IB: vDSP_Stride, _ __C: UnsafeMutablePointer<Float>, _ __IC: vDSP_Stride, _ __N: vDSP_Length)
+         
+         对于一般的接受 const 数组的 C API，其要求的类型为 UnsafePointer，
+         而非 const 的数组则对应 UnsafeMutablePointer。
+         使用时，对于 const 的参数，我们直接将 Swift 数组传入 (上例中的 a 和 b)；而对于可变的数组，在前面加上 & 后传入即可
+         
+         对于传参，Swift 进行了简化，使用起来非常方便。
+         但是如果我们想要使用指针来像之前用 pointee 的方式直接操作数组的话，就需要借助一个特殊的类型：UnsafeMutableBufferPointer
+         Buffer Pointer 是一段连续的内存的指针，通常用来表达像是数组或者字典这样的集合类型
+         */
+        let a: [Float] = [1, 2, 3, 4]
+        let b: [Float] = [0.5, 0.25, 0.125, 0.0625]
+        var result: [Float] = [0, 0, 0, 0]
+        vDSP_vadd(a, 1, b, 1, &result, 1, 4)// // result now contains [1.5, 2.25, 3.125, 4.0625]
+
+        var array = [1, 2, 3, 4, 5]
+        var arrayPtr = UnsafeMutableBufferPointer<Int>(start: &array, count: array.count)// baseAddress 是第一个元素的指针，类型为 UnsafeMutablePointer<Int>
+        if let basePtr: UnsafeMutablePointer<Int> = arrayPtr.baseAddress {
+            print(basePtr.pointee)  // 1
+            basePtr.pointee = 10
+            print(basePtr.pointee) // 10, array数组的第一个元素也为10了
+            
+            //下一个元素
+            let nextPtr = basePtr.successor()
+            print(nextPtr.pointee) // 2
+        }
+        
+        // MARK: 指针操作和转换
+        /**
+         在 Swift 中不能像 C 里那样使用 & 符号直接获取地址来进行操作
+         如果我们想对某个变量进行指针操作，我们可以借助 withUnsafePointer 或 withUnsafeMutablePointer 这两个辅助方法
+         这两个方法接受两个参数，第一个是 inout 的任意类型，第二个是一个闭包
+         Swift 会将第一个输入转换为指针，然后将这个转换后的 Unsafe 的指针作为参数，去调用闭包。withUnsafePointer 或 withUnsafeMutablePointer 的差别是前者转化后的指针不可变，后者转化后的指针可变
+         */
+        var test = 10
+        test = withUnsafeMutablePointer(to: &test, { (ptr: UnsafeMutablePointer<Int>) -> Int in
+            ptr.pointee += 1
+            return ptr.pointee
+        })
+        print("test = \(test)")// 11
         
         
         
@@ -822,6 +867,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
          let result = myCFunc( swiftCallback )// 3.3
          */
         
+        
         // MARK: String
         /**
          NSString对象使用UTF-16编码
@@ -864,14 +910,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         print("enclosedEAcute = \(enclosedEAcute) regionalIndicatorForUS = \(regionalIndicatorForUS)")
         
         
-        // ===========================
-        let str = "123"
-        let s = str.subString(from: 1, length: 6)
-        let subStr = str.prefix(4)
-        
-        
-//        print("\()")
-
+        // ========================================
         // 数组map
 //        var arr1 : [Int] = [1, 2, 3] // print: ==1== ==2== ==3==
         // 可选类型map
@@ -880,7 +919,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             print("==\($0)==")
         }
 
-        
+        // ========================================
         // 可选类型
         let num: Int? = 1
         switch num {
@@ -890,6 +929,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             print("intNum = \(intNum)")
         }
         
+        // ========================================
         // 会创建多个线程
         DispatchQueue.global().async {
             print("1.\(Thread.current)")
