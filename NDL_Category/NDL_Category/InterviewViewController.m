@@ -6,9 +6,68 @@
 //  Copyright © 2019 ndl. All rights reserved.
 //
 
+// MARK: libevent
+/**
+ https://libevent.org/
+ https://www.cnblogs.com/szitcast/p/10963742.html
+ 
+ void *memcpy(void *str1, const void *str2, size_t n) 从存储区 str2 复制 n 个字节到存储区 str1
+ 
+ event_base:
+ 使用libevent函数之前需要分配一个或者多个event_base结构体。每个event_base结构体持有一个事件集合，可以检测以确定哪个事件是激活的
+ */
+
 // MARK: .m->c++
 // xcrun -sdk iphoneos clang -arch arm64 -rewrite-objc main.m -o main-arm64.cpp
 // 把cpp文件直接拽入Xcode，为了不显示报错信息，我们不让它参与编译
+
+// MARK: 预处理
+/**
+ 程序中的源代码计算机是无法识别的，需要将写好的代码转成0、1二进制代码，计算机才能识别。将源代码转成二进制代码需要两步：编译和链接
+ 
+ 编译是通过编译器将每个文件的代码都转为二进制代码，在这个过程中，如果有语法错误，会有编译失败的提示，如果成功，那么会生成对应多个目标文件。在一个文件中可能会用到其他文件，因此，还需要将编译生成的目标文件和系统提供的文件组合到一起，这个过程就是链接，最后生成了可执行文件。
+
+ 通常人们所理解的程序运行就是编译和链接两个阶段，但实际上在编译之前，预处理器要进行预处理操作，处理完之后才能进入到编译阶段。因为预处理指令是在编译之前就进行了，所以它比程序运行时进行操作的效率高。
+ 
+ 预处理程序实际上是在分析程序前先处理的语句，它可以识别散布在程序中的特定语句。所有的预处理语句都适用"#"开头，这个符号必须是一行中的第一个非空字符。
+ 预处理可以大概分为三类：文件包含、宏定义和条件编译。
+ 
+ 文件包含：在当前文件中用到其它文件中的函数或方法或其它信息时，可以将其它文件的头文件包含进来，然后再当前文件中使用，文件包含一般放到文件的开头。
+ #import在导入文件的时候进行了去重复检查，此外，""和<>两者也是有区别的，""一般是用来引用自定义的文件，<>一般是用来引用系统的文件。
+ 
+ 宏定义:
+ 在程序中，有一些常量或者简短的函数会被多次重复调用的，对于这些常用的数据，我们可以使用宏定义
+ 使用宏定义可以快速的完成程序中的多处配置，最大的好处就是只要修改宏定义的值，所有使用宏定义的值都会发生改变。此外，宏定义是在程序编译之前进行替换和设置，比定义成全局变量或者函数的效率要高。
+ 
+ 条件编译：
+ 在编译之前由预处理器来根据处理语句进行判断，如果满足条件，就编译满足条件下的代码。反之就不进入编译环节。
+ 条件编译主要分为两种：一种是判断是否定义过某个宏，根据是否定义过这个宏，来决定是否编译某段代码。另外，还有一组语句和条件结构中的阶梯if结构非常类似，但是写法上有区别，是 #if、#elif、#else、#endif组成。需要注意的是，无论哪种，都要有 #endif结束标志。此外，最重要的一点是： 条件编译中的条件不能使用普通变量，一般会选择使用宏定义。
+
+#if defined(ZB_COUNT)
+    NSLog(@"定义了 COUNT 这个宏");
+#endif
+ 
+#if ZB_COUNT== 1
+     NSLog(@"ZB_COUNT=1");
+ #elif ZB_COUNT==2
+     NSLog(@"ZB_COUNT=2");
+ #elif ZB_COUNT==3
+     NSLog(@"ZB_COUNT=3");
+ #else
+     NSLog(@"ZB_COUNT=%i", ZB_COUNT);
+ #endif
+
+ #           空指令，没有任何效果
+ #include    包含一个源代码文件
+ #define     定义宏
+ #undef      取消定义宏
+ #if         如果条件为真，则编译下面的代码
+ #elif       如果前面的#if不为真，则编译下面的代码
+ #endif      结束一个#if。。。#elif条件编译块
+ #ifdef      如果已经定义了某个宏，则编译下面的代码
+ #ifndef     如果没有定义某个宏，则编译下面的代码
+ #error      停止编译并显示错误信息
+ */
 
 // MARK: 图形图像渲染原理
 /**
@@ -93,6 +152,10 @@
  UIView 与 CALayer 的关系:
  CALayer，即 backing layer
  视图的职责是 创建并管理 图层
+ 
+ 为什么iOS要基于UIView和CALayer提供两个平行的层级关系呢：
+ 其原因在于要做职责分离，这样也能避免很多重复代码。
+ 在iOS和MacOSX两个平台上，事件和用户交互有很多地方的不同，基于多点触控的用户界面和基于鼠标键盘的交互有着本质的区别，这就是为什么iOS有UIKit和UIView，对应Mac OSX有AppKit和NSView的原因。
  
  除了 视图树 和 图层树，还有 呈现树 和 渲染树
  
@@ -1778,7 +1841,7 @@ for (NSInteger i = 0; i < 100; i++) {
  iOS设备的硬件时钟会发出Vsync（垂直同步信号），然后App的CPU会去计算屏幕要显示的内容，之后将计算好的内容提交到GPU去渲染。随后，GPU将渲染结果提交到帧缓冲区，等到下一个VSync到来时将缓冲区的帧显示到屏幕上。也就是说，一帧的显示是由CPU和GPU共同决定的。
  一般来说，页面滑动流畅是60fps，也就是1s有60帧更新，即每隔16.7ms就要产生一帧画面，而如果CPU和GPU加起来的处理时间超过了16.7ms，就会造成掉帧甚至卡顿
  
- MARK: ---5.UIApplication
+ MARK: ---5.UIApplication-UIApplicationMain
  @interface UIApplication : UIResponder
  + (UIApplication *)sharedApplication;
  @property(nullable, nonatomic, assign) id<UIApplicationDelegate> delegate;
@@ -1794,6 +1857,9 @@ for (NSInteger i = 0; i < 100; i++) {
  main()函数中调用了UIApplicationMain()方法
  int UIApplicationMain(int argc, char * _Nonnull * _Null_unspecified argv, NSString * _Nullable principalClassName, NSString * _Nullable delegateClassName);
  argc、argv是系统参数
+ 第一个参数表示程序在进入mian函数是的参数的个数，默认为1
+ 第二个参数表示装载函数的数组（包含的各个参数），默认为程序的名字
+ 第三个参数是UIApplication类名或其子类名，若是nil，则默认使用UIApplication类名
  principalClassName传nil代表的是使用UIApplication类，delegateClassName是代理类名，该类必须要遵守UIApplicationDelegate协议
  
  UIApplicationMain()做的事情：
@@ -1811,6 +1877,14 @@ for (NSInteger i = 0; i < 100; i++) {
      return YES;
  }
  UIWindow会自动将其rootViewController的view添加，这样其rootViewController就可以显示到屏幕上
+ 
+ 首先创建窗口，得到一个正确的UIWindow实例对象用来显示界面（self.window是系统自带的属性）。接着设置窗口的根控制器。自己创建控制器，设置这个控制器为self.window的根控制器。注意这个时候根控制器的view还没有加到self.window上，当窗口要显示的时候，才会把窗口的根控制器的view添加到窗口。
+ 
+ 显示窗口：
+ [self.window makeKeyAndVisible]
+ 首先将self.window设置为UIApplication的keyWindow，这么做是方便我们以后查看UIApplication的主窗口是哪一个。
+ 接着，让self.window可见
+ 实际上将[self.window makeKeyAndVisible]替换为self.window.hidden = NO，那么界面也会正常显示出来，因为makeKeyAndVisible内部就是这么做的。但是此时并没有设置UIApplication的keyWindow，为了以后方便访问，还是用makeKeyAndVisible更好一点。
 
  
  MARK: ---UIView block动画实现原理

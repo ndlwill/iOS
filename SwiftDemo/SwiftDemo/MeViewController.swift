@@ -57,12 +57,33 @@ class MeViewController: UIViewController {
         print(str is NSString)// true
         print(str is String)// true
         
+        var strArr = [AnyObject]()
+        let ff = "123"
+        print(ff is AnyObject)// true
+//        strArr.append(ff)// 报错
+        strArr.append(ff as AnyObject)// ff: NSString
+        
         // 2.AnyObject 只支持 class type，NSDate 是引用类型，而 Date 是个 struct
         var array = [AnyObject]()
         array.append(NSDate())
 //        array.append(Date())// 报错
         
+        // MARK: Any  Any类型可以表示任何类型，比如类，函数，Int，String，元祖等
+        var objects = [Any]()
+        objects.append(3)
+        objects.append(3.141592653)
+        objects.append("圆周率")
         
+        for item in objects {
+            switch item {
+            case let someInt as Int:
+                print("This is Int class \(someInt)")
+            case let someDouble as Double:
+                print("This is Double class \(someDouble)")
+            default:
+                print("This is String class \(item)")
+            }
+        }
         
 //        self.navigationController?.navigationBar.backItem?.backBarButtonItem = UIBarButtonItem(title: "22", style: .plain, target: self, action: nil)
 //        self.navigationController?.navigationBar.topItem?.backBarButtonItem = UIBarButtonItem(title: "11", style: .plain, target: self, action: nil)

@@ -25,6 +25,9 @@
      IMP _Nonnull method_imp                                  OBJC2_UNAVAILABLE;
  }                                                            
  */
+
+extern const CGFloat kTestFloat;
+
 #pragma mark - 内联静态函数
 // 方法交换 Method Swizzling
 CG_INLINE BOOL

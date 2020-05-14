@@ -7,6 +7,8 @@
 //
 
 #import <UIKit/UIKit.h>
+// MARK: 动画 || 视频
+// https://juejin.im/user/5e55f27bf265da575c16c187/posts
 
 // MARK: appcenter.ms
 // https://appcenter.ms/

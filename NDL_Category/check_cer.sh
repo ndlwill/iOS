@@ -78,9 +78,9 @@ if [ ! -d $OUTPUT_DIR ]; then
 fi
 
 # for AJS
-security find-certificate -a -c "Apple Push Services: com.aijiasuinc.AiJiaSuClient" -p > $OUTPUT_DIR/$OUTPUT_PUSH_PEM_NAME
+# security find-certificate -a -c "Apple Push Services: com.aijiasuinc.AiJiaSuClient" -p > $OUTPUT_DIR/$OUTPUT_PUSH_PEM_NAME
 # for FLY
-# security find-certificate -a -c "Apple Push Services: com.flyinc.FlyClient" -p > $OUTPUT_DIR/$OUTPUT_PUSH_PEM_NAME
+security find-certificate -a -c "Apple Push Services: com.flyinc.FlyClient" -p > $OUTPUT_DIR/$OUTPUT_PUSH_PEM_NAME
 
 # -dates          - both Before and After dates
 # notBefore=Mar 10 10:49:24 2020 GMT notAfter=Apr 9 10:49:24 2021 GMT
@@ -90,16 +90,17 @@ security find-certificate -a -c "Apple Push Services: com.aijiasuinc.AiJiaSuClie
 # notAfter=Apr 9 10:49:24 2021 GMT
 ExpirationDate=$(openssl x509 -in $OUTPUT_DIR/$OUTPUT_PUSH_PEM_NAME -noout -enddate | awk -F '=' '{print $2}')
 
+# 方法1==========替换英文月份为数字月份==========
 # 截取月份
-SubStringMonth=${ExpirationDate%% *}
-
+# SubStringMonth=${ExpirationDate%% *}
 # 替换月份的number
-transformMonthToNumber $SubStringMonth
-
+# transformMonthToNumber $SubStringMonth
 # 用变量替换${a//}做字符串替换
-FinalExpirationDate=${ExpirationDate/$SubStringMonth/$ReplaceMonthNumber}
+# FinalExpirationDate=${ExpirationDate/$SubStringMonth/$ReplaceMonthNumber}
+# ExpirationDateTimestamp=$(date -j -f "%m %d %H:%M:%S %Y %Z" "$FinalExpirationDate" +%s)
 
-ExpirationDateTimestamp=$(date -j -f "%m %d %H:%M:%S %Y %Z" "$FinalExpirationDate" +%s)
+# 方法2==========直接转换==========
+ExpirationDateTimestamp=$(LC_ALL=en_US.UTF-8 date -j -f "%b %d %H:%M:%S %Y %Z" "$ExpirationDate" +%s)
 echo "ExpirationDateTimestamp = $ExpirationDateTimestamp"
 
 CurrentDateTimestamp=$(date +%s) # 北京时间 将日期转化为时间戳

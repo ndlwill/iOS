@@ -8,6 +8,22 @@
 
 #import <Foundation/Foundation.h>
 
+// MARK: id && nil
+/**
+ id是一个指向继承了NSObject的OC对象的指针，注意id是一个指针，虽然省略了*号。
+ id和C语言的void*之间需要通过bridge关键字来显示的桥接转换。
+ id nsobj = [[NSObject alloc] init];
+ void *p = (__bridge void *)nsobj;
+ id nsobj = (__bridge id)p;
+ 
+ OC中nil定义在objc/objc.h中，表示的是一个指向空的OC对象的指针
+ 
+ instancetype只能作为返回值类型，但在编译期instancetype会进行类型检测，因此对于所有返回类的实例的类方法或实例方法，建议返回类型全部使用instancetype
+ id类型既可以作为返回类型，也可以作为参数类型，也可以作为变量的类型，但id类型在编译期不会进行类型检测
+ 
+ @selector()就是取方法的编号
+ */
+
 /*
  MARK:安装包优化
  jpg资源图片的压缩比很小，每减少一张图片，就能减少ipa包的大小

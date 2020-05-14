@@ -223,6 +223,15 @@ static NSDateFormatter *dateFormatter_ = nil;
 #pragma mark - ABPeoplePickerNavigationControllerDelegate
 - (void)peoplePickerNavigationController:(ABPeoplePickerNavigationController *)peoplePicker didSelectPerson:(ABRecordRef)person
 {
+    // MARK: ==CF==
+    /**
+     为了帮助大家理解 C 函数返回对象是否被调用者持有，苹果使用了 Create 规则 和 Get 规则 命名法：
+
+     Create 规则 的意思是，如果一个函数的名字含有 Create 或 Copy ，函数的返回值被函数的调用者持有。也就是说，调用 Create 或 Copy 函数的对象应该对返回对象调用 CFRelease 进行释放。
+
+     Get 规则 则不像 Create 规则一样能从命名规则看出规律。或许可以描述成函数名不含有 Create 或 Copy的函数？这种函数遵守 Get 规则，返回对象的持有者不会发生变化。如果想持久化一个返回对象，大多数时候就是你自己手动 retain 它。
+     */
+    
     // CFTypeRef : Base "type" of all "CF objects"
     
 //    如果是多重属性，那么ABRecordCopyValue函数返回的就是ABMultiValueRef类型的数据
@@ -668,6 +677,14 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
     bool cBool = false;
     cBool = testBool;
     
+    if (1) {
+        NSLog(@"1-true");// 走
+    }
+    
+    if (0) {
+        NSLog(@"0-true");// 不走
+    }
+    
     // MARK: ==NS_OPTIONS==
     NSInteger shareTypes1 = HIShareTypeMaskUndefined;
     // “|”按位或运算符，因为这样的运算任意一种组合的值都是唯一的，shareTypes1是只包含HIShareTypeMaskTwitter的运算结果， shareTypes2是HIShareTypeMaskTwitter和HIShareTypeMaskFacebook的组合
@@ -690,6 +707,8 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
         NSLog(@"333");// 不打印
     }
 
+    // MARK: extern
+    NSLog(@"%f", kTestFloat);// 108.8
     
     
 #pragma mark - crash

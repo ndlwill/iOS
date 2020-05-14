@@ -9,8 +9,22 @@
 // MARK: swift查看内存地址小工具Mems
 // https://github.com/CoderMJLee/Mems.git
 
+// MARK: NEKit
+// https://github.com/zhuhaow
+
+// MARK: ==Vendors==
+// https://www.cnblogs.com/edensyd/p/9450079.html
+// MARK: Keychain
+// https://github.com/kishikawakatsumi/KeychainAccess
+// MARK: XCGLogger
+// https://github.com/DaveWoodCom/XCGLogger
+// MARK: SwiftyStoreKit
+
 // MARK: 工具
 // Zeplin Lookin3
+
+// MARK: ===团队Blog===
+// https://www.jianshu.com/u/3db23baa08c7
 
 // =====github=====
 // https://github.com/devicekit/DeviceKit
@@ -54,6 +68,9 @@
  array2.append(4)
  print(address: array2) //0x6000000aa100
  */
+
+// MARK: ===动画===
+// https://github.com/WalkingToTheDistant/ImgAnimation
 
 // MARK: gitlab
 /**
@@ -367,8 +384,10 @@ import UIKit
  而 NSString *const p 表示指针的指向不能改变，但是地址里的内容是可以改变的
  
  extern 外部常量的最佳方法：
- extern const 关键字，表示这个变量已经声明，只是引用，且不可修改
+ extern const 关键字，表示这个变量已经声明
+ 
  .m文件中定义的常量，用const修饰代表常量。其中const CGFloat a = 10.f; 和 CGFloat const a = 10.f;两种写法是一样的，都代表a值为常量，不可修改。但是外部可通过extern CGFloat a;引用该变量
+ 
  全局变量若只想被该文件所持有，不希望被外界引用，则用static修饰，也就是static const CGFloat a = 10.f;和 static CGFloat const a = 10.f；
  */
 
@@ -385,6 +404,11 @@ import UIKit
  https://github.com/Tencent/MLeaksFinder
  */
 
+// MARK: Metal
+/**
+ https://blog.csdn.net/cordova/article/month/2020/04
+ */
+
 // MARK: ==Charles==
 /**
  设置网络，进行抓包:
@@ -393,6 +417,27 @@ import UIKit
  设置移动设备的网络代理模式 进入连接的无线网的高级模式
  进入HTTP代理模式，然后选择手动，并在服务器中填写自己查到的IP地址，然后在端口中填写8888，最后存储设置。
 
+ 证书配置，拦截HTTPS请求
+ 需要设置SSL Proxying Settings，将对应的域名以及端口添加进去，使用*:*即可
+ 另外还有相关证书的配置，通过help->SSL Proxying去安装证书，Mac与iPhone都要进行安装并且信任
+ 配置电脑端证书，选择install Charles Root Certificate，然后安装，最后选择始终信任
+ 配置手机端证书，选择install Charles Root Certificate on a Mobile Device or Remote Browser，然后在手机浏览器里输入chls.pro/ssl下载，进行安装。最后一步就是进入手机设置，通用->关于本机->证书信任设置，然后信任刚刚安装的证书即可
+ 
+ Mock链接的数据：
+ 如果列表有很多的请求，可以通过左下角的Filter:进行筛选
+ 
+ 方法一：
+ 首先要选择出想要mock数据的接口，设置断点
+ 然后需要再次触发访问该接口。Charles会停留在断点接口，提供一个Edit Request页，可提供修改参数以及请求类型、请求链接的校验。
+ 接着点击Execute进行执行下一步，选择JSON Text可以看到断点链接返回的参数，这个时候就可以改动返回值的结果，以达到想要测试的目的。
+ 执行Execute，便可看到下面结果（确保没有请求超时）
+ 方法二:
+ 按照方法一的步骤，获取到断点链接返回的数据后，把数据源拷贝出来，本地新建一个JSON类型的文件，把返回的数据复制到该文件中
+ 把保存好的json文件放置在桌面
+ 同时修改你要mock的数据
+ 在你需要调试的接口，右键有个Map Local
+ 选择你在本地提前写好的json文件
+ 最后再次触发该请求即可。
  */
 
 // MARK: ==离屏渲染 （Offscreen rendering）==
