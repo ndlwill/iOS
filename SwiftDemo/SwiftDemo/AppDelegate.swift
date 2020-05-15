@@ -1,3 +1,4 @@
+
 //
 //  AppDelegate.swift
 //  SwiftDemo
@@ -68,6 +69,141 @@
  array2.append(4)
  print(address: array2) //0x6000000aa100
  */
+
+// MARK: the swift programming language
+// https://docs.swift.org/swift-book/LanguageGuide/Closures.html#ID95
+
+// MARK: App 签名的原理
+// http://www.cocoachina.com/articles/19427
+// http://blog.cnbang.net/tech/3386/
+/**
+ iOS 签名机制挺复杂，各种证书，Provisioning Profile，entitlements，CertificateSigningRequest，p12，AppID
+ 一定要保证每一个安装到 iOS 上的 APP 都是经过苹果官方允许的
+ 
+ 非对称加密:
+ 通常我们说的签名就是数字签名，它是基于非对称加密算法实现的
+ 对称加密是通过同一份密钥加密和解密数据，而非对称加密则有两份密钥，分别是公钥和私钥，用公钥加密的数据，要用私钥才能解密，用私钥加密的数据，要用公钥才能解密。
+ 
+ RSA:
+ 1.选两个质数 p 和 q，相乘得出一个大整数n，例如 p = 61，q = 53，n = pq = 3233
+ 2.选 1-n 间的随便一个质数e，例如 e = 17
+ 3.经过一系列数学公式，算出一个数字 d，满足：
+ a.通过 n 和 e 这两个数据一组数据进行数学运算后，可以通过 n 和 d 去反解运算，反过来也可以。
+ b.如果只知道 n 和 e，要推导出 d，需要知道 p 和 q，也就是要需要把 n 因数分解。
+ 
+ 上述的 (n,e) 这两个数据在一起就是公钥，(n,d) 这两个数据就是私钥，满足用私钥加密，公钥解密，或反过来公钥加密，私钥解密，也满足在只暴露公钥 (只知道 n 和 e)的情况下，要推导出私钥 (n,d)，需要把大整数 n 因数分解。目前因数分解只能靠暴力穷举，而 n 数字越大，越难以用穷举计算出因数 p 和 q，也就越安全，当 n 大到二进制 1024 位或 2048 位时，以目前技术要破解几乎不可能，所以非常安全。
+ 
+ 1.首先用一种算法，算出原始数据的摘要。需满足 a.若原始数据有任何变化，计算出来的摘要值都会变化。 b.摘要要够短。这里最常用的算法是MD5。
+ 2.生成一份非对称加密的公钥和私钥，私钥我自己拿着，公钥公布出去。
+ 3.对一份数据，算出摘要后，用私钥加密这个摘要，得到一份加密后的数据，称为原始数据的签名。把它跟原始数据一起发送给用户。
+ 4.用户收到数据和签名后，用公钥解密得到摘要。同时用户用同样的算法计算原始数据的摘要，对比这里计算出来的摘要和用公钥解密签名得到的摘要是否相等，若相等则表示这份数据中途没有被篡改过，因为如果篡改过，摘要会变化。
+ 
+ 之所以要有第一步计算摘要，是因为非对称加密的原理限制可加密的内容不能太大
+ 
+ 怎样通过数字签名的机制保证每一个安装到 iOS 上的 APP 都是经过苹果认证允许的:
+ 最简单的签名:
+ 最直接的方式，苹果官方生成一对公私钥，在 iOS 里内置一个公钥，私钥由苹果后台保存，我们传 App 上 AppStore 时，苹果后台用私钥对 APP 数据进行签名，iOS 系统下载这个 APP 后，用公钥验证这个签名，若签名正确，这个 APP 肯定是由苹果后台认证的，并且没有被修改过，也就达到了苹果的需求：保证安装的每一个 APP 都是经过苹果官方允许的。
+ 
+ 如果我们 iOS 设备安装 APP 只有从 AppStore 下载这一种方式的话，这件事就结束了，没有任何复杂的东西，只有一个数字签名，非常简单地解决问题。
+ 但实际上因为除了从 AppStore 下载，我们还可以有三种方式安装一个 App：
+ 1.开发 App 时可以直接把开发中的应用安装进手机进行调试。
+ 2.In-House 企业内部分发，可以直接安装企业证书签名后的 APP。
+ 3.AD-Hoc 相当于企业分发的限制版，限制安装设备数量，较少用。
+ 
+ 开发时安装APP，它有两个个需求：
+ 1.安装包不需要传到苹果服务器，可以直接安装到手机上。如果你编译一个 APP 到手机前要先传到苹果服务器签名，这显然是不能接受的。
+ 2.苹果必须对这里的安装有控制权，包括
+ a. 经过苹果允许才可以这样安装。
+ b. 不能被滥用导致非开发app也能被安装。
+ 苹果这里给出的方案是使用了双层签名:
+ 1.在你的 Mac 开发机器生成一对公私钥，这里称为公钥L，私钥L。L:Local
+ 2.苹果自己有固定的一对公私钥，跟上面 AppStore 例子一样，私钥在苹果后台，公钥在每个 iOS 设备上。这里称为公钥A，私钥A。A:Apple
+ 3.把公钥 L 传到苹果后台，用苹果后台里的私钥 A 去签名公钥 L。得到一份数据包含了公钥 L 以及其签名，把这份数据称为证书。
+ 4.在开发时，编译完一个 APP 后，用本地的私钥 L 对这个 APP 进行签名，同时把第三步得到的证书一起打包进 APP 里，安装到手机上。
+ 5.在安装时，iOS 系统取得证书，通过系统内置的公钥 A，去验证证书的数字签名是否正确。
+ 6.验证证书后确保了公钥 L 是苹果认证过的，再用公钥 L 去验证 APP 的签名，这里就间接验证了这个 APP 安装行为是否经过苹果官方允许。（这里只验证安装行为，不验证APP 是否被改动，因为开发阶段 APP 内容总是不断变化的，苹果不需要管。）
+ 
+ 上述流程只解决了上面第一个需求，也就是需要经过苹果允许才可以安装，还未解决第二个避免被滥用的问题:
+ 苹果再加了两个限制，一是限制在苹果后台注册过的设备才可以安装，二是限制签名只能针对某一个具体的 APP。
+ 在上述第三步，苹果用私钥 A 签名我们本地公钥 L 时，实际上除了签名公钥 L，还可以加上无限多数据，这些数据都可以保证是经过苹果官方认证的，不会有被篡改的可能。
+ 把 允许安装的设备 ID 列表 和 App对应的 AppID 等数据，都在第三步这里跟公钥L一起组成证书，再用苹果私钥 A 对这个证书签名。
+ 在最后第 5 步验证时就可以拿到设备 ID 列表，判断当前设备是否符合要求。根据数字签名的原理，只要数字签名通过验证，第 5 步这里的设备 IDs / AppID / 公钥 L 就都是经过苹果认证的，无法被修改，苹果就可以限制可安装的设备和 APP，避免滥用。
+ 
+ 实际上除了 设备 ID / AppID，还有其他信息也需要在这里用苹果签名，像这个 APP 里 iCloud / push / 后台运行 等权限苹果都想控制，苹果把这些权限开关统一称为 Entitlements，它也需要通过签名去授权。
+ 上面我们把各种额外信息塞入证书里是不合适的，于是苹果另外搞了个东西，叫 Provisioning Profile，一个 Provisioning Profile 里就包含了证书以及上述提到的所有额外信息，以及所有信息的签名。
+ 
+ 1.在你的 Mac 开发机器生成一对公私钥，这里称为公钥L，私钥L。L:Local
+ 2.苹果自己有固定的一对公私钥，跟上面 AppStore 例子一样，私钥在苹果后台，公钥在每个 iOS 设备上。这里称为公钥A，私钥A。A:Apple
+ 3.把公钥 L 传到苹果后台，用苹果后台里的私钥 A 去签名公钥 L。得到一份数据包含了公钥 L 以及其签名，把这份数据称为证书。
+ 4.在苹果后台申请 AppID，配置好设备 ID 列表和 APP 可使用的权限，再加上第③步的证书，组成的数据用私钥 A 签名，把数据和签名一起组成一个 Provisioning Profile 文件，下载到本地 Mac 开发机。
+ 5.在开发时，编译完一个 APP 后，用本地的私钥 L 对这个 APP 进行签名，同时把第④步得到的 Provisioning Profile 文件打包进 APP 里，文件名为 embedded.mobileprovision，把 APP 安装到手机上。
+ 6.在安装时，iOS 系统取得证书，通过系统内置的公钥 A，去验证 embedded.mobileprovision 的数字签名是否正确，里面的证书签名也会再验一遍。
+ 7.确保了 embedded.mobileprovision 里的数据都是苹果授权以后，就可以取出里面的数据，做各种验证，包括用公钥 L 验证APP签名，验证设备 ID 是否在 ID 列表上，AppID 是否对应得上，权限开关是否跟 APP 里的 Entitlements 对应等。
+ 开发者证书从签名到认证最终苹果采用的流程大致是这样
+ 
+ 上面的步骤对应到我们平常具体的操作和概念是这样的：
+ 1.第 1 步对应的是 keychain 里的 “从证书颁发机构请求证书”，这里就本地生成了一对公私钥，保存的 CertificateSigningRequest 就是公钥，私钥保存在本地电脑里。
+ 2.第 2 步苹果处理，不用管。
+ 3.第 3 步对应把 CertificateSigningRequest 传到苹果后台生成证书，并下载到本地。这时本地有两个证书，一个是第 1 步生成的，一个是这里下载回来的，keychain 会把这两个证书关联起来，因为他们公私钥是对应的，在XCode选择下载回来的证书时，实际上会找到 keychain 里对应的私钥去签名。这里私钥只有生成它的这台 Mac 有，如果别的 Mac 也要编译签名这个 App 怎么办？答案是把私钥导出给其他 Mac 用，在 keychain 里导出私钥，就会存成 .p12 文件，其他 Mac 打开后就导入了这个私钥。
+ 4.第 4 步都是在苹果网站上操作，配置 AppID / 权限 / 设备等，最后下载 Provisioning Profile 文件。
+ 5.第 5 步 XCode 会通过第 3 步下载回来的证书（存着公钥），在本地找到对应的私钥（第一步生成的），用本地私钥去签名 App，并把 Provisioning Profile 文件命名为 embedded.mobileprovision 一起打包进去。这里对 App 的签名数据保存分两部分，Mach-O 可执行文件会把签名直接写入这个文件里，其他资源文件则会保存在 _CodeSignature 目录下。
+ 第 6 – 7 步的打包和验证都是 Xcode 和 iOS 系统自动做的事。
+ 
+ 证书：内容是公钥或私钥，由其他机构对其签名组成的数据包。
+ Entitlements：包含了 App 权限开关列表。
+ CertificateSigningRequest：本地公钥。
+ p12：本地私钥，可以导入到其他电脑。
+ Provisioning Profile：包含了 证书 / Entitlements 等数据，并由苹果后台私钥签名的数据包。
+ 
+ 另外两种方式 In-House 企业签名和 AD-Hoc 流程也是差不多的，只是企业签名不限制安装的设备数，另外需要用户在 iOS 系统设置上手动点击信任这个企业才能通过验证。
+ 
+ 而 AppStore 的签名验证方式有些不一样，前面我们说到最简单的签名方式，苹果在后台直接用私钥签名 App 就可以了，实际上苹果确实是这样做的，如果去下载一个 AppStore 的安装包，会发现它里面是没有 embedded.mobileprovision 文件的，也就是它安装和启动的流程是不依赖这个文件，验证流程也就跟上述几种类型不一样了。
+ 
+ 据猜测，因为上传到 AppStore 的包苹果会重新对内容加密，原来的本地私钥签名就没有用了，需要重新签名，从 AppStore 下载的包苹果也并不打算控制它的有效期，不需要内置一个 embedded.mobileprovision 去做校验，直接在苹果用后台的私钥重新签名，iOS 安装时用本地公钥验证 App 签名就可以了。
+ 
+ 那为什么发布 AppStore 的包还是要跟开发版一样搞各种证书和 Provisioning Profile？猜测因为苹果想做统一管理，Provisioning Profile 里包含一些权限控制，AppID 的检验等，苹果不想在上传 AppStore 包时重新用另一种协议做一遍这些验证，就不如统一把这部分放在 Provisioning Profile 里，上传 AppStore 时只要用同样的流程验证这个 Provisioning Profile 是否合法就可以了。
+
+ 所以 App 上传到 AppStore 后，就跟你的 证书 / Provisioning Profile 都没有关系了，无论他们是否过期或被废除，都不会影响 AppStore 上的安装包。
+ 
+ AppStore 加密:
+ 另一个问题是我们把 App 传上 AppStore 后，苹果会对 App 进行加密，导致 App 体积增大不少，这个加密实际上是没卵用的，只是让破解的人要多做一个步骤，运行 App 去内存 dump 出可执行文件而已，无论怎样加密，都可以用这种方式拿出加密前的可执行文件。
+ 
+ ==========签名的过程:
+ 1.首先mac生成csr文件,然后发送到Apple服务器,Apple进行签名,生成证书.
+ 2.然后创建appid,选择功能权限,添加设备.
+ 3.接着把第二步创建的信息包括第一步的证书信息组合起来,Apple进行签名,就生成了Provisioning Profile文件.
+ 4.Xcode编译的时候,mac会对app包签名,并且把Provisioning Profile文件也打包进去,生成文件embedded.mobileprovision.
+ 5.api包安装到设备上的时候,设备会对embedded.mobileprovision进行验证,以及对相关信息进行验证,比如设备是否注册,appid等等.
+ 
+ 由于个人或者公司账号限制设备数为100,如果想在一百台以上的设备上安装,打一次包就不能实现,因为Provisioning Profile中只有那100台设备,即使在这100台设备安装之后,在apple developer删除这些设备,再添加另外100台,这新的100台设备也是不能安装的.这时只能重新打包,或者重签名
+ ,批量的重签名可以使用第三方的服务.
+
+ */
+
+// MARK: ===音视频===Audio Unit
+// https://www.jianshu.com/p/5d18180c69b8
+// https://www.jianshu.com/p/f859640fcb33
+
+// MARK: APP重签名
+/**
+ 查看APP包的签名信息
+ $codesign -vv -d xxx.app
+ 
+ 要重签名一定要有一个证书才可以，如下命令查看本机所有证书
+ $security find-identity -v -p codesigning
+ 
+ 查看描述文件信息:
+ $security cms -D -i 描述文件路径
+ 
+ 在开发完成之后我们的APP要上传到App Store需要进行加密，从App Store下载安装APP的时候需要解密，这是一个可逆的过程。进入到.app 路径下，查看可执行文件的加密信息!
+ $otool -l WeChat | grep crypt
+ 加密标识为0，代表没有加密（因为已经砸壳了）两个标识代表这个可执行文件支持两个架构arm64、armv7
+ 
+ 逆向重签名有一个强大的Xcode插件MonkeyDev
+ */
+
+// MARK: 逆向
+// https://github.com/AloneMonkey/MonkeyDev
 
 // MARK: ===动画===
 // https://github.com/WalkingToTheDistant/ImgAnimation
@@ -620,6 +756,21 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
     
+    // 定义时必须指定一个类型
+    func takeIntPointer(_ p: UnsafePointer<Int>) {// 常量指针: UnsafePointer
+        // p.pointee += 1 // 报错: Left side of mutating operator isn't mutable: 'pointee' is a get-only property
+        print("takeIntPointer: \(p.pointee)")
+    }
+    
+    func takeRawPointer(_ p: UnsafeRawPointer?) {
+        print("takeRawPointer: \(p.debugDescription)")
+    }
+    
+    func takeIntMutPointer(_ p: UnsafeMutablePointer<Int>) {
+        p.pointee += 1
+        print("takeIntMutPointer: \(p.pointee)")
+    }
+    
     func incrementor(ptr: UnsafeMutablePointer<Int>) {
         ptr.pointee += 1
     }
@@ -705,7 +856,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         let stride = MemoryLayout<TestPoint>.stride// 24
         let alignment = MemoryLayout<TestPoint>.alignment// 8
         
-        // MARK: 指针UnsafePointer和托管Unmanaged
+        // MARK: 指针UnsafePointer和托管Unmanaged和UnsafeRawPointer
         /**
          但是Swift的&操作和C语言不同的一点是，Swift不允许直接获取对象的指针，比如下面的代码就会编译不通过。
          let a = NSData()
@@ -718,6 +869,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
          
          UnsafeMutablePointer:我们如果想要新建一个指针，需要做的是使用 allocate(capacity:) 这个类方法。该方法根据参数 capacity: Int 向系统申请 capacity 个数的对应泛型类型的内存
          
+         对于返回值、变量、参数的指针
+         const Type *    UnsafePointer<Type>
+         Type *    UnsafeMutablePointer<Type>
+         对于类对象的指针
+         Type * const *    UnsafePointer<Type>
+         Type * __strong *    UnsafeMutablePointer<Type>
+         
+         const void *    UnsafeRawPointer
+         void *    UnsafeMutableRawPointer
+
          Swift 中存在表示一组连续数据指针的 UnsafeBufferPointer<T>
          
          托管: TestPointerViewController.swift
@@ -732,6 +893,23 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // 这里和 C 的指针使用类似，我们通过在变量名前面加上 & 符号就可以将指向这个变量的指针传递到接受指针作为参数的方法中去
         incrementor(ptr: &aa)
         print("aa = \(aa)")// 11
+        
+        print("===takeIntPointer===")
+        takeIntPointer(&aa)// 11
+        let intArray = [1, 2]
+        // [Type]数组类型值，将数组起始地址传入函数
+        takeIntPointer(intArray)// 1
+        //takeIntPointer(&intArray)// 报错：
+        
+        print("===takeRawPointer===")
+        //takeRawPointer(&1)// 报错：Cannot pass immutable value as inout argument: literals are not mutable
+        var x: Int = 16, y: Float = 12.8
+        takeRawPointer(&x)
+        takeRawPointer(&y)
+        takeRawPointer([1, 2])
+        
+        // MARK: AutoreleasingUnsafeMutablePointer 自动释放指针
+        
         // 与这种做法类似的是使用 Swift 的 inout 关键字。我们在将变量传入 inout 参数的函数时，同样也使用 & 符号表示地址。不过区别是在函数体内部我们不需要处理指针类型，而是可以对参数直接进行操作
         incrementor1(num: &aa)
         print("aa = \(aa)")// 12
@@ -789,7 +967,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             print(nextPtr.pointee) // 2
         }
         
-        // MARK: 指针操作和转换
+        // MARK: ==指针操作和转换==
         /**
          在 Swift 中不能像 C 里那样使用 & 符号直接获取地址来进行操作
          如果我们想对某个变量进行指针操作，我们可以借助 withUnsafePointer 或 withUnsafeMutablePointer 这两个辅助方法

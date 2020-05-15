@@ -60,15 +60,33 @@ class TestCFViewController: UIViewController {
          This is useful when a function returns an unmanaged reference and you know that you’re responsible for releasing the result.
          Gets the value of this unmanaged reference as a managed reference and consumes an unbalanced retain of it.
          */
-        
-        let allocator: CFAllocator = CFAllocatorGetDefault().takeRetainedValue()
-        let arr: CFMutableArray? = CFArrayCreateMutable(allocator, 0, nil)
+        // MARK: ===CFArray===
+        let allocator: CFAllocator = CFAllocatorGetDefault().takeUnretainedValue()
+        // Ownership follows the The Create Rule
+        // 得到的是一个托管对象, 所以我们不需要再使用CFRelease来释放它了
+        let arr: CFMutableArray! = CFArrayCreateMutable(allocator, 0, nil)
         let name: NSString = "qwer"
+        let name1: NSString = "1234"
         // toOpaque: Unsafely converts an unmanaged class reference to a pointer.
         CFArrayAppendValue(arr, Unmanaged.passRetained(name).autorelease().toOpaque())
 //        CFArrayAppendValue(arr, Unmanaged.passUnretained(name).toOpaque())
+        CFArrayAppendValue(arr, Unmanaged.passUnretained(name1).toOpaque())
         
-        // UnsafeRawPointer
+        // CFArrayGetValues
+        let valuePointer: UnsafeMutablePointer<UnsafeRawPointer?> = UnsafeMutablePointer<UnsafeRawPointer?>.allocate(capacity: 0)
+        // CFArrayGetValues获取到的是一个指向了一个数组的指针
+        CFArrayGetValues(arr, CFRange(location: 0, length: 2), valuePointer)
+        // 通过这个指针我们可以创建一个Buffer指针(Swift里Buffer可理解为一个数组的指针)
+        let valueBuffer: UnsafeMutableBufferPointer<UnsafeRawPointer?> = UnsafeMutableBufferPointer.init(start: valuePointer, count: 2)
+        // 遍历这个Buffer集合可以得到一个UnsafeRawPointer,这实际就是一个非托管对象的指针
+        valueBuffer.forEach { (rawPointer) in
+            if let rawP = rawPointer {
+                // Unmanaged<NSString>.fromOpaque()方法得到一个非托管对象,然后通过takeUnretainedValue()拿到它的值
+                print(Unmanaged<NSString>.fromOpaque(rawP).takeUnretainedValue())
+            }
+        }
+        
+        // CFArrayGetValueAtIndex: return UnsafeRawPointer
         let firstValue: UnsafeRawPointer! = CFArrayGetValueAtIndex(arr, 0)
          
         // fromOpaque: Unsafely turns an opaque C pointer into an unmanaged class reference.

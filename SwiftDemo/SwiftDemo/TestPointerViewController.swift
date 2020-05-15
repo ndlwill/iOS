@@ -14,6 +14,16 @@ struct TestPointer {
     let b: Bool
 }
 
+class Resolution {
+    var width = 0
+    var height = 0
+}
+
+struct Resolution1 {
+    var width = 0
+    var height = 0
+}
+
 // MARK: ===swift指针===
 // https://juejin.im/post/5d0dde2cf265da1baa1e7d50
 
@@ -72,6 +82,43 @@ class TestPointerViewController: UIViewController {
         let strObj: NSObject = NSString(string: "1008")
         let resultVal = unsafeDowncast(strObj, to: NSString.self)// 1008
 
+        // MARK: ==打印对象地址==
+        let one = Resolution()
+        // 0x000060000342c700
+        print("one地址为: \(Unmanaged<AnyObject>.passUnretained(one as AnyObject).toOpaque())")
+        let two = one
+        // 0x000060000342c700
+        print("two地址为:\(Unmanaged<AnyObject>.passUnretained(two as AnyObject).toOpaque())")
+        
+        var structOne = Resolution1()
+        // passRetained
+        print("structOne地址为:\(Unmanaged<AnyObject>.passRetained(structOne as AnyObject).toOpaque())")
+        // 崩溃 passUnretained
+//        print("structOne地址为:\(Unmanaged<AnyObject>.passUnretained(structOne as AnyObject).toOpaque())")
+        print(structOne)
+        
+        // 同一个内容，同一个地址。改变了内容，新的地址
+        let intValue = 100
+        let intObject = intValue as AnyObject// NSNumber
+        // 0xf985adf5c494622f
+        print("intValue地址为:\(Unmanaged<AnyObject>.passUnretained(intValue as AnyObject).toOpaque())")
+        var otherInt = intValue
+        // 0xf985adf5c494622f
+        print("otherInt地址为:\(Unmanaged<AnyObject>.passUnretained(otherInt as AnyObject).toOpaque())")
+        otherInt = 120
+        // 0xf985adf5c49463ef
+        print("otherInt地址为:\(Unmanaged<AnyObject>.passUnretained(otherInt as AnyObject).toOpaque())")
+        
+        // public struct Array
+        var arr1 = ["a","b","c"]
+        var arr2 = arr1
+        print(arr1,arr2)// ["a", "b", "c"] ["a", "b", "c"]
+        arr1.remove(at: 0)
+        print(arr1,arr2)// ["b", "c"] ["a", "b", "c"]
+        // 崩溃
+//        print("arr1地址为:\(Unmanaged<AnyObject>.passUnretained(arr1 as AnyObject).toOpaque())")
+//        print("arr2地址为:\(Unmanaged<AnyObject>.passUnretained(arr2 as AnyObject).toOpaque())")
+        
     }
     
     func passPointer(_ pointer: UnsafePointer<TestPointer>) {

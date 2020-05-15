@@ -6,6 +6,9 @@
 //  Copyright © 2019 ndl. All rights reserved.
 //
 
+// MARK: GPUImage
+// https://www.jianshu.com/nb/4268718
+
 // MARK: libevent
 /**
  https://libevent.org/
@@ -16,6 +19,9 @@
  event_base:
  使用libevent函数之前需要分配一个或者多个event_base结构体。每个event_base结构体持有一个事件集合，可以检测以确定哪个事件是激活的
  */
+
+// MARK: 性能优化
+// https://juejin.im/post/5e4cfa4f6fb9a07cce74dba7
 
 // MARK: .m->c++
 // xcrun -sdk iphoneos clang -arch arm64 -rewrite-objc main.m -o main-arm64.cpp
@@ -173,7 +179,7 @@
  
  */
 
-// MARK: 图形图像渲染原理
+// MARK: ===图形图像渲染原理===
 /**
  可视化应用程序都是由 CPU 和 GPU 协作执行的
  
@@ -224,7 +230,7 @@
  
  */
 
-// MARK: iOS App 的图形渲染技术栈
+// MARK: ===iOS App 的图形渲染技术===
 /**
  http://www.cocoachina.com/cms/wap.php?action=article&id=25510
  App 使用 Core Graphics、Core Animation、Core Image 等框架来绘制可视化内容，这些软件框架相互之间也有着依赖关系。这些框架都需要通过 OpenGL 来调用 GPU 进行绘制，最终将内容显示到屏幕之上
@@ -2806,7 +2812,19 @@ for (NSInteger i = 0; i < 100; i++) {
  Symbolic bp(符号断点)
  
  alloc->[NSObject alloc]: _objc_rootAlloc(self)->callAlloc->class_createInstance->_class_createInstanceForZone(1.cls->instanceSize 内存大小 2.calloc 3.obj->initInstanceIsa) 就创建了实例对象
+ _class_createInstanceFromZone:
+ 通过instanceSize()方法分配内存，calloc()开辟空间，initInstanceIsa()创建对象。
+ initInstanceIsa():
+ 初始化了isainitIsa()
+ 
  init直接返回实例对象，啥也没做 为了让子类重写init方法，做相应的初始化
+ 工厂设计，父类没有实现，交给子类去实现
+ init:
+ _objc_rootInit(self)
+ 
+ id _objc_rootInit(id obj) {
+ return obj;
+ }
  
  llvm编译器优化: optimize
  
