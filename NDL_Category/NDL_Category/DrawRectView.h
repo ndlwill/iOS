@@ -10,7 +10,11 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface DrawRectView : UIView
+@interface DrawRectView : UIView {
+    int age;
+}
+
+@property (nonatomic, assign) NSInteger intVal;
 
 @end
 
