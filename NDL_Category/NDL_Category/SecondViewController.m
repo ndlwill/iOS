@@ -26,6 +26,8 @@
 #import "TestModelController.h"
 
 const CGFloat kTestFloat = 108.8;
+// 全局变量用static修饰时，才只被该文件所持有，外界不可引用
+static const CGFloat kTestFloat1 = 106.6;
 
 @interface SecondViewController () <CAAnimationDelegate>
 
@@ -74,6 +76,8 @@ const CGFloat kTestFloat = 108.8;
 - (void)viewDidLoad {
     [super viewDidLoad];
     
+    NSLog(@"%f", kTestFloat);
+    NSLog(@"%f", kTestFloat1);
     
 //    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(navControllerPanGesture:)];
 //    [self.navigationController.view addGestureRecognizer:pan];
