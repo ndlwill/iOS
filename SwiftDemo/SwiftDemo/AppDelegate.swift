@@ -460,8 +460,14 @@ enum Season{
          unknown(Bool)
 }
 
+// (UnsafeRawPointer?) -> Unmanaged<CFString>?  // 函数字面量
+func arrayCopyDescriptionCallBack(_ p: UnsafeRawPointer?) -> Unmanaged<CFString>? {
+    return nil
+}
+
 import UIKit
 import Accelerate
+
 
 @UIApplicationMain
 // markdown
@@ -756,6 +762,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
     
+    
+    
     // 定义时必须指定一个类型
     func takeIntPointer(_ p: UnsafePointer<Int>) {// 常量指针: UnsafePointer
         // p.pointee += 1 // 报错: Left side of mutating operator isn't mutable: 'pointee' is a get-only property
@@ -771,6 +779,40 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         print("takeIntMutPointer: \(p.pointee)")
     }
     
+    func takeRawMutPointer(_ p: UnsafeMutableRawPointer?) {
+        print("takeRawMutPointer: \(p.debugDescription)")
+    }
+    
+    func takeAutoreleasingPointer(_ p: AutoreleasingUnsafeMutablePointer<Int>) {
+        
+    }
+    
+    // 将Uint8的指针 转换为UInt64类型
+    func convertUint8PointerToUint64Pointer(uint8Pointer: UnsafePointer<UInt8>) {
+        print(uint8Pointer)// 0x00007ffeec2f74c0
+        let uint64Pointer = UnsafeRawPointer(uint8Pointer).bindMemory(to: UInt64.self, capacity: 1)
+        print("uint64Pointer = \(uint64Pointer.pointee)", uint64Pointer)// 105553131981437 0x00007ffeec2f74c0
+        
+        let uint64Pointer1 = UnsafeRawPointer(uint8Pointer).assumingMemoryBound(to: UInt64.self)
+        print("uint64Pointer1 = \(uint64Pointer1.pointee)", uint64Pointer1)// 105553131981437 0x00007ffeec2f74c0
+        
+        let uint64Pointer2_1 = UnsafeRawPointer(uint8Pointer).load(as: UInt8.self)
+        let uint64Pointer2_2 = UnsafeRawPointer(uint8Pointer).load(as: UInt64.self)
+        print(uint64Pointer2_1, uint64Pointer2_2)// 125 105553131981437
+
+        let uint64Pointer3 = UnsafeMutablePointer(mutating: uint8Pointer).withMemoryRebound(to: UInt64.self, capacity: 1) {
+            return $0
+        }
+        print("uint64Pointer3 = \(uint64Pointer3.pointee)", uint64Pointer3)// 105553131981437 0x00007ffeec2f74c0
+    }
+    
+    // 指针可以使用load等方法转为对应的类型
+    func pri<T>(address p: UnsafeRawPointer, as type: T.Type) {
+        let value = p.load(as: type)
+        print(value)
+    }
+    
+    // ================
     func incrementor(ptr: UnsafeMutablePointer<Int>) {
         ptr.pointee += 1
     }
@@ -862,6 +904,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
          let a = NSData()
          let b = &a //编译出错
          
+         内存可能有几种状态：未指定类型未初始化、指定类型未初始化、指定类型已初始化。
+         未分配的：没有预留的内存分配给指针
+         已分配的：指针指向一个有效的已分配的内存地址，但是值没有被初始化。
+         已初始化：指针指向已分配和已初始化的内存地址。
+         
          UnsafePointer<T> 是不可变的。当然对应地，它还有一个可变变体，UnsafeMutablePointer<T>
          C 中的指针都会被以这两种类型引入到 Swift 中：C 中 const 修饰的指针对应 UnsafePointer (最常见的应该就是 C 字符串的 const char * 了)
          对于一个 UnsafePointer<T> 类型，我们可以通过 pointee 属性对其进行取值
@@ -887,6 +934,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
          当我们从CF函数中获取到Unmanaged<T>对象的时候，我们需要调用takeRetainedValue或者takeUnretainedValue获取到对象T
          如果一个函数名中包含Create或Copy，则调用者获得这个对象的同时也获得对象所有权，返回值Unmanaged需要调用takeRetainedValue()方法获得对象。调用者不再使用对象时候，Swift代码中不需要调用CFRelease函数放弃对象所有权，这是因为Swift仅支持ARC内存管理
          如果一个函数名中包含Get，则调用者获得这个对象的同时不会获得对象所有权，返回值Unmanaged需要调用takeUnretainedValue()方法获得对象
+         
+         苹果的一些底层框架返回的对象有的是自动管理内存的（annotated APIs），有的是不自动管理内存
+         对于Core Fundation中有@annotated注释的函数来说，返回的是托管对象，无需自己管理内存，可以直接获取到CF对象，并且可以无缝转化(toll free bridging)成Fundation对象，比如NSString和CFString
+         对于尚未注释的函数来说，苹果给出的是使用非托管对象Unmanaged<T>进行管理的过渡方案。
+         当我们从CF函数中获取到Unmanaged<T>对象的时候，我们需要调用takeRetainedValue或者takeUnretainedValue获取到对象T
+         1.如果一个函数名中包含Create或Copy，则调用者获得这个对象的同时也获得对象所有权，返回值Unmanaged需要调用takeRetainedValue()方法获得对象。调用者不再使用对象时候，Swift代码中不需要调用CFRelease函数放弃对象所有权，这是因为Swift仅支持ARC内存管理
+         2.如果一个函数名中包含Get，则调用者获得这个对象的同时不会获得对象所有权，返回值Unmanaged需要调用takeUnretainedValue()方法获得对象。
          */
         
         var aa = 10
@@ -895,7 +949,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         print("aa = \(aa)")// 11
         
         print("===takeIntPointer===")
-        takeIntPointer(&aa)// 11
+        var aa1 = 11
+        takeIntPointer(&aa1)// 11
         let intArray = [1, 2]
         // [Type]数组类型值，将数组起始地址传入函数
         takeIntPointer(intArray)// 1
@@ -908,13 +963,27 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         takeRawPointer(&y)
         takeRawPointer([1, 2])
         
+        print("===takeIntMutPointer===")
+        //let x1 = 26// 报错: Cannot pass immutable value as inout argument: 'x1' is a 'let' constant
+        var x1 = 26
+        var arr11 = [2, 8]// 必须用var
+        takeIntMutPointer(&x1)// 27
+        takeIntMutPointer(&arr11)// 3
+        
+        print("===takeIntMutPointer===")
+        var x2 = 28
+        var arr22 = [2, 9]
+        takeRawMutPointer(&x2)
+        takeRawMutPointer(&arr22)
+        
         // MARK: AutoreleasingUnsafeMutablePointer 自动释放指针
+        
         
         // 与这种做法类似的是使用 Swift 的 inout 关键字。我们在将变量传入 inout 参数的函数时，同样也使用 & 符号表示地址。不过区别是在函数体内部我们不需要处理指针类型，而是可以对参数直接进行操作
         incrementor1(num: &aa)
         print("aa = \(aa)")// 12
         
-        // 指针初始化和内存管理
+        // ===指针初始化和内存管理===
         var intPtr = UnsafeMutablePointer<Int>.allocate(capacity: 1)
         // 内存进行了分配，并且值已经被初始化. 这种状态下的指针是可以保证正常使用的
         intPtr.initialize(to: 10)// 在完成初始化后，我们就可以通过 pointee 来操作指针指向的内存值了
@@ -936,11 +1005,45 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         print(intPointer.pointee)
         intPointer.deallocate()
         
-        // MARK: 指向数组的指针
+        // ======
+        // 未分配的指针用allocate方法分配一定的内存空间。
+        let uint8Pointer = UnsafeMutablePointer<UInt8>.allocate(capacity: 8)
+        // 分配完内存空间的指针用各种init方法来绑定一个值或一系列值。初始化时，必须保证指针是未初始化的。
+        uint8Pointer.initialize(repeating: 20, count: 4)
+        print(uint8Pointer[0], uint8Pointer[3], uint8Pointer[4])  // 20, 20, 0
+        // 修改值
+        uint8Pointer[0] = 10
+        uint8Pointer[4] = 30
+        print(uint8Pointer[0], uint8Pointer[3], uint8Pointer[4])  // 10, 20, 30
+        // 回到初始化值之前，没有释放指针指向的内存，指针依旧指向之前的值。
+        uint8Pointer.deinitialize(count: 8)
+        print(uint8Pointer[0], uint8Pointer[3], uint8Pointer[4]) // 10, 20, 30
+        // 在释放指针内存之前，必须要保证指针是未初始化的
+        uint8Pointer.deallocate()
+        delay(by: 3.0) {
+            print("===3.0===")
+            print(uint8Pointer[0], uint8Pointer[3], uint8Pointer[4]) // 可能是任何值，已经销毁了
+        }
+        
+        var structPointers = UnsafeMutablePointer<Point>.allocate(capacity: 3)
+        var ppp = Point(x: 20.9, y: 39.8)
+        structPointers[1] = ppp// ###不推荐，它不适用指针指向一个类，或某些特定的结构体和枚举的情况###
+        // 从安全的角度来讲，最受欢迎的初始化手段是使用 initialize 分配完成内存后，直接设置变量的初始值
+        structPointers.initialize(repeating: Point(x: 100.9, y: 100.8), count: 1)
+        print(structPointers[0], structPointers[1], structPointers[2], structPointers, structPointers.advanced(by: 1))
+        structPointers.deinitialize(count: 3)
+        structPointers.deallocate()
+        
+        // MARK: ==指向数组的指针==
         /**
          在 Swift 中将一个数组作为参数传递到 C API 时，Swift 已经帮助我们完成了转换
          
          public func vDSP_vadd(_ __A: UnsafePointer<Float>, _ __IA: vDSP_Stride, _ __B: UnsafePointer<Float>, _ __IB: vDSP_Stride, _ __C: UnsafeMutablePointer<Float>, _ __IC: vDSP_Stride, _ __N: vDSP_Length)
+         
+         UnsafeBufferPointer
+         UnsafeMutableBufferPointer
+         UnsafeRawBufferPointer
+         UnsafeMutableRawBufferPointer
          
          对于一般的接受 const 数组的 C API，其要求的类型为 UnsafePointer，
          而非 const 的数组则对应 UnsafeMutablePointer。
@@ -981,9 +1084,62 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         })
         print("test = \(test)")// 11
         
+        // withUnsafeMutablePointer方法可以将Swift对象ViewController转换为UnsafeMutablePointer<ViewController>类型，这样才可以当做参数传入C函数
+        var blockSelf = self
+        let appDelegatePointer: UnsafeMutablePointer<AppDelegate> = withUnsafeMutablePointer(to: &blockSelf) {
+            return $0
+        }
+        
+        // Context(info: <#T##UnsafeMutableRawPointer!#>, retain: <#T##((UnsafeRawPointer?) -> UnsafeRawPointer?)!##((UnsafeRawPointer?) -> UnsafeRawPointer?)!##(UnsafeRawPointer?) -> UnsafeRawPointer?#>)
+        var context = Context(info: appDelegatePointer, retain: nil)
+        abcPrint(&context) { (mutRawPointer) in
+            // C函数的回调函数中，传出来一个UnsafeMutableRawPointer对象的指针，展示了3种方式，可以将这个指针转换为AppDelegate对象。
+            let controller1 = mutRawPointer?.assumingMemoryBound(to: AppDelegate.self).pointee
+            print("controller1: \(String(describing: controller1))")
+            
+            let controller2 = mutRawPointer?.bindMemory(to: AppDelegate.self, capacity: 1).pointee
+            print("controller2: \(String(describing: controller2))")
+            
+            let controller3 = mutRawPointer?.load(as: AppDelegate.self)
+            print("controller3: \(String(describing: controller3))")
+        }
+        
+         var uint: UInt8 = 125
+        convertUint8PointerToUint64Pointer(uint8Pointer: &uint)
+        
+        // MARK: 可变 不可变
+        // 当一个函数需要传入不可变指针时，可变指针可以直接传入。
+        // 而当一个函数需要可变指针时，可以使用init(mutating other: UnsafePointer<Pointee>)方法转换
+        // UnsafeMutablePointer<Int>.init(mutating: <#T##UnsafePointer<Int>#>)
         
         
-        // MARK: "@"
+        // MARK: 函数指针
+        /**
+         在C中有回调函数，当swift要调用C中这类函数时，可以使用函数指针。
+
+         swift中可以用@convention 修饰一个闭包，
+
+         @convention(swift) : 表明这个是一个swift的闭包
+         @convention(block) ：表明这个是一个兼容oc的block的闭包，可以传入OC的方法。
+         @convention(c) : 表明这个是兼容c的函数指针的闭包，可以传入C的方法。
+         
+         C中的方法int (*)(void) 在swift中就是@convention(c) () -> Int32
+         在调用C函数需要传入函数指针时，swift可以传入闭包的字面量或者nil，也可以直接传入一个闭包。
+         */
+        // public struct CFArrayCallBacks
+        // public typealias CFArrayRetainCallBack = @convention(c) (CFAllocator?, UnsafeRawPointer?) -> UnsafeRawPointer?
+        // public typealias CFArrayReleaseCallBack = @convention(c) (CFAllocator?, UnsafeRawPointer?) -> Void
+        // public typealias CFArrayCopyDescriptionCallBack = @convention(c) (UnsafeRawPointer?) -> Unmanaged<CFString>?
+        // public typealias CFArrayEqualCallBack = @convention(c) (UnsafeRawPointer?, UnsafeRawPointer?) -> DarwinBoolean
+        var callbacks = CFArrayCallBacks(version: 0, retain: nil, release: nil, copyDescription: arrayCopyDescriptionCallBack, equal: { (p1, p2) -> DarwinBoolean in
+            return DarwinBoolean(true)
+        })
+        // callbacks: UnsafePointer<CFArrayCallBacks>
+        var cfMutableArray = CFArrayCreateMutable(nil, 0, &callbacks)
+        
+        
+        
+        // MARK: ==="@"===
         /**
          @IBOutlet
          如果你用@IBOutlet属性标记一个属性，那么Interface Builder（IB）将识别那个变量，并且你将能够通过提供的“outlet”机制将你的源代码与你的XIB或者Storyboard连接起来

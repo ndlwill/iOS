@@ -6,6 +6,9 @@
 //  Copyright © 2019 ndl. All rights reserved.
 //
 
+// MARK: SGPlayer
+// https://github.com/libobjc/SGPlayer
+
 // MARK: GPUImage
 // https://www.jianshu.com/nb/4268718
 
@@ -336,6 +339,190 @@
  Step 1：调用 animationWithDuration:animations: 方法
  Step 2：在 Animation Block 中进行 Layout，Display，Prepare，Commit 等步骤。
  Step 3：Render Server 根据 Animation 逐帧进行渲染
+ */
+
+// MARK: 内存管理
+/**
+ 引用计数
+ retain、release、etainCount
+ 
+ - (NSUInteger)retainCount  {
+     return (NSUInteger)__CFDoExternRefOperation(OPERATION_retainCount,self);
+ }
+
+ - (id)retain  {
+     return (id)__CFDoExternRefOperation(OPERATION_retain,self);
+ }
+
+ - (void)release  {
+     return __CFDoExternRefOperation(OPERATION_release,self);
+ }
+
+ int __CFDoExternRefOperation(uintptr_r op,id obj) {
+         CFBasicHashRef table = 取得对象对应的散列表(obj);
+         int count;
+
+         switch(op) {
+             case OPERATION_retainCount:
+                 count = CFBasicHashGetCountOfKey(table,obj);
+                 return count;
+             case OPERATION_retain:
+                 CFBasicHashAddValue(table,obj);
+                 return obj;
+             case OPERATION_release:
+                 count = CFBasicHashRemoveValue(table,obj):
+                 return 0 == count;
+         }
+     }
+ 
+ 采用散列表（引用计数表）来管理引用计数，当我们在调用retain、retainCount、release时，先调用_CFDoExternRefOperation()从而获取到引用计数表的内存地址以及本对象的内存地址，然后根据对象的内存地址在表中查询获取到引用计数值
+
+ autorelease作用是将对象放入自动释放池中，当自动释放池销毁时对自动释放池中的对象都进行一次release操作
+ 
+ ARC：
+ 使用@autoreleasepool{}来使用一个AutoreleasePool，随后编译器会改成下面的样子：
+ void *context = objc_autoreleasePoolPush();
+ // 执行的代码
+ objc_autoreleasePoolPop(context);
+ 而这两个函数都是对AutoreleasePoolPage的简单的封装
+ 
+ AutoreleasePool并没有单独的结构，而是由若干个AutoreleasePoolPage以双链表的形式组合而成（分别对应结构中的parent指针和child指针）
+ AutoreleasePool是按线程一一对应的（结构中的thread指针指向当前线程）
+ AutoreleasePoolPage每个对象开辟一个虚拟内存一页的大小，除了上面实例变量所占空间，剩下的空间全部用来存储autorelease对象的地址
+ 上面的id *next指针作为游标指向栈顶最新add进来的autorelease对象的下一个位置
+ 一个AutoreleasePoolPage的空间被占满时，会新建一个AutoreleasePoolPage对象，连接链表，后来的autorelease对象在新的page加入
+ 
+ 这一页再加入一个autorelease对象就要满了（也就是next指针马上指向栈顶），这时就要执行上面说的操作，建立下一页page对象，与这一页链表链接完成后，新page的next指针被初始化在栈底（begin的位置），然后继续向栈顶添加新对象。
+ 
+ 向一个对象发送- autorelease消息，就是将这个对象加入到当前AutoreleasePoolPage的栈顶next指针指向的位置
+ 
+ 每当执行一个objc_autoreleasePoolPush调用时，runtime向当前的AutoreleasePoolPage中add进一个哨兵对象，值为0（也就是nil）
+ objc_autoreleasePoolPush的返回值正是这个哨兵对象的地址，被objc_autoreleasePoolPop(哨兵对象)作为入参
+ 
+ 根据传入的哨兵对象地址找到哨兵对象所处的page
+ 在当前page中，将晚于哨兵对象插入的所有autorelease对象都发送一次- release消息，并向回移动next指针到正确位置
+ 从最新加入的对象一直向前清理，可以向前跨越若干个page，直到哨兵所在的page
+
+ id __strong obj = [[NSObject alloc] init];
+ 编译器会转换成下面代码：
+ id obj = objc_msgSend(NSObject, @selector(alloc));
+ objc_msgSend(obj, @selector(init));
+
+ // ...
+ objc_release(obj)
+
+ id __strong obj = [NSMutableArray array];
+ 编译器会转换成下面代码：
+ id obj = objc_msgSend(NSMutableArray, @selector(array));
+
+ //替代我们调用retain方法，是obj持有该对象
+ objc_retainAutoreleaseReturnValue(obj);
+ objc_release(obj);
+ 
+ + (id)array {
+     return [[NSMutableArray alloc] init];
+ }
+ 编译器转换如下：
+ + (id)array {
+     id obj = objc_msgSend(NSMutableArray,@selector(alloc));
+     objc_msgSend(obj,@selector(init));
+     
+     // 代替我们调用autorelease方法
+     return objc_autoreleaseReturnValue(obj);
+ }
+ objc_retainAutoreleaseReturnValue有一个成对的函数objc_autoreleaseReturnValue,这两个函数可以用于最优化程序的运行
+ 
+ 其实autorelease这个开销不小，runtime机制解决了这个问题
+ 优化:
+ Thread Local Storage（TLS）线程局部存储
+ 将一块内存作为某个线程专有的存储，以key-value的形式进行读写
+ 在返回值身上调用objc_autoreleaseReturnValue方法时，runtime将这个返回值object储存在TLS中，然后直接返回这个object（不调用autorelease），同时，在外部接收这个返回值的objc_retainAutoreleaseReturnValue里，发现TLS中正好存在这个对象，那么直接返回这个object（不调用retain）。
+ 于是乎，调用方和被调用利用TLS做中转，很有默契的免去了对返回值的内存管理。
+
+ __weak表示弱引用，弱引用不会影响对象的释放，而当对象被释放时，所有指向它的弱引用都会自动被置为nil，这样可以防止野指针
+ obj对象在生成之后立马就会被释放，主要原因是因为__weak修饰的指针没有引起对象内部的引用计数发生变化
+ Runtime维护了一个weak表，用于存储指向某个对象的所有weak指针。weak表其实是一个Hash（哈希）表
+ Key是所指对象的地址，Value是weak指针的地址（这个地址的值是所指对象的地址）数组。
+ 
+ 1.初始化时，runtime会调用objc_initWeak函数，初始化一个新的weak指针指向对象的地址。
+ 2.添加引用时，objc_initWeak函数会调用objc_storeWeak()函数，objc_storeWeak()的作用是更新指针指向，创建对应的弱引用表。
+ 3.释放时，调用clearDeallocating函数。clearDeallocating函数首先根据对象地址获取所有weak指针地址的数组，然后遍历这个数组把其中的数据设为nil，最后把这个entry从weak表中删除，最后清理对象的记录。
+ 
+ struct weak_table_t {
+     weak_entry_t *weak_entries;     // 保存来所有指向指定对象的weak指针     weak_entries的对象
+     size_t num_entries;             // weak对象的存储空间
+     uintptr_t mask;
+     uintptr_t max_hash_displacement;
+ };
+ 
+ id __weak obj = [[NSObject alloc] init];
+ 编译器转换后代码如下：
+ id obj;
+ id tmp = objc_msgSend(NSObject, @selector(alloc));
+ objc_msgSend(tmp,@selector(init));
+ objc_initWeak(&obj,tmp);
+ objc_release(tmp);
+ objc_destroyWeak(&obj);
+ 
+ id objc_initWeak(id *location, id newObj) {
+     if (!newObj) {
+         *location = nil;
+         return nil;
+     }
+
+     return storeWeak(location, newObj);
+ }
+ 
+ ###weak_entry_t是存储在弱引用表中的一个内部结构体，它负责维护和存储指向一个对象的所有弱引用Hash表###
+ 
+ 释放对象基本流程如下：
+ 调用objc_release
+ 因为对象的引用计数为0，所以执行dealloc
+ 在dealloc中，调用来_objc_rootDealloc函数
+ 在_objc_rootDealloc中，调用来object_dispose函数
+ 调用objc_destructInstance
+ 最后调用objc_clear_deallocating
+
+ clearDeallocating函数首先根据对象地址获取所有weak指针地址的数组，然后遍历这个数组把其中的数据设为nil，最后把这个entry从weak表中删除，最后清理对象的记录。
+ 
+ void objc_clear_deallocating(id obj) {
+     assert(obj);
+     assert(!UseGC);
+     if (obj->isTaggedPointer()) return;
+     obj->clearDeallocating();
+ }
+
+ //执行 clearDeallocating方法
+ inline void objc_object::clearDeallocating() {
+     sidetable_clearDeallocating();
+ }
+ void  objc_object::sidetable_clearDeallocating() {
+     SideTable *table = SideTable::tableForPointer(this);
+     // clear any weak table items
+     // clear extra retain count and deallocating bit
+     // (fixme warn or abort if extra retain count == 0 ?)
+     spinlock_lock(&table->slock);
+     RefcountMap::iterator it = table->refcnts.find(this);
+     if (it != table->refcnts.end()) {
+         if (it->second & SIDE_TABLE_WEAKLY_REFERENCED) {
+             weak_clear_no_lock(&table->weak_table, (id)this);
+         }
+         table->refcnts.erase(it);
+     }
+     spinlock_unlock(&table->slock);
+ }
+
+最终通过调用weak_clear_no_lock方法，将weak指针置空
+ 
+ objc_clear_deallocating函数的操作如下：
+ 从weak表中获取废弃对象的地址为键值的记录
+ 将包含在记录中的所有附有weak修饰符变量的地址，置为nil
+ 将weak表中该记录删除
+ 从引用计数表中删除废弃对象的地址为键值的记录
+ 
+ __unsafe_unretained：
+ __unsafe_unretained作用需要和weak对比，它不会引起对象的内部引用计数的变化，但是，当其指向的对象被销毁是__unsafe_unretained修饰的指针不会置为nil。是不安全的所有权修饰符，它不纳入ARC的内存管理。
+
  */
 
 #import "InterviewViewController.h"
