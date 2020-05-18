@@ -11,7 +11,6 @@
 @implementation DrawRectView
 
 - (void)drawRect:(CGRect)rect {
-    
     NSLog(@"DrawRectView: %@", [NSThread currentThread]);// main
 }
 

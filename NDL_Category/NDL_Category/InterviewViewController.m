@@ -4727,6 +4727,24 @@ mode里面有很多items
  }
  
  */
+// MARK: ---LG_Category
+
+
+// MARK: ---LG_KVC
+/**
+ 大括号这里面的都是成员变量
+ @interface Test : UIView {
+     int age;// 成员变量
+ }
+ 实例变量：是一种特殊的成员变量 通过class实例出来的变量
+ 属性：有默认的setter和getter方法
+ 
+ llvm编译器，当他发现没有匹配成员变量的属性时，会自动创建带下划线的成员变量
+ 
+ 
+ */
+
+// MARK: ---LG_objc_init
 
 // MARK: ---LG_多线程
 /**
