@@ -14,6 +14,116 @@ import RxDataSources
 import Moya
 import Alamofire
 
+// MARK: ==解决类实例之间的强引用循环==
+/**
+ 当另一个实例的生命周期较短时，即当另一个实例可以首先被释放时，使用weak引用。
+ 相反，当另一个实例有相同的生命周期或更长的生命周期时，使用unowned引用。
+ 
+ 弱引用(weak):
+ 因为弱引用不会对其引用的实例保持强引用，所以该实例有可能在弱引用仍然存在时就被释放了。当它所引用的实例被释放时，ARC会自动将弱引用设置为nil。当ARC将弱引用设置为nil时，属性观察器不会被调用。
+ 因为弱引用需要允许它们的值在运行时被设置为nil，所以它们总是声明为可选类型的变量，而不是常量。
+ 
+ unowned引用:
+ unowned引用也不会对它所引用的实例保持强引用
+ 
+ 只有当您确定这个引用总是引用着一个还未被释放的实例时，才使用unowned引用。
+ 如果试图在实例被释放后访问unowned引用的值，将得到一个运行时错误
+ 
+ 因为unowned引用是非可选的，所以每次使用它时，不需要解包，可以直接访问。
+ 当它所引用的实例被释放时，ARC不能将它设置为nil，因为非可选类型的变量不能设置为nil
+ 
+ 客户可能拥有信用卡，也可能没有，但是信用卡总是与客户相关联的。
+ 一个CreditCard实例的生命周期永远不会超过它所引用的客户
+ class Customer {
+     let name: String
+   //每个客户可以持有或不持有信用卡，所以将属性card定义可选类型的变量
+     var card: CreditCard?
+     init(name: String) {
+         self.name = name
+     }
+     deinit { print("\(name) is being deinitialized") }
+ }
+
+ class CreditCard {
+     let number: UInt64
+   /*
+      1.每张信用卡总有个客户与之对应，与每张信用卡相关联的客户不能为空，而且不能更换，因此将customer属性定义为非可选的常量；
+      2.由于信用卡始终拥有客户，为了避免强引用循环问题，所以将客户属性定义为unowned
+      */
+     unowned let customer: Customer
+  // 只能通过向初始化方法传递number和customer来创建CreditCard实例，确保CreditCard实例始终具有与其关联
+     init(number: UInt64, customer: Customer) {
+         self.number = number
+         self.customer = customer
+     }
+     deinit { print("Card #\(number) is being deinitialized") }
+ }
+ 
+ unowned引用和隐式解包的可选属性:
+ 每个国家都必须有一个首都，每个城市都必须属于一个国家
+ class Country {
+     let name: String
+     var capitalCity: City!// 这意味着capitalCity属性的默认值为nil，与其他任何可选值一样，但可以在不需要解包的情况下访问其值。（隐式解包选项）
+     init(name: String, capitalName: String) {
+         self.name = name
+ // 只有当一个新的Country实例完全初始化之后，Country的构造器才能将self传递给City的构造器
+      // 在Country的初始化方法中来创建City实例，并将此实例存储在其capitalCity属性中
+      //在Country的初始化方法中调用City的初始化方法。 但是，只有完全初始化一个新的Country实例后，才能将self传递到City初始化器中
+         self.capitalCity = City(name: capitalName, country: self)// （两阶段初始化）
+     }
+ }
+ // 因为capitalCity具有默认值nil，所以只要Country实例在其构造器中设置name属性，新的Country实例就认为被完全初始化。这意味着Country构造器可以设置在name属性后就可以开始引用和传递隐式self属性
+
+
+ class City {
+     let name: String
+     unowned let country: Country
+     //City的初始化器使用一个Country实例，并将此实例存储在其country属性中
+     init(name: String, country: Country) {
+         self.name = name
+         self.country = country
+     }
+ }
+ 
+ 解决闭包的强引用循环:
+ 当闭包和它捕获的实例总是相互引用，并且总是在同一时间被释放时，在闭包中定义一个unowned引用。
+ 
+ 当捕获的引用在将来的某个时刻可能变成nil时，将捕获定义为weak引用。weak引用总是可选类型，当它们引用的实例被释放时，它会自动变成nil。
+ 
+ 如果捕获的引用永远不会变成nil，那么它应该总是被捕获为一个unowned引用，而不是一个weak引用。
+ 
+ class HTMLElement {
+
+     let name: String
+     let text: String?
+
+     lazy var asHTML: () -> String = {
+         [unowned self] in
+         if let text = self.text {
+             return "<\(self.name)>\(text)</\(self.name)>"
+         } else {
+             return "<\(self.name) />"
+         }
+     }
+
+     init(name: String, text: String? = nil) {
+         self.name = name
+         self.text = text
+     }
+
+     deinit {
+         print("\(name) is being deinitialized")
+     }
+
+ }
+ 
+ var paragraph: HTMLElement? = HTMLElement(name: "p", text: "hello, world")
+ print(paragraph!.asHTML())
+ 如果将paragraph变量中的强引用设置为nil，则会释放HTMLElement实例
+ paragraph = nil
+ 
+ */
+
 // MARK: Void
 /*
  它只不过是一个空元组
@@ -502,7 +612,7 @@ class ViewController: UIViewController {
         self.testView.frame = CGRect(x: 0, y: 200, width: 50, height: 50)
         self.view.addSubview(self.testView)
         
-        // MARK: 指针UnsafePointer
+        // MARK: ==指针UnsafePointer==
         /**
          官方将直接操作内存称为 “unsafe 特性”
          在操作指针之前，需要理解几个概念：size、alignment、stride

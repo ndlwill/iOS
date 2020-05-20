@@ -70,7 +70,7 @@
  print(address: array2) //0x6000000aa100
  */
 
-// MARK: the swift programming language
+// MARK: ===the swift programming language===Swift 官方===
 // https://docs.swift.org/swift-book/LanguageGuide/Closures.html#ID95
 
 // MARK: App 签名的原理
@@ -787,25 +787,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         
     }
     
-    // 将Uint8的指针 转换为UInt64类型
-    func convertUint8PointerToUint64Pointer(uint8Pointer: UnsafePointer<UInt8>) {
-        print(uint8Pointer)// 0x00007ffeec2f74c0
-        let uint64Pointer = UnsafeRawPointer(uint8Pointer).bindMemory(to: UInt64.self, capacity: 1)
-        print("uint64Pointer = \(uint64Pointer.pointee)", uint64Pointer)// 105553131981437 0x00007ffeec2f74c0
-        
-        let uint64Pointer1 = UnsafeRawPointer(uint8Pointer).assumingMemoryBound(to: UInt64.self)
-        print("uint64Pointer1 = \(uint64Pointer1.pointee)", uint64Pointer1)// 105553131981437 0x00007ffeec2f74c0
-        
-        let uint64Pointer2_1 = UnsafeRawPointer(uint8Pointer).load(as: UInt8.self)
-        let uint64Pointer2_2 = UnsafeRawPointer(uint8Pointer).load(as: UInt64.self)
-        print(uint64Pointer2_1, uint64Pointer2_2)// 125 105553131981437
-
-        let uint64Pointer3 = UnsafeMutablePointer(mutating: uint8Pointer).withMemoryRebound(to: UInt64.self, capacity: 1) {
-            return $0
-        }
-        print("uint64Pointer3 = \(uint64Pointer3.pointee)", uint64Pointer3)// 105553131981437 0x00007ffeec2f74c0
-    }
-    
     // 指针可以使用load等方法转为对应的类型
     func pri<T>(address p: UnsafeRawPointer, as type: T.Type) {
         let value = p.load(as: type)
@@ -898,13 +879,63 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         let stride = MemoryLayout<TestPoint>.stride// 24
         let alignment = MemoryLayout<TestPoint>.alignment// 8
         
+        
         // MARK: 指针UnsafePointer和托管Unmanaged和UnsafeRawPointer
         /**
+         unsafe：不安全的，并不是真的不安全，大概是提示开发者少用。
+         Write Access：可写入。
+         Collection：像一个容器，可添加数据。
+         Strideable：指针可使用 advanced 函数移动。
+         Typed：是否需要指定类型（范型）。
+         
+         ===============================start
+         C
+         Swift
+         注解
+
+         const Type *
+         UnsafePointer<Type>
+         指针可变，指针指向的内存值不可变
+
+         Type *
+         UnsafeMutablePointer<Type>
+         指针和指针指向的内存值均可变
+
+         ClassType * const *
+         UnsafePointer<UnsafePointer<Type>>
+         指针的指针：指针不可变，指针指向的类可变
+
+         ClassType **
+         UnsafeMutablePointer<UnsafeMutablePointer<Type>>
+         指针的指针：指针和指针指向的类均可变
+
+         ClassType **
+         AutoreleasingUnsafeMutablePointer<Type>
+         作为OC方法中的指针参数
+
+         const void *
+         UnsafeRawPointer
+         指针指向的内存区，类型未定
+
+         void *
+         UnsafeMutableRawPointer
+         指针指向的内存区，类型未定
+
+         StructType *
+         OpaquePointer
+         c语言中的一些自定义类型，Swift中并未有相对应的类型
+
+         int a[]
+         UnsafeBufferPointer/UnsafeMutableBufferPointer
+         一种数组指针
+         ===============================end
+         
          但是Swift的&操作和C语言不同的一点是，Swift不允许直接获取对象的指针，比如下面的代码就会编译不通过。
          let a = NSData()
          let b = &a //编译出错
          
-         内存可能有几种状态：未指定类型未初始化、指定类型未初始化、指定类型已初始化。
+         ###内存可能有几种状态：###
+         未指定类型未初始化、指定类型未初始化、指定类型已初始化。
          未分配的：没有预留的内存分配给指针
          已分配的：指针指向一个有效的已分配的内存地址，但是值没有被初始化。
          已初始化：指针指向已分配和已初始化的内存地址。
@@ -927,6 +958,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
          void *    UnsafeMutableRawPointer
 
          Swift 中存在表示一组连续数据指针的 UnsafeBufferPointer<T>
+         
+         pointee 可理解为解引(dereference)，即用 * 符号获得指针指向内存区域的值
          
          托管: TestPointerViewController.swift
          https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFMemoryMgmt/Concepts/Ownership.html
@@ -977,7 +1010,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         takeRawMutPointer(&arr22)
         
         // MARK: AutoreleasingUnsafeMutablePointer 自动释放指针
-        
         
         // 与这种做法类似的是使用 Swift 的 inout 关键字。我们在将变量传入 inout 参数的函数时，同样也使用 & 符号表示地址。不过区别是在函数体内部我们不需要处理指针类型，而是可以对参数直接进行操作
         incrementor1(num: &aa)
@@ -1034,6 +1066,66 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         structPointers.deinitialize(count: 3)
         structPointers.deallocate()
         
+        // MARK: ===UnsafeRawPointer===
+        testRawPointer()
+        testTypePointer()
+        tranRawToTypePointer()
+        getInstByte()
+        
+        // MARK: ===UnsafeMutablePointer && UnsafePointer===
+        /**
+         UnsafeMutablePointer<Int>.allocate(capacity: <#T##Int#>)
+         
+         UnsafePointer中的pointee属性只能get不能set。
+         UnsafePointer中没有allocate方法。
+         */
+        
+        // MARK: 将指针引用的内存作为不同的类型访问
+        /**
+         withMemoryRebound:
+         将内存临时重新绑定到其他类型
+         
+         MemoryLayout<Int>.stride// 8
+         MemoryLayout<Int8>.stride// 1
+         
+         bindMemory:
+         该方法绑定内存为指定类型并返回一个UnsafeMutablePointer<指定类型>的指针，用到了指向内存的原始指针。
+         */
+        // 类型占用内存小->大不能显示123打印的显示140734414027899（一个很大的数）
+        var int8: Int8 = 123
+        withUnsafePointer(to: &int8) { (innerPointer) -> Void in
+            // innerPointer: UnsafePointer<Int8>
+            
+            innerPointer.withMemoryRebound(to: Int.self, capacity: 1) { (pointer2) -> Void in
+                print("pointer2.pointee = \(pointer2.pointee)")// 140734414027899
+            }
+        }
+        
+        // 类型占用内存大->小能显示打印的86
+        var intV: Int = 86
+        withUnsafePointer(to: &intV) { (innerPointer) -> Void in
+            // innerPointer: UnsafePointer<Int>
+            
+            innerPointer.withMemoryRebound(to: Int8.self, capacity: MemoryLayout<Int>.size / MemoryLayout<Int8>.size) { (pointer2) -> Void in
+                print("pointer2.pointee = \(pointer2.pointee) next = \(pointer2.advanced(by: 1).pointee)")// 86, 0
+            }
+        }
+        
+        
+        let aaa = 107
+        let aaaObj = aaa as AnyObject// NSNumber
+        print("aaa地址为: \(Unmanaged<AnyObject>.passUnretained(aaaObj).toOpaque())")// 0xfbc9287c2474b9a5
+        
+        var string111 = "hello" // 5个字符 'h' 'e' 'l' 'l' 'o' 每个字符占一个字节
+        var strdata = string111.data(using: .ascii)
+        strdata?.withUnsafeBytes({ (ptr: UnsafePointer<Int8>) in
+            print(ptr.pointee) // 104 = 'h'
+        })
+        
+        let ff = Point(x: 23.9, y: 76.7)
+        
+        
+        
         // MARK: ==指向数组的指针==
         /**
          在 Swift 中将一个数组作为参数传递到 C API 时，Swift 已经帮助我们完成了转换
@@ -1084,6 +1176,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         })
         print("test = \(test)")// 11
         
+        
+        // MARK: swift && c
         // withUnsafeMutablePointer方法可以将Swift对象ViewController转换为UnsafeMutablePointer<ViewController>类型，这样才可以当做参数传入C函数
         var blockSelf = self
         let appDelegatePointer: UnsafeMutablePointer<AppDelegate> = withUnsafeMutablePointer(to: &blockSelf) {
@@ -1103,9 +1197,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             let controller3 = mutRawPointer?.load(as: AppDelegate.self)
             print("controller3: \(String(describing: controller3))")
         }
-        
-         var uint: UInt8 = 125
-        convertUint8PointerToUint64Pointer(uint8Pointer: &uint)
         
         // MARK: 可变 不可变
         // 当一个函数需要传入不可变指针时，可变指针可以直接传入。
@@ -1304,6 +1395,177 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         
         UserDefaults.standard.set("100", forKey: "StringKey")
     }
+    
+    // 原生(Raw)指针
+    func testRawPointer() {
+        let count = 2
+        let stride = MemoryLayout<Int>.stride
+        let aligment = MemoryLayout<Int>.alignment
+        let byteCount = stride * count
+        
+        // 创建分配所需字节数
+        let pointer = UnsafeMutableRawPointer.allocate(byteCount: byteCount, alignment: aligment)
+
+        defer {
+            pointer.deallocate()
+        }
+        // MARK: rawPointer 使用 storeBytes 和 load 方法存储和读取字节
+        // advanced: 移动指针地址
+        pointer.storeBytes(of: 42, as: Int.self)
+        pointer.advanced(by: stride).storeBytes(of: 6, as: Int.self)
+        // 也可以直接使用 + 运算符：
+        // (pointer + stride).storeBytes(of: 6, as: Int.self)
+        let val = pointer.load(as: Int.self)// 42
+        let val1 = pointer.advanced(by: stride).load(as: Int.self)// 6
+        
+        
+        let bufferPointer = UnsafeRawBufferPointer(start: pointer, count: byteCount)
+        for (index, byte) in bufferPointer.enumerated() {
+            print("bute \(index): \(byte)")
+        }
+    }
+    
+    // 类型指针
+    func testTypePointer() {
+        let count = 2
+        let stride = MemoryLayout<Int>.stride
+        let aligment = MemoryLayout<Int>.alignment
+        let byteCount = stride * count
+        
+        // 类型指针，在分配内存的时候通过给范型赋值来指定当前指针所操作的数据类型
+        // 因为通过给范型参数赋值，已经知道了要存储的数据类型，其alignment和stride就确定了，这时只需要再知道存储几个数据即可。
+        let pointer = UnsafeMutablePointer<Int>.allocate(capacity: count)
+        pointer.initialize(repeating: 0, count: count)
+
+        defer {
+            pointer.deinitialize(count: count)
+            pointer.deallocate()
+        }
+
+        pointer.pointee = 42
+        // advanced: 这里是按类型值的个数进行移动
+        pointer.advanced(by: 1).pointee = 6
+        // 这里也可以使用运算符 + 进行移动：
+//        (pointer + 1).pointee = 6
+        print(pointer.pointee)// 42
+        let val = pointer.advanced(by: 1).pointee// 6
+        
+        let bufferPointer = UnsafeBufferPointer(start: pointer, count: count)
+        for (index, value) in bufferPointer.enumerated() {
+            print("value \(index): \(value)")
+        }
+    }
+    
+    // 原生指针转换为类型指针
+    func tranRawToTypePointer() {
+        let count = 2
+        let stride = MemoryLayout<Int>.stride
+        let aligment = MemoryLayout<Int>.alignment
+        let byteCount = stride * count
+        
+        // 创建原生指针
+        let rawPointer = UnsafeMutableRawPointer.allocate(byteCount: byteCount, alignment: aligment)
+        // 延迟释放原生指针的内存
+        defer {
+            rawPointer.deallocate()
+        }
+        
+        // 将原生指针绑定类型: 原生指针转换为类型指针，是通过调用内存绑定到特定的类型来完成的
+        // The number of bytes in this region is `count * MemoryLayout<T>.stride`.
+        // Returns: A typed pointer to the newly bound memory
+        let typePointer: UnsafeMutablePointer<Int> = rawPointer.bindMemory(to: Int.self, capacity: count)
+        
+        typePointer.initialize(repeating: 0, count: count)
+        defer {
+            typePointer.deinitialize(count: count)
+        }
+        
+        typePointer.pointee = 42
+        typePointer.advanced(by: 1).pointee = 9
+        print(typePointer.pointee)// 42
+        let val = typePointer.advanced(by: 1).pointee// 9
+        
+        let bufferPointer = UnsafeBufferPointer(start: typePointer, count: count)
+        for (index, value) in bufferPointer.enumerated() {
+            print("value \(index): \(value)")
+        }
+        
+    }
+    
+    // 获取一个实例的字节
+    func getInstByte() {
+        var sample = Sample(number: 25, flag: true)
+        
+        print("==getInstByte==")
+        // 该方法和回调闭包都有返回值，如果闭包有返回值，此返回值将会作为该方法的返回值.但是，一定不要在闭包中将body的参数，即：UnsafeRawBufferPointer 类型的指针作为返回值返回，该参数的使用范围仅限当前闭包，该参数的使用范围仅限当前闭包，该参数的使用范围仅限当前闭包。
+        withUnsafeBytes(of: &sample) { (rs) in
+            for bute in rs {
+                print(bute)
+            }
+        }
+        
+    }
+    
+    // MARK: （rawPointer: bindMemory && assumingMemoryBound） && typePointer: withMemoryRebound
+    /**
+     bindMemory:
+     Use the bindMemory(to:capacity:) method to bind the memory referenced by this pointer to the type T. The memory must be uninitialized or initialized to a type that is layout compatible with T. If the memory is uninitialized, it is still uninitialized after being bound to T.
+     
+     Warning:
+     A memory location may only be bound to one type at a time. The behavior of accessing memory as a type unrelated to its bound type is undefined.
+     
+     let count = 4
+     let bytesPointer = UnsafeMutableRawPointer.allocate(
+             bytes: 100,
+             alignedTo: MemoryLayout<Int8>.alignment)
+     let int8Pointer = bytesPointer.bindMemory(to: Int8.self, capacity: count)
+     
+     After calling bindMemory(to:capacity:), the first four bytes of the memory referenced by bytesPointer are bound to the Int8 type, though they remain uninitialized. The remainder of the allocated region is unbound raw memory. All 100 bytes of memory must eventually be deallocated.
+     
+     Parameters:
+     type
+     The type T to bind the memory to.
+     count
+     The amount of memory to bind to type T, counted as instances of T.
+     
+     Returns:
+     A typed pointer to the newly bound memory. The memory in this region is bound to T, but has not been modified in any other way. The number of bytes in this region is count * MemoryLayout<T>.stride.
+     
+     
+     withMemoryRebound：
+     Use this method when you have a pointer to memory bound to one type and you need to access that memory as instances of another type. Accessing memory as a type T requires that the memory be bound to that type. A memory location may only be bound to one type at a time, so accessing the same memory as an unrelated type without first rebinding the memory is undefined.
+     If `body` has a return value, that value is also used as the return value for the `withMemoryRebound(to:capacity:_:)` method.
+     The region of memory starting at this pointer and covering count instances of the pointer’s Pointee type must be initialized.
+     
+     Because this pointer’s memory is no longer bound to its Pointee type while the body closure executes, do not access memory using the original pointer from within body. Instead, use the body closure’s pointer argument to access the values in memory as instances of type T.
+     
+     Note：
+     Only use this method to rebind the pointer’s memory to a type with the same size and stride as the currently bound Pointee type. To bind a region of memory to a type that is a different size, convert the pointer to a raw pointer and use the bindMemory(to:capacity:) method.
+     
+     Parameters:
+     type
+     The type to temporarily bind the memory referenced by this pointer. The type T must be the same size and be layout compatible with the pointer’s Pointee type.
+     count
+     The number of instances of Pointee to bind to type.
+     body
+     A closure that takes a typed pointer to the same memory as this pointer, only bound to type T. The closure’s pointer argument is valid only for the duration of the closure’s execution. If body has a return value, that value is also used as the return value for the withMemoryRebound(to:capacity:_:) method.
+     Returns:
+     The return value, if any, of the body closure parameter.
+     
+     assumingMemoryBound:
+     Returns a typed pointer to the memory referenced by this pointer, assuming that the memory is already bound to the specified type.
+     
+     Use this method when you have a raw pointer to memory that has already been bound to the specified type. The memory starting at this pointer must be bound to the type T. Accessing memory through the returned pointer is undefined if the memory has not been bound to T. To bind memory to T, use bindMemory(to:capacity:) instead of this method.
+     
+     Use this method when you have a raw pointer to memory that has already been bound to the specified type. The memory starting at this pointer must be bound to the type T. Accessing memory through the returned pointer is undefined if the memory has not been bound to T. To bind memory to T, use bindMemory(to:capacity:) instead of this method.
+     
+     Parameters:
+     to
+     The type T that the memory has already been bound to.
+
+     Returns:
+     A typed pointer to the same memory as this raw pointer.
+     */
 
 
 }

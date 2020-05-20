@@ -661,6 +661,8 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
 }
 
 - (void)viewDidLoad {
+    NSLog(@"value = %ld", ~0l);// -1
+    
 //    NSObject *ttObj = [[NSObject alloc] init];
     id __strong ttObj = [[NSObject alloc] init];
     NSLog(@"RetainCount = %ld", CFGetRetainCount((__bridge CFTypeRef)(ttObj)));// 1

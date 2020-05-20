@@ -6,6 +6,97 @@
 //  Copyright © 2019 ndl. All rights reserved.
 //
 
+// MARK: 音视频
+/**
+ 采集：
+ 通过一些系统API获取就要可以获取物理摄像头将采集到的视频数据与麦克风采集到的音频数据.
+ */
+
+// MARK: AsyncDisplayKit is now Texture
+// https://texturegroup.org/docs/corner-rounding.html
+// https://blog.csdn.net/kmyhy/article/details/54632659
+// https://blog.csdn.net/kmyhy/article/details/54846322
+// https://www.jianshu.com/p/afc69cd9e824
+// http://www.cocoachina.com/articles/20182
+
+// MARK: ===面试===
+/**
+ https://www.jianshu.com/p/1e752f5678f1
+ */
+
+// MARK: NSTimer
+/**
+ 内存泄露原理分析+解决方案
+ NSTimer必须与RunLoop搭配使用，因为其定时任务的触发基于RunLoop，NSTimer使用常见的Target-Action模式。由于RunLoop会强引用timer，timer会强引用Target，容易造成循环引用、内存泄露等问题。
+ 
+ NSTimer与RunLoop:
+ NSTimer需要与RunLoop搭配使用。创建完定时器后，需要把定时器添加到指定RunLoopMode，添加完毕定时器就自动触发（fire）或者在设定时间fireDate后自动触发。
+ NSTimer并非真正的机械定时器，可能会出现延迟情况。当timer注册的RunLoop正在执行耗时任务、或者当前RunLoopMode并非注册是指定的mode，定时任务可能会延迟执行。
+ 
+ 创建定时器,传入Target对象，Timer会在强引用Target直到Timer失效（调用invalidate）
+ 注册定时器，调用RunLoop的addTimer:
+ RunLoop会强引用Timer。当调用Timer的invalidate使之失效时，RunLoop才会把Timer从RunLoop中移除并清除Timer对Target的强引用，invalidate是把Timer从RunLoop中移除的唯一方法。
+ 
+ 把Timer注册到RunLoop后，Timer会被其强引用，保证Timer存活，定时任务能触发。因此Target对象使用Timer实际上可以使用weak弱引用，只要你能保证创建完Timer将其加入RunLoop中。（注意：Timer通常用懒加载，且Timer一加入RunLoop就自动fire，如果想在特定时间点才fire定时任务，那必须到特定时间点才加入RunLoop，或者初始化后马上加入RunLoop并暂停定时器）
+ 
+ RunLoop强引用Timer、Timer强引用Target。Target必须等待Timer执行invalidate后清除其对Target的强引用，dealloc才会执行。
+ 
+ 如果在target中传入weak的self，那么可以解决循环引用问题吗？
+ 答案是:否
+ 
+ 内存泄漏解决方案:
+ 内存泄漏主要原因是RunLoop强引用Timer、Timer强引用Target，导致Target不执行析构。下面提供两种解决方案，本质是是从Target入手，把Target替换为另一个对象，而不是使用Timer的客户对象。客户对象不在作为Target，即可像使用普通对象一样，在dealloc中invalidate Timer。
+ 方案一：使用Block代替Target-Action
+ 方案二：直接替换Target
+ 
+ 当创建定时任务仅需执行一次（repeats=NO，也就是延迟定时任务），则执行完定时任务，会自动执行invalidate操作。
+ 但需注意：Timer会强引用Target直到延迟任务执行完毕。
+ 
+ 对于NSTimer，面试官还会问，它是否是时间准确呢？大家可能都知道是时间不准确的，因为受RunLoop的影响，那么GCD中也有延时，如果用GCD来做延时，那时间准确吗？
+ 答案是GCD的time是准确的，GCD 的线程管理是通过系统来直接管理的。GCD Timer 是通过 dispatch port 给 RunLoop 发送消息，来使 RunLoop 执行相应的 block，如果所在线程没有 RunLoop，那么 GCD 会临时创建一个线程去执行 block，执行完之后再销毁掉，因此 GCD 的 Timer 是不依赖 RunLoop 的。
+ */
+
+// MARK: Singleton单例
+/**
+ 单例模式：确保某一个类只有一个实例，而且自行实例化并向整个系统提供这个实例单例模式
+ 安全保障：防止两个线程同时调用shareInstance，使用@synchronized锁定
+ GCD创建：dispatch_once中dispatch_once_t类型为typedef long
+ onceToken= 0，线程执行dispatch_once的block中代码
+ onceToken= -1，线程跳过dispatch_once的block中代码不执行
+ onceToken= 其他值，线程被线程被阻塞，等待onceToken值改变
+ 用途：限制创建，提供全局调用，节约资源和提高性能
+ 
+ @synchronized单例
+ dispatch_once单例
+ 使用@synchronized虽然解决了多线程的问题，但是并不完美。因为只有在single未创建时，我们加锁才是有必要的。如果single已经创建.这时候锁不仅没有好处，而且还会影响到程序执行的性能（多个线程执行@synchronized中的代码时，只有一个线程执行，其他线程需要等待）。
+
+ + (SingletonManager*)shareManager {
+     static dispatch_once_t token;
+     dispatch_once(&token, ^{
+         if(defaultManager == nil) {
+             NSLog(@"dispatch_once Token: %ld",token);// 768
+             defaultManager = [[self alloc] init];
+         }
+     });
+     NSLog(@"Token: %ld",token);
+     NSLog(@"DefaultManager: %@",defaultManager);
+     return defaultManager;
+ }
+ 
+ 当线程首先调用shareInstance，某一线程要执行block中的代码时，首先需要改变onceToken的值，再去执行block中的代码。这里onceToken的值变为了768。
+这样当其他线程再获取onceToken的值时，值已经变为768。其他线程被阻塞。
+ 当block线程执行完block之后。onceToken变为-1。其他线程不再阻塞，跳过block。
+ 下次再调用shareInstance时，block已经为-1。直接跳过block。
+ 这样dispatch_once在首次调用时同步阻塞线程，生成单例之后，不再阻塞线程。
+ 
+ 静态变量在程序运行期间只被初始化一次，然后其在下一次被访问时，其值都是上次的值，其在除了这个初始化方法以外的任何地方都不能直接修改这两个变量的值。这是单例只被初始化一次的前提。
+ 点击查看 dispatch_once 发现内部通过宏把 _dispatch_once 转化成 dispatch_once
+ 查找到 _dispatch_once 函数，我们发现 DISPATCH_EXPECT 方法
+ ~0l 是长整型0按位取反，就是长整型的-1
+ 
+ 剩下就是 DISPATCH_EXPECT(x, v) 了，DISPATCH_EXPECT(*predicate, ~0l)  就是说，*predicate 很可能是 ~0l ，而当  DISPATCH_EXPECT(*predicate, ~0l)  不是 ~0l 时 才调用真正的 dispatch_once 函数。
+ */
+
 // MARK: SGPlayer
 // https://github.com/libobjc/SGPlayer
 

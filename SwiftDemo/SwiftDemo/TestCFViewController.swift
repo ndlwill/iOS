@@ -98,9 +98,13 @@ class TestCFViewController: UIViewController {
         addRunloopOberver1()
     }
     
+    
     func addRunloopOberver1() {
         // passRetained下面takeUnretainedValue 返回到前一页不会调==TestCFViewController deinit== 导致内存泄漏
         let controllerPoint = Unmanaged<TestCFViewController>.passUnretained(self).toOpaque()
+        // 不建议的方式，特别危险，不安全
+        // let controllerPoint1 = unsafeBitCast(self, to: UnsafeMutableRawPointer.self)
+        
         
         var content = CFRunLoopObserverContext(version: 0, info: controllerPoint, retain: nil, release: nil, copyDescription: nil)
         
@@ -112,6 +116,8 @@ class TestCFViewController: UIViewController {
             
             // 上边passUnretained这边takeRetainedValue: 会==TestCFViewController deinit==，导致下面崩溃。我的理解调takeRetainedValue，相当于CF那边会release
             let controller = Unmanaged<TestCFViewController>.fromOpaque(info!).takeUnretainedValue()
+            // 不建议的方式，特别危险，不安全
+            // let controller1 = unsafeBitCast(info, to: TestCFViewController.self)
             
             if controller.isKind(of: TestCFViewController.self) {
                 print("===###===")
