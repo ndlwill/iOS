@@ -12,6 +12,9 @@
  通过一些系统API获取就要可以获取物理摄像头将采集到的视频数据与麦克风采集到的音频数据.
  */
 
+// MARK: Ruby
+// https://www.runoob.com/ruby/ruby-syntax.html
+
 // MARK: AsyncDisplayKit is now Texture
 // https://texturegroup.org/docs/corner-rounding.html
 // https://blog.csdn.net/kmyhy/article/details/54632659

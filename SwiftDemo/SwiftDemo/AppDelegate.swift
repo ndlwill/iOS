@@ -70,6 +70,16 @@
  print(address: array2) //0x6000000aa100
  */
 
+// MARK: URLNavigator
+/**
+ https://cloud.tencent.com/developer/article/1444577
+ https://github.com/SeongBrave/Twilight
+ URLNavigator是Swift版本的Router。
+ Router的主要作用是解耦
+ 
+ 之前在各个ViewController间跳转，需要import ViewController，这样就造成ViewController之间的依赖，也即耦合
+ */
+
 // MARK: ===the swift programming language===Swift 官方===
 // https://docs.swift.org/swift-book/LanguageGuide/Closures.html#ID95
 
@@ -1066,14 +1076,37 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         structPointers.deinitialize(count: 3)
         structPointers.deallocate()
         
-        // MARK: ===UnsafeRawPointer===
+        // MARK: ===UnsafeRawPointer&&UnsafeMutableRawPointer===
+        /**
+         如果要类型化，必须将内存绑定到一个类型上
+         
+         UnsafeMutableRawBufferPointer 实例可以写入内存
+         */
         testRawPointer()
         testTypePointer()
         tranRawToTypePointer()
         getInstByte()
         
+        // UnsafeRawPointer只能由其他指针用init方法得到，与UnsafePointer类似，没有allocate静态方法
+        var uint64: UInt64 = 257// 257  = 1 0000 0001
+        let rawPointer = UnsafeRawPointer(UnsafeMutablePointer(&uint64))
+        let int64PointerT =  rawPointer.load(as: Int64.self)
+        let uint8Point = rawPointer.load(as: UInt8.self)// 而UInt8 表示存储8个位的无符号整数，即一个字节大小
+        print(int64PointerT) // 257
+        print(uint8Point) // 1
+        
+        let pointer = UnsafeMutableRawBufferPointer.allocate(byteCount: 3, alignment: MemoryLayout<Int>.alignment)
+        pointer.copyBytes(from: [7, 2, 3])
+        pointer.forEach {
+            print($0) // 1, 2, 3
+        }
+
+
+
+        
         // MARK: ===UnsafeMutablePointer && UnsafePointer===
         /**
+         
          UnsafeMutablePointer<Int>.allocate(capacity: <#T##Int#>)
          
          UnsafePointer中的pointee属性只能get不能set。
@@ -1126,7 +1159,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         
         
         
-        // MARK: ==指向数组的指针==
+        // MARK: ===指向数组的指针===UnsafeBufferPointer&&UnsafeMutableBufferPointer===
         /**
          在 Swift 中将一个数组作为参数传递到 C API 时，Swift 已经帮助我们完成了转换
          
@@ -1136,6 +1169,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
          UnsafeMutableBufferPointer
          UnsafeRawBufferPointer
          UnsafeMutableRawBufferPointer
+         
+         实现了Collection，因此可以直接使用Collection中的各种方法来遍历操作数据
+         这个UnsafeBufferPointer是常量，它只能获取到数据，不能通过这个指针去修改数据。与之对应的是UnsafeMutableBufferPointer指针。
          
          对于一般的接受 const 数组的 C API，其要求的类型为 UnsafePointer，
          而非 const 的数组则对应 UnsafeMutablePointer。
@@ -1162,8 +1198,20 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             print(nextPtr.pointee) // 2
         }
         
-        // MARK: ==指针操作和转换==
+        array.withUnsafeBufferPointer { bufferPointer in
+            bufferPointer.forEach {
+                print($0)
+            }
+        }
+        
+        let p111 = UnsafeMutablePointer<Int>.allocate(capacity: 5)
+        let buf111 = UnsafeMutableBufferPointer<Int>.init(start: p111, count: 5)
+        print(buf111.count)
+        
+        // MARK: ==Memory Access==指针操作和转换==
         /**
+         要通过类型化操作访问底层内存，必须将内存绑定到一个简单的类型
+         
          在 Swift 中不能像 C 里那样使用 & 符号直接获取地址来进行操作
          如果我们想对某个变量进行指针操作，我们可以借助 withUnsafePointer 或 withUnsafeMutablePointer 这两个辅助方法
          这两个方法接受两个参数，第一个是 inout 的任意类型，第二个是一个闭包
@@ -1171,10 +1219,18 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
          */
         var test = 10
         test = withUnsafeMutablePointer(to: &test, { (ptr: UnsafeMutablePointer<Int>) -> Int in
+            print("address =", ptr)
             ptr.pointee += 1
             return ptr.pointee
         })
         print("test = \(test)")// 11
+        
+        var sss = 8
+        sss = withUnsafePointer(to: &sss) { ptr in
+            return ptr.pointee + 2
+            // 此时, 会新开辟空间, 令sss指向新地址, 值为2,
+        }
+        print(sss)// 10
         
         
         // MARK: swift && c
@@ -1554,8 +1610,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
      
      assumingMemoryBound:
      Returns a typed pointer to the memory referenced by this pointer, assuming that the memory is already bound to the specified type.
-     
-     Use this method when you have a raw pointer to memory that has already been bound to the specified type. The memory starting at this pointer must be bound to the type T. Accessing memory through the returned pointer is undefined if the memory has not been bound to T. To bind memory to T, use bindMemory(to:capacity:) instead of this method.
      
      Use this method when you have a raw pointer to memory that has already been bound to the specified type. The memory starting at this pointer must be bound to the type T. Accessing memory through the returned pointer is undefined if the memory has not been bound to T. To bind memory to T, use bindMemory(to:capacity:) instead of this method.
      
