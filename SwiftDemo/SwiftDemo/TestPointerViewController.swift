@@ -52,6 +52,7 @@ class TestPointerViewController: UIViewController {
 //        passPointer(&test)
         
         // MARK: ===withUnsafePointer===withMemoryRebound===bindMemory===
+        // 大->小
         withUnsafePointer(to: &test) { (pointer) -> Void in
             print("pointee = \(pointer.pointee)")
             

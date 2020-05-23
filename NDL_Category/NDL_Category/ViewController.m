@@ -156,6 +156,7 @@ typedef id (^WeakReference)(void);
 
 @property (weak, nonatomic) IBOutlet NDLFloatLayoutView *floatLayoutView;
 
+@property (nonatomic, strong) NSObject *tttObj;
 
 @property (nonatomic, strong) UILabel *testView;
 
@@ -465,7 +466,9 @@ static NSDateFormatter *dateFormatter_ = nil;
     
     
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        
         NSLog(@"test dispatch_get_specific");
+        
         
         /**
          // dispatch_get_specific就是在当前队列中取出标识,如果是在当前队列就执行，非当前队列，就同步执行，防止死锁
@@ -658,6 +661,16 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
 }
 
 - (void)viewDidLoad {
+    NSLog(@"value = %ld", ~0l);// -1
+    
+//    NSObject *ttObj = [[NSObject alloc] init];
+    id __strong ttObj = [[NSObject alloc] init];
+    NSLog(@"RetainCount = %ld", CFGetRetainCount((__bridge CFTypeRef)(ttObj)));// 1
+    self.tttObj = ttObj;
+    NSLog(@"RetainCount = %ld", CFGetRetainCount((__bridge CFTypeRef)(ttObj)));// 2
+    
+    // 报错: Assigning retained object to weak variable; object will be released after assignment
+//    id __weak obj = [[NSObject alloc] init];
     
     Person *person111 = nil;
     NSLog(@"age = %ld", person111.age);// 0

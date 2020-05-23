@@ -6,6 +6,103 @@
 //  Copyright © 2019 ndl. All rights reserved.
 //
 
+// MARK: 音视频
+/**
+ 采集：
+ 通过一些系统API获取就要可以获取物理摄像头将采集到的视频数据与麦克风采集到的音频数据.
+ */
+
+// MARK: Ruby
+// https://www.runoob.com/ruby/ruby-syntax.html
+
+// MARK: AsyncDisplayKit is now Texture
+// https://texturegroup.org/docs/corner-rounding.html
+// https://blog.csdn.net/kmyhy/article/details/54632659
+// https://blog.csdn.net/kmyhy/article/details/54846322
+// https://www.jianshu.com/p/afc69cd9e824
+// http://www.cocoachina.com/articles/20182
+
+// MARK: ===面试===
+/**
+ https://www.jianshu.com/p/1e752f5678f1
+ */
+
+// MARK: NSTimer
+/**
+ 内存泄露原理分析+解决方案
+ NSTimer必须与RunLoop搭配使用，因为其定时任务的触发基于RunLoop，NSTimer使用常见的Target-Action模式。由于RunLoop会强引用timer，timer会强引用Target，容易造成循环引用、内存泄露等问题。
+ 
+ NSTimer与RunLoop:
+ NSTimer需要与RunLoop搭配使用。创建完定时器后，需要把定时器添加到指定RunLoopMode，添加完毕定时器就自动触发（fire）或者在设定时间fireDate后自动触发。
+ NSTimer并非真正的机械定时器，可能会出现延迟情况。当timer注册的RunLoop正在执行耗时任务、或者当前RunLoopMode并非注册是指定的mode，定时任务可能会延迟执行。
+ 
+ 创建定时器,传入Target对象，Timer会在强引用Target直到Timer失效（调用invalidate）
+ 注册定时器，调用RunLoop的addTimer:
+ RunLoop会强引用Timer。当调用Timer的invalidate使之失效时，RunLoop才会把Timer从RunLoop中移除并清除Timer对Target的强引用，invalidate是把Timer从RunLoop中移除的唯一方法。
+ 
+ 把Timer注册到RunLoop后，Timer会被其强引用，保证Timer存活，定时任务能触发。因此Target对象使用Timer实际上可以使用weak弱引用，只要你能保证创建完Timer将其加入RunLoop中。（注意：Timer通常用懒加载，且Timer一加入RunLoop就自动fire，如果想在特定时间点才fire定时任务，那必须到特定时间点才加入RunLoop，或者初始化后马上加入RunLoop并暂停定时器）
+ 
+ RunLoop强引用Timer、Timer强引用Target。Target必须等待Timer执行invalidate后清除其对Target的强引用，dealloc才会执行。
+ 
+ 如果在target中传入weak的self，那么可以解决循环引用问题吗？
+ 答案是:否
+ 
+ 内存泄漏解决方案:
+ 内存泄漏主要原因是RunLoop强引用Timer、Timer强引用Target，导致Target不执行析构。下面提供两种解决方案，本质是是从Target入手，把Target替换为另一个对象，而不是使用Timer的客户对象。客户对象不在作为Target，即可像使用普通对象一样，在dealloc中invalidate Timer。
+ 方案一：使用Block代替Target-Action
+ 方案二：直接替换Target
+ 
+ 当创建定时任务仅需执行一次（repeats=NO，也就是延迟定时任务），则执行完定时任务，会自动执行invalidate操作。
+ 但需注意：Timer会强引用Target直到延迟任务执行完毕。
+ 
+ 对于NSTimer，面试官还会问，它是否是时间准确呢？大家可能都知道是时间不准确的，因为受RunLoop的影响，那么GCD中也有延时，如果用GCD来做延时，那时间准确吗？
+ 答案是GCD的time是准确的，GCD 的线程管理是通过系统来直接管理的。GCD Timer 是通过 dispatch port 给 RunLoop 发送消息，来使 RunLoop 执行相应的 block，如果所在线程没有 RunLoop，那么 GCD 会临时创建一个线程去执行 block，执行完之后再销毁掉，因此 GCD 的 Timer 是不依赖 RunLoop 的。
+ */
+
+// MARK: Singleton单例
+/**
+ 单例模式：确保某一个类只有一个实例，而且自行实例化并向整个系统提供这个实例单例模式
+ 安全保障：防止两个线程同时调用shareInstance，使用@synchronized锁定
+ GCD创建：dispatch_once中dispatch_once_t类型为typedef long
+ onceToken= 0，线程执行dispatch_once的block中代码
+ onceToken= -1，线程跳过dispatch_once的block中代码不执行
+ onceToken= 其他值，线程被线程被阻塞，等待onceToken值改变
+ 用途：限制创建，提供全局调用，节约资源和提高性能
+ 
+ @synchronized单例
+ dispatch_once单例
+ 使用@synchronized虽然解决了多线程的问题，但是并不完美。因为只有在single未创建时，我们加锁才是有必要的。如果single已经创建.这时候锁不仅没有好处，而且还会影响到程序执行的性能（多个线程执行@synchronized中的代码时，只有一个线程执行，其他线程需要等待）。
+
+ + (SingletonManager*)shareManager {
+     static dispatch_once_t token;
+     dispatch_once(&token, ^{
+         if(defaultManager == nil) {
+             NSLog(@"dispatch_once Token: %ld",token);// 768
+             defaultManager = [[self alloc] init];
+         }
+     });
+     NSLog(@"Token: %ld",token);
+     NSLog(@"DefaultManager: %@",defaultManager);
+     return defaultManager;
+ }
+ 
+ 当线程首先调用shareInstance，某一线程要执行block中的代码时，首先需要改变onceToken的值，再去执行block中的代码。这里onceToken的值变为了768。
+这样当其他线程再获取onceToken的值时，值已经变为768。其他线程被阻塞。
+ 当block线程执行完block之后。onceToken变为-1。其他线程不再阻塞，跳过block。
+ 下次再调用shareInstance时，block已经为-1。直接跳过block。
+ 这样dispatch_once在首次调用时同步阻塞线程，生成单例之后，不再阻塞线程。
+ 
+ 静态变量在程序运行期间只被初始化一次，然后其在下一次被访问时，其值都是上次的值，其在除了这个初始化方法以外的任何地方都不能直接修改这两个变量的值。这是单例只被初始化一次的前提。
+ 点击查看 dispatch_once 发现内部通过宏把 _dispatch_once 转化成 dispatch_once
+ 查找到 _dispatch_once 函数，我们发现 DISPATCH_EXPECT 方法
+ ~0l 是长整型0按位取反，就是长整型的-1
+ 
+ 剩下就是 DISPATCH_EXPECT(x, v) 了，DISPATCH_EXPECT(*predicate, ~0l)  就是说，*predicate 很可能是 ~0l ，而当  DISPATCH_EXPECT(*predicate, ~0l)  不是 ~0l 时 才调用真正的 dispatch_once 函数。
+ */
+
+// MARK: SGPlayer
+// https://github.com/libobjc/SGPlayer
+
 // MARK: GPUImage
 // https://www.jianshu.com/nb/4268718
 
@@ -336,6 +433,190 @@
  Step 1：调用 animationWithDuration:animations: 方法
  Step 2：在 Animation Block 中进行 Layout，Display，Prepare，Commit 等步骤。
  Step 3：Render Server 根据 Animation 逐帧进行渲染
+ */
+
+// MARK: 内存管理
+/**
+ 引用计数
+ retain、release、etainCount
+ 
+ - (NSUInteger)retainCount  {
+     return (NSUInteger)__CFDoExternRefOperation(OPERATION_retainCount,self);
+ }
+
+ - (id)retain  {
+     return (id)__CFDoExternRefOperation(OPERATION_retain,self);
+ }
+
+ - (void)release  {
+     return __CFDoExternRefOperation(OPERATION_release,self);
+ }
+
+ int __CFDoExternRefOperation(uintptr_r op,id obj) {
+         CFBasicHashRef table = 取得对象对应的散列表(obj);
+         int count;
+
+         switch(op) {
+             case OPERATION_retainCount:
+                 count = CFBasicHashGetCountOfKey(table,obj);
+                 return count;
+             case OPERATION_retain:
+                 CFBasicHashAddValue(table,obj);
+                 return obj;
+             case OPERATION_release:
+                 count = CFBasicHashRemoveValue(table,obj):
+                 return 0 == count;
+         }
+     }
+ 
+ 采用散列表（引用计数表）来管理引用计数，当我们在调用retain、retainCount、release时，先调用_CFDoExternRefOperation()从而获取到引用计数表的内存地址以及本对象的内存地址，然后根据对象的内存地址在表中查询获取到引用计数值
+
+ autorelease作用是将对象放入自动释放池中，当自动释放池销毁时对自动释放池中的对象都进行一次release操作
+ 
+ ARC：
+ 使用@autoreleasepool{}来使用一个AutoreleasePool，随后编译器会改成下面的样子：
+ void *context = objc_autoreleasePoolPush();
+ // 执行的代码
+ objc_autoreleasePoolPop(context);
+ 而这两个函数都是对AutoreleasePoolPage的简单的封装
+ 
+ AutoreleasePool并没有单独的结构，而是由若干个AutoreleasePoolPage以双链表的形式组合而成（分别对应结构中的parent指针和child指针）
+ AutoreleasePool是按线程一一对应的（结构中的thread指针指向当前线程）
+ AutoreleasePoolPage每个对象开辟一个虚拟内存一页的大小，除了上面实例变量所占空间，剩下的空间全部用来存储autorelease对象的地址
+ 上面的id *next指针作为游标指向栈顶最新add进来的autorelease对象的下一个位置
+ 一个AutoreleasePoolPage的空间被占满时，会新建一个AutoreleasePoolPage对象，连接链表，后来的autorelease对象在新的page加入
+ 
+ 这一页再加入一个autorelease对象就要满了（也就是next指针马上指向栈顶），这时就要执行上面说的操作，建立下一页page对象，与这一页链表链接完成后，新page的next指针被初始化在栈底（begin的位置），然后继续向栈顶添加新对象。
+ 
+ 向一个对象发送- autorelease消息，就是将这个对象加入到当前AutoreleasePoolPage的栈顶next指针指向的位置
+ 
+ 每当执行一个objc_autoreleasePoolPush调用时，runtime向当前的AutoreleasePoolPage中add进一个哨兵对象，值为0（也就是nil）
+ objc_autoreleasePoolPush的返回值正是这个哨兵对象的地址，被objc_autoreleasePoolPop(哨兵对象)作为入参
+ 
+ 根据传入的哨兵对象地址找到哨兵对象所处的page
+ 在当前page中，将晚于哨兵对象插入的所有autorelease对象都发送一次- release消息，并向回移动next指针到正确位置
+ 从最新加入的对象一直向前清理，可以向前跨越若干个page，直到哨兵所在的page
+
+ id __strong obj = [[NSObject alloc] init];
+ 编译器会转换成下面代码：
+ id obj = objc_msgSend(NSObject, @selector(alloc));
+ objc_msgSend(obj, @selector(init));
+
+ // ...
+ objc_release(obj)
+
+ id __strong obj = [NSMutableArray array];
+ 编译器会转换成下面代码：
+ id obj = objc_msgSend(NSMutableArray, @selector(array));
+
+ //替代我们调用retain方法，是obj持有该对象
+ objc_retainAutoreleaseReturnValue(obj);
+ objc_release(obj);
+ 
+ + (id)array {
+     return [[NSMutableArray alloc] init];
+ }
+ 编译器转换如下：
+ + (id)array {
+     id obj = objc_msgSend(NSMutableArray,@selector(alloc));
+     objc_msgSend(obj,@selector(init));
+     
+     // 代替我们调用autorelease方法
+     return objc_autoreleaseReturnValue(obj);
+ }
+ objc_retainAutoreleaseReturnValue有一个成对的函数objc_autoreleaseReturnValue,这两个函数可以用于最优化程序的运行
+ 
+ 其实autorelease这个开销不小，runtime机制解决了这个问题
+ 优化:
+ Thread Local Storage（TLS）线程局部存储
+ 将一块内存作为某个线程专有的存储，以key-value的形式进行读写
+ 在返回值身上调用objc_autoreleaseReturnValue方法时，runtime将这个返回值object储存在TLS中，然后直接返回这个object（不调用autorelease），同时，在外部接收这个返回值的objc_retainAutoreleaseReturnValue里，发现TLS中正好存在这个对象，那么直接返回这个object（不调用retain）。
+ 于是乎，调用方和被调用利用TLS做中转，很有默契的免去了对返回值的内存管理。
+
+ __weak表示弱引用，弱引用不会影响对象的释放，而当对象被释放时，所有指向它的弱引用都会自动被置为nil，这样可以防止野指针
+ obj对象在生成之后立马就会被释放，主要原因是因为__weak修饰的指针没有引起对象内部的引用计数发生变化
+ Runtime维护了一个weak表，用于存储指向某个对象的所有weak指针。weak表其实是一个Hash（哈希）表
+ Key是所指对象的地址，Value是weak指针的地址（这个地址的值是所指对象的地址）数组。
+ 
+ 1.初始化时，runtime会调用objc_initWeak函数，初始化一个新的weak指针指向对象的地址。
+ 2.添加引用时，objc_initWeak函数会调用objc_storeWeak()函数，objc_storeWeak()的作用是更新指针指向，创建对应的弱引用表。
+ 3.释放时，调用clearDeallocating函数。clearDeallocating函数首先根据对象地址获取所有weak指针地址的数组，然后遍历这个数组把其中的数据设为nil，最后把这个entry从weak表中删除，最后清理对象的记录。
+ 
+ struct weak_table_t {
+     weak_entry_t *weak_entries;     // 保存来所有指向指定对象的weak指针     weak_entries的对象
+     size_t num_entries;             // weak对象的存储空间
+     uintptr_t mask;
+     uintptr_t max_hash_displacement;
+ };
+ 
+ id __weak obj = [[NSObject alloc] init];
+ 编译器转换后代码如下：
+ id obj;
+ id tmp = objc_msgSend(NSObject, @selector(alloc));
+ objc_msgSend(tmp,@selector(init));
+ objc_initWeak(&obj,tmp);
+ objc_release(tmp);
+ objc_destroyWeak(&obj);
+ 
+ id objc_initWeak(id *location, id newObj) {
+     if (!newObj) {
+         *location = nil;
+         return nil;
+     }
+
+     return storeWeak(location, newObj);
+ }
+ 
+ ###weak_entry_t是存储在弱引用表中的一个内部结构体，它负责维护和存储指向一个对象的所有弱引用Hash表###
+ 
+ 释放对象基本流程如下：
+ 调用objc_release
+ 因为对象的引用计数为0，所以执行dealloc
+ 在dealloc中，调用来_objc_rootDealloc函数
+ 在_objc_rootDealloc中，调用来object_dispose函数
+ 调用objc_destructInstance
+ 最后调用objc_clear_deallocating
+
+ clearDeallocating函数首先根据对象地址获取所有weak指针地址的数组，然后遍历这个数组把其中的数据设为nil，最后把这个entry从weak表中删除，最后清理对象的记录。
+ 
+ void objc_clear_deallocating(id obj) {
+     assert(obj);
+     assert(!UseGC);
+     if (obj->isTaggedPointer()) return;
+     obj->clearDeallocating();
+ }
+
+ //执行 clearDeallocating方法
+ inline void objc_object::clearDeallocating() {
+     sidetable_clearDeallocating();
+ }
+ void  objc_object::sidetable_clearDeallocating() {
+     SideTable *table = SideTable::tableForPointer(this);
+     // clear any weak table items
+     // clear extra retain count and deallocating bit
+     // (fixme warn or abort if extra retain count == 0 ?)
+     spinlock_lock(&table->slock);
+     RefcountMap::iterator it = table->refcnts.find(this);
+     if (it != table->refcnts.end()) {
+         if (it->second & SIDE_TABLE_WEAKLY_REFERENCED) {
+             weak_clear_no_lock(&table->weak_table, (id)this);
+         }
+         table->refcnts.erase(it);
+     }
+     spinlock_unlock(&table->slock);
+ }
+
+最终通过调用weak_clear_no_lock方法，将weak指针置空
+ 
+ objc_clear_deallocating函数的操作如下：
+ 从weak表中获取废弃对象的地址为键值的记录
+ 将包含在记录中的所有附有weak修饰符变量的地址，置为nil
+ 将weak表中该记录删除
+ 从引用计数表中删除废弃对象的地址为键值的记录
+ 
+ __unsafe_unretained：
+ __unsafe_unretained作用需要和weak对比，它不会引起对象的内部引用计数的变化，但是，当其指向的对象被销毁是__unsafe_unretained修饰的指针不会置为nil。是不安全的所有权修饰符，它不纳入ARC的内存管理。
+
  */
 
 #import "InterviewViewController.h"
