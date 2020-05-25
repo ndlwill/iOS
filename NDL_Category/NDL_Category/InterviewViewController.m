@@ -4822,23 +4822,89 @@ mode里面有很多items
  
  */
 // MARK: ---LG_Category
-
+/**
+ objc_init
+ 
+ 
+ attachLists(List * const* addedLists, uint32_t addedCount){
+ 
+ if (hasArray()) {
+ uint32_t oldCount = array()->count;
+ uint32_t newCount = oldCount + addedCount;
+ setArray(realloc(array(), array_t::byteSize(newCount)))
+ array()->count = newCount;
+ 
+ memmove()
+ memcpy()
+ }
+ }
+ */
 
 // MARK: ---LG_KVC
 /**
  大括号这里面的都是成员变量
  @interface Test : UIView {
      int age;// 成员变量
+     UIButton *btn;// 成员变量也是实例变量
  }
  实例变量：是一种特殊的成员变量 通过class实例出来的变量
  属性：有默认的setter和getter方法
  
  llvm编译器，当他发现没有匹配成员变量的属性时，会自动创建带下划线的成员变量
  
+ kvc: 是一种机制，间接访问成员变量
  
+ [p valueForKey:@"name"]： 返回的是id类型是对象
+ 查找流程：
+ 1.找方法 get<Key>,<Key>,is<Key>,_<Key> 一般类型
+ 2.countOf<Key>, objectIn<Key>AtIndex 用于NSArray
+ 3.countOf<Key>, enumeratorOf<Key>, memberOf<Key> 用于NSSet，NSSet它是无序的
+ 4.
+ + (BOOL)accessInstanceVariablesDirectly{// 默认YES
+     return YES;
+ }
+ 找变量_<Key>, _is<Key>,<Key>,is<Key>
+ 5.all fails,invoke valueForUndefinedKey:
+ 
+ Basic Setter:
+ 1.方法set<Key>, _set<Key>
+ 2.
+ + (BOOL)accessInstanceVariablesDirectly{// 默认YES
+     return YES;
+ }
+ 变量_<Key>, _is<Key>,<Key>,is<Key>
+ 3.setValue:forUndefinedKey
+ 
+ @interface LGPerson : NSObject{
+     @public
+     NSString *name;
+     NSString *_name;
+     NSString *_isName;
+     NSString *isName;
+     
+ }
+ 
+ LGPerson *p = [[LGPerson alloc] init];
+ [p setValue:@"ndl" forKey:@"name"];
+
+ NSLog(@"%@",p->isName);// (null)
+ NSLog(@"%@-%@",p->name,p->isName);// (null)-(null)
+ NSLog(@"%@-%@-%@",p->name,p->isName,p->_isName);// (null)-(null)-(null)
+ NSLog(@"%@-%@-%@-%@",p->name,p->isName,p->_name,p->_isName);// (null)-(null)-ndl-(null)
+ 
+ NSLog(@"%@",[p valueForKey:@"name"]);// ndl
+ 
+ 如果实现了setName方法
+ - (void)setName:(NSString *)name{
+     NSLog(@"%s",__func__);
+ }
+ NSLog(@"%@",[p valueForKey:@"name"]);// (null)
  */
 
-// MARK: ---LG_objc_init
+// MARK: ---LG_objc_init 应用初始化过程
+/**
+ 
+ */
 
 // MARK: ---LG_多线程
 /**
