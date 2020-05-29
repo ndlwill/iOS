@@ -1,0 +1,93 @@
+解压你的ipa包
+删除签名文件: rm -rf Payload/Your-XXX.app/_CodeSignature
+将你企业证书对应的mobileprovision文件copy到app文件中：cp -rf Your-XXX.mobileprovision Payload/Your-XXX.app/embedded.mobileprovision
+准备好entitlements文件，该文件可以包含你使用的一些系统功能。例如：gps定位、healthkit等
+重新签名：codesign -v -vvvv -f -s "iPhone Distribution: Your-XXX-Co., Ltd." --entitlements=Your-XXX.entitlements Payload/Your-XXX.app
+重新打包： xcrun -sdk iphoneos PackageApplication -v Payload/Your-XXX.app -o ~/Desktop/Your-Resigned.ipa
+这时候你就可以上传到Fir上测试了
+
+
+Your-XXX就是你的要重新签名的app名称
+iPhone Distribution: Your-XXX-Co., Ltd.是你KeyChain中企业证书的名称
+
+一个可以用的entitlements内容:
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>application-identifier</key>
+    <string>Your-App-Id.Your-BoundId</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>Your-App-Id</string>
+    <key>com.apple.developer.healthkit</key>
+    <true/>
+</dict>
+</plist>
+上面的Your-App-Id就是你在开发者证书网站中的App Ids分类下的BoundId的prefix，例如：P499PN56FF
+
+
+========================
+1、准备IPA后缀文件（Ad Hoc Deployment 打包）xx.mobileprovision文件（企业）
+
+2、获取证书里面的信息（xx.plist）
+security cms -D -i xx.mobileprovision > xx.plist
+
+3、导出xx.plist
+/usr/libexec/PlistBuddy -x -c 'Print:xx项目名'  xx.plist > xx.plist
+
+4、解压ipa包
+unzip xx.ipa
+
+5、删除旧签名
+rm -rf Payload/xx.app/_CodeSignature/
+
+6、删除动态库签名（所有framework都有需要执行此步骤）
+①、删除签名
+rm -rf Payload/xx.app/Frameworks/xx.framework/_CodeSignature
+②、重新签名
+codesign -f -s "证书的名称" Payload/xx.app/Frameworks/xx.framework/
+
+7、替换配置文件
+cp xx.mobileprovision Payload/xx.app/
+
+8、签名
+codesign -f -s "证书的名称" --entitlements xx.plist Payload/xx.app
+
+9、打包成ipa
+zip -r new_xx.ipa Payload/
+
+最终 new_xx.ipa就是重新签名的文件
+
+========================企业证书
+签好的app用户如何安装？
+第一步、下载APP(APP一般会上传到分发平台).第二步、信任应用，设置 > 通用 > 设备管理，点击证书选择信任.接下来就可以正常使用了。
+
+========================企业签名的掉签
+APP证书掉签的情况，一旦掉签的话APP就会闪退，就会导致大量的客户流失，造成不可挽回的损失。
+因为有的做苹果签名服务的人手中只有一个证书，甚至是共享证书，由个人运营或者是小型工作室来运作，签的APP数量会非常的庞大
+当签的用户数量到达一定的值时，就会有很大的可能性被封掉，一旦证书被封掉之后，所签的APP也会闪退，就会导致客户流失
+掉签一般都是由以下几种原因造成的：
+1、企业证书的装机量：
+苹果公司创建企业开发者账号最初的目的是为了方便一些大型企业内部员工测试用的，仅限公司的内部员工使用，但是现在很多的企业开发者账号被大量的滥用，装机量甚至达到了上百万，这样的数值肯定会被苹果方面注意到，很大的可能性是要被封号的，一旦封号，APP就要跟着凉凉，所以说证书签的名越多，就越有可能被封号，越不稳定。
+2、证书生成的p12安装量：
+p12证书的安装数量最多不要超过三台电脑，因为如果超过三台电脑，同样会引起苹果的注意，导致证书被封。
+3、证书生成的revoke次数：
+企业证书多次的生成和反复的revoke，同样也会触发苹果的安全机制，使得企业账号被封。
+4、被人举报：
+被举报的原因可能会有很多，有可能是自己的APP涉及了敏感地带，也有可能是违反了相关规定，也有可能是同行的恶意举报，都有几率导致账号被封。
+
+========================苹果超级签名
+开发者可以在开发者后台添加手机的UDID，然后重新打包一个IPA文件，分发平台，然后被添加的UDID就可以下载
+
+特点总结
+1、直接分发，安装即可运行，不需要用户做企业证书的信任操作
+2、目前稳定，不会有证书吊销导致的业务风险
+
+缺点总结
+1、单开发者账号的iPhone设备数量只有100个，导致分发成本非常高(99美元/1年/100个设备)
+
+自动化:
+注册新的开发者设备+更新Provisioning Profile
+Spaceship公开了Apple Developer Center的API，而且执行速度比解析开发者Web页面快两个数量级，从而在非常短的时间内搞定Provisioning Profile。
+自动签名封包:
+推荐使用 Sigh 这个框架
