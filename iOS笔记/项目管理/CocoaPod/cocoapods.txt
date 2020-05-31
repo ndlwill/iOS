@@ -1,0 +1,315 @@
+2020年
+https://www.jianshu.com/p/dd1d37828240
+
+当我们新建一个Podfile文件运行后，会自动生成一个Podfile.lock文件
+Podfile.lock文件里存储着我们已经安装的依赖库(pods)的版本
+这个文件会保持对每个pod已安装版本的跟踪，并且锁定这些版本
+
+当我们第一次运行Podfile时，如果对依赖库不指定版本的话，cocoapods会安装最新的版本，同时将pods的版本记录在Podfile.lock文件中
+
+再执行pod install的话，只会处理没有记录在Podfile.lock中的依赖库，会查找匹配Podfile中描述的版本。
+对于已经记录在Podfile.lock的依赖库，会下载Podfile.lock文件中记录的版本，而不会检查是否有更新
+如果你约束了pods的版本的话，会按照你指定的版本进行安装，同时也会更新Podfile.lock记录的信息
+
+pod install:
+在项目中第一次使用CocoaPods, 进行安装的时候使用这个命令.
+在Podfile中增加或删除某个pod后, 也是使用这个命令. 而不是pod update
+每次运行pod install命令, 下载并安装新的pod时, 它会为Podfile.lock文件中的每个pod写入已安装的版本. 此文件跟踪每个pod的已安装版本并锁定这些版本
+当运行pod install，它只解析Podfile.lock中尚未列在其中的pod的依赖库.
+对于已经在Podfile.lock中列出的pod, Podfile.lock不会尝试检查是否有更新的版本.
+对于尚未在Podfile.lock中列出的pod, 会搜索与Podfile（如中所述pod ‘MyPod’, ‘~>1.2’）匹配的版本或最新的版本
+
+pod outdated:
+当运行pod outdated时, CocoaPods将列出所有比Podfile.lock（每个pod当前安装的版本）中, 已经列出的版本更新的pod版本. 这意味着如果你在这些pod上运行pod update PODNAME, 它将会把指定的pod更新到最新版本.
+
+pod update 要更新库的名字:
+这个命令会忽略Podfile.lock中的记录，直接去找符合Podfile文件中的该依赖库的约束版本（无约束的话就是最新版本）
+当运行pod update PODNAME时, CocoaPods将尝试查找PODNAME更新的pod版本, 会忽略掉Podfile.lock中已经存在的版本.
+如果直接运行pod update, 没有指定PODNAME, CocoaPods会把Podfile中所有的pod都更新到最新版本.(如果已经是最新版本了, 则不更新)
+
+pod env:查看已经安装的cocoapods版本。
+pod outdated：查看Podfile文件中的依赖库的最新版本。
+
+=================================CocoaPods的机制
+它的工作机制是通过pod search 框架名称 在索引库里进行检索，并得到要搜索框架的一个描述文件（.podspec文件）。
+利用该描述信息中包含的关于框架的版本信息，下载地址，依赖库等信息来下载和管理三方库
+
+而本地的索引库是从github的pod索引库down来的。
+所以每次在使用pod install的时候，会从远程更新本地的索引库，这样才能保证本地索引库是最新的，检索到需要的框架
+
+在pod install 可以通过后面这个命令代替，来禁止更新本地索引库 pod install --verbose --no-repo-
+
+
+=================================创建一个私有的podspec包括如下那么几个步骤
+创建并设置一个私有的Spec Repo。
+创建Pod的所需要的项目工程文件，并且有可访问的项目版本控制地址。
+创建Pod所对应的podspec文件。
+本地测试配置好的podspec文件是否可用。
+向私有的Spec Repo中提交podspec。
+在个人项目中的Podfile中增加刚刚制作的好的Pod并使用。
+更新维护podspec。
+
+
+=================================本地测试podspec文件
+创建一个新的项目
+在Podfile中我们可以这样编辑，有两种方式:
+platform :ios, '7.0'
+ 
+pod 'PodTestLibrary', :path => '~/code/Cocoapods/podTest/PodTestLibrary'      #指定路径
+pod 'PodTestLibrary', :podspec => '~/code/Cocoapods/podTest/PodTestLibrary/PodTestLibrary.podspec'  #指定podspec文件
+
+然后执行pod install命令安装依赖，打开项目工程，可以看到库文件都被加载到Pods子项目中了，
+不过它们并没有在Pods目录下，而是跟测试项目一样存在于Development Pods/PodTestLibrary中，
+这是因为我们是在本地测试，而没有把podspec文件添加到Spec Repo中的缘故
+
+=================================向私有的Spec Repo中提交podspec
+向我们的私有Spec Repo提交podspec只需要一个命令
+$ pod repo push WTSpecs PodTestLibrary.podspec  #前面是本地Repo名字 后面是podspec名字
+
+再去看我们的Spec Repo远端仓库，也有了一次提交，这个podspec也已经被Push上去了
+
+添加到私有的Repo，如果要添加到Cocoapods的官方库了，可以使用trunk工具
+
+=================================增加了subspec特性
+Pod::Spec.new do |s|
+  s.name             = "PodTestLibrary"
+  s.version          = "1.0.0"
+  s.summary          = "Just Testing."
+  s.description      = <<-DESC
+                       Testing Private Podspec.
+ 
+                       * Markdown format.
+                       * Don't worry about the indent, we strip it!
+                       DESC
+  s.homepage         = "https://coding.net/u/wtlucky/p/podTestLibrary"
+  # s.screenshots     = "www.example.com/screenshots_1", "www.example.com/screenshots_2"
+  s.license          = 'MIT'
+  s.author           = { "wtlucky" => "wtlucky@foxmail.com" }
+  s.source           = { :git => "https://coding.net/wtlucky/podTestLibrary.git", :tag => "1.0.0" }
+  # s.social_media_url = 'https://twitter.com/<twitter_username>'
+ 
+  s.platform     = :ios, '7.0'
+  s.requires_arc = true
+ 
+  #s.source_files = 'Pod/Classes/**/*'
+  #s.resource_bundles = {
+  #  'PodTestLibrary' => ['Pod/Assets/*.png']
+  #}
+  #s.public_header_files = 'Pod/Classes/**/*.h'
+ 
+  s.subspec 'NetWorkEngine' do |networkEngine|
+      networkEngine.source_files = 'Pod/Classes/NetworkEngine/**/*'
+      networkEngine.public_header_files = 'Pod/Classes/NetworkEngine/**/*.h'
+      networkEngine.dependency 'AFNetworking', '~> 2.3'
+  end
+ 
+  s.subspec 'DataModel' do |dataModel|
+      dataModel.source_files = 'Pod/Classes/DataModel/**/*'
+      dataModel.public_header_files = 'Pod/Classes/DataModel/**/*.h'
+  end
+ 
+  s.subspec 'CommonTools' do |commonTools|
+      commonTools.source_files = 'Pod/Classes/CommonTools/**/*'
+      commonTools.public_header_files = 'Pod/Classes/CommonTools/**/*.h'
+      commonTools.dependency 'OpenUDID', '~> 1.0.0'
+  end
+ 
+  s.subspec 'UIKitAddition' do |ui|
+      ui.source_files = 'Pod/Classes/UIKitAddition/**/*'
+      ui.public_header_files = 'Pod/Classes/UIKitAddition/**/*.h'
+      ui.resource = "Pod/Assets/MLSUIKitResource.bundle"
+      ui.dependency 'PodTestLibrary/CommonTools'
+  end
+ 
+  s.frameworks = 'UIKit'
+  #s.dependency 'AFNetworking', '~> 2.3'
+  #s.dependency 'OpenUDID', '~> 1.0.0'
+end
+
+因为我们创建了subspec所以项目整体的依赖dependency，源文件source_files，头文件public_header_files，资源文件resource等都移动到了各自的subspec中，每个subspec之间也可以有相互的依赖关系，比如UIKitAddition就依赖于CommonTools
+
+push到远端仓库，并打上新的tag->1.0.0
+// pod repo push REPO [NAME.podspec]
+pod repo push WTSpecs PodTestLibrary.podspec
+
+对应的Podfile中添加的内容为:
+platform :ios, '7.0'
+ 
+pod 'PodTestLibrary/NetWorkEngine', '1.0.0'  #使用某一个部分
+pod 'PodTestLibrary/UIKitAddition', '1.0.0'
+ 
+pod 'PodTestLibrary', '1.0.0'   #使用整个库
+
+删除一个私有Spec Repo，只需要执行一条命令即可
+$ pod repo remove WTSpecs
+这样这个Spec Repo就在本地删除了，我们还可以通过
+$ pod repo add WTSpecs git@coding.net:wtlucky/WTSpecs.git
+再把它给加回来。
+
+要删除私有Spec Repo下的某一个podspec怎么操作呢，此时无需借助Cocoapods，只需要cd到~/.cocoapods/repos/WTSpecs目录下，删掉库目录
+wtlucky@wtluckydeMacBook-Pro:~/.cocoapods/repos/WTSpecs$ rm -Rf PodTestLibrary
+
+
+=================================生成 podspec 描述文件 (specification 说明书，详述)
+// pod spec create [NAME|https://github.com/USER/REPO]
+1.生成 podspec 描述文件:pod spec create ndl_category
+2.
+// 编辑描述文件
+http://guides.cocoapods.org/making/specs-and-specs-repo.html
+https://guides.cocoapods.org/syntax/podspec.html#group_root_specification
+3.本地验证
+验证spec文件是否修改正确:$ pod lib lint
+# 如果有警告可以忽略
+$ pod lib lint --allow-warnings 
+// pod lib lint CSDNModuleExample.podspec --verbose --no-clean --allow-warnings --use-libraries --sources='https://github.com/CocoaPods/Specs.git'
+
+4.
+注册trunk，并通过trunk提交spec到git的cocapod索引库
+
+# 注册trunk账号
+pod trunk register ndl1020@163.com ndlwill
+# 注册后，去填写的Email中验证一下，就完成了注册
+
+# 提交到git的CocoaPods仓库
+# 这个操作会把本地的spec提交到git仓库
+pod trunk push
+或者pod trunk push ndl_category.podspec
+
+
+pod search ndl_category
+如果搜索不到，干掉缓存json文件
+~/Library/Caches/CocoaPods/search_index.json
+
+=======================================Using Pod Lib Create 
+http://guides.cocoapods.org/making/using-pod-lib-create
+// 官网guide
+https://guides.cocoapods.org/
+
+1.先创建一个空文件夹TestLib
+2.cd到TestLib然后执行pod lib create XXX(lib名字) (会自动创建项目)
+
+tree podTestLibrary -L 2
+podTestLibrary
+├── Example
+│   ├── Podfile
+│   ├── Podfile.lock
+│   ├── Pods
+│   ├── Tests
+│   ├── podTestLibrary
+│   ├── podTestLibrary.xcodeproj
+│   └── podTestLibrary.xcworkspace
+├── LICENSE
+├── README.md
+├── _Pods.xcodeproj -> Example/Pods/Pods.xcodeproj
+├── podTestLibrary
+│   ├── Assets
+│   └── Classes
+└── podTestLibrary.podspec
+
+接下来就是向Pod文件夹中添加库文件和资源，并配置podspec文件
+然后进入Example文件夹执行pod update命令，再打开项目工程可以看到
+刚刚添加的组件已经在Pods子工程下Development Pods/PodTestLibrary中了，然后编辑demo工程
+每当你向Pod中添加了新的文件或者以后更新了podspec的版本都需要重新执行一遍pod update命令
+需要将该项目添加并推送到远端仓库，并编辑podspec文件
+podspec文件中获取Git版本控制的项目还需要tag号，所以我们要打上一个tag
+做完这些就可以开始编辑podspec文件了，它是一个Ruby的文件，把编辑器的格式改成Ruby就能看到语法高亮
+//http://guides.cocoapods.org/syntax/podspec.html
+Pod::Spec.new do |s|
+  s.name             = "PodTestLibrary"    #名称
+  s.version          = "0.1.0"             #版本号
+  s.summary          = "Just Testing."     #简短介绍，下面是详细介绍
+  s.description      = <<-DESC
+                       Testing Private Podspec.
+ 
+                       * Markdown format.
+                       * Don't worry about the indent, we strip it!
+                       DESC
+  s.homepage         = "https://coding.net/u/wtlucky/p/podTestLibrary"                           #主页,这里要填写可以访问到的地址，不然验证不通过
+  # s.screenshots     = "www.example.com/screenshots_1", "www.example.com/screenshots_2"           #截图
+  s.license          = 'MIT'              #开源协议
+  s.author           = { "wtlucky" => "wtlucky@foxmail.com" }                   #作者信息
+  s.source           = { :git => "https://coding.net/wtlucky/podTestLibrary.git", :tag => "0.1.0" }      #项目地址，这里不支持ssh的地址，验证不通过，只支持HTTP和HTTPS，最好使用HTTPS
+  # s.social_media_url = 'https://twitter.com/<twitter_username>'                       #多媒体介绍地址
+ 
+  s.platform     = :ios, '7.0'            #支持的平台及版本
+  s.requires_arc = true                   #是否使用ARC，如果指定具体文件，则具体的问题使用ARC
+ 
+  s.source_files = 'Pod/Classes/**/*'     #代码源文件地址，**/*表示Classes目录及其子目录下所有文件，如果有多个目录下则用逗号分开，如果需要在项目中分组显示，这里也要做相应的设置
+  s.resource_bundles = {
+    'PodTestLibrary' => ['Pod/Assets/*.png']
+  }                                       #资源文件地址
+ 
+  s.public_header_files = 'Pod/Classes/**/*.h'   #公开头文件地址
+  s.frameworks = 'UIKit'                  #所需的framework，多个用逗号隔开
+  s.dependency 'AFNetworking', '~> 2.3'   #依赖关系，该项目所依赖的其他库，如果有多个需要填写多个s.dependency
+end
+编辑完podspec文件后，需要验证一下这个文件是否可用
+pod lib lint
+
+=======================================Spec Repo
+它是所有的Pods的一个索引，就是一个容器
+所有公开的Pods都在这个里面，它实际是一个Git仓库remote端在GitHub上
+但是当你使用了Cocoapods后它会被clone到本地的~/.cocoapods/repos目录下
+可以进入到这个目录看到master文件夹就是这个官方的Spec Repo了
+
+=============上传私有库spec,远程私有索引库
+// 创建私有podspec
+https://www.jianshu.com/p/03823477bd23
+http://www.cocoachina.com/ios/20150228/11206.html ########
+
+远程创建私有索引库
+
+# 创建本地索引库
+# NAME是我们url（spec库地址）的别名，我们之后上传spec都通过这个别名
+pod repo add NAME URL
+# pod repo add [Private Repo Name] [GitHub HTTPS clone URL]
+pod repo add PriSpecs https://github.com/ndlwill/PrivateSpecs.git
+pod repo add LocalReferenceRepo https://github.com/ndlwill/RemotePrivateReferenceRepo
+如果成功的话进入到~/.cocoapods/repos目录下就可以看到LocalReferenceRepo这个目录了
+
+# 查询本地所有索引库
+pod repo
+# push spec至远程库
+pod repo push LocalReferenceRepo index.podspec// 把spce放到本地的索引库,本地私有索引库再会自动推送到远程的索引库
+// pod repo push CSDNModuleExampleLibrary CSDNModuleExample.podspec --allow-warnings --use-libraries --sources='https://github.com/CocoaPods/Specs.git' 
+
+
+因为我们是私有库所以我们还要在podfile中添加我们的spec源
+如果在podfile文件里面，不写任何索引库的路径，默认的只是在git的 pod 索引库进行检索。
+找不到我们的私有库,所以我们要在pod文件中提供索引库路径。这样就可以检索到了
+或者source 'git@github.com:ndlwill/RemotePrivateReferenceRepo.git'
+source 'https://github.com/ndlwill/RemotePrivateReferenceRepo.git‘
+source 'https://github.com/CocoaPods/Specs.git'  #官方仓库的地址
+
+
+// 删除本地索引库
+pod repo remove LocalReferenceRepo
+// 查到自己信息
+pod trunk me
+
+
+// podspec
+ s.name             = 'QXFullGestureView ' ##名字必须与libname相同
+ s.version          = '0.1.0'     #版本必须为0.0.0格式
+ s.summary          = 'all gesture view' #关于库的一个简短描述
+ s.description      = <<-DESC
+ TODO: 备注文字(较长描述)
+                             DESC
+ #是否支持arc
+ s.requires_arc = true
+ #文件主页
+ s.homepage         = 'https://github.com/Maoyis/QXFullGestureView '
+ #开源协议
+ s.license          = { :type => 'MIT', :file => 'LICENSE' }
+ #作者信息
+ s.author           = { 'Maoyis' => 'xxxxxx@qq.com' }
+ #源文件所在网络路径
+ s.source           = { :git => 'https://github.com/Maoyis/QXFullGestureView .git', :tag => s.version.to_s }
+ #支持版本
+ s.ios.deployment_target = '7.0'
+ #公开头文件名
+ s.public_header_files = 'Pod/Classes/**/*.h'
+ #依赖的框架
+ s.frameworks = 'UIKit', 'MapKit'
+ #依赖库
+ s.dependency 'AFNetworking', '~> 2.3'

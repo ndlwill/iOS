@@ -70,6 +70,154 @@
  print(address: array2) //0x6000000aa100
  */
 
+// MARK: ==Error==
+/**
+ public protocol Error {
+ }
+ extension Error {
+ }
+ A type representing an error value that can be thrown. Any type that declares conformance to the Error protocol can be used to represent an error in Swift’s error handling system. Because the Error protocol has no requirements of its own, you can declare conformance on any custom type you create.
+
+ struct XMLParsingError: Error {
+     enum ErrorKind {
+         case invalidCharacter
+         case mismatchedTag
+         case internalError
+     }
+
+     let line: Int
+     let column: Int
+     let kind: ErrorKind
+ }
+
+ func parse(_ source: String) throws -> XMLDoc {
+     // ...
+     throw XMLParsingError(line: 19, column: 5, kind: .mismatchedTag)
+     // ...
+ }
+ 
+ do {
+     let xmlDoc = try parse(myXMLData)
+ } catch let e as XMLParsingError {
+     print("Parsing error: \(e.kind) [\(e.line):\(e.column)]")
+ } catch {
+     print("Other error: \(error)")
+ }
+ // Prints "Parsing error: mismatchedTag [19:5]"
+ 
+ Alamofire中的错误示例:
+ public enum AFError: Error {
+     public enum ParameterEncodingFailureReason {
+         case missingURL
+         case jsonEncodingFailed(error: Error)
+         case propertyListEncodingFailed(error: Error)
+     }
+
+     
+     public enum MultipartEncodingFailureReason {
+         case bodyPartURLInvalid(url: URL)
+         case bodyPartFilenameInvalid(in: URL)
+         case bodyPartFileNotReachable(at: URL)
+         case bodyPartFileNotReachableWithError(atURL: URL, error: Error)
+         case bodyPartFileIsDirectory(at: URL)
+         case bodyPartFileSizeNotAvailable(at: URL)
+         case bodyPartFileSizeQueryFailedWithError(forURL: URL, error: Error)
+         case bodyPartInputStreamCreationFailed(for: URL)
+
+         case outputStreamCreationFailed(for: URL)
+         case outputStreamFileAlreadyExists(at: URL)
+         case outputStreamURLInvalid(url: URL)
+         case outputStreamWriteFailed(error: Error)
+
+         case inputStreamReadFailed(error: Error)
+     }
+
+     
+     public enum ResponseValidationFailureReason {
+         case dataFileNil
+         case dataFileReadFailed(at: URL)
+         case missingContentType(acceptableContentTypes: [String])
+         case unacceptableContentType(acceptableContentTypes: [String], responseContentType: String)
+         case unacceptableStatusCode(code: Int)
+     }
+
+     
+     public enum ResponseSerializationFailureReason {
+         case inputDataNil
+         case inputDataNilOrZeroLength
+         case inputFileNil
+         case inputFileReadFailed(at: URL)
+         case stringSerializationFailed(encoding: String.Encoding)
+         case jsonSerializationFailed(error: Error)
+         case propertyListSerializationFailed(error: Error)
+     }
+
+     case parameterEncodingFailed(reason: ParameterEncodingFailureReason)
+     case multipartEncodingFailed(reason: MultipartEncodingFailureReason)
+     case responseValidationFailed(reason: ResponseValidationFailureReason)
+     case responseSerializationFailed(reason: ResponseSerializationFailureReason)
+ }
+ 
+ 错误的表示：
+ /// 定义一个枚举类型的错误类型
+ enum MyEnumError: Error {
+     case errorOne
+     case errorTwo
+     /// 实现Error协议的localizedDescription只读实例属性
+     var localizedDescription: String {
+         let desc = self == .errorOne ? "the first errror" : "the second error"
+         return "\(self): \(desc)"
+     }
+ }
+  
+ /// 定义一个结构体类型的错误类型
+ struct MyStructError: Error {
+     var errCode: Int = 0
+     /// 实现Error协议的localizedDescription只读实例属性
+     var localizedDescription: String {
+         return "The error code is: \(errCode)"
+     }
+ }
+ 
+ 错误抛出：
+ func foo(a: Int) throws -> Int {
+     if a < -10 {
+         // 如果a的值小于-10，
+         // 则抛出MyEnumError.errorOne
+         throw MyEnumError.errorOne
+     }
+     else if a > 10 {
+         // 如果a的值大于10，
+         // 则抛出MyEnumError.errorTwo
+         throw MyEnumError.errorTwo
+     }
+     else if a == 0 {
+         // 如果a的值为0，
+         // 那么抛出MyStructError对象，
+         // 并且其errCode的值为-1
+         throw MyStructError(errCode: -1)
+     }
+      
+     print("a = \(a)")
+      
+     return a
+ }
+ 
+ 错误捕获与处理：
+ do {
+     var value = try foo(a: -100)
+     value += try foo(a: 100)
+     value += try foo(a: 0)
+      
+     print("value = \(value)")
+ }   // 下面紧接着使用catch语句块
+ catch let err {
+     // 如果在do语句块中有任一错误抛出，
+     // 那么即会执行此catch语句块中的内容
+     print("err is: \(err)")
+ }
+ */
+
 // MARK: URLNavigator
 /**
  https://cloud.tencent.com/developer/article/1444577
