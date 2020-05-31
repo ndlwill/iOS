@@ -31,19 +31,20 @@
 }
 
 - (void)testExample {
+    
     XCUIApplication *app = [[XCUIApplication alloc] init];
-    [[[[[app.otherElements containingType:XCUIElementTypeStaticText identifier:@"sjhdgdgjk"] childrenMatchingType:XCUIElementTypeButton] matchingIdentifier:@"Button"] elementBoundByIndex:0] tap];
-    [app.buttons[@"Four"] tap];
-    [app.navigationBars[@"FourView"].buttons[@"Test"] tap];
+    [app.buttons[@"collectionView"] tap];
     
-    XCUIElement *element = [[[[[[[app childrenMatchingType:XCUIElementTypeWindow] elementBoundByIndex:0] childrenMatchingType:XCUIElementTypeOther].element childrenMatchingType:XCUIElementTypeOther].element childrenMatchingType:XCUIElementTypeOther].element childrenMatchingType:XCUIElementTypeOther].element childrenMatchingType:XCUIElementTypeOther].element;
-    [element tap];
-    [element tap];
-    [element tap];
-    [element tap];
+    XCUIElementQuery *cellsQuery = app.collectionViews.cells;
+    /*@START_MENU_TOKEN@*/[[cellsQuery.otherElements containingType:XCUIElementTypeStaticText identifier:@"0-4"].element pressForDuration:1.7];/*[["[","cellsQuery.otherElements containingType:XCUIElementTypeStaticText identifier:@\"0-4\"].element"," tap];"," pressForDuration:1.7];"],[[[0,1,1]],[[0,3],[0,2]]],[0,0]]@END_MENU_TOKEN@*/
     
-    // Use recording to get started writing UI tests.
-    // Use XCTAssert and related functions to verify your tests produce the correct results.
+    XCUIElement *element = [cellsQuery.otherElements containingType:XCUIElementTypeStaticText identifier:@"0-5"].element;
+    /*@START_MENU_TOKEN@*/[element pressForDuration:1.7];/*[["element","["," tap];"," pressForDuration:1.7];"],[[[-1,0,1]],[[1,3],[1,2]]],[0,0]]@END_MENU_TOKEN@*/
+    [app.buttons[@"close"] tap];
+    /*@START_MENU_TOKEN@*/[element pressForDuration:1.6];/*[["element","["," tap];"," pressForDuration:1.6];"],[[[-1,0,1]],[[1,3],[1,2]]],[0,0]]@END_MENU_TOKEN@*/
+    [[cellsQuery.otherElements containingType:XCUIElementTypeStaticText identifier:@"0-7"].element swipeUp];
+    [[cellsQuery.otherElements containingType:XCUIElementTypeStaticText identifier:@"0-16"].element swipeRight];
+    
 }
 
 @end

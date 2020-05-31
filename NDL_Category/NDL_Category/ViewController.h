@@ -148,6 +148,11 @@ return nil;
  */
 @interface ViewController : UIViewController
 
+- (int)getPlus:(int)num1 num2:(int)num2;
+
+- (void)loadData:(void (^)(id data))dataBlock;
+
+- (void)openCamera;
 
 @end
 

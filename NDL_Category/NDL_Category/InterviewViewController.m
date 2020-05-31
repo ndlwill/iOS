@@ -6,6 +6,12 @@
 //  Copyright © 2019 ndl. All rights reserved.
 //
 
+// MARK: 工具
+/**
+ Alfred
+ goshell
+ */
+
 // MARK: 音视频
 /**
  采集：
@@ -4903,6 +4909,23 @@ mode里面有很多items
 
 // MARK: ---LG_objc_init 应用初始化过程
 /**
+ 
+ */
+
+// MARK: LG_单元测试
+/**
+ UIKit Tests
+ Tests
+ 
+ command + u
+ */
+
+// MARK: LG_CI
+/**
+ github:
+ Travis CI // 绑定github上面的项目
+ codecov // 要有代码覆盖率 需要有单元测试
+ 
  
  */
 

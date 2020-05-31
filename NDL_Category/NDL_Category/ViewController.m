@@ -660,6 +660,29 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
     [self presentViewController:[[BaseNavigationController alloc] initWithRootViewController:[[HomeTranViewController alloc] init]] animated:YES completion:nil];
 }
 
+- (int)getPlus:(int)num1 num2:(int)num2{
+    return num1 + num2;
+}
+
+- (void)loadData:(void (^)(id data))dataBlock{
+    
+    dispatch_async(dispatch_get_global_queue(0, 0), ^{
+        [NSThread sleepForTimeInterval:2];
+        NSString *dataStr = @"meilo30";
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSLog(@"刷新UI");
+            dataBlock(dataStr);
+        });
+    });
+}
+
+- (void)openCamera{
+    // I/O
+    for (int i = 0; i<100; i++) {
+        NSLog(@"tes openCamera");
+    }
+}
+
 - (void)viewDidLoad {
     NSLog(@"value = %ld", ~0l);// -1
     
