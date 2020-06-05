@@ -750,6 +750,8 @@ monthss = {"1" => "January", "2" => "February"}
 puts "\n==========other=========="
 puts "ndl\nyxx"
 
+# gets 语句可用于获取来自名为 STDIN 的标准屏幕的用户输入.gets方法得到的字符串包含一个“\n”回车符，所以我们需要继续使用chomp方法把"\n"回车符去掉
+
 # 负数的索引代表从数组的末尾开始
 # Ruby中字符是整数
 word = "jdj"
@@ -790,7 +792,11 @@ ary.each { |element|
     puts "each: #{element}"
 }
 
-puts "\n==========Symbol=========="
+optionssss={"a"=>123}
+nilvar=optionssss[:abc]
+puts nilvar.nil? # true
+
+puts "==========Symbol=========="
 =begin
 Symbol 表示“名字”，比如字符串的名字，标识符的名字。
 创建一个 Symbol 对象的方法是在名字或者字符串前面加上冒号
