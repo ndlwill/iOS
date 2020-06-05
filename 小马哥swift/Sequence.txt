@@ -1,0 +1,124 @@
+Sequence 是一系列相同类型的值的集合，并且提供对这些值的迭代能力。
+
+for element in someSequence {
+    doSomething(with: element)
+}
+我们经常把 for-in 循环用在 Array、Dictioanry、Set 等数据结构上，因为他们都实现了 Sequence 协议。
+
+protocol Sequence {
+    associatedtype Iterator: IteratorProtocol
+    func makeIterator() -> Iterator
+}
+Sequence 协议只有一个必须实现的方法 makeIterator()
+makeIterator() 需要返回一个 Iterator，它是一个 IteratorProtocol 类型
+
+Iterator:
+Iterator 在 Swift 3.1 标准库中即为 IteratorProtocol，它用来为 Sequence 提供迭代能力。
+对于 Sequence，我们可以用 for-in 来迭代其中的元素，其实 for-in 的背后是 IteratorProtocol 在起作用
+
+public protocol IteratorProtocol {
+    associatedtype Element
+    public mutating func next() -> Self.Element?
+}
+其中仅声明了一个 next() 方法，用来返回 Sequence 中的下一个元素，或者当没有下一个元素时返回 nil。
+associatedtype 声明了元素的类型。
+
+
+let animals = ["Antelope", "Butterfly", "Camel", "Dolphin"]
+for animal in animals {
+    print(animal)
+}
+实际上编译器会把以上代码转换成下面的代码:
+var animalIterator = animals.makeIterator()
+while let animal = animalIterator.next() {
+    print(animal)
+}
+1.获取到 animals 数组的 Iterator
+2.在一个 while 循环中，通过 Iterator 不断获取下一个元素，并对元素进行操作
+3.当 next() 返回 nil 时，退出循环
+
+
+let array = [1,2,3]
+var itearator = array.makeIterator()
+while let i = itearator.next() {
+    print(i)
+}
+
+举例1：最简单的 Iterator
+最简单的 Iterator 实现就是在 next() 中返回 nil，代码如下:
+struct SimplestIterator: IteratorProtocol {
+    typealias Element = Int
+    mutating func next() -> Int? {
+        return nil
+    }
+}
+
+举例2：常量 Iterator
+让 next() 返回一个值，也是一种简单的实现，例如下面代码：
+struct ConstantIterator: IteratorProtocol {
+    typealias Element = Int
+    mutating func next() -> Int? {
+        return 1
+    }
+}
+
+举例3：斐波那契数列 Iterator
+再看一个复杂一点的例子，斐波那契数列的实现：
+struct FibsIterator: IteratorProtocol {
+    var state = (0, 1)
+    mutating func next() -> Int? {
+        let upcomingNumber = state.0
+        state = (state.1, state.0 + state.1)
+        return upcomingNumber
+    }
+}
+在实现 Iterator 时可以省略 Element 的类型声明，Swift 会通过 next() 的返回值类型来自动推导出 Element 的类型。不过对于实现比较复杂的 Iterator，往往还是会加上类型声明这一句，提高代码可读性。
+
+===========================
+实现一个 Sequence:
+准备实现这样的一个 Iterator：它接收一个字符串数组，并可以迭代这个数组中所有字符串的首字母。
+
+struct FirstLetterIterator: IteratorProtocol {
+    let strings: [String]
+    var offset: Int
+	
+    init(strings: [String]) {
+        self.strings = strings
+        offset = 0
+    }
+	
+    mutating func next() -> String? {
+        guard offset < strings.endIndex else { return nil }
+        let string = strings[offset]
+        offset += 1
+        return string.substring(to: string.index(string.startIndex, offsetBy: 1))
+    }
+}
+
+struct FirstLetterSequence: Sequence {
+    let strings: [String]
+	
+    func makeIterator() -> FirstLetterIterator {
+        return FirstLetterIterator(strings: strings)
+    }
+}
+
+for letter in FirstLetterSequence(strings: ["apple", "banana", "orange"]) {
+    print(letter)
+}
+
+===========================
+值类型 Iterator:
+let seq = stride(from: 0, to: 10, by: 1)
+var i1 = seq.makeIterator()
+i1.next()
+var i2 = i1
+i1.next() 
+i2.next()
+
+引用类型 Iterator:
+可以把任何一个值类型 Iterator 用 AnyIterator 这个包一下就形成了一个引用类型的 Iterator。
+
+
+还有一种更简单的方法来创建 Sequence，用 Swift 标准库中的 sequence 函数。
+第一个参数是 Sequence 中的第一个值，第二个参数传入一个闭包作为 next() 的内容。

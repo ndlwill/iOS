@@ -666,7 +666,15 @@ Ruby 中还支持一种采用 %q 和 %Q 来引导的字符串变量，%q 使用�
 跟在 q 或 Q 后面的字符是分界符.分界符可以是任意一个非字母数字的单字节字符.如:[,{,(,<,!等,字符串会一直读取到发现相匹配的结束符为止.
 
 字符编码:
+Ruby 的默认字符集是 ASCII，字符可用单个字节表示。如果您使用 UTF-8 或其他现代的字符集，字符可能是用一个到四个字节表示。
+您可以在程序开头使用 $KCODE 改变字符集：
+$KCODE = 'u'
 
+编码	描述
+a	ASCII （与 none 相同）。这是默认的。
+e	EUC。
+n	None （与 ASCII 相同）。
+u	UTF-8。
 
 =end
 single='Won\'t you read O\'Reilly\'s book?'
@@ -684,6 +692,60 @@ desc1 = %Q{Ruby 的字符串可以使用 '' 和 ""。}
 desc2 = %q|Ruby 的字符串可以使用 '' 和 ""。|
 puts desc1
 puts desc2
+
+myStr = String.new("THIS IS TEST")
+myStrDownCase = myStr.downcase
+
+puts "\n==========数组（Array）=========="
+=begin
+数组是任何对象的有序整数索引集合
+数组的索引从 0 开始
+一个负数的索相对于数组的末尾计数的，也就是说，索引为 -1 表示数组的最后一个元素，-2 表示数组中的倒数第二个元素
+数组可存储诸如 String、 Integer、 Fixnum、 Hash、 Symbol 等对象，甚至可以是其他 Array 对象。
+数组不需要指定大小，当向数组添加元素时，Ruby 数组会自动增长。
+
+数组 names 的大小或长度为 20 个元素。您可以使用 size 或 length 方法返回数组的大小
+也可以使用带有 new 的块，每个元素使用块中的计算结果来填充
+=end
+names = Array.new
+names1 = Array.new(20) 
+
+names2 = Array.new(4, "mac")
+puts "#{names2}"
+
+nums111 = Array.new(10) { |e| e = e * 2 }
+nums222 = Array.[](1, 2, 3, 4,5)
+nums333 = Array[1, 2, 3, 4,5]
+
+digits = Array(0..9)
+num555 = digits.at(6)
+
+puts "\n==========哈希（Hash）=========="
+=begin
+哈希（Hash）是类似 "key" => "value" 这样的键值对集合。哈希类似于一个数组，只不过它的索引不局限于使用数字。
+Hash 的索引（或者叫"键"）几乎可以是任何对象。
+Hash 的元素没有特定的顺序
+
+通过 new 类方法创建一个空的哈希：
+months = Hash.new
+
+也可以使用 new 创建带有默认值的哈希，不带默认值的哈希是 nil：
+months = Hash.new( "month" )
+或
+months = Hash.new "month"
+
+您可以使用任何的 Ruby 对象作为键或值，甚至可以使用数组:
+[1,"jan"] => "January"
+=end
+months = Hash.new( "month" )
+puts "#{months[0]}"
+puts "#{months[72]}"
+
+H = Hash["a" => 100, "b" => 200]
+puts "#{H['a']}"
+puts "#{H['b']}"
+
+monthss = {"1" => "January", "2" => "February"}
 
 puts "\n==========other=========="
 puts "ndl\nyxx"
@@ -728,6 +790,22 @@ ary.each { |element|
     puts "each: #{element}"
 }
 
+puts "\n==========Symbol=========="
+=begin
+Symbol 表示“名字”，比如字符串的名字，标识符的名字。
+创建一个 Symbol 对象的方法是在名字或者字符串前面加上冒号
+每一个对象都有唯一的对象标识符（Object Identifier）
+字符串就是字符串，干吗还有字符串的名字？这是因为在 Ruby 中字符串也是一种对象，即 String 对象。无论其结构还是操作和 Symbol 对象都是不同的。
+
+除了可以采用一般的字符串，还可以使用操作符（例如+, -, *, /），变量，常量，方法甚至类的名字来创建 Symbol 对象
+
+名字相同，则Symbol 相同
+
+Symbol 对象一旦定义将一直存在，直到程序执行退出。所有 Symbol 对象存放在 Ruby 内部的符号表中，
+可以通过类方法 Symbol.all_symbols 得到当前 Ruby 程序中定义的所有 Symbol 对象，该方法返回一个 Symbol 对象数组
+=end
+puts :xyz
+
 # https://blog.csdn.net/besfanfei/article/details/7966850
 # 创建一个 Symbol 对象的方法是在名字或者字符串前面加上冒号
 # 创建 Symbol 对象的字符串中不能含有’\0’字符，而 String 对象是可以的
@@ -744,3 +822,87 @@ puts "foo".object_id # 70270002025960
 puts "foo".object_id # 70270002021740
 puts "foo".object_id # 70270002021540
 # 而后三行中的字符串”foo”都是不同的对象
+
+# 每个 String 对象都是不同的，即便他们包含了相同的字符串内容
+# 而对于 Symbol 对象，一个名字（字符串内容）唯一确定一个 Symbol 对象。
+
+puts "=====Test====="
+# 类名、常量名和方法名都是 Test
+class Test
+    puts :Test.object_id
+    Test=100
+    puts :Test.object_id
+
+    def Test
+        puts :Test.object_id
+    end
+end
+
+ttt=Test.new
+ttt.Test
+
+puts Symbol.all_symbols.size
+puts Symbol.all_symbols[0..9]
+
+testStr="testStr"
+puts testStr
+testStr[0]="n"
+puts testStr
+
+testSym=:testSymbol
+puts testSym
+
+# Symbol 转化为 String
+# 使用 to_s 或 id2name 方法将 Symbol 转化为一个 String 对象
+# 每个 String 对象都是唯一的，因此对一个 Symbol 调用多次将产生多个 String 对象。
+puts :symbolid.id2name
+puts :symbolid.to_s
+puts :"i am ndl".to_s
+
+# String 转化为 Symbol
+# 除了在字符串前面加冒号，还可以使用 to_sym 或 intern 方法将 String 转化为 Symbol ，如果该 Symbol 已经存在，则直接返回
+var111 = "varsym".to_sym
+puts var111
+var222 = "varsym".intern
+puts var222
+puts var111 == var222
+
+# 使用 Symbol
+# Ruby 内部一直在使用 Symbol ，比如 Ruby 程序中的各种名字，Symbol本质上是 Ruby 符号表中的东西。使用 Symbol 处理名字可以降低 Ruby 内存消耗，提高执行速度
+# 那么 Symbol 对我们有什么用呢？当然也是内存。使用 String 的开销太大了，因为每一个String 都是一个对象。想想前边的例子，一个字符串每出现一次 Ruby 就会创建一个 String 对象。
+=begin
+当你面临 String 还是 Symbol 的选择时，可以参考以下标准：
+如果使用字符串的内容，这个内容可能会变化，使用 String
+如果使用固定的名字或者说是标识符，使用 Symbol
+
+那么什么时候我们会用到名字呢？很多时候都会，比如枚举值、关键字（哈希表关键字、方法的参数）等等
+
+作为哈希表的 key
+
+哈希参数
+通常我们定义的函数的参数的个数和顺序是写死的，调用函数的时候要确保参数的个数、顺序匹配，有时候这样很不方便，使用哈希参数可以解决这个问题。
+=end
+hosts = {:beijing=>'machine1', :shanghai=>'machine2', :guangzhou=>'machine3', :tianjin=>'machine4', :shenzhen=>'machine5'}
+puts "#{hosts}"
+
+# 使用哈希参数的方法可以如下定义，前半部分为固定参数，后面为可变参数，或者干脆全采用哈希参数：
+def my_method1(para1, options={})
+    puts "para1 = #{para1} options = #{options}"
+end
+ 
+def my_method2(options={})
+
+end
+
+
+my_method1 "cc", {"ndl"=>"yxx"}
+
+# 如果你希望设定一些默认参数，并允许调用者更改这些参数，可以使用哈希对象的 merge! 方法
+# hsh.merge!( other_hash )。该方法将other_hash里内容加到hsh中，如果other_hash与hsh有重复的key，则key在other_hash中的value覆盖hsh中对应key的value。
+def my_method(opts={})
+  default_opts={:arg1 => 10, :arg2 => "abc"}
+  default_opts.merge!(opts)
+  default_opts.each{|key,value| puts "#{key} is #{value}"}
+end
+
+my_method(:arg1=>5, :arg3=>"def")

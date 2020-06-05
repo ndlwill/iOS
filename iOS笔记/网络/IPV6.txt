@@ -1,0 +1,157 @@
+https://www.jianshu.com/p/a6bab07c4062
+
+iOS IPV6-Only支持:
+首先IPV6，是对IPV4地址空间的扩充。目前当我们用iOS设备连接上Wifi、4G、3G等网络时，设备被分配的地址均是IPV4地址，
+但是随着运营商和企业逐渐部署IPV6 DNS64/NAT64网络之后，设备被分配的地址会变成IPV6的地址，
+而这些网络就是所谓的IPV6-Only网络，并且仍然可以通过此网络去获取IPV4地址提供的内容。
+客户端向服务器端请求域名解析，首先通过DNS64 Server查询IPv6的地址，如果查询不到，再向DNS Server查询IPv4地址，
+通过DNS64 Server合成一个IPV6的地址，最终将一个IPV6的地址返回给客户端。
+
+https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/NetworkingOverview/UnderstandingandPreparingfortheIPv6Transition/UnderstandingandPreparingfortheIPv6Transition.html#//apple_ref/doc/uid/TP40010220-CH213-SW1
+在Mac OS 10.11＋的双网卡的Mac机器（以太网口＋无线网卡），
+我们可以通过模拟构建这么一个local IPv6 DNS64/NAT64 的网络环境去测试应用是否支持IPV6-Only网络
+
+
+en0（Wifi）、pdp_ip0（移动网络）
+
+网络api查阅:
+https://www.ibm.com/support/knowledgecenter/en/ssw_ibm_i_72/apis/resgetservers.htm
+https://docs.oracle.com/cd/E36784_01/html/E36875/res-getservers-3resolv.html
+
+typedef struct __res_state *res_state;
+res_state res = malloc(sizeof(struct __res_state));
+swift: typealias res_9_state = UnsafeMutablePointer<__res_9_state>
+
+/*
+ * Internet address (a structure for historical reasons)
+ */
+public struct in_addr {
+
+    public var s_addr: in_addr_t
+
+    public init()
+
+    public init(s_addr: in_addr_t)
+}
+
+
+/*
+ * Socket address, internet style.
+ */
+public struct sockaddr_in {
+
+    public var sin_len: __uint8_t
+
+    public var sin_family: sa_family_t
+
+    public var sin_port: in_port_t
+
+    public var sin_addr: in_addr
+
+    public var sin_zero: (Int8, Int8, Int8, Int8, Int8, Int8, Int8, Int8)
+
+    public init()
+
+    public init(sin_len: __uint8_t, sin_family: sa_family_t, sin_port: in_port_t, sin_addr: in_addr, sin_zero: (Int8, Int8, Int8, Int8, Int8, Int8, Int8, Int8))
+}
+
+/*
+ * [XSI] Structure used by kernel to store most addresses.
+ */
+public struct sockaddr {
+
+    public var sa_len: __uint8_t /* total length */
+
+    public var sa_family: sa_family_t /* [XSI] address family */
+
+    public var sa_data: (Int8, Int8, Int8, Int8, Int8, Int8, Int8, Int8, Int8, Int8, Int8, Int8, Int8, Int8) /* [XSI] addr value (actually larger) */
+
+    public init()
+
+    public init(sa_len: __uint8_t, sa_family: sa_family_t, sa_data: (Int8, Int8, Int8, Int8, Int8, Int8, Int8, Int8, Int8, Int8, Int8, Int8, Int8, Int8))
+}
+
+================================
+char ip[INET_ADDRSTRLEN]:
+INET_ADDRSTRLEN
+INET6_ADDRSTRLEN
+
+
+================================
+inet_pton和inet_ntop这2个IP地址转换函数，可以在将IP地址在“点分十进制”和“二进制整数”之间转换
+inet_ntop:
+inet_ntop函数原型[将“二进制整数” －> “点分十进制”]
+
+{
+char IPdotdec[20]; //存放点分十进制IP地址
+struct in_addr s; // IPv4地址结构体
+// 输入IP地址
+printf("Please input IP address: ");
+scanf("%s", IPdotdec);
+// 转换
+inet_pton(AF_INET, IPdotdec, (void *)&s);
+printf("inet_pton: 0x%x\n", s.s_addr); // 注意得到的字节序
+// 反转换
+inet_ntop(AF_INET, (void *)&s, IPdotdec, 16);
+printf("inet_ntop: %s\n", IPdotdec);
+}
+
+
+char *inet_ntoa(struct in_addr in);
+将一个32位网络字节序的二进制IP地址转换成相应的点分十进制的IP地址
+
+
+// 获取主机信息
+res_state res = malloc(sizeof(struct __res_state));
+
+int result = res_ninit(res);
+
+NSMutableArray *servers = [[NSMutableArray alloc] init];
+
+if (result == 0) {
+
+    union res_9_sockaddr_union *addr_union = malloc(res->nscount * sizeof(union res_9_sockaddr_union));
+
+    res_getservers(res, addr_union, res->nscount);
+
+    
+
+    for (int i = 0; i < res->nscount; i++) {
+
+        if (addr_union[i].sin.sin_family == AF_INET) {
+
+            char ip[INET_ADDRSTRLEN];
+
+            inet_ntop(AF_INET, &(addr_union[i].sin.sin_addr), ip, INET_ADDRSTRLEN);
+
+            NSString *dnsIP = [NSString stringWithUTF8String:ip];
+
+            [servers addObject:dnsIP];
+
+            NSLog(@"IPv4 DNS IP: %@", dnsIP);
+
+        } else if (addr_union[i].sin6.sin6_family == AF_INET6) {
+
+            char ip[INET6_ADDRSTRLEN];
+
+            inet_ntop(AF_INET6, &(addr_union[i].sin6.sin6_addr), ip, INET6_ADDRSTRLEN);
+
+            NSString *dnsIP = [NSString stringWithUTF8String:ip];
+
+            [servers addObject:dnsIP];
+
+            NSLog(@"IPv6 DNS IP: %@", dnsIP);
+
+        } else {
+
+            NSLog(@"Undefined family.");
+
+        }
+
+    }
+
+}
+
+res_nclose(res);
+
+free(res);

@@ -7,6 +7,13 @@
 //  Copyright © 2019 dzcx. All rights reserved.
 //
 
+// MARK: Device
+/**
+ let device = UIDevice.current
+ print("name = \(device.name)  systemVersion = \(device.systemVersion)  systemName = \(device.systemName) model = \(device.model)")
+ name = “Administrator”的 iPhone  systemVersion = 13.4.1  systemName = iOS model = iPhone
+ */
+
 // MARK: swift查看内存地址小工具Mems
 // https://github.com/CoderMJLee/Mems.git
 
@@ -920,8 +927,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
     
+    var globalVar = 100
     
-    
+    func testInOut(_ number: inout Int) {
+        number += globalVar
+    }
+ 
     // 定义时必须指定一个类型
     func takeIntPointer(_ p: UnsafePointer<Int>) {// 常量指针: UnsafePointer
         // p.pointee += 1 // 报错: Left side of mutating operator isn't mutable: 'pointee' is a get-only property
@@ -961,6 +972,46 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // MARK: Array && ArraySlice
+        let originArray = [1, 3, 4]
+        let range = 0..<originArray.count
+        let rangeArray: ArraySlice<Int> = originArray[range]
+        let testArr = Array(rangeArray)
+        
+        let rangeTest1 = 0...0
+        for i in rangeTest1 {
+            print(i)
+        }
+        let rangeTest2 = 0..<0
+        for i in rangeTest2 {
+            print(i)
+        }
+        
+        // MARK: 内存安全访问
+        /**
+         https://docs.swift.org/swift-book/LanguageGuide/MemorySafety.html#//apple_ref/doc/uid/TP40014097-CH46-ID567
+         重叠访问主要带有 in-out 参数的函数（或方法）以及结构体中带有 mutating 关键字的方法
+         
+         In-Out 参数的访问冲突
+         
+         self 的访问冲突
+         在结构体中，带有 mutating 关键字的方法调用期间对 self 具有写入权限
+         
+         属性的访问冲突
+         */
+        var inoutValue = 88
+        testInOut(&inoutValue)// inoutValue: 188
+        // 会崩溃: accesses to 0x600003b195d8, but modification requires exclusive access修改需要独占访问
+        /**
+         globalVar是一个全局变量
+         冲突的原因在于 number 和 globalVar 引用的是内存中同一区域，并且同时进行读写访问，因此导致访问冲突。
+         */
+        // testInOut(&globalVar)
+        // 可以采用复制 globalVar 的方式解决该问题
+        var tempGlobal = globalVar
+        testInOut(&tempGlobal)// globalVar: 200
+        
+        
         // MARK: deinit
         /**
          先UIViewController deinit->再它里面的view deinit
@@ -1037,6 +1088,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         let stride = MemoryLayout<TestPoint>.stride// 24
         let alignment = MemoryLayout<TestPoint>.alignment// 8
         
+        // MARK: 悬空指针（Dangling pointer）
+        /**
+         一个指针所指的内存被释放后，这个指针就被悬空了。
+         避免悬空指针？
+         基本思路：在释放一块内存时，将指向这块内存的指针变量设置为NULL。访问指针变量前，先判断是否为NULL。
+         */
         
         // MARK: 指针UnsafePointer和托管Unmanaged和UnsafeRawPointer
         /**
@@ -1304,7 +1361,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         })
         
         let ff = Point(x: 23.9, y: 76.7)
-        
+    
+        // 模拟器
+        #if arch(i386) || arch(x86_64)
+
+        #endif
         
         
         // MARK: ===指向数组的指针===UnsafeBufferPointer&&UnsafeMutableBufferPointer===
@@ -1710,7 +1771,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         
     }
     
-    // MARK: （rawPointer: bindMemory && assumingMemoryBound） && typePointer: withMemoryRebound
+    // MARK: （rawPointer: bindMemory && assumingMemoryBound  他们的返回值都是UnsafeMutablePointer<T>） && typePointer: withMemoryRebound
     /**
      bindMemory:
      Use the bindMemory(to:capacity:) method to bind the memory referenced by this pointer to the type T. The memory must be uninitialized or initialized to a type that is layout compatible with T. If the memory is uninitialized, it is still uninitialized after being bound to T.

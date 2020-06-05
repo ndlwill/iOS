@@ -120,9 +120,5 @@ class TestIPadViewController: UIViewController {
         // 在实战中经常遇到Option作为参数的运用。比如给一个view设置一个或两个圆角
         let path = UIBezierPath(roundedRect: view.bounds, byRoundingCorners: [.bottomLeft, .bottomRight], cornerRadii: CGSize(width: 10, height: 10))
         
-        
-        
-        
     }
-
 }
