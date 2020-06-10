@@ -14,6 +14,9 @@
  name = “Administrator”的 iPhone  systemVersion = 13.4.1  systemName = iOS model = iPhone
  */
 
+// MARK: 国外blog
+// https://www.raywenderlich.com/10978716-ios-apprentice
+
 // MARK: swift查看内存地址小工具Mems
 // https://github.com/CoderMJLee/Mems.git
 
