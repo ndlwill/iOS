@@ -7,6 +7,13 @@
 //
 
 #import <UIKit/UIKit.h>
+// MARK: accessibilityIdentifier
+/**
+ A string that identifies the element
+ UI Testing的时候可以用来标识控件
+ 可以通过给控件设置accessibilityIdentifier属性来访问
+ */
+
 /*
  UIScrollView在滚动过程当中，其实是在修改原点坐标。当手指触摸后, scroll view会暂时拦截触摸事件,使用一个计时器。假如在计时器到点后没有发生手指移动事件，那么 scroll view 发送 tracking events 到被点击的 subview。假如在计时器到点前发生了移动事件，那么 scroll view 取消 tracking 自己发生滚动
  
