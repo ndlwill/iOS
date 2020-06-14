@@ -504,6 +504,7 @@ def test2
  var = test2
  puts var
 
+ # 可变参数的方法定义
 def sample (*test)
     puts "参数个数为 #{test.length}"
     for i in 0...test.length
@@ -511,6 +512,14 @@ def sample (*test)
     end
 end
 sample "Mac", "36", "M", "MCA"
+sample(1, 2, 6)
+
+# 至少需要指定一个参数的方法
+def meth(arg, *agrs)
+    [arg, agrs]
+end
+p meth(1)
+p meth(1, 2, 3)
 
 class Accounts
     def reading_charge
@@ -520,6 +529,46 @@ class Accounts
     end
 end
 Accounts.return_date # 如需访问该方法，您不需要创建类 Accounts 的对象。
+
+# 不带参数的方法
+def function_name
+    puts "function_name"
+end
+function_name
+function_name()
+
+# 带参数的方法定义
+def function_name1(param1, param2)
+    puts "function_name1 #{param1} #{param2}"
+end
+function_name1(12, 88)
+function_name1 14, 66
+
+# 关键字参数的方法定义
+# 除了参数名外，使用“参数名 : 值”这样的形式还可以指定参数的默认值
+def areas(x: 12, y: 20)
+    puts "#{x} #{y}"
+end
+areas # 12, 20
+areas(x: 20) # 20, 20
+areas(x: 10, y: 30) # 10, 30
+# 可以用散列作为实参传递给方法的关键字参数
+hashArgs={x: 2, y: 5}
+areas(hashArgs) # 2, 5 
+
+# 带块的方法定义
+def myloop
+    while true
+        yield # 执行块
+    end
+end
+countNumber= 1 # 初始化num
+myloop do
+    puts "countNumber is #{countNumber}" # 输出num
+    break if countNumber > 100 # num超过100时跳出循环
+    countNumber *= 2  # num乘2
+end
+# 方法的调用可以省略小括号()
 
 puts "\n==========Block=========="
 =begin
@@ -706,6 +755,10 @@ puts "\n==========数组（Array）=========="
 
 数组 names 的大小或长度为 20 个元素。您可以使用 size 或 length 方法返回数组的大小
 也可以使用带有 new 的块，每个元素使用块中的计算结果来填充
+
+数组内建方法:
+我们需要有一个 Array 对象的实例来调用 Array 方法。下面是创建 Array 对象实例的方式：
+Array.[](...) [or] Array[...] [or] [...]
 =end
 names = Array.new
 names1 = Array.new(20) 
