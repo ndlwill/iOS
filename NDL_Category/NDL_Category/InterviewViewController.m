@@ -12,6 +12,14 @@
  goshell
  */
 
+// MARK: Jenkins
+/**
+ 需要java环境
+ brew install jenkins
+ java -jar jenkins.war --httpPort=8099
+ 浏览器 localhost:8099
+ */
+
 // MARK: 音视频
 /**
  采集：
@@ -4907,6 +4915,66 @@ mode里面有很多items
  NSLog(@"%@",[p valueForKey:@"name"]);// (null)
  */
 
+// MARK: ---LG_KVO
+/**
+ addObserver: forKeyPath: options: context:
+ context: 打标签--用来区分 解决继承的相关问题 判断嵌套少，性能高
+ 必须要移除观察者
+ // context
+ static void *PersonNameContext = &PersonNameContext;
+ 
+ @implementation LGPerson
+ // 自动观察开关
+ + (BOOL)automaticallyNotifiesObserversForKey:(NSString *)key{
+     if ([key isEqualToString:@"age"]) {
+         return YES;
+     }
+     return NO;
+ }
+ 
+ // 手动观察
+ - (void)setName:(NSString *)name
+ {
+     [self willChangeValueForKey:@"name"];
+     _name = name;
+     [self didChangeValueForKey:@"name"];
+ }
+ 
+ // 下载进度 -- writtenData/totalData
+ + (NSSet<NSString *> *)keyPathsForValuesAffectingValueForKey:(NSString *)key{
+     
+     NSSet *keyPaths = [super keyPathsForValuesAffectingValueForKey:key];
+     if ([key isEqualToString:@"downloadProgress"]) {
+         NSArray *affectingKeys = @[@"totalData", @"writtenData"];
+         keyPaths = [keyPaths setByAddingObjectsFromArray:affectingKeys];
+     }
+     return keyPaths;
+ }
+ @end
+ 
+ @interface LGPerson : NSObject
+ @property (nonatomic, copy) NSString *name;
+ @property (nonatomic, copy) NSString *nick;
+ @property (nonatomic, copy) NSString *downloadProgress;
+ @property (nonatomic, assign) double writtenData;
+ @property (nonatomic, assign) double totalData;
+ @property (nonatomic, strong) NSMutableArray *dateArray;
+ @end
+ 
+ KVO与KVC有关联，依赖于KVC
+ 重要：观察dateArray 集合类型的观察要通过KVC来取值
+ [self.person.dateArray addObject:@"hello"];// 这个不触发KVO
+ [[self.person mutableArrayValueForKey:@"dateArray"] addObject:@"hello"];// 这个触发，因为mutableArrayValueForKey是KVC
+ 
+ 1:33
+ 
+ KVO原理:
+ 动态生成子类： NSKVONotifying_xxxx
+ 重写观察对象的setter方法，Class方法
+ 在重写setter方法中调用 – willChangeValueForKey和 – didChangeValueForKey
+ 向父类发送消息
+ */
+
 // MARK: ---LG_objc_init 应用初始化过程
 /**
  
@@ -4925,8 +4993,6 @@ mode里面有很多items
  github:
  Travis CI // 绑定github上面的项目
  codecov // 要有代码覆盖率 需要有单元测试
- 
- 
  */
 
 // MARK: ---LG_多线程
