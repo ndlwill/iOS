@@ -367,8 +367,10 @@
  视图的职责是 创建并管理 图层
  
  为什么iOS要基于UIView和CALayer提供两个平行的层级关系呢：
+ ###
  其原因在于要做职责分离，这样也能避免很多重复代码。
  在iOS和MacOSX两个平台上，事件和用户交互有很多地方的不同，基于多点触控的用户界面和基于鼠标键盘的交互有着本质的区别，这就是为什么iOS有UIKit和UIView，对应Mac OSX有AppKit和NSView的原因。
+ ###
  
  除了 视图树 和 图层树，还有 呈现树 和 渲染树
  
@@ -378,16 +380,18 @@
  图形渲染流水线支持从顶点开始进行绘制（在流水线中，顶点会被处理生成纹理），也支持直接使用纹理（图片）进行渲染
  相应地，在实际开发中，绘制界面也有两种方式：一种是 手动绘制；另一种是 使用图片
  对此，iOS 中也有两种相应的实现方式：
- 使用图片：contents image
- 手动绘制：custom drawing
+ ##使用图片：contents image
+ ##手动绘制：custom drawing
  
  Contents Image:
  Contents Image 是指通过 CALayer 的 contents 属性来配置图片。然而，contents 属性的类型为 id。在这种情况下，可以给 contents 属性赋予任何值，app 仍可以编译通过。但是在实践中，如果 content 的值不是 CGImage ，得到的图层将是空白的
  为什么要将 contents 的属性类型定义为 id 而非 CGImage。这是因为在 Mac OS 系统中，该属性对 CGImage 和 NSImage 类型的值都起作用，而在 iOS 系统中，该属性只对 CGImage 起作用。
  本质上，contents 属性指向的一块缓存区域，称为 backing store，可以存放 bitmap 数据
+ iOS中将该缓存区保存的图片称为寄宿图。
  
  Custom Drawing:
- Custom Drawing 是指使用 Core Graphics 直接绘制寄宿图。实际开发中，一般通过继承 UIView 并实现 -drawRect: 方法来自定义绘制
+ ###Custom Drawing 是指使用 Core Graphics 直接绘制寄宿图。
+ 实际开发中，一般通过继承 UIView 并实现 -drawRect: 方法来自定义绘制
  虽然 -drawRect: 是一个 UIView 方法，但事实上都是底层的 CALayer 完成了重绘工作并保存了产生的图片
  
  UIView 有一个关联图层，即 CALayer。
@@ -4488,6 +4492,12 @@ oc对象本质是结构体
 
 // MARK: ---LG_runloop
 /**
+ https://blog.ibireme.com/2015/05/18/runloop/
+ Source有两个版本：
+ Source0 和 Source1。
+ • Source0 只包含了一个回调（函数指针），它并不能主动触发事件。使用时，你需要先调用 CFRunLoopSourceSignal(source)，将这个 Source 标记为待处理，然后手动调用 CFRunLoopWakeUp(runloop) 来唤醒 RunLoop，让其处理这个事件。
+ • Source1 包含了一个 mach_port 和一个回调（函数指针），被用于通过内核和其他线程相互发送消息。这种 Source 能主动唤醒 RunLoop 的线程
+ 
  Runloop的作用:
  保持程序的持续运行
  处理APP中的各种事件（触摸、定时器、performSelector）
