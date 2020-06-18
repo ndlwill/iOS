@@ -4220,6 +4220,7 @@ for (NSInteger i = 0; i < 100; i++) {
 
 // MARK: ---LG_runtime
 /**
+ https://www.jianshu.com/p/9d649ce6d0b8
  Runtime有两个版本：
  一个是Legacy版本(早期版本) 。
  一个是Modern版本(现行版本)。

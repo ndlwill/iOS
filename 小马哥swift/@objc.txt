@@ -1,0 +1,44 @@
+Cocoa 中的 Objective-C 对象是基于运行时的
+它从骨子里遵循了 KVC (Key-Value Coding，通过类似字典的方式存储对象信息) 
+以及动态派发 (Dynamic Dispatch，在运行调用时再决定实际调用的具体实现)。
+
+而 Swift 为了追求性能，如果没有特殊需要的话，是不会在运行时再来决定这些的。
+也就是说，Swift 类型的成员或者方法在编译时就已经决定，
+而运行时便不再需要经过一次查找，而可以直接使用。
+
+1、 使用@objc修饰将暴露给Objective-C的类、方法、属性等
+如果我们要使用 Objective-C 的代码或者特性来调用纯 Swift 的类型时候，
+我们会因为找不到所需要的这些运行时信息，而导致失败。
+为此，在 Swift 类型文件中，我们使用@objc修饰将暴露给Objective-C的类、方法、属性。
+
+注意这个步骤只需要对那些不是继承自 NSObject 的类型进行，
+如果你用 Swift 写的 class 是继承自 NSObject 的话，
+Swift 会默认自动为所有的非 private 的类和成员加上 @objc。
+这就是说，对一个 NSObject 的子类，你只需要导入相应的头文件就可以在 Objective-C 里使用这个类了。
+
+2、@objc 修饰符的另一个作用是为 Objective-C 侧重新声明方法或者变量的名字
+虽然绝大部分时候自动转换的方法名已经足够好用 (比如会将 Swift 中类似 init(name: String) 的方法转换成 -initWithName:(NSString *)name 这样)，
+但是有时候我们还是期望 Objective-C 里使用和 Swift 中不一样的方法名或者类的名字，比如 Swift 里这样的一个类：
+
+class 我的类: NSObject {
+    func 打招呼(名字: String) {
+        print("哈喽，\(名字)")
+    }
+}
+我的类().打招呼("小明")
+
+@objc(MyClass)
+class 我的类 {
+    @objc(greeting:)
+    func 打招呼(名字: String) {
+        print("哈喽，\(名字)")
+    }
+}
+我们在 Objective-C 里就能调用 [[MyClass new] greeting:@"XiaoMing"] 这样的代码了
+
+即使是NSObject 的子类，Swift 也不会在被标记为 private 的方法或成员上自动加 @objc，以保证尽量不使用动态派发来提高代码执行效率。
+添加 @objc 修饰符并不意味着这个方法或者属性会变成动态派发，Swift 依然可能会将其优化为静态调用。
+如果你需要和 Objective-C 里动态调用时相同的运行时特性的话，你需要使用的修饰符是 dynamic。
+
+一般情况下在做 app 开发时应该用不上，
+但是在施展一些像动态替换方法或者运行时再决定实现这样的 "黑魔法" 的时候，我们就需要用到 dynamic 修饰符了

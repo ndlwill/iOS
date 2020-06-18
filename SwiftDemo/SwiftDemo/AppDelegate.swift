@@ -423,6 +423,7 @@
 
 // MARK: ===动画===
 // https://github.com/WalkingToTheDistant/ImgAnimation
+// https://www.jianshu.com/u/25b2d09211e4
 
 // MARK: gitlab
 /**
