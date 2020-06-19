@@ -6,6 +6,12 @@
 //  Copyright © 2019 ndl. All rights reserved.
 //
 
+// MARK: 监控
+// https://github.com/Tencent/OOMDetector
+
+// MARK: UICollectionView
+// https://github.com/liangdahong/BMLongPressDragCellCollectionView
+
 // MARK: 工具
 /**
  Alfred
@@ -3649,6 +3655,20 @@ for (NSInteger i = 0; i < 100; i++) {
  利用 method_exchangeImplementations 交换两个方法的实现
  利用 class_replaceMethod替换方法的实现
  利用 method_setImplementation 来直接设置某个方法的IMP
+ 
+ SEL originalSelector = @selector(viewWillAppear:);
+ SEL swizzledSelector = @selector(fd_viewWillAppear:);
+ Method originalMethod = class_getInstanceMethod(class, originalSelector);
+ Method swizzledMethod = class_getInstanceMethod(class, swizzledSelector);
+ BOOL success = class_addMethod(class, originalSelector, method_getImplementation(swizzledMethod), method_getTypeEncoding(swizzledMethod));
+ if (success) {
+     // 主类本身没有实现需要替换的方法，而是继承了父类的实现，即 class_addMethod 方法返回 YES 。
+     // 这时使用 class_getInstanceMethod 函数获取到的 originalSelector 指向的就是父类的方法，我们再通过执行 class_replaceMethod(class, swizzledSelector, method_getImplementation(originalMethod), method_getTypeEncoding(originalMethod));
+     // 将父类的实现替换到我们自定义的 mrc_viewWillAppear 方法中。这样就达到了在 mrc_viewWillAppear 方法的实现中调用父类实现的目的。
+     class_replaceMethod(class, swizzledSelector, method_getImplementation(originalMethod), method_getTypeEncoding(originalMethod));
+ } else {
+     method_exchangeImplementations(originalMethod, swizzledMethod);
+ }
  
  MARK: ---10.什么时候会报unrecognized selector的异常
  在向一个对象发送消息时，runtime库会根据对象的isa指针找到该对象实际所属的类，然后在该类中的方法列表以及其父类方法列表中寻找方法运行，如果，在最顶层的父类中依然找不到相应的方法时，会进入消息转发阶段，如果消息三次转发流程仍未实现，则程序在运行时会挂掉并抛出异常unrecognized selector sent to XXX

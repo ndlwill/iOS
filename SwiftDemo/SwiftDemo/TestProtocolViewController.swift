@@ -30,8 +30,32 @@ import UIKit
  但是多继承有一个无法回避的问题，就是两个父类都实现了同样的方法时，子类该怎么办？我们很难确定应该继承哪一个父类的方法.
  因为多继承的拓扑结构是一个菱形，所以这个问题又被叫做菱形缺陷 (Diamond Problem)。
  
+ 横切关注点 (Cross-Cutting Concerns) 那就是我们很难在不同继承关系的类里共用代码! 现在我们通过面向协议的方式
+ 
  Objective-C 是不安全的，编译器默认你知道某个方法确实有实现，这是消息发送的灵活性所必须付出的代价。
+ 
+ 我们可以使用 POP 来解耦，通过组合的方式让代码有更好的重用性
  */
+
+struct User {
+    let name: String
+    let message: String
+    
+    init?(data: Data) {
+        guard let obj = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
+            return nil
+        }
+        guard let name = obj["name"] as? String else {
+            return nil
+        }
+        guard let message = obj["message"] as? String else {
+            return nil
+        }
+        
+        self.name = name
+        self.message = message
+    }
+}
 
 
 class TestProtocolViewController: UIViewController {
@@ -41,15 +65,20 @@ class TestProtocolViewController: UIViewController {
         self.view.backgroundColor = UIColor.lightGray
         
         // 将协议作为标准类型，来对方法调用进行动态派发了
-        // 动态派发安全性的问题:如果Bug类没有实现greet(),Compiler Error:
+        // 动态派发安全性的问题: 如果其他类没有实现greet(),Compiler Error:因此不存在消息误发送的情况
         let array: [Greetable] = [
                 Person_n(name: "person_n"),
                 Cat_n(name: "cat_n")]
         for obj in array {
             obj.greet()
         }
-        
-        // 使用协议和协议扩展
+
+        let request = UserRequest(name: "onevcat")
+        request.send { user in
+            if let user = user {
+                print("\(user.message) from \(user.name)")
+            }
+        }
         
     }
 
