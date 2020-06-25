@@ -7,6 +7,26 @@
 //  Copyright © 2019 dzcx. All rights reserved.
 //
 
+// MARK: Network tools
+// https://github.com/mediaios/net-diagnosis
+
+// MARK: github tools
+// https://github.com/filsv/iPhoneOSDeviceSupport
+
+// MARK: swift开源框架
+// https://www.jianshu.com/p/0797ca000ee1
+
+// MARK: 直播
+// https://www.jianshu.com/p/7d1f6c20799d
+
+// MARK: interview
+// https://www.jianshu.com/u/b0a8b4cbff94
+
+// MARK: 大神blog
+// https://www.jianshu.com/u/8367278ff6cf
+// https://www.jianshu.com/p/2b1d9e9eb10d
+// https://www.jianshu.com/u/57da48d44319
+
 // MARK: Swift 语法规范 && SwiftLint
 // https://github.com/github/swift-style-guide
 /**
