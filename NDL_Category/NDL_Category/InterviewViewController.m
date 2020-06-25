@@ -4997,13 +4997,31 @@ mode里面有很多items
  [self.person.dateArray addObject:@"hello"];// 这个不触发KVO
  [[self.person mutableArrayValueForKey:@"dateArray"] addObject:@"hello"];// 这个触发，因为mutableArrayValueForKey是KVC
  
- 1:33
+ KVO观察属性和成员变量，给属性赋值会走回调，给成员变量赋值不会走回调
+ KVO默认是观察属性的setter方法
  
- KVO原理:
- 动态生成子类： NSKVONotifying_xxxx
- 重写观察对象的setter方法，Class方法
+ ###子类重写父类的方法，方法的imp的地址就会改变###
+ 
+ KVO原理:（isa_swizzling）
+ addObserver的时候 动态生成子类： NSKVONotifying_xxxx,对象的isa指向它
+ 重写观察对象的setter方法，class方法，dealloc方法，添加了_isKVOA方法
  在重写setter方法中调用 – willChangeValueForKey和 – didChangeValueForKey
  向父类发送消息
+ 
+ removeObserver原理：
+ 移除观察者，isa从指向动态生成的类到指回原来的类
+ removeObserver之前的打印
+ (lldb) po self.person
+ <LGPerson: 0x600003305120>
+ (lldb) po self.person.class
+ LGPerson
+ (lldb) po object_getClass(self.person)
+ NSKVONotifying_LGPerson
+ 
+ removeObserver之后的打印：
+ 动态生成的NSKVONotifying_LGPerson没有消失
+ 
+ github: KVOController
  */
 
 // MARK: ---LG_objc_init 应用初始化过程
