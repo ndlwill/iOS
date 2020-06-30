@@ -1099,6 +1099,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        
+        print(Bundle.ndl_bundleURLSchemes)
+        print(Bundle.ndl_bundle(with: BusinessUnitHome.self))
+        
         // MARK: Array && ArraySlice
         let originArray = [1, 3, 4]
         let range = 0..<originArray.count
