@@ -16,8 +16,9 @@
 // MARK: swift开源框架
 // https://www.jianshu.com/p/0797ca000ee1
 
-// MARK: 直播
+// MARK: 直播 && 音视频
 // https://www.jianshu.com/p/7d1f6c20799d
+// https://juejin.im/user/58ec343861ff4b00691b4f26/posts
 
 // MARK: interview
 // https://www.jianshu.com/u/b0a8b4cbff94
@@ -93,6 +94,7 @@
 
 // MARK: ==Vendors==
 // https://www.cnblogs.com/edensyd/p/9450079.html
+// https://www.jianshu.com/p/c845dc2f794a
 // MARK: Keychain
 // https://github.com/kishikawakatsumi/KeychainAccess
 // MARK: XCGLogger
