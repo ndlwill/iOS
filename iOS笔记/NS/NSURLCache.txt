@@ -1,0 +1,100 @@
+NSURLCache类用NSURLRequest对象和NSCachedURLResponse对象的一对一映射关系实现了请求数据的缓存。
+它同时提供内存缓存和硬盘缓存，你可以分别自定义内存缓存和硬盘缓存的大小，同时也可以自定义硬盘缓存的目录。
+
+其中NSURLRequest对象是请求对象
+NSCachedURLResponse对象是对缓存数据的封装，其中的data属性是请求回来的JSON(或者其他格式)的二进制数据。
+
+@interface NSURLCache : NSObject
+    
+/** 缓存类的单例 */
+@property (class, strong) NSURLCache *sharedURLCache;
+    
+/** 初始化方法 */
+- (instancetype)initWithMemoryCapacity:(NSUInteger)memoryCapacity diskCapacity:(NSUInteger)diskCapacity diskPath:(nullable NSString *)path;
+    
+/** 取得缓存数据的方法 */
+- (nullable NSCachedURLResponse *)cachedResponseForRequest:(NSURLRequest *)request;
+    
+/** 存储缓存数据的方法 */
+- (void)storeCachedResponse:(NSCachedURLResponse *)cachedResponse forRequest:(NSURLRequest *)request;
+    
+/** 删除指定request的缓存 */
+- (void)removeCachedResponseForRequest:(NSURLRequest *)request;
+    
+/** 删除全部缓存 */
+- (void)removeAllCachedResponses;
+    
+/** 删除缓存数据的一部分 */
+- (void)removeCachedResponsesSinceDate:(NSDate *)date;
+    
+/** 内存缓存的大小 单位:字节 */
+@property NSUInteger memoryCapacity;
+    
+/** 硬盘缓存的大小 单位:字节 */
+@property NSUInteger diskCapacity;
+    
+/** 当前可用的内存缓存大小 单位:字节 */
+@property (readonly) NSUInteger currentMemoryUsage;
+    
+/** 当前可用的硬盘缓存大小 单位:字节 */
+@property (readonly) NSUInteger currentDiskUsage;
+    
+@end
+
+
+缓存策略	含义
+NSURLRequestUseProtocolCachePolicy	根据服务器相关协议执行缓存(协议后面会有介绍)
+NSURLRequestReloadIgnoringLocalCacheData	忽略本地缓存，直接请求服务器(但是数据依然会被存储)
+NSURLRequestReturnCacheDataElseLoad	有缓存取缓存，无缓存请求
+NSURLRequestReturnCacheDataDontLoad	有缓存取缓存，无缓存返回失败
+
+如果使用了默认缓存策略，也就是上面表格中第一个，需要从返回的response的header中获取相应的字段来指导缓存该如何进行。
+1.Cache-Control字段：常用的有 no-cache，no-store，和max-age。其中no-cache代表不能使用这个缓存，no-store代表不存储这个数据，max-age代表缓存的有效期(单位为秒)。
+2.Expires字段：缓存过期时间，后面跟一个日期，此日期之前都可以直接使用本缓存。如果Expires与Cache-Control同时存在，则Cache-Control优先。
+3.Last-Modified和If-Modified-Since字段：如果response中有Last-Modified，则在下次请求时，给request的header设置If-Modified-Since为Last-Modified的值，服务器校验数据是否有变化，如果有变化，返回新数据，否则，返回304状态码，可以使用此缓存。
+4.ETag和If-None-Match字段：如果response中有ETag，则在下次请求时，给request的header设置If-None-Match为ETag的值，服务器校验数据是否有变化，如果有变化，返回新数据，否则，返回304状态码，可以使用此缓存。
+
+继承自NSURLCache的自定义WXYURLCache类
+//配置缓存
+NSUInteger memoryCapacity = 20*1024*1024;
+NSUInteger diskCapacity = 50*1024*1024;
+WXYURLCache *customURLCache = [[WXYURLCache alloc] initWithMemoryCapacity:memoryCapacity diskCapacity:diskCapacity diskPath:[WXYURLCache customCachePath]];
+[NSURLCache setSharedURLCache:customURLCache];
+自定义的目录只需要设置一个目录名即可，它会自动存到应用程序沙盒的Caches目录下，不需要手动获取Caches目录。
++ (NSString *)customCachePath{
+    return @"CustomCache";
+}
+
+重写NSURLCache的方法:
+重写取缓存方法。
+
+- (NSCachedURLResponse *)cachedResponseForRequest:(NSURLRequest *)request{
+    NSCachedURLResponse *cachedURLResponse = [super cachedResponseForRequest:request];
+    id cacheData = nil;
+    if (!cachedURLResponse.data) {
+        cacheData = @"取到的缓存为空";
+    }
+    else{
+        cacheData = [NSJSONSerialization JSONObjectWithData:cachedURLResponse.data options:NSJSONReadingMutableContainers error:nil];
+    }
+    
+    NSLog(@"\n取缓存:\n  \nURL:%@\n  \n���response:%@\n\n", request.URL.absoluteString, cacheData);
+    
+    return cachedURLResponse;
+}
+
+
+- (void)storeCachedResponse:(NSCachedURLResponse *)cachedResponse forRequest:(NSURLRequest *)request{
+    id cacheData = [NSJSONSerialization JSONObjectWithData:cachedResponse.data options:NSJSONReadingMutableContainers error:nil];
+    
+    NSLog(@"\n存缓存:\n  \nURL:%@\n  \nresponse:%@\n\n", request.URL.absoluteString, cacheData);
+    
+    [super storeCachedResponse:cachedResponse forRequest:request];
+}
+
+
+清除掉缓存
+[[NSURLCache sharedURLCache] removeAllCachedResponses];
+
+只有NSURLSession或者NSURLCOnnection的请求才会走Apple提供的这个NSURLCache的缓存
+看了一下缓存的沙盒目录，NSURLCache通过数据库来实现存储缓存
