@@ -684,7 +684,13 @@ id weakReferenceNonretainedObjectValue(WeakReference ref) {
 }
 
 - (void)viewDidLoad {
+    /**
+     UL--------无符号长整型0
+     1UL--------无符号长整型1
+     如果没有UL后缀，则系统默认为 int类型，即，有符号整形
+     */
     NSLog(@"value = %ld", ~0l);// -1
+    NSLog(@"value = %ld", 1UL);// 1
     
 //    NSObject *ttObj = [[NSObject alloc] init];
     id __strong ttObj = [[NSObject alloc] init];
