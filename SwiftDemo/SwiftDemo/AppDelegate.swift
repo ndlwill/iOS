@@ -708,7 +708,8 @@ import UIKit
 import Accelerate
 
 
-@UIApplicationMain
+
+
 // markdown
 /**
  # 一级标题
@@ -1052,6 +1053,9 @@ import Accelerate
  https://github.com/Ramotion/animated-tab-bar
  */
 
+
+// MARK: UIApplicationMain
+@UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
@@ -1101,6 +1105,108 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+
+        print("AppDelegate: \(#file): \(#function)")
+        
+        // MARK: dispatch_once && method swizzling
+        OnceClass.takeOnceTimeFunc()
+        OnceClass.takeOnceTimeFunc()
+        
+        
+        // MARK: UserDefaults
+        /**
+         ["INNextHearbeatDate": 615967481.533718, "INNextFreshmintRefreshDateKey": 615536873.3292, "AppleKeyboards": <__NSCFArray 0x281d04a80>(
+         zh_Hans-Pinyin@sw=Pinyin-Simplified;hw=US,
+         zh_Hans-Pinyin@sw=Pinyin10-Simplified;hw=US,
+         ar@sw=Arabic;hw=Automatic,
+         en_US@hw=US;sw=QWERTY,
+         yue_Hant-HWR@sw=HWR-Traditional,
+         zh_Hant-HWR@sw=HWR-Traditional,
+         emoji@sw=Emoji,
+         com.sogou.sogouinput.basekeyboard
+         )
+         , "AppleKeyboardsExpanded": 1, "AppleLanguagesSchemaVersion": 1001, "CarCapabilities": {
+             CarCapabilitiesDefaultIdentifier =     {
+                 CRCapabilitiesDisabledFeatureKey = 0;
+                 CRCapabilitiesUserInterfaceStyleKey = 2;
+                 CapabilitiesDashboardRoundedCornersKey = "{{0, 0}, {0, 0}}";
+                 CapabilitiesNowPlayingAlbumArtKey = 2;
+                 CapabilitiesViewAreaInsetKey = "{{0, 0}, {0, 0}}";
+             };
+         }, "AKDeviceUnlockState": 1, "AKLastEmailListRequestDateKey": 2020-07-09 03:18:54 +0000, "com.apple.content-rating.ExplicitMusicPodcastsAllowed": 1, "AppleTemperatureUnit": Celsius, "PKKeychainVersionKey": 7, "com.apple.content-rating.TVShowRating": 1000, "NSPersonNameDefaultDisplayNameOrder": 2, "com.apple.content-rating.ExplicitBooksAllowed": 1, "AddingEmojiKeybordHandled": 1, "AppleLanguages": <__NSCFArray 0x281203d20>(
+         zh-Hans-CN,
+         ar-CN,
+         en-CN,
+         zh-Hant-HK,
+         zh-Hant-CN,
+         yue-Hant-CN
+         )
+         , "MSVLoggingMasterSwitchEnabledKey": 0, "AKLastIDMSEnvironment": 0, "NSLanguages": <__NSArrayI 0x2815191d0>(
+         zh-Hans-CN,
+         ar-CN,
+         en-CN,
+         zh-Hant-HK,
+         zh-Hant-CN,
+         yue-Hant-CN,
+         en
+         )
+         , "AppleICUForce24HourTime": 1, "ApplePasscodeKeyboards": <__NSCFArray 0x281203cc0>(
+         zh_Hans-Pinyin@sw=Pinyin-Simplified;hw=US,
+         zh_Hans-Pinyin@sw=Pinyin10-Simplified;hw=US,
+         en_US@hw=US;sw=QWERTY,
+         zh_Hant-HWR@sw=HWR-Traditional,
+         emoji@sw=Emoji
+         )
+         , "com.apple.content-rating.AppRating": 1000, "AKLastCheckInAttemptDate": 2019-10-19 12:39:30 +0000, "AppleLocale": zh_CN, "AKLastCheckInSuccessDate": 2019-10-19 12:39:33 +0000, "NSInterfaceStyle": macintosh, "AppleLanguagesDidMigrate": 17F80, "com.apple.content-rating.MovieRating": 1000, "AppleITunesStoreItemKinds": <__NSCFArray 0x281801f00>(
+         podcast,
+         artist,
+         itunes-u,
+         booklet,
+         document,
+         movie,
+         eBook,
+         software,
+         software-update,
+         podcast-episode
+         )
+         ]
+         
+         比如应用内切换中英文，就需要修改AppleLanguages的value
+         AppleLanguages与手机设置里面的首选语言顺序相同
+         
+         在App内想切换成中文
+         UserDefaults.standard.setValue(["zh-Hans-CN"], forKey: "AppleLanguages")
+         
+         那么如果这个时候用户在系统设置中切换到了日语，那么我想在客户端中通过跟随手机系统的设置，还原到日语，该怎么办呢?
+         
+         */
+        let udDic = UserDefaults.standard.dictionaryRepresentation()
+        print("udDic = \(udDic)")
+        UserDefaults.standard.setValue(["zh-Hans-CN"], forKey: "AppleLanguages")
+        print("udDic after = \(UserDefaults.standard.dictionaryRepresentation())")
+        UserDefaults.standard.setValue(nil, forKey: "AppleLanguages")// 恢复到系统默认值
+        // or: UserDefaults.standard.removeObject(forKey: "AppleLanguages")
+        print("udDic final = \(UserDefaults.standard.dictionaryRepresentation())")
+        
+        // MARK: Bundle
+        /**
+         all = [NSBundle </private/var/containers/Bundle/Application/F12EDFCC-16AB-426C-8AE7-A0061742CE82/FlyClient.app> (loaded), NSBundle </System/Library/CoreServices/CoreGlyphs.bundle> (not yet loaded)]
+         bundleURL = file:///private/var/containers/Bundle/Application/F12EDFCC-16AB-426C-8AE7-A0061742CE82/FlyClient.app/
+         resourceURL = Optional(file:///private/var/containers/Bundle/Application/F12EDFCC-16AB-426C-8AE7-A0061742CE82/FlyClient.app/)
+         zh-Hans.lproj = Optional("/private/var/containers/Bundle/Application/F12EDFCC-16AB-426C-8AE7-A0061742CE82/FlyClient.app/zh-Hans.lproj")
+         zh-Hans.lproj bundle = Optional(NSBundle </var/containers/Bundle/Application/F12EDFCC-16AB-426C-8AE7-A0061742CE82/FlyClient.app/zh-Hans.lproj> (not yet loaded))
+         
+         
+         NSLocalizedString(T##key: String##String, comment: T##String)
+         public func NSLocalizedString(_ key: String, tableName: String? = nil, bundle: Bundle = Bundle.main, value: String = "", comment: String) -> String
+         Bundle.main.localizedString(forKey: T##String, value: T##String?, table: T##String?)
+         */
+        print("all = \(Bundle.allBundles)")
+        print("bundleURL = \(Bundle.main.bundleURL)")
+        print("resourceURL = \(Bundle.main.resourceURL)")
+        let zhPath = Bundle.main.path(forResource: "zh-Hans", ofType: "lproj")
+        print("zh-Hans.lproj = \(zhPath)")
+        print("zh-Hans.lproj bundle = \(Bundle.init(path: zhPath ?? ""))")
         
         print(Bundle.ndl_bundleURLSchemes)
         print(Bundle.ndl_bundle(with: BusinessUnitHome.self))

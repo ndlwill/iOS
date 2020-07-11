@@ -73,8 +73,15 @@ class TestProtocolViewController: UIViewController {
             obj.greet()
         }
 
-        let request = UserRequest(name: "onevcat")
-        request.send { user in
+        // MARK: Test UserRequest
+//        let request = UserRequest(name: "onevcat")
+//        request.send { user in
+//            if let user = user {
+//                print("\(user.message) from \(user.name)")
+//            }
+//        }
+        
+        URLSessionClient().send(UserRequest(name: "onevcat")) { user in
             if let user = user {
                 print("\(user.message) from \(user.name)")
             }

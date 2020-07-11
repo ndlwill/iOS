@@ -14,6 +14,99 @@ import RxDataSources
 import Moya
 import Alamofire
 
+// MARK: =====Method Swizzling Start=====
+protocol SelfAware: class {
+    static func awake()
+    static func swizzlingForClass(_ forClass: AnyClass, originalSelector: Selector, swizzledSelector: Selector)
+}
+
+extension SelfAware {
+    static func swizzlingForClass(_ forClass: AnyClass, originalSelector: Selector, swizzledSelector: Selector) {
+        let originalMethod = class_getInstanceMethod(forClass, originalSelector)
+        let swizzledMethod = class_getInstanceMethod(forClass, swizzledSelector)
+        guard (originalMethod != nil && swizzledMethod != nil) else {
+            return
+        }
+        if class_addMethod(forClass, originalSelector, method_getImplementation(swizzledMethod!), method_getTypeEncoding(swizzledMethod!)) {
+            class_replaceMethod(forClass, swizzledSelector, method_getImplementation(originalMethod!), method_getTypeEncoding(originalMethod!))
+        } else {
+            method_exchangeImplementations(originalMethod!, swizzledMethod!)
+        }
+    }
+}
+
+extension UIViewController: SelfAware {
+    static func awake() {
+        swizzleMethod
+    }
+    private static let swizzleMethod: Void = {
+        let originalSelector = #selector(viewWillAppear(_:))
+        let swizzledSelector = #selector(swizzled_viewWillAppear(_:))
+        
+        swizzlingForClass(UIViewController.self, originalSelector: originalSelector, swizzledSelector: swizzledSelector)
+    }()
+    
+    @objc func swizzled_viewWillAppear(_ animated: Bool) {
+        swizzled_viewWillAppear(animated)
+        print("after swizzled_viewWillAppear")
+    }
+    
+    func test() {
+        print("UIViewController: \(#function)")
+    }
+}
+
+extension UIButton: SelfAware {
+    static func awake() {
+        UIButton.takeOnceTime
+    }
+
+    private static let takeOnceTime: Void = {
+        let originalSelector = #selector(sendAction)
+        let swizzledSelector = #selector(xxx_sendAction(action:to:forEvent:))
+        
+        swizzlingForClass(UIButton.self, originalSelector: originalSelector, swizzledSelector: swizzledSelector)
+    }()
+    
+    @objc public func xxx_sendAction(action: Selector, to: AnyObject!, forEvent: UIEvent!) {
+        struct xxx_buttonTapCounter {
+            static var count: Int = 0
+        }
+        xxx_buttonTapCounter.count += 1
+        print("xxx_buttonTapCounter.count before = \(xxx_buttonTapCounter.count)")
+        xxx_sendAction(action: action, to: to, forEvent: forEvent)
+        print("xxx_buttonTapCounter.count after = \(xxx_buttonTapCounter.count)")
+    }
+}
+
+class ClassManager {
+    static func swizzlingMethods() {
+        let classCount = Int(objc_getClassList(nil, 0))
+        print("swizzlingMethods: classCount = \(classCount)")
+        let types = UnsafeMutablePointer<AnyClass>.allocate(capacity: classCount)
+        let autoreleasingTypes = AutoreleasingUnsafeMutablePointer<AnyClass>(types)
+        objc_getClassList(autoreleasingTypes, Int32(classCount))
+        for index in 0..<classCount {
+            (types[index] as? SelfAware.Type)?.awake()
+        }
+        types.deallocate()
+    }
+}
+
+extension UIApplication {
+    private static let runOnce: Void = {
+        print("###before application(_:didFinishLaunchingWithOptions:)###")
+        ClassManager.swizzlingMethods()
+    }()
+    
+    open override var next: UIResponder? {
+        UIApplication.runOnce
+        return super.next
+    }
+}
+
+// MARK: =====Method Swizzling End=====
+
 // MARK: ==解决类实例之间的强引用循环==
 /**
  当另一个实例的生命周期较短时，即当另一个实例可以首先被释放时，使用weak引用。
@@ -527,9 +620,33 @@ class ViewController: UIViewController {
         self.present(TestDismiss1ViewController(), animated: true, completion: nil)
     }
     
+    // MARK: viewWillAppear
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        
+        self.test()
+        print("===ViewController viewWillAppear===")
+    }
+    
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        
+    }
+    
+    @objc func swizzlingButtonClicked() {
+        print("swizzlingButtonClicked")
+    }
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         self.view.backgroundColor = UIColor.cyan
+        
+        let swizzlingButton = UIButton(type: .custom)
+        swizzlingButton.backgroundColor = UIColor.red
+        swizzlingButton.setTitle("swizzlingButton", for: .normal)
+        swizzlingButton.frame = CGRect(x: 50, y: 100, width: 100, height: 60)
+        view.addSubview(swizzlingButton)
+        swizzlingButton.addTarget(self, action: #selector(swizzlingButtonClicked), for: .touchUpInside)
         
         // MARK: 值类型相关
         var p1 = Person_NDL(name: "ndl")

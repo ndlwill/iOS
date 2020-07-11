@@ -48,6 +48,7 @@
 // MARK: ===面试===
 /**
  https://www.jianshu.com/p/1e752f5678f1
+ https://www.jianshu.com/p/c10b25003153
  */
 
 // MARK: NSTimer
@@ -1122,6 +1123,8 @@
     // http://www.cocoachina.com/cms/wap.php?action=article&id=24524
     // MARK: NSOperation
     /**
+     注意：这里 maxConcurrentOperationCount 控制的不是并发线程的数量，而是一个队列中同时能并发执行的最大操作数。而且一个操作也并非只能在一个线程中运行。
+     
      NSOperationQueue 是操作队列, 即存放operation的队列
      NSInvocationOperation只有配合NSOperationQueue使用才能实现多线程编程，单独使用NSInvocationOperation不会开启线程，默认在当前线程（指执行该方法的线程）中同步执行
      
@@ -5637,6 +5640,9 @@ runloop用到了gcd的source（dispatch_source_t）
  
  也可以处理cookie 但这个是iOS11才有
  ##WKWebsiteDataStore##
+ // WKWebView
+ https://www.jianshu.com/p/56738af0724c
+ https://www.jianshu.com/p/52668d5b2e68
  
  构建HTTP网络框架：
  url处理 // 百分号编码
