@@ -5871,7 +5871,174 @@ TCP(传输控制协议) 建立连接，形成传输数据的通道 在连接中�
  [p release];// release()->rootRelease()，1.extra_rc - 1 2.如果下溢出  如果散列表存在newisa.has_sidetable_rc就去散列表借来的RC_HALF - 1存到extra_rc 3.如果release借了散列表的引用计数还是下溢出就调用dealloc
  [p retainCount];// 1
  
- 1:24
+ MARK:dealloc底层实现:
+ dealloc
+ ->
+ _objc_rootDealloc(self)
+ 
+ _objc_rootDealloc(id obj) {
+ obj->rootDealloc()
+ }
+ ->
+ objc_object::rootDealloc(){
+ if(fastpath(isa.nonpointer && !isa.weakly_referenced && !isa.hasassoc && !isa.has_cxx_dtor && !isa.has_sidetable_rc)){
+ free(this)
+ }else {
+ object_dispose((id)this)
+ }
+ }
+ ->
+ id object_dispose(id obj){
+ objc_destructInstance(obj);
+ free(obj)
+ return nil
+ }
+ ->
+ void *objc_destructInstance(id obj){
+ if(obj){
+ bool cxx = obj->hasCxxDtor() // dtor: 析构函数
+ bool assoc = obj->hasAssociatedObjects()
+ if (cxx) object_cxxDestruct(obj)
+ if (assoc) _object_remove_associations(obj)
+ obj->clearDeallocating()
+ }
+ return obj
+ }
+ ->
+ void objc_object::clearDeallocating(){
+ if(slowpath(!isa.nonpointer)){
+ sidetable_clearDealllocating();
+ } else if (slowpath(isa.weakly_referenced || isa.has_sidetable_rc)){
+ clearDeallocating_slow();
+ }
+ }
+ ->
+ sidetable_clearDealllocating(){
+ SideTable& table = SiideTable()[this]
+ 
+ table.lock()
+ RefcountMap::iterator it = table.refcnts.find(this);
+ if (it!= table.refcnts.end()){
+ if(it->second & SIDE_TABLE_WEAKLY_REFERENCED){
+ weak_clear_no_lock(&table.weak_table, (id)this)
+ }
+ table.refcnts.erase(it);
+ }
+ table.unlock();
+ }
+ ->
+ void weak_clear_no_lock(weak_table_t *weak_table, id referent_id){
+ objc_object *referent = (ojc_object *)referent_id;
+ weak_entry_t *entry = weak_entry_for_referent(weak_table, referent))
+ if(entry == nil){
+ return;
+ }
+ 
+ weak_referrer_t *referrers;
+ size_t count;
+ if(entry->out_of_line()){
+ referrers = entry->referrers;
+ count = TABLE_SIZE(entry);
+ } else {
+ referrers = entry->inline_referrers;
+ count = WEAK_INLINE_COUNT;
+ }
+ 
+ for(size_t i = 0; i<count;++i){
+ objc_object **referrer = referrers[i];
+ if(referrer){
+ if(*referrer == referent){
+ *referrer = nil;
+ }
+ }
+ }
+ 
+ weak_entry_remove(weak_table, entry)
+ 
+ }
+ 
+ 00:12
+ 
+ 
+ 
+ MARK: weak底层原理：
+ objc_initWeak->
+ storeWeak
+ ->
+ storeWeak(){
+ // clean up old value
+ if(haveOld){
+ weak_unregister_no_lock(&oldTable->weak_table, oldObj, location)
+ }
+ // assign new value
+ if (haveNew){
+ weakregister_no_lock(&newTable->weak_table, newObj, location, crashIfDeallocating)
+ }
+ }
+ ->
+ weakregister_no_lock(){
+ weak_entry_t *entry;
+ if ((entry = weak_entry_for_referent(weak_table, referent))){
+ append_referrer(entry, referrer)
+ } else {
+ weak_entry_t new_entry(referent, referrer)// 创建entry
+ weak_grow_maybe(weak_table)// 容量准备
+ weak_entry_insert(weak_table, &new_entry);// 插入entry
+ }
+ 
+ }
+ ->
+ weak_entry_for_referent:
+ weak_entry_t* weak_entry_for_referent(weak_table_t *wek_table, objc_object *referent){
+ weak_entry_t *weak_entries = weak_table->weak_entries;
+ size_t begin = hash_pointer(referent) & weak_table->mask;
+ size_t index = begin
+ while(weak_table->weak_entriesp[index].referent != referent){
+ index = (index + 1) & weak_table->mask;
+ ...
+ }
+ return &weak_table->weak_entries[index];
+ }
+ 
+ append_referrer:
+ new_referrer---The new weak pointer to be added
+ static void append_referrer(weak_entry_t *entry, objc_objcet **new_referrer){
+ if(!entry->out_of_line()){
+ // try to insert inline
+ for(size_t i = 0; i<WEAK_INLINE_COUNT;i++){
+ if(entry->inline_referrers[i]==nil){
+ entry->inline_referrers[i] = new_referrer
+ return
+ }
+ }
+ 
+ // could't insert inline.Allocate out of line
+ weak_referrer_t *new_referrers = (weak_referrer_t *)calloc(WEAK_INLINE_COUNT, sizeof(weak_referrer_t))
+ // will  fix it and rehash it
+ for(size_t i = 0; i<WEAK_INLINE_COUNT;i++){
+ new_referrers[i]= entry->inline_referrers[i];
+ }
+ }
+ }
+ 
+ entry->inline_referrers[i] = new_referrer;
+ new_referrers[i] = entry->inline_referrers[i]
+ entry->referrers = new_referrers;
+ 
+ weak_entry_t结构体的初始化方法：
+ weak_entry_t(objc_object *newReferent, objc_object **newReferrer): referent(newReferent){
+inline_referrers[0] = newReferrer;
+ for(int i = 1; i<WEAK_INLINE_COUNT;i++){
+ inline_referrers[i] = nil;
+ }
+ }
+ 
+ NSObject *obj = [[NSObject alloc] init]
+ id __weak obj1 = obj;
+ referent: 指示物
+ referrer: 推荐人,引荐人 这边指弱引用指针,obj1
+ 
+ 
  */
 
 

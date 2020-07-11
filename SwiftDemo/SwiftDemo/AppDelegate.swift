@@ -1555,7 +1555,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
          要通过类型化操作访问底层内存，必须将内存绑定到一个简单的类型
          
          在 Swift 中不能像 C 里那样使用 & 符号直接获取地址来进行操作
-         如果我们想对某个变量进行指针操作，我们可以借助 withUnsafePointer 或 withUnsafeMutablePointer 这两个辅助方法
+         ===如果我们想对某个变量进行指针操作===，我们可以借助 withUnsafePointer 或 withUnsafeMutablePointer 这两个辅助方法
          这两个方法接受两个参数，第一个是 inout 的任意类型，第二个是一个闭包
          Swift 会将第一个输入转换为指针，然后将这个转换后的 Unsafe 的指针作为参数，去调用闭包。withUnsafePointer 或 withUnsafeMutablePointer 的差别是前者转化后的指针不可变，后者转化后的指针可变
          */
@@ -1574,6 +1574,28 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         }
         print(sss)// 10
         
+        // MARK: unsafeBitCast
+        /**
+         unsafeBitCast 是非常危险的操作，它会将一个指针指向的内存强制按位转换为目标的类型
+         因为这种转换是在 Swift 的类型管理之外进行的，因此编译器无法确保得到的类型是否确实正确，你必须明确地知道你在做什么
+         
+         因为 NSArray 是可以存放任意 NSObject 对象的，当我们在使用 CFArrayGetValueAtIndex 从中取值的时候，得到的结果将是一个 UnsafePointer<Void>。由于我们很明白其中存放的是 String 对象，因此可以直接将其强制转换为 CFString
+         
+         关于 unsafeBitCast 一种更常见的使用场景是不同类型的指针之间进行转换。因为指针本身所占用的的大小是一定的，所以指针的类型进行转换是不会出什么致命问题的。这在与一些 C API 协作时会很常见。比如有很多 C API 要求的输入是 void *，对应到 Swift 中为 UnsafePointer<Void>。我们可以通过下面这样的方式将任意指针转换为 UnsafePointer。
+         */
+        let nsarray = NSArray(object: "meow")
+        let array2str = unsafeBitCast(CFArrayGetValueAtIndex(nsarray, 0), to: CFString.self)// “meow”
+        
+        var count111 = 100
+        // UnsafePointer<Void> has been replaced by UnsafeRawPointer
+        let voidPtr = withUnsafePointer(to: &count111, { (a: UnsafePointer<Int>) -> UnsafePointer<Void> in
+            return unsafeBitCast(a, to: UnsafePointer<Void>.self)
+        })
+        // voidPtr 是 UnsafePointer<Void>。相当于 C 中的 void *
+
+        // 转换回 UnsafePointer<Int>
+        let intPtr111 = unsafeBitCast(voidPtr, to: UnsafePointer<Int>.self)
+        intPtr111.pointee //100
         
         // MARK: swift && c
         // withUnsafeMutablePointer方法可以将Swift对象ViewController转换为UnsafeMutablePointer<ViewController>类型，这样才可以当做参数传入C函数
