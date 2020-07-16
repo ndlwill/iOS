@@ -95,6 +95,7 @@
 #import <sys/types.h>
 #import <sys/sysctl.h>
 #import "ResidentThread.h"
+#import "SystemLog.h"
 
 // ===cocoapods===
 // https://www.jianshu.com/p/b2f391ba0287
@@ -250,6 +251,8 @@ static void save_crash_report (PLCrashReporter *reporter) {
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
     NSLog(@"=====didFinishLaunchingWithOptions===== documentDir = %@", [NSString documentDir]);
+    
+    log4cplus_debug("AppDelegate", "test for syslog [%s]", "success");
     
     self.serialQueue = dispatch_queue_create("messageQueue", DISPATCH_QUEUE_SERIAL);
     
