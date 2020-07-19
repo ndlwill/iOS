@@ -156,11 +156,13 @@
 
 - (BOOL)shouldAutorotate
 {
+    NSLog(@"BaseNavVC-shouldAutorotate %@-%@", self.visibleViewController, self.topViewController);
     return [self.visibleViewController shouldAutorotate];
 }
 
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations
 {
+    NSLog(@"BaseNavVC-supportedInterfaceOrientations %@-%@", self.visibleViewController, self.topViewController);
     return [self.visibleViewController supportedInterfaceOrientations];
 }
 
