@@ -5857,7 +5857,7 @@ TCP(传输控制协议) 建立连接，形成传输数据的通道 在连接中�
  33位：shiftcls:
  存储类指针的值。开启指针优化的情况下，在 arm64 架构中有 33 位用来存储类指针。
  6位：magic:⽤于调试器判断当前对象是真的对象还是没有初始化的空间
- 1位：weakly_referenced:志对象是否被指向或者曾经指向一个 ARC 的弱变量，没有弱引⽤的对象可以更快释放。
+ 1位：weakly_referenced:标志对象是否被指向或者曾经指向一个 ARC 的弱变量，没有弱引⽤的对象可以更快释放。
  1位：deallocating:标志对象是否正在释放内存
  1位：has_sidetable_rc:当对象引⽤计数⼤于 10 时，则需要借⽤该变量存储进位
  19位：extra_rc:当表示该对象的引用计数值，实际上是引用计数值减 1， 例如，如果对象的引用计数为 10，那么 extra_rc 为 9。如果引用计数⼤于 10， 则需要使用到has_sidetable_rc。
@@ -5932,6 +5932,19 @@ TCP(传输控制协议) 建立连接，形成传输数据的通道 在连接中�
  }
  table.unlock();
  }
+ 
+ void objc_object::clearDeallocating_slow(){
+ SideTable& table = SiideTable()[this]
+ table.lock()
+ if(isa.weakly_referenced){
+ weak_clear_no_lock(&table.weak_table, (id)this)
+ }
+ if(isa.has_sidetable_rc){
+ table.refcnts.erase(this);
+ }
+ table.unlock()
+ }
+ 
  ->
  void weak_clear_no_lock(weak_table_t *weak_table, id referent_id){
  objc_object *referent = (ojc_object *)referent_id;
@@ -5962,8 +5975,14 @@ TCP(传输控制协议) 建立连接，形成传输数据的通道 在连接中�
  weak_entry_remove(weak_table, entry)
  
  }
+ ->
+ static void weak_entry_remove(weak_table_t weak_table, weak_entry_t *entry){
+ // out of line: 超越了界限
+ if (entry->out_of_line()) free(entry->referrers)
+ bzero(entry, sizeof(*entry))
+ weak_table->num_entries--;
+ }
  
- 00:12
  
  
  
@@ -6044,7 +6063,109 @@ inline_referrers[0] = newReferrer;
  referent: 指示物
  referrer: 推荐人,引荐人 这边指弱引用指针,obj1
  
+ MARK: strong
+ void objc_storeStrong(id *location, id obj){
+ id prev = *location
+ if(obj == prev){
+ return;
+ }
+ objc_retain(obj);
+ *location = obj;
+ objc_release(prev);
+ }
  
+ // 内存管理，查看变量修饰符
+ static void _class_lookUpIvar(){
+ 
+ }
+ 
+ // strong
+ class_getIvarLayout()
+ 
+ // weak
+ const uint8_t *class_getWeakIvarLayout(Class cls){
+ if (cls) return cls->data()->ro->weakIvarLayout;
+ else return nil
+ }
+ 
+ //
+ bool isARC() {
+ return data()->ro->flags & RO_IS_ARC;
+ }
+ 
+ MARK: autoreleasepool
+ 自动释放池：双向链表,用来容纳变量
+ AutoreleasePoolPage
+ page: 属性 56字节
+ pageSize(一页所能容纳的大小): 4096
+ 
+ (4096-56)/8 = 505
+ 
+ next: 指向最新添加的autoreleased对象的下一个位置，初始化时指向begin()
+ 
+ ARC:
+ extern void _objc_autoreleasePoolPrint(void);// 用来打印信息
+ 需要Buid Settings->Objective-C Automatic Reference Counting: No
+ @autoreleasepool {
+ for (int i =0;i<505;i++){
+ NSObject *objc = [[[NSObject alloc]init] autorelease]
+ }
+ _objc_autoreleasePoolPrint();
+ }
+ 
+ 16进制的38 = 3*16+8=56
+ 0x103803000---PAGE (full) (cold)
+ 0x103803038###POOL 0x103803038 边界符
+ 之间相差8
+ 0x103803040
+ 。。
+ 。。
+ 0x103803ff8
+ 0x104801000---PAGE (hot)
+ 0x104801038
+ 
+ static inline void* push(){
+ id *dest;
+ if(DebugPoolAllocation){
+ // each autorelease pool starts on a new pool page
+ dest = autoreleaseNewPage(POOL_BOUNDARY);
+ }else {
+ dest = autoreleaseFast(POOL_BOUNDARY);
+ }
+ return dest;
+ }
+ 
+ static __attribute__((noinline)) id *autoreleaseNewPage(id obj){
+ AutoreleasePoolPage *page = hotPage();
+ if (page) return autoreleaseFullPage(obj, page);
+ else return autoreleaseNoPage(obj);
+ }
+ 
+ static __attribute__((noinline)) id *autoreleaseFullPage(id obj, AutoreleasePoolPage *page){
+ do{
+ if (page->child) page = page->child;
+ else page = new AutoreleasePoolPage(page);
+ }while(page->full())
+ setHotPage(page);
+ return page->add(obj);
+ }
+ 
+ id *autoreleaseNoPage(id obj){
+ bool pushExtraBoundary = false;
+ if(haveEmptyPoolPlaceholder()){
+ pushExtraBoundary = true;
+ } else if(){
+ 
+ } else if(){
+ 
+ }
+ AutoreleasePoolPage *page = new AutoreleasePoolPage(nil);
+ setHotPage(page);
+ if(pushExtraBoundary){
+ page->add(POOL_BOUNDARY);
+ }
+ return page->add(obj);
+ }
  */
 
 
