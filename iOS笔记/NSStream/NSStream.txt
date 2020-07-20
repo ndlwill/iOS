@@ -1,0 +1,49 @@
+https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Streams/Streams.html
+
+大文件上传或者下载，如果一次性加载数据到内存，会导致内存暴涨，
+所以需要使用输入流 NSInputStream 和输出流 NSOutputStream，建立起文件和内存中的管道，通过管道输入和输出数据。
+
+在 Cocoa 中包含三个与流相关的类：NSStream、NSInputStream 和 NSOutputStream 。
+NSStream 是一个抽象基类，定义了所有流对象的基础接口和属性。NSInputStream 和 NSOutputStream 继承自 NSStream，实现了输入流和输出流的默认行为。
+NSInputStream 可以从文件、socket 和 NSData 对象中获取数据；NSOutputStream 可以将数据写入文件、socket 、内存缓存和 NSData 对象中。
+
+
+NSInputStream输入流逐步读入
+
+流提供了一种简单的方式在不同介质中交换数据，这种交换方式与设备无关。
+流是在通信路径中串行传输的连续的比特位序列。
+除了基于文件的流以外其它形式的流都是不可查找的，这些流的数据一旦消耗完后就无法从流对象中再次获取。
+
+Cocoa中的流对象与Core Foundation中的流对象是对应的。我们可以通过toll-free桥接方法来进行相互转换。
+NSStream、NSInputStream和NSOutputStream分别对应CFStream、CFReadStream和CFWriteStream。
+但这两者间不是完全一样的。Core Foundation一般使用回调函数来处理数据。
+
+从输入流中读取数据：
+从一个NSInputStream流中读取数据主要包括以下几个步骤：
+从数据源中创建和初始化一个NSInputStream实例
+将流对象放入一个run loop中并打开流
+处理流对象发送到其代理的事件
+当没有更多数据可读取时，关闭并销毁流对象。
+- (void)setUpStreamForFile:( NSString *)path {
+  NSInputStream *inputStream = [[NSInputStream alloc] initWithFileAtPath:path];
+  inputStream.delegate = self;
+  [inputStream scheduleInRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+  [inputStream open];
+ }
+
+在流对象放入run loop且有流事件(有可读数据)发生时，流对象会向代理对象发送stream:handleEvent:消息。
+在打开流之前，我们需要调用流对象的scheduleInRunLoop:forMode:方法，这样做可以避免在没有数据可读时阻塞代理对象的操作。
+我们需要确保的是流对象被放入正确的run loop中，即放入流事件发生的那个线程的run loop中。
+
+流的轮循处理
+在流的处理过程中，除了将流放入run loop来处理流事件外，还可以对流进行轮循处理。
+我们将流处理数据的过程放到一个循环中，并在循环中不断地去询问流是否有可用的数据供读取(hasBytesAvailable)或可用的空间供写入(hasSpaceAvailable)。
+当处理到流的结尾时，我们跳出循环结束流的操作。
+这种处理方法的问题在于它会阻塞当前线程，直到流处理结束为止，才继续进行后面的操作。
+而这种问题在处理网络socket流时尤为严重，我们必须等待服务端数据回来后才能继续操作。因此，通常情况下，建议使用run loop方式来处理流事件。
+
+设置Socket流：
+在iOS中NSStream类不支持连接到远程主机，幸运的是CFStream支持。
+前面已经说过这两者可以通过toll-free桥接来相互转换。
+使用CFStream时我们可以调用CFStreamCreatePairWithSocketToHost函数并传递主机名和端口号，来获取一个CFReadStreamRef和一个CFWriteStreamRef来进行通信，
+然后我们可以将它们转换为NSInputStream和NSOutputStream对象来处理。
