@@ -167,7 +167,18 @@
  AVAssetWriter: 从媒体(sample buffers或still images)中生成asset.
  
  asset reader and writer 不适用于实时处理. asset reader不能读取HTTP直播流. 然而,如果你使用asset writer做实时流操作,设置expectsMediaDataInRealTime为YES.对于非实时流的数据如果设置该属性则会报错.
-
+ 1.Reading an Asset
+ 每个AVAssetReader对象仅仅能和一个asset关联,但是这个asset可以包含多个tracks.
+ 
+ 创建Asset Reader
+ 
+ 建立Asset Reader输出
+ 创建好asset reader后,至少设置一个输出对象以接收当前正在去读的媒体数据.设置好输出后,请确保alwaysCopiesSampleData为NO以便得到性能的提升.
+ 如果仅仅想要从一个或多个轨道中读取媒体数据并且将其转为不同的格式,可以使用AVAssetReaderTrackOutput类. 通过使用一个单独的轨道输出对象对每个AVAssetTrack对象你想要从asset中读取的.
+ 
+ 使用AVAssetReaderAudioMixOutput与AVAssetReaderVideoCompositionOutput类分别读取由AVAudioMix与AVVideoComposition对象合成的媒体数据.通常被用在从AVComposition中读取数据.
+ 
+ Reading the Asset’s Media Data 设置好输出后,可以调用startReading开始读取.接下来,使用copyNextSampleBuffer方法从每个输出中单独检索数据
  */
 
 @interface PlayerView : UIView
@@ -782,6 +793,90 @@ static const NSString *ItemStatusContext;
             }
         });
     }];
+
+}
+
+- (void)testAVAssetReader {
+    NSError *outError;
+    AVAsset *someAsset = [AVAsset assetWithURL:nil];
+    AVAssetReader *assetReader = [AVAssetReader assetReaderWithAsset:someAsset error:&outError];
+    BOOL success = (assetReader != nil);
+    
+    // 1.
+    AVAsset *localAsset = assetReader.asset;
+    // Get the audio track to read.
+    AVAssetTrack *audioTrack = [[localAsset tracksWithMediaType:AVMediaTypeAudio] objectAtIndex:0];
+    // Decompression settings for Linear PCM
+    NSDictionary *decompressionAudioSettings = @{ AVFormatIDKey : [NSNumber numberWithUnsignedInt:kAudioFormatLinearPCM] };
+    // Create the output with the audio track and decompression settings.
+    AVAssetReaderOutput *trackOutput = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:audioTrack outputSettings:decompressionAudioSettings];
+    // Add the output to the reader if possible.
+    if ([assetReader canAddOutput:trackOutput])
+        [assetReader addOutput:trackOutput];
+    
+    // 2.
+//    AVAudioMix *audioMix = [[AVAudioMix alloc] init];
+//    // Assumes that assetReader was initialized with an AVComposition object.
+//    AVComposition *composition = (AVComposition *)assetReader.asset;
+//    // Get the audio tracks to read.
+//    NSArray *audioTracks = [composition tracksWithMediaType:AVMediaTypeAudio];
+//    // Get the decompression settings for Linear PCM.
+//    NSDictionary *decompressionAudioSettings = @{ AVFormatIDKey : [NSNumber numberWithUnsignedInt:kAudioFormatLinearPCM] };
+//    // Create the audio mix output with the audio tracks and decompression setttings.
+//    AVAssetReaderAudioMixOutput *audioMixOutput = [AVAssetReaderAudioMixOutput assetReaderAudioMixOutputWithAudioTracks:audioTracks audioSettings:decompressionAudioSettings];
+//    // Associate the audio mix used to mix the audio tracks being read with the output.
+//    audioMixOutput.audioMix = audioMix;
+//    // Add the output to the reader if possible.
+//    if ([assetReader canAddOutput:audioMixOutput])
+//        [assetReader addOutput:audioMixOutput];
+
+    // 3.
+//    AVVideoComposition *videoComposition = [AVVideoComposition videoCompositionWithPropertiesOfAsset:nil];
+//    // Assumes assetReader was initialized with an AVComposition.
+//    AVComposition *composition = (AVComposition *)assetReader.asset;
+//    // Get the video tracks to read.
+//    NSArray *videoTracks = [composition tracksWithMediaType:AVMediaTypeVideo];
+//    // Decompression settings for ARGB.
+//    NSDictionary *decompressionVideoSettings = @{ (id)kCVPixelBufferPixelFormatTypeKey : [NSNumber numberWithUnsignedInt:kCVPixelFormatType_32ARGB], (id)kCVPixelBufferIOSurfacePropertiesKey : [NSDictionary dictionary] };
+//    // Create the video composition output with the video tracks and decompression setttings.
+//    AVAssetReaderVideoCompositionOutput *videoCompositionOutput = [AVAssetReaderVideoCompositionOutput assetReaderVideoCompositionOutputWithVideoTracks:videoTracks videoSettings:decompressionVideoSettings];
+//    // Associate the video composition used to composite the video tracks being read with the output.
+//    videoCompositionOutput.videoComposition = videoComposition;
+//    // Add the output to the reader if possible.
+//    if ([assetReader canAddOutput:videoCompositionOutput])
+//        [assetReader addOutput:videoCompositionOutput];
+
+
+    // Start the asset reader up.
+    [assetReader startReading];
+    BOOL done = NO;
+    while (!done)
+    {
+      // Copy the next sample buffer from the reader output.
+      CMSampleBufferRef sampleBuffer = [trackOutput copyNextSampleBuffer];
+      if (sampleBuffer)
+      {
+        // Do something with sampleBuffer here.
+        CFRelease(sampleBuffer);
+        sampleBuffer = NULL;
+      }
+      else
+      {
+        // Find out why the asset reader output couldn't copy another sample buffer.
+        if (assetReader.status == AVAssetReaderStatusFailed)
+        {
+          NSError *failureError = assetReader.error;
+          // Handle the error here.
+        }
+        else
+        {
+          // The asset reader output has read all of its samples.
+          done = YES;
+        }
+      }
+    }
+
+
 
 }
 
