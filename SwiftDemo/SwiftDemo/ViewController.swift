@@ -233,6 +233,7 @@ extension UIApplication {
 
 // MARK: RxSwift
 // https://www.jianshu.com/u/cea6393d7686
+// https://beeth0ven.github.io/RxSwift-Chinese-Documentation/content/rxswift_ecosystem.html
 
 // MARK: RxCocoa中对UIKit的Delegate的处理
 /**

@@ -6,6 +6,11 @@
 //  Copyright © 2019 ndl. All rights reserved.
 //
 
+/**
+ 快速搜索在目录下面的含有关键字的文件
+ grep -r 关键字
+ */
+
 // MARK: LG_Stu
 // https://www.jianshu.com/u/4db89678773b
 
@@ -52,6 +57,7 @@
 /**
  https://www.jianshu.com/p/1e752f5678f1
  https://www.jianshu.com/p/c10b25003153
+ https://juejin.im/post/6844904087046225933
  */
 
 // MARK: NSTimer
