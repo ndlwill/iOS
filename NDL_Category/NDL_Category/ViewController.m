@@ -124,6 +124,7 @@
 #import "LocalNotificationUtils.h"
 
 #import "TestPresentViewController.h"
+#import "TestTouchEventViewController.h"
 
 #import "NextRootViewController.h"
 
@@ -2173,9 +2174,14 @@ NSLog(@"viewDidLoad 22");
 //    });
     
     
-    // MARK: test Rotate ???
+    // MARK: test Rotate ???======
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        KeyWindow.rootViewController = [[BaseNavigationController alloc] initWithRootViewController:[TestRotateViewController new]];
+//    });
+    
+    // MARK: test touch event
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        KeyWindow.rootViewController = [[BaseNavigationController alloc] initWithRootViewController:[TestRotateViewController new]];
+        KeyWindow.rootViewController = [[BaseNavigationController alloc] initWithRootViewController:[TestTouchEventViewController new]];
     });
     
     // MARK: test tabBarVC

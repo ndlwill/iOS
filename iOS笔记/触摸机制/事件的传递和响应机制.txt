@@ -1,0 +1,240 @@
+UITouch对象：
+当用户用一根手指触摸屏幕时，会创建一个与手指相关的UITouch对象
+一根手指对应一个UITouch对象
+如果两根手指同时触摸一个view，那么view只会调用一次touchesBegan:withEvent:方法，touches参数中装着2个UITouch对象
+如果这两根手指一前一后分开触摸同一个view，那么view会分别调用2次touchesBegan:withEvent:方法，并且每次调用时的touches参数中只包含一个UITouch对象
+
+多个手指先后触摸，系统会根据触摸的位置判断是否更新同一个UITouch对象。若两个手指一前一后触摸同一个位置（即双击），那么第一次触摸时生成一个UITouch对象，第二次触摸更新这个UITouch对象（UITouch对象的 tap count 属性值从1变成2）；
+若两个手指一前一后触摸的位置不同，将会生成两个UITouch对象，两者之间没有联系。
+
+手指离开屏幕一段时间后，确定该UITouch对象不会再被更新将被释放。
+
+UITouch的作用：
+保存着跟手指相关的信息，比如触摸的位置、时间、阶段
+当手指移动时，系统会更新同一个UITouch对象，使之能够一直保存该手指在的触摸位置
+当手指离开屏幕时，系统会销毁相应的UITouch对象
+
+UIEvent:
+触摸的目的是生成触摸事件供响应者响应，一个触摸事件对应一个UIEvent对象，其中的 type 属性标识了事件的类型（之前说过事件不只是触摸事件）。
+UIEvent对象中包含了触发该事件的触摸对象的集合，因为一个触摸事件可能是由多个手指同时触摸产生的。触摸对象集合通过 allTouches 属性获取。
+
+事件的产生：
+发生触摸事件后，系统会将该事件加入到一个由UIApplication管理的事件队列中,为什么是队列而不是栈？因为队列的特点是FIFO，即先进先出，先产生的事件先处理才符合常理，所以把事件添加到队列。
+UIApplication会从事件队列中取出最前面的事件，并将事件分发下去以便处理，通常，先发送事件给应用程序的主窗口（keyWindow）。
+主窗口会在视图层次结构中找到一个最合适的视图来处理触摸事件，这也是整个事件处理过程的第一步。
+找到合适的视图控件后，就会调用视图控件的touches方法来作具体的事件处理。
+
+事件的传递：
+触摸事件的传递是从父控件传递到子控件
+也就是UIApplication->window->寻找处理事件最合适的view
+###如果父控件不能接受触摸事件，那么子控件就不可能接收到触摸事件###
+
+应用如何找到最合适的控件来处理事件？
+1.首先判断主窗口（keyWindow）自己是否能接受触摸事件
+2.判断触摸点是否在自己身上
+3.子控件数组中从后往前遍历子控件，重复前面的两个步骤（所谓从后往前遍历子控件，就是首先查找子控件数组中最后一个元素，然后执行1、2步骤）
+4.view，比如叫做fitView，那么会把这个事件交给这个fitView，再遍历这个fitView的子控件，直至没有更合适的view为止。
+5.如果没有符合条件的子控件，那么就认为自己最合适处理这个事件，也就是自己是最合适的view。
+
+UIView不能接收触摸事件的三种情况：
+不允许交互：userInteractionEnabled = NO
+隐藏：如果把父控件隐藏，那么子控件也会隐藏，隐藏的控件不能接受事件
+透明度：如果设置一个控件的透明度<0.01，会直接影响子控件的透明度。alpha：0.0~0.01为透明。
+
+两个重要的方法：
+hitTest:withEvent:方法
+pointInside方法
+
+
+只要事件一传递给一个控件,这个控件就会调用他自己的hitTest：withEvent：方法
+作用：
+寻找并返回最合适的view(能够响应事件的那个最合适的view)
+###不管这个控件能不能处理事件，也不管触摸点在不在这个控件上，事件都会先传递给这个控件，随后再调用hitTest:withEvent:方法###
+
+
+拦截事件的处理：
+正因为hitTest：withEvent：方法可以返回最合适的view，所以可以通过重写hitTest：withEvent：方法，返回指定的view作为最合适的view。
+不管点击哪里，最合适的view都是hitTest：withEvent：方法中返回的那个view。
+通过重写hitTest：withEvent：，就可以拦截事件的传递过程，想让谁处理事件谁就处理事件。
+事件传递给谁，就会调用谁的hitTest:withEvent:方法。
+如果hitTest:withEvent:方法中返回nil，那么调用该方法的控件本身和其子控件都不是最合适的view，也就是在自己身上没有找到更合适的view。那么最合适的view就是该控件的父控件。
+事件的传递顺序是这样的：
+产生触摸事件->UIApplication事件队列->[UIWindow hitTest:withEvent:]->返回更合适的view->[子控件 hitTest:withEvent:]->返回最合适的view
+
+
+技巧：想让谁成为最合适的view就重写谁自己的父控件的hitTest:withEvent:方法返回指定的子控件，或者重写自己的hitTest:withEvent:方法 return self。
+但是，建议在父控件的hitTest:withEvent:中返回子控件作为最合适的view！
+
+
+原因在于在自己的hitTest:withEvent:方法中返回自己有时候会出现问题。
+因为会存在这么一种情况：当遍历子控件时，如果触摸点不在子控件A自己身上而是在子控件B身上，还要要求返回子控件A作为最合适的view，采用返回自己的方法可能会导致还没有来得及遍历A自己，就有可能已经遍历了点真正所在的view，
+也就是B。这就导致了返回的不是自己而是触摸点真正所在的view。所以还是建议在父控件的hitTest:withEvent:中返回子控件作为最合适的view！
+
+
+return nil的含义：
+hitTest：withEvent：中return nil的意思是调用当前hitTest：withEvent：方法的view不是合适的view，子控件也不是合适的view。
+如果同级的兄弟控件也没有合适的view，那么最合适的view就是父控件。
+
+=====hitTest:withEvent:方法底层实现=====
+#import "WSWindow.h"
+@implementation WSWindow
+// 什么时候调用:只要事件一传递给一个控件，那么这个控件就会调用自己的这个方法
+// 作用:寻找并返回最合适的view
+// UIApplication -> [UIWindow hitTest:withEvent:]寻找最合适的view告诉系统
+// point:当前手指触摸的点
+// point:是方法调用者坐标系上的点
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event{
+    // 1.判断下窗口能否接收事件
+     if (self.userInteractionEnabled == NO || self.hidden == YES ||  self.alpha <= 0.01) return nil; 
+    // 2.判断下点在不在窗口上 
+    // 不在窗口上 
+    if ([self pointInside:point withEvent:event] == NO) return nil; 
+    // 3.从后往前遍历子控件数组 
+    int count = (int)self.subviews.count; 
+    for (int i = count - 1; i >= 0; i--)     { 
+    // 获取子控件
+    UIView *childView = self.subviews[i]; 
+    // 坐标系的转换,把窗口上的点转换为子控件上的点 
+    // 把自己控件上的点转换成子控件上的点 
+    CGPoint childP = [self convertPoint:point toView:childView]; 
+    UIView *fitView = [childView hitTest:childP withEvent:event]; 
+    if (fitView) {
+    // 如果能找到最合适的view 
+    return fitView; 
+    }
+    } 
+    // 4.没有找到更合适的view，也就是没有比自己更合适的view 
+    return self;
+    }
+    // 作用:判断下传入过来的点在不在方法调用者的坐标系上
+    // point:是方法调用者坐标系上的点
+    //- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event
+    //{
+    // return NO;
+    //}
+    - (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event{ 
+    NSLog(@"%s",__func__);
+    }
+    @end
+    hit:withEvent:方法底层会调用pointInside:withEvent:方法判断点在不在方法调用者的坐标系上。
+
+
+    屏幕上现在有一个viewA，viewA有一个subView叫做viewB，要求触摸viewB时,viewB会响应事件，而触摸viewA本身，不会响应该事件。如何实现？
+    // viewA的hitTest
+    - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event{
+    UIView *view = [super hitTest:point withEvent:event];
+    if (view == self) {
+        return nil;
+    }
+    return view;
+}
+
+=====================================事件的响应
+触摸事件处理的整体过程
+1>用户点击屏幕后产生的一个触摸事件，经过一系列的传递过程后，会找到最合适的视图控件来处理这个事件
+2>找到最合适的视图控件后，就会调用控件的touches方法来作具体的事件处理touchesBegan…touchesMoved…touchedEnded…
+3>这些touches方法的默认做法是将事件顺着响应者链条向上传递（也就是touch方法默认不处理事件，只传递事件），将事件交给上一个响应者进行处理
+
+响应者链条：在iOS程序中无论是最后面的UIWindow还是最前面的某个按钮，它们的摆放是有前后关系的，
+一个控件可以放到另一个控件上面或下面，那么用户点击某个控件时是触发上面的控件还是下面的控件呢，
+这种先后关系构成一个链条就叫“响应者链”。也可以说，响应者链是由多个响应者对象连接起来的链条。
+
+响应者对象：能处理事件的对象，也就是继承自UIResponder的对象
+作用：能很清楚的看见每个响应者之间的联系，并且可以让一个事件多个对象处理。
+
+
+如何判断上一个响应者
+1> 如果当前这个view是控制器的view,那么控制器就是上一个响应者
+2> 如果当前这个view不是控制器的view,那么父控件就是上一个响应者
+
+
+响应者链的事件传递过程:
+1>如果当前view是控制器的view，那么控制器就是上一个响应者，事件就传递给控制器；如果当前view不是控制器的view，那么父视图就是当前view的上一个响应者，事件就传递给它的父视图
+2>在视图层次结构的最顶级视图，如果也不能处理收到的事件或消息，则其将事件或消息传递给window对象进行处理
+3>如果window对象也不处理，则其将事件或消息传递给UIApplication对象
+4>如果UIApplication也不能处理该事件或消息，则将其丢弃
+
+
+事件处理的整个流程总结：
+1.触摸屏幕产生触摸事件后，触摸事件会被添加到由UIApplication管理的事件队列中（即，首先接收到事件的是UIApplication）。
+2.UIApplication会从事件队列中取出最前面的事件，把事件传递给应用程序的主窗口（keyWindow）。
+3.主窗口会在视图层次结构中找到一个最合适的视图来处理触摸事件。（至此，第一步已完成)
+4.最合适的view会调用自己的touches方法处理事件
+5.touches默认做法是把事件顺着响应者链条向上抛。
+
+
+事件的传递与响应：
+1、当一个事件发生后，事件会从父控件传给子控件，也就是说由UIApplication -> UIWindow -> UIView -> initial view,以上就是事件的传递，也就是寻找最合适的view的过程。
+2、接下来是事件的响应。首先看initial view能否处理这个事件，如果不能则会将事件传递给其上级视图（inital view的superView）；如果上级视图仍然无法处理则会继续往上传递；一直传递到视图控制器view controller，首先判断视图控制器的根视图view是否能处理此事件；如果不能则接着判断该视图控制器能否处理此事件，如果还是不能则继续向上传 递；（对于第二个图视图控制器本身还在另一个视图控制器中，则继续交给父视图控制器的根视图，如果根视图不能处理则交给父视图控制器处理）；一直到 window，如果window还是不能处理此事件则继续交给application处理，如果最后application还是不能处理此事件则将其丢弃
+3、在事件的响应中，如果某个控件实现了touches...方法，则这个事件将由该控件来接受，如果调用了[supertouches….];就会将事件顺着响应者链条往上传递，传递给上一个响应者；接着就会调用上一个响应者的touches….方法
+
+
+如何做到一个事件多个对象处理：
+因为系统默认做法是把事件上抛给父控件，所以可以通过重写自己的touches方法和父控件的touches方法来达到一个事件多个对象处理的目的。
+- (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event{ 
+// 1.自己先处理事件...
+NSLog(@"do somthing...");
+// 2.再调用系统的默认做法，再把事件交给上一个响应者处理
+[super touchesBegan:touches withEvent:event]; 
+}
+
+
+事件的传递和响应的区别：
+事件的传递是从上到下（父控件到子控件），事件的响应是从下到上（顺着响应者链条向上传递：子控件到父控件。
+
+
+===================================================
+因为UIControl类重写了touchesBegan系列方法，可以通过下面的方式验证。
+unsigned int outCount = 0;
+Method *methods = class_copyMethodList([UIControl class], &outCount);//包含了touchesBegan系列方法
+
+
+
+=========================================================================================================================================================
+系统响应阶段：
+1.手指触碰屏幕，屏幕感应到触碰后，将事件交由IOKit处理。
+
+2.IOKit将触摸事件封装成一个IOHIDEvent对象，并通过mach port传递给SpringBoad进程。
+
+mach port 进程端口，各进程之间通过它进行通信。
+SpringBoad.app 是一个系统进程，可以理解为桌面系统，可以统一管理和分发系统接收到的触摸事件。
+
+3.SpringBoard进程因接收到触摸事件，触发了主线程runloop的source1事件源的回调。
+
+此时SpringBoard会根据当前桌面的状态，判断应该由谁处理此次触摸事件。
+因为事件发生时，你可能正在桌面上翻页，也可能正在刷微博。
+若是前者（即前台无APP运行），则触发SpringBoard本身主线程runloop的source0事件源的回调，将事件交由桌面系统去消耗；若是后者（即有app正在前台运行），
+则将触摸事件通过IPC传递给前台APP进程，接下来的事情便是APP内部对于触摸事件的响应了。
+
+
+APP响应阶段：
+1.APP进程的mach port接受到SpringBoard进程传递来的触摸事件，主线程的runloop被唤醒，触发了source1回调。
+2.source1回调又触发了一个source0回调，将接收到的IOHIDEvent对象封装成UIEvent对象，此时APP将正式开始对于触摸事件的响应。
+3.source0回调内部将触摸事件添加到UIApplication对象的事件队列中。事件出队后，UIApplication开始一个寻找最佳响应者的过程，这个过程又称hit-testing，细节将在[寻找事件的最佳响应者]一节阐述。
+4.寻找到最佳响应者后，接下来的事情便是事件在响应链中的传递及响应了，关于响应链相关的内容详见[事件的响应及在响应链中的传递]一节。事实上，事件除了被响应者消耗，还能被手势识别器或是target-action模式捕捉并消耗掉。其中涉及对触摸事件的响应优先级，详见[事件的三徒弟UIResponder、UIGestureRecognizer、UIControl]一节。
+5.触摸事件历经坎坷后要么被某个响应对象捕获后释放，要么致死也没能找到能够响应的对象，最终释放。至此，这个触摸事件的使命就算终结了。runloop若没有其他事件需要处理，也将重归于眠，等待新的事件到来后唤醒。
+
+
+寻找事件的最佳响应者（Hit-Testing）:
+每个事件的理想宿命是被能够响应它的对象响应后释放，然而响应者诸多，事件一次只有一个，
+谁都想把事件抢到自己碗里来，为避免纷争，就得有一个先后顺序，也就是得有一个响应者的优先级。
+因此这就存在一个寻找事件最佳响应者（又称第一响应者 first responder）的过程，目的是找到一个具备最高优先级响应权的响应对象（the most appropriate responder object），
+这个过程叫做Hit-Testing，那个命中的最佳响应者称为hit-tested view。
+
+
+// 解决tabbar 中间圆形按钮点击事件
+//TabBar
+- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event
+{
+    //将触摸点坐标转换到在CircleButton上的坐标
+    CGPoint pointTemp = [self convertPoint:point toView:_CircleButton];
+    //若触摸点在CricleButton上则返回YES
+    if ([_CircleButton pointInside:pointTemp withEvent:event]) {
+        return YES;
+    }
+    //否则返回默认的操作
+    return [super pointInside:point withEvent:event];
+}
+
+
+事件的响应及在响应链中的传递：
