@@ -15,6 +15,12 @@
 
 // MARK: swift开源框架
 // https://www.jianshu.com/p/0797ca000ee1
+// YPImagePicker: https://github.com/Yummypets/YPImagePicker
+// https://github.com/freshOS/Stevia
+// https://github.com/HHK1/PryntTrimmerView
+// https://github.com/instacart/Nantes
+// https://github.com/shima11/FlexiblePageControl
+// https://github.com/KennethTsang/GrowingTextView
 
 // MARK: 直播 && 音视频
 // https://www.jianshu.com/p/7d1f6c20799d

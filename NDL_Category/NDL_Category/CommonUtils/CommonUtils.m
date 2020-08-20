@@ -19,6 +19,18 @@
     NSLog(@"===CommonUtils Dealloc===");
 }
 
++ (void)forceInterfaceOrientation:(UIInterfaceOrientation)orientation
+{
+    if ([[UIDevice currentDevice] respondsToSelector:@selector(setOrientation:)]) {
+        SEL selector = NSSelectorFromString(@"setOrientation:");
+        NSInvocation * invocation = [NSInvocation invocationWithMethodSignature:[UIDevice instanceMethodSignatureForSelector:selector]];
+        [invocation setSelector:selector];
+        [invocation setTarget:[UIDevice currentDevice]];
+        [invocation setArgument:&orientation atIndex:2];
+        [invocation invoke];
+    }
+}
+
 + (NSInteger)integerCeil:(NSInteger)value
 {
     if (value == 0) {

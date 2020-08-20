@@ -9,6 +9,11 @@
 #import "TestTouchEventViewController.h"
 #import "TestEventView.h"
 
+/**
+ UIWindow:
+ - (void)sendEvent:(UIEvent *)event;                    // called by UIApplication to dispatch events to views inside the window
+ */
+
 @interface TestTouchEventViewController ()
 
 @end

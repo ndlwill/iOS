@@ -238,3 +238,356 @@ APP响应阶段：
 
 
 事件的响应及在响应链中的传递：
+经历Hit-Testing后，UIApplication已经知道事件的最佳响应者是谁了，接下来要做的事情就是：
+1.将事件传递给最佳响应者响应
+2.事件沿着响应链传递
+
+因为最佳响应者具有最高的事件响应优先级，因此UIApplication会先将事件传递给它供其响应。首先，UIApplication将事件通过 sendEvent: 传递给事件所属的window，
+window同样通过 sendEvent: 再将事件传递给hit-tested view，即最佳响应者。过程如下：
+UIApplication ——> UIWindow ——> hit-tested view
+
+假如应用中存在多个window对象，UIApplication是怎么知道要把事件传给哪个window的？window又是怎么知道哪个视图才是最佳响应者的呢？
+这两个过程都是传递事件的过程，涉及的方法都是 sendEvent: ，而该方法的参数（UIEvent对象）是唯一贯穿整个经过的线索，那么就可以大胆猜测必然是该触摸事件对象上绑定了这些信息。
+之前在介绍UITouch的时候就说过touch对象保存了触摸所属的window及view，而event对象又绑定了touch对象
+
+前面介绍UIResponder的时候说过，每个响应者必定都是UIResponder对象，通过4个响应触摸事件的方法来响应事件。
+每个UIResponder对象默认都已经实现了这4个方法，但是默认不对事件做任何处理，单纯只是将事件沿着响应链传递。
+若要截获事件进行自定义的响应操作，就要重写相关的方法。例如，通过重写 touchesMoved: withEvent: 方法实现简单的视图拖动。
+
+事件的传递（响应链）:
+前面一直在提最佳响应者，之所以称之为“最佳”，是因为其具备响应事件的最高优先权（响应链顶端的男人）。
+最佳响应者首先接收到事件，然后便拥有了对事件的绝对控制权：即它可以选择独吞这个事件，也可以将这个事件往下传递给其他响应者，
+这个由响应者构成的视图链就称之为响应链。
+
+事件传递的目的是为了寻找事件的最佳响应者，是自下而上的传递；
+而这里的事件传递目的是响应者做出对事件的响应，这个过程是自上而下的。
+前者为“寻找”，后者为“响应”。
+
+响应者对于事件的操作方式：
+响应者对于事件的拦截以及传递都是通过 touchesBegan:withEvent: 方法控制的，该方法的默认实现是将事件沿着默认的响应链往下传递。
+
+响应者对于接收到的事件有3种操作：
+不拦截，默认操作
+事件会自动沿着默认的响应链往下传递
+拦截，不再往下分发事件
+重写 touchesBegan:withEvent: 进行事件处理，不调用父类的 touchesBegan:withEvent:
+拦截，继续往下分发事件
+重写 touchesBegan:withEvent: 进行事件处理，同时调用父类的 touchesBegan:withEvent: 将事件往下传递
+
+响应链中的事件传递规则：
+每一个响应者对象（UIResponder对象）都有一个 nextResponder 方法，用于获取响应链中当前对象的下一个响应者。
+因此，一旦事件的最佳响应者确定了，这个事件所处的响应链就确定了。
+
+对于响应者对象，默认的 nextResponder 实现如下：
+UIView
+若视图是控制器的根视图，则其nextResponder为控制器对象；否则，其nextResponder为父视图。
+UIViewController
+若控制器的视图是window的根视图，则其nextResponder为窗口对象；若控制器是从别的控制器present出来的，则其nextResponder为presenting view controller。
+UIWindow
+nextResponder为UIApplication对象。
+UIApplication
+若当前应用的app delegate是一个UIResponder对象，且不是UIView、UIViewController或app本身，则UIApplication的nextResponder为app delegate。
+
+
+完全可以重写响应者的 nextResponder 方法来自定义响应链。
+
+==================================================事件的三徒弟UIResponder、UIGestureRecognizer、UIControl
+除了UIResponder能够响应事件，手势识别器、UIControl同样具备对事件的处理能力。
+
+##二师兄##手势识别器:
+手势识别器与UIResponder的联系。
+事实上，手势分为离散型手势（discrete gestures）和持续型手势（continuous gesture）。
+系统提供的离散型手势包括点按手势（UITapGestureRecognizer）和轻扫手势（UISwipeGestureRecognizer），其余均为持续型手势。
+
+两者主要区别在于状态变化过程：
+离散型：
+识别成功：Possible —> Recognized
+识别失败：Possible —> Failed
+
+持续型：
+完整识别：Possible —> Began —> [Changed] —> Ended
+不完整识别：Possible —> Began —> [Changed] —> Cancel
+
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(actionTap)];
+    [self.view addGestureRecognizer:tap];
+}
+- (void)actionTap{
+    NSLog(@"View Taped");
+}
+
+// 打印
+-[YellowView touchesBegan:withEvent:]
+View Taped
+-[YellowView touchesCancelled:withEvent:]
+
+https://developer.apple.com/documentation/uikit/uigesturerecognizer?language=objc
+
+官方文档找到了这样的解释：
+A window delivers touch events to a gesture recognizer before it delivers them to the hit-tested view attached 
+to the gesture recognizer. Generally, if a gesture recognizer analyzes the stream of touches in a multi-touch 
+sequence and doesn’t recognize its gesture, the view receives the full complement of touches. 
+If a gesture recognizer recognizes its gesture, the remaining touches for the view are cancelled.
+The usual sequence of actions in gesture recognition follows a path determined by default values of 
+the cancelsTouchesInView, delaysTouchesBegan, delaysTouchesEnded properties.
+
+Window在将事件传递给hit-tested view之前，会先将事件传递给相关的手势识别器并由手势识别器优先识别。
+若手势识别器成功识别了事件，就会取消hit-tested view对事件的响应；若手势识别器没能识别事件，hit-tested view才完全接手事件的响应权。
+
+手势识别器比UIResponder具有更高的事件响应优先级！
+
+按照这个解释，Window在将事件传递给hit-tested view即YellowView之前，先传递给了控制器根视图上的手势识别器。
+手势识别器成功识别了该事件，通知Application取消YellowView对事件的响应。
+
+然而看日志，却是YellowView的 touchesBegan:withEvent: 先调用了，既然手势识别器先响应，
+不应该上面的action先执行吗，这又怎么解释？事实上这个认知是错误的。手势识别器的action的调用时机（即此处的 actionTap）
+并不是手势识别器接收到事件的时机，而是手势识别器成功识别事件后的时机，即手势识别器的状态变为UIGestureRecognizerStateRecognized。
+因此从该日志中并不能看出事件是优先传递给手势识别器的，那该怎么证明Window先将事件传递给了手势识别器？
+
+要解决这个问题，只要知道手势识别器是如何接收事件的，然后在接收事件的方法中打印日志对比调用时间先后即可。说起来你可能不信，手势识别器对于事件的响应也是通过这4个熟悉的方法来实现的。
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;
+虽然手势识别器通过这几个方法来响应事件，但它并不是UIResponder的子类，相关的方法声明在 UIGestureRecognizerSubclass.h 中。
+
+我们便可以自定义一个单击手势识别器的类，重写这几个方法来监听手势识别器接收事件的时机。
+创建一个UITapGestureRecognizer的子类，重写响应事件的方法，每个方法中调用父类的实现，并替换demo中的手势识别器。另外需要在.m文件中引入 import <UIKit/UIGestureRecognizerSubclass.h> ，因为相关方法声明在该头文件中。
+// LXFTapGestureRecognizer (继承自UITapGestureRecognizer)
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event{
+    NSLog(@"%s",__func__);
+    [super touchesBegan:touches withEvent:event];
+}
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event{
+    NSLog(@"%s",__func__);
+    [super touchesMoved:touches withEvent:event];
+}
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event{
+    NSLog(@"%s",__func__);
+    [super touchesEnded:touches withEvent:event];
+}
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event{
+    NSLog(@"%s",__func__);
+    [super touchesCancelled:touches withEvent:event];
+}
+
+
+现在，再次点击YellowView，日志如下：
+-[LXFTapGestureRecognizer touchesBegan:withEvent:]
+-[YellowView touchesBegan:withEvent:]
+-[LXFTapGestureRecognizer touchesEnded:withEvent:]
+View Taped
+-[YellowView touchesCancelled:withEvent:]
+
+很明显，确实是手势识别器先接收到了事件。之后手势识别器成功识别了手势，执行了action，再由Application取消了YellowView对事件的响应。
+
+Window怎么知道要把事件传递给哪些手势识别器？
+之前探讨过Application怎么知道要把event传递给哪个Window，以及Window怎么知道要把event传递给哪个hit-tested view的问题，答案是这些信息都保存在event所绑定的touch对象上。
+手势识别器也是一样的，event绑定的touch对象上维护了一个手势识别器数组，里面的手势识别器毫无疑问是在hit-testing的过程中收集的。
+重写sendEvent，打个断点看一下touch上绑定的手势识别器数组
+
+Window先将事件传递给这些手势识别器，再传给hit-tested view。一旦有手势识别器成功识别了手势，Application就会取消hit-tested view对事件的响应。
+
+
+持续型手势：
+将上面Demo中视图绑定的单击手势识别器用滑动手势识别器（UIPanGestureRecognizer）替换。
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(actionPan)];
+    [self.view addGestureRecognizer:pan];
+}
+- (void)actionPan{
+    NSLog(@"View panned");
+}
+
+-[YellowView touchesBegan:withEvent:]
+-[YellowView touchesMoved:withEvent:]
+-[YellowView touchesMoved:withEvent:]
+-[YellowView touchesMoved:withEvent:]
+View panned
+-[YellowView touchesCancelled:withEvent:]
+View panned
+View panned
+View panned
+...
+
+
+在一开始滑动的过程中，手势识别器处在识别手势阶段，滑动产生的连续事件既会传递给手势识别器又会传递给YellowView，
+因此YellowView的 touchesMoved:withEvent: 在开始一段时间内会持续调用；当手势识别器成功识别了该滑动手势时，
+手势识别器的action开始调用，同时通知Application取消YellowView对事件的响应。之后仅由滑动手势识别器接收事件并响应，YellowView不再接收事件。
+
+另外，在滑动的过程中，若手势识别器未能识别手势，则事件在触摸滑动过程中会一直传递给hit-tested view，直到触摸结束。
+
+手势识别器的3个属性：
+@property(nonatomic) BOOL cancelsTouchesInView;
+@property(nonatomic) BOOL delaysTouchesBegan;
+@property(nonatomic) BOOL delaysTouchesEnded;
+
+先总结一下手势识别器与UIResponder对于事件响应的联系：
+当触摸发生或者触摸的状态发生变化时，Window都会传递事件寻求响应。
+
+Window先将绑定了触摸对象的事件传递给触摸对象上绑定的手势识别器，再发送给触摸对象对应的hit-tested view。
+手势识别器识别手势期间，若触摸对象的触摸状态发生变化，事件都是先发送给手势识别器再发送给hit-test view。
+手势识别器若成功识别了手势，则通知Application取消hit-tested view对于事件的响应，并停止向hit-tested view发送事件；
+若手势识别器未能识别手势，而此时触摸并未结束，则停止向手势识别器发送事件，仅向hit-test view发送事件。
+若手势识别器未能识别手势，且此时触摸已经结束，则向hit-tested view发送end状态的touch事件以停止对事件的响应。
+
+
+cancelsTouchesInView
+默认为YES。表示当手势识别器成功识别了手势之后，会通知Application取消响应链对事件的响应，并不再传递事件给hit-test view。
+若设置成NO，表示手势识别成功后不取消响应链对事件的响应，事件依旧会传递给hit-test view。
+
+
+demo中设置: pan.cancelsTouchesInView = NO
+-[YellowView touchesBegan:withEvent:]
+-[YellowView touchesMoved:withEvent:]
+-[YellowView touchesMoved:withEvent:]
+-[YellowView touchesMoved:withEvent:]
+View panned
+-[YellowView touchesMoved:withEvent:]
+View panned
+View panned
+-[YellowView touchesMoved:withEvent:]
+View panned
+-[YellowView touchesMoved:withEvent:]
+...
+即便滑动手势识别器识别了手势，Application也会依旧发送事件给YellowView。
+
+
+delaysTouchesBegan：
+默认为NO。默认情况下手势识别器在识别手势期间，当触摸状态发生改变时，Application都会将事件传递给手势识别器和hit-tested view；若设置成YES，
+则表示手势识别器在识别手势期间，截断事件，即不会将事件发送给hit-tested view。
+
+设置 pan.delaysTouchesBegan = YES
+View panned
+View panned
+View panned
+View panned
+...
+因为滑动手势识别器在识别期间，事件不会传递给YellowView，
+因此期间YellowView的 touchesBegan:withEvent: 和 touchesMoved:withEvent: 都不会被调用；
+而后滑动手势识别器成功识别了手势，也就独吞了事件，不会再传递给YellowView。因此只打印了手势识别器成功识别手势后的action调用。
+
+delaysTouchesEnded：
+默认为YES。当手势识别失败时，若此时触摸已经结束，会延迟一小段时间（0.15s）再调用响应者的 touchesEnded:withEvent:；
+若设置成NO，则在手势识别失败时会立即通知Application发送状态为end的touch事件给hit-tested view以调用 touchesEnded:withEvent: 结束事件响应。
+
+总结：手势识别器比响应链具有更高的事件响应优先级。
+
+##大师兄##UIControl
+UIControl是系统提供的能够以target-action模式处理触摸事件的控件，iOS中UIButton、UISegmentedControl、UISwitch等控件都是UIControl的子类。
+当UIControl跟踪到触摸事件时，会向其上添加的target发送事件以执行action。值得注意的是，UIConotrol是UIView的子类，因此本身也具备UIResponder应有的身份。
+
+关于UIControl，此处介绍两点：
+1.target-action执行时机及过程
+2..触摸事件优先级
+
+target-action:
+target：处理交互事件的对象
+action：处理交互事件的方式
+
+UIControl作为能够响应事件的控件，必然也需要待事件交互符合条件时才去响应，因此也会跟踪事件发生的过程。
+不同于UIResponder以及UIGestureRecognizer通过 touches 系列方法跟踪，UIControl有其独特的跟踪方式：
+- (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(nullable UIEvent *)event;
+- (BOOL)continueTrackingWithTouch:(UITouch *)touch withEvent:(nullable UIEvent *)event;
+- (void)endTrackingWithTouch:(nullable UITouch *)touch withEvent:(nullable UIEvent *)event;
+- (void)cancelTrackingWithEvent:(nullable UIEvent *)event;
+
+乍一看，这4个方法和UIResponder的那4个方法几乎吻合，只不过UIControl只能接收单点触控，因此接收的参数是单个UITouch对象。
+这几个方法的职能也和UIResponder一致，用来跟踪触摸的开始、滑动、结束、取消。
+不过，UIControl本身也是UIResponder，因此同样有 touches 系列的4个方法。
+事实上，UIControl的 Tracking 系列方法是在 touch 系列方法内部调用的
+比如 beginTrackingWithTouch 是在 touchesBegan 方法内部调用的， 
+###因此它虽然也是UIResponder，但 touches 系列方法的默认实现和UIResponder本类还是有区别的。###
+
+当UIControl跟踪事件的过程中，识别出事件交互符合响应条件，就会触发target-action进行响应。
+UIControl控件通过 addTarget:action:forControlEvents: 添加事件处理的target和action，当事件发生时，UIControl通知target执行对应的action。
+说是“通知”其实很笼统，事实上这里有个action传递的过程。
+当UIControl监听到需要处理的交互事件时，会调用 sendAction:to:forEvent: 将target、action以及event对象发送给全局应用，Application对象再通过 sendAction:to:from:forEvent: 向target发送action。
+
+
+因此，可以通过重写UIControl的 sendAction:to:forEvent: 或 sendAction:to:from:forEvent: 自定义事件执行的target及action。
+另外，若不指定target，即 addTarget:action:forControlEvents: 时target传空，那么当事件发生时，Application会在响应链上从上往下寻找能响应action的对象。官方说明如下：
+If you specify nil for the target object, the control searches the responder chain for an object that defines the specified action method.
+
+
+触摸事件优先级：
+In iOS 6.0 and later, default control actions prevent overlapping gesture recognizer behavior. 
+For example, the default action for a button is a single tap. 
+If you have a single tap gesture recognizer attached to a button’s parent view, and the user taps the button, 
+then the button’s action method receives the touch event instead of the gesture recognizer.This applies only to gesture recognition that overlaps the default action for a control, 
+which includes:
+A single finger single tap on a UIButton, UISwitch, UIStepper, UISegmentedControl, and UIPageControl.
+A single finger swipe on the knob of a UISlider, in a direction parallel to the slider.
+A single finger pan gesture on the knob of a UISwitch, in a direction parallel to the switch.
+
+简单理解：UIControl会阻止父视图上的手势识别器行为，也就是UIControl处理事件的优先级比UIGestureRecognizer高，但前提是相比于父视图上的手势识别器。
+
+预置场景：在BlueView上添加一个button，同时给button添加一个target-action事件。
+示例一：在BlueView上添加点击手势识别器
+示例二：在button上添加手势识别器
+
+操作方式：单击button
+测试结果：示例一中，button的target-action响应了单击事件；
+示例二中，BlueView上的手势识别器响应了事件。过程日志打印如下：
+
+//示例一
+-[CLTapGestureRecognizer touchesBegan:withEvent:]
+-[CLButton touchesBegan:withEvent:]
+-[CLButton beginTrackingWithTouch:withEvent:]
+-[CLTapGestureRecognizer touchesEnded:withEvent:] after called state = 5
+-[CLButton touchesEnded:withEvent:]
+-[CLButton endTrackingWithTouch:withEvent:]
+按钮点击
+
+//示例二
+-[CLTapGestureRecognizer touchesBegan:withEvent:]
+-[CLButton touchesBegan:withEvent:]
+-[CLButton beginTrackingWithTouch:withEvent:]
+-[CLTapGestureRecognizer touchesEnded:withEvent:] after called state = 3
+手势触发
+-[CLButton touchesCancelled:withEvent:]
+-[CLButton cancelTrackingWithEvent:]
+
+原因分析：点击button后，事件先传递给手势识别器，再传递给作为hit-tested view存在的button（UIControl本身也是UIResponder，这一过程和普通事件响应者无异）。
+示例一中，由于button阻止了父视图BlueView中的手势识别器的识别，导致手势识别器识别失败（状态为failed 枚举值为5）
+button完全接手了事件的响应权，事件最终由button响应；
+示例二中，button未阻止其本身绑定的手势识别器的识别，因此手势识别器先识别手势并识别成功（状态为ended 枚举值为3）
+而后通知Application取消响应链对事件的响应，因为 touchesCancelled 被调用，同时 cancelTrackingWithEvent 跟着调用，因此button的target-action得不到执行。
+
+其他：经测试，若示例一中的手势识别器设置 cancelsTouchesInView 为NO，手势识别器和button都能响应事件。也就是说这种情况下，button不会阻止父视图中手势识别器的识别。
+
+结论：UIControl比其父视图上的手势识别器具有更高的事件响应优先级。？？？？？？不正确
+###
+UIControl的响应优先级比手势识别器高的说法不准确，准确地说只适用于系统提供的有默认action操作的UIControl，
+例如UIbutton、UISwitch等的单击，而对于自定义的UIControl，经验证，响应优先级比手势识别器低。
+###
+
+UIScrollViewDelayedTouchesBeganGestureRecognizer：
+//TouchEventHook.m
++ (void)load{
+    Class aClass = objc_getClass("UIScrollViewDelayedTouchesBeganGestureRecognizer");
+    SEL sel = @selector(hook_sendTouchesShouldBeginForDelayedTouches:);
+    Method method = class_getClassMethod([self class], sel);
+    class_addMethod(aClass, sel, class_getMethodImplementation([self class], sel), method_getTypeEncoding(method));
+    exchangeMethod(aClass, @selector(sendTouchesShouldBeginForDelayedTouches:), sel);
+}
+
+- (void)hook_sendTouchesShouldBeginForDelayedTouches:(id)arg1{
+    [self hook_sendTouchesShouldBeginForDelayedTouches:arg1];
+}
+
+void exchangeMethod(Class aClass, SEL oldSEL, SEL newSEL) {
+    Method oldMethod = class_getInstanceMethod(aClass, oldSEL);
+    Method newMethod = class_getInstanceMethod(aClass, newSEL);
+    method_exchangeImplementations(oldMethod, newMethod);
+}
+可以推测该手势识别器截断了事件并延迟0.15s才发送给hit-tested view
+
+
+总结：
+触摸发生时，系统内核生成触摸事件，先由IOKit处理封装成IOHIDEvent对象，通过IPC传递给系统进程SpringBoard，而后再传递给前台APP处理。
+事件传递到APP内部时被封装成开发者可见的UIEvent对象，先经过hit-testing寻找第一响应者，而后由Window对象将事件传递给hit-tested view，并开始在响应链上的传递。
+UIRespnder、UIGestureRecognizer、UIControl，笼统地讲，事件响应优先级依次递增。

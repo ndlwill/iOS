@@ -51,6 +51,9 @@ velocityInView： 手指在视图上移动的速度（x,y）, 正负也是代表
 
 @interface CommonUtils : NSObject
 
+// 强制旋转
++ (void)forceInterfaceOrientation:(UIInterfaceOrientation)orientation;
+
 + (NSInteger)integerCeil:(NSInteger)value;
 
 // 过渡值

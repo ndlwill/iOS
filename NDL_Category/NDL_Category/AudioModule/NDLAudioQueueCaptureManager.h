@@ -14,6 +14,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface NDLAudioQueueCaptureManager : NSObject
 
 @property (nonatomic, assign, readonly) BOOL isRunning;
+// 当前是否正在录制
 @property (nonatomic, assign) BOOL isRecordVoice;
 
 - (instancetype)getInstance;

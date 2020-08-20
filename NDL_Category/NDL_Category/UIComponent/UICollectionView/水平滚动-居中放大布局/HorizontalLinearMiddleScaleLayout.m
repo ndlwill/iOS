@@ -22,6 +22,7 @@
  */
 - (BOOL)shouldInvalidateLayoutForBoundsChange:(CGRect)newBounds
 {
+    NSLog(@"===shouldInvalidateLayoutForBoundsChange===");
     return YES;
 }
 

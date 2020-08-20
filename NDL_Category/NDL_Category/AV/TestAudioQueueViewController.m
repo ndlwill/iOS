@@ -15,6 +15,7 @@
  */
 
 #import "TestAudioQueueViewController.h"
+#import <SystemConfiguration/SystemConfiguration.h>
 
 @interface TestAudioQueueViewController ()
 
