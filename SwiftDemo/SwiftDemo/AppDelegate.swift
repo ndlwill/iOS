@@ -21,6 +21,10 @@
 // https://github.com/instacart/Nantes
 // https://github.com/shima11/FlexiblePageControl
 // https://github.com/KennethTsang/GrowingTextView
+// TabBar
+// http://www.86y.org/art_detail.aspx?id=867
+// https://www.cnblogs.com/frankhe/p/10913042.html
+// https://zhuanlan.zhihu.com/p/100037958
 
 // MARK: 直播 && 音视频
 // https://www.jianshu.com/p/7d1f6c20799d
