@@ -7,6 +7,31 @@
 //  Copyright © 2019 dzcx. All rights reserved.
 //
 
+// MARK: Swift 条件编译
+/**
+ 其中保存了target "TestSwift”的所有的环境变量
+ xcodebuild -project TestSwift.xcodeproj -target TestSwift -configuration Debug -showBuildSettings > buildSettings.txt
+ 
+ 方法    可选参数
+ os()    macOS, iOS, tvOS, watchOS, Linux
+ arch()    x86_64, arm, arm64, i386
+ swift()    >= 某个版本
+ 
+ #if <#T##condition###>
+
+ #elseif <#T##condition###>
+
+ #else
+
+ #endif
+ */
+
+// MARK: base64编解码
+// https://base64.us/
+
+// MARK: iOS Devicess Support
+// https://gitee.com/ios_shen/iOSDeviceSupport
+
 // MARK: Network tools
 // https://github.com/mediaios/net-diagnosis
 
@@ -25,6 +50,816 @@
 // http://www.86y.org/art_detail.aspx?id=867
 // https://www.cnblogs.com/frankhe/p/10913042.html
 // https://zhuanlan.zhihu.com/p/100037958
+// Facebook Paper使用的第三方库
+// https://www.jianshu.com/p/6598fdef5afc
+// https://github.com/EasySwift
+// TagListView
+
+// MARK: swift新版本特性 4.1, 4.2, 5.0
+// https://www.jianshu.com/u/8ee8ce4ab94d
+/**
+ Void 实质上是一个空的tuple，即()
+ 
+ =====swift4.1:=====
+ let s: AnyObject = "This is a bridged string." as NSString
+ print(s is NSString)
+ print(s is String)
+ true
+ true
+ NSString 和 String 会自动bridge
+ 第一行中的as不应该使用as!或者as?。
+ 
+ var arr = [AnyObject]()
+ arr.append(NSDate())
+ arr.append(Date())
+ print(arr is [NSDate])
+ 编译不过：
+ Argument type 'Date' does not conform to expected type 'AnyObject'
+ AnyObject 只支持 class type，NSDate 是引用类型，而 Date 是个 struct
+ 
+ var arr = [AnyObject]()
+ arr.append(NSDate())
+ print(arr is Array<NSDate>)
+ print(arr is Array<Date>)
+ print(arr is Any)
+ print(arr is [Any])
+ true
+ true  // 有些环境下此处是false。
+ true
+ true
+ NSDate 和 Date 可自动 bridge。
+ 
+ var arr = [Int]()
+ arr.append(12)
+ var arr2 = arr as [AnyObject] as [Any]
+ arr2.append(1.0)
+ print(arr2[0])
+ print(arr.count)
+ 12
+ 1
+ [Int] 数组可以转成 [AnyObject]，此处发生了 Int 往NS引用类型的隐式转换，不然一个Int不可能是一个 AnyObject。
+ Array 是值类型，因此 append 在 arr2 的1.0，不影响 arr。
+
+ 
+ var arr = [Int]()
+ arr.append(12)
+ var arr2 = arr ______
+ // 以下三种情况分别程序结果为何
+ // as [AnyObject]
+ // as [AnyObject] as [Any]
+ // as [Any]
+ arr2.append(1.0)
+ print(type(of:arr2[0]))
+ 
+ as [AnyObject]
+ 运行结果
+ 编译不过：
+ Argument type 'Double' does not conform to expected type 'AnyObject'
+ arr2.append(1.0) 编译不通过。1.0 是值类型，而数组是 [AnyObject] 只接受引用类型
+ 
+ as [AnyObject] as [Any]
+ 运行结果
+ __NSCFNumber
+ 回答NSNumber也算对。两次转换成 [Any] 因此后续的 append(1.0) 可以编译通过；
+ 由于 Int 是值类型，[Int ]转换成 [AnyObject] 的时候，Int 自动转换成 NSNumber 引用类型。
+
+ as [Any]
+ Int
+ 知识点
+ Any 可以代表任何类型，此处不发生 Int 到 NSNumber 类型的自动转换。
+ var arr = [Int]()
+ arr.append(12)
+ var arr1 = arr as [Any]
+ arr1.append(1.0)
+ print(type(of:arr1))
+ print(type(of:arr1[0]))
+ print(type(of:arr1[1]))
+ Array<Any>
+ Int
+ Double
+ 
+ 1.==========Conditional Conformance
+ 我们知道 Array 是个泛型 struct ，它有个类型参数是 Element 。现在我们想让 Array 实现 Equatable 协议，当然有个条件，需要实际的 Element 类型本身实现 Equatable 。这是个很自然的条件，因为如果 Element 不支持相等比较的话，我们也没有办法写出 Array 的相等比较扩展。
+ 而事实上，新的标准库已经加入了这个扩展
+ extension Array : Equatable where Element : Equatable {
+
+     /// Returns a Boolean value indicating whether two arrays contain the same
+     /// elements in the same order.
+     ///
+     /// You can use the equal-to operator (`==`) to compare any two arrays
+     /// that store the same, `Equatable`-conforming element type.
+     ///
+     /// - Parameters:
+     ///   - lhs: An array to compare.
+     ///   - rhs: Another array to compare.
+     @inlinable public static func == (lhs: [Element], rhs: [Element]) -> Bool
+ }
+ let a1 = [[123], [456,789]]
+ let a2 = [[123], [456,789]]
+ let a3: [[Int]] = []
+ print(a1 == a2) // true
+ print(a1 == a3) // false
+ 
+ Conditional Conformance 对动态检查的支持
+ protocol P {
+   func doSomething()
+ }
+
+ struct S: P {
+   func doSomething() { print("S") }
+ }
+
+ extension Array: P where Element: P {
+   func doSomething() {
+     for value in self {
+       value.doSomething()
+     }
+   }
+ }
+
+ // compile-time
+ func doSomethingStatically<E: P>(_ value:Array<E>) {
+   value.doSomething()
+ }
+
+ // runtime
+ func doSomethingIfP(_ value: Any) {
+   if let p = value as? P {
+     p.doSomething()
+   }
+ }
+
+ doSomethingIfP([S(), S(), S()])
+ #
+ 因为Equatable这样的protocol只能作为泛型的类型约束，而不能作为可以直接hold值的类型，原因是它有 associated type 或者Self.Equatable 不是泛型类型，只是泛型约束
+ 
+ 2.==========Sequence.compactMap
+ Sequence.flatMap<S>(_: (Element) -> S)
+     -> [S.Element] where S : Sequence
+ Optional.flatMap<U>(_: (Wrapped) -> U?) -> U?
+ Sequence.flatMap<U>(_: (Element) -> U?) -> [U]
+ 
+ ---最广为人知的 Sequence.flatMap: Sequence.flatMap<S>(_: (Element) -> S)-> [S.Element] where S : Sequence
+ let numbers = [1, 2, 3, 4]
+ let mapped = numbers.map {
+     Array(repeating: $0, count: $0)}
+ // [[1], [2, 2], [3, 3, 3], [4, 4, 4, 4]]
+ let flatMapped = numbers.flatMap {
+     Array(repeating: $0, count: $0) }
+ // [1, 2, 2, 3, 3, 3, 4, 4, 4, 4]
+ In fact, s.flatMap(transform) is equivalent to Array(s.map(transform).joined()).
+ 
+ map 是没拍扁的：closure 返回的是数组，map 最终将它们组成一个二维的数组；
+ flatMap 中执行的 closure 返回的是同样的数组，但是 flatMap 将每一个返回的数组都拍扁，取出它的元素，构成一个大的一维数组。
+ 
+ ---Optional也有flatMap: Optional.flatMap<U>(_: (Wrapped) -> U?) -> U?
+ func map<U>( transform: (Wrapped) -> U)  -> U?
+ func flatMap<U>( transform: (Wrapped) -> U?) -> U?
+ map 函数是：在 transform 函数返回的类型上，最终给你再套一个 Optional ；
+ flatMap 函数从概念上来讲则是在 transform 函数返回结果后，帮你退一层 Optional，再帮你套一个。
+
+ ---另一个Sequence.flatMap
+ Sequence.flatMap<U>(_: (Element) -> U?) -> [U]
+ 这个函数压扁 Optional 类型，组成数组
+ let possibleNumbers = ["1", "2", "three", "///4///", "5"]
+
+ let flatMapped: [Int] = possibleNumbers.flatMap {
+      str in Int(str) }
+ // [1, 2, 5]
+ 如果这里使用 map，就返回 [Int?] 了而且包含 nil
+ 
+ 'flatMap' is deprecated: Please use compactMap(_:) for the case where closure returns an optional value
+ 当closure返回Optional的时候，在Swift 4.1 中应该使用compactMap
+ let flatMapped: [Int] = possibleNumbers.compactMap {
+ str in Int(str) }
+
+ 3.==========合成 Equatable 和 Hashable
+ 编译器合成 (synthesize) 是十分重要的功能，它把开发者从简单重复的劳动中解放出来。在Swift 4.0 中，我们知道 Codable 可以合成相关函数，于是 Codable 的实现者在大部分情况下不需要实现相关函数。
+触发合成的一个重要的必要非充分条件是：包含的存储属性或相关值全都是 Codable / Equatable / Hashable，编译器才有可能推导出这个类型的相关函数实现。
+ ###
+ 如果对象相等，则这两个对象的 hash 值一定相等。
+ 如果两个对象 hash 值相等，这两个对象不一定相等。
+ Swift 中 Hashable 一定是 Equatable，因为前者继承了后者。
+ 修改 == 函数的时候需要考虑是否同步修改 hashValue，反之亦然。
+ Dictionary 和 Set 的中的 Key 类型都要求是 Hashable
+ ###
+ 
+  -----合成 Equatable
+ 我们以前得手写如下代码。缺点：1. 实现很冗长无聊。2. 增删改一个属性还得记得改这个函数。
+ struct Person: Equatable {
+   static func == (lhs: Person, rhs: Person) -> Bool {
+     return
+     lhs.firstName == rhs.firstName &&
+     lhs.lastName == rhs.lastName &&
+     lhs.birthDate == rhs.birthDate &&
+ ...
+   }
+ }
+ 现在舒服了，声明下 : Equatable即可，编译器帮你合成 == 函数的实现。
+ struct Person: Equatable { ... }
+ 这样是否意味着可以无脑申明 Equatable 了呢？并不是这样
+在某些属性不参与相等比较时，必须自己实现，让编译器不要合成。
+ 假如 Person 有一个属性叫 createdTime，记录了它被创建的时间，如果我们不希望这个属性参与相等比较，就需要自己实现 == 函数
+ 
+ 在 Swift 4.1 版本前的情况:
+ // eg1
+ enum SSS {
+     case a
+     case b
+ }
+ SSS.a == SSS.b
+
+ // eg2
+ enum KKK : String {
+     case a
+     case b
+ }
+ KKK.a == KKK.b
+
+ // eg3
+ enum Token {
+     case string(String)
+     case number(Int)
+     case lparen
+     case rparen
+ }
+ Token.string("123") == Token.string("456")
+ 例子1、2能编译过，例子 3编译不过
+ SSS 是最简单的 enum，KKK是带有 rawType 的 enum，这两个在 Swift 4.1 之前就自动是 Equatable 和 Hashable，即便不显式声明
+ 例子3是带 associated value 的 enum，在 Swift 4.1 之前需要实现 Equatable，不仅要声明 :Equatable，还得自己写 == 方法
+ static func == (lhs: Token, rhs: Token) -> Bool {
+   switch (lhs, rhs) {
+   case (.string(let lhsString), .string(let rhsString)):
+     return lhsString == rhsString
+   case (.number(let lhsNumber), .number(let rhsNumber)):
+     return lhsNumber == rhsNumber
+   case (.lparen, .lparen), (.rparen, .rparen):
+     return true
+   default:
+     return false
+   }
+ }
+ 在 Swift 4.1 中，例子 3 我们仅仅需要声明 :Equatable 就能让编译器帮我们合成==方法
+ 
+ -----合成 Hashable
+ 上面那个带 associated value 的 enum，如何实现它的 hashValue方法呢？有可能你已经有了答案，但这里同样可以声明 :Hashable让编译器合成。
+ hash 函数。这个函数目的是：将原来对象的域映射到 Int 的值域。
+ 编译器合成的 hash 函数能保证高质量，但很有可能不是最优的。因为编译器无法得到一些只有你知道的信息：比如属性的实际值域：var age: Int（不可能是负数；如果是 Person 结构，取值范围在0-200等），又比如属性之间的关系特性，而往往你可以利用这些信息设计出更优的 hash 函数。
+合成 Hashable 跟 Equatable 一样，声明 :Hashable 之后，可以自己实现，来压制编译器的合成行为。
+ 
+ Hashable 和 Equatable 还有一些编译器不合成的情况需要特别指出：
+ class 不合成，原因是继承情况下比较复杂，合成出来也不一定是你要的。
+ extension 声明实现 Hashable 或 Equatable 时也不合成。
+ 
+ Swift 有个特性叫强类型的 Key Path。如果 Key Path 中用下标表达式的话，下标类型必须是 Hashable 的，Int 原本就是，而String.Index原来不是，所以下面例子中第二段的代码只在 Swift 4.1 中是合法的。
+ let numbers = [10, 20, 30, 40, 50]
+ let firstValue = \[Int].[0]
+ print(numbers[keyPath: firstValue])     // 10
+
+ let string = "Helloooo!"
+ let firstChar = \String.[string.startIndex] // valid in Swift 4.1 or later
+ 
+ 4.==========Codable的改进
+ 它实际上是 Encodable & Decodable 两个接口的复合接口
+ 可以很方便地合成 init(from:Decoder) 以及 encode(to:Encoder) 这两个函数
+ Swift 4.1 为 JSONEncoder 和 JSONDecoder 分别引入了两个新的属性: keyEncodingStrategy 以及 keyDecodingStrategy
+ 
+ -----弥合下划线命名和驼峰命名
+ let jsonStr = """
+ {
+ "age": 18,
+ "first_name": "Leon"
+ }
+ """
+
+ struct Person : Codable {
+   var age: Int
+   var firstName: String
+ }
+ 在这个例子中，JSON 字符串无法解码成 Person，同时 Person 的实例也无法编码成这个 JSON 字符串。原因就在于第二个属性的命名风格是不同的，前者使用了下划线命名法 (Snake Case)，后者使用了驼峰命名法 (Camel Case)。
+为了解决这个问题，在Swift 4.0 中，我们需要在 Person 内部自定义一个 CodingKeys
+ enum CodingKeys : String, CodingKey {
+     case age
+     case firstName = "first_name"
+ }
+ 这个内部枚举 CodingKeys 的 rawType 是 String，并且声明实现 CodingKey 接口。这时，编译器会使用它的信息合成 Codable 相关函数
+ 而在Swift 4.1 中，解决这个问题有了个更方便的方法：不指定 CodingKeys，而是在编码的时候，把 JSONEncoder 的属性 keyEncodingStrategy 设置为 .convertToSnakeCase；在解码的时候，把 JSONDecoder 的属性 keyDecodingStrategy 设置成 .convertFromSnakeCase。代码如下：
+ // 编码
+ let leon = Person(age: 18, firstName: "Leon")
+ let encoder = JSONEncoder()
+ encoder.keyEncodingStrategy = .convertToSnakeCase
+ let resultData = try? encoder.encode(leon)
+
+ // 解码
+ let data = jsonStr.data(using: .utf8)!
+ let decoder = JSONDecoder()
+ decoder.keyDecodingStrategy = .convertFromSnakeCase
+ let person = try? decoder.decode(Person.self, from: data)
+
+ -----自定义键策略
+ 上面这个例子只解决了最典型的一种 Key 风格不匹配的情况。有很多其它情况需要覆盖，比如：首字母大写的帕斯卡命名法
+ let jsonStr = """
+ {
+ "Age": 18,
+ "FirstName": "Leon"
+ }
+ """
+ 实际上，我们需要更通用的方法，来解决 JSON 解码和编码的键策略问题。它就是 keyEncodingStrategy 和 keyDecodingStrategy 的另一个枚举项 .custom(([CodingKey]) -> CodingKey>)，我们看到它接受一个 CodingKey 数组到 CodingKey 的函数作为关联值。
+ 那么 CodingKey 到底是什么呢？官方这样定义：一种被当做键 (Key) 用于编码和解码的类型。它是个 protocol，定义了以下四个方法，简写如下：
+ protocol CodingKey {
+   var stringValue: String { get }
+   init?(stringValue: String)
+
+   var intValue: Int? { get }
+   init?(intValue: Int)
+ }
+ 我们看到：
+ 可划分为 stringValue 和 intValue 两对，分别代表以 String 为键和以 Int 为键的两种情况。
+ 在每一种对方法中，定义对 String / Int 的双向转换。
+ 初始化函数是 failable 的。
+ stringValue 不是 Optional 的，intValue 是 Optional 的。
+
+ 回到需要解决的问题，我们需要传入的这个 ([CodingKey]) -> CodingKey> 函数，正是利用了 CodingKey 可以双向转换的特性，将一个 CodingKey 转换成另一种 CodingKey，所以实质上提供的是一个 map 函数
+ 输入参数可是个数组，这里解释一下：之所以是数组是为了提供给你到当前编解码位置的完整路径，在大多数情况下，我们只需要取数组最后一个 CodingKey 即可。
+ 默认情况在编码成 JSON 的时候，Encoder 会使用 Person.CodingKeys 进行编码，调用它的 stringValue，最终给出在实际 JSON 中当做键的字符串（驼峰命名风格的）。
+ 当使用 .custom 键编码策略的时候，就在上述过程中插入了一步：将 Person.CodingKeys 转变成了另一个 CodingKey（下面实现中的 SimpleCodingKey ），在负责转换的 map 函数中，将 stringValue 从 Person.CodingKeys 对象中取出，首字母变成大写，再用来构造 SimpleCodingKey，这时候实际用以 JSON 编码的 CodingKey 被替换成 SimpleCodingKey了（帕斯卡命名风格）。
+ struct SimpleCodingKey : CodingKey {
+     var stringValue: String
+     var intValue: Int?
+     
+     init(stringValue: String) {
+         self.stringValue = stringValue
+     }
+     
+     init(intValue: Int) {
+         self.stringValue = "\(intValue)"
+         self.intValue = intValue
+     }
+ }
+
+ extension JSONEncoder.KeyEncodingStrategy {
+     static var convertToPascalCase: JSONEncoder.KeyEncodingStrategy {
+         return .custom { codingKeys in
+             var str = codingKeys.last!.stringValue
+             guard let firstChar = str.first else {
+                 return SimpleCodingKey(stringValue: str)
+             }
+             let startIdx = str.startIndex
+             str.replaceSubrange(startIdx...startIdx,
+                                 with: String(firstChar).uppercased())
+             return SimpleCodingKey(stringValue: str)
+         }
+     }
+ }
+
+ let leon = Person(age: 18, firstName: "Leon")
+ let encoder = JSONEncoder()
+ encoder.keyEncodingStrategy = .convertToPascalCase
+ let resultData = try? encoder.encode(leon)
+
+ 这里有两处实现细节要注意一下：
+ SimpleCodingKey 的初始化方法不是 failable 的，但根据实现的要求，非 failable 的初始化方法被认定为实现了接口中的 failable 初始化方法
+ extension 中使用了语法糖，添加的 convertToPascalCase 实际上是个 static var，但可以用类似于 enum 实例的语法来使用。
+ 
+ 以上解决了编码部分，其实解码部分也是类似的，区别在于代码中的 uppercased 换成 lowercased。CodingKeys 的转换过程可以被描述为：_JSONKey 的对象需要转换成首字母小写的 SimpleCodingKey ，然后 SimpleCodingKey 再被拿去匹配 Person.CodingKeys
+ 
+ 泛型设计和元类型编程：我们在解码JSON的时候是这么写的：try? decoder.decode(Person.self, from: data)这里传入 Person.self 其实就涉及到了元类型编程了。这个函数是原型是：func decode<T>(_ type: T.Type, from data: Data) throws -> T where T : Decodable，如果要展开说，就是另一个话题了。我们可以在了解元类型设计的时候，想到这个范本。
+
+ 5.==========associatedtype的递归约束
+ -----Sequence 的关联类型
+ Swift 4.1 之前，我们是这样约束 Sequence 的 SubSequence 关联类型的：用注释。
+ protocol Sequence {
+   // SubSequences themselves must be Sequences...
+   associatedtype SubSequence
+   
+   // The subsequence conforms to Sequence...
+   func dropFirst(_ n: Int) -> Self.SubSequence
+ }
+ 在 Swift 4.1 之前，如果 Sequence 的关联类型 SubSequence 定义成 SubSequence : Sequence 这样的递归形式，就会报以下错误：
+ Type may not reference itself as a requirement，这就造成了实际的类型约束只能写成注释，而且需要在类型使用的地方都写明注释，叮嘱大家需要遵循的规范。
+ 
+ protocol Sequence {
+   associatedtype Element
+
+   associatedtype Iterator : IteratorProtocol
+     where Iterator.Element == Element
+
+   associatedtype SubSequence : Sequence = AnySequence<Element>
+     where Element == SubSequence.Element,
+           SubSequence.SubSequence == SubSequence
+  // ...
+ }
+ 在上面代码中，我们看到了3个关联类型，并且看到了一系列的约束，梳理如下：
+ Iterator 关联类型约束了它必须是个 IteratorProtocol，
+ Iterator 关联类型约束了它的Element跟Sequence的Element必须一致，建立起了关联类型间的连接。
+ SubSequence 关联类型约束了它必须是个 Sequence，这里形成了关联类型的约束的递归定义，也就是本文所提及的 Swift 4.1 的新特性。
+ SubSequence 关联类型约束了它的Element跟 Sequence的 Element一致。
+ SubSequence.Iterator.Element 关联类型，由于上述约束以及递归定义，自动和之前所提及的所有Element 保持了一致，因此无需显式申明。
+ SubSequence.SubSequence 与 SubSequence 是同一个类型。
+ SubSequence 的默认类型推断是 AnySequence，这就意味着 AnySequence<Element> 满足所有对 SubSequence 的要求，特别值得注意的是它对于上一条约束的满足： AnySequence 的 dropFirst 方法的返回值类型必须是 AnySequence。还有个值得一提的例子是：Array的 SubSequence 是ArraySlice，它也满足上述特征。
+ 
+ -----打造一个 DummySequence
+ struct DummySequence<Element>: Sequence {
+
+   typealias Iterator = AnyIterator<Element>
+       
+   typealias SubSequence = AnySequence<Element>
+     
+   func makeIterator() -> AnyIterator<Element> {
+     return AnyIterator<Element> { return nil }
+   }
+ }
+ 其实还有优化空间，两处的 typealias 也都可以删除，只剩下 makeIterator。第一处可以删除，是因为后续的makeIterator可以推导出此处的类型；第二处也可以删除，是因为 AnySequence<Element> 就是不指定时的默认选择类型。
+ 
+ AnySequence
+ AnyIterator
+ 
+ -----AnySequence
+ protocol List {
+   associatedtype Element
+   func element(at index: Int) -> Element?
+ }
+
+ struct IntArrayList: List {
+   func element(at index: Int) -> Int? {
+     return nil
+   }
+ }
+
+ struct IntLinkedList: List {
+   func element(at index: Int) -> Int? {
+     return nil
+   }
+ }
+
+ struct DoubleLinkedList: List {
+   func element(at index: Int) -> Double? {
+     return nil
+   }
+ }
+
+ 想写出以下的代码，如何定义intLists呢？
+ for l in intLists {
+     _ = l.element(at: 0)
+ }
+ // compile error
+ let intLists: [List] = [IntArrayList(), IntLinkedList()]
+ // compile error
+ let intLists2: [List<Int>] = [IntArrayList(), IntLinkedList()]
+ 
+ List不是泛型类型，仅仅是泛型约束。这时候就要出动 Type eraser 技术了
+ struct AnyList<Element>: List {
+     private let elementFunc: (Int) -> Element?
+     init<L>(_ base: L) where Element == L.Element, L : List {
+         elementFunc = base.element(at:)
+     }
+     func element(at index: Int) -> Element? {
+         return elementFunc(index)
+     }
+ }
+ 它是一个包装类型 (Wrapper)，所以它还有个名字叫做 Type-erased wrapper，在我看来它有两个作用：
+ 帮助隐藏具体类型
+ 用通用的泛型类型表达泛型约束
+ 
+ // 编译通过
+ let intLists = [AnyList(IntArrayList()),AnyList(IntLinkedList())]
+ for l in intLists {
+     _ = l.element(at: 0)
+ }
+
+ // 预期中的编译不过
+ let mixedLists = [AnyList(IntLinkedList()), AnyList(DoubleLinkedList())]
+ 在 Swift 标准库中，有许多 Type eraser，例如：AnySequence、AnyIterator、AnyHashable 等等
+
+
+ =====swift4.2:=====
+ 1.==========CaseIterable.allCases
+ -----合成枚举 allCases
+ enum Weekday : String, CaseIterable {
+     case monday, tuesday, wednesday, thursday, friday
+ }
+
+ print(Weekday.allCases)
+ 上述 Weekday 枚举声明成 enum Weekday : String, CaseIterable 的话（指定rawType），编译器也是能够自动合成的。
+ Swift 4.2 引入一个新的 protocol CaseIterable，它被用于合成简单枚举类型的 allCases 静态属性
+ 所谓“简单枚举类型”，指的是不带关联值的枚举类型。
+ Swift 支持一些标准库类型的自动合成，在Swift 4.1 中，我们曾就提到过 合成的Equatable 和 Hashable以及 Codable。所以 CaseIterable 是另一个支持自动合成的 -able 协议。
+ 然而，自动合成特性尽管方便，但是也会造成记忆成本，大家需要记住什么时候会合成而什么时候不会。
+ 
+ ----自实现 CaseIterable
+ 当无法自动合成的时候，我们可以自己实现 CaseIterable。例如，带关联值的枚举：
+
+ enum MartialStatus : CaseIterable {
+     case single
+     case married(spouse: String)
+     
+     static var allCases: [MartialStatus] {
+         return [.single, .married(spouse: "Leon")]
+     }
+ }
+ 再比如，某个case在某种情况下不可用，或者默认合成的实现不是你想要的时候，也可以自己实现。
+ enum MartialStatus : CaseIterable {
+     @available(*, unavailable)
+     case single
+     case married
+
+     static var allCases: [MartialStatus] { return [.married]}
+ }
+
+ print(MartialStatus.allCases)
+ 既然某些情况下编译器不能合成，那么我们完全可以自己添加 allCases 属性，而不声明实现 CaseIterable。首先，这样是可以的，因为以前就是这么做的。其次，你也有可能会失去一些其他方面针对 CaseIterable 协议设计的一些功能；当然到需要的时候，再通过extension来扩展声明实现也是可以的。
+ 
+ CaseIterable 如同 Equatable 和 Hashable 一样，是泛型约束，而不是泛型类型
+ public protocol CaseIterable {
+
+     /// A type that can represent a collection of all values of this type.
+     associatedtype AllCases : Collection where Self.AllCases.Element == Self
+
+     /// A collection of all values of this type.
+     static var allCases: Self.AllCases { get }
+ }
+ 编译器合成 CaseIterable 是使用了哪个具体的 Collection 类型呢
+ print(type(of:Weekday.allCases)) // 原来还是 Array<Weekday>
+ 
+ 2.==========Conditional Conformance 的更新
+ Conditional conformances express the notion that a generic type will conform to a particular protocol only when its type arguments meet certain requirements.
+
+ Conditional Conformance 表达的含义是：当一个泛型类型的类型参数满足某些条件时，该泛型类型实现了某个特定协议。
+ 举个例子，当 Array 类型的类型参数是 Equatable 的时候，我们希望 Array 自动成为 Equatable
+ extension Array: Equatable where Element: Equatable {
+   static func == (lhs: Array,  rhs: Array) -> Bool {
+     guard lhs.count == rhs.count else {
+       return false
+     }
+     for (i, v) in lhs.enumerated() {
+       if rhs[i] != v {
+         return false
+       }
+     }
+     return true
+   }
+ }
+ 这个扩展不仅可以用来直接比较一维数组，由于可以递归推断，同样可以比较多维数组：下面的 a1 和 a2 都是 Array<Array<Int>> 类型 ，由于 Int 是 Equatable ，所以 Array<Int> 也是 Equatable ，因此 Array<Array<Int>> 是Equatable，可以直接比较是否相等。
+ 还有一个非常重要的特性，就是它对于运行时 Conditional Conformance 的支持。
+ protocol P {
+   func doSomething()
+ }
+
+ struct S: P {
+   func doSomething() { print("S") }
+ }
+
+ extension Array: P where Element: P {
+   func doSomething() {
+     for value in self {
+       value.doSomething()
+     }
+   }
+ }
+
+ // compile-time
+ func doSomethingStatically<E: P>(_ value:Array<E>) {
+   value.doSomething()
+ }
+
+ // runtime
+ func doSomethingIfP(_ value: Any) {
+   if let p = value as? P {
+     p.doSomething()
+   }
+ }
+
+ doSomethingIfP([S(), S(), S()])
+ 我们看到了两个版本，前者是编译器确定了这个扩展的有效性；后者是 runtime 的时候做检查，它体现了 Conditional Conformance 对动态检查的支持。
+ 我们可以想象是自己是被传入的参数：我是个普通的 Array，只不过我的元素类型实现了 P。结果可以动态发现我作为 Array 也实现了 protocol P，并且拥有了新方法 doSomething 。哪怕我是被作为 Any 类型传入的，动态也能判断上述事实。我只是个 Array ，元素类型实现了 P 而已。 Conditional Conformance 的扩展使这一切成为可能。
+ ##
+ 在Swift中，可不可以写 as? Equatable，或者 var e : Equatable = 10 呢？其实是不能的，因为Equatable这样的protocol只能作为泛型的类型约束，而不能作为可以直接hold值的类型，原因是它有 associated type 或者Self；也没有Equatable<Int> 的写法，Equatable 不是泛型类型，只是泛型约束。
+ ##
+ 
+ Swift 4.2 中对 Hashable 也内置了一系列 Conditional Conformance：也就是当其类型参数是 Hashable 的时候 Optional, Array, Dictionary 和 Range 也是 Hashable
+ 
+ 3.==========Hashable 和 Hasher
+ -----Hashable 的 Conditional Conformance
+ 使用 Dictionary 和 Set 的时候要求用作 Key 的类型实现 Hashable 协议。由于大多数内置类型天生是 Hashable，因此大多数情况下，无需手动实现。
+ 但是对于一个自定义的类型，需要由我们来实现 Hashable
+ 编译器在一定条件下会帮助合成 Hashable 中的函数
+ struct Person: Hashable {
+   var age: Int
+   var name: String
+ }
+ 上述代码在 Swift 4.1 和 Swift 4.2 中都可以编译过，由于 Hashable is a Equatable，所以编译器实际上自动合成了 == 以及 hashValue 两个函数。但是下一个相似的例子却在 Swift 4.1 中编译不过，在 Swift 4.2 中可以编译过。
+ struct Person: Hashable {
+   var age: Int
+   var pets: [String]
+ }
+ 其实这是由于 [String] 在 Swift 4.1 中不是 Hashable，所以编译器无法合成；而在 Swift 4.2 中由于标准库中添加了一组 Hashable 的 Conditional Conformance 扩展，所以可以合成。其中包含：
+ extension Array : Hashable where Element : Hashable
+ 其含义是：当 Array 的元素是 Hashable 时，这个 Array 也是 Hashable：由于String 本身是 Hashable，所以[String] 在 Swift 4.2 中是 Hashable，编译器的自动合成得以继续。
+ 
+ 有关 Conditional Conformance,它属于泛型特性，不是标准库的特权，我们完全自己也可以定义。在 Swift 4.2 中，如果有重复的定义，编译器会给出警告。
+ 
+ -----简化 Hashable 的实现
+ 即便编译器合成 Hashable的情况在 Swift 4.2 中得到了进一步的改进，我们在很多情况下也不得不自己实现 Hashable：
+ class 类型声明 Hashable 时
+ extension 中声明 Hashable 时
+ 有数据成员需要排除出 hashValue 计算时
+ 自己能够提供更好的 hashValue 实现时
+ 
+ 一个好的 hashValue 实现在 Swift 4.1 中是怎么样的：
+ // Swift 4.1
+ struct Person: Hashable {
+   var age: Int
+   var name: String
+
+   var hashValue: Int {
+      return age.hashValue ^ name.hashValue &* 16777619
+   }
+ }
+ 这段代码要求开发人员对于如何计算一个哈希值非常专业：首先 ^ 是异或，&* 是防止乘法溢出 crash 的运算符，16777619 显然也不是一个随便选择的数字。
+ 所以简化 Hashable 第一个目的，是要简化 Hash 算法给程序员带来的心智负担。因此，在 Swift 4.2 中，实现同样的功能简化成为：
+ // Swift 4.2
+ struct Person: Hashable {
+   var age: Int
+   var name: String
+
+ func hash(into hasher: inout Hasher) {
+   hasher.combine(age)
+   hasher.combine(name)
+   }
+ }
+ 在这段代码中，转而实现的是 Hashable 中定义的新方法 func hash(into hasher: inout Hasher)，在这个方法的实现中，我们 99 % 的情况只要调用 hasher.combine，传入需要纳入 Hash 计算的 Hashable 数据成员即可。对于字节流，Hasher 提供另一个combine方法。我们来看一下 Hasher 的定义：
+ // Swift 4.2
+ public struct Hasher {
+  
+ public mutating func combine<H>(_ value: H) where H : Hashable
+ public mutating func combine(bytes: UnsafeRawBufferPointer)
+ public __consuming func finalize() -> Int
+ }
+ 而谁负责传入这个 Hasher 呢？其实是编译器自动生成的另一个 Hashable 的老方法 hashValue ，如下：
+ // Swift 4.2 supplied by the compiler
+ var hashValue: Int {
+   var hasher = Hasher()
+   self.hash(into: &hasher)
+   return hasher.finalize()
+ }
+ 最后调用 finalize 一次生成最后的计算结果。可以看到新的 Hashable 设计不仅简化了用户的实现代码，还将计算 Hash 的职责抽离，使得将来在不改变用户代码的情况下，也能在标准库中优化计算 Hash 的代码。
+ 
+ -----Hashable 的向后兼容
+ 由于 Hashable 作为协议加了一个新的方法， Swift 4.2 之前的代码还能编译过吗？答案是可以，编译器自动生成新的方法的实现如下：
+ // Supplied by the compiler:
+ func hash(into hasher: inout Hasher) {
+   hasher.combine(self.hashValue)
+ }
+ 因此，在 Swift 4.2 下，实现任意一个 Hashable 的函数都可以通过编译，但我们推荐实现新的 hash(into:) 函数。
+ 
+ -----Hashable 的性能
+ 我们需要了解我们自己的代码可能带来的潜在性能问题。
+ struct Point: Hashable {
+   var x: Int
+   var y: Int
+ }
+
+ struct Line: Hashable {
+   var begin: Point
+   var end: Point
+
+   func hash(into hasher: inout Hasher) {
+     hasher.combine(begin.hashValue) // potential performance issue
+     hasher.combine(end) // correct
+   }
+ }
+ 在这个例子中，我们不应当『提前』计算出 begin 的 hashValue，尽管这从结果上是可行的。而是应当像 end 那样仅仅像Hasher提出计算需求。那么combine 究竟做了什么呢？来看源码：
+ @inlinable
+ @inline(__always)
+ public mutating func combine<H: Hashable>(_ value: H) {
+   value.hash(into: &self)
+ }
+ combine仅仅是一个语法糖，实质上形成的是 Hashable.hash(into:)的层层调用。为了消除这个语法糖带来的函数调用性能影响，标准库将它的接口定义和实现统统作为模块的一部分暴露出来了，允许用户代码内联，这就是@inlinable的作用。而且只有实现稳定到与接口一样的程度，才应该这样声明。与@inlinable配合的是@usableFromInline，它同样作为模块ABI的一部分（但不作为API），@inlinable的函数可以调用@usableFromInline函数。这是Swift 4.2 的一个不常用的新特性，也是 Hashable 性能相关的另一方面。
+ 
+ -----Hashable 多次执行中的随机行为
+ hashValue 的值到底是什么
+ 在 Xcode 9 中，他永远是固定的；然而在 Xcode 10 中它在每次运行的时候数字都不一样。
+ 这是因为新的版本的默认行为是在程序每次执行的时候，加入不同的随机Seed，因此在多次运行过程中的结果是不同的，一次程序运行时候的多次1.hashValue的调用结果是保持相同的。这个默认行为可以通过将环境变量 SWIFT_DETERMINISTIC_HASHING 设置成 1 变回原先的方式，但是我们不推荐，因为 Hash 每次执行加入随机性是为了防止哈希碰撞的攻击，这对于特别是服务端上 的 Swift 程序是有很重要价值的。
+ 
+ =====swift5.0:=====
+ 1.=====Result<Success, Failure> 类型、Monad 和 Functor
+ 在Swift 5 之前，抛出和处理错误的标准做法是使用 throws try catch， 异步错误使用的是 completion: @escaping (ResponseType?, ErrorType?) -> Void 的形式进行回调。
+ 然而一些第三方库已经发现了缺乏一个泛型 Result<Success,Failure> 类型的不方便，纷纷实现了自己的 Result 类型以及相关的 Monad 和Functor 特性。
+ 
+ 实现这个类型并不需要 Swift 5 的其他特性，我们使用 Swift 4 就可以自己实现
+ -----类型定义
+ public enum Result<Success, Failure: Swift.Error> {
+   case success(Success)
+   case failure(Failure)
+ }
+ 以上是该类型的定义，首先它是个枚举类型，有两种值分别代表成功和失败；其次它有两个泛型类型参数，分别代表成功的值的类型以及错误类型；错误类型有一个类型约束，它必须实现 Swift.Error 协议。
+ 尽管这个类型设计看起来很简单，但它也是经过慎重考虑的，简单讨论一下其他两种类似的设计。
+ public enum Result<Success, Failure> {
+     case success(Success)
+     case failure(Failure)
+ }
+ 上面这个设计取消了错误类型的约束，它有可能变相鼓励用一个非 Swift.Error 的类型代表错误，比如 String 类型，这与 Swift 的现有设计背道而驰。
+ public enum Result<Success> {
+     case success(Success)
+     case failure(Swift.Error)
+ }
+ 第三种设计其实在很多第三方库中出现，对于failure 的情况仅用了 Swift.Error 类型进行约束。它的缺点是在实例化 Result 类型时候若用的是强类型的类型，会丢掉那个具体的强类型信息。
+ 
+ -----异步回调的应用
+ func dataTask(with url: URL, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) -> URLSessionDataTask
+ 
+ 在 Swift 5 中可以考虑被设计成：
+ func dataTask(with url: URL, completionHandler: @escaping (Result<(URLResponse, Data), Error>) -> Void) -> URLSessionDataTask
+ 获取到结果后，解包，根据成功或失败走不同路径。
+ URLSession.shared.dataTask(with: url) { (result: Result<(URLResponse, Data), Error>) in
+     case .success(let response):
+         handleResponse(response.0, data: response.1)
+     case .failure(let error):
+         handleError(error)
+     }
+ }
+ 
+ -----同步 throws 函数的应用
+ 在很多时候，我们并不喜欢在调用 throws 函数的时候直接处理 try catch，而是不打断控制流地将结果默默记录下来，因此这里包装类型 Result 也能派上用处。它提供了如下这个初始化函数。
+ extension Result where Failure == Swift.Error {
+   public init(catching body: () throws -> Success) {
+     do {
+       self = .success(try body())
+     } catch {
+       self = .failure(error)
+     }
+   }
+ }
+ 我们可以这样使用：
+ let config = Result {try String(contentsOfFile: configuration) }
+ 
+ 用Result的形式也会有不方便的情况。
+ 第一个代价是：try catch 控制流不能直接使用了
+ 第二个代价是：这跟 rethrows 函数设计也不默认匹配
+ 
+ throws 代表的是控制流语法糖，而 Result 代表的是状态。这两者很多情况下是可以转换的，上面说了 throws 转成 Result，下面看一下 Result 如何转成 throws，Result 的 get 方法：
+ public func get() throws -> Success {
+   switch self {
+   case let .success(success):
+     return success
+   case let .failure(failure):
+     throw failure
+   }
+ }
+ throws 或者是 返回Result 这两种方式都是可行的
+ 一般情况下：推荐设计的时候使用 throws，在使用需要的时候转成状态 Result。
+ 
+ -----Functor 和 Monad
+ Functor 和 Monad 都是函数式编程的概念。简单来说，Functor意味着实现了 map 方法，而Monad意味着实现了flatMap。因此 Optional 类型和 Array 类型都既是 Functor 又是 Monad，与Result一样，它们都是一种复合类型，或者叫 Wrapper 类型。
+
+ map 方法：传入的 transform 函数的 入参是 Wrapped 类型，返回的是 Wrapped 类型
+ flatMap 方法：传入的 transform 函数的 入参是 Wrapped 类型，返回的是 Wrapper 类型
+ Result作为 Functor 和 Monad 类型有 map, mapError, flatMap, flatMapError 四个方法，实现如下：
+ public func map<NewSuccess>(
+   _ transform: (Success) -> NewSuccess
+ ) -> Result<NewSuccess, Failure> {
+   switch self {
+   case let .success(success):
+     return .success(transform(success))
+   case let .failure(failure):
+     return .failure(failure)
+   }
+ }
+ 
+ public func mapError<NewFailure>(
+   _ transform: (Failure) -> NewFailure
+ ) -> Result<Success, NewFailure> {
+   switch self {
+   case let .success(success):
+     return .success(success)
+   case let .failure(failure):
+     return .failure(transform(failure))
+   }
+ }
+ 
+
+ public func flatMap<NewSuccess>(
+   _ transform: (Success) -> Result<NewSuccess, Failure>
+ ) -> Result<NewSuccess, Failure> {
+   switch self {
+   case let .success(success):
+     return transform(success)
+   case let .failure(failure):
+     return .failure(failure)
+   }
+ }
+ 
+ public func flatMapError<NewFailure>(
+   _ transform: (Failure) -> Result<Success, NewFailure>
+ ) -> Result<Success, NewFailure> {
+   switch self {
+   case let .success(success):
+     return .success(success)
+   case let .failure(failure):
+     return transform(failure)
+   }
+ }
+ */
 
 // MARK: 直播 && 音视频
 // https://www.jianshu.com/p/7d1f6c20799d
@@ -40,6 +875,7 @@
 
 // MARK: Swift 语法规范 && SwiftLint
 // https://github.com/github/swift-style-guide
+// https://google.github.io/swift/
 /**
  多态 可以通过 协议 实现
  
@@ -90,8 +926,14 @@
  Build Settings -> Swift Language Version
  */
 
+// MARK: Swift 协议
+// https://www.jianshu.com/p/cd332fe277c2
+
 // MARK: Swift Blog
 // https://www.jianshu.com/u/4d2db3bb937c
+// https://www.jianshu.com/u/1e877b3dcc34
+// https://github.com/dks333/Tiktok-Clone
+// https://www.jianshu.com/u/23dd8d9701bf
 
 // MARK: 国外blog
 // https://www.raywenderlich.com/10978716-ios-apprentice
@@ -108,11 +950,17 @@
 // https://www.jianshu.com/p/c845dc2f794a
 // MARK: Keychain
 // https://github.com/kishikawakatsumi/KeychainAccess
+// https://github.com/evgenyneu/keychain-swift
 // MARK: XCGLogger
 // https://github.com/DaveWoodCom/XCGLogger
 // MARK: SwiftyStoreKit
 // MARK: FSCalendar
 // MARK: FSPagerView
+// MARK: MarqueeLabel
+// https://github.com/cbpowell/MarqueeLabel
+
+// MARK: URLSession-tutorial
+// https://www.raywenderlich.com/3244963-urlsession-tutorial-getting-started
 
 // MARK: 工具
 // Zeplin Lookin3
@@ -434,6 +1282,8 @@
 // MARK: ===音视频===Audio Unit
 // https://www.jianshu.com/p/5d18180c69b8
 // https://www.jianshu.com/p/f859640fcb33
+// MARK: ===音视频===
+// https://xiaozhuanlan.com/topic/7950436182
 
 // MARK: APP重签名
 /**
@@ -495,6 +1345,16 @@
  RxSwift: 响应式编程
  Rx 是 ReactiveX 的缩写 (reactive:有反应的)
  http://reactivex.io/
+ */
+
+// MARK: Apple Configurator2 获取ipa包
+// ~/资源库/Group Containers/K36BKF7T3D.group.com.apple.configurator/Library/Caches/Assets/TemporaryItems/MobileApps/
+// https://github.com/devcxm/iOS-Images-Extractor 可以获取Assets.car中的资源
+
+// MARK: Debug
+/**
+ 使用私有API _ivarDescription查看UIPageControl对象的属性
+ po [tmp _ivarDescription]
  */
 
 // Swift4.0
@@ -1118,6 +1978,25 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        
+        // MARK: NSMutableArray sort
+        let arr = NSMutableArray()
+        arr.add(10)
+        arr.add(3)
+        arr.add(8)
+        arr.sort { (num1, num2) -> ComparisonResult in
+            if let n1 = num1 as? Int, let n2 = num2 as? Int {
+                if n1 < n2 {
+                    return .orderedAscending
+                }
+                if n1 > n2 {
+                    return .orderedDescending
+                }
+            }
+            
+            return .orderedSame
+        }
+        print(arr)// 3, 8, 10
 
         print("AppDelegate: \(#file): \(#function)")
         

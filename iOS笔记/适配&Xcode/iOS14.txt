@@ -1,0 +1,102 @@
+=================================隐私适配:
+iOS14最重要的更新之一：用户隐私和安全。
+
+1.
+广告标识符IDFA全称Identity for Advertisers，用来标记用户以便于投放广告、个性化推荐等。
+
+iOS13及以前，系统会默认为用户 开启 广告追踪权限。
+#import <AdSupport/AdSupport.h> 
+- (void)obtainIDFA {
+    // 使用原方式访问 IDFA
+    if ([[ASIdentifierManager sharedManager] isAdvertisingTrackingEnabled]) {
+        NSString *idfaStr = [[ASIdentifierManager sharedManager] advertisingIdentifier].UUIDString;
+        NSLog(@"idfaStr - %@", idfaStr);
+    }
+}
+iOS14中，系统会默认为用户 关闭 广告追踪权限。
+且以上isAdvertisingTrackingEnabled判断用户是否允许被追踪的方法被废弃：
+
+首先在 info.plist 中配置权限：
+key：NSUserTrackingUsageDescription
+value：获取设备信息用以精准推送您喜欢的内容
+#import <AdSupport/AdSupport.h>
+#import <AppTrackingTransparency/AppTrackingTransparency.h>
+ 
+- (void)obtainIDFA {
+    // iOS14方式访问 IDFA
+    if (@available(iOS 14, *)) {
+        [ATTrackingManager requestTrackingAuthorizationWithCompletionHandler:^(ATTrackingManagerAuthorizationStatus status) {
+            if (status == ATTrackingManagerAuthorizationStatusAuthorized) {
+                NSString *idfaStr = [[ASIdentifierManager sharedManager] advertisingIdentifier].UUIDString;
+                NSLog(@"idfaStr - %@", idfaStr);
+            }
+        }];
+    } else {
+        // 使用原方式访问 IDFA
+        if ([[ASIdentifierManager sharedManager] isAdvertisingTrackingEnabled]) {
+            NSString *idfaStr = [[ASIdentifierManager sharedManager] advertisingIdentifier].UUIDString;
+            NSLog(@"idfaStr - %@", idfaStr);
+        }
+    }
+}
+最后启动应用弹出申请，经过用户同意授权之后，才能最终获取正确的IDFA信息
+
+2.相册
+iOS13及以前，App请求用户相册授权：用户同意App获取相册信息，当前App就可以获取到用户的整个照片库信息
+iOS14新增了Limited Photo Library Access 模式，在授权弹窗中增加了 选择照片 选项。用户可以选择开放照片库或者特定的相册给App，保证用户隐私。
+
+相册新增选择权限类型 PHAuthorizationStatusLimited ：当页面弹出请求权限 Alert 时，会有 Select Photos... 选项，用户选择该选项时，会弹出页面供用户选择允许App访问的图片/照片。
+适配要点：权限提示框会在每次冷启动后打开相册时重新弹出，可以在 info.plist 中设置 PHPhotoLibraryPreventAutomaticLimitedAccessAlert 选项为 YES ，关闭提示，调用下述方法手动选择：
+[[PHPhotoLibrary sharedPhotoLibrary] presentLimitedLibraryPickerFromViewController:self];
+
+3.定位
+OS13及以前，App请求用户定位授权：用户同意App获取定位信息，当前App就可以获取到用户的精确定位。
+iOS14新增了精确定位和模糊定位的概念，默认精确定位，用户可以手动关闭精确定位以开启模糊定位，可以选择允许一次或使用App时允许。
+
+CLAccuracyAuthorization
+
+iOS14系统定位配置
+倘若App需要精确定位：
+首先在 info.plist 中配置权限：
+NSLocationTemporaryUsageDescriptionDictionary：
+key：preciseKey
+value：申请定位用于给您做精准推荐
+
+#import <CoreLocation/CoreLocation.h>
+ 
+- (void)obtainLocation {
+    // iOS14方式请求 精确定位
+    if (@available(iOS 14.0, *)) {
+        CLLocationManager *locationManager = [[CLLocationManager alloc] init];
+        [locationManager requestTemporaryFullAccuracyAuthorizationWithPurposeKey:@"preciseKey" completion:^(NSError * _Nullable error) {
+ 
+        }];
+    } else {
+        // Fallback on earlier versions
+    }
+}
+最后启动应用弹出申请，经过用户同意授权之后，才能最终获取正确的精确定位
+
+如果功能强依赖精确定位，可以在需要的时候调用 [CALocationMnanger requestTemporaryFullAccuracyAuthorizationWithPurposeKey:] 单独请求一次精确定位，用户可以选择拒绝授权。所需参数 purposeKey 需要在 info.plist 中设置 NSLocationTemporaryUsageDescriptionDictionary 字典，key 为 purposeKey ， value 为对应的话述。
+
+4.麦克风和相机
+iOS14中App在使用麦克风或相机时右上角会有提示：黄点(麦克风)、绿点(相机)，无法隐藏。
+iOS14麦克风和相机亮点提示
+
+5.剪切板
+iOS14中App在读取剪切板内容时，会有toast提示，从顶部弹出。例如：手机淘宝 - 粘贴自：微信
+
+=================================控件适配:
+1.UITableViewCell
+contentView
+iOS14推荐使用[cell.contentView addSubview:];方式添加控件。
+因为UITableViewCell中使用 [cell addSubview:]方式添加的控件，会显示在contentView的下层，控件会被contentView遮挡并无法响应交互事件。
+
+2.UIDatePicker
+iOS13及以前，UIDatePicker样式只有轮播样式
+iOS14中UIDatePicker样式有四种，可根据需求设置，默认是UIDatePickerStyleAutomatic，会自动选择当前平台和模式可用的最佳样式。
+
+需要使用轮播样式，设置为UIDatePickerStyleWheels即可：
+self.datePicker.preferredDatePickerStyle = UIDatePickerStyleWheels;
+
+3.

@@ -1,0 +1,61 @@
+Background Fetch 后台应用程序刷新的使用
+
+在开始创建 Background Fetch 功能，TARGETS->Capabilities->Background Modes，勾选 Background fetch，如果还需支持后台远程推送，则再勾选下面的 Remote notifications 即可
+
+首先在 AppDelegate 中的 didFinishLaunchingWithOptions: 方法中调用
+application.setMinimumBackgroundFetchInterval(UIApplication.backgroundFetchIntervalMinimum)
+
+//This property has no effect for apps that do not have the UIBackgroundModes key with the fetch value in its Info.plist file.
+// iOS7.0-iOS13.0
+setMinimumBackgroundFetchInterval
+
+
+然后执行下面的代理方法，在该代理方法中请求相关数据并刷新UI，
+performFetchWithCompletionHandler
+在这里还要提下 UIBackgroundFetchResult 是个枚举值， 有三个值， 分别为：
+UIBackgroundFetchResultNewData  成功拉取数据    
+UIBackgroundFetchResultNoData     没有新数据
+UIBackgroundFetchResultFailed         拉取数据失败或者超时
+
+==============================================后台处理任务的几种方式
+1.
+UIBackgroundTaskIdentifier
+这种方式不能让应用真正的一直在后台活下去，只能让应用延缓被挂起的时间，在应用已经进入后台，做一些善后工作，保存一些现场数据。
+
+监听UIApplicationDidEnterBackgroundNotification通知，或者在applicationDidEnterBackground方法中加入以下代码。
+UIApplication *application = [UIApplication  performSelector:@selector(sharedApplication)];
+__block UIBackgroundTaskIdentifier bgTask = [application beginBackgroundTaskWithExpirationHandler:^{
+    // Clean up any unfinished task business by marking where you
+    // stopped or ending the task outright.
+    [application endBackgroundTask:bgTask];
+    bgTask = UIBackgroundTaskInvalid;
+}];
+
+// Start the long-running task and return immediately.
+[self cleanDiskWithCompletionBlock:^{
+    [application endBackgroundTask:bgTask];
+    bgTask = UIBackgroundTaskInvalid;
+}];
+
+cleanDiskWithCompletionBlock在该方法中启动异步线程，立刻返回，在异步线程中，最后执行完成回调的block
+
+2.Background Mode
+(1)Background Fetch
+后台应用刷新，在手机设置->通用->后台应用刷新，打开之后，应用可以在后台不定时的刷新内容。因为这个机制也是由苹果统一管理，而且调用时间也是不确定的，所以开发者很难调试系统什么时候会分配你时间允许你刷新内容。
+所以可以应用在实时性不高的场合
+
+通过application的属性去查应用是否开启后台刷新功能backgroundRefreshStatus，返回值
+UIBackgroundRefreshStatusRestricted, //< unavailable on this system due to device configuration; the user cannot enable the feature
+UIBackgroundRefreshStatusDenied, //< explicitly disabled by the user for this application
+UIBackgroundRefreshStatusAvailable //< enabled for this application
+
+但XCode也提供了Fetch事件的调试办法，在XCode上运行程序后，在Debug->Simulate Background Fetch.
+还有一种情况是app没有运行(不在前台也不在后台)，被Fetch事件唤醒执行.这种情况的测试方法如下:
+Product->Scheme->Edit scheme 在Debug模式选中Options,点选Launch due to a background fetch event，运行即可
+
+(2)Remote notifications
+苹果的APNS(Apple Push Notifications Server)连结着所有的苹果可接收推送设备，如果服务器想主动给应用发送一些消息，必须通过APNS。
+iOS7之后，可以推送来了之后在后台刷新应用内容，在Background Mode中挑勾Remote notifications
+
+(3)Location updates
+后台定位的应用现在也好多，可以在用户跑步或者骑行的时候开启，在后台记录下应用跑步的路程。
