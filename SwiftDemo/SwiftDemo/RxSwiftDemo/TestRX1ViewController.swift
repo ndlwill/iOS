@@ -96,6 +96,12 @@ class TestRX1ViewController: UIViewController {
         timer.subscribe(onNext: { (num) in
             
             }).disposed(by: disposeBag)
+        
+        
+//        let disposable = timer.subscribe(onNext: { (num) in
+//
+//        })
+//        disposable.dispose()// 销毁
     }
     
     func testObserver() {

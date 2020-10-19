@@ -7,24 +7,34 @@
 //
 
 import UIKit
+import RxSwift
+//import RxCocoa
 
 class TestRX2ViewController: UIViewController {
+    
+    var disposeBag = DisposeBag.init()
+    
+    var userNameTF: UITextField!
+    var passwordTF: UITextField!
+    var userNameValidLabel: UILabel!
+    var loginButton: UIButton!
 
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        // Do any additional setup after loading the view.
+        let userNameValid = userNameTF.rx.text.orEmpty.map { (text) -> Bool in
+            return text.count >= 5
+        }
+        let passwordValid = passwordTF.rx.text.orEmpty.map { (text) -> Bool in
+            return text.count >= 6
+        }
+        userNameValid.bind(to: userNameValidLabel.rx.isHidden).disposed(by: disposeBag)
+        
+        Observable.combineLatest(userNameValid, passwordValid) {
+            $0 && $1
+            }
+        .bind(to: loginButton.rx.isEnabled)
+        .disposed(by: disposeBag)
     }
-    
-
-    /*
-    // MARK: - Navigation
-
-    // In a storyboard-based application, you will often want to do a little preparation before navigation
-    override func prepare(for segue: UIStoryboardSegue, sender: Any?) {
-        // Get the new view controller using segue.destination.
-        // Pass the selected object to the new view controller.
-    }
-    */
 
 }
