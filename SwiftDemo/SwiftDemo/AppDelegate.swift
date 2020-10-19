@@ -7,6 +7,18 @@
 //  Copyright © 2019 dzcx. All rights reserved.
 //
 
+// MARK: 图片裁剪功能
+// https://juejin.im/post/6844904006649987085
+
+// MARK: Swift Package Manager(SPM) 
+
+// MARK: module.modulemap
+/*
+ If you're using Swift want to use modules, drag `module.modulemap` into
+your project and update your User Header Search Paths to contain the
+directory that contains your module map.
+ */
+
 // MARK: Swift 条件编译
 /**
  其中保存了target "TestSwift”的所有的环境变量
