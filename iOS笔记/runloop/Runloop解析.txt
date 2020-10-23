@@ -1,0 +1,308 @@
+====================runloop啥时候开启
+从app的main函数中的UIApplicationMain走进去，就一直在里面循环了
+
+进入UIApplicationMain后，就会接着调用application:didFinishLaunchingWithOptions:方法，在这个方法里就开启runloop，通过监听runloop状态，在***即将进入runloop***回调打上断点，看堆栈即可得知
+
+====================runloop对象是怎么存储的
+获取Runloop的入参是线程对象，可以判定，线程与runloop一一对应的关系
+
+CF_EXPORT CFRunLoopRef _CFRunLoopGet0(pthread_t t) {
+// 如果参数为空，那么就默认是主线程
+if (pthread_equal(t, kNilPthreadT)) {
+        t = pthread_main_thread_np();
+    }
+
+__CFLock(&loopsLock);
+
+// static CFMutableDictionaryRef __CFRunLoops = NULL;
+// 存放Runloop对象的是字典
+// 判断这个Runloop字典存在不，不存在就创建一个，并将主线程Runloop加进入
+if (!__CFRunLoops) {
+        __CFUnlock(&loopsLock);
+        
+        CFMutableDictionaryRef dict = CFDictionaryCreateMutable(kCFAllocatorSystemDefault, 0, NULL, &kCFTypeDictionaryValueCallBacks);
+        CFRunLoopRef mainLoop = __CFRunLoopCreate(pthread_main_thread_np());
+        CFDictionarySetValue(dict, pthreadPointer(pthread_main_thread_np()), mainLoop);
+        
+        if (!OSAtomicCompareAndSwapPtrBarrier(NULL, dict, (void * volatile *)&__CFRunLoops)) {
+            CFRelease(dict);
+        }
+        
+        CFRelease(mainLoop);
+        
+        __CFLock(&loopsLock);
+    }
+
+// 根据线程去这个字典取Runloop
+CFRunLoopRef loop = (CFRunLoopRef)CFDictionaryGetValue(__CFRunLoops, pthreadPointer(t));
+__CFUnlock(&loopsLock);
+
+// 如果不存在，就创建一个Runloop，并加到字典中
+if (!loop) {
+        CFRunLoopRef newLoop = __CFRunLoopCreate(t);
+        __CFLock(&loopsLock);
+        loop = (CFRunLoopRef)CFDictionaryGetValue(__CFRunLoops, pthreadPointer(t));
+        if (!loop) {
+            CFDictionarySetValue(__CFRunLoops, pthreadPointer(t), newLoop);
+            loop = newLoop;
+        }
+        // don't release run loops inside the loopsLock, because CFRunLoopDeallocate may end up taking it
+        __CFUnlock(&loopsLock);
+        CFRelease(newLoop);
+    }
+
+return loop;
+}
+
+实现思路
+1.先判断这个全局字典存不存在，不存在，创建一个，并将主线程的runloop加进去
+2.直接去字典里取这个loop
+3.如果loop不存在，就创建一个loop加入到全局字典中
+
+runloop对象和线程是一一对应的关系
+runloop对象是储存在一个全局字典中的，这个全局字段的key是线程对象，value是runloop对象
+
+====================runloop怎么跑起来的，又是怎么退出的
+runloop有六个状态变化
+
+typedef CF_OPTIONS(CFOptionFlags, CFRunLoopActivity) {
+    kCFRunLoopEntry         = (1UL << 0), // 即将进入Loop
+    kCFRunLoopBeforeTimers  = (1UL << 1), // 即将处理 Timer
+    kCFRunLoopBeforeSources = (1UL << 2), // 即将处理 Source
+    kCFRunLoopBeforeWaiting = (1UL << 5), // 即将进入休眠
+    kCFRunLoopAfterWaiting  = (1UL << 6), // 刚从休眠中唤醒
+    kCFRunLoopExit          = (1UL << 7), // 即将退出Loop
+};
+
+当启动runloop的时候，就是监听输入源（端口port、source0、source1）、定时器、如果有事件，处理事件，没有就休眠
+
+使用run方法启动runloop的情况
+我们先从开启runloop的函数入手,从CFRunLoopRun函数，我们看到了runloop确实是一个do-while操作，那么里面的CFRunLoopRunSpecific每走一次，就算runloop迭代一次，
+那么这个runloop迭代一次后，会退出runloop,退出runloop后，因为CFRunLoopRun函数有do-while操作，所以又会重新进入runloop
+void CFRunLoopRun(void) {	/* DOES CALLOUT */
+    int32_t result;
+    do {
+        result = CFRunLoopRunSpecific(CFRunLoopGetCurrent(), kCFRunLoopDefaultMode, 1.0e10, false);
+        CHECK_FOR_FORK();
+    } while (kCFRunLoopRunStopped != result && kCFRunLoopRunFinished != result);
+}
+
+CFRunLoopRunSpecific中做了一些前置判断，比如判断当前Mode为空，直接return，这个也可以说明一点***启动runloop之前，runloop中一定要有输入源或者定时器***
+SInt32 CFRunLoopRunSpecific(CFRunLoopRef rl, CFStringRef modeName, CFTimeInterval seconds, Boolean returnAfterSourceHandled) {     /* DOES CALLOUT */
+
+    ...
+    
+    //  前置判断，比如判断当前`Mode`为空，直接`return`
+    if (NULL == currentMode || __CFRunLoopModeIsEmpty(rl, currentMode, rl->_currentMode)) {
+        Boolean did = false;
+        if (currentMode) __CFRunLoopModeUnlock(currentMode);
+        __CFRunLoopUnlock(rl);
+        return did ? kCFRunLoopRunHandledSource : kCFRunLoopRunFinished;
+    }
+    
+    
+   ...
+   
+    // 回调即将进入runloop
+    if (currentMode->_observerMask & kCFRunLoopEntry ) __CFRunLoopDoObservers(rl, currentMode, kCFRunLoopEntry);
+    
+    // 进入runloop
+    result = __CFRunLoopRun(rl, currentMode, seconds, returnAfterSourceHandled, previousMode);
+    
+    // 即将退出runloop
+    if (currentMode->_observerMask & kCFRunLoopExit ) __CFRunLoopDoObservers(rl, currentMode, kCFRunLoopExit);
+    
+    ...
+    
+    return result;
+}
+
+// 再看下__CFRunLoopRun函数
+static int32_t __CFRunLoopRun(CFRunLoopRef rl, CFRunLoopModeRef rlm, CFTimeInterval seconds, Boolean stopAfterHandle, CFRunLoopModeRef previousMode) {
+	do {
+		// 监听source、timer
+		if (rlm->_observerMask & kCFRunLoopBeforeTimers) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeTimers);
+        if (rlm->_observerMask & kCFRunLoopBeforeSources) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeSources);
+        
+       // 处理source0
+       Boolean sourceHandledThisLoop = __CFRunLoopDoSources0(rl, rlm, stopAfterHandle);
+       
+       // 即将进入休眠
+       if (!poll && (rlm->_observerMask & kCFRunLoopBeforeWaiting)) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeWaiting);
+
+		...
+		
+		 // 退出runloop的条件
+		 if (sourceHandledThisLoop && stopAfterHandle) {
+		 	  // 处理完source后sourceHandledThisLoop会为YES
+		 	  // stopAfterHandle，如果是CFRunloop调用的话，是为NO
+		 	  // 可以回头看下CFRunLoopRun函数
+		 	  // 
+            retVal = kCFRunLoopRunHandledSource;
+        } else if (timeout_context->termTSR < mach_absolute_time()) {
+            // 自身超时时间到了
+            retVal = kCFRunLoopRunTimedOut;
+        } else if (__CFRunLoopIsStopped(rl)) {
+            // 被外部调用CFRunloop停止
+            __CFRunLoopUnsetStopped(rl);
+            retVal = kCFRunLoopRunStopped;
+        } else if (rlm->_stopped) {
+            // 被 _CFRunLoopStopMode 停止
+            rlm->_stopped = false;
+            retVal = kCFRunLoopRunStopped;
+        } else if (__CFRunLoopModeIsEmpty(rl, rlm, previousMode)) { // 检查上一个 mode 有没有执行完所有事件源
+            retVal = kCFRunLoopRunFinished;
+        }
+       
+	} while(0 = retVal);
+}
+
+退出runloop有四个条件
+入参stopAfterHandle为YES的时候，那么处理完source就会退出runloop
+自身超时时间到了
+被外部调用CFRunloop停止
+被 _CFRunLoopStopMode 停止
+
+CFRunLoopRun指定stopAfterHandle为NO,说明使用run方法开启runloop，处理完source后不会退出runloop
+
+如果是使用CFRunLoopRunInMode则可以指定是否需要处理完source后就退出runloop
+
+====================Runloop do-while
+do-while的过程中，做了以下操作:
+监听source（source1是基于port的线程通信(触摸/锁屏/摇晃等)，source0是不基于port的，包括：UIEvent、performSelector），监听到就处理
+监听timer的事件，监听到就处理
+没有source和timer的时候，就休眠，休眠不是不监听，还是保持监听的，只是当有事件的时候，才唤醒，继续处理
+
+// HID: Human Interface Device HID设备是直接与人交互的设备，例如键盘,触摸屏
+当我们触发了事件（触摸/锁屏/摇晃等）后，由IOKit.framework生成一个 IOHIDEvent事件，而IOKit是苹果的硬件驱动框架，
+由它进行底层接口的抽象封装与系统进行交互传递硬件感应的事件，并专门处理用户交互设备，由IOHIDServices和IOHIDDisplays两部分组成，
+其中IOHIDServices是专门处理用户交互的，它会将事件封装成IOHIDEvents对象，接着用mach port转发给需要的App进程，
+随后 Source1就会接收IOHIDEvent，之后再回调__IOHIDEventSystemClientQueueCallback()，
+__IOHIDEventSystemClientQueueCallback()内触发Source0，Source0 再触发 _UIApplicationHandleEventQueue()。
+所以触摸事件看到是在 Source0 内的。
+
+总结：触摸事件先通过 mach port 发送，封装为 source1，之后又转换为 source0
+
+1.一个runloop对应一个线程，多个mode，一个mode下对应多个source、observer、timer
+
+struct __CFRunLoop {
+    pthread_t _pthread; // 线程对象
+    CFMutableSetRef _commonModes; // 
+    CFMutableSetRef _commonModeItems;
+    CFRunLoopModeRef _currentMode;
+    CFMutableSetRef _modes;
+    ...
+    // 简化
+};
+
+struct __CFRunLoopMode {
+    CFMutableSetRef _sources0;
+    CFMutableSetRef _sources1;
+    CFMutableArrayRef _observers;
+    CFMutableArrayRef _timers;
+    ...
+    // 简化
+};
+
+常见有五种mode：
+kCFRunLoopDefaultMode: App的默认 Mode，通常主线程是在这个 Mode 下运行的。
+UITrackingRunLoopMode: 界面跟踪 Mode，用于 ScrollView 追踪触摸滑动，保证界面滑动时不受其他 Mode 影响。
+UIInitializationRunLoopMode: 在刚启动 App 时第进入的第一个 Mode，启动完成后就不再使用。
+GSEventReceiveRunLoopMode: 接受系统事件的内部 Mode，通常用不到。
+kCFRunLoopCommonModes: 这是一个占位的 Mode，没有实际作用。
+
+子线程不自动开启runloop，手动开启runloop前，必须得有输入源和定时器（输入源就是通过监听端口，可以获取不同的事件），
+通过CFRunloop源码中的CFRunLoopRunSpecific函数，其中判断了当mode为null或者modeItem为空，直接return
+
+====================监听Runloop的状态
+CF_EXPORT CFRunLoopObserverRef CFRunLoopObserverCreate(CFAllocatorRef allocator, CFOptionFlags activities, Boolean repeats, CFIndex order, CFRunLoopObserverCallBack callout, CFRunLoopObserverContext *context);
+
+函数指针:
+static void runLoopOserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActivity activity, void *info)
+{
+   //void *info正是我们要用来与OC传值的,这边可以转成OC对象,前面我们传进来的时候是self
+    RunloopObserver *target = (__bridge RunloopObserver *)(info);//void *info即是我们前面传递的self(ViewController)
+    
+    if (target.callback) {
+        target.callback(observer, activity);
+    }
+}
+
+定义CFRunLoopObserverContext对象,其实这个参数是用于通信的
+// 从CFRunLoopObserverRef点进去找
+    
+    typedef struct {
+        CFIndex    version; // 传0，不知道是什么
+        void *    info; // 数据传递用的，void *，指就是可以接受所有指针
+        const void *(*retain)(const void *info); // 引用
+        void    (*release)(const void *info); // 回收
+        CFStringRef    (*copyDescription)(const void *info); // 描述，没用到
+    } CFRunLoopObserverContext;
+
+创建监听:
+//创建一个监听
+static CFRunLoopObserverRef observer;
+    
+// CFRunLoopObserverCreate参数。1.不懂  2.监听runloop变化状态  3.是否重复监听  4.不懂，传0 5.函数指针  6.CFRunLoopObserverContext对象
+observer = CFRunLoopObserverCreate(NULL, kCFRunLoopAllActivities, YES, 0, &runLoopOserverCallBack, &context);
+    
+//注册监听
+CFRunLoopAddObserver(runLoopRef, observer, kCFRunLoopCommonModes);
+    
+//销毁
+CFRelease(observer);
+    
+====================常驻线程以及怎么销毁常驻线程
+先说下performSelector和子线程的,perform...AfterDelay和perform..onThread都需要在开启runloop的线程执行
+因为其实现原理，都是往runloop添加一个不重复的定时器
+
+
+
+
+====================RunLoop的退出方式
+通过[NSRunLoop currentRunLoop]或者CFRunLoopGetCurrent()可以获取当前线程的runloop。
+
+启动一个runloop有以下三种方法：
+- (void)run;
+- (void)runUntilDate:(NSDate *)limitDate；
+- (void)runMode:(NSString *)mode beforeDate:(NSDate *)limitDate;
+
+这三种方式无论通过哪一种方式启动runloop，如果没有一个输入源或者timer附加于runloop上，runloop就会立刻退出。
+
+(1) 第一种方式，runloop会一直运行下去，在此期间会处理来自输入源的数据，并且会在NSDefaultRunLoopMode模式下重复调用runMode:beforeDate:方法；
+(2) 第二种方式，可以设置超时时间，在超时时间到达之前，runloop会一直运行，在此期间runloop会处理来自输入源的数据，并且也会在NSDefaultRunLoopMode模式下重复调用runMode:beforeDate:方法；
+(3) 第三种方式，runloop会运行一次，超时时间到达或者第一个input source被处理，则runloop就会退出。
+前两种启动方式会重复调用runMode:beforeDate:方法。
+
+退出RunLoop的方式:
+第一种启动方式的退出方法
+文档说，如果想退出runloop，不应该使用第一种启动方式来启动runloop。
+如果runloop没有input sources或者附加的timer，runloop就会退出。
+虽然这样可以将runloop退出，但是苹果并不建议我们这么做，因为系统内部有可能会在当前线程的runloop中添加一些输入源，所以通过手动移除input source或者timer这种方式，并不能保证runloop一定会退出。
+
+第二种启动方式runUntilDate:
+可以通过设置超时时间来退出runloop
+
+第三种启动方式runMode:beforeDate:
+通过这种方式启动，runloop会运行一次，当超时时间到达或者第一个输入源被处理，runloop就会退出。
+如果我们想控制runloop的退出时机，而不是在处理完一个输入源事件之后就退出，那么就要重复调用runMode:beforeDate:，
+具体可以参考苹果文档给出的方案，如下：
+
+NSRunLoop *theRL = [NSRunLoop currentRunLoop];
+myPort = (NSMachPort *)[NSMachPort port];
+[theRL addPort:_port forMode:NSDefaultRunLoopMode];
+
+BOOL shouldKeepRunning = YES; // global
+while (shouldKeepRunning && [theRL runMode:NSDefaultRunLoopMode beforeDate:[NSDate distantFuture]]);
+
+//关闭runloop的地方
+- (void)quitLoop
+ {
+    shouldKeepRunning = NO;
+    CFRunLoopStop(CFRunLoopGetCurrent());
+}
+
+总之:
+如果不想退出runloop可以使用第一种方式启动runloop；
+使用第二种方式启动runloop，可以通过设置超时时间来退出；
+使用第三种方式启动runloop，可以通过设置超时时间或者使用CFRunLoopStop方法来退出。

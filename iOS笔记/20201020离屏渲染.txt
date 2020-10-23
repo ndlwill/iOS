@@ -1,0 +1,147 @@
+https://mp.weixin.qq.com/s?__biz=MzA5MTM1NTc2Ng==&mid=2458322656&idx=1&sn=ea1585d20cc71f9a42a7aadc860fd9ad&chksm=870e09f9b07980ef303f878870762208dc8ebf0975d370a1bc2d5d5b83ded82507e5b0dc6526&scene=178&cur_album_id=1406482220017369090#rd
+https://mp.weixin.qq.com/s?__biz=MzA5MTM1NTc2Ng==&mid=2458322852&idx=1&sn=b3be904d955b20e292e3c2683e2b64f0&chksm=870e08bdb07981abdc9a847b6db5135ac58f651f3eda02b09e1120b7df402d8e5afa94b08eea&scene=178&cur_album_id=1406482220017369090#rd
+
+苹果官方文档对于cornerRadius的描述：
+Setting the radius to a value greater than 0.0 causes the layer to begin drawing rounded corners on its background. 
+By default, the corner radius does not apply to the image in the layer’s contents property; it applies only to the background color and border of the layer. 
+However, setting the masksToBounds property to true causes the content to be clipped to the rounded corners.
+
+我们发现设置cornerRadius大于0时，只为layer的backgroundColor和border设置圆角；
+而不会对layer的contents设置圆角，除非同时设置了layer.masksToBounds为true（对应UIView的clipsToBounds属性）。
+
+#####如果这时，你认为layer.masksToBounds或者clipsToBounds设置为true就会触发离屏渲染，这是不完全正确的。#####
+
+不设置layer.masksToBounds或者clipsToBounds，其默认值为NO
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    UIView *view1 = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 200.0, 200.0)];
+    // 设置背景色
+    view1.backgroundColor = UIColor.redColor;
+    // 设置边框宽度和颜色
+    view1.layer.borderWidth = 2.0;
+    view1.layer.borderColor = UIColor.blackColor.CGColor;
+    // 设置圆角
+    view1.layer.cornerRadius = 100.0;
+    
+    view1.center = self.view.center;
+    [self.view addSubview:view1];
+}
+我们看到只有背景色、边框以及圆角的时候，确实不会触发离屏渲染。
+
+
+设置layer.masksToBounds或者clipsToBounds为YES
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    UIView *view1 = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 200.0, 200.0)];
+    // 设置背景色
+    view1.backgroundColor = UIColor.redColor;
+    // 设置边框宽度和颜色
+    view1.layer.borderWidth = 2.0;
+    view1.layer.borderColor = UIColor.blackColor.CGColor;
+    // 设置圆角
+    view1.layer.cornerRadius = 100.0;
+  
+    // 设置裁剪
+    view1.clipsToBounds = YES;
+    
+    view1.center = self.view.center;
+    [self.view addSubview:view1];
+}
+当我们开启layer.masksToBounds或者clipsToBounds时，同样的没有触发离屏渲染。这是因为我们还没有设置图片。
+
+
+设置layer.masksToBounds或者clipsToBounds为YES，同时设置图片
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    UIView *view1 = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 200.0, 200.0)];
+    // 设置背景色
+    view1.backgroundColor = UIColor.redColor;
+    // 设置边框宽度和颜色
+    view1.layer.borderWidth = 2.0;
+    view1.layer.borderColor = UIColor.blackColor.CGColor;
+    
+    //设置图片
+    view1.layer.contents = (__bridge id)[UIImage imageNamed:@"pkq"].CGImage;
+    
+    // 设置圆角
+    view1.layer.cornerRadius = 100.0;
+    // 设置裁剪
+    view1.clipsToBounds = YES;
+    view1.center = self.view.center;
+    [self.view addSubview:view1];
+}
+当我们开启layer.masksToBounds或者clipsToBounds时，同时设置图片时，就会触发离屏渲染。
+其实不光是图片，我们为视图添加一个有颜色、内容或边框等有图像信息的子视图也会触发离屏渲染。
+有图像信息还包括在视图或者layer的draw方法中进行绘制等。
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    UIView *view1 = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 200.0, 200.0)];
+    // 设置背景色
+    view1.backgroundColor = UIColor.redColor;
+    // 设置边框宽度和颜色
+    view1.layer.borderWidth = 2.0;
+    view1.layer.borderColor = UIColor.blackColor.CGColor;
+    // 设置圆角
+    view1.layer.cornerRadius = 100.0;
+    // 设置裁剪
+    view1.clipsToBounds = YES;
+    
+    // 子视图
+    UIView *view2 = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 100.0, 100.0)];
+    // 下面3个任何一个属性
+    // 设置背景色
+    view2.backgroundColor = UIColor.blueColor;
+    // 设置内容
+    view2.layer.contents = (__bridge id)([UIImage imageNamed:@"pkq"].CGImage);
+    // 设置边框
+    view2.layer.borderWidth = 2.0; 
+    view2.layer.borderColor = UIColor.blackColor.CGColor;
+    [view1 addSubview:view2];
+    
+    view1.center = self.view.center;
+    [self.view addSubview:view1];
+}
+
+#####圆角触发离屏渲染的真正原因#####
+图层的叠加绘制大概遵循“画家算法”。
+油画算法：先绘制场景中的离观察者较远的物体，再绘制较近的物体。
+先绘制红色部分，再绘制⻩色部分，最后再绘制灰⾊部分，即可解决隐藏面消除的问题。即将场景按照物理距离和观察者的距离远近排序，由远及近的绘制即可。
+
+当我们设置了cornerRadius以及masksToBounds进行圆角+裁剪时，masksToBounds裁剪属性会应用到所有的图层上。
+本来我们从后往前绘制，绘制完一个图层就可以丢弃了。但现在需要依次在 Offscreen Buffer中保存，等待圆角+裁剪处理，即引发了 离屏渲染 。
+
+背景色、边框、背景色+边框，再加上圆角+裁剪，根据文档说明，因为 contents = nil 没有需要裁剪处理的内容，所以masksToBounds设置为YES或者NO都没有影响。
+一旦我们 为contents设置了内容 ，无论是图片、绘制内容、有图像信息的子视图等，再加上圆角+裁剪，就会触发离屏渲染。
+###不一定是直接为contents赋值！###
+
+iOS9及以后的优化
+关于圆角，iOS 9及之后的系统版本，苹果进行了一些优化
+1.layer.contents/imageView.image
+我们只设置contents或者UIImageView的image，并加上圆角+裁剪，是不会产生离屏渲染的。但如果加上了背景色、边框或其他有图像内容的图层，还是会产生离屏渲染。
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    UIView *view1 = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 200.0, 200.0)];
+    //设置图片
+    view1.layer.contents = (__bridge id)[UIImage imageNamed:@"qiyu"].CGImage;
+    // 设置圆角
+    view1.layer.cornerRadius = 100.0;
+    // 设置裁剪
+    view1.clipsToBounds = YES;
+    
+    view1.center = self.view.center;
+    [self.view addSubview:view1];
+}
+因为只有 单层 内容需要添加圆角和裁切，所以可以不需要用到离屏渲染技术。
+但如果加上了背景色、边框或其他有图像内容的图层，就会产生为 多层 添加圆角和裁切，所以还是会触发离屏渲染
+2.UIButton
+我们为UIButton设置一个图片，其实会添加一个UIImageView
+为UIButton添加圆角和裁剪，则会触发离屏渲染。
+// 设置圆角
+button.layer.cornerRadius = 100.0;
+// 设置裁剪
+button.clipsToBounds = YES;
+如果改为UIButton中的UIImageView添加圆角和裁剪，则 不会触发离屏渲染。
+// 设置圆角
+button.imageView.layer.cornerRadius = 100.0;
+// 设置裁剪
+button.imageView.clipsToBounds = YES;

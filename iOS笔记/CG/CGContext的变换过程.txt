@@ -1,0 +1,51 @@
+iOS支持两套图形API族：Core Graphics/Quartz 和 OpenGL ES。
+
+OpenGL ES 是跨平台的图形API，属于OpenGL的一个简化版本。
+Core Graphics Framework是基于Quartz的高级绘图引擎。
+它提供低级别、轻量级的2D渲染，具有无与伦比的输出保真度。使用此框架可以处理基于路径的绘制、转换、颜色管理、屏幕外渲染、模式、渐变和阴影、图像数据管理、图像创建和图像遮罩，以及PDF文档创建、显示和解析。
+
+我们可以用Core Graphics进行图形的绘制，也可以用它来解码图片(可以查看 SDWebImage 、YYImage 或 GPUImage 中的具体实现)。
+
+需要绘制一张旋转了180°的图片:
+CGContextScaleCTM(context, -1.0, -1.0);
+CGContextTranslateCTM(context, -image.size.width, -image.size.height);
+或者
+CGContextRotateCTM(context, M_PI);
+CGContextTranslateCTM(context, -image.size.width, -image.size.height);
+或者
+CGContextTranslateCTM(context, image.size.width / 2.0, image.size.height / 2.0);
+CGContextRotateCTM(context, M_PI);
+CGContextTranslateCTM(context, -image.size.width / 2.0, -image.size.height / 2.0);
+
+变换的其实是当前图像的变换矩阵
+/* Rotate the current graphics state's transformation matrix (the CTM) by `angle' radians. */
+CG_EXTERN void CGContextRotateCTM(CGContextRef cg_nullable c, CGFloat angle) CG_AVAILABLE_STARTING(10.0, 2.0);
+我们绘制图像的顶点坐标，会经过我们这里设置的各种变换，最终被确定并绘制出来。
+本质和在OpenGL ES中，对图像的顶点坐标进行矩阵变换是一样的。
+
+其实，和OpenGL的矩阵变换类似， CGContext的变换如果从后往前读，更符合我们的理解。
+
+右+x，下+y
+上面的代码反过来读就是：
+变换1：
+先向x轴的负方向移动image.size.width，向y轴的负方向移动image.size.height
+再关于原点对称
+
+变换2：
+先向x轴的负方向移动image.size.width，向y轴的负方向移动image.size.height
+再绕原点旋转180°
+
+变换3：
+先向x轴的负方向移动image.size.width/2.0，向y轴的负方向移动image.size.height/2.0
+再绕原点旋转180°
+然后向x轴的正方向移动image.size.width/2.0，向y轴的正方向移动image.size.height/2.0
+
+如果只是想翻转一个图片，其实还有一个简单的办法。
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    UIImage *image = [UIImage imageNamed:@"qiyu"];
+    UIImage *rotatedImage = [UIImage imageWithCGImage:image.CGImage scale:image.scale orientation:UIImageOrientationDown];
+    UIImageView *imageView = [[UIImageView alloc] initWithImage:rotatedImage];
+    imageView.center = self.view.center;
+    [self.view addSubview:imageView];
+}

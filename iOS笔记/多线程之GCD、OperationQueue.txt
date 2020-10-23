@@ -1,0 +1,307 @@
+====================================区别
+
+GCD：
+将任务（block）添加到队列(串行/并发/主队列)，并且指定任务执行的函数(同步/异步)
+GCD是底层的C语言构成的API
+iOS 4.0 推出的，针对多核处理器的并发技术
+在队列中执行的是由 block 构成的任务，这是一个轻量级的数据结构
+要停止已经加入 queue 的 block 需要写复杂的代码
+需要通过 Barrier（dispatch_barrier_async）或者同步任务设置任务之间的依赖关系
+只能设置队列的优先级
+高级功能： dispatch_once_t（一次性执行, 多线程安全）； dispatch_after（延迟）； dispatch_group（调度组）； dispatch_semaphore（信号量）； dispatch_apply（优化顺序不敏感大体量for循环）；
+
+OperationQueue：
+OC 框架，更加面向对象，是对 GCD 的封装。
+iOS 2.0 推出的，苹果推出 GCD 之后，对 NSOperation 的底层进行了全部重写。
+可以设置队列中每一个操作的 QOS（） 队列的整体 QOS
+操作相关 Operation作为一个对象，为我们提供了更多的选择： 任务依赖（addDependency），可以跨队列设置操作的依赖关系； 在队列中的优先级（queuePriority） 服务质量（qualityOfService, iOS8+）; 完成回调（void (^completionBlock)(void）
+队列相关 服务质量（qualityOfService, iOS8+）; 最大并发操作数（maxConcurrentOperationCount），GCD 不易实现; 暂停/继续（suspended）； 取消所有操作（cancelAllOperations）； KVO 监听队列任务执行进度（progress, iOS13+）；
+
+
+private func serialExcuteByGCD(){
+    let lArr : [UIImageView] = [imageView1, imageView2, imageView3, imageView4]
+
+    //串行队列，异步执行时，只开一个子线程
+    let serialQ = DispatchQueue.init(label: "com.companyName.serial.downImage")
+
+    for i in 0..<lArr.count{
+        let lImgV = lArr[i]
+
+        //清空旧图片
+        lImgV.image = nil
+
+        //注意，防坑：串行队列创建的位置,在这创建时，每个循环都是一个新的串行队列，里面只装一个任务，多个串行队列，整体上是并行的效果。
+        //            let serialQ = DispatchQueue.init(label: "com.companyName.serial.downImage")
+
+        serialQ.async {
+
+            print("第\(i)个 开始，%@",Thread.current)
+            Downloader.downloadImageWithURLStr(urlStr: imageURLs[i]) { (img) in
+                let lImgV = lArr[i]
+
+                print("第\(i)个 结束")
+                DispatchQueue.main.async {
+                    print("第\(i)个 切到主线程更新图片")
+                    lImgV.image = img
+                }
+                if nil == img{
+                    print("第\(i+1)个img is nil")
+                }
+            }
+        }
+    }
+}
+
+第0个 开始
+第0个 结束
+第1个 开始
+第0个 更新图片
+第1个 结束
+第2个 开始
+第1个 更新图片
+第2个 结束
+第3个 开始
+第2个 更新图片
+第3个 结束
+第3个 更新图片
+
+由 log 可知: GCD 切到主线程也需要时间，切换完成之前，指令可能已经执行到下个循环了。但是看起来图片还是依次下载完成和显示的，因为每一张图切到主线程显示都需要时间。
+
+
+
+并发队列（Concurrent Queues）:
+需要用到并发队列时，强烈建议 使用系统自带的四种全局队列之一。但是，当你需要使用 barrier 对队列中任务进行栅栏时，只能使用自定义并发队列。
+
+并发队列依旧保证中任务按加入的先后顺序开始（FIFO），但是无法知道执行顺序，执行时长和某一时刻的任务数。按 FIFO 开始后，他们之间不会相互等待。
+比如：提交了 #1，#2，#3 任务到并发队列，开始的顺序是 #1，#2，#3。#2 和 #3 虽然开始的比 #1 晚，但是可能比 #1 执行结束的还要早。任务的执行是由系统决定的，所以执行时长和结束时间都无法确定。
+
+barrier 和锁的区别:
+依赖对象不同，barrier 依赖的对象是自定义并发队列，锁操作依赖的对象是线程。
+作用不同，barrier 起到自定义并发队列中栅栏的作用；锁起到多线程操作时防止资源竞争的作用。
+
+private func concurrentExcuteByGCD(){
+    let lArr : [UIImageView] = [imageView1, imageView2, imageView3, imageView4]
+
+    for i in 0..<lArr.count{
+        let lImgV = lArr[i]
+
+        //清空旧图片
+        lImgV.image = nil
+
+        //并行队列:图片下载任务按顺序开始，但是是并行执行，不会相互等待，任务结束和图片显示顺序是无序的，多个子线程同时执行，性能更佳。
+        let lConQ = DispatchQueue.init(label: "cusQueue", qos: .background, attributes: .concurrent)
+        lConQ.async {
+            print("第\(i)个开始，%@", Thread.current)
+            Downloader.downloadImageWithURLStr(urlStr: imageURLs[i]) { (img) in
+                let lImgV = lArr[i]
+                    print("第\(i)个结束")
+                DispatchQueue.main.async {
+                    lImgV.image = img
+                }
+                if nil == img{
+                    print("第\(i+1)个img is nil")
+                }
+            }
+        }
+    }
+}
+
+第0个开始，%@ <NSThread: 0x600002de2e00>{number = 4, name = (null)}
+第1个开始，%@ <NSThread: 0x600002dc65c0>{number = 6, name = (null)}
+第2个开始，%@ <NSThread: 0x600002ddc8c0>{number = 8, name = (null)}
+第3个开始，%@ <NSThread: 0x600002d0c8c0>{number = 7, name = (null)}
+第0个结束
+第3个结束
+第1个结束
+第2个结束
+
+/**
+Submits a block for asynchronous execution on a main queue and returns immediately.
+*/
+static inline void dispatch_async_on_main_queue(void (^block)()) {
+if (NSThread.isMainThread) {
+    block();
+} else {
+    dispatch_async(dispatch_get_main_queue(), block);
+}
+}
+
+主队列是串行队列，每个时间点只能有一个任务执行，因此如果耗时操作放到主队列，会导致界面卡顿
+
+串行队列异步执行时，切到主线程刷 UI 也需要时间，切换完成之前，指令可能已经执行到下个循环了。但是看起来图片还是依次下载完成和显示的，因为每一张图切到主线程显示都需要时间。
+
+iOS8 之后，如果需要添加可被取消的任务，可以使用 DispatchWorkItem 类，此类有 cancel 方法。
+
+
+dispatch_apply 函数整体上是同步执行，内部 block 的执行类型（串行/并发）由队列类型决定，但是串行队列易死锁，建议用并发队列。
+dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
+//count 是迭代的总次数。
+dispatch_apply(count, queue, ^(size_t i) {
+   printf("%u\n",i);
+});
+
+//同样在上面循环结束后才调用。
+printf("done");
+
+您应该确保您的任务代码在每次迭代中完成合理数量的工作。
+与您分派到队列的任何块或函数一样，调度该代码以便执行会带来开销。
+如果循环的每次迭代只执行少量的工作，那么调度代码的开销可能会超过将代码分派到队列可能带来的性能优势。
+如果您在测试期间发现这一点是正确的，那么您可以使用步进来增加每个循环迭代期间执行的工作量。
+通过大步前进，您可以将原始循环的多个迭代集中到一个块中，并按比例减少迭代次数。
+例如，如果您最初执行了 100次 迭代，但决定使用步长为 4 的迭代，那么您现在从每个块执行 4 次循环迭代，迭代次数为 25次 。
+
+一个队列的不同任务可以在多个线程执行吗？ 
+答：串行队列，异步执行时，只开一个子线程；无所谓多个线程执行； 并发队列，异步执行时，会自动开多个线程，可以在多个线程并发执行不同的任务。
+
+一个线程可以同时执行多个队列的任务吗？ 
+答：一个线程某个时间点只能执行一个任务，执行完毕后，可能执行到来自其他队列的任务（如果有的话）。比如：主线程除了执行主队列中任务外，也可能会执行非主队列中的任务。
+
+
+qualityOfService 和 queuePriority 的区别是什么？ 
+答： qualityOfService: 用于表示 operation 在获取系统资源时的优先级，默认值：NSQualityOfServiceBackground，
+我们可以根据需要给 operation 赋不同的优化级，如最高优化级：NSQualityOfServiceUserInteractive。
+queuePriority: 用于设置 operation 在 operationQueue 中的相对优化级，同一 queue 中优化级高的 operation(isReady 为 YES) 会被优先执行。
+需要注意区分 qualityOfService (在系统层面，operation 与其他线程获取资源的优先级) 与 queuePriority (同一 queue 中 operation 间执行的优化级)的区别。
+同时，需要注意 dependencies (严格控制执行顺序)与 queuePriority (queue 内部相对优先级)的区别。
+
+添加依赖后，队列中网络请求任务有依赖关系时，任务结束判定以数据返回为准还是以发起请求为准？ 
+答：以发起请求为准。
+
+====================================OperationQueue
+NSOperation 是基于 GCD 做的面向对象的封装。
+NSOperation 是一个"抽象类"，不能直接使用。抽象类的用处是定义子类共有的属性和方法。
+
+它有两个子类：
+NSInvocationOperation (调用操作)
+NSBlockOperation (块操作) 一般常用NSBlockOperation，代码简单，同时由于闭包性使它没有传参问题。
+任务被封装在 NSOperation 的子类实例类对象里，一个 NSOperation 子类对象可以添加多个任务 block 和 一个执行完成 block ，当其关联的所有 block 执行完时，就认为操作结束了。
+
+OperationQueue也是对 GCD 的高级封装:
+被添加到队列的操作默认是异步执行的。
+
+常见的抽象类有：
+UIGestureRecognizer
+CAAnimation
+CAPropertyAnimation
+
+func testDepedence(){
+    let op0 = BlockOperation.init {
+        print("op0")
+    }
+
+    let op1 = BlockOperation.init {
+        print("op1")
+    }
+
+    let op2 = BlockOperation.init {
+        print("op2")
+    }
+
+    let op3 = BlockOperation.init {
+        print("op3")
+    }
+
+    let op4 = BlockOperation.init {
+        print("op4")
+    }
+
+    op0.addDependency(op1)
+    op1.addDependency(op2)
+
+    op0.queuePriority = .veryHigh
+    op1.queuePriority = .normal
+    op2.queuePriority = .veryLow
+
+    op3.queuePriority = .low
+    op4.queuePriority = .veryHigh
+
+    gOpeQueue.addOperations([op0, op1, op2, op3, op4], waitUntilFinished: false)
+}
+ op4
+ op2
+ op3
+ op1
+ op0
+ 或
+ op4
+ op3
+ op2
+ op1
+ op0
+
+ 操作间不存在依赖时，按优先级执行；存在依赖时，按依赖关系先后执行（与无依赖关系的其他任务相比，依赖集合的执行顺序不确定）
+
+队列暂停/继续:
+通过对队列的isSuspended属性赋值，可实现队列中未执行任务的暂停和继续效果。正在执行的任务不受影响。
+
+///暂停队列，只对未执行中的任务有效。本例中对串行队列的效果明显。并发队列因4个任务一开始就很容易一起开始执行，即使挂起也无法影响已处于执行状态的任务。
+@IBAction func pauseQueueItemDC(_ sender: Any) {
+    gOpeQueue.isSuspended = true
+}
+
+///恢复队列，之前未开始执行的任务会开始执行
+@IBAction func resumeQueueItemDC(_ sender: Any) {
+    gOpeQueue.isSuspended = false
+}
+
+取消操作:
+一旦添加到操作队列中，操作对象实际上归队列所有，不能删除。取消操作的唯一方法是取消它。可以通过调用单个操作对象的 cancel 方法来取消单个操作对象，也可以通过调用队列对象的 cancelAllOperations 方法来取消队列中的所有操作对象。
+更常见的做法是取消所有队列操作，以响应某些重要事件，如应用程序退出或用户专门请求取消，而不是有选择地取消操作。
+
+取消单个操作对象:
+取消（cancel）时，有 3 种情况： 
+1.操作在队列中等待执行，这种情况下，操作将不会被执行。 
+2.操作已经在执行中，此时，系统不会强制停止这个操作，但是，其 cancelled属性会被置为 true 。 
+3.操作已完成，此时，cancel 无任何影响。
+
+取消队列中的所有操作对象
+方法： cancelAllOperations。同样只会对未执行的任务有效。
+deinit {
+    gOpeQueue.cancelAllOperations()
+    print("die:%@",self)
+}
+
+通过设置操作间依赖，可以实现 非FIFO 的指定顺序效果。那么，通过设置最大并发数为 1 ，可以实现指定顺序效果吗？
+A:不可以！ 设置最大并发数为 1 后，虽然每个时间点只执行一个操作，但是操作的执行顺序仍然基于其他因素，如操作的依赖关系，操作的优先级（依赖关系比优先级级别更高，即先根据依赖关系排序;不存在依赖关系时，才根据优先级排序）。
+如果操作对象的执行顺序对您很重要，那么您应该在将操作添加到队列之前使用 依赖关系 建立该顺序，或改用 GCD 的 串行队列 实现序列化效果。
+
+Operation Queue的 block 中为何无需使用 [weak self] 或 [unowned self] ？ 
+A:即使队列对象是为全局的，self -> queue -> operation block -> self，的确会造成循环引用。但是在队列里的操作执行完毕时，队列会自动释放操作，自动解除循环引用。
+所以不必使用 [weak self] 或 [unowned self] 。 
+此外，这种循环引用在某些情况下非常有用，你无需额外持有任何对象就可以让操作自动完成它的任务。
+比如下载页面下载过程中，退出有循环引用的界面时，如果不执行 cancelAllOperation 方法，可以实现继续执行剩余队列中下载任务的效果。
+
+func addOperation(_ op: Operation) Discussion: Once added, the specified operation remains in the queue until it finishes executing. 
+
+操作的 QOS 和队列的 QOS 有何关系？ 
+A:队列的 QOS 设置，会自动把较低优先级的操作提升到与队列相同优先级。（原更高优先级操作的优先级保持不变）。后续添加进队列的操作，优先级低于队列优先级时，也会被自动提升到与队列相同的优先级。
+https://stackoverflow.com/questions/31062196/can-nsoperation-have-a-lower-qualityofservice-than-nsoperationqueue
+
+
+在主线程上同步执行任务时，因任务和之前已加入主队列但未执行的任务会相互等待，导致死锁。
+func testDeadLock(){
+    //主队列同步执行，会导致死锁。block需要等待testDeadLock执行，而主队列同步调用，又使其他任务必须等待此block执行。于是形成了相互等待，就死锁了。
+    DispatchQueue.main.sync {
+        print("main block")
+    }
+    print("2")
+}
+
+但是下面代码不会死锁，故串行队列同步执行任务不一定死锁。
+- (void)testSynSerialQueue{
+    dispatch_queue_t myCustomQueue;
+    myCustomQueue = dispatch_queue_create("com.example.MyCustomQueue", NULL);
+
+    dispatch_async(myCustomQueue, ^{
+        printf("Do some work here.\n");
+    });
+
+    printf("The first block may or may not have run.\n");
+
+    dispatch_sync(myCustomQueue, ^{
+        printf("Do some more work here.\n");
+    });
+    printf("Both blocks have completed.\n");
+}
+
+代码设计优先级：系统方法 > 并行 > 串行 > 锁

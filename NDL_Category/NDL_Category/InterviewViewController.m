@@ -11,6 +11,14 @@
  grep -r 关键字
  */
 
+// MARK: LG_BLOG
+// https://www.jianshu.com/p/e2a7c218926b
+// https://www.jianshu.com/u/1e877b3dcc34
+
+// MARK: AV相关
+// https://github.com/wsl2ls/iOS_Tips
+// https://juejin.im/user/2788017221155176/posts
+
 // MARK: LG_Stu
 // https://www.jianshu.com/u/4db89678773b
 
