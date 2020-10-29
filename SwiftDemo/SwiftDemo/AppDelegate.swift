@@ -7,6 +7,10 @@
 //  Copyright © 2019 dzcx. All rights reserved.
 //
 
+// MARK: WCDB.swift
+// https://blog.csdn.net/kyl282889543/article/details/100538486
+// https://www.jianshu.com/p/3712dc71f956
+
 // MARK: Runloop
 // https://juejin.im/user/78820566645534/posts
 

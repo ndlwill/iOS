@@ -1,0 +1,157 @@
+库是共享程序代码的方式，一般分为静态库和动态库。
+
+库的本质是可执行的二进制文件，是资源文件和代码编译的一个集合。根据链接方式不同，可以分为动态库和静态库，其中系统提供的库都属于动态库。
+
+静态和动态的名字，区分了编译后的代码是以何种方式链接到目标程序中的。
+
+静态库：
+链接时完整地拷贝至可执行文件中
+有多个app使用就会被复制多份，不能共享且占用更多冗余内存。
+所有的函数都在库中，因此当修改函数时需要重新编译。
+
+对于一个静态库而言，其实已经是编译好的了,类似一个 .o 的集合 这里并没有连接。
+在 build 的过程中只会参与链接的过程，而这个链接的过程简单的讲就是合并，并且链接器只会将静态库中被使用的部分合并到可执行文件中去
+
+为什么要使用静态库？
+方便共享代码，便于合理使用。
+实现iOS程序的模块化，可以把固定的业务模块化成静态库。
+和别人分享你的代码库，但不想让别人看到你代码的实现。
+开发第三方sdk的需要
+
+动态库：
+链接时不复制，程序运行时由系统动态加载到内存，供程序调用，系统只加载一次，多个程序共用，节省内存。
+
+系统的.framework是动态库, 我们自己建立的.framework是静态库
+
+iOS里静态库的形式：
+.a 和 .framework
+iOS里动态库的形式
+.dylib 和 .framework
+
+.a是一个纯二进制文件，.framework中除了有二进制文件之外还有资源文件。
+###其中.a 不能直接使用，需要 .h文件配合，而.framework则可以直接使用。.framework本身已经包含了.h和其它文件###
+.framework = .a + .h + sourceFile(资源文件)
+推荐使用.framework
+
+#####制作静态库时的几点注意：#####
+图片资源的处理：一般都是把图片文件单独的放在一个.bundle文件中，一般.bundle的名字和.a或.framework的名字相同。
+.bundle文件很好弄，新建一个文件夹，把它改名为.bundle就可以了，右键，显示包内容可以向其中添加图片资源。
+category的处理：category是我们实际开发项目中经常用到的，把category打成静态库是没有问题的，
+但是在用这个静态库的工程中，调用category中的方法时会有找不到该方法的运行时错误selector not recognized，
+解决办法是：在使用静态库的工程中配置other linker flags的值为-ObjC。
+复杂的静态库：如果一个静态库很复杂，需要暴露的.h比较多的话，就可以在静态库的内部创建一个.h文件（一般这个.h文件的名字和静态库的名字相同），
+然后把所有需要暴露出来的.h文件都集中放在这个.h文件中，而那些原本需要暴露的.h都不需要再暴露了，只需要把.h暴露出来就可以了。
+
+iOS8之前苹果是不允许第三方框架使用动态库方式实现的，但是iOS8之后添加了App Extension，Extension 需要与主App共享代码，而且新加入的Swift的语言机制也需要动态库，
+于是苹果提出了Embedded Framework概念，这种动态库允许App和App Extension共享代码，但是这份动态库的生命被限定在一个App进程内。简单点可以理解为被阉割的动态库。
+与系统的动态Framework 不同，使用 Cocoa Touch Framework 制作的动态库 在打包和提交 App 时资源文件会被放到 App main bundle 的根目录文件下，运行在沙盒里，而不是系统中。
+所以，不同的 App 即使使用了同样的 Framework，仍然需要被分别签名，打包和加载。
+
+Embedded Framework: 允许用户生成的“动态库”类型。
+Embedded Framework，这种动态库允许APP和APP Extension共享代码，但是这份动态库的生命被限定在一个APP进程内。
+如果你把某个自己开发的动态库放在了Linked Frameworks and Libraries里面，程序一启动就会报Reason: Image Not Found，你只能把它放在Embeded Binaries里面才能正常使用
+
+编译: 将我们的源代码文件编译为目标文件
+链接: 将我们的各种目标文件加上一些第三方库，和系统库链接为可执行文件。
+由于某个目标文件的符号(可以理解为变量，函数等)可能来自其他目标文件，其实链接这一步最主要的操作就是决议符号的地址。
+若符号来自静态库(本质就是.o 的集合包)或 .o，将其纳入链接产物，并确定符号地址
+若符号来自动态库，打个标记，等启动的时候再说---交给dyld去加载和链接符号
+
+于是链接加装载就有了不同的情况：
+Load 装载：将库文件载入内存
+    Static Loading：启动时
+    Dynamic Loading：启动后（使用时）
+Link 链接：决议符号地址
+    Static Linking：构建（链接）时
+    Dynamic Linking：运行时（启动时或使用时）
+
+直接添加Framework报错
+dyld: Library not loaded: @rpath/IFlyMSC_Dylib.framework/IFlyMSC_Dylib
+  Referenced from: /private/var/containers/Bundle/Application/B1CAB261-A1AE-4797-B0F0-9BBA9C2C78FF/Test.app/Test
+  Reason: image not found
+解决方案：
+General->Frameworks,Libraries,and Embedded Content->IFlyMSC_Dylib.framework->Embed&sign
+
+
+使用CocoaPods引入三方库时如果在Podfile里加入use_frameworks! ，那么在编译的时候就会默认帮你生成“动态库”，我们能看到每个源码Pod都会在Pods工程下生成一个对应的“动态库Framework”的target，
+我们能在这个target的Build Settings -> Mach-O Type看到默认设置是Dynamic Library。也就是生成了一个“动态Framework”，我们能在Pods工程下Products文件夹下面看到每一个Pod对应生成的“动态库”。
+这些生成的“动态库”将链接到主项目给主工程使用，但是我们在主工程target的General -> Frameworks,Libraries,and Embedded Content中并没有看到这些“动态库”。
+这是因为cocoapods已经执行了脚本把这些“动态库”嵌入到了.app的Framework目录下
+相当于在Frameworks,Libraries,and Embedded Content加入了这些“动态库”
+我们能在主工程target的Build Phase -> Embed Pods Frameworks中看到执行的脚本。
+
+
+Bundle的概念，framework是一种特殊类型的Bundle，bunlde是一个包含多个子文件夹的文件夹。
+在iOS上，Bundlue将相关联的文件(比如图片, Nibs，代码)编译成一个包文件。程序将它当作一个单独文件来处理，你可以在不知道内部实现的情况下使用它。
+
+Q: Podfile使用静态库时出现报错[!] The following Swift pods cannot yet be integrated as static libraries:,如何解决？
+A：pod install 时的错误信息提示我们应该使用use_modular_headers!来让整个项目支持静态库，或者对单个Pod使用:modular_headers => true
+
+==================================================Embed
+https://developer.apple.com/library/archive/technotes/tn2435/_index.html#//apple_ref/doc/uid/DTS40017543-CH1-EMBED_SECTION
+
+Embed：嵌入，用于动态库，动态库在运行时链接，所以它们需要被打进bundle里面
+file frameworkToLink.framework/frameworkToLink
+如果返回：
+current ar archive:说明是静态库，选择Do not embed
+Mach-0 dynamically：说明是动态库，选择Embed
+
+==================================================Signing
+Signing：只用于动态库，如果已经有签名了就不需要再签名。
+codesign -dv frameworkToLink.framwork
+如果返回：
+code object is not signed at all 或者 adhoc: 表示还没签名，则选择Embed and sign
+其它：表示已经正确签名，选择Embed Without Signing
+
+==================================================
+将Build Active Architecture Only 设置为NO（代表根据Arch 和Valid Arch来设定， 一般Debug模式下为yes，Release模式下为No）
+
+==================================================动态库的作用
+
+==================================================Umbrella Framework
+https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPFrameworks/Concepts/FrameworkAnatomy.html#//apple_ref/doc/uid/20002253-99314
+
+然而，有两个因素将伞式框架与其他框架区分开来。首先是它们包含头文件的方式。第二个事实是它们封装了子框架。
+Umbrella frameworks hide the complex cross-dependencies among the many different pieces of system software. 
+Thus you do not need to know what set of frameworks and libraries you must import to accomplish a particular task
+A subframework is structurally a public framework that packages a specific Apple technology, such as Apple events, Quartz, or Open Transport. 
+Although the APIs of subframeworks are public, Apple has put mechanisms in place to prevent developers from linking directly with subframeworks (see Restrictions on Subframework Linking).
+A subframework always resides in an umbrella framework installed in /System/Library/Frameworks, and within this umbrella framework, its header files are exposed.
+Physically, umbrella frameworks have a similar structure to standard frameworks. One significant difference is the addition of a Frameworks directory to contain the subframeworks that make up the umbrella framework.
+Unlike standard frameworks, the Headers directory of an umbrella framework contains a more limited set of header files. It does not contain a collection of the headers in its subframeworks. Instead, it contains only the master header file for the framework. 
+When referring to an umbrella framework in your source files, you should include only the master header file
+
+它允许你将不同的frameworks合并成一个framework，输出部分头文件。为了构建一个umbrella framework，你必须包含umbrella header。
+
+==================================================modular
+为了能够引入framework modular，我们必须引入 module map
+
+framework module ModularFramework{
+  module Modulel{
+    header "File1.h"
+  }
+  module Module2{
+    header "File2.h"
+  }
+}
+
+import ModularFramework.Module1
+import ModularFramework.Module2
+
+CocoaPods允许使用umbrella和modular frameworks。
+如果你引入了pods到你的项目里，在Target->YourApp->Build Settings找查找modulemap和umbrella可以看到它们的设置。
+
+==================================================CocoaPods相关
+在使用静态库时，某些Pod不支持module怎么办？
+可以使用use_modular_headers!来让所有Pod支持静态库;
+或者对不支持静态库的Pod后面添加:modular_headers => true来使其支持module
+
+==================================================#import和@import
+@import是iOS7之后的新特性语法: Modules（模块导入）或者"语义引入"
+
+Modules可以看成是可执行framework的集合，比#import更加快捷和高效。
+
+Enable Modules是默认打开的，在Target->YourApp->Build Setting->搜索Modules, 可以看到Enable Modules默认是YES，Link Frameworks Automatically也是默认打开的
+打开后，使用原来的#import和#include，编译器会在编译的时候自动把可能的地方换成modules的写法去编译。
+@import的一个优势是开发者不需要手动将framework添加到project settings里面，它是自动完成的。
+使用Modules的形式，可以使用@import MapKit;, 还可以只加载framework里的submodules，如@import MapKit.MKAnnotation;
