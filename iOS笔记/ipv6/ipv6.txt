@@ -1,0 +1,335 @@
+1.把ip地址转化为用于网络传输的二进制数值
+int inet_aton(const char *cp, struct in_addr *inp);
+inet_aton() 转换网络主机地址ip(如192.168.1.10)为二进制数值，并存储在struct in_addr结构中,即第二个参数*inp
+函数返回非0表示cp主机有地有效，返回0表示主机地址无效。
+（这个转换完后不能用于网络传输，还需要调用htons或htonl函数才能将主机字节顺序转化为网络字节顺序）
+
+in_addr_t inet_addr(const char *cp);
+inet_addr函数转换网络主机地址（如192.168.1.10)为网络字节序二进制值，如果参数char *cp无效，函数返回-1(INADDR_NONE)
+这个函数在处理地址为255.255.255.255时也返回－1,255.255.255.255是一个有效的地址，不过inet_addr无法处理;
+
+2.将网络传输的二进制数值转化为成点分十进制的ip地址
+char *inet_ntoa(struct in_addr in);
+inet_ntoa 函数转换网络字节排序的地址为标准的ASCII以点分开的地址,该函数返回指向点分开的字符串地址（如192.168.1.10)的指针
+该字符串的空间为静态分配的，这意味着在第二次调用该函数时，上一次调用将会被重写（复盖），所以如果需要保存该串最后复制出来自己管理
+
+输出一个点分十进制的IP:
+#include <stdio.h>   
+#include <sys/socket.h>   
+#include <netinet/in.h>   
+#include <arpa/inet.h>   
+#include <string.h>   
+int main()   
+{   
+	struct in_addr addr1,addr2;   
+	ulong l1,l2;   
+	l1= inet_addr("192.168.0.74");   
+	l2 = inet_addr("211.100.21.179");   
+	memcpy(&addr1, &l1, 4);   
+	memcpy(&addr2, &l2, 4);   
+	printf("%s : %s\n", inet_ntoa(addr1), inet_ntoa(addr2)); //注意这一句的运行结果   
+	printf("%s\n", inet_ntoa(addr1));   
+	printf("%s\n", inet_ntoa(addr2));  
+	return 0;   
+}   
+实际运行结果如下：　
+192.168.0.74 : 192.168.0.74          //从这里可以看出,printf里的inet_ntoa只运行了一次。　　
+192.168.0.74　　
+211.100.21.179
+inet_ntoa返回一个char *,而这个char *的空间是在inet_ntoa里面静态分配的，所以inet_ntoa后面的调用会覆盖上一次的调用。
+第一句printf的结果只能说明在printf里面的可变参数的求值是从右到左的，仅此而已
+
+3.新型网路地址转化函数inet_pton和inet_ntop
+这两个函数是随IPv6出现的函数，对于IPv4地址和IPv6地址都适用，函数中p和n分别代表表达（presentation)和数值（numeric)。
+地址的表达格式通常是ASCII字符串，数值格式则是存放到套接字地址结构的二进制值。
+
+#include <arpe/inet.h>
+int inet_pton(int family, const char *strptr, void *addrptr);     //将点分十进制的ip地址转化为用于网络传输的数值格式
+返回值：若成功则为1，若输入不是有效的表达式则为0，若出错则为-1
+ 
+const char * inet_ntop(int family, const void *addrptr, char *strptr, size_t len);     //将数值格式转化为点分十进制的ip地址格式
+返回值：若成功则为指向结构的指针，若出错则为NULL
+（1）这两个函数的family参数既可以是AF_INET（ipv4）也可以是AF_INET6（ipv6）。如果，以不被支持的地址族作为family参数，这两个函数都返回一个错误，并将errno置为EAFNOSUPPORT
+（2）第一个函数尝试转换由strptr指针所指向的字符串，并通过addrptr指针存放二进制结果，若成功则返回值为1，否则如果所指定的family而言输入字符串不是有效的表达式格式，那么返回值为0.
+（3）inet_ntop进行相反的转换，从数值格式（addrptr）转换到表达式（strptr)。inet_ntop函数的strptr参数不可以是一个空指针。调用者必须为目标存储单元分配内存并指定其大小，调用成功时，这个指针就是该函数的返回值。
+len参数是目标存储单元的大小，以免该函数溢出其调用者的缓冲区。如果len太小，不足以容纳表达式结果，那么返回一个空指针，并置为errno为ENOSPC。
+
+inet_pton是可以直接将点分十进制转换网络字节序的
+inet_pton(AF_INET, ip, &foo.sin_addr);   //  代替 foo.sin_addr.addr=inet_addr(ip);
+
+char str[INET_ADDRSTRLEN];
+char *ptr = inet_ntop(AF_INET,&foo.sin_addr, str, sizeof(str));      // 代替 ptr = inet_ntoa(foo.sin_addr)
+
+getpeername()函数: 获取socket的对方地址
+
+gethostbyname和gethostbyaddr这两个函数仅仅支持IPv4
+
+getaddrinfo: getaddrinfo根据域名获取IP等信息。
+int getaddrinfo( const char *hostname, const char *service, const struct addrinfo *hints, struct addrinfo **result );
+hostname:一个主机名或者地址串(IPv4的点分十进制串或者IPv6的16进制串)
+service：服务名可以是十进制的端口号，也可以是已定义的服务名称，如ftp、http等
+hints：获取信息要求设置.可以是一个空指针，也可以是一个指向某个addrinfo结构体的指针，调用者在这个结构中填入关于期望返回的信息类型的暗示。举例来说：指定的服务既可支持TCP也可支持UDP，所以调用者可以把hints结构中的ai_socktype成员设置成SOCK_DGRAM使得返回的仅仅是适用于数据报套接口的信息。
+result：获取信息结果.本函数通过result指针参数返回一个指向addrinfo结构体链表的指针。
+返回值：0——成功，非0——出错
+void freeaddrinfo(struct addrinfo *ai);
+
+struct addrinfo {
+    int     ai_flags;
+    int     ai_family;
+    int     ai_socktype;
+    int     ai_protocol;
+    size_t  ai_addrlen;
+    struct sockaddr *ai_addr;
+    char   *ai_canonname;
+    struct addrinfo *ai_next;
+};
+
+IPv4中使用gethostbyname()函数完成主机名到地址解析，这个函数仅仅支持IPv4
+IPv6中引入了新的API getaddrinfo()，它是协议无关的，既可用于IPv4也可用于IPv6。
+getaddrinfo() 函数能够处理名字到地址以及服务到端口这两种转换，返回的是一个 struct addrinfo 的结构体(列表)指针而不是一个地址清单。
+
+Parameter
+1) nodename
+主机名("www.baidu.com")或者是数字化的地址字符串(IPv4的点分十进制串("192.168.1.100")或者IPv6的16进制串("2000::1:2345:6789:abcd"))，
+如果 ai_flags 中设置了AI_NUMERICHOST 标志，那么该参数只能是数字化的地址字符串，不能是域名,该标志的作用就是阻止进行域名解析。
+nodename 和 servname 可以设置为NULL，但是同时只能有一个为NUL。
+2) servname
+服务名可以是十进制的端口号("8080")字符串，也可以是已定义的服务名称，如"ftp"、"http"等,详细请查看/etc/services 文件，
+最后翻译成对应服务的端口号。
+如果此参数设置为NULL，那么返回的socket地址中的端口号不会被设置。
+如果 ai_flags 设置了AI_NUMERICSERV 标志并且该参数未设置为NULL，那么该参数必须是一个指向10进制的端口号字符串，
+不能设定成服务名，该标志就是用来阻止服务名解析。
+3) hints
+该参数指向用户设定的 struct addrinfo 结构体，只能设定该结构体中 ai_family、ai_socktype、ai_protocol 和 ai_flags 四个域，
+其他域必须设置为0 或者 NULL, 通常是申请 结构体变量后使用memset()初始化再设定指定的四个域。
+该参数可以设置为NULL，等价于 ai_socktype = 0， ai_protocol = 0，ai_family = AF_UNSPEC， 
+ai_flags = 0
+① ai_family
+　　指定返回地址的协议簇，取值范围:AF_INET(IPv4)、AF_INET6(IPv6)、AF_UNSPEC(IPv4 and IPv6)
+
+   ② ai_socktype
+　　具体类型请查看struct addrinfo 中的 enum __socket_type 类型，用于设定返回地址的socket类型，
+
+　　常用的有SOCK_STREAM、SOCK_DGRAM、SOCK_RAW, 设置为0表示所有类型都可以。
+
+　③ ai_protocol
+　　具体取值范围请查看 Ip Protocol ，常用的有 IPPROTO_TCP、IPPROTO_UDP 等，设置为0表示所有协议。
+
+　④ ai_flags
+　　附加选项,多个选项可以使用或操作进行结合，具体取值范围请查看struct addrinfo , 常用的标志如下：
+
+AI_PASSIVE
+　　　　如果设置了 AI_PASSIVE 标志,并且 nodename 是 NULL, 那么返回的socket地址可以用于的bind()函数，
+
+     　　返回的地址是通配符地址(wildcard address, IPv4时是INADDR_ANY,IPv6时是IN6ADDR_ANY_INIT)，
+
+     　　这样应用程序(典型是server)就可以使用这个通配符地址用来接收任何请求主机地址的连接，
+
+     　　如果 nodename 不是NULL，那么 AI_PASSIVE 标志被忽略；
+
+　　　　如果未设置AI_PASSIVE标志,返回的socket地址可以用于connect(), sendto(), 或者 sendmsg()函数。
+
+　　　　如果 nodename 是NULL，那么网络地址会被设置为lookback接口地址(IPv4时是INADDR_LOOPBACK,IPv6时是IN6ADDR_LOOPBACK_INIT)，
+
+　　　　这种情况下，应用是想与运行在同一个主机上另一个应用通信。
+
+AI_CANONNAME
+ 　　　　请求canonical(主机的official name)名字。如果设置了该标志，那么 res 返回的第一个 struct addrinfo 中的 ai_canonname 域会存储official name的指针。
+
+AI_NUMERICHOST
+ 　　　　阻止域名解析，具体见 nodename 中的说明。
+
+AI_NUMERICSERV
+　　　　阻止服务名解析，具体见 servname 中的说明。
+
+AI_V4MAPPED
+ 　　　　当 ai_family 指定为AF_INT6(IPv6)时，如果没有找到IPv6地址，那么会返回IPv4-mapped IPv6 地址，
+
+　　　　也就是说如果没有找到AAAA record(用来将域名解析到IPv6地址的DNS记录),那么就查询A record(IPv4),
+
+　　　　将找到的IPv4地址映射到IPv6地址, IPv4-mapped IPv6 地址其实是IPv6内嵌IPv4的一种方式，
+
+　　　　地址的形式为"0::FFFF:a.b.c.d"，例如"::ffff:192.168.89.9"(混合格式)这个地址仍然是一个IPv6地址，
+
+           只是"0000:0000:0000:0000:0000:ffff:c0a8:5909"(16机制格式)的另外一种写法罢了。
+
+　　　　当 ai_family 不是AF_INT6(IPv6)时，该标志被忽略。
+
+AI_ALL
+ 　　　　查询IPv4和IPv6地址
+
+AI_ADDRCONFIG
+　　　　只有当主机配置了IPv4地址才进行查询IPv4地址；只有当主机配置了IPv6地址才进行查询IPv6地址.
+4) res
+该参数获取一个指向存储结果的 struct addrinfo 结构体列表，使用完成后调用 freeaddrinfo() 释放存储结果空间。
+
+Return Value
+如果 getaddrinfo() 函数执行成功，返回值为 0 ， 其他情况返回值表示错误种别。使用函数gai_strerror() 可以获取可读性的错误信息,用法用strerror()相同
+
+getnameinfo:
+
+###
+Some apps work directly with sockets and other raw network APIs such as gethostbyname, gethostbyname2, and inet_aton. 
+These APIs are prone to misuse or they only support IPv4
+###
+
+==================================================
+https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/NetworkingOverview/UnderstandingandPreparingfortheIPv6Transition/UnderstandingandPreparingfortheIPv6Transition.html#//apple_ref/doc/uid/TP40010220-CH213-SW25
+Avoiding Common Networking Mistakes:
+https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/NetworkingOverview/CommonPitfalls/CommonPitfalls.html#//apple_ref/doc/uid/TP40010220-CH4-SW20
+
+https://www.ietf.org/rfc/rfc4038
+
+// MARK:
+https://github.com/WeMobileDev/article/blob/master/IPv6%20socket%E7%BC%96%E7%A8%8B.md#%E9%97%AE%E9%A2%98%E5%A4%8D%E6%9D%82%E6%80%A7
+
+IPv4地址示例：192.168.1.1
+IPv6地址示例：2001:0db8:85a3:08d3:1319:8a2e:0370:7344
+
+#####但是ipv6的客户端是不能直接连接ipv4的服务端，需要通过DNS64或者NAT64的转换地址才能连接#####
+DNS64/NAT64负责协议的转换和地址的转换,这样我们在IPv6的环境下也是可以访问IPv4的后台资源的
+
+DNS64/NAT64网络是一个通过转化的方式持续提供IPv4内容访问的IPv6-only网络
+
+苹果审核ipv6的标准是应用在ipv6的网络环境下和最新的ios系统下，应用也能正常连接。
+服务器地址不能直接使用ip地址，需要使用域名代替，否则不能通过苹果的转换通道。
+
+IPv6由128位二进制数组成
+将这128位的地址按每16位划分为一个段，将每个段转换成十六进制数字，并用冒号隔开。
+IPv6 address::ffff:128.0.0.128或者纯16进制::ffff:ff00:00ff
+
+###应苹果公司的要求，我们重点关注客户端从IPv6的网络环境访问IPv4的服务资源。###
+
+###
+network address translation (NAT) 
+A DNS64/NAT64 network is an IPv6-only network that continues to provide access to IPv4 content through translation
+Refer to RFC4038: Application Aspects of IPv6 Transition.
+
+To solve this problem, most major network providers are implementing a DNS64/NAT64 transitional workflow. This is an IPv6-only network that continues to provide access to IPv4 content through translation.
+In this type of workflow, the client sends DNS queries to a DNS64 server, which requests IPv6 addresses from the DNS server. 
+When an IPv6 address is found, it’s passed back to the client immediately. 
+However, when an IPv6 address isn’t found, the DNS64 server requests an IPv4 address instead. 
+The DNS64 server then synthesizes an IPv6 address by prefixing the IPv4 address, and passes that back to the client. 
+In this regard, the client always receives an IPv6-ready address. 
+When the client sends a request to a server, any IPv6 packets destined for synthesized addresses are automatically routed by the network through a NAT64 gateway. 
+The gateway performs the IPv6-to-IPv4 address and protocol translation for the request.
+It also performs the IPv4 to IPv6 translation for the response from the server. 
+
+如果客户端向DNS64服务器发起一个DNS查询，当DNS找到一个基于IPv6的地址后，立刻返回客户端。
+如果无法找到对应的IPv6地址，DNS64服务器将请求IPv4地址，然后DNS64服务器将IPv4作为前缀合成一个IPv6地址，并且将其返回给客户端。这样，客户端将总是获得一个IPv6目标地址
+
+如果域名配置了AAAA记录，则直接返回配置的IPv6地址，如果只有A记录，则DNS64会合成IPv6地址后返回给App Client
+
+DNS64则主要是配合NAT64工作，主要是将DNS查询信息中的A记录（IPv4地址）合成到AAAA记录（IPv6地址）中，
+返回合成的AAAA记录给IPv6侧用户。NAT64一般与DNS64协同工作，而不需要在IPv6客户端或IPv4服务器端做任何修改。
+
+// ###iOS官方: Ensuring IPv6 DNS64/NAT64 Compatibility###
+1.Use High-Level Networking Frameworks
+2.Don’t Use IP Address Literals
+Make sure you aren’t passing IPv4 address literals in dot notation to APIs such as getaddrinfo and SCNetworkReachabilityCreateWithName.
+Note: In iOS 9 and OS X 10.11 and later, NSURLSession and CFNetwork automatically synthesize IPv6 addresses from IPv4 literals locally on devices operating on DNS64/NAT64 networks. 
+However, you should still work to rid your code of IP address literals.
+3.Connect Without Preflight
+If you must check for network availability, avoid calling the SCNetworkReachabilityCreateWithAddress method. Call the SCNetworkReachabilityCreateWithName method and pass it a hostname instead
+4.Use Appropriately Sized Storage Containers
+Use address storage containers, such as sockaddr_storage, that are large enough to store IPv6 addresses.
+5.Check Source Code for IPv6 DNS64/NAT64 Incompatibilities
+Check for and eliminate IPv4-specific APIs, such as:
+inet_addr()
+inet_aton()
+inet_lnaof()
+inet_makeaddr()
+inet_netof()
+inet_network()
+inet_ntoa()
+inet_ntoa_r()
+bindresvport()
+getipv4sourcefilter()
+setipv4sourcefilter()
+
+If your code handles IPv4 types, make sure the IPv6 equivalents are handled too.
+IPv4        IPv6
+AF_INET     AF_INET6
+PF_INET     PF_INET6
+struct in_addr      struct in_addr6
+struct sockaddr_in      struct sockaddr_in6
+kDNSServiceProtocol_IPv4        kDNSServiceProtocol_IPv6
+6.Use System APIs to Synthesize IPv6 Addresses
+If your app needs to connect to an IPv4-only server without a DNS hostname, use getaddrinfo to resolve the IPv4 address literal. 
+If the current network interface doesn’t support IPv4, but supports IPv6, NAT64, and DNS64, performing this task will result in a synthesized IPv6 address.
+
+Using getaddrinfo to resolve an IPv4 address literal:
+#include <sys/socket.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <err.h>
+ 
+uint8_t ipv4[4] = {192, 0, 2, 1};
+struct addrinfo hints, *res, *res0;
+int error, s;
+const char *cause = NULL;
+
+char ipv4_str_buf[INET_ADDRSTRLEN] = { 0 };
+const char *ipv4_str = inet_ntop(AF_INET, &ipv4, ipv4_str_buf, sizeof(ipv4_str_buf));
+
+memset(&hints, 0, sizeof(hints));
+hints.ai_family = PF_UNSPEC;
+hints.ai_socktype = SOCK_STREAM;
+hints.ai_flags = AI_DEFAULT;
+error = getaddrinfo(ipv4_str, "http", &hints, &res0);
+if (error) {
+    errx(1, "%s", gai_strerror(error));
+    /*NOTREACHED*/
+}
+s = -1;
+for (res = res0; res; res = res->ai_next) {
+    s = socket(res->ai_family, res->ai_socktype,
+                res->ai_protocol);
+    if (s < 0) {
+        cause = "socket";
+        continue;
+    }
+
+    if (connect(s, res->ai_addr, res->ai_addrlen) < 0) {
+        cause = "connect";
+        close(s);
+        s = -1;
+        continue;
+    }
+
+    break;  /* okay we got one */
+}
+if (s < 0) {
+    err(1, "%s", cause);
+    /*NOTREACHED*/
+}
+freeaddrinfo(res0);
+
+Note: The ability to synthesize IPv6 addresses was added to getaddrinfo in iOS 9.2 and OS X 10.11.2.
+
+7.Test for IPv6 DNS64/NAT64 Compatibility Regularly
+
+###
+
+NAT64的工作流程,首先局域网内有一个NAT64的路由设备并且有DNS64的服务:
+a、客户端进行getaddrinfo的域名解析
+b、DNS返回结果，如果返回的IP里面只有v4地址，并且当前网络是IPv6-only网路，DNS64服务器会把v4地址加上64:ff9b::/96的前缀，
+例如64:ff9b::14.17.32.211。如果当前网络是IPv4-only或IPv4-IPv6，DNS64不会做任何事情。
+c、客户端拿到IPv6地址进行connect。
+d、路由器发现地址的前缀为64:ff9b::/96，知道这个是NAT64的映射，是需要访问14.17.32.211。这个时候需要进行NAT64映射，因为到外网需要转换成IPv4 stack。
+e、当数据返回的时候，按照NAT映射，IPv4回包重新加上前缀64:ff9b::/96，然后返回给客户端。
+
+例子：
+1、IPv6主机发起www.abc.com的AAAA域名解析到DNS64（主机配置的DNS地址是DNS64）；
+2、DNS64触发AAAA到DNS AAAA中查询；
+3、DNS AAAA返回NULL的信息到DNS64；
+4、 DNS64然后触发A的申请到DNS A中查询；
+5、DNS A返回www.abc.com的A记录（1.1.1.1）；
+6、 DNS64合成IPv6地址（64:ff9b:1.1.1.1），返回AAAA response给IPv6主机；
+7、IPv6主机发起目的地址为64:ff9b:1.1.1.1的IPv6数据包，由于NAT64在IPv6域内通告配置的IPv6Prefix，因此这个数据包转发到NAT64设备上；
+8、NAT64执行地址转换和协议转换，目的地址转换为192.0.2.1，源地址根据地址状态转换（64:ff9b:1.1.1.1，1500）>（1.1.1.1，2000）在IPv4域内路由到IPv4 Server；
+9、 数据包返回，目的地址和端口为1.1.1.1,2000；
+10、 NAT64根据已有记录进行转换，目的地址转换为2001:db8::1，源地址为加了IPv6前缀的IPv4Server地址64:ff9b:1.1.1.1，发送到IPv6主机；
+
+按照NAT64的规则，客户端如果没有做DNS域名解析的话，客户端就需要完成DNS64的工作。这里的关键点是，发现网络是IPv6-only的NAT64网络的情况下，我们可以自己补充上前缀64:ff9b::/96，然后进行正常的访问。
+AAAA记录（AAAA Record）是用来将域名解析到IPv6地址的DNS记录，用户可以将一个域名解析到IPv6地址上，也可以将子域名解析到IPv6地址上。

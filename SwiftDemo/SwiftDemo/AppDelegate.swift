@@ -7,6 +7,12 @@
 //  Copyright © 2019 dzcx. All rights reserved.
 //
 
+// MARK: SDK开发
+// https://www.jianshu.com/p/1d6cd04ff1e3
+
+// MARK: Setting.bundle
+// https://www.jianshu.com/u/ff32105744ef
+
 // MARK: WCDB.swift
 // https://blog.csdn.net/kyl282889543/article/details/100538486
 // https://www.jianshu.com/p/3712dc71f956
@@ -977,6 +983,7 @@ directory that contains your module map.
 // MARK: FSPagerView
 // MARK: MarqueeLabel
 // https://github.com/cbpowell/MarqueeLabel
+// Sentry崩溃收集
 
 // MARK: URLSession-tutorial
 // https://www.raywenderlich.com/3244963-urlsession-tutorial-getting-started
