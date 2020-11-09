@@ -1,0 +1,259 @@
+从SIL看Swift函数派发机制
+
+protocol Drawing {
+  func render()
+}
+
+extension Drawing {
+  func circle() { print("protocol") }
+  func render() { circle() }
+}
+
+class SVG: Drawing {
+  func circle() { print("class") }
+}
+
+SVG().render()
+
+// what's the output?
+答案是： protocol 。
+原因是 extension中声明的函数是静态派发，编译的时候就已经确定了调用地址，类无法重写实现。
+
+我们通过 SIL 分析一下：
+swiftc -emit-silgen -O demo.swift -o demo.sil
+
+我们可以看到SVG初始化后，是直接调用 Drawing.render() 协议的静态函数的。
+而对于 Drawing.render() 来说，内部也只直接调用 Drawing.circle() 的，所以这是编译期就决定了的。
+
+1.派发机制
+函数派发的三种类型:
+静态派发
+函数表派发
+消息派发
+
+1.1 静态派发
+静态派发是三种派发方式中最快的。CPU 直接拿到函数地址并进行调用。编译器优化时，也常常将函数进行内联，将其转换为静态派发方式，提升执行速度。
+C++ 默认使用静态派发；在 Swift 中给函数加上final关键字，也会变成静态派发。
+优点：
+使用最少的指令集，办最快的事情。
+缺点：
+静态派发最大的弊病就是没有动态性，不支持继承。
+
+
+1.2 函数表派发
+编译型语言中最常见的派发方式，既保证了动态性也兼顾了执行效率。
+函数所在的类会维护一个“函数表”(虚函数表)，存取了每个函数实现的指针。
+每个类的 vtable 在编译时就会被构建，所以与静态派发相比多出了两个读取的工作：
+
+读取该类的 vtable
+读取函数的指针
+
+优点：
+查表是一种简单，易实现，而且性能可预知的方式。
+理论上说，函数表派发也是一种高效的方式。
+
+缺点：
+与静态派发相比，从字节码角度来看，多了两次读和一次跳转。
+与静态派发相比，编译器对某些含有副作用的函数无法优化。
+Swift 类扩展里面的函数无法动态加入该类的函数表中，只能使用静态派发的方式。
+
+class A {
+    func method1() {}
+}
+class B: A {
+		func method2() {}
+}
+class C: B {
+    override func method2() {}
+    func method3() {}
+}
+
+offset	    0xA00	    A	    0xB00	    B	    0xC00	    C
+0	        0x121	A.method1	0x121	A.method1	0x121	A.method1
+1			                    0x222	B.method2	0x322	C.method2
+2					                                0x323	C.method3
+
+let obj = C()
+obj.method2()
+
+当method2被调用时，会经历下面的几个过程：
+读取对象 0xC00 的函数表
+读取函数指针的索引， method2 的地址为0x322
+跳转执行 0x322
+
+1.3 消息派发
+消息机制是调用函数最动态的方式。由于 Swfit 使用的依旧是 Objective-C 的运行时系统，消息派发其实也就是 Objective-C 的 Message Passing(消息传递)。
+
+id returnValue = [obj messageName:param];
+// 底层代码
+id returnValue = objc_msgSend(obj, @selector(messageName:), param);
+
+优点：
+动态性高
+Method Swizzling
+isa Swizzling
+缺点：
+执行效率是三种派发方式中最低的
+
+所幸的是 objc_msgSend 会将匹配的结果缓存到一个映射表中，每个类都有这样一块缓存。若是之后发送相同的消息，执行速率会很快。
+
+2. Swift的派发机制
+Swift的派发机制受到4个因素的影响：
+数据类型
+函数声明的位置
+指定派发方式
+编译器优化
+
+类型	初始声明	扩展
+值类型	静态派发	静态派发
+协议	函数表派发	静态派发
+类	函数表派发	静态派发
+NSObject子类	函数表派发	静态派发
+
+struct 类型仅使用静态派发，不存在 vtable 结构；
+class 类型存在 vtable 结构，函数依次被存放在 vtable 中，使用函数表派发。
+
+2.2 函数声明的位置
+函数声明位置的不同也会导致派发方式的不同。
+
+在 类 中声明
+在 扩展 中声明
+
+protocol MyProtocol {
+    func testOfProtocol()
+}
+
+extension MyProtocol {
+    func testOfProtocolInExtension() {}
+}
+
+class MyClass: MyProtocol {
+    func testOfClass() {}
+    func testOfProtocol() {}
+}
+
+extension MyClass {
+    func testOfClassInExtension() {}
+}
+
+声明在 协议 或者 类 中的函数是使用函数表派发的
+声明在 扩展 中的函数则是静态派发
+
+2.3 指定派发方式
+给函数添加关键字的修饰也会改变其派发方式。
+
+final
+添加了 final 关键字的函数无法被重写，使用静态派发，不会在 vtable 中出现，且对 objc 运行时不可见。
+
+dynamic
+函数均可添加 dynamic 关键字，为非objc类和值类型的函数赋予动态性，但派发方式还是函数表派发。
+
+利用 dynamic 关键字，实现 Method Swizzling:
+class Test {
+    dynamic func foo() {
+        print("bar")
+    }
+}
+
+extension Test {
+    @_dynamicReplacement(for: foo())
+    func foo_new() {
+        print("bar new")
+    }
+}
+    
+Test().foo() // bar new
+
+@objc
+该关键字可以将Swift函数暴露给Objc运行时，但并不会改变其派发方式，依旧是函数表派发。
+class Test {
+    @objc func foo() {}
+}
+
+@objc + dynamic
+class Test {
+    dynamic func foo1() {}
+    @objc func foo2() {}
+    @objc dynamic func foo3() {}
+}
+vtable 中只有 foo1 和 foo2 ，没有 foo3。
+Test.foo1 和 Test.foo2 都是通过 class_method 采用 函数表 的方式。而 Test.foo3 则是通过 objc_method 采用 消息派发 的方式
+
+@inline
+class Test {
+    @inline(__always) func foo() {}
+}
+告诉编译器将此函数静态派发，但将其转换成SIL代码后，依旧是 vtable 派发。
+
+static
+class Test {
+    static func foo() {}
+}
+static 关键字会将函数变为静态派发，不会在 vtable 中出现
+
+总结
+类型    静态派发    函数表派发  消息派发
+值类型  所有方法    /           /
+协议    extension   主体创建    /
+类  extension/final/static  主体创建    @objc + dynamic
+NSObject子类    extension/final/static  主体创建    @objc + dynamic
+
+编译器可能将某些方法优化为静态派发。例如，私有函数。
+
+2.4 编译器优化
+Swift 会尽可能的去优化函数派发方式。当一个类声明了一个私有函数时，该函数很可能会被优化为静态派发。
+这也就是为什么在 Swift 中使用 target-action 模式时，私有 selector 会报错的原因(Objective-C 无法获取 #selector 指定的函数)。
+
+另一个需要注意的是，NSObject子类 中的 属性，如果没有使用 dynamic 修饰的话， 这个优化会默认让 KVO 失效。因为，这个属性的 getter 和 setter 会被优化为静态派发。
+虽然，代码可以通过编译，不过动态生成的 KVO 函数就不会被触发。
+
+
+protocol Logger {
+    func log(content: String)
+}
+
+extension Logger{
+    func log(content: String){
+        print(content)
+    }
+    func description()->String{
+        return "Logger"
+    }
+}
+
+class MyLogger:Logger{
+    func log(content: String) {
+        print("MyLogger: " + content)
+    }
+    func description()->String{
+        return "MyLogger"
+    }
+}
+
+let p1:Logger = MyLogger()
+p1.log(content: "p1")
+print(p1.description())
+    
+let p2:MyLogger = MyLogger()
+p2.log(content: "p2")
+print(p2.description())
+
+答案：
+let p1:Logger = MyLogger()
+p1.log(content: "p1") 	// MyLogger: p1
+print(p1.description()) // Logger
+    
+let p2:MyLogger = MyLogger()
+p2.log(content: "p2")	// MyLogger: p2
+print(p2.description()) // MyLogger
+
+由于 Swift 是强类型的语言，所以 p1 为 Logger 类型， p2 为 MyLogger 类型。
+
+protocol 通过 sil_witness_table 进行调用。sil_witness_table 中的 Logger.log 函数，内部实现为通过 class_method 调用 MyLogger.log ，所以无论是 p1 还是 p2 均正常输出 MyLogger: p1/p2 。
+
+而对于 description 函数会有一些不同：
+对于 p1 Logger 类型来说，这是一个静态派发的函数，所以输出 Logger；
+对于 p2 MyLogger 类型来说，这是一个 vtabel 派发的函数，所以输出 MyLogger。
+
+对于 p1 Logger 类型来说，通过 function_ref 进行调用，为静态派发；
+对于 p2 MyLogger 类型来说，通过 class_method 进行调用，为函数表派发。

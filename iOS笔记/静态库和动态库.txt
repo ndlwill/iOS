@@ -180,6 +180,15 @@ CocoaPods允许使用umbrella和modular frameworks。
 可以使用use_modular_headers!来让所有Pod支持静态库;
 或者对不支持静态库的Pod后面添加:modular_headers => true来使其支持module
 
+关于 use_frameworks!
+在使用CocoaPods的时候在Podfile里加入use_frameworks! ，那么你在编译的时候就会默认帮你生成动态库，我们能看到每个源码Pod都会在Pods工程下面生成一个对应的动态库Framework的target，
+我们能在这个target的Build Settings -> Mach-O Type看到默认设置是Dynamic Library。也就是会生成一个动态Framework，我们能在Products下面看到每一个Pod对应生成的动态库。
+
+这些生成的动态库将链接到主项目给主工程使用，但是我们上面说过动态库需要在主工程target的General -> Embedded Binaries中添加才能使用，而我们并没有在Embedded Binaries中看到这些动态库。
+
+其实是cocoapods已经执行了脚本把这些动态库嵌入到了.app的Framework目录下，相当于在Embedded Binaries加入了这些动态库。
+我们能在主工程target的Build Phase -> Embed Pods Frameworks里看到执行的脚本。
+
 ==================================================#import和@import
 @import是iOS7之后的新特性语法: Modules（模块导入）或者"语义引入"
 
@@ -392,15 +401,14 @@ Modules:
 .bundle文件:
 如果我们在Build Phases -> Copy Bundle Resources里加入.bundle文件，那么创建出来的.Framework里就会有这个.bundle的资源文件夹。
 
-==================================================资源
+==================================================资源相关
 一般如果是静态Framework的话，资源打包进Framework是读取不了的。静态Framework和.a文件都是编译进可执行文件里面的。
 只有动态Framework能在.app的Framework文件夹下看到，并读取.framework里的资源文件。
 
 你可以用NSBundle *bundel = [[NSBundle mainBundle] bundlePath];得到.app目录，如果是动态库你能在Framework目录下看到这个动态库以及动态库里面资源文件。
 然后你只要用NSBundle *bundle = [NSBundle bundleForClass:<#ClassFromFramework#>];得到这个动态库的路径就能读取到里面的资源了。
 
-
-==================================================打包framework
+==================================================#####打包framework#####
 再新建一个taget，找到Aggregate
 在新建的Aggregate的Build Phases下点左上的+号选择New Run Script Phases
 
@@ -492,3 +500,10 @@ $ lipo /Users/XY/Desktop/Release-iphoneos/libXYCalculateTool.a -thin arm64 -outp
 #查看分离出的静态库，为arm64架构(移除后的.a没有配置路径，就在桌面。∵前面我们cd进了Desktop)
 $ lipo -info /Users/XY/Desktop/libXYCalculateTool.a 
 Non-fat file: /Users/XY/Desktop/libXYCalculateTool.a is architecture: arm64
+
+==================================================相关问题
+如果静态库中有category类，则在使用静态库的项目配置中【Other Linker Flags】需要添加参数【-ObjC]
+
+Swift 支持:
+跟着 iOS8 / Xcode 6 同时发布的还有 Swift。如果要在项目中使用外部的代码，可选的方式只有两种，一种是把代码拷贝到工程中，另一种是用动态 Framework。使用静态库是不支持的。
+造成这个问题的原因主要是 Swift 的运行库没有被包含在 iOS 系统中，而是会打包进 App 中（这也是造成 Swift App 体积大的原因）,静态库会导致最终的目标程序中包含重复的运行库

@@ -7,6 +7,12 @@
 //  Copyright © 2019 dzcx. All rights reserved.
 //
 
+// MARK: LG
+// https://www.jianshu.com/u/1e8432e01e5a
+
+// MARK: ping
+// https://developer.apple.com/library/archive/samplecode/SimplePing/Introduction/Intro.html
+
 // MARK: SDK开发
 // https://www.jianshu.com/p/1d6cd04ff1e3
 

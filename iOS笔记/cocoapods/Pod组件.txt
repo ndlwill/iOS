@@ -6,6 +6,9 @@ gem list
 sudo gem install cocoapods-acknowledgements
 sudo gem uninstall cocoapods X.X.X
 
+==================================================Podfile Syntax Reference
+https://guides.cocoapods.org/syntax/podfile.html#post_install
+
 ==================================================含第三方库的组件
 本地检测代码仓库是否有问题
 pod lib lint xxx.podspec --allow-warnings --use-libraries
@@ -26,7 +29,47 @@ pod spec lint --allow-warnings --verbose
 //向远程代码索引库提交spec
 pod trunk push xxx.podspec --allow-warnings --verbose
 
-==================================================
+==================================================私有库依赖私有库的
+--allow-warnings //用它忽略警告
+--verbose //打印执行过程详细信息
+--use-libraries //表示使用静态库或者是framework，这里主要是解决当我们依赖一些framework库后校验提示找不到库的时候用到。
+--sources=https://github.com/CocoaPods/Specs //如果库依赖了三方的pod库需要设置，可以设置私有库
+
+验证远程spec文件是否有问题:
+pod spec lint WYLoginModule.podspec --sources='https://gitee.com/BIMComponent/BIMRepo.git,https://github.com/CocoaPods/Specs.git' --allow-warnings --use-libraries 
+pod spec lint xxx.podspec --sources ='repo1 url, repo2 url' --allow-warnings --use-libraries 
+
+验证远程代码库:
+pod lib lint WYLoginModule.podspec --sources='https://gitee.com/BIMComponent/BIMRepo.git,https://github.com/CocoaPods/Specs.git' --allow-warnings --use-libraries 
+pod lib lint xxx.podspec --sources ='repo1 url, repo2 url' --allow-warnings --use-libraries
+
+上传私有库:
+1.   pod trunk me
+看上传的私有库是否在列表中
+如果不存在，就要在次上传此私有库
+pod trunk push xxx.podspec --allow-warnings --use-libraries
+上传本地:
+pod repo push WYRepo WYLoginModule.podspec --sources='https://gitee.com/BIMComponent/BIMRepo.git,https://github.com/CocoaPods/Specs.git' --allow-warnings --use-libraries 
+pod repo push XXXRepo xxx.podspec --sources ='repo1 url, repo2 url' --allow-warnings --use-libraries
+
+上传完成之后:
+rm ~/Library/Caches/CocoaPods/search_index.json
+pod repo update
+
+eg:
+// podspec 设置依赖
+s.dependency '私库'
+s.dependency 'MBProgressHUD'
+s.dependency 'Masonry'
+
+// 本地校验
+pod lib lint --verbose --use-libraries --allow-warnings
+// 同时依赖私库和公共库，直接本地校验会出错，
+ 
+// 校验podspec文件时会到远程podspec库查找相关依赖，默认只会到官方specs库校验，此时需要指定远程specs库去校验。----sources指定源
+pod spec lint JKDJ_UIKit.podspec --verbose --use-libraries --allow-warnings --sources='https://私库.git,https://github.com/CocoaPods/Specs.git'
+
+==================================================流程
 pod lib lint -> git commit -> git push -> git tag -> git push --tag -> pod spec lint -> pod push
 
 ==================================================多target项目CocoaPods更新
@@ -94,6 +137,53 @@ sudo gem install cocoapods
 ==================================================使用CocoaPods管理SDK
 https://guides.cocoapods.org/making/making-a-cocoapod.html
 
+删除仓库：
+pod repo remove CodeBaseSpecs
+更新仓库：
+pod repo update CodeBaseSpecs
+
+有时候当你使用pod update时会发现特别慢，那是因为pod会默认先更新一次podspec索引。使用--no-repo-update参数可以禁止其做索引更新操作。
+pod update --no-repo-update
+
+--verbose:
+意思是打印详细信息
+
+--only-errors和--allow-warnings:
+--allow-warnings是允许warning的存在，也就是说当你在pod lib lint验证podspec的时候，如果不加这句，而你的代码里又一些警告的话，是验证不通过的。
+而加上这句话的话，有警告也能验证通过。
+--only-errors这句话是只显示出错误，就是你在验证的时候就算--allow-warnings，但是那些warnings也还是会打印出来和errors混杂在一起，
+这会让你很难找error。所以这里使用--only-errors来只打印error，不打印warning
+
+--fail-fast:
+出现第一个错误的时候就停止
+
+--use-libraries:
+pod在提交或验证的时候如果用到的第三方中需要使用.a静态库文件的话，则会用到这个参数。如果不使用--use-libraries则会验证不通过。
+但是比如你用swift创建了一个pod的话，你使用--use-libraries就会报错，因为swift开始，生成的就不是.a静态库了，它是不支持编译为静态库的，
+只能生成.Framework动态库。下面就是swift的pod使用--use-libraries时的报错：
+ERROR | [iOS] unknown: Encountered an unknown error (Pods written in Swift can only be integrated as frameworks; add use_frameworks! to your Podfile or target to opt into using it. The Swift Pod being used is: Socialite) during validation.
+
+给Pod添加资源文件:
+在 podspec 中，我们利用 s.source_files 来指定要编译的源代码文件。但是一些资源文件如图片、nib、plist等要怎么办呢？这里有两种方式：s.resources和s.resource_bundles。
+s.resources和s.resource_bundles的区别主要是后者在上面代码[NSBundle bundleForClass:<#ClassFromPodspec#>]中得到的那个bundle对象下面再生成一个.bundle资源文件夹，
+相较于s.resources直接平铺的方式更好的组织了文件，避免资源文件命名冲突。
+s.resource_bundles = {
+'PodTest'(.bundle文件名) => 'PodTest/Assets/*.{png,xib,plist}'
+}
+Podfile使用use_frameworks!
+编译后资源文件会在test.app/Frameworks/PodName.framework下的PodTest.bundle目录下
+NSBundle *bundle = [NSBundle bundleForClass:<#ClassFromPodspec#>];
+[UIImage imageWithContentsOfFile:[bundle pathForResource:@"PodTest.bundle/imageName@2x" ofType:@"png"]];
+Podfile不使用use_frameworks!
+编译后资源文件会在test.app下的PodTest.bundle目录下
+[UIImage imageNamed:@"PodTest.bundle/imageName"];
+//下面这种也可以
+NSBundle *bundle = [NSBundle bundleForClass:<#ClassFromPodspec#>];
+[UIImage imageWithContentsOfFile:[bundle pathForResource:@"PodTest.bundle/imageName@2x" ofType:@"png"]];
+使用s.resources方式
+s.resources = ['PodTest/Assets/*.{png,xib,plist}']
+注意切换resources和resource_bundles测试的时候要把工程clear一下，不然的话之前的位置那些编译过的资源文件还会存在。
+
 /**
  ###私有库###
  pod repo
@@ -117,8 +207,163 @@ https://guides.cocoapods.org/making/making-a-cocoapod.html
  pod repo push 索引库的本地名称 xx.podspec
  pod repo push CodeBaseSpecs Utilities.podspec
 
+ pod spec相对于pod lib会更为精确，pod lib相当于只验证一个本地仓库，pod spec会同时验证本地仓库和远程仓库。
+
  source 官方索引库url
  source 私有索引库url
  pod '组件名称'
  pod install
  */
+
+==================================================私有库问题总结
+1.关于第三方库支持 的cpu的框架
+Undefined symbols for architecture i386:
+ld: symbol(s) not found for architecture i386
+cup的框架 : arm64 x86_64 armv7 armv7s i386
+s.xcconfig = { 'VALID_ARCHS' => 'arm64 x86_64 armv7 armv7s' }
+
+2.第三方含有 静态库(.a) 和 动态库(.framework)
+///添加
+s.static_framework = true
+
+3.自己引进 静态库(.a) 和 动态库(.framework)
+s.vendored_libraries  = 'UC_IM/Classes/Lib/*.{a}' /// 该目录下 .a
+s.vendored_framework  = 'UC_IM/Classes/Framework/***.framework'  ///Framework目录下的***.framework动态库
+
+4.私有库使用子模块
+如果你想引用一个私有库里面的一小部分功能，但是又不想把整个库导入，那么私有库的子模块 ,外部单独依赖这个子模块
+
+子模块的定义，也还是在.podspec文件中
+#子模块 —— 头文件
+s.subspec 'Header' do |ss|
+   ss.source_files = 'UC_IM/Classes/Header/*.{h,m}'
+end
+使用子模块时只需在podfile中添加  pod 'UC_IM/header' 
+
+5.使用私有库的分支和本地库
+主工程podfile
+pod 'Ucoupon',:git => 'http://git.hnbangyao.com/ios', :branch => 'dev' #直接使用远程库的branchName最新提交，而不是通过XXXRepo索引库中的tag标签
+使用本地的仓库
+pod 'Ucoupon',:path => '/Users/MacBook/Project/UC_IM' #直接使用本地库, '/Users/MacBook/Project/UC_IM' 是私有库在本地的目录，这种更方便于开发。
+
+6.直接使用头文件 像PCH文件一样
+s.prefix_header_contents = '#import <Masonry/Masonry.h>','#import "header.h"'
+
+7.公共库需要多人操作
+//添加管理者
+pod trunk add-owner xxx_Mediator xxxxxxxxxxx@qq.com
+//删除管理者
+pod trunk remove-owner xxx_Mediator xxxxxxxxxxx@qq.com
+
+8.私有库含有swift文件
+验证私有库不能使用 --use-libraries  
+不能使用静态库的验证
+
+==================================================s.subspec
+一般一个大的项目写成pod的时候，它可能会分为多个subspec，这样的话当你用一个庞大的库时，只需要其中的一小部分，那么就可以使用其中的某个subspec了。
+
+我们拿AFNetworking.podspec来看，比如只引入其中的Reachability
+
+pod 'AFNetworking/Reachability'
+或者
+pod 'AFNetworking',:subspecs=>['Reachability','Security']
+所以一般subspec之间最好不要有互相依赖，不然的话，你用了其中一个subspec，而它其中一个文件依赖了另一个你未引入的subspec中的文件的话是会报错的。
+
+如果有多个subspec互相依赖的话，可以像AFNetworking.podspec里这样写，UIKit依赖于NSURLSession
+s.subspec 'NSURLSession' do |ss|
+    //省略一大段代码
+end
+
+s.subspec 'UIKit' do |ss|
+    ss.ios.deployment_target = '7.0'
+    ss.tvos.deployment_target = '9.0'
+    ss.dependency 'AFNetworking/NSURLSession'
+
+    ss.public_header_files = 'UIKit+AFNetworking/*.h'
+    ss.source_files = 'UIKit+AFNetworking'
+end
+
+
+PODS:
+  - AFNetworking (3.0.0):
+    - AFNetworking/NSURLSession (= 3.0.0)
+    - AFNetworking/Reachability (= 3.0.0)
+    - AFNetworking/Security (= 3.0.0)
+    - AFNetworking/Serialization (= 3.0.0)
+    - AFNetworking/UIKit (= 3.0.0)
+  - AFNetworking/NSURLSession (3.0.0):
+    - AFNetworking/Reachability
+    - AFNetworking/Security
+    - AFNetworking/Serialization
+  - AFNetworking/Reachability (3.0.0)
+  - AFNetworking/Security (3.0.0)
+  - AFNetworking/Serialization (3.0.0)
+  - AFNetworking/UIKit (3.0.0):
+    - AFNetworking/NSURLSession
+DEPENDENCIES:
+  - AFNetworking (= 3.0)
+SPEC CHECKSUMS:
+  AFNetworking: 932ff751f9d6fb1dad0b3af58b7e3ffba0a4e7fd
+
+PODFILE CHECKSUM: f38d14cf91adf9e2024f841ce5336dae96aa6fa6
+
+COCOAPODS: 1.2.0.beta.1
+
+
+#####s.subspec互相之间的依赖问题#####
+当你把源码分为多个s.subspec的时候，其实是需要在对应的subspec下面做依赖的，如下面这样：
+s.subspec 'ViewController' do |ss|
+     ss.source_files = 'PodName/ViewController/*.{h,m}'
+end
+
+s.subspec 'View' do |ss|
+     ss.source_files = 'PodName/View/*.{h,m}'
+end
+如上面这样写的话(ViewController中有文件依赖于View)，你在本地编译安装pod库其实是不会报错的。
+但是如果你要pod spec lint的验证这个podspec，它会报错，提示'ViewController'中某个文件找不到引用View中的文件。
+其实pod在做检查的时候会把ViewController和View当做两个独立的spec，如果ViewController中有使用View中的文件的话，需要添加依赖关系，如下这样就是正确的。
+s.subspec 'ViewController' do |ss|
+     ss.source_files = 'PodName/ViewController/*.{h,m}'
+     ss.dependency 'PodName/View'
+end
+
+s.subspec 'View' do |ss|
+     ss.source_files = 'PodName/View/*.{h,m}'
+end
+
+==================================================pod install和pod update的区别
+源码:
+https://github.com/CocoaPods/CocoaPods/blob/1.2.0.beta.1/lib/cocoapods/command/install.rb#L32
+https://github.com/CocoaPods/CocoaPods/blob/1.2.0.beta.1/lib/cocoapods/command/update.rb#L47
+
+//是否更新repo索引
+install.rb默认不更新
+update.rb默认更新
+我们就常常会使用pod update --no-repo-update来禁止更新repo
+
+update.rb 独有的，因为有个命令是更新某个特定的pod用的。pod update podName
+pod update podName的时候会去Podfile.lock文件检查这个pod是否安装过，如果没有安装过会抛出异常
+但是如果直接pod update的话就算Podfile.lock中没有某个pod，这是不会抛出异常，它会默认帮你先安装好，然后写入到Podfile.lock文件中。
+
+//installer.update表示是否更新pod。
+install.rb默认不更新
+update.rb默认更新
+pod update默认是更新pod的，而pod install是不更新的。
+但是这是相对于pod 'SDWebImage', '~>3.8.0'这样的写法来用的。比如原来已经安装过3.8.0版本，Podfile.lock中就为3.8.0版本，满足~>3.8.0这个条件，那么pod install的时候是是不会更新到最新版的。
+但是pod update会更新到最新版，同时改写Podfile.lock中的版本号为最新版。
+
+而pod 'SDWebImage', '3.8.1'这种写法的话，pod install和pod update是一样的。比如Podfile.lock中原来为3.8.0版本，那么不管怎样都是不等于'3.8.1'的。
+pod install的时候就会重新安装'3.8.1'版本，同时改写Podfile.lock中的版本号为'3.8.1'
+
+https://guides.cocoapods.org/using/pod-install-vs-update.html
+主要就是说pod install用在adding/removing pods的时候。而当你需要更新pods的时候使用pod update
+还有最好把你的Podfile.lock文件提交到版本管理中，要不然，就会破坏整个逻辑，没有了Podfile.lock限制你的Pods中的库的版本。
+
+==================================================第一次pod setup特别慢
+利用shadowsocks的socks5代理，配置好后明显加速。用下面两条命令配置好后，保持shadowsocks客户端开启就行了。
+//shadowsocks的本地端口默认是1080
+git config --global http.proxy 'socks5://127.0.0.1:1080' 
+git config --global https.proxy 'socks5://127.0.0.1:1080'
+然后用下面这种直接clone的方式能够看到进度
+cd ~/.cocoapods/repos
+git clone https://github.com/CocoaPods/Specs.git
