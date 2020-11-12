@@ -143,16 +143,231 @@ CocoaPods允许使用umbrella和modular frameworks。如果你引入了pods到�
 Q: Podfile使用静态库时出现报错[!] The following Swift pods cannot yet be integrated as static libraries:,如何解决？
 A：pod install 时的错误信息提示我们应该使用use_modular_headers!来让整个项目支持静态库，或者对单个Pod使用:modular_headers => true
 
-===============================================================================================
+===============================================================================================修改编译参数完成二进制文件的重新排布提升应用的启动速度
 通过修改库的类型和Clang插桩找到启动所需符号，然后修改编译参数完成二进制文件的重新排布提升应用的启动速度的。
 通过staticlib优化、二进制重排两项技术
 
 1. 动态库转静态库
 
-Pre-main时间的查看:
+1.1 Pre-main时间的查看
 在系统执行应用程序的main函数并调用应用程序委托函数(applicationWillFinishLaunching)之前，会发生很多事情。
 我们可以将DYLD_PRINT_STATISTICS环境变量添加到项目scheme中。
 
+应用程序启动:
 dylib loading time 动态加载程序查找并读取应用程序使用的依赖动态库。
 每个库本身都可能有依赖项。虽然苹果系统框架的加载是高度优化的，但加载嵌入式框架可能会很耗时。为了加快动态库的加载速度，苹果建议您使用更少的动态库，或者考虑合并它们。
 建议的目标是六个额外的(非系统)框架。
+
+Rebase/binding time 修正调整镜像内的指针(重新调整)和设置指向镜像外符号的指针(绑定)。
+为了加快重新定位/绑定时间，我们需要更少的指针修复。
+如果有大量(大的是20000)Objective-C类、选择器和类别的应用程序可以增加800ms的启动时间。
+如果应用程序使用C++代码，那么使用更少的虚拟函数。
+使用Swift结构体通常也更快。
+
+ObjC setup time Objective-C运行时需要进行设置类、类别和选择器注册。我们对重新定位绑定时间所做的任何改进也将优化这个设置时间。
+
+initializer time 运行初始化程序。如果使用了Objective-C的 +load 方法，请将其替换为 +initialize 方法。
+
+1.2 动态库与静态库加载的耗时
+
+通过修改Mach-O Type从动态库改为静态库，dylib loading time得到了很大的提升
+
+CocoaPods会在项目中的Build Phases添加一个 [CP] Embed Pods Frameworks 执行脚本。
+"${PODS_ROOT}/Target Support Files/Pods-项目名/Pods-项目名-frameworks.sh"
+我们在执行pod install后会生成一个Pods-项目名-frameworks.sh的脚本文件。
+由于我们是手动修改的Mach-O Type类型，这个脚本中的install_framework仍然会执行，所以我们要把转换成静态库的这些库从Pods-项目名-frameworks.sh文件中删除。
+
+以AFNetworking为例，需要从文件中删除：
+install_framework "${BUILT_PRODUCTS_DIR}/AFNetworking/AFNetworking.framework"
+
+当然你也可以写一个ruby脚本在使用CocoaPods的post_install进行处理。
+1.把相关的库转成静态的。
+target.build_configurations.each do |config|
+    config.build_settings['MACH_O_TYPE'] = 'staticlib'
+end
+
+2.读取Pods-项目名-frameworks.sh文件，删除相关的字符串。
+regex = /install_framework.*\/#{pod_name}\.framework\"/
+pod_frameworks_content.gsub!(regex, "")
+
+2. 二进制重排
+2.1 App启动
+进程如果能直接访问物理内存无疑是很不安全的，所以操作系统在物理内存的上又建立了一层虚拟内存。
+
+iOS系统中虚拟内存到物理内存的映射都是以页为最小单位的。当进程访问一个虚拟内存Page而对应的物理内存却不存在时，就会出现Page Fault缺页中断，然后加载这一页。
+虽然本身这个处理速度是很快的，但是在一个App的启动过程中可能出现上千(甚至更多)次Page Fault，这个时间积累起来会比较明显了。
+iOS系统中一页是16KB。
+我们常说的启动是指点击App到第一页显示为止，包含pre-main、main到didFinishLaunchingWithOptions结束的整个时间。
+
+main到didFinishLaunchingWithOptions结束，这个部分是我们可以控制的，可以优化的
+二进制重排主要是针对如何减少Page Fault的优化。
+
+冷启动：
+程序完全退出，之间加载的分页数据被其他进程所使用覆盖之后，或者重启设备、第一次安装，才算是冷启动。
+
+热启动：
+程序杀掉之后，马上又重新启动。这个时候相应的物理内存中仍然保留之前加载过的分页数据，可以进行重用，不需要全部重新加载。所以热启动的速度比较快。
+
+利用Instruments工具System Trace更直观地比较这两种启动。
+
+2.2 二进制重排
+2.2.1 二进制重排的意义
+
+程序默认情况下是顺序执行的。
+如果启动需要使用的方法分别在2页Page1和Page2中(method1和method3)，为了执行相应的代码，系统就必须进行两个Page Fault。
+如果我们对方法进行重新排列，让method1和method3在一个Page，那么就可以较少一次Page Fault。
+
+那么怎么衡量重排效果并验证呢？
+查看Page Fault次数是否减少。
+查看编译过程的中间产物LinkMap文件进行确认。
+
+2.2.2 System Trace
+那么如何衡量页的加载时间呢？这里就用到了Instruments中的System Trace工具。
+
+点击录制⏺后，出现第一个页面，马上停止⏹。过滤只显示Main Thread相关，选择Summary: Virtual Memory。
+File Backed Page In次数就是触发Page Fault的次数了。
+Page Cache Hit就是页缓存命中的次数了。
+对比冷启动和热启动的File Backed Page In次数，可以看到热启动情况下，触发的Page Fault的次数就变得很小了。
+
+2.2.3 启动顺序
+2.2.3.1 文件顺序
+Build Phases中Compile Sources列表顺序决定了文件执行的顺序(可以调整)。如果不进行重排，文件的顺序决定了方法、函数的执行顺序。
+随着Compile Sources中的文件顺序的修改，+load方法的执行顺序也发生了改变。
+
+2.2.3.2 符号表顺序
+Build Settings中修改Write Link Map File为YES编译后会生成一个Link Map符号表txt文件。
+执行⌘ + B构建后，选择Product中的App，在Finder中打开，选择Intermediates.noindex文件夹，
+我们可以看到这个顺序和我们Compile Sources中的顺序是一致的。
+
+Mach-O的一些信息
+可以看到，整体的顺序和Compile Sources的中的顺序是一样的，并且方法是按照文件中方法的顺序进行链接的。
+Address 表示文件中方法的地址。
+Size 表示方法的大小。
+File 表示在第几个文件中。
+Name 表示方法名。
+
+2.2.4 二进制重排初体验
+在项目根目录创建一个order文件。
+touch BinaryOptimization.order
+
+在Build Settings中找到Order File，填入./BinaryOptimization.order。
+在BinaryOptimization.order文件中填入：
++[ViewController load]
++[AppDelegate load]
+_main
+-[ViewController someMethod]
+
+然后执行⌘ + B构建。
+可以看到Link Map中的最上面几个方法和我们在BinaryOptimization.order文件中设置的方法顺序一致！
+
+Xcode的连接器ld还忽略掉了不存在的方法 -[ViewController someMethod]。
+如果提供了link选项 -order_file_statistics，会以warning的形式把这些没找到的符号打印在日志里。
+
+2.3 二进制重排实战
+要真正的实现二进制重排，我们需要拿到启动的所有方法、函数等符号，并保存其顺序，然后写入order文件，实现二进制重排。
+
+https://mp.weixin.qq.com/s/Drmmx5JtjG3UtTFksL6Q8Q
+
+解决方案编译期插桩
+
+2.3.1 Clang插桩
+其实就是一个代码覆盖工具，更多信息可以查看官网 https://clang.llvm.org/docs/SanitizerCoverage.html#tracing-pcs
+
+Build Settings中 Other C Flags添加-fsanitize-coverage=trace-pc-guard配置，编译的话会报错。
+Undefined symbol: ___sanitizer_cov_trace_pc_guard_init
+Undefined symbol: ___sanitizer_cov_trace_pc_guard
+
+查看官网会需要我们添加一个两个函数：
+#include <stdint.h>
+#include <stdio.h>
+#include <sanitizer/coverage_interface.h>
+
+// This callback is inserted by the compiler as a module constructor
+// into every DSO. 'start' and 'stop' correspond to the
+// beginning and end of the section with the guards for the entire
+// binary (executable or DSO). The callback will be called at least
+// once per DSO and may be called multiple times with the same parameters.
+extern "C" void __sanitizer_cov_trace_pc_guard_init(uint32_t *start,
+                                                    uint32_t *stop) {
+  static uint64_t N;  // Counter for the guards.
+  if (start == stop || *start) return;  // Initialize only once.
+  printf("INIT: %p %p\n", start, stop);
+  for (uint32_t *x = start; x < stop; x++)
+    *x = ++N;  // Guards should start from 1.
+}
+
+// This callback is inserted by the compiler on every edge in the
+// control flow (some optimizations apply).
+// Typically, the compiler will emit the code like this:
+//    if(*guard)
+//      __sanitizer_cov_trace_pc_guard(guard);
+// But for large functions it will emit a simple call:
+//    __sanitizer_cov_trace_pc_guard(guard);
+extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t *guard) {
+  if (!*guard) return;  // Duplicate the guard check.
+  // If you set *guard to 0 this code will not be called again for this edge.
+  // Now you can get the PC and do whatever you want:
+  //   store it somewhere or symbolize it and print right away.
+  // The values of `*guard` are as you set them in
+  // __sanitizer_cov_trace_pc_guard_init and so you can make them consecutive
+  // and use them to dereference an array or a bit vector.
+  void *PC = __builtin_return_address(0);
+  char PcDescr[1024];
+  // This function is a part of the sanitizer run-time.
+  // To use it, link with AddressSanitizer or other sanitizer.
+  __sanitizer_symbolize_pc(PC, "%p %F %L", PcDescr, sizeof(PcDescr));
+  printf("guard: %p %x PC %s\n", guard, *guard, PcDescr);
+}
+
+
+我们把代码添加到ViewController.m中，我们不需要 extern "C" 所以可以删掉， __sanitizer_symbolize_pc() 还会报错，不重要先注释了然后继续。
+#include <stdint.h>
+#include <stdio.h>
+#include <sanitizer/coverage_interface.h>
+
+void __sanitizer_cov_trace_pc_guard_init(uint32_t *start, uint32_t *stop) {
+  static uint64_t N;  // Counter for the guards.
+  if (start == stop || *start) return;  // Initialize only once.
+  printf("INIT: %p %p\n", start, stop);
+  for (uint32_t *x = start; x < stop; x++)
+    *x = ++N;  // Guards should start from 1.
+}
+
+void __sanitizer_cov_trace_pc_guard(uint32_t *guard) {
+  if (!*guard) return;  // Duplicate the guard check.
+//  void *PC = __builtin_return_address(0);
+  char PcDescr[1024];
+//  __sanitizer_symbolize_pc(PC, "%p %F %L", PcDescr, sizeof(PcDescr));
+  printf("guard: %p %x PC %s\n", guard, *guard, PcDescr);
+}
+
+函数 __sanitizer_cov_trace_pc_guard_init统计了方法的个数。运行后，我们可以看到：
+INIT: 0x104bed670 0x104bed6b0
+
+(lldb) x 0x104bed670
+0x104bed670: 01 00 00 00 02 00 00 00 03 00 00 00 04 00 00 00  ................
+0x104bed680: 05 00 00 00 06 00 00 00 07 00 00 00 08 00 00 00  ................
+(lldb) x 0x104bed6b0-0x4
+0x104bed6ac: 10 00 00 00 10 00 00 00 00 00 00 00 00 00 00 00  ................
+0x104bed6bc: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+
+读取内存之后，我们可以看到一个类似计数器的东西。最后一个打印的是结束位置，按显示是4位4位的，所以向前移动4位，打印出来的应该就是最后一位。
+根据小端模式，10 00 00 00对应的是00 00 00 10即16。
+我们在ViewController中添加一些方法：
+void(^block)(void) = ^(void){
+    
+};
+
+void test()
+{
+    block();
+}
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    test();
+}
+
+再打印一次：
+(lldb) x 0x10426d6dc-0x4
+0x10426d6d8: 13
+可以看到增加了3(block是匿名函数)，计数器统计了函数/方法的个数，这里添加了三个，索引增加了3。
