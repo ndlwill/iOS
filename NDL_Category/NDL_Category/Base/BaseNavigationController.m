@@ -154,21 +154,32 @@
     [self popViewControllerAnimated:YES];
 }
 
+/**
+ topViewController指的是UINavigationController最顶部的controller,也就是UINavigationController.topViewController必定存在于UINavigationController.viewControllers
+
+ visibleViewController指的是UINavigationController当前展示的controller，也就是UINavigationController.visibleViewController可能存在于UINavigationController.viewControllers也可能不存在
+ 
+ A --push--> B --push--> C --present--> a --push--> b
+ 此时A.navigationController的
+
+ topViewController = C
+ visibleViewController = b
+ */
 - (BOOL)shouldAutorotate
 {
     NSLog(@"BaseNavVC-shouldAutorotate %@-%@", self.visibleViewController, self.topViewController);
-    return [self.visibleViewController shouldAutorotate];
+    return [self.topViewController shouldAutorotate];
 }
 
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations
 {
     NSLog(@"BaseNavVC-supportedInterfaceOrientations %@-%@", self.visibleViewController, self.topViewController);
-    return [self.visibleViewController supportedInterfaceOrientations];
+    return [self.topViewController supportedInterfaceOrientations];
 }
 
 - (UIInterfaceOrientation)preferredInterfaceOrientationForPresentation
 {
-    return [self.visibleViewController preferredInterfaceOrientationForPresentation];
+    return [self.topViewController preferredInterfaceOrientationForPresentation];
 }
 
 

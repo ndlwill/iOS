@@ -7,6 +7,21 @@
 //  Copyright © 2019 dzcx. All rights reserved.
 //
 
+// MARK: 面试
+// https://github.com/DevDragonLi/iOSInterviewsAndDevNotes // 必须看
+// https://juejin.cn/user/2348212570038446/posts
+// https://juejin.cn/user/2242659450368119/posts
+
+// MARK: 字节跳动/bytedance
+// https://juejin.cn/user/2788017221155176/posts
+
+// MARK: M3U
+// https://zh.wikipedia.org/wiki/M3U
+// 播放页面为：https://developer.apple.com/videos/play/wwdc2019/507 ，通过Charles进行抓包，我们可以得到视频播放过程中的M3U8文件。
+
+// MARK: ipv6
+// https://github.com/WeMobileDev/article/blob/master/IPv6%20socket%E7%BC%96%E7%A8%8B.md#%E9%97%AE%E9%A2%98%E5%A4%8D%E6%9D%82%E6%80%A7
+
 // MARK: LG
 // https://www.jianshu.com/u/1e8432e01e5a
 
@@ -990,9 +1005,16 @@ directory that contains your module map.
 // MARK: MarqueeLabel
 // https://github.com/cbpowell/MarqueeLabel
 // Sentry崩溃收集
+// ESPullToRefresh
+// https://www.jianshu.com/p/c3f2b8ef9c4b
+
+// https://github.com/JoanKing/JKSwiftExtension // Extension
+// https://github.com/HeathWang/HWPanModal
+// https://github.com/indulgeIn/YBImageBrowser 
 
 // MARK: URLSession-tutorial
 // https://www.raywenderlich.com/3244963-urlsession-tutorial-getting-started
+
 
 // MARK: 工具
 // Zeplin Lookin3

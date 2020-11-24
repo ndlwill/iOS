@@ -261,3 +261,386 @@ b. 目前国内的一些应用或是游戏，希望的是自动订阅 关联的�
 [[SKPaymentQueue defaultQueue] addTransactionObserver:self];
 因为自动订阅，除了第一次购买行为是用户主动触发的。后续续费都是Apple自动完成的，一般在要过期的前24小时开始，苹果会尝试扣费，扣费成功的话 会在APP下次启动的时候主动推送给APP。
 所以，APP启动的时候一定要添加上面的那句话。
+
+一般的流程：请求苹果服务器->交易成功回调->获取本地凭证上传后台->后台校验（后台再去远程调用苹果服务）->校验成功后回调客户端->客户端获得权限。
+其中有几个可能出现的问题
+1.上传凭证到后台失败
+2.后台请求苹果失败或网络等一系列原因导致回调客户端失败。
+
+为了内购流程的闭环，就是一定要收到后台的回调结果才算完成。所以对应 1 、2 两点，可以通过凭证保存到本地，然后再次上传，直到服务器回调有结果。
+这一点很多文章都说过了，但好像有些细节问题没说，凭证就算不保存，再次获取本地凭证也是可以的，因为凭证中保存了所有的交易记录，但如果切换了苹果ID，就无法通过再次获取本地凭证来完成之前的交易了。
+所以稳妥起见，还是要保存凭证，同时可考虑保存到keychain中避免app卸载导致的凭证丢失问题（考虑keyChain的容容量问题，数量上应该有所限制，实现一个队列来的处理可能会比较好）。
+
+// 客户端调试: 客户端可以通过凭证向想苹果服务器获取信息验证收据。
+- (void)query:(NSString *)receipt {
+# ifdef DEBUG
+//    NSData *receipt; // Sent to the server by the device
+    // Create the JSON object that describes the request
+    NSError *error;
+    NSDictionary *requestContents = @{
+    @"receipt-data": receipt,
+    @"password" : @"xxxxxxxxxxxxxxxxxxxxxx",//内购的秘钥
+    @"exclude-old-transactions":@(YES)
+    };
+    NSData *requestData = [NSJSONSerialization dataWithJSONObject:requestContents
+    options:0
+    error:&error];
+    if (!requestData) { /* ... Handle error ... */ }
+    // Create a POST request with the receipt data.
+    NSURL *storeURL = [NSURL
+    URLWithString:@"https://sandbox.itunes.apple.com/verifyReceipt"];
+    NSMutableURLRequest *storeRequest = [NSMutableURLRequest requestWithURL:storeURL];
+    [storeRequest setHTTPMethod:@"POST"];
+    [storeRequest setHTTPBody:requestData];
+    // Make a connection to the iTunes Store on a background queue.
+    NSOperationQueue *queue = [[NSOperationQueue alloc] init];
+    ///NSURLConnection 已不推荐使用，如果在线上使用要切换到新的api
+    [NSURLConnection sendAsynchronousRequest:storeRequest queue:queue
+                           completionHandler:^(NSURLResponse * _Nullable response, NSData * _Nullable data, NSError * _Nullable connectionError) {
+        if (connectionError) {
+            
+        } else {
+            NSError *error;
+            NSDictionary *jsonResponse = [NSJSONSerialization JSONObjectWithData:data
+            options:0 error:&error];
+            if (!jsonResponse) { /* ... Handle error ...*/ } else {
+                
+            }
+            /* ... Send a response back to the device ... */
+            }
+    }];
+# endif
+}
+
+#####同一个订阅组中更换订阅 xxx_2 升级到 xxx_3#####
+这个更换订阅，目前发现两种情况，就是都会出现pending_renewal_info字段，此字段记录了自动续期的待处理信息，例如订阅的变更等
+
+https://developer.apple.com/documentation/appstorereceipts/responsebody/pending_renewal_info
+
+"pending_renewal_info" =     (
+        {
+    "auto_renew_product_id" = "xxxx_3";//变更的目标订阅
+    "auto_renew_status" = 1;
+    "original_transaction_id" = 1000000xxxxxx;
+    "product_id" = "xxx_2";//原订阅
+}
+);
+由便宜的订阅升级到贵的订阅，因为下个订阅会在当前订阅结束才会具体执行变更。所以如果这个时候获取最后一条交易信息，对应的product_id 依然是当前的，如"product_id" = "xxx_2";
+
+此时最后一条记录为
+"latest_receipt_info" =     (
+            {
+        "expires_date" = "2020-03-26 03:43:20 Etc/GMT";
+        "expires_date_ms" = 1585194200000;
+        "expires_date_pst" = "2020-03-25 20:43:20 America/Los_Angeles";
+        "is_in_intro_offer_period" = false;
+        "is_trial_period" = false;
+        "original_purchase_date" = "2020-03-26 02:54:07 Etc/GMT";
+        "original_purchase_date_ms" = 1585191247000;
+        "original_purchase_date_pst" = "2020-03-25 19:54:07 America/Los_Angeles";
+        "original_transaction_id" = 1000000643447076;
+        "product_id" = "xxx_2";
+        "purchase_date" = "2020-03-26 03:28:20 Etc/GMT";
+        "purchase_date_ms" = 1585193300000;
+        "purchase_date_pst" = "2020-03-25 20:28:20 America/Los_Angeles";
+        quantity = 1;
+    ....省略
+    }
+);
+如果仅仅判断当前的产品是否生效，判断latest_receipt_info -> expires_date_ms 即可。
+然后有一天到期了，就会变更到目标订阅，此时会收到自动续订，再去获取信息，latest_receipt_info 和 pending_renewal_info 会变化如下：
+
+/// auto_renew_product_id 和  product_id 一致 订阅已经切换过去了。
+"pending_renewal_info" =     (
+            {
+        "auto_renew_product_id" = "xxx_3";
+        "auto_renew_status" = 1;
+        "original_transaction_id" = 1000000643xxxx;
+        "product_id" = "xxx_3";
+    }
+);
+    
+//此为变更后的第一次续订，同时这个续订是真正把订阅切换过去
+"latest_receipt_info" =     (
+        {
+    "expires_date" = "2020-03-26 04:43:20 Etc/GMT";
+    "expires_date_ms" = 1585197800000;
+    "expires_date_pst" = "2020-03-25 21:43:20 America/Los_Angeles";
+    "is_in_intro_offer_period" = false;
+    "is_trial_period" = false;
+    "original_purchase_date" = "2020-03-26 02:54:07 Etc/GMT";
+    "original_purchase_date_ms" = 1585191247000;
+    "original_purchase_date_pst" = "2020-03-25 19:54:07 America/Los_Angeles";
+    "original_transaction_id" = 1000000643447076;
+    "product_id" = "xxx_3";
+    "purchase_date" = "2020-03-26 03:43:20 Etc/GMT";
+    "purchase_date_ms" = 1585194200000;
+    "purchase_date_pst" = "2020-03-25 20:43:20 America/Los_Angeles";
+    quantity = 1;
+    ....省略
+}
+);
+这样的一个方式，根据苹果的内购提示都是很一致的 “当前xxx订阅到期时，将支付新订阅的费用。”。意思不是立刻补钱，也不是立刻切换，而是下次变更订阅的同时，变更收费。
+
+#####同一个订阅组降级套餐 xxx_3 降级到 xxx_2#####
+降级订阅与升级订阅有所不同，会立即生效并按照一定的计算方式退费（可能按未使用时间折算返回），这样的意思就是说这个降级订阅会立即产生一条记录，
+并且pending_renewal_info 里面的product_id 和 auto_renew_product_id 会一致
+
+"latest_receipt_info" =     (
+            {
+        "expires_date" = "2020-03-26 04:23:23 Etc/GMT";
+        "expires_date_ms" = 1585196603000;
+        "expires_date_pst" = "2020-03-25 21:23:23 America/Los_Angeles";
+        "is_in_intro_offer_period" = false;
+        "is_trial_period" = false;
+        "original_purchase_date" = "2020-03-26 02:54:07 Etc/GMT";
+        "original_purchase_date_ms" = 1585191247000;
+        "original_purchase_date_pst" = "2020-03-25 19:54:07 America/Los_Angeles";
+        "original_transaction_id" = 1000000643447076;
+        "product_id" = "xxx_2";
+        "purchase_date" = "2020-03-26 04:08:23 Etc/GMT";
+        "purchase_date_ms" = 1585195703000;
+        "purchase_date_pst" = "2020-03-25 21:08:23 America/Los_Angeles";
+        quantity = 1;
+        ......省略
+    }
+);
+"pending_renewal_info" =     (
+            {
+        "auto_renew_product_id" = "xxx_2";
+        "auto_renew_status" = 1;
+        "original_transaction_id" = 100000064344xxxx;
+        "product_id" = "xxxx_2";
+    }
+);
+
+所以在确定订阅生效的情况下，以latest_receipt_info的数据来计算是否过期即可。
+
+========================================================================2020.11.13最新沙盒账号测试
+日本账号:
+第一次 购买自动订阅的1个月套餐
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741475761")  nil
+
+test1:
+打开app回调
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741475761")  nil
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741477213")  Optional("1000000741475761")
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741479050")  Optional("1000000741475761")
+
+restore:
+Transactions Restored count = 3
+[D][Restored] Transaction Restored, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741479862")  Optional("1000000741475761")
+[D][RestoreCompletedTransactionsFinished] Transactions Restored count = 4
+[D][SKPaymentTransaction] id: Optional("1000000741479862") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761")
+
+test2:
+打开app回调
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741475761")  nil
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741477213")  Optional("1000000741475761")
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741479050")  Optional("1000000741475761")
+[D][Restored] Transaction Restored, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741479862")  Optional("1000000741475761")
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741480950")  Optional("1000000741475761")
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741482209")  Optional("1000000741475761")
+
+restore:
+Transactions Restored count = 6
+[D][SKPaymentTransaction ！= restored] id: Optional("1000000741475761") date: Optional(2020-11-13 04:44:30 +0000) originalId: nil
+[D][SKPaymentTransaction ！= restored] id: Optional("1000000741477213") date: Optional(2020-11-13 04:49:30 +0000) originalId: Optional("1000000741475761")
+[D][SKPaymentTransaction ！= restored] id: Optional("1000000741479050") date: Optional(2020-11-13 04:54:30 +0000) originalId: Optional("1000000741475761")
+[D][SKPaymentTransaction ！= restored] id: Optional("1000000741479862") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761")
+[D][SKPaymentTransaction] id: Optional("1000000741479862") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761")
+[D][SKPaymentTransaction ！= restored] id: Optional("1000000741480950") date: Optional(2020-11-13 05:04:30 +0000) originalId: Optional("1000000741475761")
+[D][SKPaymentTransaction ！= restored] id: Optional("1000000741482209") date: Optional(2020-11-13 05:09:30 +0000) originalId: Optional("1000000741475761")
+
+test3:
+打开app回调
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741475761")  nil
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741477213")  Optional("1000000741475761")
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741479050")  Optional("1000000741475761")
+[D][Restored] Transaction Restored, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741479862")  Optional("1000000741475761")
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741480950")  Optional("1000000741475761")
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741482209")  Optional("1000000741475761")
+
+restore:
+[D][RestoreCompletedTransactionsFinished] Transactions Restored count = 6
+[D][SKPaymentTransaction ！= restored] id: Optional("1000000741475761") date: Optional(2020-11-13 04:44:30 +0000) originalId: nil state = 1
+[D][SKPaymentTransaction ！= restored] id: Optional("1000000741477213") date: Optional(2020-11-13 04:49:30 +0000) originalId: Optional("1000000741475761") state = 1
+[D][SKPaymentTransaction ！= restored] id: Optional("1000000741479050") date: Optional(2020-11-13 04:54:30 +0000) originalId: Optional("1000000741475761") state = 1
+[D][SKPaymentTransaction ！= restored] id: Optional("1000000741479862") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761") state = 3
+[D][SKPaymentTransaction] id: Optional("1000000741479862") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761")
+[D][SKPaymentTransaction ！= restored] id: Optional("1000000741480950") date: Optional(2020-11-13 05:04:30 +0000) originalId: Optional("1000000741475761") state = 1
+[D][SKPaymentTransaction ！= restored] id: Optional("1000000741482209") date: Optional(2020-11-13 05:09:30 +0000) originalId: Optional("1000000741475761") state = 1
+
+paymentQueueRestoreCompletedTransactionsFinished
+restore的交易后台验证成功后
+
+test4:
+打开app回调
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741475761")  nil
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741477213")  Optional("1000000741475761")
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741479050")  Optional("1000000741475761")
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741480950")  Optional("1000000741475761")
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741482209")  Optional("1000000741475761")
+
+
+restore:
+[D][Restored] Transaction Restored, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741490609")  Optional("1000000741475761")
+2020-11-13 13:36:10.872 [D][RestoreCompletedTransactionsFinished] Transactions Restored count = 6
+2020-11-13 13:36:10.873 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741475761") date: Optional(2020-11-13 04:44:30 +0000) originalId: nil state = 1
+2020-11-13 13:36:10.874 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741477213") date: Optional(2020-11-13 04:49:30 +0000) originalId: Optional("1000000741475761") state = 1
+2020-11-13 13:36:10.874 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741479050") date: Optional(2020-11-13 04:54:30 +0000) originalId: Optional("1000000741475761") state = 1
+2020-11-13 13:36:10.875 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741480950") date: Optional(2020-11-13 05:04:30 +0000) originalId: Optional("1000000741475761") state = 1
+2020-11-13 13:36:10.875 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741482209") date: Optional(2020-11-13 05:09:30 +0000) originalId: Optional("1000000741475761") state = 1
+2020-11-13 13:36:10.876 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741490609") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761") state = 3
+2020-11-13 13:36:10.876 [D][SKPaymentTransaction] id: Optional("1000000741490609") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761")
+
+test5:
+打开app回调
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741475761")  nil
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741477213")  Optional("1000000741475761")
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741479050")  Optional("1000000741475761")
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741480950")  Optional("1000000741475761")
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741482209")  Optional("1000000741475761")
+[D][Restored] Transaction Restored, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741490609")  Optional("1000000741475761")
+
+restore:
+[D][Restored] Transaction Restored, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741492121")  Optional("1000000741475761")
+2020-11-13 13:42:38.204 [D][RestoreCompletedTransactionsFinished] Transactions Restored count = 7
+2020-11-13 13:42:38.205 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741475761") date: Optional(2020-11-13 04:44:30 +0000) originalId: nil state = 1
+2020-11-13 13:42:38.205 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741477213") date: Optional(2020-11-13 04:49:30 +0000) originalId: Optional("1000000741475761") state = 1
+2020-11-13 13:42:38.206 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741479050") date: Optional(2020-11-13 04:54:30 +0000) originalId: Optional("1000000741475761") state = 1
+2020-11-13 13:42:38.206 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741480950") date: Optional(2020-11-13 05:04:30 +0000) originalId: Optional("1000000741475761") state = 1
+2020-11-13 13:42:38.206 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741482209") date: Optional(2020-11-13 05:09:30 +0000) originalId: Optional("1000000741475761") state = 1
+2020-11-13 13:42:38.207 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741490609") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761") state = 3
+2020-11-13 13:42:38.207 [D][SKPaymentTransaction] id: Optional("1000000741490609") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761")
+2020-11-13 13:42:38.207 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741492121") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761") state = 3
+2020-11-13 13:42:38.208 [D][SKPaymentTransaction] id: Optional("1000000741492121") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761")
+
+test6:
+打开app回调
+2020-11-13 13:46:29.879 [D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741475761")  nil
+2020-11-13 13:46:29.880 [D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741477213")  Optional("1000000741475761")
+2020-11-13 13:46:29.880 [D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741479050")  Optional("1000000741475761")
+2020-11-13 13:46:29.881 [D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741480950")  Optional("1000000741475761")
+2020-11-13 13:46:29.881 [D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741482209")  Optional("1000000741475761")
+2020-11-13 13:46:29.881 [D][Restored] Transaction Restored, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741490609")  Optional("1000000741475761")
+2020-11-13 13:46:29.882 [D][Restored] Transaction Restored, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741492121")  Optional("1000000741475761")
+
+restore:
+[D][Restored] Transaction Restored, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741494008")  Optional("1000000741475761")
+2020-11-13 13:48:30.922 [D][RestoreCompletedTransactionsFinished] Transactions Restored count = 8
+2020-11-13 13:48:30.923 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741475761") date: Optional(2020-11-13 04:44:30 +0000) originalId: nil state = 1
+2020-11-13 13:48:30.923 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741477213") date: Optional(2020-11-13 04:49:30 +0000) originalId: Optional("1000000741475761") state = 1
+2020-11-13 13:48:30.924 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741479050") date: Optional(2020-11-13 04:54:30 +0000) originalId: Optional("1000000741475761") state = 1
+2020-11-13 13:48:30.924 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741480950") date: Optional(2020-11-13 05:04:30 +0000) originalId: Optional("1000000741475761") state = 1
+2020-11-13 13:48:30.925 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741482209") date: Optional(2020-11-13 05:09:30 +0000) originalId: Optional("1000000741475761") state = 1
+2020-11-13 13:48:30.925 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741490609") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761") state = 3
+2020-11-13 13:48:30.926 [D][SKPaymentTransaction] id: Optional("1000000741490609") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761")
+2020-11-13 13:48:30.933 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741492121") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761") state = 3
+2020-11-13 13:48:30.933 [D][SKPaymentTransaction] id: Optional("1000000741492121") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761")
+2020-11-13 13:48:30.939 [D][SKPaymentTransaction ！= restored] id: Optional("1000000741494008") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761") state = 3
+2020-11-13 13:48:30.939 [D][SKPaymentTransaction] id: Optional("1000000741494008") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761")
+
+paymentQueueRestoreCompletedTransactionsFinished
+restore的交易后台验证成功后
+
+test7:
+打开app回调
+
+[D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741475761")  nil
+2020-11-13 13:53:17.793 [D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741477213")  Optional("1000000741475761")
+2020-11-13 13:53:17.794 [D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741479050")  Optional("1000000741475761")
+2020-11-13 13:53:17.794 [D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741480950")  Optional("1000000741475761")
+2020-11-13 13:53:17.794 [D][Purchase] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m1.AJSPremium Optional("1000000741482209")  Optional("1000000741475761")
+
+全部purchased和restored的都完成验证后
+test8:
+restore:
+2020-11-13 14:18:52.615 [D][RestoreCompletedTransactionsFinished] Transactions Restored count = 6
+2020-11-13 14:18:52.616 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000741504973") date: Optional(2020-11-13 04:44:30 +0000) originalId: Optional("1000000741475761")
+2020-11-13 14:18:52.621 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000741504974") date: Optional(2020-11-13 05:04:30 +0000) originalId: Optional("1000000741475761")
+2020-11-13 14:18:52.621 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000741504975") date: Optional(2020-11-13 04:54:30 +0000) originalId: Optional("1000000741475761")
+2020-11-13 14:18:52.621 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000741504976") date: Optional(2020-11-13 05:09:30 +0000) originalId: Optional("1000000741475761")
+2020-11-13 14:18:52.621 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000741504977") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761")
+2020-11-13 14:18:52.622 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000741504978") date: Optional(2020-11-13 04:49:30 +0000) originalId: Optional("1000000741475761")
+
+重新打开app再restore:
+2020-11-13 14:27:44.370 [D][RestoreCompletedTransactionsFinished] Transactions Restored count = 6
+2020-11-13 14:27:44.371 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000741509639") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761")
+2020-11-13 14:27:44.371 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000741509640") date: Optional(2020-11-13 05:09:30 +0000) originalId: Optional("1000000741475761")
+2020-11-13 14:27:44.372 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000741509641") date: Optional(2020-11-13 04:49:30 +0000) originalId: Optional("1000000741475761")
+2020-11-13 14:27:44.372 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000741509642") date: Optional(2020-11-13 04:54:30 +0000) originalId: Optional("1000000741475761")
+2020-11-13 14:27:44.372 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000741509643") date: Optional(2020-11-13 05:04:30 +0000) originalId: Optional("1000000741475761")
+2020-11-13 14:27:44.373 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000741509644") date: Optional(2020-11-13 04:44:30 +0000) originalId: Optional("1000000741475761")
+
+// 上面一共6笔订单
+// 过了几天后
+test9:
+restore:
+[restoreCompletedTransactionsFailed] Cannot connect to iTunes Store
+
+再一次
+2020-11-16 10:58:46.329 [D][RestoreCompletedTransactionsFinished] Transactions Restored count = 6
+2020-11-16 10:58:46.330 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742182768") date: Optional(2020-11-13 04:44:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 10:58:46.330 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742182769") date: Optional(2020-11-13 04:49:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 10:58:46.331 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742182770") date: Optional(2020-11-13 04:54:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 10:58:46.331 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742182771") date: Optional(2020-11-13 05:04:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 10:58:46.331 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742182772") date: Optional(2020-11-13 05:09:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 10:58:46.335 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742182773") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761")
+
+退出沙盒账号 再一次
+[D][restoreCompletedTransactionsFailed] Cannot connect to iTunes Store
+
+再一次
+弹框Sign in to iTunes Store 要求输入appleid 
+然后输入沙盒账号
+2020-11-16 11:11:23.830 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742183867") date: Optional(2020-11-13 05:09:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 11:11:23.831 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742183868") date: Optional(2020-11-13 04:49:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 11:11:23.832 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742183869") date: Optional(2020-11-13 05:04:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 11:11:23.832 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742183870") date: Optional(2020-11-13 04:44:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 11:11:23.833 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742183871") date: Optional(2020-11-13 04:54:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 11:11:23.833 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742183872") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761")
+
+然后再次购买 3个月的订阅套餐
+[D][Purchased] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m03.AJSPremium Optional("1000000742186784")  Optional("1000000741475761")
+
+过了几个小时后
+[D][Purchased] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m03.AJSPremium Optional("1000000742190839")  Optional("1000000741475761")
+[D][Purchased] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m03.AJSPremium Optional("1000000742195906")  Optional("1000000741475761")
+[D][Purchased] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m03.AJSPremium Optional("1000000742199168")  Optional("1000000741475761")
+[D][Purchased] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m03.AJSPremium Optional("1000000742202217")  Optional("1000000741475761")
+[D][Purchased] Transaction Purchased, Product Identifier: com.fvcorp.group.auto.m03.AJSPremium Optional("1000000742204168")  Optional("1000000741475761")
+
+test10:
+restore:
+2020-11-16 14:11:40.843 [D][RestoreCompletedTransactionsFinished] Transactions Restored count = 10
+2020-11-16 14:11:40.846 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742227886") date: Optional(2020-11-16 04:32:45 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:11:40.846 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742227887") date: Optional(2020-11-13 04:44:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:11:40.846 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742227888") date: Optional(2020-11-16 04:17:45 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:11:40.849 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742227889") date: Optional(2020-11-16 03:32:45 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:11:40.849 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742227890") date: Optional(2020-11-16 03:17:45 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:11:40.849 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742227891") date: Optional(2020-11-16 03:47:45 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:11:40.850 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742227892") date: Optional(2020-11-16 04:02:45 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:11:40.850 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742227893") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:11:40.850 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742227894") date: Optional(2020-11-13 05:09:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:11:40.853 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742227895") date: Optional(2020-11-13 05:04:30 +0000) originalId: Optional("1000000741475761")
+
+test11:
+restore:
+2020-11-16 14:18:16.503 [D][RestoreCompletedTransactionsFinished] Transactions Restored count = 12
+2020-11-16 14:18:16.504 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742229497") date: Optional(2020-11-13 04:44:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:18:16.504 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742229498") date: Optional(2020-11-16 03:32:45 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:18:16.504 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742229499") date: Optional(2020-11-13 05:09:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:18:16.506 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742229500") date: Optional(2020-11-13 04:54:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:18:16.507 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742229501") date: Optional(2020-11-13 04:49:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:18:16.507 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742229502") date: Optional(2020-11-16 03:17:45 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:18:16.507 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742229503") date: Optional(2020-11-16 04:17:45 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:18:16.508 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742229504") date: Optional(2020-11-16 03:47:45 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:18:16.509 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742229505") date: Optional(2020-11-16 04:02:45 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:18:16.509 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742229506") date: Optional(2020-11-13 04:59:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:18:16.509 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742229507") date: Optional(2020-11-13 05:04:30 +0000) originalId: Optional("1000000741475761")
+2020-11-16 14:18:16.510 [D][RestoreCompletedTransactionsFinished.restored] id: Optional("1000000742229508") date: Optional(2020-11-16 04:32:45 +0000) originalId: Optional("1000000741475761")
+
+
+Bundle.main.appStoreReceiptURL:
+file:///private/var/mobile/Containers/Data/Application/37DFB396-F6EB-4B69-A240-8CF7BB25B663/StoreKit/sandboxReceipt

@@ -144,6 +144,8 @@ Q: Podfile使用静态库时出现报错[!] The following Swift pods cannot yet 
 A：pod install 时的错误信息提示我们应该使用use_modular_headers!来让整个项目支持静态库，或者对单个Pod使用:modular_headers => true
 
 ===============================================================================================修改编译参数完成二进制文件的重新排布提升应用的启动速度
+https://juejin.im/post/6844904143111323661
+
 通过修改库的类型和Clang插桩找到启动所需符号，然后修改编译参数完成二进制文件的重新排布提升应用的启动速度的。
 通过staticlib优化、二进制重排两项技术
 
@@ -371,3 +373,139 @@ void test()
 (lldb) x 0x10426d6dc-0x4
 0x10426d6d8: 13
 可以看到增加了3(block是匿名函数)，计数器统计了函数/方法的个数，这里添加了三个，索引增加了3。
+
+也就是说Clang插桩就是在汇编代码中插入了 __sanitizer_cov_trace_pc_guard函数的调用。
+拿到了全部的符号之后需要保存，但是不能用数组，因为有可能会有在子线程执行的，所以用数组会有线程问题 。这里我们使用原子队列：
+#import <libkern/OSAtomic.h>
+#import <dlfcn.h>
+
+/*
+ 原子队列特点
+ 1、先进后出
+ 2、线程安全
+ 3、只能保存结构体
+ */
+static OSQueueHead symbolList = OS_ATOMIC_QUEUE_INIT;
+
+// 符号结构体链表
+typedef struct {
+    void *pc;
+    void *next;
+} SymbolNode;
+
+void __sanitizer_cov_trace_pc_guard(uint32_t *guard) {
+    if (!*guard) return;  // Duplicate the guard check.
+    
+    // 函数执行前会将下一个要执行的函数地址保存到寄存器中
+    // 这里是拿到函数的返回地址
+    void *PC = __builtin_return_address(0);
+    
+    SymbolNode * node = malloc(sizeof(SymbolNode));
+    *node = (SymbolNode){PC, NULL};
+    // 入队
+    OSAtomicEnqueue(&symbolList, node, offsetof(SymbolNode, next));
+    
+    // 以下是一些打印，只是看一下，实际中可以注释
+    // dlopen 通过动态库拿到句柄 通过句柄拿到函数的内存地址
+    // dladdr 通过函数内存地址拿到函数
+    typedef struct dl_info {
+        const char      *dli_fname;     /* Pathname of shared object      函数的路径  */
+        void            *dli_fbase;     /* Base address of shared object  函数的地址  */
+        const char      *dli_sname;     /* Name of nearest symbol         函数符号    */
+        void            *dli_saddr;     /* Address of nearest symbol      函数起始地址 */
+    } Dl_info;
+    Dl_info info;
+    dladdr(PC, &info);
+    printf("fnam:%s \n fbase:%p \n sname:%s \n saddr:%p \n",
+           info.dli_fname,
+           info.dli_fbase,
+           info.dli_sname,
+           info.dli_saddr);
+}
+
+运行后这里我们可以看到很多打印，只取一条来说明，很明显其中sname就是我们需要的符号名了。
+fnam:/private/var/containers/Bundle/Application/3EAE3817-0EF7-4892-BC55-368CC504A568/BinaryOptimization.app/BinaryOptimization 
+fbase:0x100938000 
+sname:+[AppDelegate load] 
+saddr:0x10093d81c 
+
+下面我们通过点击屏幕导出所需要的符号，需要注意的是C函数和Swift方法前面需要加下划线。
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
+{
+    NSMutableArray <NSString *>* symbolNames = [NSMutableArray array];
+    while (YES) {
+        SymbolNode * node = OSAtomicDequeue(&symbolList, offsetof(SymbolNode, next));
+        if (node == NULL) {
+            break;
+        }
+        Dl_info info;
+        dladdr(node->pc, &info);
+        
+        NSString * name = @(info.dli_sname);
+        BOOL isObjc = [name hasPrefix:@"+["] || [name hasPrefix:@"-["]; //OC方法不处理
+        NSString * symbolName = isObjc? name : [@"_" stringByAppendingString:name]; //c函数、swift方法前面带下划线
+        [symbolNames addObject:symbolName];
+        printf("%s \n",info.dli_sname);
+    }
+    
+    NSEnumerator * emt = [symbolNames reverseObjectEnumerator];
+    NSMutableArray<NSString*>* funcs = [NSMutableArray arrayWithCapacity:symbolNames.count];
+    NSString * name;
+    while (name = [emt nextObject]) {
+        if (![funcs containsObject:name]) {
+            [funcs addObject:name];
+        }
+    }
+    // 删掉当前方法，因为这个点击方法不是启动需要的
+    [funcs removeObject:[NSString stringWithFormat:@"%s",__FUNCTION__]];
+    
+    NSString * filePath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"BinaryOptimization.order"];
+    NSString *funcStr = [funcs componentsJoinedByString:@"\n"];
+    NSData * fileContents = [funcStr dataUsingEncoding:NSUTF8StringEncoding];
+    // 在路径上创建文件
+    [[NSFileManager defaultManager] createFileAtPath:filePath contents:fileContents attributes:nil];
+    
+    NSLog(@"%@",filePath);
+}
+
+这时如果你直接点击屏幕，有个巨坑，会看到控制台一直在输出，出现了死循环：
+
+解决办法：
+Build Settings中Other C Flags添加func配置，即-fsanitize-coverage=func,trace-pc-guard。
+
+官网对func的参数的解释：只检测每个函数的入口。
+再次运行点击屏幕就不会有问题了。
+
+2.3.2 从真机上获取order文件
+我们把order文件存在了真机上的tmp文件夹中
+
+2.3.3 Swift
+wift也可以重排么？当然可以！
+我们在项目中添加一个Swift类，然后在viewDidLoad调用一下：
+
+class SwiftTest: NSObject {
+    @objc class public func swiftTestLoad(){
+        print("swiftTest");
+    }
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    [SwiftTest swiftTestLoad];
+}
+
+Build Setting中Other Swift Flags设置：
+-sanitize-coverage=func
+-sanitize=undefined
+
+运行后点击一下屏幕，查看控制台：
+所有处理完之后，最后需要Write Link Map File改为NO，把Other C Flags/Other Swift Flags的配置删除掉。
+
+因为这个配置会在我们代码中自动插入跳转执行 __sanitizer_cov_trace_pc_guard。重排完就不需要了，需要去除掉。 
+同时把ViewController中的 __sanitizer_cov_trace_pc_guard也要去除掉。
+
+总结
+1.通过将动态库转为静态库，我们优化了dylib loading time。
+苹果官方建议为6个以下，这里我们因为符号冲突，只保留了3个动态库。
+2.通过二进制重排，让启动需要的方法排列更紧凑，减少了Page Fault的次数。
+获取符号表时，采用Clang插桩可以直接hook到Objective-C方法、Swift方法、C函数、Block，可以不用区别对待。相比于抖音之前提出的方案确实简单很多，门槛也要低一些。

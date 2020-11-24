@@ -247,12 +247,67 @@ static void save_crash_report (PLCrashReporter *reporter) {
 
  */
 
+- (BOOL)onDeviceOrientationDidChange{
+   //获取当前设备Device
+   UIDevice *device = [UIDevice currentDevice] ;
+   //识别当前设备的旋转方向
+   switch (device.orientation) {
+       case UIDeviceOrientationFaceUp:
+           NSLog(@"屏幕幕朝上平躺");
+           break;
 
+       case UIDeviceOrientationFaceDown:
+           NSLog(@"屏幕朝下平躺");
+           break;
+
+       case UIDeviceOrientationUnknown:
+           //系统当前无法识别设备朝向，可能是倾斜
+           NSLog(@"未知方向");
+           break;
+
+       case UIDeviceOrientationLandscapeLeft:
+           NSLog(@"屏幕向左橫置");
+           break;
+
+       case UIDeviceOrientationLandscapeRight:
+           NSLog(@"屏幕向右橫置");
+           break;
+
+       case UIDeviceOrientationPortrait:
+           NSLog(@"屏幕直立");
+           break;
+
+       case UIDeviceOrientationPortraitUpsideDown:
+           NSLog(@"屏幕直立，上下顛倒");
+           break;
+
+       default:
+           NSLog(@"无法识别");
+           break;
+   }
+   return YES;
+}
+
+
+// return  UIInterfaceOrientationMaskPortrait | UIInterfaceOrientationMaskLandscapeLeft;
+//- (UIInterfaceOrientationMask)application:(UIApplication *)application supportedInterfaceOrientationsForWindow:(UIWindow *)window
+//{
+//    return UIInterfaceOrientationMaskAllButUpsideDown;
+//}
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
     NSLog(@"=====didFinishLaunchingWithOptions===== documentDir = %@", [NSString documentDir]);
     
     log4cplus_debug("AppDelegate", "test for syslog [%s]", "success");
+    
+    // ###添加这个，旋转屏幕就会旋转，不加的话，需要点一下屏幕后旋转屏幕才会旋转， 不知道为什么###
+    // 设备方向（物理旋转） - UIDeviceOrientation
+    // 硬件设备（ipad、iPhone）背身的旋转方向，以Home为参照物
+    // 设备的旋转方向只读不可写
+//    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onDeviceOrientationDidChange)
+//                         name:UIDeviceOrientationDidChangeNotification
+//                                                   object:nil];
+//    [[UIDevice currentDevice] beginGeneratingDeviceOrientationNotifications];
     
     self.serialQueue = dispatch_queue_create("messageQueue", DISPATCH_QUEUE_SERIAL);
     
@@ -1066,10 +1121,7 @@ static void runLoopObserverCallBack(CFRunLoopObserverRef observer, CFRunLoopActi
     
 }
 
-//- (UIInterfaceOrientationMask)application:(UIApplication *)application supportedInterfaceOrientationsForWindow:(UIWindow *)window
-//{
-//    return UIInterfaceOrientationMaskAllButUpsideDown;
-//}
+
 
 
 // 后台下载

@@ -68,7 +68,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) CGFloat shakeLevel;
 
 // 是否处于编辑模式(抖动) // 调用enterEditingModel，leaveEditingModel会改变这个值
-@property (nonatomic, assign, readonly, getter=isEditing) BOOL editing;// YES: 表示不通过长按事件触发，通过enterEditingModel
+@property (nonatomic, assign, readonly, getter=isEditting) BOOL editting;// YES: 表示不通过长按事件触发，通过enterEditingModel
 
 - (void)enterEditingModel;// 进入编辑模式
 - (void)leaveEditingModel;// 离开编辑模式

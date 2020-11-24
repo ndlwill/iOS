@@ -155,6 +155,130 @@ CocoaPods/Xcodeproj
 在用CocoaPods集成第三方库之后，默认情况下，我们需要使用类似#import <XXX/YYY.h>的方式引入第三方库的头文件。
 我们可以在Build Settings -> User Header Search Paths中添加${SRCROOT}并设置成recursive，这样我们就可以直接使用#impot "YYY.h"这种方式了。
 
+CocoaPods: 手动改动动态库为静态库后的问题
+我们在执行了pod install之后，CocoaPods会在主工程的Build Phase添加一个 [CP] Embed Pods Frameworks脚本：
+这个脚本会在Build之后执行。
+我们静态化后，把三方库install_framework相关的代码注释
+
+install_framework到底是干嘛的?
+# Copies and strips a vendored framework
+install_framework()
+{
+  # 设置source变量，三方库构建之后的路径
+  if [ -r "${BUILT_PRODUCTS_DIR}/$1" ]; then
+    local source="${BUILT_PRODUCTS_DIR}/$1"
+  elif [ -r "${BUILT_PRODUCTS_DIR}/$(basename "$1")" ]; then
+    local source="${BUILT_PRODUCTS_DIR}/$(basename "$1")"
+  elif [ -r "$1" ]; then
+    local source="$1"
+  fi
+  
+  # 设置destination变量，三方库需要移动到的路径
+  local destination="${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}"
+  
+  # 判断source是否为链接文件，需要指向原来的文件
+  if [ -L "${source}" ]; then
+    echo "Symlinked..."
+    source="$(readlink "${source}")"
+  fi
+  
+  # rsync --delete无差异同步，可以简单理解为网盘同步，或者复制
+  # 想详细了解rsync，可以在命令行中输入man rsync
+  # 这里相当于把source的文件(文件夹)同步到destination
+  # 即把*.framework复制到Frameworks文件夹下
+  # Use filter instead of exclude so missing patterns don't throw errors.
+  echo "rsync --delete -av "${RSYNC_PROTECT_TMP_FILES[@]}" --filter \"- CVS/\" --filter \"- .svn/\" --filter \"- .git/\" --filter \"- .hg/\" --filter \"- Headers\" --filter \"- PrivateHeaders\" --filter \"- Modules\" \"${source}\" \"${destination}\""
+  rsync --delete -av "${RSYNC_PROTECT_TMP_FILES[@]}" --filter "- CVS/" --filter "- .svn/" --filter "- .git/" --filter "- .hg/" --filter "- Headers" --filter "- PrivateHeaders" --filter "- Modules" "${source}" "${destination}"
+  
+  # 下面是找到二进制文件，即framework的Mach-O
+  local basename
+  basename="$(basename -s .framework "$1")"
+  binary="${destination}/${basename}.framework/${basename}"
+
+  if ! [ -r "$binary" ]; then
+    binary="${destination}/${basename}"
+  elif [ -L "${binary}" ]; then
+    echo "Destination binary is symlinked..."
+    dirname="$(dirname "${binary}")"
+    binary="${dirname}/$(readlink "${binary}")"
+  fi
+  
+  # 去掉无效的架构
+  # Strip invalid architectures so "fat" simulator / device frameworks work on device
+  if [[ "$(file "$binary")" == *"dynamically linked shared library"* ]]; then
+    strip_invalid_archs "$binary"
+  fi
+  
+  # 进行代码签名
+  # Resign the code if required by the build settings to avoid unstable apps
+  code_sign_if_enabled "${destination}/$(basename "$1")"
+  
+  # Swift的运行时库，Xcode 7之后就用不到了，可以不管
+  # Embed linked Swift runtime libraries. No longer necessary as of Xcode 7.
+  if [ "${XCODE_VERSION_MAJOR}" -lt 7 ]; then
+    local swift_runtime_libs
+    swift_runtime_libs=$(xcrun otool -LX "$binary" | grep --color=never @rpath/libswift | sed -E s/@rpath\\/\(.+dylib\).*/\\1/g | uniq -u)
+    for lib in $swift_runtime_libs; do
+      echo "rsync -auv \"${SWIFT_STDLIB_PATH}/${lib}\" \"${destination}\""
+      rsync -auv "${SWIFT_STDLIB_PATH}/${lib}" "${destination}"
+      code_sign_if_enabled "${destination}/${lib}"
+    done
+  fi
+}
+如果把这部分注释了，相当于说不会把构建好的 *.framework包复制到App的Frameworks文件夹下，自然 *.framework中的资源文件也就丢失了。
+我们构建之后利用脚本把资源拷贝到App文件夹下不就好了。
+install_framework_bundle()
+{
+    # 设置source变量，三方库构建之后的路径
+    if [ -r "${BUILT_PRODUCTS_DIR}/$1" ]; then
+      local source="${BUILT_PRODUCTS_DIR}/$1"
+    elif [ -r "${BUILT_PRODUCTS_DIR}/$(basename "$1")" ]; then
+      local source="${BUILT_PRODUCTS_DIR}/$(basename "$1")"
+    elif [ -r "$1" ]; then
+      local source="$1"
+    fi
+
+    # 设置destination变量，三方库需要移动到的路径
+    local destination="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
+
+    # 遍历framework下的文件，找到bundle和图片，有其他资源自己改一下
+    for filename in `ls ${source} | grep ".*\.bundle\|.*\.jpg\|.*\.jpeg\|.*\.png"`
+    do
+      full_path=${source}/${filename}
+      # 把资源同步到Main Bundle中
+      rsync -abrv --suffix .conflict "${full_path}" "${destination}"
+    done
+}
+
+现在我们的操作就是把被静态化的三方库从install_framework方法改为install_framework_bundle：
+if [[ "$CONFIGURATION" == "Debug" ]]; then
+  install_framework_bundle "${BUILT_PRODUCTS_DIR}/Pod1/Pod1.framework"
+  install_framework_bundle "${BUILT_PRODUCTS_DIR}/Pod2/Pod2.framework"
+fi
+if [[ "$CONFIGURATION" == "Release" ]]; then
+  install_framework_bundle "${BUILT_PRODUCTS_DIR}/Pod1/Pod1.framework"
+  install_framework_bundle "${BUILT_PRODUCTS_DIR}/Pod2/Pod2.framework"
+fi
+
+
+-b --suffix .conflict会把重名文件添加后缀 .conflict，这个后缀是可配的。
+处理完你可以用find扫一遍App文件夹，看一下有没有重名的资源被 .conflict标记出来
+check_conflict()
+{
+    local destination="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
+    conflict_list=`find ${destination} -regex '.*\.conflict'`
+    conflict_list=(${conflict_list/ /})
+    count=${#conflict_list[*]}
+    if [ $count -gt 0 ]; then
+        echo "Found conflicts:"
+        for var in ${conflict_list[@]}
+        do
+           echo $var
+        done
+        exit 1
+    fi
+}
+如果资源重名，可能就没方法静态化了。
 
 ==================================================cocoapods使用总结
 https://guides.cocoapods.org/using/the-podfile.html
@@ -795,4 +919,534 @@ end
 target 'JYTest' do
 pod 'JYPodTest', :path => '~/Desktop/JYPodTest'  # 指定路径
 #pod 'JYPodTest', :podspec => '~/Desktop/JYPodTest/JYPodTest.podspec'  #指定podspec文件
+end
+
+==================================================创建动态库项目这里以 wx 举例
+动态库依赖静态库具有吸附性，那么我们可以自定义一个动态库把微信这种静态库吸附进来。对外整体呈现的是动态库特性。其他的组件依赖我们自定义的动态库。
+
+按照微信的官方文档。添加依赖库
+将wx的PublicHeader暴露出来，注意由于我并没有使用到wx相关API所以链接器帮我们链接动态库的时候可能并不会把wx静态库吸附进来。我们手动在build Setting的other link flags加上-all_load标记
+在Schema里面跳转编译配置为Release，并且选择所有的CPU架构
+于是我们有了我们自己的私有动态库LJWXSDK
+
+其实加在EmbededBinaries里面的东西其实会被复制一份到xx.app里面，所以这个名字起得还是不错的直译就是嵌入的框架
+
+#import<> : 通过build setting里面中的header Search Path里面去找
+#import"" : 第一步先搜索user Header search Path再搜索 header search Path 。所以对我们的framework来说，CocoaPod帮我们加到了Header search Path目前2种导入方式都是可以支持的。
+
+
+配置是non-recursive。如果把non去掉意思就是我可以递归的去查找某些framework下面的头文件了。 但是Xcode的效率肯定就会有影响。还是不建议修改的好。
+
+==================================================动/静态库混用封装组件化
+https://guides.cocoapods.org/syntax/podspec.html
+
+// cocoapods 1.4.0
+Pod::Spec.new do |s|
+s.name                  = 'XXXThirdPartSocial'
+s.version               = '1.0'
+s.summary               = '第三方社交模块'
+s.homepage              = 'xxx.xxx.xxx'
+s.license               = { :type => 'MIT'}
+s.author                = { 'xxx' => 'xxx@163.com' }
+s.source                = { :git => 'xxx.xxx.xxx', :tag => "#{s.version}" }
+s.platform              = :ios, '7.0'
+s.source_files          = ''
+s.requires_arc          = true
+s.ios.dependency    'UMengUShare/Social/ReducedQQ'
+s.ios.dependency    'UMengUShare/Social/ReducedWeChat'
+s.ios.dependency    'UMengUShare/Social/ReducedSina'
+s.static_framework  =  true
+end
+
+// 或者cocoapods 1.3.1
+把dependency一些静态库的pod拍平就是现在的解决方法，自己建pod，保证一层支持framework和.a,另外如果实在自己的pod里dependency的静态库pod，这个时候比较好的选择是建立subspec，直接subspec里面封装对静态库的支持。
+这里支持的时候要分为3类，先放一个友盟分享的例子：友盟的framework 和.a都是静态库
+Pod::Spec.new do |s|
+s.name                  = 'XXXThirdPartSocial'
+s.version               = '1.0'
+s.summary               = '第三方社交模块'
+s.homepage              = 'xxx.xxx.xxx'
+s.license               = { :type => 'MIT'}
+s.author                = { 'xxx' => 'xxx@163.com' }
+s.source                = { :git => 'xxx.xxx.xxx', :tag => "#{s.version}" }
+s.platform              = :ios, '7.0'
+s.source_files          = ''
+s.requires_arc          = true
+#s.ios.dependency   'UMengUShare/Social/ReducedQQ'
+#s.ios.dependency   'UMengUShare/Social/ReducedWeChat'
+#s.ios.dependency   'UMengUShare/Social/ReducedSina'
+s.subspec 'XXXThirdPartSocialVendor' do |sss|
+sss.source_files            = ''
+sss.resource                = 'UMSocialSDK/UMSocialSDKPromptResources.bundle'
+sss.ios.vendored_frameworks = 'UMSocialSDK/UMSocialCore.framework','UMSocialSDK/UMSocialNetwork.framework'
+sss.ios.vendored_library    = 'SocialLibraries/QQ/libSocialQQ.a','SocialLibraries/Sina/libSocialSina.a','SocialLibraries/WeChat/libSocialWeChat.a'
+sss.ios.public_header_files   = 'SocialLibraries/**/*.{h}'
+sss.ios.library  = 'sqlite3'
+end
+end
+
+
+在cocoapods1.4 之前 对于pods库集成swift库 都是需要我们设置 !use_framework ，这样设置之后所有的pods库都必须使用动态库，但这就带来一个问题，如果我需要集成一个静态库怎么办？
+1.升级pods
+gem install cocoapods
+2.自己组件库的podsepc 添加s.static_framework = true
+
+==================================================https://guides.cocoapods.org/syntax/podspec.html
+可参考
+https://github.com/firebase/firebase-ios-sdk
+
+----------Root specification
+name: required
+spec.name = 'AFNetworking'
+
+version: required
+spec.version = '0.0.1'
+
+swift_versions:
+spec.swift_versions = ['3.0']
+spec.swift_versions = ['3.0', '4.0', '4.2']
+spec.swift_version = '3.0'
+spec.swift_version = '3.0', '4.0'
+
+cocoapods_version:
+spec.cocoapods_version = '>= 0.36'
+
+author: required
+spec.author = 'Darth Vader'
+spec.authors = 'Darth Vader', 'Wookiee'
+spec.authors = { 'Darth Vader' => 'darthvader@darkside.com',
+                 'Wookiee'     => 'wookiee@aggrrttaaggrrt.com' }
+
+license: required
+spec.license = 'MIT'
+spec.license = { :type => 'MIT', :file => 'MIT-LICENSE.txt' }
+spec.license = { :type => 'MIT', :text => <<-LICENSE
+                   Copyright 2012
+                   Permission is granted to...
+                 LICENSE
+               }
+Supported Keys:
+:type
+:file
+:text
+
+homepage: required
+spec.homepage = 'http://www.example.com'
+
+source: required
+spec.source = { :git => 'https://github.com/AFNetworking/AFNetworking.git',
+                :tag => spec.version.to_s }
+Supported Keys:
+:git => :tag, :branch, :commit, :submodules
+:svn => :folder, :tag, :revision
+:hg => :revision
+:http => :flatten, :type, :sha256, :sha1, :headers
+
+summary: required
+spec.summary = 'Computes the meaning of life.'
+
+screenshots:
+spec.screenshot  = 'http://dl.dropbox.com/u/378729/MBProgressHUD/1.png'
+spec.screenshots = [ 'http://dl.dropbox.com/u/378729/MBProgressHUD/1.png',
+                     'http://dl.dropbox.com/u/378729/MBProgressHUD/2.png' ]
+
+prepare_command:
+If the pod is installed with the :path option this command will not be executed.
+spec.prepare_command = 'ruby build_files.rb'
+spec.prepare_command = <<-CMD
+                        sed -i 's/MyNameSpacedHeader/Header/g' ./**/*.h
+                        sed -i 's/MyNameOtherSpacedHeader/OtherHeader/g' ./**/*.h
+                   CMD
+
+static_framework:
+spec.static_framework = true
+
+deprecated:
+spec.deprecated = true
+
+----------Platform
+The platform on which this Pod is supported. Leaving this blank means the Pod is supported on all platforms. When supporting multiple platforms you should use deployment_target below instead.
+
+platform:
+spec.platform = :osx, '10.8'
+spec.platform = :ios
+spec.platform = :osx
+
+deployment_target
+spec.ios.deployment_target = '6.0'
+spec.osx.deployment_target = '10.8'
+
+----------Build settings
+In this group are listed the attributes related to the configuration of the build environment that should be used to build the library.
+If not defined in a subspec the attributes of this group inherit the value of the parent.
+
+dependency:
+Any dependency on other Pods or to a ‘sub-specification’.
+Dependencies can specify versions requirements. The use of the optimistic version indicator ~> is recommended because it provides good control over the version without being too restrictive. 
+For example, ~> 1.0.1 is equivalent to >= 1.0.1 combined with < 1.1. Similarly, ~> 1.0 will match 1.0, 1.0.1, 1.1, but will not upgrade to 2.0.
+
+Pods with overly restrictive dependencies limit their compatibility with other Pods.
+
+spec.dependency 'AFNetworking', '~> 1.0'
+spec.dependency 'AFNetworking', '~> 1.0', :configurations => ['Debug']
+spec.dependency 'AFNetworking', '~> 1.0', :configurations => :debug
+spec.dependency 'RestKit/CoreData', '~> 0.20.0'
+spec.ios.dependency 'MBProgressHUD', '~> 0.5'
+
+info_plist: multi-platform
+Key-Value pairs to add to the generated Info.plist.
+spec.info_plist = {
+  'CFBundleIdentifier' => 'com.myorg.MyLib',
+  'MY_VAR' => 'SOME_VALUE'
+}
+
+requires_arc: multi-platform
+allows you to specify which source_files use ARC. This can either be the files which support ARC, or true to indicate all of the source_files use ARC.
+Files which do not use ARC will have the -fno-objc-arc compiler flag.
+The default value of this attribute is true.
+
+spec.requires_arc = true
+
+spec.requires_arc = false
+spec.requires_arc = 'Classes/Arc'
+spec.requires_arc = ['Classes/*ARC.m', 'Classes/ARC.mm']
+
+frameworks: multi-platform
+A list of system frameworks that the user’s target needs to link against.
+spec.ios.framework = 'CFNetwork'
+spec.frameworks = 'QuartzCore', 'CoreData'
+
+weak_frameworks: multi-platform
+A list of frameworks that the user’s target needs to weakly link against.
+spec.weak_framework = 'Twitter'
+spec.weak_frameworks = 'Twitter', 'SafariServices'
+
+libraries: multi-platform
+A list of system libraries that the user’s target (application) needs to link against.
+spec.ios.library = 'xml2'
+spec.libraries = 'xml2', 'z'
+
+compiler_flags: multi-platform
+A list of flags which should be passed to the compiler.
+spec.compiler_flags = '-DOS_OBJECT_USE_OBJC=0', '-Wno-format'
+
+pod_target_xcconfig: multi-platform
+Any flag to add to the final private pod target xcconfig file.
+spec.pod_target_xcconfig = { 'OTHER_LDFLAGS' => '-lObjC' }
+
+user_target_xcconfig: multi-platform
+Specifies flags to add to the final aggregate target xcconfig file, which propagates to non-overridden and inheriting build settings to the integrated user targets.
+spec.user_target_xcconfig = { 'MY_SUBSPEC' => 'YES' }
+
+prefix_header_contents: multi-platform
+Any content to inject in the prefix header of the pod project.
+This attribute is not recommended as Pods should not pollute the prefix header of other libraries or of the user project.
+spec.prefix_header_contents = '#import <UIKit/UIKit.h>'
+spec.prefix_header_contents = '#import <UIKit/UIKit.h>', '#import <Foundation/Foundation.h>'
+
+prefix_header_file: multi-platform
+spec.prefix_header_file = 'iphone/include/prefix.pch'
+spec.prefix_header_file = false
+
+module_name:
+The name to use for the framework / clang module which will be generated for this specification instead of the default (header_dir if set, otherwise the specification name).
+spec.module_name = 'Three20'
+
+header_dir: multi-platform
+spec.header_dir = 'Three20Core'
+
+header_mappings_dir: multi-platform
+A directory from where to preserve the folder structure for the headers files. If not provided the headers files are flattened.
+spec.header_mappings_dir = 'src/include'
+
+script_phases: multi-platform
+This attribute allows to define a script phase to execute as part of compilation of the Pod. 
+Unlike a prepare command, script phases execute as part of xcodebuild they can also utilize all environment variables that are set during compilation.
+spec.script_phase = { :name => 'Hello World', :script => 'echo "Hello World"' }
+spec.script_phase = { :name => 'Hello World', :script => 'echo "Hello World"', :execution_position => :before_compile }
+spec.script_phase = { :name => 'Hello World', :script => 'puts "Hello World"', :shell_path => '/usr/bin/ruby' }
+spec.script_phase = { :name => 'Hello World', :script => 'echo "Hello World"',
+  :input_files => ['/path/to/input_file.txt'], :output_files => ['/path/to/output_file.txt']
+}
+spec.script_phase = { :name => 'Hello World', :script => 'echo "Hello World"',
+  :input_file_lists => ['/path/to/input_files.xcfilelist'], :output_file_lists => ['/path/to/output_files.xcfilelist']
+}
+spec.script_phases = [
+    { :name => 'Hello World', :script => 'echo "Hello World"' },
+    { :name => 'Hello Ruby World', :script => 'puts "Hello World"', :shell_path => '/usr/bin/ruby' },
+  ]
+
+----------File patterns
+Podspecs should be located at the root of the repository, and paths to files should be specified relative to the root of the repository as well. 
+File patterns do not support traversing the parent directory ( .. ). File patterns may contain the following wildcard patterns:
+
+Pattern: *
+Matches any file. Can be restricted by other values in the glob.
+* will match all files
+c* will match all files beginning with c
+*c will match all files ending with c
+*c* will match all files that have c in them (including at the beginning or end)
+Equivalent to /.*/x in regexp.
+Note this will not match Unix-like hidden files (dotfiles). In order to include those in the match results, you must use something like {*,.*}.
+
+Pattern: **
+Matches directories recursively.
+
+Pattern: ?
+Matches any one character. Equivalent to /.{1}/ in regexp.
+
+Pattern: [set]
+Matches any one character in set.
+Behaves exactly like character sets in Regexp, including set negation ([^a-z]).
+
+Pattern: {p,q}
+Matches either literal p or literal q.
+Matching literals may be more than one character in length. More than two literals may be specified.
+Equivalent to pattern alternation in regexp.
+
+Pattern: \
+Escapes the next meta-character.
+
+Examples:
+"JSONKit.?"    #=> ["JSONKit.h", "JSONKit.m"]
+"*.[a-z][a-z]" #=> ["CHANGELOG.md", "README.md"]
+"*.[^m]*"      #=> ["JSONKit.h"]
+"*.{h,m}"      #=> ["JSONKit.h", "JSONKit.m"]
+"*"            #=> ["CHANGELOG.md", "JSONKit.h", "JSONKit.m", "README.md"]
+
+source_files: multi-platform
+spec.source_files = 'Classes/**/*.{h,m}'
+spec.source_files = 'Classes/**/*.{h,m}', 'More_Classes/**/*.{h,m}'
+
+public_header_files: multi-platform
+spec.public_header_files = 'Headers/Public/*.h'
+
+private_header_files: multi-platform
+spec.private_header_files = 'Headers/Private/*.h'
+
+vendored_frameworks: multi-platform
+The paths of the framework bundles that come shipped with the Pod.
+spec.ios.vendored_frameworks = 'Frameworks/MyFramework.framework'
+spec.vendored_frameworks = 'MyFramework.framework', 'TheirFramework.framework'
+
+vendored_libraries: multi-platform
+The paths of the libraries that come shipped with the Pod.
+spec.ios.vendored_library = 'Libraries/libProj4.a'
+spec.vendored_libraries = 'libProj4.a', 'libJavaScriptCore.a'
+
+resource_bundles: multi-platform
+This attribute allows to define the name and the file of the resource bundles which should be built for the Pod. 
+They are specified as a hash where the keys represent the name of the bundles and the values the file patterns that they should include.
+For building the Pod as a static library, we strongly recommend library developers to adopt resource bundles as there can be name collisions using the resources attribute.
+The names of the bundles should at least include the name of the Pod to minimise the chance of name collisions.
+spec.ios.resource_bundle = { 'MapBox' => 'MapView/Map/Resources/*.png' }
+spec.resource_bundles = {
+    'MapBox' => ['MapView/Map/Resources/*.png'],
+    'MapBoxOtherResources' => ['MapView/Map/OtherResources/*.png']
+  }
+
+resources: multi-platform
+A list of resources that should be copied into the target bundle.
+For building the Pod as a static library, we strongly recommend library developers to adopt resource bundles as there can be name collisions using the resources attribute. 
+Moreover, resources specified with this attribute are copied directly to the client target and therefore they are not optimised by Xcode.
+spec.resource = 'Resources/HockeySDK.bundle'
+spec.resources = ['Images/*.png', 'Sounds/*']
+
+exclude_files: multi-platform
+A list of file patterns that should be excluded from the other file patterns.
+spec.ios.exclude_files = 'Classes/osx'
+spec.exclude_files = 'Classes/**/unused.{h,m}'
+
+preserve_paths: multi-platform
+Any file that should not be removed after being downloaded.
+By default, CocoaPods removes all files that are not matched by any of the other file pattern.
+spec.preserve_path = 'IMPORTANT.txt'
+spec.preserve_paths = 'Frameworks/*.framework'
+
+module_map: multi-platform
+The module map file that should be used when this pod is integrated as a framework.
+By default, CocoaPods creates a module map file based upon the public headers in a specification.
+spec.module_map = 'source/module.modulemap'
+
+----------Subspecs
+A library can specify a dependency on either another library, a subspec of another library, or a subspec of itself.
+
+subspec:
+Represents specification for a module of the library.
+Subspecs participate on a dual hierarchy.
+On one side, a specification automatically inherits as a dependency all it children ‘sub-specifications’ (unless a default subspec is specified).
+On the other side, a ‘sub-specification’ inherits the value of the attributes of the parents so common values for attributes can be specified in the ancestors.
+
+pod 'ShareKit', '2.0'
+Installs ShareKit with all the sharers like ShareKit/Evernote, ShareKit/Facebook, etc, as they are defined as subspecs.
+pod 'ShareKit/Twitter',  '2.0'
+pod 'ShareKit/Pinboard', '2.0'
+Installs ShareKit with only the source files for ShareKit/Twitter, ShareKit/Pinboard. Note that, in this case, the ‘sub-specifications’ to compile need the source files, 
+the dependencies, and the other attributes defined by the root specification. CocoaPods is smart enough to handle any issues arising from duplicate attributes.
+
+Examples:
+Subspecs with different source files.
+subspec 'Twitter' do |sp|
+  sp.source_files = 'Classes/Twitter'
+end
+
+subspec 'Pinboard' do |sp|
+  sp.source_files = 'Classes/Pinboard'
+end
+
+Subspecs referencing dependencies to other subspecs.
+Pod::Spec.new do |s|
+  s.name = 'RestKit'
+
+  s.subspec 'Core' do |cs|
+    cs.dependency 'RestKit/ObjectMapping'
+    cs.dependency 'RestKit/Network'
+    cs.dependency 'RestKit/CoreData'
+  end
+
+  s.subspec 'ObjectMapping' do |os|
+  end
+end
+
+Nested subspecs.
+Pod::Spec.new do |s|
+  s.name = 'Root'
+
+  s.subspec 'Level_1' do |sp|
+    sp.subspec 'Level_2' do |ssp|
+    end
+  end
+end
+
+requires_app_host: multi-platform
+Whether a test specification requires an app host to run tests. This only applies to test specifications.
+test_spec.requires_app_host = true
+
+app_host_name: multi-platform
+The app specification to use as an app host, if necessary.
+
+scheme: multi-platform
+Specifies the scheme configuration to be used for this specification.
+spec.scheme = { :launch_arguments => ['Arg1'] }
+spec.scheme = { :launch_arguments => ['Arg1', 'Arg2'], :environment_variables => { 'Key1' => 'Val1'} }
+Supported Keys:
+:launch_arguments
+:environment_variables
+:code_coverage
+
+test_spec:
+Represents a test specification for the library. Here you can place all your tests for your podspec along with the test dependencies.
+Examples:
+Pod::Spec.new do |spec|
+  spec.name = 'NSAttributedString+CCLFormat'
+
+  spec.test_spec do |test_spec|
+    test_spec.source_files = 'NSAttributedString+CCLFormatTests.m'
+    test_spec.dependency 'Expecta'
+  end
+end
+
+app_spec:
+Represents an app specification for the library. Here you can place all your app source files for your podspec along with the app dependencies.
+Examples:
+Pod::Spec.new do |spec|
+  spec.name = 'NSAttributedString+CCLFormat'
+
+  spec.app_spec do |app_spec|
+    app_spec.source_files = 'NSAttributedString+CCLFormat.m'
+    app_spec.dependency 'AFNetworking'
+  end
+end
+
+default_subspecs:
+An array of subspecs names that should be used as preferred dependency. If not specified, a specification requires all of its subspecs as dependencies.
+You may use the value :none to specify that none of the subspecs are required to compile this pod and that all subspecs are optional.
+A Pod should make available the full library by default. Users can fine tune their dependencies, and exclude unneeded subspecs, once their requirements are known. 
+Therefore, this attribute is rarely needed. It is intended to be used to select a default if there are ‘sub-specifications’ which provide alternative incompatible implementations, 
+or to exclude modules rarely needed (especially if they trigger dependencies on other libraries).
+Examples:
+spec.default_subspec = 'Core'
+spec.default_subspecs = 'Core', 'UI'
+spec.default_subspecs = :none
+
+----------Multi-Platform support
+A specification can store values which are specific to only one platform.
+For example one might want to store resources which are specific to only iOS projects.
+spec.resources = 'Resources/**/*.png'
+spec.ios.resources = 'Resources_ios/**/*.png'
+
+ios
+Provides support for specifying iOS attributes.
+spec.ios.source_files = 'Classes/ios/**/*.{h,m}'
+
+osx
+Provides support for specifying OS X attributes.
+spec.osx.source_files = 'Classes/osx/**/*.{h,m}'
+
+macos
+Provides support for specifying OS X attributes.
+spec.osx.source_files = 'Classes/osx/**/*.{h,m}'
+
+tvos
+Provides support for specifying tvOS attributes.
+spec.tvos.source_files = 'Classes/tvos/**/*.{h,m}'
+
+watchos
+Provides support for specifying watchOS attributes.
+spec.watchos.source_files = 'Classes/watchos/**/*.{h,m}'
+
+
+
+
+==================================================podspec
+Pod::Spec.new do |s|
+
+  s.name         = "YBImageBrowser"
+
+  s.version      = "3.0.9"
+
+  s.summary      = "iOS image browser / iOS 图片浏览器"
+
+  s.description  = <<-DESC
+  					iOS 图片浏览器，功能强大，易于拓展，极致的性能优化和严格的内存控制让其运行更加的流畅和稳健。
+                   DESC
+
+  s.homepage     = "https://github.com/indulgeIn"
+
+  s.license      = "MIT"
+
+  s.author       = { "杨波" => "1106355439@qq.com" }
+
+  s.platform     = :ios, "8.0"
+
+  s.source       = { :git => "https://github.com/indulgeIn/YBImageBrowser.git", :tag => "#{s.version}" }
+
+  s.requires_arc = true
+
+  s.default_subspec = "Core"
+
+  s.subspec "Core" do |core|
+    core.source_files   = "YBImageBrowser/**/*.{h,m}"
+    core.resources      = "YBImageBrowser/YBImageBrowser.bundle"
+    core.dependency 'YYImage'
+    core.dependency 'SDWebImage', '>= 5.0.0'
+  end
+  s.subspec "NOSD" do |core|
+    core.source_files   = "YBImageBrowser/**/*.{h,m}"
+    core.exclude_files  = "YBImageBrowser/WebImageMediator/YBIBDefaultWebImageMediator.{h,m}"
+    core.resources      = "YBImageBrowser/YBImageBrowser.bundle"
+    core.dependency 'YYImage'
+  end
+
+  s.subspec "Video" do |video|
+    video.source_files = "Video/*.{h,m}"
+    video.resources    = "Video/YBImageBrowserVideo.bundle"
+    video.dependency 'YBImageBrowser/Core'
+  end
+  s.subspec "VideoNOSD" do |video|
+    video.source_files = "Video/*.{h,m}"
+    video.resources    = "Video/YBImageBrowserVideo.bundle"
+    video.dependency 'YBImageBrowser/NOSD'
+  end
+
 end
