@@ -11,7 +11,47 @@
  grep -r 关键字
  */
 
+// MARK: 多页面嵌套 JXPagerView、JXCategoryView
+
+// 判断设备是否越狱，依据是否存在apt和Cydia.app
+
+// MARK: lipo
+/**
+ lipo 是管理Fat File 的工具，可以查看cpu 架构，提取特定架构，整合和拆分库文件
+ 
+ 查看静态库指出cpu的架构:
+ lipo -info 静态库路径.framework/xxxx 或 静态库路径.a
+ 
+ lipo -info /Users/tgkj/Desktop/TeeagerGreenModel.framework/TeeagerGreenModel
+ Architectures in the fat file: /Users/tgkj/Desktop/TeeagerGreenModel.framework/TeeagerGreenModel are: armv7 i386 x86_64 arm64
+ 
+ 合并静态库:
+ lipo -create 静态库路径1  静态库路径2 -output 存放路径
+ lipo -create /Users/tgkj/Library/Developer/Xcode/DerivedData/ TeeagerGreenModel-bjryvkwvkylloqeqscwurstbubsa/Build/Products/Release-iphoneos/TeeagerGreenModel.framework/TeeagerGreenModel /Users/tgkj/Library/Developer/Xcode/DerivedData/TeeagerGreenModel-bjryvkwvkylloqeqscwurstbubsa/Build/Products/Release-iphonesimulator/TeeagerGreenModel.framework/TeeagerGreenModel -output /Users/tgkj/Library/Developer/Xcode/DerivedData/TeeagerGreenModel-bjryvkwvkylloqeqscwurstbubsa/Build/Products/Release-iphoneos/TeeagerGreenModel.framework/TeeagerGreenModel
+ 
+ 移除指定架构:
+ lipo  静态库路径 -remove CPU架构名称 -output 移除后存放路径
+ lipo  /Users/tgkj/Library/Developer/Xcode/DerivedData/ TeeagerGreenModel-bjryvkwvkylloqeqscwurstbubsa/Build/Products/Release-iphoneos/TeeagerGreenModel.framework/TeeagerGreenModel -remove armv7 -output /Users/tgkj/Library/Developer/Xcode/DerivedData/ TeeagerGreenModel-bjryvkwvkylloqeqscwurstbubsa/Build/Products/Release-iphoneos/TeeagerGreenModel.framework/TeeagerGreenModel
+
+ */
+
+// MARK: 字节
+// https://juejin.im/user/2999123452637853
+// https://juejin.im/user/78820566645534
+// https://juejin.im/user/2788017221155176/posts
+
+// MARK: LG_BLOG
+// https://www.jianshu.com/p/e2a7c218926b
+// https://www.jianshu.com/u/1e877b3dcc34
+// https://juejin.im/user/2436173498429287
+
+// MARK: AV相关
+// https://github.com/wsl2ls/iOS_Tips
+// https://juejin.im/user/2788017221155176/posts
+
 // MARK: LG_Stu
+// https://blog.csdn.net/lin1109221208
+// https://www.jianshu.com/p/74e278cabf47
 // https://www.jianshu.com/u/4db89678773b
 
 // https://www.jianshu.com/u/e15d1f644bea // https://github.com/wsl2ls

@@ -1,0 +1,532 @@
+静态库和动态库都属于通过封装代码开放接口从而达到保护核心代码的目的。
+
+.a称为库， .framework称为框架，二者可以统称为库。
+.a 库文件和头文件分离，.a 是一个纯二进制文件，不包含资源文件和头文件；
+.framework的库文件和头文件打包在一起，可以包含资源文件，在使用上会更便于管理。
+
+Framework是Cocoa/Cocoa Touch程序中使用的一种资源打包方式，可以将代码文件、头文件、资源文件、说明文档等集中在一起，方便开发者使用。
+
+库是共享程序代码的方式，一般分为静态库和动态库。
+
+库的本质是可执行的二进制文件，是资源文件和代码编译的一个集合。根据链接方式不同，可以分为动态库和静态库，其中系统提供的库都属于动态库。
+
+静态和动态的名字，区分了编译后的代码是以何种方式链接到目标程序中的。
+
+静态库：
+之所以称为静态，是因为在编译时候，会直接拷贝一份，复制到目标程序中，目标程序中的这份静态库代码就不再发生改变了。
+链接时完整地拷贝至可执行文件中
+有多个app使用就会被复制多份，不能共享且占用更多冗余内存。
+所有的函数都在库中，因此当修改函数时需要重新编译。
+
+对于一个静态库而言，其实已经是编译好的了,类似一个 .o 的集合 这里并没有连接。
+在 build 的过程中只会参与链接的过程，而这个链接的过程简单的讲就是合并，并且链接器只会将静态库中被使用的部分合并到可执行文件中去
+
+一般如果是静态Framework的话，资源打包进Framework是读取不了的
+静态Framework和.a文件都是编译进可执行文件里面的。只有动态Framework能在.app下面的Framework文件夹下看到，并读取.framework里的资源文件。
+
+为什么要使用静态库？
+方便共享代码，便于合理使用。
+实现iOS程序的模块化，可以把固定的业务模块化成静态库。
+和别人分享你的代码库，但不想让别人看到你代码的实现。
+开发第三方sdk的需要
+
+动态库：
+链接时不复制，程序运行时由系统动态加载到内存，供程序调用，系统只加载一次，多个程序共用，节省内存。
+
+系统的.framework是动态库, 我们自己建立的.framework是静态库
+
+iOS里静态库的形式：
+.a 和 .framework
+iOS里动态库的形式
+.dylib 和 .framework
+
+.a是一个纯二进制文件，.framework中除了有二进制文件之外还有资源文件。
+###其中.a 不能直接使用，需要 .h文件配合，而.framework则可以直接使用。.framework本身已经包含了.h和其它文件###
+.framework = .a + .h + sourceFile(资源文件)
+推荐使用.framework
+
+#####制作静态库时的几点注意：#####
+图片资源的处理：一般都是把图片文件单独的放在一个.bundle文件中，一般.bundle的名字和.a或.framework的名字相同。
+.bundle文件很好弄，新建一个文件夹，把它改名为.bundle就可以了，右键，显示包内容可以向其中添加图片资源。
+category的处理：category是我们实际开发项目中经常用到的，把category打成静态库是没有问题的，
+但是在用这个静态库的工程中，调用category中的方法时会有找不到该方法的运行时错误selector not recognized，
+解决办法是：在使用静态库的工程中配置other linker flags的值为-ObjC。
+复杂的静态库：如果一个静态库很复杂，需要暴露的.h比较多的话，就可以在静态库的内部创建一个.h文件（一般这个.h文件的名字和静态库的名字相同），
+然后把所有需要暴露出来的.h文件都集中放在这个.h文件中，而那些原本需要暴露的.h都不需要再暴露了，只需要把.h暴露出来就可以了。
+
+iOS8之前苹果是不允许第三方框架使用动态库方式实现的，但是iOS8之后添加了App Extension，Extension 需要与主App共享代码，而且新加入的Swift的语言机制也需要动态库，
+于是苹果提出了Embedded Framework概念，这种动态库允许App和App Extension共享代码，但是这份动态库的生命被限定在一个App进程内。简单点可以理解为被阉割的动态库。
+与系统的动态Framework 不同，使用 Cocoa Touch Framework 制作的动态库 在打包和提交 App 时资源文件会被放到 App main bundle 的根目录文件下，运行在沙盒里，而不是系统中。
+所以，不同的 App 即使使用了同样的 Framework，仍然需要被分别签名，打包和加载。
+
+Embedded Framework: 允许用户生成的“动态库”类型。
+Embedded Framework，这种动态库允许APP和APP Extension共享代码，但是这份动态库的生命被限定在一个APP进程内。
+如果你把某个自己开发的动态库放在了Linked Frameworks and Libraries里面，程序一启动就会报Reason: Image Not Found，你只能把它放在Embeded Binaries里面才能正常使用
+
+编译: 将我们的源代码文件编译为目标文件
+链接: 将我们的各种目标文件加上一些第三方库，和系统库链接为可执行文件。
+由于某个目标文件的符号(可以理解为变量，函数等)可能来自其他目标文件，其实链接这一步最主要的操作就是决议符号的地址。
+若符号来自静态库(本质就是.o 的集合包)或 .o，将其纳入链接产物，并确定符号地址
+若符号来自动态库，打个标记，等启动的时候再说---交给dyld去加载和链接符号
+
+于是链接加装载就有了不同的情况：
+Load 装载：将库文件载入内存
+    Static Loading：启动时
+    Dynamic Loading：启动后（使用时）
+Link 链接：决议符号地址
+    Static Linking：构建（链接）时
+    Dynamic Linking：运行时（启动时或使用时）
+
+直接添加Framework报错
+dyld: Library not loaded: @rpath/IFlyMSC_Dylib.framework/IFlyMSC_Dylib
+  Referenced from: /private/var/containers/Bundle/Application/B1CAB261-A1AE-4797-B0F0-9BBA9C2C78FF/Test.app/Test
+  Reason: image not found
+解决方案：
+General->Frameworks,Libraries,and Embedded Content->IFlyMSC_Dylib.framework->Embed&sign
+
+
+使用CocoaPods引入三方库时如果在Podfile里加入use_frameworks! ，那么在编译的时候就会默认帮你生成“动态库”，我们能看到每个源码Pod都会在Pods工程下生成一个对应的“动态库Framework”的target，
+我们能在这个target的Build Settings -> Mach-O Type看到默认设置是Dynamic Library。也就是生成了一个“动态Framework”，我们能在Pods工程下Products文件夹下面看到每一个Pod对应生成的“动态库”。
+这些生成的“动态库”将链接到主项目给主工程使用，但是我们在主工程target的General -> Frameworks,Libraries,and Embedded Content中并没有看到这些“动态库”。
+这是因为cocoapods已经执行了脚本把这些“动态库”嵌入到了.app的Framework目录下
+相当于在Frameworks,Libraries,and Embedded Content加入了这些“动态库”
+我们能在主工程target的Build Phase -> Embed Pods Frameworks中看到执行的脚本。
+
+
+Bundle的概念，framework是一种特殊类型的Bundle，bunlde是一个包含多个子文件夹的文件夹。
+在iOS上，Bundlue将相关联的文件(比如图片, Nibs，代码)编译成一个包文件。程序将它当作一个单独文件来处理，你可以在不知道内部实现的情况下使用它。
+
+Q: Podfile使用静态库时出现报错[!] The following Swift pods cannot yet be integrated as static libraries:,如何解决？
+A：pod install 时的错误信息提示我们应该使用use_modular_headers!来让整个项目支持静态库，或者对单个Pod使用:modular_headers => true
+
+==================================================Embed
+https://developer.apple.com/library/archive/technotes/tn2435/_index.html#//apple_ref/doc/uid/DTS40017543-CH1-EMBED_SECTION
+
+Embed：嵌入，用于动态库，动态库在运行时链接，所以它们需要被打进bundle里面
+file frameworkToLink.framework/frameworkToLink
+如果返回：
+current ar archive:说明是静态库，选择Do not embed
+Mach-0 dynamically：说明是动态库，选择Embed
+
+==================================================Signing
+Signing：只用于动态库，如果已经有签名了就不需要再签名。
+codesign -dv frameworkToLink.framwork
+如果返回：
+code object is not signed at all 或者 adhoc: 表示还没签名，则选择Embed and sign
+其它：表示已经正确签名，选择Embed Without Signing
+
+系统在加载动态库时，会检查 framework 的签名，签名中必须包含 TeamIdentifier 并且 framework 和 host app 的 TeamIdentifier 必须一致。
+
+如果不一致，否则会报下面的错误：
+Error loading /path/to/framework: dlopen(/path/to/framework, 265): no suitable image found. Did find:/path/to/framework: mmap() error 1
+
+codesign -dv /path/to/YourApp.app
+或
+codesign -dv /path/to/youFramework.framework
+
+如果证书太旧,其中的 TeamIdentifier=not set
+
+==================================================
+将Build Active Architecture Only 设置为NO（代表根据Arch 和Valid Arch来设定， 一般Debug模式下为yes，Release模式下为No）
+
+==================================================动态库的作用
+应用插件化:
+每一个功能点都是一个动态库，在用户想使用某个功能的时候让其从网络下载，然后手动加载动态库，实现功能的的插件化
+虽然技术上来说这种动态更新是可行的，但是对于AppStore上上架的app是不可以的。
+iOS8之后虽然可以上传含有动态库的app，但是苹果不仅需要你动态库和app的签名一致，而且苹果会在你上架的时候再经过一次AppStore的签名。
+所以你想在线更新动态库，首先你得有苹果APPStore私钥，而这个基本不可能。
+除非你的应用不需要通过AppStore上架，比如企业内部的应用，通过企业证书发布，那么就可以实现应用插件化在线更新动态库了。
+
+共享可执行文件:
+在其它大部分平台上，动态库都可以用于不同应用间共享，这就大大节省了内存。
+从目前来看，iOS仍然不允许进程间共享动态库，即iOS上的动态库只能是私有的，因为我们仍然不能将动态库文件放置在除了自身沙盒以外的其它任何地方。
+不过iOS8上开放了App Extension功能，可以为一个应用创建插件，这样主app和插件之间共享动态库还是可行的。
+
+==================================================Umbrella Framework
+https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPFrameworks/Concepts/FrameworkAnatomy.html#//apple_ref/doc/uid/20002253-99314
+
+然而，有两个因素将伞式框架与其他框架区分开来。首先是它们包含头文件的方式。第二个事实是它们封装了子框架。
+Umbrella frameworks hide the complex cross-dependencies among the many different pieces of system software. 
+Thus you do not need to know what set of frameworks and libraries you must import to accomplish a particular task
+A subframework is structurally a public framework that packages a specific Apple technology, such as Apple events, Quartz, or Open Transport. 
+Although the APIs of subframeworks are public, Apple has put mechanisms in place to prevent developers from linking directly with subframeworks (see Restrictions on Subframework Linking).
+A subframework always resides in an umbrella framework installed in /System/Library/Frameworks, and within this umbrella framework, its header files are exposed.
+Physically, umbrella frameworks have a similar structure to standard frameworks. One significant difference is the addition of a Frameworks directory to contain the subframeworks that make up the umbrella framework.
+Unlike standard frameworks, the Headers directory of an umbrella framework contains a more limited set of header files. It does not contain a collection of the headers in its subframeworks. Instead, it contains only the master header file for the framework. 
+When referring to an umbrella framework in your source files, you should include only the master header file
+
+它允许你将不同的frameworks合并成一个framework，输出部分头文件。为了构建一个umbrella framework，你必须包含umbrella header。
+
+==================================================modular
+为了能够引入framework modular，我们必须引入 module map
+
+framework module ModularFramework{
+  module Modulel{
+    header "File1.h"
+  }
+  module Module2{
+    header "File2.h"
+  }
+}
+
+import ModularFramework.Module1
+import ModularFramework.Module2
+
+CocoaPods允许使用umbrella和modular frameworks。
+如果你引入了pods到你的项目里，在Target->YourApp->Build Settings找查找modulemap和umbrella可以看到它们的设置。
+
+==================================================CocoaPods相关
+在使用静态库时，某些Pod不支持module怎么办？
+可以使用use_modular_headers!来让所有Pod支持静态库;
+或者对不支持静态库的Pod后面添加:modular_headers => true来使其支持module
+
+关于 use_frameworks!
+在使用CocoaPods的时候在Podfile里加入use_frameworks! ，那么你在编译的时候就会默认帮你生成动态库，我们能看到每个源码Pod都会在Pods工程下面生成一个对应的动态库Framework的target，
+我们能在这个target的Build Settings -> Mach-O Type看到默认设置是Dynamic Library。也就是会生成一个动态Framework，我们能在Products下面看到每一个Pod对应生成的动态库。
+
+这些生成的动态库将链接到主项目给主工程使用，但是我们上面说过动态库需要在主工程target的General -> Embedded Binaries中添加才能使用，而我们并没有在Embedded Binaries中看到这些动态库。
+
+其实是cocoapods已经执行了脚本把这些动态库嵌入到了.app的Framework目录下，相当于在Embedded Binaries加入了这些动态库。
+我们能在主工程target的Build Phase -> Embed Pods Frameworks里看到执行的脚本。
+
+==================================================#import和@import
+@import是iOS7之后的新特性语法: Modules（模块导入）或者"语义引入"
+
+Modules可以看成是可执行framework的集合，比#import更加快捷和高效。
+
+Enable Modules是默认打开的，在Target->YourApp->Build Setting->搜索Modules, 可以看到Enable Modules默认是YES，Link Frameworks Automatically也是默认打开的
+打开后，使用原来的#import和#include，编译器会在编译的时候自动把可能的地方换成modules的写法去编译。
+@import的一个优势是开发者不需要手动将framework添加到project settings里面，它是自动完成的。
+使用Modules的形式，可以使用@import MapKit;, 还可以只加载framework里的submodules，如@import MapKit.MKAnnotation;
+
+==================================================从源代码到app
+当我们点击了 build 之后，做了什么事情呢？
+预处理（Pre-process）：把宏替换，删除注释，展开头文件，产生 .i 文件。
+编译（Compliling）：把之前的 .i 文件转换成汇编语言，产生 .s文件。
+汇编（Asembly）：把汇编语言文件转换为机器码文件，产生 .o 文件。
+链接（Link）：对.o文件中的对于其他的库的引用的地方进行引用，生成最后的可执行文件（同时也包括多个 .o 文件进行 link）。
+
+==================================================Mach-O
+在制作 framework 的时候需要选择这个 Mach-O Type.
+为Mach Object文件格式的缩写，它是一种用于可执行文件，目标代码，动态库，内核转储的文件格式。作为a.out格式的替代，Mach-O提供了更强的扩展性，并提升了符号表中信息的访问速度。
+
+==================================================创建静态Framework
+静态库的版本（4种）:
+真机-Debug版本
+真机-Release版本
+模拟器-Debug版本
+模拟器-Release版本
+
+选择Release版本。编译模拟器和真机的所有CPU架构。
+选择Generic iOS Device运行编译就会生成对应版本的Framework了
+
+合成包含真机和模拟器的Framework:
+cd到Products
+lipo -create Release-iphoneos/testLib.framework/testLib  Release-iphonesimulator/testLib.framework/testLib  -output testLib
+然后复制到任何一个testLib.framework里替换掉旧的testLib就可以了
+
+或者在工程的Build Phases里添加以下脚本，真机和模拟器都Build一遍之后就会在工程目录下生成Products文件夹，里面就是合并之后的Framework。
+if [ "${ACTION}" = "build" ]
+then
+INSTALL_DIR=${SRCROOT}/Products/${PROJECT_NAME}.framework
+
+DEVICE_DIR=${BUILD_ROOT}/${CONFIGURATION}-iphoneos/${PROJECT_NAME}.framework
+
+SIMULATOR_DIR=${BUILD_ROOT}/${CONFIGURATION}-iphonesimulator/${PROJECT_NAME}.framework
+
+
+if [ -d "${INSTALL_DIR}" ]
+then
+rm -rf "${INSTALL_DIR}"
+fi
+
+mkdir -p "${INSTALL_DIR}"
+
+cp -R "${DEVICE_DIR}/" "${INSTALL_DIR}/"
+#ditto "${DEVICE_DIR}/Headers" "${INSTALL_DIR}/Headers"
+
+lipo -create "${DEVICE_DIR}/${PROJECT_NAME}" "${SIMULATOR_DIR}/${PROJECT_NAME}" -output "${INSTALL_DIR}/${PROJECT_NAME}"
+
+#open "${DEVICE_DIR}"
+#open "${SRCROOT}/Products"
+fi
+
+==================================================创建动态库工程
+TestFW.framework
+TestFV.h
+#import <TestFW/CommonUtils.h>
+
+[[NSBundle bundleForClass:CommonUtils.class] pathForResource:@"home_btn_connect_pre@2x" ofType:@"png" inDirectory:@"Resources.bundle"];
+
+Framework即可以是动态库，也可以是静态库。
+比如我创建的framework叫testLib，然后在build setting中设置动态库或静态库。
+设置Mach-O Type， 创建framework的时候默认是Dynamic Library，我们可以修改为Static Library。
+
+如果我们创建的framework是动态库，那么我们直接在工程里使用的时候会报错：Reason: Image Not Found。
+需要在工程的General里的Embedded Binaries添加这个动态库才能使用。
+因为我们创建的这个动态库其实也不能给其他程序使用的，而你的App Extension和APP之间是需要使用这个动态库的。
+这个动态库可以App Extension和APP之间共用一份（App 和 Extension 的 Bundle 是共享的）
+因此苹果又把这种 Framework 称为 Embedded Framework，而我把这个动态库称为伪动态库。
+
+我们创建的动态库是在我们自己应用的.app目录里面，只能自己的App Extension和APP使用。而系统的动态库是在系统目录里面，所有的程序都能使用。
+
+一般我们得到的iOS程序包是.ipa文件。其实就是一个压缩包，解压缩.ipa。
+解压缩后里面会有一个payload文件夹，文件夹里有一个.app文件，右键显示包内容，然后找到一个一般体积最大跟.app同名的文件，那个文件就是可执行文件。
+
+NSBundle *bundel = [[NSBundle mainBundle] bundlePath];就能得到.app的路径。可执行文件就在.app里面
+而我们自己创建的动态库就在.app目录下的Framework文件夹里。
+
+即有系统的动态库(WebKit)，又有自己的动态库(DFCUserInterface)，我们可以看一下可执行文件中对动态库的链接地址。
+用MachOView查看可执行文件
+
+==================================================Xcode 中的链接路径问题
+build setting->Linking
+
+install Name:
+install Name 本质是一个路径，告诉连接器在运行时在哪里找到需要的库。
+比如libfoo.dylib有一个/usr/lib/libfoo.dylib.的install name.在链接的时候install name 会被拷贝到应用程序。
+当动态链接器需要libfoo.dylib的时候，它将会从应用程序中找到这个install Name,然后知道在/usr/lib/找到libfoo.dylib这个库。
+
+executable_path:
+有时候你需要嵌入一个库到应用程序中，而不是将这个库安装到\Library下，绝对路径是不合适的。
+Mac下的解决方案就是@executable_path。
+当放在 install Name 的值的前面的时候,比如Bar.app依赖于Foo.framework，并且Bar.app安装在/Applications。
+@executable_path被展开为/Applications/Bar.app/Contents/MacOS
+如果想嵌入一个库在Contents/Frameworks。只需要设置Foo.framework的install Name 为
+@executable_path/../Frameworks/Foo.framework/Versions/A/Foo
+动态链接库会把它扩展为/Applications/Bar.app/Contents/MacOS/../Frameworks/Foo.framework/Versions/A/Foo。这样就可以找到库了。
+
+loader_path:
+查找可执行文件并不总是好用的，想象一下你需要传递一个已经嵌入了另一个库的库。
+比如Foo.framework嵌入Baz.framework.
+即使是Foo.framework请求加载，当确实@executable_path的具体指向的时候，动态链接器也找不到Bar.app
+苹果提供了@loader_path解决类似问题。
+如果是应用程序，则和@executable_path一样，如果是Framework或者plugin,则和Framework或者plugin相关，这样更有用。
+
+@rpath:
+上面的方案是可行的，但也有问题。
+问题是，库的单个拷贝只能用一种方式使用。
+如果想Foo.framework嵌入在一个应用程序或者安装到/Library/Frameworks使用，你需要提供两个单独的不同的install name包。
+苹果提供了@rpath解决这个问题。
+当把@rpath 放在install name前面，就将告诉动态链接器去本地的列表搜索这个库。
+这个列表嵌入到这个应用程序，因此能够被应用程序的编译过程控制，而不是framework.因此单个framework可以用于多个目的。
+To make this work, Foo.framework's install name would be set to @rpath/Foo.framework/Versions/A/Foo. 
+An application that intends to embed Foo.framework would then pass -rpath @executable_path/../Frameworks to the linker at build time, which tells the dynamic linker to search for @rpath frameworks there. 
+An application that intends to install the framework would pass -rpath /Library/Frameworks, telling the dynamic linker to search there. An application that for some reason doesn't want to commit to one or the other at build time can just pass both sets of parameters, which will cause the dynamic linker to try both locations.
+
+==================================================如何加快编译速度
+查看编译时间:
+xcode界面直接查看
+defaults write com.apple.dt.Xcode ShowBuildOperationDuration YES
+
+Optimization Level:
+是指编译器的优化层度，优化后的代码效率比较高，但是可读性比较差，且编译时间更长.它一共有以下几个选项:
+None: 编译器不会尝试优化代码，当你专注解决逻辑错误、编译速度快时使用此项。
+Fast: 编译器执行简单的优化来提高代码的性能，同时最大限度的减少编译时间，该选项在编译过程中会使用更多的内存。
+Faster: 编译器执行所有优化，增加编译时间，提高代码的性能。
+Fastest: 编译器执行所有优化，改善代码的速度，但会增加代码长度，编译速度慢。
+Fastest, Smallest: 编译器执行所有优化，不会增加代码的长度，它是执行文件占用更少内存的首选方案
+所以说我们平时开发的时候可以选择使用None来不给代码执行优化，这样既可以减少编译时间，又可以看出你代码哪里有性能问题。
+而你的release版应该选择Fastest, Smalllest，这样既能执行所有的优化而不增加代码长度，又能使执行文件占用更少的内存。
+
+pod里的Optimization Level:
+我们在使用pod的时候，每一个pod其实都是一个target，它有自己的Optimization Level。
+cocoapods默认给每一个pod的Optimization Level设置的是Fastest, Smallest，也就是说执行所有的优化和减少内存占用空间。
+这样我们在开发的时候会有两个问题：一个是debug的时候无法输出pod源码里面的变量值，因为编译器已经给代码做了优化，它无法再记录你的变量值了。
+还有一个就是编译时间长，拿我现在的工程来说，如果把所有pod的Optimization Level选项设置成None的话编译时间为2分30秒，如果为默认的Fastest, Smallest的话时间为3分15秒。
+把所有pod的的Optimization Level设置为None只需在Podfile里加入以下代码即可（其中的"Dev"为你项目的Scheme）：
+post_install do |installer|
+  installer.pods_project.build_configurations.each do |config|
+    if config.name.include?("Dev")
+      config.build_settings['GCC_OPTIMIZATION_LEVEL'] = '0'
+    end
+  end
+end
+
+Debug Information Format:
+在工程对应Target的Build Settings中，找到Debug Information Format这一项，将Debug时的DWARF with dSYM file改为DWARF
+这一项设置的是是否将调试信息加入到可执行文件中，改为DWARF后，如果程序崩溃，将无法输出崩溃位置对应的函数堆栈，但由于Debug模式下可以在XCode中查看调试信息，所以改为DWARF影响并不大。这一项更改完之后，可以大幅提升编译速度。
+其实Debug Information Format就是表示是否生成.dSYM文件，也就是符号表。如果为DWARF就表示不生成.dSYM文件
+
+下面这句虽然能修改所有pod的Debug Information Format为DWARF，但是是没用的，主要还是看主工程里的Debug Information Format的设置。
+主工程如果为DWARF with dSYM file也会为pod里的代码生成符号表的。
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+        if config.name == 'Dev'
+          config.build_settings['DEBUG_INFORMATION_FORMAT'] = 'dwarf'
+        end
+    end
+  end
+end
+
+将Build Active Architecture Only改为Yes:
+这一项设置的是是否仅编译当前架构的版本，如果为No，会编译所有架构的版本。
+需要注意的是，此选项在Release模式下必须为No，否则发布的ipa在部分设备上将不能运行。这一项更改完之后，可以显著提高编译速度。
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+        if config.name == 'Dev'
+          config.build_settings['ONLY_ACTIVE_ARCH'] = 'YES'
+        end
+    end
+  end
+end
+
+二进制化:
+什么叫二进制化，其实就是把源码编译为静态库或动态库。也就是我们平常使用的.framework和.a文件，这些库都是已经编译好的，
+所以当你pod update或者pod install，就不用再重新编译一遍那么多文件了，能够显著减少编译时间。
+
+小技巧:
+像下面设置的时候，build setting里那个配置在文件里对应的名字是从哪来的呢？
+ONLY_ACTIVE_ARCH对应Build Active Architecture Only
+DEBUG_INFORMATION_FORMAT对应Debug Infomation Format
+GCC_OPTIMIZATION_LEVEL对应Optimization Level
+可以查看projectName.xcodeproj里的project.pbxproj文件
+
+==================================================静态库Framework目录
+Headers:
+表示暴露的头文件，一般都会有一个和Framework同名的.h文件，你在创建Framework的时候文件夹里也会默认生成这样一个文件。
+
+info.plist:
+主要就是这个Framework的一些配置信息。
+
+Modules:
+这个文件夹里有个module.modulemap文件，我们看到这里面有这样一句umbrella header "testLib.h"，umbrella有保护伞、庇护的意思。
+也就是说Headers中暴露的testLib.h文件被放在umbrella雨伞下保护起来了，所以我们需要将其他的所有需要暴露的.h文件放到testLib.h文件中保护起来，不然会出现警告。
+
+二进制文件:
+这个就是你源码编译而成的二进制文件，主要的执行代码就在这个里面。
+
+.bundle文件:
+如果我们在Build Phases -> Copy Bundle Resources里加入.bundle文件，那么创建出来的.Framework里就会有这个.bundle的资源文件夹。
+
+==================================================资源相关
+一般如果是静态Framework的话，资源打包进Framework是读取不了的。静态Framework和.a文件都是编译进可执行文件里面的。
+只有动态Framework能在.app的Framework文件夹下看到，并读取.framework里的资源文件。
+
+你可以用NSBundle *bundel = [[NSBundle mainBundle] bundlePath];得到.app目录，如果是动态库你能在Framework目录下看到这个动态库以及动态库里面资源文件。
+然后你只要用NSBundle *bundle = [NSBundle bundleForClass:<#ClassFromFramework#>];得到这个动态库的路径就能读取到里面的资源了。
+
+==================================================#####打包framework#####
+再新建一个taget，找到Aggregate
+在新建的Aggregate的Build Phases下点左上的+号选择New Run Script Phases
+
+# Sets the target folders and the final framework product.
+# 如果工程名称和Framework的Target名称不一样的话，要自定义FMKNAME
+# 例如: FMK_NAME = "MyFramework"
+FMK_NAME=${PROJECT_NAME}
+echo $FMK_NAME
+# Install dir will be the final output to the framework.
+# The following line create it in the root folder of the current project.
+INSTALL_DIR=${SRCROOT}/Products/${FMK_NAME}.framework
+# Working dir will be deleted after the framework creation.
+WRK_DIR=build
+DEVICE_DIR=${WRK_DIR}/Release-iphoneos/${FMK_NAME}.framework
+SIMULATOR_DIR=${WRK_DIR}/Release-iphonesimulator/${FMK_NAME}.framework
+# -configuration ${CONFIGURATION}
+# Clean and Building both architectures.
+clean build
+xcodebuild -configuration "Release" -target "${FMK_NAME}" -sdk iphoneos
+xcodebuild -configuration "Release" -target "${FMK_NAME}" -sdk iphonesimulator
+
+# Cleaning the oldest.
+if [ -d "${INSTALL_DIR}" ]
+then
+rm -rf "${INSTALL_DIR}"
+fi
+mkdir -p "${INSTALL_DIR}"
+path=`pwd`
+echo $path # /Users/youdone-ndl/Desktop/TestFramework
+cp -R "${DEVICE_DIR}/" "${INSTALL_DIR}/"
+lipo "${SIMULATOR_DIR}/${FMK_NAME}" -remove arm64 -output "${SIMULATOR_DIR}/${FMK_NAME}" # for xcode12
+// 或者不加这句话，在framework的target的Build Setting->Excluded Architectures->Release->Any iOS Simuator SDK -> arm64
+
+# Uses the Lipo Tool to merge both binary files (i386 + armv6/armv7) into one Universal final product.
+lipo -create "${DEVICE_DIR}/${FMK_NAME}" "${SIMULATOR_DIR}/${FMK_NAME}" -output "${INSTALL_DIR}/${FMK_NAME}"
+rm -r "${WRK_DIR}"
+open "${SRCROOT}/Products"
+
+添加完脚本后选择Aggregate编译即可，编译完成后会自动打开打包目录。
+
+#####XCode12 模拟器静态库支持arm64架构引发的系列问题:
+真机模拟器库无法合并，报错：have the same architectures (arm64) and can't be in the same fat output file
+XCode12之前：
+编译模拟器静态库支持i386 x86_64两架构
+编译真机静态库支持armv7 arm64两架构
+使用lipo -create -output命令可以将两个库合并成一个支持模拟器和真机i386 x86_64 armv7 arm64四种架构的胖子库。
+
+XCode12编译的模拟器静态库也支持了arm64，导致出现真机库和模拟器库不能合并的问题。
+
+解决办法：
+(1)如果有库工程：
+Build Settings -> Excluded Architectures里按照这样设置一下，再编译合并就不会报错了。
+设置arm64
+
+(2)如果手里只有.a或.framework文件
+使用lipo remove命令将模拟器库的arm64架构移除
+$ lipo XXX.a -remove arm64 -output XXX.a
+
+#####XCode12模拟器编译第三方库失败:
+building for iOS Simulator, but linking in object file built for iOS
+原来xcode12模拟器已经用arm架构来编译项目了，而link链接的还是x86架构
+
+临时解决方法：
+Target——Build Settings最下面有个VALID_ARCHS，这个VALID_ARCHS在xcode12中已经淘汰了，
+但有些cocoapod集成进来的三方库还是有这个key,比如这个极光认证：
+
+在Build Settings里User-Defined里是否有个VALID_ARCHS。看看是否有x86_64架构。没有的话填上。
+在User-Defined->VALID_ARCHS中加入了x86_64之后我这里就可以正常运行了
+
+#####静态库工程编译模拟器库报错ld: in XXX.a(XXXXXXX.o), building for iOS Simulator, but linking in object file built for iOS, for architecture arm64
+这个是出在静态库工程中包含其他已经编译好的静态库，且该静态库是真机模拟器合并胖子库（支持四种架构）。
+由于这个胖子库只支持真机的arm64但不支持模拟器arm64，所以出现了以上报错。
+去Build Settings -> Excluded Architectures里按照这样设置一下，再编译模拟器库就不会报错了。
+Excluded Architectures->Release->Any iOS Simuator SDK -> arm64
+
+==================================================分离架构
+$ lipo XXX.a -thin arm64 -output XXX.a
+$ lipo XXX.a -thin armv7 -output XXX.a
+$ lipo XXX.a -thin i386 -output XXX.a
+$ lipo XXX.a -thin x86_64 -output XXX.a
+
+$ cd Desktop
+# 查看支持的架构，为armv7 arm64 
+$ lipo -info /Users/XY/Desktop/Release-iphoneos/libXYCalculateTool.a
+Architectures in the fat file: /Users/XY/Desktop/Release-iphoneos/libXYCalculateTool.a are: armv7 arm64 
+
+# 分离出想要的arm64架构
+$ lipo /Users/XY/Desktop/Release-iphoneos/libXYCalculateTool.a -thin arm64 -output libXYCalculateTool.a 
+#查看分离出的静态库，为arm64架构(移除后的.a没有配置路径，就在桌面。∵前面我们cd进了Desktop)
+$ lipo -info /Users/XY/Desktop/libXYCalculateTool.a 
+Non-fat file: /Users/XY/Desktop/libXYCalculateTool.a is architecture: arm64
+
+==================================================相关问题
+如果静态库中有category类，则在使用静态库的项目配置中【Other Linker Flags】需要添加参数【-ObjC]
+
+Swift 支持:
+跟着 iOS8 / Xcode 6 同时发布的还有 Swift。如果要在项目中使用外部的代码，可选的方式只有两种，一种是把代码拷贝到工程中，另一种是用动态 Framework。使用静态库是不支持的。
+造成这个问题的原因主要是 Swift 的运行库没有被包含在 iOS 系统中，而是会打包进 App 中（这也是造成 Swift App 体积大的原因）,静态库会导致最终的目标程序中包含重复的运行库
+
+==================================================优缺点
+库类型
+优点
+缺点
+
+静态库
+1. 目标程序没有外部依赖，直接就可以运行。2. 效率教动态库高。
+1. 会使用目标程序的体积增大。
+
+动态库
+1. 不需要拷贝到目标程序中，不会影响目标程序的体积。 同一份库可以被多个程序使用。2. 运行时才载入，可以让我们随时对库进行替换，而不需要重新编译代码。
+1. 动态载入会带来一部分性能损失。2. 动态库会使得程序依赖于外部环境。如果环境缺少动态库或者库的版本不正确，就会导致程序无法运行。
+
+iOS8之后，iOS有了App Extesion特性。由于iOS主App和Extension需要共享代码，于是苹果后来提出了Embedded Framework。
+这种动态库允许App和App Extension共享代码，但是这份动态库的作用范围被限定在一个App进程内，且需要拷贝到目标程序中。
+
+简单点可以理解为被阉割的动态库：因为系统的动态库是不需要拷贝到目标程序中，且可以被多个进程使用；而我们的动态库(Embedded Framework)没有这么大的能力。
+
+建议：
+如果程序使用了App Extesion，且主工程和Extension使用了相同的三方库：
+可以使用动态库来节约内存，减少包的大小。
+如果涉及的库较多，又想提升启动速度，可以考虑合并多个动态库，减少动态库的数量。

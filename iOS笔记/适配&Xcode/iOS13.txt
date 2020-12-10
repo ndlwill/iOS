@@ -1,0 +1,267 @@
+==========KVC
+部分方法属性不允许使用 valueForKey、setValue:forKey:  来获取或者设置私有属性，具体表现为在运行时会直接崩溃
+
+如:
+[textField setValue:[UIColor red] forKeyPath:@"_placeholderLabel.textColor"];
+//替换为
+textField.attributedPlaceholder = [[NSAttributedString alloc] initWithString:@"输入" attributes:@{NSForegroundColorAttributeName: [UIColor red]}];
+
+// 崩溃 api
+UITextField *textField = [searchBar valueForKey:@"_searchField"];
+
+// 替代方案 1，使用 iOS 13 的新属性 searchTextField
+searchBar.searchTextField.placeholder = @"search";
+
+// 替代方案 2，遍历获取指定类型的属性
+- (UIView *)findViewWithClassName:(NSString *)className inView:(UIView *)view{
+    Class specificView = NSClassFromString(className);
+    if ([view isKindOfClass:specificView]) {
+        return view;
+    }
+    
+    if (view.subviews.count > 0) {
+        for (UIView *subView in view.subviews) {
+            UIView *targetView = [self findViewWithClassName:className inView:subView];
+            if (targetView != nil) {
+                return targetView;
+            }
+        }
+    }
+    
+    return nil;
+}
+
+// 调用方法
+ UITextField *textField = [self findViewWithClassName:@"UITextField" inView:_searchBar];
+
+==========Dark Mode
+DarkMode 主要从两个方面来适配，一是颜色，二是图片
+
+iOS 13 之前 UIColor 只能表示一种颜色，从 iOS 13 开始 UIColor 是一个动态的颜色，它可以在 LightMode 和 DarkMode 拥有不同的颜色。
+// UIColor 增加的颜色
+@available(iOS 13.0, *)
+open class var systemBackground: UIColor { get }
+@available(iOS 13.0, *)
+open class var label: UIColor { get }
+@available(iOS 13.0, *)
+open class var placeholderText: UIColor { get }
+...
+
+view.backgroundColor = UIColor.systemBackground
+label.textColor = UIColor.label
+placeholderLabel.textColor = UIColor.placeholderText
+
+自己创建一个动态的 UIColor:
+iOS 13 下 UIColor 增加了一个初始化方法，我们可以用这个初始化方法来创建动态颜色。
+@available(iOS 13.0, *)
+public init(dynamicProvider: @escaping (UITraitCollection) -> UIColor)
+当系统从 LightMode 和 DarkMode 之间切换的时候就会触发这个回调。
+这个闭包返回一个 UITraitCollection 类，我们要用这个类的 userInterfaceStyle 属性。 userInterfaceStyle 是一个枚举
+@available(iOS 12.0, *)
+public enum UIUserInterfaceStyle : Int {
+    case unspecified
+    case light
+    case dark
+}
+这个枚举会告诉我们当前是 LightMode or DarkMode
+
+let backgroundColor = UIColor { (trainCollection) -> UIColor in
+    if trainCollection.userInterfaceStyle == .dark {
+        return UIColor.black
+    } else {
+        return UIColor.white
+    }
+}
+view.backgroundColor = backgroundColor
+
+let labelColor = UIColor { (trainCollection) -> UIColor in
+    if trainCollection.userInterfaceStyle == .dark {
+        return UIColor.white
+    } else {
+        return UIColor.black
+    }
+}
+label.textColor = labelColor
+
+图片适配：
+在右侧工具栏中点击最后一栏，点击 Appearances 选择 Any, Dark
+
+如何获取当前模式 (Light or Dark)：
+我们可以在 UIViewController 或 UIView 中调用 traitCollection.userInterfaceStyle 来获取当前视图的样式
+if trainCollection.userInterfaceStyle == .dark {
+    // Dark
+} else {
+    // Light
+}
+那么我们什么时候需要用这样的方法做适配呢，比如说当我们使用 CGColor 的时候，上面说到 UIColor 在 iOS 13 下变成了一个动态颜色，
+但是 CGColor 仍然只能表示单一的颜色，所以当我们使用到 CGColor 的时候，我们就可以用上面的方法做适配。
+
+对于 CGColor 我们还有还有另一种适配方法
+let resolvedColor = labelColor.resolvedColor(with: traitCollection)
+layer.borderColor = resolvedColor.cgColor
+resolvedColor 方法会根据传递进去的 traitCollection 返回对应的颜色。
+
+对于 UIImage 我们也有类似的方法
+let image = UIImage(named: "icon")
+let resovledImage = image?.imageAsset?.image(with: traitCollection)
+
+监听模式变化：
+上面我们说了如何获取当前模式，但是我们要搭配监听方法一起使用
+当 light dark 模式切换的时候，要把上面的代码再执行一遍。系统为我们提供了一个回调方法，当 light dark 切换时就会触发这个方法。
+override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+    super.traitCollectionDidChange(previousTraitCollection)
+    if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+        // 适配代码
+    }
+}
+
+如何改变当前模式:
+我们可以看到在动图中是直接改系统的模式，从而让 App 的模式修改，但是对于某些有夜间模式功能的 App 来说，如果用户打开了夜间模式，那么即使现在系统是 light 模式，也要强制用 dark 模式。
+我们可以用以下代码将当前 UIViewController 或 UIView 的模式。
+overrideUserInterfaceStyle = .dark
+print(traitCollection.userInterfaceStyle)  // dark
+我们可以看到设置了 overrideUserInterfaceStyle 之后，traitCollection.userInterfaceStyle 就是我们设置后的模式了
+
+需要给每一个 Controller 和 View 都设置一遍吗?
+答案是不需要
+当我们设置一个 controller 为 dark 之后，这个 controller 下的 view，都会是 dark mode，但是后续推出的 controller 仍然是跟随系统的样式。
+
+因为苹果对 overrideUserInterfaceStyle 属性的解释是这样的。
+当我们在一个普通的 controlle, view 上重写这个属性，只会影响当前的视图，不会影响前面的 controller 和后续推出的 controller。
+
+但是当我们在 window 上设置 overrideUserInterfaceStyle 的时候，就会影响 window 下所有的 controller, view，包括后续推出的 controller。
+
+如果 App 打开夜间模式，那么很简单我们只需要设置 window 的 overrideUserInterfaceStyle 属性就好了。
+
+当我们用 Xcode11 创建项目，我们会发现项目结构发生了变化，window 从 AppDelegate 移到 SceneDelegate 中。那么如何获取 SceneDelegate 中的 window 呢，代码如下:
+// 这里就简单介绍一下，实际项目中，如果是iOS应用这么写没问题，但是对于iPadOS应用还需要判断scene的状态是否激活
+let scene = UIApplication.shared.connectedScenes.first?.delegate as? SceneDelegate
+scene?.window?.overrideUserInterfaceStyle = .dark
+
+Status Bar:
+之前 Status Bar 有两种状态，default 和 lightContent
+现在 Status Bar 有三种状态，default,  darkContent 和 lightContent
+现在的 darkContent 对应之前的 default，现在的 default 会根据情况自动选择 darkContent 和 lightContent
+
+UIActivityIndicatorView:
+之前的 UIActivityIndicatorView 有三种 style 分别为 whiteLarge, white 和 gray，现在全部废弃。
+增加两种 style 分别为 medium 和 large，指示器颜色用 color 属性修改
+
+如何在模式切换时打印日志
+在 Arguments 中的 Arguments Passed On Launch 里面添加下面这行命令。
+-UITraitCollectionChangeLoggingEnabled YES
+
+https://mp.weixin.qq.com/s/qliFbqRdkkE30vslojfJCA
+使用 QMUITheme 实现换肤并适配 iOS 13 Dark Mode
+
+https://juejin.im/post/6844903859739967495
+
+
+==========Sign In with Apple
+如果你的应用使用了第三方或社交账号登录服务（如Facebook、Google、Twitter、LinkedIn、Amazon、微信等）来设置或验证用户的主账号，就必须把 Sign In With Apple 作为同等的选项添加到应用上。
+
+==========presentViewController
+
+==========UISegmentedControl 默认样式改变
+原本设置选中颜色的 tintColor 已经失效，新增了 selectedSegmentTintColor 属性用以修改选中的颜色。
+
+==========h5的适配
+https://blog.csdn.net/u012413955/article/details/92198556
+
+==========推送的 deviceToken 获取到的格式发生变化
+#include <arpa/inet.h>
+- (void)application:(UIApplication *)application didRegisterForRemoteNotificationsWithDeviceToken:(NSData *)deviceToken {
+    if (![deviceToken isKindOfClass:[NSData class]]) return;
+    const unsigned *tokenBytes = [deviceToken bytes];
+    NSString *hexToken = [NSString stringWithFormat:@"%08x%08x%08x%08x%08x%08x%08x%08x",
+                          ntohl(tokenBytes[0]), ntohl(tokenBytes[1]), ntohl(tokenBytes[2]),
+                          ntohl(tokenBytes[3]), ntohl(tokenBytes[4]), ntohl(tokenBytes[5]),
+                          ntohl(tokenBytes[6]), ntohl(tokenBytes[7])];
+    NSLog(@"deviceToken:%@", hexToken);
+}
+
+==========UISearchBar 黑线处理
+for (UIView *view in _searchBar.subviews.lastObject.subviews) {
+    if ([view isKindOfClass:NSClassFromString(@"UISearchBarBackground")]) {
+        view.layer.contents = nil;
+        break;
+    }
+} 
+
+==========UISearchDisplayController
+在 iOS 8 之前，我们在 UITableView 上添加搜索框需要使用 UISearchBar + UISearchDisplayController 的组合方式，
+而在 iOS 8 之后，苹果就已经推出了 UISearchController 来代替这个组合方式
+在 iOS 13 中，如果还继续使用 UISearchDisplayController 会直接导致崩溃
+
+在 iOS 13 中终于可以获取直接获取搜索的文本框：
+_searchBar.searchTextField.text = @“search";
+
+==========CNCopyCurrentNetworkInfo
+iOS13 以后只有开启了 Access WiFi Information capability，才能获取到 SSID 和 BSSID wi-fi or wlan 相关使用变更
+可以先获取用户位置权限才能返回SSID。
+
+==========蓝牙权限需要申请
+iOS13以前，使用蓝牙时可以直接用，不会出现权限提示，iOS13后，再使用就会提示了。 在info.plist里增加
+<key>NSBluetoothAlwaysUsageDescription</key> 
+<string>我们要一直使用您的蓝牙</string>
+
+==========AppDelegate和SceneDelegate
+这是为了 iPadOS 的多进程准备的
+
+在iOS 13（及以后版本）上，SceneDelegate将负责AppDelegate的某些功能。 
+最重要的是，window（窗口）的概念已被scene（场景）的概念所代替。 一个应用程序可以具有不止一个场景，而一个场景现在可以作为您应用程序的用户界面和内容的载体（背景）。
+
+尤其是一个具有多场景的App的概念很有趣，因为它使您可以在iOS和iPadOS上构建多窗口应用程序。
+例如，文档编辑器App中的每个文本文档都可以有自己的场景。 用户还可以创建场景的副本，同时运行一个应用程序的多个实例（类似多开）。
+
+现在，一个新的iOS项目会自动创建一个SceneDelegate类，其中包括我们熟悉的生命周期事件，例如active，resign和disconnect。
+AppDelegate类中多了两个与“scene sessions”相关的新方法：application(_:configurationForConnecting:options:) 和 application(_:didDiscardSceneSessions:)
+Info.plist文件中提供了”Application Scene Manifest“配置项，用于配置App的场景，包括它们的场景配置名，delegate类名和storyboard
+
+iOS12及之前生命周期的各方法：
+application:(UIApplication *)application didFinishLaunchingWithOptions
+// 初始化
+
+application:(UIApplication *)applicationDidBecomeActive
+// 已经被激活
+
+application:(UIApplication *)applicationWillResignActive
+// 即将被挂起
+
+application:(UIApplication *)applicationDidEnterBackground
+// 已经进入后台
+
+application:(UIApplication *)applicationWillEnterForeground
+// 即将回到前台
+
+application:(UIApplication *)applicationWillTerminate
+// 即将被杀死
+
+
+iOS13之后生命周期的各方法：
+scene:(UIScene *)scene willConnectToSession
+// 初始化
+
+sceneDidBecomeActive:(UIScene *)scene
+// 已经被激活
+
+sceneWillResignActive:(UIScene *)scene
+// 即将被挂起
+
+sceneDidEnterBackground:(UIScene *)scene
+// 已经进入后台
+
+sceneWillEnterForeground:(UIScene *)scene
+// 即将回到前台
+
+sceneDidDisconnect:(UIScene *)scene
+// 即将被杀死
+
+
+Windows在ios13之前就已经出现了，它们代表应用程序运行的视口（viewport）。UISceneSession控制用户看到的可见窗口，你创建的UIWindow是你的应用的容器视图(container view)。
+
+
+
+iOS13之前，appDelegate的职责全权处理App生命周期和UI生命周期
+iOS13之后，appDelegate的职责是处理App生命周期和新的SceneSession生命周期。
+所有UI生命周期交给SceneDelegate处理，appDelegate不在负责UI生命周期。

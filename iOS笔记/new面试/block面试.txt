@@ -1,0 +1,200 @@
+// Block
+returnType (^blockName)(parameterTypes)
+
+// 函数指针
+returnType (*c_func)(parameterTypes)
+
+例如输入和返回参数都是字符串：
+(char *) (*c_func)(const char *);
+(NSString *) (^block)(NSString *);
+
+1.=====Block捕获自动变量:=====
+Block转换为C函数之后，Block中使用的自动变量会被作为成员变量追加到 __X_block_impl_Y结构体中，其中 X一般是函数名， Y是第几个Block，比如main函数中的第0个结构体： __main_block_impl_0
+
+typedef void (^MyBlock)(void);
+
+int main(int argc, const char * argv[])
+{
+  @autoreleasepool
+  {
+     int age = 10;
+     MyBlock block = ^{
+         NSLog(@"age = %d", age);
+     };
+     age = 18;
+     block();
+  }
+  return 0;
+}
+
+clang -w -rewrite-objc main.m
+或者
+xcrun -sdk iphoneos clang -arch arm64 -w -rewrite-objc main.m
+区别是下面指定了SDK和架构代码会少一点
+
+int main(int argc, const char * argv[])
+{
+  /* @autoreleasepool */
+  { __AtAutoreleasePool __autoreleasepool; 
+     int age = 10;
+     MyBlock block = ((void (*)())&__main_block_impl_0((void *)__main_block_func_0, &__main_block_desc_0_DATA, age));
+     age = 18;
+     ((void (*)(__block_impl *))((__block_impl *)block)->FuncPtr)((__block_impl *)block);
+  }
+  return 0;
+}
+
+
+#####下面是main函数中涉及到的一些结构体#####
+struct __main_block_impl_0 {
+  struct __block_impl impl; //block的函数的imp结构体
+  struct __main_block_desc_0* Desc; // block的信息
+  int age; // 值引用的age值
+  __main_block_impl_0(void *fp, struct __main_block_desc_0 *desc, int _age, int flags=0) : age(_age) {
+    impl.isa = &_NSConcreteStackBlock; // 栈类型的block
+    impl.Flags = flags;
+    impl.FuncPtr = fp; // 传入了函数具体的imp指针
+    Desc = desc;
+  }
+};
+
+struct __block_impl {
+  void *isa; // block的类型：全局、栈、堆
+  int Flags;
+  int Reserved;
+  void *FuncPtr; // 函数的指针！就是通过它调用block的！
+};
+
+static struct __main_block_desc_0 { // block的信息
+  size_t reserved;
+  size_t Block_size; // block的大小
+} __main_block_desc_0_DATA = { 0, sizeof(struct __main_block_impl_0)};
+可以看到，block初始化的时候age是值传递，所以block结构体中age=10，所以打印的是age = 10
+
+2.=====__block说明符=====
+Block中修改捕获的自动变量有两种方法：
+使用静态变量、静态全局变量、全局变量
+
+从Block语法转化为C语言函数中访问静态全局变量、全局变量，没有任何不同，可以直接访问。而静态变量使用的是静态变量的指针来进行访问。
+自动变量不能采用静态变量的做法进行访问。原因是，自动变量是在存储在栈上的，当超出其作用域时，会被栈释放。
+而静态变量是存储在堆上的，超出作用域时，静态变量没有被释放，所以还可以访问。
+
+添加 __block修饰符
+__block存储域类说明符。存储域说明符会指定变量存储的域，如栈auto、堆static、全局extern，寄存器register。
+
+typedef void (^MyBlock)(void);
+
+int main(int argc, const char * argv[])
+{
+@autoreleasepool
+{
+   int __block age = 10;
+   MyBlock block = ^{
+       age = 18;
+   };
+   block();
+}
+return 0;
+}
+
+int main(int argc, const char * argv[])
+{
+  /* @autoreleasepool */
+  { __AtAutoreleasePool __autoreleasepool; 
+     __Block_byref_age_0 age = {(void*)0,(__Block_byref_age_0 *)&age, 0, sizeof(__Block_byref_age_0), 10};
+     MyBlock block = ((void (*)())&__main_block_impl_0((void *)__main_block_func_0, &__main_block_desc_0_DATA, (__Block_byref_age_0 *)&age, 570425344));
+     ((void (*)(__block_impl *))((__block_impl *)block)->FuncPtr)((__block_impl *)block);
+  }
+  return 0;
+}
+__block说明符，其实会把自动变量包含到一个结构体中
+这次block初始化的过程中，把age这个结构体传入到了block结构体中，现在就变成了指针引用。
+struct __Block_byref_age_0 {
+  void *__isa; //isa指针
+  __Block_byref_age_0 *__forwarding; // 指向自己的指针
+  int __flags; // 标记
+  int __size; // 结构体大小
+  int age; // 成员变量，存储age值
+};
+
+struct __main_block_impl_0 {
+  struct __block_impl impl;
+  struct __main_block_desc_0* Desc;
+  __Block_byref_age_0 *age; // 结构体指针引用
+  __main_block_impl_0(void *fp, struct __main_block_desc_0 *desc, __Block_byref_age_0 *_age, int flags=0) : age(_age->__forwarding) {
+    impl.isa = &_NSConcreteStackBlock;
+    impl.Flags = flags;
+    impl.FuncPtr = fp;
+    Desc = desc;
+  }
+};
+我们再来看看block中是如何修改age对应的值：
+static void __main_block_func_0(struct __main_block_impl_0 *__cself) {
+    __Block_byref_age_0 *age = __cself->age; // 通过结构体的self指针拿到age结构体的指针
+    (age->__forwarding->age) = 18; // 通过age结构体指针修改age值
+}
+
+3.=====Block存储域=====
+从C代码中我们可以看到Block的是指是Block结构体实例，__block变量实质是栈上__block变量结构体实例。
+从初始化函数中我们可以看到，impl.isa = &_NSConcreteStackBlock;，即之前我们使用的是栈Block。
+
+其实，Block有3中类型：
+_NSConcreteGlobalBlock类对象存储在程序的数据区(.data区)。
+_NSConcreteStackBlock类对象存储在栈上。
+_NSConcreteMallocBlock类对象存储在堆上。
+
+全局Block肯定是存储在全局数据区的，但是在函数栈上创建的Block，如果没有捕获自动变量，Block的结构实例还是 _NSConcreteGlobalBlock，而不是 _NSConcreteStackBlock：
+
+void (^blk0)(void) = ^{ // 没有截获自动变量的Block
+    NSLog(@"Stack Block");
+};
+blk0();
+NSLog(@"%@",[blk0 class]); // 打印:__NSGlobalBlock__
+
+int i = 1;
+void (^blk1)(void) = ^{ // 截获自动变量i的Block
+    NSLog(@"Capture:%d", i);
+};
+blk1();
+NSLog(@"%@",[blk1 class]); // 打印：__NSMallocBlock__
+
+可以看到没有捕获自动变量的Block打印的类是NSGlobalBlock，表示存储在全局数据区。 
+但为什么捕获自动变量的Block打印的类却是设置在堆上的NSMallocBlock，而非栈上的NSStackBlock？
+
+设置在栈上的Block，如果超出作用域，Block就会被释放。若 __block变量也配置在栈上，也会有被释放的问题。
+所以， copy方法调用时，__block变量也被复制到堆上，同时impl.isa = &_NSConcreteMallocBlock;。复制之后，栈上 __block变量的__forwarding指针会指向堆上的对象。
+因 此 __block变量无论被分配在栈上还是堆上都能够正确访问。
+
+编译器如何判断何时需要进行copy操作呢？
+在ARC开启时，自动判断进行 copy：
+
+手动调用copy。
+将Block作为函数参数返回值返回时，编译器会自动进行 copy。
+将Block赋值给 copy修饰的id类或者Block类型成员变量，或者__strong修饰的自动变量。
+方法名含有usingBlock的Cocoa框架方法或GCD相关API传递Block。
+如果不能自动 copy，则需要我们手动调用 copy方法将其复制到堆上。比如向不包括上面提到的方法或函数的参数中传递Block时。
+
+ARC环境下，返回一个对象时会先将该对象复制给一个临时实例指针，然后进行retain操作，再返回对象指针。
+runtime/objc-arr.mm提到，Block的retain操作objc_retainBlock函数实际上是Block_copy函数。
+在实行retain操作objc_retainBlock后，栈上的Block会被复制到堆上，同时返回堆上的地址作为指针赋值给临时变量。
+
+4.=====__block变量存储域=====
+当Block从栈复制到堆上时候，__block变量也被复制到堆上并被Block持有
+若此时 __block变量已经在堆上，则被该Block持有。
+若配置在堆上的Block被释放，则它所持有的 __block变量也会被释放。
+__block int val = 0;
+void (^block)(void) = [^{ ++val; } copy];
+++val;
+block();
+利用 copy操作，Block和 __block变量都从栈上被复制到了堆上。无论是{ ++val; }还是++val;都转换成了++(val->__forwarding->val);
+
+Block中的变量val为复制到堆上的 __block变量结构体实例，而Block外的变量val则为复制前栈上的 __block变量结构体实例，但这个结构体的__forwarding成员变量指向堆上的 __block变量结构体实例。
+所以，无论是是在Block内部还是外部使用 __block变量，都可以顺利访问同一个 __block变量。
+
+
+==================================================Block最常问的就是循环引用、内存泄露问题。
+注意要点：
+__weak说明符的使用
+__block说明符的使用
+谁持有谁
+如何解除循环引用

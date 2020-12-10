@@ -1,0 +1,123 @@
+UIView/CALayer渲染的触发时机
+
+@interface TestView : UIView
+@end
+
+@implementation TestView
+- (void)drawRect:(CGRect)rect
+{
+    [super drawRect:rect];
+}
+@end
+
+@implementation ViewController
+- (void)loadView
+{
+    self.view = [[TestView alloc] initWithFrame:[UIScreen mainScreen].bounds];
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = [UIColor whiteColor];
+    
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        self.view.backgroundColor = [UIColor blueColor];
+    });
+    
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeDetailDisclosure];
+    [button addTarget:self action:@selector(buttonPressed) forControlEvents:UIControlEventTouchUpInside];
+    button.center = self.view.center;
+    [self.view addSubview:button];
+}
+
+- (void)buttonPressed
+{
+    self.view.backgroundColor = [UIColor redColor];
+}
+@end
+
+1.
+在TestView的setNeedsDisplay，setNeedsLayout，drawRect添加断点
+刚运行起来就会进入断点，我们在 lldb 中使用 bt 打印一下调用栈。
+
+自定义一个TestView并复写 drawRect: 方法
+视图在初始化时会触发setNeedsDisplay。
+添加到视图层级之后还会触发 setNeedsLayout。
+最后才会进入 drawRect: 方法，即由主线程的 RunLoop 触发 -[UIApplication _firstCommitBlock] 进行第一次的绘制。所以，初始化也是在 下一轮RunLoop 才会生效。
+
+2.
+当在操作UI时，比如改变了frame、更新了UIView/CALayer的层次时，或者手动调用了UIView/CALayer的setNeedsLayout/setNeedsDisplay方法后，这个UIView/CALayer就被标记为待处理，并被提交到一个全局的容器去。
+苹果注册了一个Observer监听BeforeWaiting(即将进入休眠)和Exit(即将退出Loop)事件，回调去执行一个很长的函数：
+_ZN2CA11Transaction17observer_callbackEP19__CFRunLoopObservermPv。
+这个函数里会遍历所有待处理的UIView/CAlayer以执行实际的绘制和调整，并更新UI界面。
+
+继续运行，执行完下面代码的中改变视图背景色的部分后
+dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    self.view.backgroundColor = [UIColor blueColor];
+});
+
+会进入第二次的断点：
+这一次我们发现主线程的 RunLoop 通过一个Observer触发了CA::Transaction::observer_callback。
+
+我们知道 __CFRunLoopDoObservers 的API申明如下：
+static void __CFRunLoopDoObservers(CFRunLoopRef rl, CFRunLoopModeRef rlm, CFRunLoopActivity activity)
+第三个参数为CFRunLoopActivity类型：
+typedef CF_OPTIONS(CFOptionFlags, CFRunLoopActivity) {
+    kCFRunLoopEntry = (1UL << 0),
+    kCFRunLoopBeforeTimers = (1UL << 1),
+    kCFRunLoopBeforeSources = (1UL << 2),
+    kCFRunLoopBeforeWaiting = (1UL << 5),
+    kCFRunLoopAfterWaiting = (1UL << 6),
+    kCFRunLoopExit = (1UL << 7),
+    kCFRunLoopAllActivities = 0x0FFFFFFFU
+};
+
+我们打印一下第三个参数：
+(lldb) po $arg3
+32
+
+正好是我们的kCFRunLoopBeforeWaiting事件。
+
+下面我们打印主线程的 RunLoop 并搜索 observer_callback 可以看到：
+(lldb) po [NSRunLoop mainRunLoop]
+...
+// activities = 0xa0 kCFRunLoopBeforeWaiting | kCFRunLoopExit
+4 : <CFRunLoopObserver 0x600000e1c3c0 [0x7fff8062d610]>{valid = Yes, activities = 0xa0, repeats = Yes, order = 2000000, callout = _ZN2CA11Transaction17observer_callbackEP19__CFRunLoopObservermPv (0x7fff2b454f32), context = <CFRunLoopObserver context 0x0>}
+...
+
+我们可以看到主线程的 RunLoop 即将进入休眠的时候触发了这个观察者。
+
+这时触发的渲染，是在当前轮次，还是下一轮RunLoop进行显示？
+其实 BeforeWaiting 指的是，提交到这一轮 RunLoop 的事务都做完了，要进入休眠了。
+可以理解为每一轮 RunLoop 的 completion callback ，可以开始进行新一轮的事务提交了。
+而监听到 BeforeWaiting 的Observer会调用 _ZN2CA11Transaction17observer_callbackEP19__CFRunLoopObservermPv ，进行下一次的事务的准备和提交。
+
+_ZN2CA11Transaction17observer_callbackEP19__CFRunLoopObservermPv()
+    QuartzCore:CA::Transaction::observer_callback:
+        CA::Transaction::commit();
+            CA::Context::commit_transaction();
+                CA::Layer::layout_and_display_if_needed();
+                    CA::Layer::layout_if_needed();
+                        [CALayer layoutSublayers];
+                            [UIView layoutSubviews];
+                    CA::Layer::display_if_needed();
+                        [CALayer display];
+                            [UIView drawRect];
+即，下一轮的RunLoop才会刷新界面 。
+
+3.
+我们点击按钮之后，也会更改视图的背景色：
+- (void)buttonPressed
+{
+    self.view.backgroundColor = [UIColor redColor];
+}
+
+我们知道，点击按钮会触发主线程的 RunLoop 的 source1 执行 __IOHIDEventSystemClientQueueCallback ，唤醒下一轮 RunLoop 。
+
+进入断点之后，我们发现唤醒 下一轮RunLoop 之后由 source0 执行 CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE0_PERFORM_FUNCTION 回调，进而触发 QuartzCore`CA::Transaction::commit() 方法。
+
+Source1在处理任务的时候，有时会跟Source0一起配合，把一些任务分发给Source0去执行。例如刚刚提到的点击事件，先由Source1处理硬件事件，之后Source1将事件包装分发给Source0继续进行处理。
+
+总结：
+初始化或者更改视图显示效果之后，均在 下一轮RunLoop 才会生效，提交给 Render Server 进行渲染。
+当前这一轮只做标记，下一轮打包拿去渲染

@@ -2,7 +2,7 @@
 iOS14最重要的更新之一：用户隐私和安全。
 
 1.
-广告标识符IDFA全称Identity for Advertisers，用来标记用户以便于投放广告、个性化推荐等。
+IDFA 全称为 Identity for Advertisers ，即广告标识符。用来标记用户，目前最广泛的用途是用于投放广告、个性化推荐等。
 
 iOS13及以前，系统会默认为用户 开启 广告追踪权限。
 #import <AdSupport/AdSupport.h> 
@@ -49,9 +49,106 @@ iOS14新增了Limited Photo Library Access 模式，在授权弹窗中增加了 
 适配要点：权限提示框会在每次冷启动后打开相册时重新弹出，可以在 info.plist 中设置 PHPhotoLibraryPreventAutomaticLimitedAccessAlert 选项为 YES ，关闭提示，调用下述方法手动选择：
 [[PHPhotoLibrary sharedPhotoLibrary] presentLimitedLibraryPickerFromViewController:self];
 
+在 iOS14 中官方推荐使用 PHPicker 来替代原 API 进行图片选择。PHPicker 为独立进程，会在视图最顶层进行展示，应用内无法对其进行截图也无法直接访问到其内的数据。
+UIImagePickerController -> PHPickerViewController， UIImagePickerViewController 功能受限，每次只能选择一张图片，将逐渐被废弃。
+PHPicker 支持多选，支持搜索，支持按 image，video，livePhotos 等进行选择。
+
+@interface ViewController () <PHPickerViewControllerDelegate>
+  
+@property (weak, nonatomic) IBOutlet UIImageView *imageView;
+@property (nonatomic, strong) NSArray<NSItemProvider *> *itemProviders;
+  
+@end
+  
+@implementation ViewController
+  
+  - (void)viewDidLoad {
+      [super viewDidLoad];
+      // Do any additional setup after loading the view.
+}
+  
+  - (IBAction)button:(id)sender {
+      // 以下 API 仅为 iOS14 only
+      PHPickerConfiguration *configuration = [[PHPickerConfiguration alloc] init];
+      configuration.filter = [PHPickerFilter videosFilter]; // 可配置查询用户相册中文件的类型，支持三种
+    configuration.selectionLimit = 0; // 默认为1，为0时表示可多选。
+  
+      PHPickerViewController *picker = [[PHPickerViewController alloc] initWithConfiguration:configuration];
+      picker.delegate = self;
+      // picker vc，在选完图片后需要在回调中手动 dismiss
+    [self presentViewController:picker animated:YES completion:^{
+  
+      }];
+  }
+  
+#pragma mark - Delegate
+  
+  - (void)picker:(PHPickerViewController *)picker didFinishPicking:(NSArray<PHPickerResult *> *)results {
+      [picker dismissViewControllerAnimated:YES completion:nil];
+      if (!results || !results.count) {
+          return;
+      }
+      NSItemProvider *itemProvider = results.firstObject.itemProvider;
+      if ([itemProvider canLoadObjectOfClass:UIImage.class]) {
+          __weak typeof(self) weakSelf = self;
+          [itemProvider loadObjectOfClass:UIImage.class completionHandler:^(__kindof id<NSItemProviderReading>  _Nullable object, NSError * _Nullable error) {
+              if ([object isKindOfClass:UIImage.class]) {
+                  __strong typeof(self) strongSelf = weakSelf;
+                  dispatch_async(dispatch_get_main_queue(), ^{
+                      strongSelf.imageView.image = (UIImage *)object;
+                  });
+              }
+          }]; 
+      }
+    }
+
+
+##########
+typedef NS_ENUM(NSInteger, PHAccessLevel) {
+  PHAccessLevelAddOnly = 1, // 仅允许添加照片
+  PHAccessLevelReadWrite = 2, // 允许访问照片，limitedLevel 必须为 readWrite
+} API_AVAILABLE(macos(10.16), ios(14), tvos(14));
+ 
+// 查询权限
+PHAccessLevel level = PHAccessLevelReadWrite;
+PHAuthorizationStatus status = [PHPhotoLibrary authorizationStatusForAccessLevel:level];
+  switch (status) {
+      case PHAuthorizationStatusLimited:
+          NSLog(@"limited");
+          break;
+      case PHAuthorizationStatusDenied:
+          NSLog(@"denied");
+          break;
+      case PHAuthorizationStatusAuthorized:
+          NSLog(@"authorized");
+          break;
+      default:
+          break;
+}
+ 
+// 请求权限，需注意 limited 权限尽在 accessLevel 为 readAndWrite 时生效
+[PHPhotoLibrary requestAuthorizationForAccessLevel:level handler:^(PHAuthorizationStatus status) {
+  switch (status) {
+      case PHAuthorizationStatusLimited:
+          NSLog(@"limited");
+          break;
+      case PHAuthorizationStatusDenied:
+          NSLog(@"denied");
+          break;
+      case PHAuthorizationStatusAuthorized:
+          NSLog(@"authorized");
+          break;
+      default:
+          break; 
+  }
+}];
+
 3.定位
 OS13及以前，App请求用户定位授权：用户同意App获取定位信息，当前App就可以获取到用户的精确定位。
 iOS14新增了精确定位和模糊定位的概念，默认精确定位，用户可以手动关闭精确定位以开启模糊定位，可以选择允许一次或使用App时允许。
+
+iOS14 新增用户大致位置选项可供用户选择，原因是大多数 App 实际上并不需要获取用户到用户最准确的定位信息。
+iOS14 授权弹窗新增的 Precise的开关默认会选中精确位置。用户通过这个开关可以进行更改，当把这个值设为 On 时，地图上会显示精确位置；切换为Off时，将显示用户的大致位置。
 
 CLAccuracyAuthorization
 
@@ -61,6 +158,11 @@ iOS14系统定位配置
 NSLocationTemporaryUsageDescriptionDictionary：
 key：preciseKey
 value：申请定位用于给您做精准推荐
+
+对于地理位置不敏感的App 来说，iOS14 也可以通过直接在 info.plist 中添加 NSLocationDefaultAccuracyReduced 为 true 默认请求大概位置。
+这样设置之后，即使用户想要为该 App 开启精确定位权限，也无法开启。
+
+需要注意的是，当 App 在 Background 模式下，如果并未获得精确位置授权，那么 Beacon 及其他位置敏感功能都将受到限制。
 
 #import <CoreLocation/CoreLocation.h>
  

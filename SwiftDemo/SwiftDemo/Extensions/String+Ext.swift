@@ -224,4 +224,10 @@ public extension String {
         return true
     }
     
+    
+    
+}
+
+extension Optional where Wrapped == String {
+    
 }

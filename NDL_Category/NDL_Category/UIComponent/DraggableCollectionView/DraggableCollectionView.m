@@ -122,7 +122,7 @@ static CGFloat const kMoveStep = 4.0;
     // 开启定时器
     [self _startEdgeTimer];
     
-    if (!_editing) {
+    if (!_editting) {
         // 执行抖动动画
         [self _startShakeVisibleCells];
     } else {
@@ -324,7 +324,7 @@ static CGFloat const kMoveStep = 4.0;
 // 停止抖动动画
 - (void)_stopShakeVisibleCells
 {
-    if (_editing || !_shakeFlag) {
+    if (_editting || !_shakeFlag) {
         return;
     }
     
@@ -413,7 +413,7 @@ static CGFloat const kMoveStep = 4.0;
 #pragma mark - public methods
 - (void)enterEditingModel
 {
-    _editing = YES;
+    _editting = YES;
     _originPressDuration = self.longPress.minimumPressDuration;
     self.longPress.minimumPressDuration = 0;// 处于编辑状态，触摸直接选中
     
@@ -428,7 +428,7 @@ static CGFloat const kMoveStep = 4.0;
 - (void)leaveEditingModel
 {
 //    self.editing = NO;// 赋值给只读属性报错 1.要么用_editing 2.要么.m写属性
-    _editing = NO;
+    _editting = NO;
     
     self.longPress.minimumPressDuration = _originPressDuration;
     
@@ -505,7 +505,7 @@ static CGFloat const kMoveStep = 4.0;
 //        CGPoint contentOffset = [change[NSKeyValueChangeNewKey] CGPointValue];
         
         // 代码触发 || 长按手势触发 两种情况
-        if (_editing || _isPanning) {
+        if (_editting || _isPanning) {
             [self _startShakeVisibleCells];
         }
     }
@@ -538,7 +538,7 @@ static CGFloat const kMoveStep = 4.0;
 #endif
     
     // 执行动画
-    if (_editing) {
+    if (_editting) {
         [self _startShakeVisibleCells];
     }
 }

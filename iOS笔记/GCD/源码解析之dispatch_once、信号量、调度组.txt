@@ -1,0 +1,124 @@
+==================================================dispatch_once
+static dispatch_once_t onceToken;
+dispatch_once(&onceToken, ^{
+    
+});
+
+typedef long dispatch_once_t;
+
+跟着源码走，会进入到这里：
+dispatch_once_f(dispatch_once_t *val, void *ctxt, dispatch_function_t func)
+{
+    // 第一句代码把我们传进来的指针强转成dispatch_once_gate_t，进入这个会发现它是一个结构体，里面只有一个联合体
+	dispatch_once_gate_t l = (dispatch_once_gate_t)val;
+
+#if !DISPATCH_ONCE_INLINE_FASTPATH || DISPATCH_ONCE_USE_QUIESCENT_COUNTER
+	uintptr_t v = os_atomic_load(&l->dgo_once, acquire);
+	if (likely(v == DLOCK_ONCE_DONE)) {
+		return;
+	}
+#if DISPATCH_ONCE_USE_QUIESCENT_COUNTER
+	if (likely(DISPATCH_ONCE_IS_GEN(v))) {
+		return _dispatch_once_mark_done_if_quiesced(l, v);
+	}
+#endif
+#endif
+	if (_dispatch_once_gate_tryenter(l)) {
+		return _dispatch_once_callout(l, ctxt, func);
+	}
+	return _dispatch_once_wait(l);
+}
+
+// 可以理解成判断对象是否在os存储过
+_dispatch_once_gate_tryenter(dispatch_once_gate_t l)
+{
+	// os 对象是否存储过
+	// unlock
+	return os_atomic_cmpxchg(&l->dgo_once, DLOCK_ONCE_UNLOCKED,
+			(uintptr_t)_dispatch_lock_value_for_self(), relaxed);
+}
+
+_dispatch_once_callout(dispatch_once_gate_t l, void *ctxt,
+		dispatch_function_t func)
+{
+	_dispatch_client_callout(ctxt, func);
+	_dispatch_once_gate_broadcast(l);
+}
+
+看到_dispatch_client_callout()这个应该很熟悉了，这里就是执行block里面的内容。
+
+_dispatch_once_gate_broadcast(dispatch_once_gate_t l)
+{
+	dispatch_lock value_self = _dispatch_lock_value_for_self();
+	uintptr_t v;
+#if DISPATCH_ONCE_USE_QUIESCENT_COUNTER
+// _dispatch_once_mark_quiescing表示正在创建，这里标记了一个_dispatch_once_generation()：
+	v = _dispatch_once_mark_quiescing(l);
+#else
+// _dispatch_once_mark_done()，这里表示标记一个DLOCK_ONCE_DONE
+	v = _dispatch_once_mark_done(l);
+#endif
+	if (likely((dispatch_lock)v == value_self)) return;
+	_dispatch_gate_broadcast_slow(&l->dgo_gate, (dispatch_lock)v);
+}
+
+_dispatch_once_mark_quiescing(dispatch_once_gate_t dgo)
+{
+	return os_atomic_xchg(&dgo->dgo_once, _dispatch_once_generation(), release);
+}
+
+_dispatch_once_mark_done(dispatch_once_gate_t dgo)
+{
+	return os_atomic_xchg(&dgo->dgo_once, DLOCK_ONCE_DONE, release);
+}
+
+此时此刻，是否还记得我们一开始跳过的方法里的代码:
+uintptr_t v = os_atomic_load(&l->dgo_once, acquire);
+	if (likely(v == DLOCK_ONCE_DONE)) {
+		return;
+	}
+#if DISPATCH_ONCE_USE_QUIESCENT_COUNTER
+	if (likely(DISPATCH_ONCE_IS_GEN(v))) {
+		return _dispatch_once_mark_done_if_quiesced(l, v);
+	}
+如果标记了获取到的v等于DLOCK_ONCE_DONE，就直接返回.如果是下面的，我们在进入查看一下：
+_dispatch_once_mark_done_if_quiesced(dispatch_once_gate_t dgo, uintptr_t gen)
+{
+	if (_dispatch_once_generation() - gen >= DISPATCH_ONCE_GEN_SAFE_DELTA) {
+		/*
+		 * See explanation above, when the quiescing counter approach is taken
+		 * then this store needs only to be relaxed as it is used as a witness
+		 * that the required barriers have happened.
+		 */
+		os_atomic_store(&dgo->dgo_once, DLOCK_ONCE_DONE, relaxed);
+	}
+}
+
+==================================================信号量dispatch_semaphore_t
+// 创建信号量对象 信号量 >= 0
+dispatch_semaphore_t sem = dispatch_semaphore_create(1);
+// -1操作
+dispatch_wait(sem, DISPATCH_TIME_FOREVER);
+// +1 操作
+dispatch_semaphore_signal(sem);
+
+上面三句代码，就是创建信号量的代码。 wait的-1操作相当于阻塞操作，signal则是+1操作。
+
+dispatch_semaphore_create(long value)
+{
+	dispatch_semaphore_t dsema;
+	if (value < 0) {
+		return DISPATCH_BAD_INPUT;
+	}
+
+	dsema = _dispatch_object_alloc(DISPATCH_VTABLE(semaphore),
+			sizeof(struct dispatch_semaphore_s));
+	dsema->do_next = DISPATCH_OBJECT_LISTLESS;
+	dsema->do_targetq = _dispatch_get_default_queue(false);
+	dsema->dsema_value = value;
+	_dispatch_sema4_init(&dsema->dsema_sema, _DSEMA4_POLICY_FIFO);
+	dsema->dsema_orig = value;
+	return dsema;
+}
+
+第一步就声明了一个信号量对象，然后判断value，小于0就是不正确操作。后面就是创建对象，开辟空间。最主要的两步其实就是value的赋值。

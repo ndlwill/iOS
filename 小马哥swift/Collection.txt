@@ -1,0 +1,320 @@
+Sequence 是 Swift 整个集合类型体系中的起点，它抽象了一个集合最原始的协议。
+仅表示一系列类型相同的元素，而不对这一系列元素的性质有任何额外的约定。
+它只约定一个动作，就是可以从序列的当前位置读取下一个元素，也即表示序列需要对外提供一个迭代器来实现对外的访问。
+
+public protocol Sequence {
+  associatedtype Element
+  associatedtype Iterator : IteratorProtocol where Iterator.Element == Element
+  __consuming func makeIterator() -> Iterator    
+}
+
+Element：表示序列中元素的类型；
+Iterator：表示 IteratorProtocol 并且 Iterator 的 Element 与序列的 Element 相同；
+makeIterator()：返回一个 Iterator，Iterator 迭代器提供了访问序列中下一个元素的能力
+public protocol IteratorProtocol {
+  associatedtype Element
+  mutating func next() -> Element?
+}
+Element：表示 next() 返回的元素类型，如上面所述，Element 的类型与相应的序列的 Element 保持一致；
+next()：方法是问序列下一个元素的接口，如果没有下一个元素则返回 nil;
+
+IteratorProtocol 协议与 Sequence 协议是一对紧密相连的协议。序列通过创建一个提供对其元素进行访问的迭代器，它通过跟踪迭代过程并在调用 next() 时返回一个元素。
+
+在我们使用 for-in 来访问序列或者集合时， Swift 实质在底层通过迭代器来循环遍历数组
+let colors = ["red", "white", "black"]
+for color in colors {
+    print(color)
+}
+实质上 Swift 在底层通过 Sequence 的 Iterator 能力，做了如下转换：
+let colors = ["red", "white", "black"]
+var iterator = colors.makeIterator()
+while let color = iterator.next() {
+    print(color)
+}
+这两种方式访问序列的效果是等同的，只是一种简单的语法转换，所以所有基于 Sequence 的协议，除了可以通过过 for 来访问元素外，还可以通过迭代器来序列元素。
+
+==================================================自定义序列
+来实例一个输出 1…n 的平方数的序列。
+
+首先我们需要先实现一个 SquareIterator 的迭代器来遍历平方数序列：
+struct SquareIterator: IteratorProtocol {
+    typealias Element = Int
+    var state = (curr: 0, next: 1)
+    mutating func next() -> SquareIterator.Element? {
+        let curr = state.curr
+        let next = state.next
+        state = (curr: next, next: next + 1)
+        if curr == 0 {
+            return 1
+        }
+        return curr * curr
+    }
+}
+
+通过在迭代器中定义一个 state 来记录当前迭代过程的状态信息，实现了该迭代器后，我们就需要实现 Square 序列的 Sequence 协议：
+
+struct Square: Sequence {
+    typealias Element = Int
+    func makeIterator() -> SquareIterator {
+        return SquareIterator()
+    }
+}
+
+通过实现了 Sequence 与 IteratorProtocol 两个协议，那么一个简单的 Square 序列即开发完毕，我们可以尝试去执行它：
+let square = Square()
+var iterator = square.makeIterator()
+while let num = iterator.next(), num <= 100 {
+    print(num)
+}
+
+到这里我们已经完成一个自定义的序列，它支持通过迭代器来遍历序列的所有元素，但是没有办法通过下标的方式来访问序列元素，至于如何实现下标访问，这其中又涉及到另一个协议：Collection，接下来我们就来谈谈 Collection Protocol。
+
+==================================================Collection
+Collection 是一个继承于 Sequence 序列，是一个元素可以反复遍历并且可以通过索引的下标访问的有限集合。
+集合在标准库中广泛使用，当我们在使用数组、字典和其他集合时，大多将受益于 Collection 协议声明和实现的操作。
+除了集合从 Sequence 协议继承的操作之外，最大的不同点是可以访问依赖于访问集合中特定位置的元素的方法。
+
+在 Collection.swift 查看到 Collection 的具体实现：
+public protocol Collection: Sequence {
+  override associatedtype Element
+  associatedtype Index : Comparable
+  var startIndex: Index { get }
+  var endIndex: Index { get }
+  associatedtype Iterator = IndexingIterator<Self>
+  override __consuming func makeIterator() -> Iterator
+
+  associatedtype SubSequence: Collection = Slice<Self>
+  where SubSequence.Index == Index,
+        Element == SubSequence.Element,
+        SubSequence.SubSequence == SubSequence
+  
+  @_borrowed
+  subscript(position: Index) -> Element { get }
+  subscript(bounds: Range<Index>) -> SubSequence { get }
+
+  associatedtype Indices : Collection = DefaultIndices<Self>
+    where Indices.Element == Index, 
+          Indices.Index == Index,
+          Indices.SubSequence == Indices
+       
+  var indices: Indices { get }
+}
+
+Element、makeIterator：重写 Sequence 的 Element、makeIterator；
+startIndex、endIndex：非空集合中第一个、最后一个元素的位置；
+subscript：下标访问集合元素，例如 collection[i]、collection[0...i]；
+indices: 集合的索引
+
+通过源码，我们可以发现 Collection 与 Sequence 最大的不同点是提供了索引能力，以此基础上提供了通过下标访问元素的能力。 Collection 的自定义了迭代器：IndexingIterator
+
+IndexingIterator:
+Collection 的迭代器使用 IndexingIterator，从名字的字面意思来看，这就是与下标位置有关的迭代器，我们先来看下它的具体实现：
+public struct IndexingIterator<Elements : Collection> {
+  internal let _elements: Elements
+  internal var _position: Elements.Index
+  
+  init(_elements: Elements) {
+    self._elements = _elements
+    self._position = _elements.startIndex
+  }
+  init(_elements: Elements, _position: Elements.Index) {
+    self._elements = _elements
+    self._position = _position
+  }
+}
+extension IndexingIterator: IteratorProtocol, Sequence {
+  public typealias Element = Elements.Element
+  public typealias Iterator = IndexingIterator<Elements>
+  public typealias SubSequence = AnySequence<Element>
+  
+  public mutating func next() -> Elements.Element? {
+    if _position == _elements.endIndex { return nil }
+    let element = _elements[_position]
+    _elements.formIndex(after: &_position)
+    return element
+  }
+}
+
+_elements：需要迭代的集合，类型为 Collection；
+_position：记录遍历时的位置信息；
+
+IndexingIterator 的作用主要是在迭代器执行 next() 方法时，记录了 position，通过 position 记录索引的同时，还可以与 elements.endIndex 比较来判断是否有下一个元素。
+
+// If the collection is empty, `endIndex` is equal to `startIndex`.
+
+==================================================Slice
+Collection 协议中，去访问多个元素时，返回了一个 Slice<Self>
+这里的 Slice 是一个可以获取集合的元素的子序列。
+切片存储的只是集合的开始和结束索引，所以它不会将集合中的元素复制一份，因此创建切片具有O（1）复杂度。
+Collection 中通过 Slice 来截取子序列
+
+public struct Slice<Base: Collection> {
+  public var _startIndex: Base.Index
+  public var _endIndex: Base.Index
+  internal var _base: Base
+
+  public init(base: Base, bounds: Range<Base.Index>) {
+    self._base = base
+    self._startIndex = bounds.lowerBound
+    self._endIndex = bounds.upperBound
+  }
+  public var base: Base {
+    return _base
+  }
+}
+extension Slice: Collection {
+  public typealias Index = Base.Index
+  public typealias Indices = Base.Indices
+  public typealias Element = Base.Element
+  public typealias SubSequence = Slice<Base>
+  public typealias Iterator = IndexingIterator<Slice<Base>>
+
+  public var startIndex: Index {
+    return _startIndex
+  }
+  public var endIndex: Index {
+    return _endIndex
+  }
+  public subscript(index: Index) -> Base.Element {
+    get {
+      _failEarlyRangeCheck(index, bounds: startIndex..<endIndex)
+      return _base[index]
+    }
+  }
+  public subscript(bounds: Range<Index>) -> Slice<Base> {
+    get {
+      _failEarlyRangeCheck(bounds, bounds: startIndex..<endIndex)
+      return Slice(base: _base, bounds: bounds)
+    }
+  }
+}
+
+Slice 实质上仅且修改 Collection 的索引，从而达到获取子序列的效果。
+
+==================================================Custom Collection
+这个集合包含 1 ~ 10 的 Int 类型的元素，并支持下标访问和多次遍历：
+struct SquareCollection: Collection { 
+    typealias Element = Int
+    typealias Index = Int
+    typealias Indices = Range<Int>
+    let contents = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    var indices: Range<Int> = 0..<10
+    
+    public func index(after i: Int) -> Int {
+        return i + 1
+    }
+    public var startIndex: Int {
+        get {
+            return indices.startIndex
+        }
+    }
+    public var endIndex: Int {
+        get {
+            return indices.endIndex
+        }
+    }
+    public subscript(index: Int) -> Element {
+        get {
+            return contents[index]
+        }
+    }
+}
+
+我们在 SquareCollection 实现了 Collection 协议，提供了索引功能，然后通过 subscript 方法就可以达到通过下标访问元素的效果：
+
+let collection = SquareCollection()
+print(collection[1])  // 2
+print(collection[3])  // 4
+
+这个自定义的集合，有点类似一个写死的数组，它拥有 Sequence 与 Collection 协议的所有已实现的方法，比如：
+let newCollection = collection.dropLast()
+print(newCollection.count) // 9
+
+当然这离真正的数组还有很远的距离，比如设置初始化元素、越界判断、通过下标修改元素值，关于通过下标修改元素，Swift 中通过 MutableCollection 协议来实现
+public protocol MutableCollection: Collection
+where SubSequence: MutableCollection
+{
+  override subscript(position: Index) -> Element { get set }
+  override subscript(bounds: Range<Index>) -> SubSequence { get set }
+}
+
+extension MutableCollection {
+  public subscript(bounds: Range<Index>) -> Slice<Self> {
+    get {
+      _failEarlyRangeCheck(bounds, bounds: startIndex..<endIndex)
+      return Slice(base: self, bounds: bounds)
+    }
+    set {
+      _writeBackMutableSlice(&self, bounds: bounds, slice: newValue)
+    }
+  }
+}
+最核心的是重写了 subscript 方法，提供了对外的 set 方法
+
+集合大家族中， 除了定义相关的数据结构外，还提供了大量的算法实现，以提高 Swift 的便捷性与高性能，
+以 Sequence 为例，我们可以看下 SequenceAlgorithms.swift 内容：
+public func enumerated() -> EnumeratedSequence<Self>
+public func min() -> Element?
+public func max() -> Element?
+public func starts<PossiblePrefix: Sequence>(
+    with possiblePrefix: PossiblePrefix
+  ) -> Bool
+public func elementsEqual<OtherSequence: Sequence>
+...
+...
+
+==================================================LazySequence
+在 Sequence 和 Collection 中已经了很多类似 map 和 filter 这些高阶函数，
+它们的思路是将一些通用的算法封装成简单的单行函数。但是有些时候我们并不需要立马执行这些辅助数，
+我们希望是的使用时再去执行辅助函数，定义时只做声明，这个时候就需要使用到 lazy
+
+let allUser = [0, 1, 0, 1, 0, 2, 3, 4, 2, 1]
+// 定义时直接执行 filter 方法，如果 agents 没有被使用，则浪费了资源
+let agents = allUser.filter { $0 == 1 }
+
+// 使用时才执行 filter 方法，如果不使用也不会浪费资源
+let lazyAgents = allUser.lazy.filter { $0 == 1 }
+
+Swift Sequences 和 Collections 给我提供通过 lazy 的方式来执行辅助函数，目的是为了给开发者提供便捷的辅助函数并又保持其高性能
+
+我们可以通过查看 LazySequence.swift 了解具体实现，核心代码如下:
+public protocol LazySequenceProtocol : Sequence {
+  associatedtype Elements: Sequence = Self where Elements.Element == Element
+  var elements: Elements { get }
+}
+extension LazySequenceProtocol where Elements == Self {
+  public var elements: Self { return self }
+}
+extension LazySequenceProtocol {
+  public var lazy: LazySequence<Elements> {
+    return elements.lazy
+  }
+}
+extension LazySequenceProtocol where Elements: LazySequenceProtocol {
+  public var lazy: Elements {
+    return elements
+  }
+}
+public struct LazySequence<Base : Sequence> {
+  internal var _base: Base
+  internal init(_base: Base) {
+    self._base = _base
+  }
+}
+
+ LazySequence 并没有做任何的额外事情，只是新定义了一种类型。
+
+ extension LazyFilterSequence.Iterator: IteratorProtocol, Sequence {
+  public typealias Element = Base.Element
+  public mutating func next() -> Element? {
+    while let n = _base.next() {
+      if _predicate(n) {
+        return n
+      }
+    }
+    return nil
+  }
+}
+
+Lazy 的功能，实质上是通过 extension 方法，在迭代器执行 next() 方法时，
+对获取到的元素执行 filter() 后再进行返回，从而实现了 lazy 惰性执行的效果。当然其它的 map()、flatMap() 等方法 lazy 实现也是一样的

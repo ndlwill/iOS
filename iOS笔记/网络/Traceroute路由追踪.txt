@@ -1,0 +1,140 @@
+现实世界中的网络是由无数的计算机和路由器组成的一张的大网，应用的数据包在发送到服务器之前都要经过层层的路由转发。
+而Traceroute是一种常规的网络分析工具，用来定位到目标主机之间的所有路由器
+
+IP协议:
+IP协议是TCP/IP协议族中最核心的部分，它的作用是在两台主机之间传输数据，所有上层协议的数据（HTTP、TCP、UDP等）都会被封装在一个个的IP数据包中被发送到网络上。
+
+ICMP:
+ICMP全称为互联网控制报文协议，它常用于传递错误信息，ICMP协议是IP层的一部分，它的报文也是通过IP数据包来传输的。
+
+TTL:
+TTL（time-to-live）是IP数据包中的一个字段，它指定了数据包最多能经过几次路由器。
+从我们源主机发出去的数据包在到达目的主机的路上要经过许多个路由器的转发，在发送数据包的时候源主机会设置一个TTL的值，每经过一个路由器TTL就会被减去一，
+当TTL为0的时候该数据包会被直接丢弃（不再继续转发），并发送一个超时ICMP报文给源主机。
+
+具体到traceroute的实现细节上，有两种不同的方案：
+1.基于UDP实现
+在基于UDP的实现中，客户端发送的数据包是通过UDP协议来传输的，使用了一个大于30000的端口号，服务器在收到这个数据包的时候会返回一个端口不可达的ICMP错误信息，
+客户端通过判断收到的错误信息是TTL超时还是端口不可达来判断数据包是否到达目标主机
+
+(1)客户端发送一个TTL为1，端口号大于30000的UDP数据包，到达第一站路由器之后TTL被减去1，返回了一个超时的ICMP数据包，客户端得到第一跳路由器的地址。
+(2)客户端发送一个TTL为2的数据包，在第二跳的路由器节点处超时，得到第二跳路由器的地址。
+(3)客户端发送一个TTL为3的数据包，数据包成功到达目标主机，返回一个端口不可达错误，traceroute结束。
+
+Linux和macOS系统自带了一个traceroute指令，可以结合Wireshark抓包来看看它的实现原理。首先对百度的域名进行traceroute：traceroute www.baidu.com
+因为安全问题大部分的应用服务器都不提供UDP服务（或者被防火墙挡掉）
+所以我们拿不到服务器的任何返回，程序就理所当然的认为还没有结束，一直尝试增加数据包的TTL。
+
+2.基于ICMP实现
+上述方案失败的原因是由于服务器对于UDP数据包的处理，
+所以在这一种实现中我们不使用UDP协议，而是直接发送一个ICMP回显请求（echo request）数据包，
+服务器在收到回显请求的时候会向客户端发送一个ICMP回显应答（echo reply）数据包，在这之后的流程还是跟第一种方案一样。
+这样就避免了我们的traceroute数据包被服务器的防火墙策略墙掉。
+
+(1)客户端发送一个TTL为1的ICMP请求回显数据包，在第一跳的时候超时并返回一个ICMP超时数据包，得到第一跳的地址。
+(2)客户端发送一个TTL为2的ICMP请求回显数据包，得到第二跳的地址。
+(3)客户端发送一个TTL为3的ICMP请求回显数据包，到达目标主机，目标主机返回一个ICMP回显应答，traceroute结束。
+
+采用这种方案时，ICMP数据包的创建、解析、校验都需要我们自己进行，ICMP是封装在IP数据包的数据段中传输的，所以关键在于如何创建和发送ICMP数据，
+以及接收到返回的数据时如何从IP数据包中将ICMP解析出来：
+
+#####创建ICMP数据#####
+// https://zh.wikipedia.org/wiki/%E4%BA%92%E8%81%94%E7%BD%91%E6%8E%A7%E5%88%B6%E6%B6%88%E6%81%AF%E5%8D%8F%E8%AE%AE
+其中的类型字段用来表示消息的类型，在Wiki上可以看到所有类型代表的含义。报文中的标识符和序列号由发送端指定，
+如果这个ICMP报文是一个请求回显的报文（类型为8，代码为0），这两个字段会被原封不动的返回。
+
+根据各个字段的大小可以定义如下类型：
+typedef struct ICMPPacket {
+    uint8_t     type; // 类型
+    uint8_t     code; // 类型代码
+    uint16_t    checksum; // 校验码
+    uint16_t    identifier; // ID
+    uint16_t    sequenceNumber; // 序列号
+    // data...
+} ICMPPacket;
+
+其中的type字段指定了这个ICMP数据包的类型，是需要重点关注的对象，为此定义一个报文类型的枚举：
+
+// ICMPv4报文类型
+typedef enum ICMPv4Type {
+    kICMPv4TypeEchoReply = 0, // 回显应答
+    kICMPv4TypeEchoRequest = 8, // 回显请求
+    kICMPv4TypeTimeOut = 11, // 超时
+}ICMPv4Type;
+
+在发送数据的时系统会自动加上IP头部不需要自己处理，如此一来我们只需要创建一个ICMPPacket数据包并通过socket发送到目标服务器就可以了。
+
+#####解析ICMP数据#####
+接下来就是要接收服务器向我们返回的ICMP数据了，我们接收到的是带有IP头部的原始数据，所以必须先进行一些处理将ICMP从IP数据包中提取出来，IP数据包由两部分组成：
+数据包头部信息部分以及实际的数据部分。
+其实这里面只有用红框圈出来的这这三个字段需要我们关心：
+版本表示该数据包是IPv4还是IPv6；
+之前说过ICMP协议是通过IP协议来传输的，如果该数据包传输的是ICMP协议则协议字段会被设置为1
+由于IPv4数据包带有可选的选项字段，所以其头部的长度是可变的，此时需要根据首部长度字段来获取具体的数据。
+
+根据上面的结构可以定义类型：
+typedef struct IPv4Header {
+    uint8_t versionAndHeaderLength; // 版本和首部长度
+    uint8_t serviceType;
+    uint16_t totalLength; 
+    uint16_t identifier;
+    uint16_t flagsAndFragmentOffset;
+    uint8_t timeToLive;
+    uint8_t protocol; // 协议类型，1表示ICMP
+    uint16_t checksum;
+    uint8_t sourceAddress[4];
+    uint8_t destAddress[4];
+    // options...
+    // data...
+} IPv4Header;
+
+提取ICMP数据包的方法如下：
++ (ICMPPacket *)unpackICMPv4Packet:(char *)packet len:(int)len {
+    if (len < (sizeof(IPv4Header) + sizeof(ICMPPacket))) {
+        return NULL;
+    }
+    
+    const struct IPv4Header *ipPtr = (const IPv4Header *)packet;
+    if ((ipPtr->versionAndHeaderLength & 0xF0) != 0x40 || // IPv4
+        ipPtr->protocol != 1) { // ICMP
+        return NULL;
+    }
+    
+    // 获取IP头部长度
+    size_t ipHeaderLength = (ipPtr->versionAndHeaderLength & 0x0F) * sizeof(uint32_t); 
+    if (len < ipHeaderLength + sizeof(ICMPPacket)) {
+        return NULL;
+    }
+    
+    // 返回数据部分的ICMP
+    return (ICMPPacket *)((char *)packet + ipHeaderLength);
+}
+其中出现的如ipPtr->versionAndHeaderLength & 0xF0的判断是因为版本号和首部长度各自只占4个bit，在结构中直接定义了一个1字节的uint8_t类型来表示，所以只能通过位运算符&来获取各自的值。
+
+#####整体流程#####
+整体流程的伪代码：
+// 1. 创建一个套接字
+int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
+
+// 2. 最多尝试30跳
+int ttl = 1;
+for (0...30) {
+    // 3. 设置TTL，发送3个ICMP数据包，每一跳都将递增TTL
+    setsockopt(sock, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+    ++ttl;
+    for (0...3) {
+        // 4. 发送并等待返回的数据包
+        sendto(...);
+        recvfrom(...);
+        
+        // 5. 解析数据包，记录数据，成功条件判断
+        ICMPPacket *packet = unpack(...);
+    }
+}
+
+socket的类型采用了SOCK_DGRAM，有些小伙伴可能会感到疑惑：用SOCK_DGRAM创建套接字不还是发送UDP数据么？
+确实在许多系统的实现中要直接发送ICMP的话需要使用原始套接字（类型为SOCK_RAW），这在iOS系统中是不被允许使用的，
+但是查阅资料中了解到macOS支持一种使用参数SOCK_DGRAM和IPPROTO_ICMP来直接创建ICMP套接字方式，尝试之下果然iOS也支持这种用法。
+
+有些路由器会隐藏的自己的位置，不让ICMP Timeout的消息通过，结果就是在那一跳上始终会显示星号，
+此外服务器也可以伪造traceroute路径的，不过一般应用服务器也没有理由这么做

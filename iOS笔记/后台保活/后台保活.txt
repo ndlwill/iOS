@@ -1,0 +1,128 @@
+iOS后台保活按时间可分为短时保活和长时间保活
+
+1.短时保活的方式
+通过beginBackgroundTaskWithName来实现。在iOS7-iOS13可以申请到大约3分钟的保活时间，在iOS 13以后只能申请30秒左右的时间。
+
+@property (assign, nonatomic) UIBackgroundTaskIdentifier backgroundId;
+- (void)appWillEnterForeground {
+   [self stopKeepAlive];
+}
+
+- (void)appDidEnterBackground {
+    _backgroundId = [[UIApplication sharedApplication] beginBackgroundTaskWithExpirationHandler:^{
+        //申请的时间即将到时回调该方法
+        NSLog(@"BackgroundTask time gone");
+        [self stopKeepAlive];
+    }];
+}
+
+- (void)stopKeepAlive{
+  if (_backgroundId) {
+        [[UIApplication sharedApplication] endBackgroundTask:_backgroundId];
+        _backgroundId = UIBackgroundTaskInvalid;
+    }
+}
+
+2.长时间保活
+App长时间保活的方式有：播放无声音乐、后台持续定位、后台下载资源、BGTaskScheduler等，这些需要在苹果后台开通后台权限，并且在xcode中也开启相关权限。
+
+(1)播放无声音乐，适用于音乐类app。像腾讯视频、爱奇艺等用了播放无声音乐保活的方式。
+在app进入后台时开启无声音乐，进入前台后停止无声音乐。（更好的处理方式是先获取短时保活，短时快过时再播放无声音乐）示例如下：
+
+@property (nonatomic, strong) BackgroundPlayer* player;
+
+[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(appWillEnterForeground) name:UIApplicationWillEnterForegroundNotification object:nil];
+[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(appDidEnterBackground) name:UIApplicationDidEnterBackgroundNotification object:nil];
+- (void)appWillEnterForeground {
+    if (self.player) {
+        [self.player stopPlayBackgroundAlive];
+    }
+}
+
+- (void)appDidEnterBackground {
+    if (_player == nil) {
+        _player = [[BackgroundPlayer alloc] init];
+    }
+    [self.player startPlayer];  
+}
+
+#import <Foundation/Foundation.h>
+#import <AVFoundation/AVFoundation.h>
+
+@interface BackgroundPlayer : NSObject <AVAudioPlayerDelegate>
+{
+    AVAudioPlayer* _player;
+}
+- (void)startPlayer;
+
+- (void)stopPlayer;
+@end
+
+#import "BackgroundPlayer.h"
+
+@implementation BackgroundPlayer
+
+- (void)startPlayer
+{
+    if (_player && [_player isPlaying]) {
+        return;
+    }
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    [[AVAudioSession sharedInstance] setMode:AVAudioSessionModeDefault error:nil];
+
+    NSString* route = [[[[[AVAudioSession sharedInstance] currentRoute] outputs] objectAtIndex:0] portType];
+    
+    if ([route isEqualToString:AVAudioSessionPortHeadphones] || [route isEqualToString:AVAudioSessionPortBluetoothA2DP] || [route isEqualToString:AVAudioSessionPortBluetoothLE] || [route isEqualToString:AVAudioSessionPortBluetoothHFP]) {
+        if (@available(iOS 10.0, *)) {
+            [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayAndRecord
+                                             withOptions:(AVAudioSessionCategoryOptionMixWithOthers | AVAudioSessionCategoryOptionAllowBluetooth | AVAudioSessionCategoryOptionAllowBluetoothA2DP)
+                                                   error:nil];
+        } else {
+            // Fallback on earlier versions
+        }
+    }else{
+        [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayAndRecord
+                                         withOptions:(AVAudioSessionCategoryOptionMixWithOthers | AVAudioSessionCategoryOptionDefaultToSpeaker)
+                                               error:nil];
+    }
+    
+    [session setActive:YES error:nil];
+    
+    NSURL *url = [[NSBundle bundleWithPath:WECAST_CLOUD_BUNDLE_PATH]URLForResource:@"你的音乐资源" withExtension:nil];
+    _player = [[AVAudioPlayer alloc] initWithContentsOfURL:url error:nil];
+    [_player prepareToPlay];
+    [_player setDelegate:self];
+    _player.numberOfLoops = -1;
+    BOOL ret = [_player play];
+    if (!ret) {
+        NSLog(@"play failed,please turn on audio background mode");
+    }
+}
+
+- (void)stopPlayer
+{
+    if (_player) {
+        [_player stop];
+        _player = nil;
+        AVAudioSession *session = [AVAudioSession sharedInstance];
+        [session setActive:NO error:nil];
+        NSLog(@"stop in play background success");
+    }
+}
+
+@end
+
+(2)后台持续定位
+(3)后台下载资源
+
+创建指定标识的后台NSURLSessionConfiguration，配置好。
+NSURL *url = [NSURL URLWithString:@"https://images.pexels.com/photos/3225517/pexels-photo-3225517.jpeg"];
+NSURLSessionConfiguration *sessionConfig = [NSURLSessionConfiguration backgroundSessionConfigurationWithIdentifier:@"com.qishare.ios.wyw.backgroundDownloadTask"];
+// 低于iOS13.0设备资源下载完后 可以得到通知 AppDelegate.m 文件中的 - (void)application:(UIApplication *)application handleEventsForBackgroundURLSession:(NSString *)identifier completionHandler:(void (^)(void))completionHandler
+// iOS13.0+的设备资源下载完后 直接在下载结束的代理方法中会有回调
+sessionConfig.sessionSendsLaunchEvents = YES;
+// 当传输大数据量数据的时候，建议将此属性设置为YES，这样系统可以安排对设备而言最佳的传输时间。例如，系统可能会延迟传输大文件，直到设备连接充电器并通过Wi-Fi连接到网络为止。 此属性的默认值为NO。
+sessionConfig.discretionary = YES;
+NSURLSession *session = [NSURLSession sessionWithConfiguration:sessionConfig delegate:self delegateQueue:nil];
+NSURLSessionDownloadTask *downloadTask = [session downloadTaskWithURL:url];
+[downloadTask resume];

@@ -1,0 +1,511 @@
+dyld:
+dyld是苹果的动态链接器系统先读取App的可执行文件（Mach-O文件），从里面获得dyld的路径，然后加载dyld，dyld去初始化运行环境，
+开启缓存策略，加载程序相关依赖库(其中也包含我们的可执行文件)，并对这些库进行链接，最后调用每个依赖库的初始化方法，在这一步，runtime被初始化。
+当所有依赖库的初始化后，轮到最后一位(程序可执行文件)进行初始化，在这时runtime会对项目中所有类进行类结构初始化，然后调用所有的load方法。
+最后dyld返回main函数地址，main函数被调用，我们便来到了熟悉的程序入口。
+
+dyld共享库缓存:
+当你构建一个真正的程序时，将会链接各种各样的库。它们又会依赖其他一些framework和动态库。需要加载的动态库会非常多。
+而对于相互依赖的符号就更多了。可能将会有上千个符号需要解析处理，这将花费很长的时间
+为了缩短这个处理过程所花费时间，OS X 和 iOS 上的动态链接器使用了共享缓存，OS X的共享缓存位于/private/var/db/dyld/，
+iOS的则在/System/Library/Caches/com.apple.dyle/。
+对于每一种架构，操作系统都有一个单独的文件，文件中包含了绝大多数的动态库，这些库都已经链接为一个文件，并且已经处理好了它们之间的符号关系。
+当加载一个 Mach-O 文件 (一个可执行文件或者一个库) 时，动态链接器首先会检查共享缓存看看是否存在其中，如果存在，那么就直接从共享缓存中拿出来使用。
+每一个进程都把这个共享缓存映射到了自己的地址空间中。这个方法大大优化了 OS X 和 iOS 上程序的启动时间。
+
+dyld加载过程:
+1、Load dylibs image
+在每个动态库的加载过程中，dyld需要做下面工作：
+分析动态库
+找到动态库的mach-o文件
+打开文件
+验证文件
+在系统核心注册文件签名
+对动态库的每一个segment调用mmap()
+针对这一步的优化：
+减少非系统库的依赖
+合并非系统库
+
+项目依赖的共享动态库
+输入命令：otool -L XXXX
+2、Rebase/Bind image
+由于ASLR(address space layout randomization)的存在，可执行文件和动态链接库在虚拟内存中的加载地址每次启动都不固定，
+所以需要这2步来修复镜像中的资源指针，来指向正确的地址。
+rebase修复的是指向当前镜像内部的资源指针； 而bind指向的是镜像外部的资源指针。
+
+rebase步骤先进行，需要把镜像读入内存，并以page为单位进行加密验证，保证不会被篡改，所以这一步的瓶颈在IO。
+bind在其后进行，由于要查询符号表，来指向跨镜像的资源，加上在rebase阶段，镜像已被读入和加密验证，所以这一步的瓶颈在于CPU计算。
+优化该阶段的关键在于减少__DATA segment中的指针数量。我们可以优化的点有：
+减少Objc类数量， 减少selector数量
+减少C++虚函数数量
+3、Objc setup
+Objc setup主要是在objc_init完成的，objc_init是在libsystem中的一个initialize方法libsystem_initializer中初始化了libdispatch，
+然后libdispatch_init调用了_os_object_int， 最终调用了_objc_init。
+void _objc_init(void)
+{
+    static bool initialized = false;
+    if (initialized) return;
+    initialized = true;
+    
+    environ_init();
+    tls_init();
+    static_init();
+    lock_init();
+    exception_init();
+
+    _dyld_objc_notify_register(&map_2_images, load_images, unmap_image);
+}
+通过上面代码可以知道，runtime在_objc_init向dyld绑定了3个回调函数，分别是map_2_images,load_images和unmap_image
+(1)dyld在binding操作结束之后，会发出dyld_image_state_bound通知，然后与之绑定的回调函数map_2_images就会被调用，它主要做以下几件事来完成Objc Setup：
+读取二进制文件的 DATA 段内容，找到与 objc 相关的信息
+注册 Objc 类
+确保 selector 的唯一性
+读取 protocol 以及 category 的信息
+(2)load_images函数作用就是调用Objc的load方法，它监听dyld_image_state_dependents_initialize通知
+(3)unmap_image可以理解为map_2_images的逆向操作
+由于之前2步骤的优化，这一步实际上没有什么可做的。几乎都靠 Rebasing 和 Binding 步骤中减少所需 fix-up 内容。因为前面的工作也会使得这步耗时减少。
+4、initializers
+以上三步属于静态调整，都是在修改__DATA segment中的内容，而这里则开始动态调整，开始在堆和栈中写入内容。 工作主要有：
+(1)Objc的+load()函数
+(2)C++的构造函数属性函数 形如attribute((constructor)) void DoSomeInitializationWork()
+(3)非基本类型的C++静态全局变量的创建(通常是类或结构体)(non-trivial initializer) 比如一个全局静态结构体的构建，如果在构造函数中有繁重的工作，那么会拖慢启动速度
+
+Objc的load函数和C++的静态构造器采用由底向上的方式执行，来保证每个执行的方法，都可以找到所依赖的动态库
+
+(1)dyld开始将程序二进制文件初始化
+(2)交由ImageLoader读取image，其中包含了我们的类、方法等各种符号
+(3)由于runtime向dyld绑定了回调，当image加载到内存后，dyld会通知runtime进行处理
+(4)runtime接手后调用map images做解析和处理，接下来load images中调用 callloadmethods方法，遍历所有加载进来的Class，按继承层级依次调用Class的+load方法和其 Category的+load方法
+
+整个事件由dyld主导，完成运行环境的初始化后，配合ImageLoader 将二进制文件按格式加载到内存，动态链接依赖库，并由runtime负责加载成objc 定义的结构，所有初始化工作结束后，dyld调用真正的main函数
+
+这一步可做的优化有：
+使用+initialize来代替+load
+不要使用atribute((constructor)) 将方法显式标记为初始化器，而是让初始化方法调用时才执行。比如使用 dispatch_once()、pthread_once() 或 std::once()。也就是在第一次使用时才初始化，推迟了一部分工作耗时。也尽量不要用到C++的静态对象。
+
+pre-main阶段具体优化:
+1、删除无用代码（未被调用的静态变量、类和方法）
+可以使用AppCode对工程进行扫描，删除无用代码
+删减一些无用的静态变量
+删减没有被调用或者已经废弃的方法
+
+2、+load方法处理
++load()方法，用于在App启动执行一些操作，+load()方法在Initializers阶段被执行，但过多的+load()方法则会拖慢启动速度。 
+分析+load()方法，看是否可以延迟到App冷启动后的某个时间节点。
+initialize的重复调用问题，能用dispatch_once()来完成的，就尽量不要用到load方法
+
+3、针对减少不必要的库
+基本上一个公共库越大，类越多，启动时在pre-main阶段所需的时间也越多
+项目中使用cocoapods并没有设置use_frameworks，所以pod管理的有源码的第三方库都是静态库的形式
+
+4、合并功能类似的类和扩展(Category)
+由于Category的实现原理，和ObjC的动态绑定有很强的关系，所以实际上类的扩展是比较占用启动时间的。尽量合并一些扩展，会对启动有一定的优化作用。
+这里只是强调要合并一些在工程、架构上没有太大意义的扩展。
+
+5、压缩资源图片
+因为启动的时候大大小小的图片加载个十来二十个是很正常的，图片小了，IO操作量就小了，启动当然就会快了。
+
+静态库：.a和.framework
+动态库: .dylib和.framework
+Bundle的概念，framework是一种特殊类型的Bundle，bunlde是一个包含多个子文件夹的文件夹。
+在iOS上，Bundlue将相关联的文件(比如图片, Nibs，代码)编译成一个包文件。
+程序将它当作一个单独文件来处理，你可以在不知道内部实现的情况下使用它。
+而库需要一些其他资源：头文件，本地化文件，图片资源，文档和示例。我们可以将其打包成一个bunlde，这就是framework。
+
+在Podfile中
+默认使用静态库，即 # use_frameworks!（#是注释标示）
+添加use_frameworks!表明Pod使用动态库, Pods/Products里都是动态库(.framework文件)
+不添加use_frameworks!表明Pod使用静态库, Pods/Products里都是静态库(.a文件)
+
+即使我们将资源文件（图片等）打包到frameworks里，Xcode仍然未能引用它们。通过embedding framework让我们可以访问这些资源文件
+https://developer.apple.com/library/archive/technotes/tn2435/_index.html#//apple_ref/doc/uid/DTS40017543-CH1-EMBED_SECTION
+
+Umbrella frameworks的定义: Umbrella frameworks add minor refinements to the standard framework structure, such as the ability to encompass other frameworks
+umberllar framework的目的是 隐藏不同frameworks之间的复杂依赖关系。
+它允许你将不同的frameworks合并成一个framework，输出部分头文件。为了构建一个umbrella framework，你必须包含umbrella header。
+https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPFrameworks/Concepts/FrameworkAnatomy.html#//apple_ref/doc/uid/20002253-99314
+
+为了能够引入framework modular，我们必须引入 module map
+framework module ModularFramework{
+  module Modulel{
+    header "File1.h"
+  }
+  module Module2{
+    header "File2.h"
+  }
+}
+随后，使用module
+import ModularFramework.Module1
+import ModularFramework.Module2
+
+CocoaPods允许使用umbrella和modular frameworks。如果你引入了pods到你的项目里，在Target->YourApp->Build Settings找查找modulemap和umbrella可以看到它们的设置。
+
+Q: Podfile使用静态库时出现报错[!] The following Swift pods cannot yet be integrated as static libraries:,如何解决？
+A：pod install 时的错误信息提示我们应该使用use_modular_headers!来让整个项目支持静态库，或者对单个Pod使用:modular_headers => true
+
+===============================================================================================修改编译参数完成二进制文件的重新排布提升应用的启动速度
+https://juejin.im/post/6844904143111323661
+
+通过修改库的类型和Clang插桩找到启动所需符号，然后修改编译参数完成二进制文件的重新排布提升应用的启动速度的。
+通过staticlib优化、二进制重排两项技术
+
+1. 动态库转静态库
+
+1.1 Pre-main时间的查看
+在系统执行应用程序的main函数并调用应用程序委托函数(applicationWillFinishLaunching)之前，会发生很多事情。
+我们可以将DYLD_PRINT_STATISTICS环境变量添加到项目scheme中。
+
+应用程序启动:
+dylib loading time 动态加载程序查找并读取应用程序使用的依赖动态库。
+每个库本身都可能有依赖项。虽然苹果系统框架的加载是高度优化的，但加载嵌入式框架可能会很耗时。为了加快动态库的加载速度，苹果建议您使用更少的动态库，或者考虑合并它们。
+建议的目标是六个额外的(非系统)框架。
+
+Rebase/binding time 修正调整镜像内的指针(重新调整)和设置指向镜像外符号的指针(绑定)。
+为了加快重新定位/绑定时间，我们需要更少的指针修复。
+如果有大量(大的是20000)Objective-C类、选择器和类别的应用程序可以增加800ms的启动时间。
+如果应用程序使用C++代码，那么使用更少的虚拟函数。
+使用Swift结构体通常也更快。
+
+ObjC setup time Objective-C运行时需要进行设置类、类别和选择器注册。我们对重新定位绑定时间所做的任何改进也将优化这个设置时间。
+
+initializer time 运行初始化程序。如果使用了Objective-C的 +load 方法，请将其替换为 +initialize 方法。
+
+1.2 动态库与静态库加载的耗时
+
+通过修改Mach-O Type从动态库改为静态库，dylib loading time得到了很大的提升
+
+CocoaPods会在项目中的Build Phases添加一个 [CP] Embed Pods Frameworks 执行脚本。
+"${PODS_ROOT}/Target Support Files/Pods-项目名/Pods-项目名-frameworks.sh"
+我们在执行pod install后会生成一个Pods-项目名-frameworks.sh的脚本文件。
+由于我们是手动修改的Mach-O Type类型，这个脚本中的install_framework仍然会执行，所以我们要把转换成静态库的这些库从Pods-项目名-frameworks.sh文件中删除。
+
+以AFNetworking为例，需要从文件中删除：
+install_framework "${BUILT_PRODUCTS_DIR}/AFNetworking/AFNetworking.framework"
+
+当然你也可以写一个ruby脚本在使用CocoaPods的post_install进行处理。
+1.把相关的库转成静态的。
+target.build_configurations.each do |config|
+    config.build_settings['MACH_O_TYPE'] = 'staticlib'
+end
+
+2.读取Pods-项目名-frameworks.sh文件，删除相关的字符串。
+regex = /install_framework.*\/#{pod_name}\.framework\"/
+pod_frameworks_content.gsub!(regex, "")
+
+2. 二进制重排
+2.1 App启动
+进程如果能直接访问物理内存无疑是很不安全的，所以操作系统在物理内存的上又建立了一层虚拟内存。
+
+iOS系统中虚拟内存到物理内存的映射都是以页为最小单位的。当进程访问一个虚拟内存Page而对应的物理内存却不存在时，就会出现Page Fault缺页中断，然后加载这一页。
+虽然本身这个处理速度是很快的，但是在一个App的启动过程中可能出现上千(甚至更多)次Page Fault，这个时间积累起来会比较明显了。
+iOS系统中一页是16KB。
+我们常说的启动是指点击App到第一页显示为止，包含pre-main、main到didFinishLaunchingWithOptions结束的整个时间。
+
+main到didFinishLaunchingWithOptions结束，这个部分是我们可以控制的，可以优化的
+二进制重排主要是针对如何减少Page Fault的优化。
+
+冷启动：
+程序完全退出，之间加载的分页数据被其他进程所使用覆盖之后，或者重启设备、第一次安装，才算是冷启动。
+
+热启动：
+程序杀掉之后，马上又重新启动。这个时候相应的物理内存中仍然保留之前加载过的分页数据，可以进行重用，不需要全部重新加载。所以热启动的速度比较快。
+
+利用Instruments工具System Trace更直观地比较这两种启动。
+
+2.2 二进制重排
+2.2.1 二进制重排的意义
+
+程序默认情况下是顺序执行的。
+如果启动需要使用的方法分别在2页Page1和Page2中(method1和method3)，为了执行相应的代码，系统就必须进行两个Page Fault。
+如果我们对方法进行重新排列，让method1和method3在一个Page，那么就可以较少一次Page Fault。
+
+那么怎么衡量重排效果并验证呢？
+查看Page Fault次数是否减少。
+查看编译过程的中间产物LinkMap文件进行确认。
+
+2.2.2 System Trace
+那么如何衡量页的加载时间呢？这里就用到了Instruments中的System Trace工具。
+
+点击录制⏺后，出现第一个页面，马上停止⏹。过滤只显示Main Thread相关，选择Summary: Virtual Memory。
+File Backed Page In次数就是触发Page Fault的次数了。
+Page Cache Hit就是页缓存命中的次数了。
+对比冷启动和热启动的File Backed Page In次数，可以看到热启动情况下，触发的Page Fault的次数就变得很小了。
+
+2.2.3 启动顺序
+2.2.3.1 文件顺序
+Build Phases中Compile Sources列表顺序决定了文件执行的顺序(可以调整)。如果不进行重排，文件的顺序决定了方法、函数的执行顺序。
+随着Compile Sources中的文件顺序的修改，+load方法的执行顺序也发生了改变。
+
+2.2.3.2 符号表顺序
+Build Settings中修改Write Link Map File为YES编译后会生成一个Link Map符号表txt文件。
+执行⌘ + B构建后，选择Product中的App，在Finder中打开，选择Intermediates.noindex文件夹，
+我们可以看到这个顺序和我们Compile Sources中的顺序是一致的。
+
+Mach-O的一些信息
+可以看到，整体的顺序和Compile Sources的中的顺序是一样的，并且方法是按照文件中方法的顺序进行链接的。
+Address 表示文件中方法的地址。
+Size 表示方法的大小。
+File 表示在第几个文件中。
+Name 表示方法名。
+
+2.2.4 二进制重排初体验
+在项目根目录创建一个order文件。
+touch BinaryOptimization.order
+
+在Build Settings中找到Order File，填入./BinaryOptimization.order。
+在BinaryOptimization.order文件中填入：
++[ViewController load]
++[AppDelegate load]
+_main
+-[ViewController someMethod]
+
+然后执行⌘ + B构建。
+可以看到Link Map中的最上面几个方法和我们在BinaryOptimization.order文件中设置的方法顺序一致！
+
+Xcode的连接器ld还忽略掉了不存在的方法 -[ViewController someMethod]。
+如果提供了link选项 -order_file_statistics，会以warning的形式把这些没找到的符号打印在日志里。
+
+2.3 二进制重排实战
+要真正的实现二进制重排，我们需要拿到启动的所有方法、函数等符号，并保存其顺序，然后写入order文件，实现二进制重排。
+
+https://mp.weixin.qq.com/s/Drmmx5JtjG3UtTFksL6Q8Q
+
+解决方案编译期插桩
+
+2.3.1 Clang插桩
+其实就是一个代码覆盖工具，更多信息可以查看官网 https://clang.llvm.org/docs/SanitizerCoverage.html#tracing-pcs
+
+Build Settings中 Other C Flags添加-fsanitize-coverage=trace-pc-guard配置，编译的话会报错。
+Undefined symbol: ___sanitizer_cov_trace_pc_guard_init
+Undefined symbol: ___sanitizer_cov_trace_pc_guard
+
+查看官网会需要我们添加一个两个函数：
+#include <stdint.h>
+#include <stdio.h>
+#include <sanitizer/coverage_interface.h>
+
+// This callback is inserted by the compiler as a module constructor
+// into every DSO. 'start' and 'stop' correspond to the
+// beginning and end of the section with the guards for the entire
+// binary (executable or DSO). The callback will be called at least
+// once per DSO and may be called multiple times with the same parameters.
+extern "C" void __sanitizer_cov_trace_pc_guard_init(uint32_t *start,
+                                                    uint32_t *stop) {
+  static uint64_t N;  // Counter for the guards.
+  if (start == stop || *start) return;  // Initialize only once.
+  printf("INIT: %p %p\n", start, stop);
+  for (uint32_t *x = start; x < stop; x++)
+    *x = ++N;  // Guards should start from 1.
+}
+
+// This callback is inserted by the compiler on every edge in the
+// control flow (some optimizations apply).
+// Typically, the compiler will emit the code like this:
+//    if(*guard)
+//      __sanitizer_cov_trace_pc_guard(guard);
+// But for large functions it will emit a simple call:
+//    __sanitizer_cov_trace_pc_guard(guard);
+extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t *guard) {
+  if (!*guard) return;  // Duplicate the guard check.
+  // If you set *guard to 0 this code will not be called again for this edge.
+  // Now you can get the PC and do whatever you want:
+  //   store it somewhere or symbolize it and print right away.
+  // The values of `*guard` are as you set them in
+  // __sanitizer_cov_trace_pc_guard_init and so you can make them consecutive
+  // and use them to dereference an array or a bit vector.
+  void *PC = __builtin_return_address(0);
+  char PcDescr[1024];
+  // This function is a part of the sanitizer run-time.
+  // To use it, link with AddressSanitizer or other sanitizer.
+  __sanitizer_symbolize_pc(PC, "%p %F %L", PcDescr, sizeof(PcDescr));
+  printf("guard: %p %x PC %s\n", guard, *guard, PcDescr);
+}
+
+
+我们把代码添加到ViewController.m中，我们不需要 extern "C" 所以可以删掉， __sanitizer_symbolize_pc() 还会报错，不重要先注释了然后继续。
+#include <stdint.h>
+#include <stdio.h>
+#include <sanitizer/coverage_interface.h>
+
+void __sanitizer_cov_trace_pc_guard_init(uint32_t *start, uint32_t *stop) {
+  static uint64_t N;  // Counter for the guards.
+  if (start == stop || *start) return;  // Initialize only once.
+  printf("INIT: %p %p\n", start, stop);
+  for (uint32_t *x = start; x < stop; x++)
+    *x = ++N;  // Guards should start from 1.
+}
+
+void __sanitizer_cov_trace_pc_guard(uint32_t *guard) {
+  if (!*guard) return;  // Duplicate the guard check.
+//  void *PC = __builtin_return_address(0);
+  char PcDescr[1024];
+//  __sanitizer_symbolize_pc(PC, "%p %F %L", PcDescr, sizeof(PcDescr));
+  printf("guard: %p %x PC %s\n", guard, *guard, PcDescr);
+}
+
+函数 __sanitizer_cov_trace_pc_guard_init统计了方法的个数。运行后，我们可以看到：
+INIT: 0x104bed670 0x104bed6b0
+
+(lldb) x 0x104bed670
+0x104bed670: 01 00 00 00 02 00 00 00 03 00 00 00 04 00 00 00  ................
+0x104bed680: 05 00 00 00 06 00 00 00 07 00 00 00 08 00 00 00  ................
+(lldb) x 0x104bed6b0-0x4
+0x104bed6ac: 10 00 00 00 10 00 00 00 00 00 00 00 00 00 00 00  ................
+0x104bed6bc: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+
+读取内存之后，我们可以看到一个类似计数器的东西。最后一个打印的是结束位置，按显示是4位4位的，所以向前移动4位，打印出来的应该就是最后一位。
+根据小端模式，10 00 00 00对应的是00 00 00 10即16。
+我们在ViewController中添加一些方法：
+void(^block)(void) = ^(void){
+    
+};
+
+void test()
+{
+    block();
+}
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    test();
+}
+
+再打印一次：
+(lldb) x 0x10426d6dc-0x4
+0x10426d6d8: 13
+可以看到增加了3(block是匿名函数)，计数器统计了函数/方法的个数，这里添加了三个，索引增加了3。
+
+也就是说Clang插桩就是在汇编代码中插入了 __sanitizer_cov_trace_pc_guard函数的调用。
+拿到了全部的符号之后需要保存，但是不能用数组，因为有可能会有在子线程执行的，所以用数组会有线程问题 。这里我们使用原子队列：
+#import <libkern/OSAtomic.h>
+#import <dlfcn.h>
+
+/*
+ 原子队列特点
+ 1、先进后出
+ 2、线程安全
+ 3、只能保存结构体
+ */
+static OSQueueHead symbolList = OS_ATOMIC_QUEUE_INIT;
+
+// 符号结构体链表
+typedef struct {
+    void *pc;
+    void *next;
+} SymbolNode;
+
+void __sanitizer_cov_trace_pc_guard(uint32_t *guard) {
+    if (!*guard) return;  // Duplicate the guard check.
+    
+    // 函数执行前会将下一个要执行的函数地址保存到寄存器中
+    // 这里是拿到函数的返回地址
+    void *PC = __builtin_return_address(0);
+    
+    SymbolNode * node = malloc(sizeof(SymbolNode));
+    *node = (SymbolNode){PC, NULL};
+    // 入队
+    OSAtomicEnqueue(&symbolList, node, offsetof(SymbolNode, next));
+    
+    // 以下是一些打印，只是看一下，实际中可以注释
+    // dlopen 通过动态库拿到句柄 通过句柄拿到函数的内存地址
+    // dladdr 通过函数内存地址拿到函数
+    typedef struct dl_info {
+        const char      *dli_fname;     /* Pathname of shared object      函数的路径  */
+        void            *dli_fbase;     /* Base address of shared object  函数的地址  */
+        const char      *dli_sname;     /* Name of nearest symbol         函数符号    */
+        void            *dli_saddr;     /* Address of nearest symbol      函数起始地址 */
+    } Dl_info;
+    Dl_info info;
+    dladdr(PC, &info);
+    printf("fnam:%s \n fbase:%p \n sname:%s \n saddr:%p \n",
+           info.dli_fname,
+           info.dli_fbase,
+           info.dli_sname,
+           info.dli_saddr);
+}
+
+运行后这里我们可以看到很多打印，只取一条来说明，很明显其中sname就是我们需要的符号名了。
+fnam:/private/var/containers/Bundle/Application/3EAE3817-0EF7-4892-BC55-368CC504A568/BinaryOptimization.app/BinaryOptimization 
+fbase:0x100938000 
+sname:+[AppDelegate load] 
+saddr:0x10093d81c 
+
+下面我们通过点击屏幕导出所需要的符号，需要注意的是C函数和Swift方法前面需要加下划线。
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
+{
+    NSMutableArray <NSString *>* symbolNames = [NSMutableArray array];
+    while (YES) {
+        SymbolNode * node = OSAtomicDequeue(&symbolList, offsetof(SymbolNode, next));
+        if (node == NULL) {
+            break;
+        }
+        Dl_info info;
+        dladdr(node->pc, &info);
+        
+        NSString * name = @(info.dli_sname);
+        BOOL isObjc = [name hasPrefix:@"+["] || [name hasPrefix:@"-["]; //OC方法不处理
+        NSString * symbolName = isObjc? name : [@"_" stringByAppendingString:name]; //c函数、swift方法前面带下划线
+        [symbolNames addObject:symbolName];
+        printf("%s \n",info.dli_sname);
+    }
+    
+    NSEnumerator * emt = [symbolNames reverseObjectEnumerator];
+    NSMutableArray<NSString*>* funcs = [NSMutableArray arrayWithCapacity:symbolNames.count];
+    NSString * name;
+    while (name = [emt nextObject]) {
+        if (![funcs containsObject:name]) {
+            [funcs addObject:name];
+        }
+    }
+    // 删掉当前方法，因为这个点击方法不是启动需要的
+    [funcs removeObject:[NSString stringWithFormat:@"%s",__FUNCTION__]];
+    
+    NSString * filePath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"BinaryOptimization.order"];
+    NSString *funcStr = [funcs componentsJoinedByString:@"\n"];
+    NSData * fileContents = [funcStr dataUsingEncoding:NSUTF8StringEncoding];
+    // 在路径上创建文件
+    [[NSFileManager defaultManager] createFileAtPath:filePath contents:fileContents attributes:nil];
+    
+    NSLog(@"%@",filePath);
+}
+
+这时如果你直接点击屏幕，有个巨坑，会看到控制台一直在输出，出现了死循环：
+
+解决办法：
+Build Settings中Other C Flags添加func配置，即-fsanitize-coverage=func,trace-pc-guard。
+
+官网对func的参数的解释：只检测每个函数的入口。
+再次运行点击屏幕就不会有问题了。
+
+2.3.2 从真机上获取order文件
+我们把order文件存在了真机上的tmp文件夹中
+
+2.3.3 Swift
+wift也可以重排么？当然可以！
+我们在项目中添加一个Swift类，然后在viewDidLoad调用一下：
+
+class SwiftTest: NSObject {
+    @objc class public func swiftTestLoad(){
+        print("swiftTest");
+    }
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    [SwiftTest swiftTestLoad];
+}
+
+Build Setting中Other Swift Flags设置：
+-sanitize-coverage=func
+-sanitize=undefined
+
+运行后点击一下屏幕，查看控制台：
+所有处理完之后，最后需要Write Link Map File改为NO，把Other C Flags/Other Swift Flags的配置删除掉。
+
+因为这个配置会在我们代码中自动插入跳转执行 __sanitizer_cov_trace_pc_guard。重排完就不需要了，需要去除掉。 
+同时把ViewController中的 __sanitizer_cov_trace_pc_guard也要去除掉。
+
+总结
+1.通过将动态库转为静态库，我们优化了dylib loading time。
+苹果官方建议为6个以下，这里我们因为符号冲突，只保留了3个动态库。
+2.通过二进制重排，让启动需要的方法排列更紧凑，减少了Page Fault的次数。
+获取符号表时，采用Clang插桩可以直接hook到Objective-C方法、Swift方法、C函数、Block，可以不用区别对待。相比于抖音之前提出的方案确实简单很多，门槛也要低一些。
