@@ -115,6 +115,11 @@ class TestRX1ViewController: UIViewController {
         
         
         // 源码分析create
+        /**
+         create:
+         Create.swift
+         return AnonymousObservable(subscribe)
+         */
         let ob1 = Observable<Any>.create { (observer) -> Disposable in
             // 发送信号
             observer.onNext("111")
@@ -124,6 +129,14 @@ class TestRX1ViewController: UIViewController {
             return Disposables.create()
         }
         
+        /**
+         subscribe:
+         ObservableType+Extensions.swift
+         let observer = AnonymousObserver { e in
+             on(e)
+         }
+         return self.asObservable().subscribe(observer)
+         */
         ob1.subscribe { (event) in
             
         }
