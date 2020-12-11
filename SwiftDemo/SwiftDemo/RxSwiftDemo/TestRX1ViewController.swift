@@ -113,6 +113,13 @@ class TestRX1ViewController: UIViewController {
             
             }).disposed(by: disposeBag)
         
+        
+        // 源码分析create
+        /**
+         create:
+         Create.swift
+         return AnonymousObservable(subscribe)
+         */
         let ob1 = Observable<Any>.create { (observer) -> Disposable in
             // 发送信号
             observer.onNext("111")
@@ -121,13 +128,18 @@ class TestRX1ViewController: UIViewController {
 //            observer.onCompleted()
             return Disposables.create()
         }
-        ob1.subscribe(onNext: { (anyValue) in
+        
+        /**
+         subscribe:
+         ObservableType+Extensions.swift
+         let observer = AnonymousObserver { e in
+             on(e)
+         }
+         return self.asObservable().subscribe(observer)
+         */
+        ob1.subscribe { (event) in
             
-        }, onError: { (error) in
-            
-        }, onCompleted: {
-            
-        })
+        }
     }
     
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
