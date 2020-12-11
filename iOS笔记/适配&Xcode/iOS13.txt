@@ -1,3 +1,103 @@
+用Xcode 11创建一个Single View App项目，会多生成一些文件和代码:
+多了SceneDelegate代理
+Info.plist里面多了Application Scene Manifest配置
+
+适配方案——不支持多场景窗口:
+将多出来的文件和代码删除就好了
+删除SceneDelegate代理文件 (可选)
+删除 Info.plist里面的Application Scene Manifest配置（一定要删除）
+删除 AppDelegate代理的两个方法：
+application:configurationForConnectingSceneSession:options:
+application: didDiscardSceneSessions:
+这两个方法一定要删除，否则使用纯代码创建的Window和导航控制器UINavigationController不会生效。
+
+适配方案——支持多场景窗口:
+//AppDelegate
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+    //在Xcode11创建的项目中，需要自行给AppDelegate添加属性window
+    //自定义Window
+    self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    //自定义导航控制器
+    UINavigationController *rootNavgationController = [[UINavigationController alloc] initWithRootViewController:[ViewController new]];
+    //导航控制是rootViewController
+    self.window.rootViewController = rootNavgationController;
+    //现实Window
+    [self.window makeKeyAndVisible];
+    return YES;
+}
+
+Xcode 11创建的项目中，写入上述代码运行App，结果发现这部分代码虽然执行了，但是通过UIViewController的self.navigationController获取的导航竟然是nil。
+从现象反推过程，既然代码执行了，那么很大可能是self.window没有显示在屏幕上。
+查看iOS13下UIWindow的定义，有这么一条
+// If nil, window will not appear on any screen.
+// changing the UIWindowScene may be an expensive operation and should not be done in performance-sensitive code
+@property(nullable, nonatomic, weak) UIWindowScene *windowScene API_AVAILABLE(ios(13.0));
+如果UIWindow的属性windowScene为nil，那么这个UIWindow则不会显示在任何屏幕上。
+
+解决办法是在SceneDelegate的方法scene:willConnectToSession:options:中创建UIWindow和UINavigationController
+//SceneDelegate
+- (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)connectionOptions {
+    self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    self.window.windowScene = (UIWindowScene*)scene;
+    UINavigationController *rootNavgationController = [[UINavigationController alloc] initWithRootViewController:[ViewController new]];
+    self.window.rootViewController = rootNavgationController;
+    [self.window makeKeyAndVisible];
+}
+
+#####同时兼容iOS13和iOS12及以下#####
+AppDelegate部分代码
+//AppDelegate.h
+
+@interface AppDelegate : UIResponder <UIApplicationDelegate>
+
+@property (strong, nonatomic) UIWindow *window;
+
+@end
+
+//AppDelegate.m
+@implementation AppDelegate
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+    // Override point for customization after application launch.
+    if (@available(iOS 13,*)) {
+        return YES;
+    } else {
+        self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        UINavigationController *rootNavgationController = [[UINavigationController alloc] initWithRootViewController:[ViewController new]];
+        self.window.rootViewController = rootNavgationController;
+        [self.window makeKeyAndVisible];
+        return YES;
+    }
+}
+
+#pragma mark - UISceneSession lifecycle
+
+- (UISceneConfiguration *)application:(UIApplication *)application configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession options:(UISceneConnectionOptions *)options {
+    return [[UISceneConfiguration alloc] initWithName:@"Default Configuration" sessionRole:connectingSceneSession.role];
+}
+
+@end
+
+SceneDelegate部分代码
+//SceneDelegate.h
+@interface SceneDelegate : UIResponder <UIWindowSceneDelegate>
+
+@property (strong, nonatomic) UIWindow * window;
+
+@end
+
+//SceneDelegate.m
+@implementation SceneDelegate
+- (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)connectionOptions {
+- 
+    self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    self.window.windowScene = (UIWindowScene*)scene;
+    UINavigationController *rootNavgationController = [[UINavigationController alloc] initWithRootViewController:[ViewController new]];
+    self.window.rootViewController = rootNavgationController;
+    [self.window makeKeyAndVisible];
+}
+
+@end
+
 ==========KVC
 部分方法属性不允许使用 valueForKey、setValue:forKey:  来获取或者设置私有属性，具体表现为在运行时会直接崩溃
 
@@ -12,7 +112,7 @@ UITextField *textField = [searchBar valueForKey:@"_searchField"];
 // 替代方案 1，使用 iOS 13 的新属性 searchTextField
 searchBar.searchTextField.placeholder = @"search";
 
-// 替代方案 2，遍历获取指定类型的属性
+// #####替代方案 2，遍历获取指定类型的属性#####
 - (UIView *)findViewWithClassName:(NSString *)className inView:(UIView *)view{
     Class specificView = NSClassFromString(className);
     if ([view isKindOfClass:specificView]) {
@@ -35,6 +135,8 @@ searchBar.searchTextField.placeholder = @"search";
  UITextField *textField = [self findViewWithClassName:@"UITextField" inView:_searchBar];
 
 ==========Dark Mode
+如果不打算适配 Dark Mode，可以直接在 Info.plist 中添加一栏：User Interface Style : Light，即可在应用内禁用暗黑模式。
+
 DarkMode 主要从两个方面来适配，一是颜色，二是图片
 
 iOS 13 之前 UIColor 只能表示一种颜色，从 iOS 13 开始 UIColor 是一个动态的颜色，它可以在 LightMode 和 DarkMode 拥有不同的颜色。
@@ -187,6 +289,16 @@ for (UIView *view in _searchBar.subviews.lastObject.subviews) {
         break;
     }
 } 
+
+==========UITabBarButton 不同状态下结构不同
+在 iOS 13 中，UITabBarButton 的控件结构会随着其选中状态的变化而变化，主要体现为 UITabBarSwappableImageView 和 UITabBarButtonLabel 的位置变化。
+在选中时和以前一样，是 UITabBarButton 的子控件。
+而在未选中状态下放到了 UIVisualEffectView 的 _UIVisualEffectContentView 里面。
+
+把红点添加到 UITabBarButton 上，位置再根据 UITabBarSwappableImageView 调整即可。
+
+==========UINavigationBar
+从 iOS 11 开始，UINavigationBar 使用了自动布局，左右两边的按钮到屏幕之间会有 16 或 20 的边距。
 
 ==========UISearchDisplayController
 在 iOS 8 之前，我们在 UITableView 上添加搜索框需要使用 UISearchBar + UISearchDisplayController 的组合方式，

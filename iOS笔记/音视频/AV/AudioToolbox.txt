@@ -1,2 +1,274 @@
 AudioToolbox
 Record or play audio, convert formats, parse audio streams, and configure your audio session.
+
+==================================================AAC 音频编码
+iOS下Apple为我们提供了非常方便的音频编解码工具AudioToolbox。该工具中包含了常见的编解码库，如AAC、iLBC、OPUS等。
+
+AAC编码的基本流程:
+设置AAC编器的输入、输出格式。
+创建AAC编码器。
+转码。
+得到AAC编码数据后，增加ADTS头。该头用于区分每个AAC数据帧。
+
+1.设置转码格式
+在创建编码器之前，我们首先要设置好编码器的输入数据格式和输出数据格式。
+比如输入数据是单声道还是双声道，数据是什么格式的，采样率是多少等。同样的，输出参数是AAC,还是OPUS? 每个传输包的大小等。
+只有这样，AudioToolbox才清楚他要创建一个什么样的编解码器。
+
+这与创建编码器的函数也有关。该函数的前两个输入参数就是音频输入格式和输出格式。函数原型如下:
+AudioConverterNewSpecific( 
+    inSourceFormat: AudioStreamBasicDescription, //输入参数
+    inDestinationFormat: AudioStreamBasicDescription, //输出参数
+    inNumberClassDescriptions: UInt32, //音频描述符数量
+    inClassDescriptions: AudioClassDescription, //音频描述符数组
+    outAudioConverter: AudioConverterRef //编码器
+    ) -> OSStatus
+
+AudioStreamBasicDescription inAudioStreamBasicDescription =
+ *CMAudioFormatDescriptionGetStreamBasicDescription((CMAudioFormatDescriptionRef)CMSampleBufferGetFormatDescription(sampleBuffer));
+上面这段代码就是输入格式的设置。
+设置编码器的输入格式是通过传入的第一个音频数据包来获得的。
+因为，在iOS中每个音视频的输入数据中都包含了必要的参数。
+
+下面的代码是对编码器输出格式的设置。
+// 先将输出描述符清0
+AudioStreamBasicDescription outAudioStreamBasicDescription = {0}; 
+
+// 设置采样率，有 32K, 44.1K，48K
+outAudioStreamBasicDescription.mSampleRate = 44100; 
+
+// 音频格式可以设置为 ：
+// kAudioFormatMPEG4AAC_HE 
+// kAudioFormatMPEG4AAC_HE_V2
+// kAudioFormatMPEG4AAC
+outAudioStreamBasicDescription.mFormatID = kAudioFormatMPEG4AAC; 
+
+// 指明格式的细节. 设置为 0 说明没有子格式。
+// 如果 mFormatID 设置为 kAudioFormatMPEG4AAC_HE 该值应该为0
+outAudioStreamBasicDescription.mFormatFlags = kMPEG4Object_AAC_LC;
+
+// 每个音频包的字节数. 
+// 该字段设置为 0, 表明包里的字节数是变化的。
+// 对于使用可变包大小的格式，请使用AudioStreamPacketDescription结构指定每个数据包的大小。 
+outAudioStreamBasicDescription.mBytesPerPacket = 0;
+
+// 每个音频包帧的数量. 对于未压缩的数据设置为 1. 
+// 动态码率格式，这个值是一个较大的固定数字，比如说AAC的1024。
+// 如果是动态帧数（比如Ogg格式）设置为0。
+outAudioStreamBasicDescription.mFramesPerPacket = 1024; 
+
+// 每个帧的字节数。对于压缩数据，设置为 0.
+outAudioStreamBasicDescription.mBytesPerFrame = 0; 
+
+// 音频声道数
+outAudioStreamBasicDescription.mChannelsPerFrame = 1;
+
+// 压缩数据，该值设置为0.
+outAudioStreamBasicDescription.mBitsPerChannel = 0;
+
+// 用于字节对齐，必须是0.
+outAudioStreamBasicDescription.mReserved = 0; 
+
+2.创建编解码器
+创建编码器除了上面说的要设置输入输出数据格式外，还要告诉 AudioToolbox 是创建编码器还是创建解码器；是创建 AAC 的，还是创建OPUS的；是硬编码还是软编码。
+iOS为我们提供了 AudioClassDescription 来描述这些信息
+struct AudioClassDescription {
+    OSType  mType; 
+    OSType  mSubType;
+    OSType  mManufacturer;
+};
+mType: 指明提编码器还是解码器。kAudioDecoderComponentType／kAudioEncoderComponentType。
+mSubType: 指明是 AAC, iLBC 还是 OPUS等。
+mManufacturer: 指明是软编还是硬编码。
+
+首先通过 AudioFormatGetPropertyInfo 获取音频属性信息。在这里就是获得所有与 格式ID一致的描术信息的个数。格式ID在这里就是 kMPEG4Object_AAC_LC
+然后，使用 AudioFormatGetProperty 获取音频格式属性值，在这里就是得到所有的音频描述符。
+找到与用户指定一致的描述符。
+最后调用 AudioConverterNewSpecific 创建转码器。
+
+AudioClassDescription audioClassDescription;
+memset(&audioClassDescription, 0, sizeof(audioClassDescription));
+UInt32 size;
+
+//根据编码格式，获取描述符个数。
+NSAssert(AudioFormatGetPropertyInfo(kAudioFormatProperty_Encoders, 
+            sizeof(outAudioStreamBasicDescription.mFormatID),
+            &outAudioStreamBasicDescription.mFormatID, 
+            &size) == noErr, nil);
+
+uint32_t count = size / sizeof(AudioClassDescription);
+
+//取出所有的描述符
+AudioClassDescription descriptions[count];
+NSAssert(AudioFormatGetProperty(kAudioFormatProperty_Encoders,
+            sizeof(outAudioStreamBasicDescription.mFormatID), 
+            &outAudioStreamBasicDescription.mFormatID, 
+            &size,
+            descriptions) == noErr, nil);
+
+//找出与输出格式一致的软编描述符
+for (uint32_t i = 0; i < count; i++) {
+
+    if ((outAudioStreamBasicDescription.mFormatID == descriptions[i].mSubType) && 
+        (kAppleSoftwareAudioCodecManufacturer == descriptions[i].mManufacturer)) {
+
+        memcpy(&audioClassDescription, &descriptions[i], sizeof(audioClassDescription));
+
+    }
+}
+
+//创建软编码器
+NSAssert(audioClassDescription.mSubType == outAudioStreamBasicDescription.mFormatID &&
+            audioClassDescription.mManufacturer == kAppleSoftwareAudioCodecManufacturer, nil);
+
+AudioConverterRef audioConverter;
+memset(&audioConverter, 0, sizeof(audioConverter));
+NSAssert(AudioConverterNewSpecific(&inAudioStreamBasicDescription,
+             &outAudioStreamBasicDescription,
+              1, 
+              &audioClassDescription,
+               &audioConverter) == 0, nil);
+
+创建好编码器后，还要修改一下编码器的码率。如果要正确的编码，编码码率参数是必须设置的。
+UInt32 outputBitrate = 64000;
+UInt32 propSize = sizeof(outputBitrate);
+
+if(result == noErr) {
+    result = AudioConverterSetProperty(audioConverter,
+                 kAudioConverterEncodeBitRate, 
+                 propSize, 
+                 &outputBitrate);
+}
+AAC并不是随便的码率都可以支持。比如，如果PCM采样率是44100KHz，那么码率可以设置64000bps，如果是16K，可以设置为32000bps。
+
+设置好码率后，可以通过 AudioConverterGetProperty 方法查询一下是否已经设置成功。
+UInt32 value = 0;  
+size = sizeof(value);  
+AudioConverterGetProperty(audioConverter,
+            kAudioConverterPropertyMaximumOutputPacketSize,
+            &size, 
+            &value);
+
+3.转码
+使用 AudioConverterFillComplexBuffer 方法进行转码
+AudioConverterFillComplexBuffer(
+            inAudioConverter: AudioConverterRef, 
+            inInputDataProc: AudioConverterComplexInputDataProc, 
+            inInputDataProcUserData: UnsafeMutablePointer, 
+            ioOutputDataPacketSize: UnsafeMutablePointer<UInt32>, 
+            outOutputData: UnsafeMutablePointer<AudioBufferList>, 
+            outPacketDescription: AudioStreamPacketDescription
+            ) -> OSStatus
+
+inAudioConverter : 转码器
+inInputDataProc : 回调函数。用于将PCM数据喂给编码器。
+inInputDataProcUserData : 用户自定义数据指针。
+ioOutputDataPacketSize : 输出数据包大小。
+outOutputData : 输出数据 AudioBufferList 指针。
+outPacketDescription : 输出包描述符。
+
+下面是转码的具体代码：
+首先，创建一个 AudioBufferList，并将输入数据存到 AudioBufferList里。
+其次，设置输出。
+然后，调用 AudioConverterFillComplexBuffer 方法，该方法又会调用 inInputDataProc 回调函数，将输入数据拷贝到编码器中。
+最后，转码。将转码后的数据输出到指定的输出变量中。
+
+//设置输入
+AudioBufferList inAaudioBufferList;
+CMBlockBufferRef blockBuffer;
+CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(sampleBuffer, NULL, &inAaudioBufferList, sizeof(inAaudioBufferList), NULL, NULL, 0, &blockBuffer);
+NSAssert(inAaudioBufferList.mNumberBuffers == 1, nil);
+
+//设置输出
+uint32_t bufferSize = inAaudioBufferList.mBuffers[0].mDataByteSize;
+uint8_t *buffer = (uint8_t *)malloc(bufferSize);
+memset(buffer, 0, bufferSize);
+AudioBufferList outAudioBufferList;
+outAudioBufferList.mNumberBuffers = 1;
+outAudioBufferList.mBuffers[0].mNumberChannels = inAaudioBufferList.mBuffers[0].mNumberChannels;
+outAudioBufferList.mBuffers[0].mDataByteSize = bufferSize;
+outAudioBufferList.mBuffers[0].mData = buffer;
+
+UInt32 ioOutputDataPacketSize = 1;
+
+//转码
+NSAssert(
+    AudioConverterFillComplexBuffer(audioConverter, 
+                    inInputDataProc, 
+                    &inAaudioBufferList, 
+                    &ioOutputDataPacketSize, 
+                    &outAudioBufferList, NULL) == 0, 
+nil);
+
+//将输出数据变成 NSData 数据
+NSData *data = [NSData 
+                dataWithBytes:outAudioBufferList.mBuffers[0].mData 
+                length:outAudioBufferList.mBuffers[0].mDataByteSize];
+
+free(buffer);
+CFRelease(blockBuffer);
+
+看一下 inInputDataProc 这个回调函数的具体实现。其中 inUserData 就是在 AudioConverterFillComplexBuffer 方法中传入的第三个参数，也就是输入数据。
+inInputDataProc 回调函数的作用就是将输入数据拷贝到 ioData 中。ioData 就是编码器编码时用到的真正输入缓冲区。
+OSStatus inInputDataProc(AudioConverterRef inAudioConverter, 
+            UInt32 *ioNumberDataPackets, 
+            AudioBufferList *ioData, 
+            AudioStreamPacketDescription **outDataPacketDescription, 
+            void *inUserData)
+{
+    AudioBufferList audioBufferList = *(AudioBufferList *)inUserData;
+
+    ioData->mBuffers[0].mData = audioBufferList.mBuffers[0].mData;
+    ioData->mBuffers[0].mDataByteSize = audioBufferList.mBuffers[0].mDataByteSize;
+
+    return  noErr;
+}
+
+至此，AAC编码部分就已经分析完了。但很多时候我们需要将 AAC 数据保存成文件。
+如果我们直接将一帧一帧的AAC数据直接写入文件，再从AAC文件中读取数据交由解码器解码，是无法成功的。原因很简单，解码器搞不清楚文件里每个 AAC 帧到底有多大。
+解决的办法是在每一帧前加一个头。这是一个比较通用的做法。在AAC中加的头格式我们称为 ADTS头。
+
+增加ADTS头
+ADTS共7或9个字节。一般情况下使用 7 字节。它的结构如下：
+
+Structure
+AAAAAAAA AAAABCCD EEFFFFGH HHIJKLMM MMMMMMMM MMMOOOOO OOOOOOPP (QQQQQQQQ QQQQQQQQ)
+
+Letter Length (bits) Description
+A 12 syncword 0xFFF, all bits must be 1
+B 1 MPEG Version: 0 for MPEG-4, 1 for MPEG-2
+C 2 Layer: always 0
+D 1 protection absent, Warning, set to 1 if there is no CRC and 0 if there is CRC
+E 2 profile, the MPEG-4 Audio Object Type minus 1
+F 4 MPEG-4 Sampling Frequency Index (15 is forbidden)
+G 1 private bit, guaranteed never to be used by MPEG, set to 0 when encoding, ignore when decoding
+H 3 MPEG-4 Channel Configuration (in the case of 0, the channel configuration is sent via an inband PCE)
+I 1 originality, set to 0 when encoding, ignore when decoding
+J 1 home, set to 0 when encoding, ignore when decoding
+K 1 copyrighted id bit, the next bit of a centrally registered copyright identifier, set to 0 when encoding, ignore when decoding
+L 1 copyright id start, signals that this frame's copyright id bit is the first bit of the copyright id, set to 0 when encoding, ignore when decoding
+M 13 frame length, this value must include 7 or 9 bytes of header length: FrameLength = (ProtectionAbsent == 1 ? 7 : 9) + size(AACFrame)
+O 11 Buffer fullness
+P 2 Number of AAC frames (RDBs) in ADTS frame minus 1, for maximum compatibility always use 1 AAC frame per ADTS frame
+Q 16 CRC if protection absent is 0
+
+- (NSData*) adtsDataForPacketLength:(NSUInteger)packetLength {
+    int adtsLength = 7;
+    char *packet = malloc(sizeof(char) * adtsLength);
+    // Variables Recycled by addADTStoPacket
+    int profile = 2;  //AAC LC
+    //39=MediaCodecInfo.CodecProfileLevel.AACObjectELD;
+    int freqIdx = 4;  //44.1KHz
+    int chanCfg = 1;  //MPEG-4 Audio Channel Configuration. 1 Channel front-center
+    NSUInteger fullLength = adtsLength + packetLength;
+    // fill in ADTS data
+    packet[0] = (char)0xFF; // 11111111     = syncword
+    packet[1] = (char)0xF9; // 1111 1 00 1  = syncword MPEG-2 Layer CRC
+    packet[2] = (char)(((profile-1)<<6) + (freqIdx<<2) +(chanCfg>>2));
+    packet[3] = (char)(((chanCfg&3)<<6) + (fullLength>>11));
+    packet[4] = (char)((fullLength&0x7FF) >> 3);
+    packet[5] = (char)(((fullLength&7)<<5) + 0x1F);
+    packet[6] = (char)0xFC;
+    NSData *data = [NSData dataWithBytesNoCopy:packet length:adtsLength freeWhenDone:YES];
+    return data;
+}

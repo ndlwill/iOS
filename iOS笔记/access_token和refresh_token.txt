@@ -1,0 +1,49 @@
+双token的刷新 access_token和refresh_token
+第一次用账号密码登录服务器会返回两个 token : access_token 和 refresh_token，时效长短不一样。
+短的access_token 时效过了之后，发送时效长的 refresh_token 重新获取一个短时效token，如果都过期，就需要重新登录了。
+
+refresh_token 就是用来刷新access_token 。活跃用户的 access_token 过期了，用refresh_token 获取 新的access_token 。
+
+token过期了就需要用户跳转登录页面重新登录？ 
+显然不是的，如果是 不活跃用户 token过期了，确实需要跳转登录页面重新登录。 但是 活跃用户 ，就算token过期了，也不应该跳转登录页面。
+
+==================================================
+access token 是在 Oauth2.0 协议中，客户端访问资源服务器的令牌（其实就是一段全局唯一的随机字符串）。拥有这个令牌代表着得到用户的授权。它里面包含哪些信息呢？
+哪个用户  在什么时候  授权给哪个客户端  去做什么事情
+
+这个授权是临时的，有一定有效期。这是因为，access token 在使用的过程中可能会泄露。给 access token 限定一个较短的有效期可以降低因 access token 泄露而带来的风险。
+然而引入了有效期之后，客户端使用起来就不那么方便了。每当 access token 过期，客户端就必须重新向用户索要授权。这样用户可能每隔几天，甚至每天都需要进行授权操作。这是一件非常影响用户体验的事情。希望有一种方法，可以避免这种情况。
+于是 Oauth2.0 引入了 refresh token 机制。refresh token 的作用是用来刷新 access token。鉴权服务器提供一个刷新接口
+
+POST /refresh
+参数： refreshtoken
+返回：新的 access token
+
+传入 refresh token，鉴权服务器验证通过后，返回一个新的 access token。为了安全，Oauth2.0 引入了两个措施：
+1，Oauth2.0 要求，refresh token 一定是保存在服务器上（应用方的服务器）的，而绝不能存放在狭义的客户端（例如移动 app、PC端软件、浏览器） 上。调用 refresh 接口的时候，一定是从服务器到服务器的访问；
+2，Oauth2.0 引入了 client_id 、client_secret 机制。即每一个应用都会被分配到一个 client_id 和一个对应的 client_secret。应用必须把 client_secret 妥善保管在服务器上，决不能泄露。刷新 access token 时，需要验证这个 client_secret。
+
+POST /refresh
+参数：
+refresh token
+client_id
+signatrue 签名，由 sha256(client_id + refresh_token + client_secret) 得到
+返回：新的 access token
+
+以上就是 refresh token 机制。refresh token 的有效期非常长，会在用户授权时，随 access token 一起重定向到回调 url，传递给应用。
+
+==================================================Oauth2.0
+是腾讯给有道云笔记进行授权的页面。
+
+这个页面有两个要素：
+1，有认证机制。在腾讯这个例子中，你需要输入QQ账号密码，证明你是一个合法的QQ用户
+2，展示了授权信息。看页面右方“有道云笔记将获得以下权限”部分。这是在告诉用户，如果你授权给客户端，那么，客户端将获得访问你这些资源的权限
+
+注意，这个页面是部署在 B 的鉴权服务器上，所有用户输入的账号密码是直接提交给 B，A 是没有任何机会拿到的。
+如果用户同意授权并且认证通过，那么，接下来鉴权服务器会通知 A，并给 A 发送一个访问令牌（access token，其实就是一段全局唯一的随机字符串）。有了这个访问令牌，A 就可以拿着它去找资源服务器要资源了。
+
+资源服务器在接收到这个请求之后，会拿着 access token，再去找鉴权服务器，检查这个 access token 的合法性和权限，如果通过的话，才返回资源给客户端。
+
+不过你可能会问，这个 access token 和账号密码的区别是什么呢？都是代表用户身份的，为什么 access token 就更安全？答案是：
+1，账号密码是一切，有了账号密码就几乎可以做任何事情（甚至改掉原密码）。而 access token 是有限制范围的。每个 access token 都有一个 scope，也就是允许执行哪些操作。
+2，access token 是有有效期的。如果 access token 被窃取，也不能一直用。

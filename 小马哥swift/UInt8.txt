@@ -1,0 +1,112 @@
+[UInt8]是Swift中的数组类型，也是作用比较特殊的一种数组类型, 常用于底层交互与内存操作与管理。如: 字符串编解码, 充当字节缓冲区等等
+
+字符串编解码:
+###[UInt8]（或[Int8]）转 String###
+String有对应的直接从[UInt8]或[Int8]转换成String的构造函数
+/// "这是一个字符串" 的utf8编码
+let bytes: [UInt8] = [232, 191, 153, 230, 152, 175, 228, 184, 128, 228, 184, 170, 229, 173, 151, 231, 172, 166, 228, 184, 178]
+/// 转换成字符串
+if let msg = String(bytes: bytes, encoding: .utf8) {
+	print(msg)
+}
+
+###String 转 [UInt8](或[Int8]）###
+String转[UInt8]或[Int8]时需要借助中间角色Data
+let msg = "这是一个字符串"
+if let data = msg.data(using: .utf8) {
+  let bytes = [UInt8](data)
+  print(bytes)
+}
+
+底层交互:
+1. 转换到C语言中的const char*, char*, void*,const void*
+这里的转换指的是使用同一块内存地址
+
+指针类型对应关系
+C语言指针类型	swift语言指针对象类型
+char *	UnsafeMutablePointer<Int8>
+const char *	UnsafePointer<Int8>
+unsigned char *	UnsafeMutablePointer<UInt8>
+const unsigned char *	UnsafePointer<UInt8>
+void *	UnsafeMutableRawPointer
+const void *	UnsafeRawPointer
+
+几种特殊的指针类型
+UnsafeRawBufferPointer
+UnsafeMutableRawBufferPointer
+UnsafeBufferPointer<T>
+UnsafeMutableBufferPointer<T>
+
+这些带有Buffer的指针类型， 可以理解为对应的不带Buffer的指针类型加上了缓冲区大小, 比如:
+UnsafePointer<Int> 对应 const int *, 表示仅有地址
+那UnsafeBufferPointer<Int>对应 const int * 加 size, 表示该地址与内存大小所对应的一块缓冲区
+
+
+#####从[UInt8]或[Int8] 转换到 const unsigned char*或 const char *#####
+[UInt8] -> UnsafeRawBufferPointer -> UnsafeBufferPointer<UInt8> -> UnsafePointer<UInt8> (Int8同理)
+
+/// 0. 原始字节数据 8字节
+let buffer = [UInt8](repeating: 0, count: 8) 
+/// 1. [UInt8] -> UnsafeRawBufferPointer
+let unsafeRawBufferPointer = buffer.withUnsafeBytes { $0 } 
+/// 2. UnsafeRawBufferPointer -> UnsafeBufferPointer<UInt8>
+let unsafeBufferPointer = unsafeRawBufferPointer.bindMemory(to: UInt8.self)
+/// 3. UnsafeBufferPointer<UInt8> -> UnsafePointer<UInt8>
+let unsafePointer = unsafeBufferPointer.baseAddress
+其中 步骤1和步骤2可以合并
+/// 0. 原始字节数据 8字节
+let buffer = [UInt8](repeating: 0, count: 8)
+/// 1. [UInt8] -> UnsafeBufferPointer<UInt8>
+let unsafeBufferPointer = buffer.withUnsafeBufferPointer {$0}
+/// 2.. UnsafeBufferPointer<UInt8> -> UnsafePointer<UInt8>
+let unsafePointer = unsafeBufferPointer.baseAddress
+
+
+#####从[UInt8]或[Int8]转换到 unsigned char *或 char *#####
+[UInt8] -> UnsafeMutableRawBufferPointer -> UnsafeMutableBufferPointer<UInt8> -> UnsafeMutablePointer<UInt8> (Int8同理)
+
+/// 0. 原始字节数据 8字节
+var buffer = [UInt8](repeating: 0, count: 8)
+/// 1. [UInt8] -> UnsafeMutableRawBufferPointer
+let unsafeMutableRawBufferPointer = buffer.withUnsafeMutableBytes { $0 }
+/// 2. UnsafeMutableRawBufferPointer -> UnsafeMutableBufferPointer<UInt8>
+let unsafeMutableBufferPointer = unsafeMutableRawBufferPointer.bindMemory(to: UInt8.self)
+/// 3. UnsafeMutableBufferPointer<UInt8> -> UnsafeMutablePointer<UInt8>
+let unsafeMutablePointer = unsafeMutableBufferPointer.baseAddress
+其中的步骤1和步骤2也是可以合并的
+/// [UInt8] -> UnsafeMutableBufferPointer<UInt8>
+let unsafeMutableBufferPointer = buffer.withUnsafeMutableBufferPointer {$0 }
+
+
+#####从[UInt8]或[Int8]转换成const void *或者void *#####
+在上述的步骤里, 在步骤1得到的unsafeMutableRawBufferPointer就可以通过该对象的baseAddress字段就能获取到对应的void *
+
+/// 获取 const void *
+let unsafeRawPointer = unsafeRawBufferPointer.baseAddress
+/// 获取void *
+let unsafeMutableRawPointer = unsafeMutableRawBufferPointer.baseAddress
+
+2. 从C语言中的const char * , char *, const unsigned char *, unsigned char *, const void *, void *对应缓冲区的数据创建 Data
+
+/// 这里是示例， 类型为 UnsafeMutablePointer<Int8>， 也就是 char *
+/// message可能来自任何C语言的接口
+let message = strerror(errno) 
+/// 通过指针和大小来构造 UnsafeBufferPointer<Int8>
+let unsafeBufferPointer = UnsafeBufferPointer<Int8>(start: message, count: strlen(msg!))
+/// 构造Data
+let data = Data(buffer: unsafeBufferPointer)
+
+3. 从Data得到 [UInt8] 或者 [Int8]以及String
+
+Data其实内部就是[UInt8]，在大部分情况下都可以直接当成[UInt8]来使用, 字节的append，remove, insert, find等等都有相同的操作
+但是如果需要拷贝出来一份 [UInt8]或者[Int8]，可以使用map函数
+
+/// 缓冲区里的数据    
+let data = Data(buffer: unsafeBufferPointer)
+/// [UInt8]
+let u8a = data.map {$0}
+/// [Int8]
+let s8a = data.map {Int8($0)}
+
+String也自带从data数据的构造函数
+let text = String(data: data, encoding: .utf8)

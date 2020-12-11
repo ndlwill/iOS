@@ -1450,3 +1450,87 @@ Pod::Spec.new do |s|
   end
 
 end
+
+==================================================[Cocoapods]支持Swift静态库
+// Cocoapods国内镜像
+https://mirrors.tuna.tsinghua.edu.cn/help/CocoaPods/
+
+混编，加use_frameworks!，OC引用全部报红
+https://blog.cocoapods.org/
+https://blog.cocoapods.org/CocoaPods-1.5.0/
+https://stackoverflow.com/
+Cocoapods在1.5.0版本就支持Swift以静态库的形式集成到项目中。
+
+==================================================Cocoapods 1.7.0
+从1.7.2开始，已经完全切到CDN上了。1.8以上甚至把CDN作为默认源
+使用，在Podfile最上面添加即可
+source 'https://cdn.cocoapods.org/'
+
+
+一个功能是 Multiple Pod Projects:
+install! 'cocoapods', :generate_multiple_pod_projects => true
+
+install! 函数只能调用一次
+需要注意 install! 是个用来配置的函数
+install! 'cocoapods', generate_multiple_pod_projects: true
+install! 'cocoapods', disable_input_output_paths: true
+这么做之后发现不生效，后来才想起来 install! 是一个用来配置的函数，重复调用的话，只会以最后一次的调用为准。所以应该在一次调用里把它们都传入进去：
+install! 'cocoapods', 
+         disable_input_output_paths: true,
+         generate_multiple_pod_projects: true
+
+但是如果开启了 generate_multiple_pod_projects 的话，由于项目结构的变化，installer.pod_targets 就没办法获得所有 pods 引入的 target 了:
+post_install do |installer|
+  swift_4_0_compatible = [ ... ]
+  swift_4_2_compatible = [ ... ]
+
+  installer.pod_targets.each do |t|
+    t.build_configurations.each do |c|
+      c.build_settings['SWIFT_VERSION'] = '4.0' if swift_4_0_compatible.include? t.name
+      c.build_settings['SWIFT_VERSION'] = '4.2' if swift_4_2_compatible.include? t.name
+    end
+  end
+end
+
+
+==================================================Cocoapods 1.8.0
+project_name Podfile DSL
+
+DSL 其实是 Domain Specific Language 的缩写,中文翻译为领域特定语言
+
+install! 'cocoapods', :generate_multiple_pod_projects => true // 改变了库的依赖方式，之前是以Targets方式依赖
+
+target 'MyApp' do
+  use_frameworks!
+
+  pod 'Moya', :project_name => 'Networking'// 改变依赖方式的同时，分组
+  pod 'Alamofire', :project_name => 'Networking'
+  pod 'Result', :project_name => 'Networking'
+
+  target 'MyAppTests' do
+    inherit! :search_paths
+    pod 'OCMock', :project_name => 'Testing'
+  end
+end
+
+分组project_name:
+如果某一个库内部依赖了其他库，是不能分组到目的项目中的。不过问题也不是很大，如果真的较真，非要把它分出来。可以把内部依赖库再pod指向一下。
+
+以YYWebImage为例子，内部依赖了YYCache、YYImage
+pod 'YYWebImage', :project_name => 'Image'
+复制代码如果只设置了YYWebImage到Image项目中去，那么YYCache、YYImage就会跑到外面去，可以把内部依赖也指向一下
+pod 'YYWebImage', :project_name => 'Image'
+pod 'YYCache', :project_name => 'Image'
+pod 'YYImage', :project_name => 'Image'
+
+==================================================Pod install (有点小缺陷，理解思想为主)
+每次我们需要安装pod第三方库的时候，都需要:
+先跳到终端
+然后找到podfile所有路径
+再执行pod install 或 pod update
+
+解决办法:
+创建一个PodInstall的脚本target，每次需要的时候，执行build这个脚本。
+
+export PATH=/Users/xxxx/.rvm/rubies/ruby-2.6.3/bin:$PATH
+pod install

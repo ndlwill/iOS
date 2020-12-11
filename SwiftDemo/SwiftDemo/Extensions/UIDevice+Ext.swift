@@ -22,4 +22,23 @@ extension UIDevice {
             return false
         }
     }
+    
+    // https://www.theiphonewiki.com/wiki/Models
+    // https://zh.wikipedia.org/wiki/IOS%E5%92%8CiPadOS%E8%AE%BE%E5%A4%87%E5%88%97%E8%A1%A8
+    // https://www.jianshu.com/p/d0382538049a
+    var modelName: String {
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let machineMirror = Mirror(reflecting: systemInfo.machine)
+        
+        // 型号标识
+        let resultName = machineMirror.children.reduce("") { (result, child) -> String in
+            guard let value = child.value as? Int8, value != 0 else {
+                return result
+            }
+            return result + String(UnicodeScalar(UInt8(value)))
+        }
+        
+        return resultName
+    }
 }

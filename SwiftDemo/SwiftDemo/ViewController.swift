@@ -373,7 +373,7 @@ class ViewController: UIViewController {
             return Disposables.create()
         }
     }
-    
+
     // request11 并行 request1
     func request11() -> Observable<String> {
         print("===start request11===")

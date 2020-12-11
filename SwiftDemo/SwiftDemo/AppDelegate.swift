@@ -12,6 +12,16 @@
 // https://juejin.cn/user/2348212570038446/posts
 // https://juejin.cn/user/2242659450368119/posts
 
+// MARK: apple document
+// https://developer.apple.com/library/archive/navigation/
+// https://help.apple.com/developer-account/#/dev77c875b7e
+
+// MARK: 知识小集
+// https://juejin.cn/user/1327865776308782/posts
+
+// MARK: AVFoundation相关
+// https://juejin.cn/user/1714893870076253/posts
+
 // MARK: 字节跳动/bytedance
 // https://juejin.cn/user/2788017221155176/posts
 
@@ -1007,6 +1017,14 @@ directory that contains your module map.
 // Sentry崩溃收集
 // ESPullToRefresh
 // https://www.jianshu.com/p/c3f2b8ef9c4b
+// XLPagerTabStrip
+// https://github.com/xmartlabs/XLPagerTabStrip
+
+// 唱吧
+// https://github.com/ChangbaDevs
+
+// ZFPlayer
+// https://github.com/renzifeng/ZFPlayer
 
 // https://github.com/JoanKing/JKSwiftExtension // Extension
 // https://github.com/HeathWang/HWPanModal
@@ -2765,7 +2783,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
          */
         
         
-        // MARK: String
+        // MARK: ===String===UnicodeScalar
         /**
          NSString对象使用UTF-16编码
          
