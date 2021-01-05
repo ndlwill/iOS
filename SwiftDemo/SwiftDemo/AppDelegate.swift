@@ -5,7 +5,16 @@
 //
 //  Created by dzcx on 2019/7/17.
 //  Copyright © 2019 dzcx. All rights reserved.
-//
+
+// 16进制 两位算一个字节（0x00）
+// 0xff(16进制) == 11111111（2进制） == 255(10进制)
+// 0xf == 1111
+
+// MARK: swift源码分析
+// https://www.cnblogs.com/huahuahu/
+
+// MARK: RFC规范
+// https://www.ietf.org/rfc/
 
 // MARK: 面试
 // https://github.com/DevDragonLi/iOSInterviewsAndDevNotes // 必须看
@@ -93,6 +102,9 @@ directory that contains your module map.
 
 // MARK: github tools
 // https://github.com/filsv/iPhoneOSDeviceSupport
+
+// MARK: objccn
+// https://onevcat.com/
 
 // MARK: swift开源框架
 // https://www.jianshu.com/p/0797ca000ee1
