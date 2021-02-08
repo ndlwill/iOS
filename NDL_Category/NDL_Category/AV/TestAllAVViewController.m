@@ -9,6 +9,8 @@
 #import "TestAllAVViewController.h"
 #import <CoreMedia/CoreMedia.h>
 
+#import <AVFoundation/AVFoundation.h>
+
 // MARK: CMTime
 /**
  typedef struct
@@ -185,6 +187,10 @@
     {{0/1 = 0.000}, {+INFINITY}}
     */
 
+}
+
+- (void)testAVAssetWriterXXX {
+    
 }
 
 @end

@@ -122,3 +122,289 @@ dispatch_semaphore_create(long value)
 }
 
 第一步就声明了一个信号量对象，然后判断value，小于0就是不正确操作。后面就是创建对象，开辟空间。最主要的两步其实就是value的赋值。
+
+#define dispatch_wait(object, timeout) \
+		_Generic((object), \
+			dispatch_block_t:dispatch_block_wait, \
+			dispatch_group_t:dispatch_group_wait, \
+			dispatch_semaphore_t:dispatch_semaphore_wait \
+		)((object),(timeout))
+
+dispatch_semaphore_wait(dispatch_semaphore_t dsema, dispatch_time_t timeout)
+{
+	long value = os_atomic_dec2o(dsema, dsema_value, acquire);
+	if (likely(value >= 0)) {
+		return 0;
+	}
+	return _dispatch_semaphore_wait_slow(dsema, timeout);
+}
+
+中间一个if条件判断，如果value >= 0，则直接返回一个0，返回0表示堵塞，允许进来的线程为0
+
+#define os_atomic_dec2o(p, f, m) \ os_atomic_sub2o(p, f, 1, m)             =======> 宏定义
+#define os_atomic_sub2o(p, f, v, m) \ os_atomic_sub(&(p)->f, (v), m)        ========> 宏定义
+#define os_atomic_sub(p, v, m) \ _os_atomic_c11_op((p), (v), m, sub, -)     ========> 宏定义
+实际上这一步就是进行-1操作
+
+再看_dispatch_semaphore_wait_slow()方法，走到这步，说明value值是小于0的
+_dispatch_semaphore_wait_slow(dispatch_semaphore_t dsema,
+		dispatch_time_t timeout)
+{
+	long orig;
+
+	_dispatch_sema4_create(&dsema->dsema_sema, _DSEMA4_POLICY_FIFO);
+	switch (timeout) {
+	default:
+		if (!_dispatch_sema4_timedwait(&dsema->dsema_sema, timeout)) {
+			break;
+		}
+		// Fall through and try to undo what the fast path did to
+		// dsema->dsema_value
+	case DISPATCH_TIME_NOW:
+		orig = dsema->dsema_value;
+		while (orig < 0) {
+			if (os_atomic_cmpxchgvw2o(dsema, dsema_value, orig, orig + 1,
+					&orig, relaxed)) {
+				return _DSEMA4_TIMEOUT();
+			}
+		}
+		// Another thread called semaphore_signal().
+		// Fall through and drain the wakeup.
+	case DISPATCH_TIME_FOREVER:
+		_dispatch_sema4_wait(&dsema->dsema_sema);
+		break;
+	}
+	return 0;
+}
+
+就是告诉我们会一直的进行等待，它是对我们第二个参数设置的遍历。 我们这里设置的是forever，永久等待。注释也帮我们解答了，如果想要唤醒，那么就调用semaphore_signal()方法。
+
+dispatch_semaphore_signal(dispatch_semaphore_t dsema)
+{
+	long value = os_atomic_inc2o(dsema, dsema_value, release);
+	if (likely(value > 0)) {
+		return 0;
+	}
+	if (unlikely(value == LONG_MIN)) {
+		DISPATCH_CLIENT_CRASH(value,
+				"Unbalanced call to dispatch_semaphore_signal()");
+	}
+	return _dispatch_semaphore_signal_slow(dsema);
+}
+
+#define os_atomic_inc2o(p, f, m) \ os_atomic_add2o(p, f, 1, m)
+#define os_atomic_add2o(p, f, v, m) \ os_atomic_add(&(p)->f, (v), m)
+#define os_atomic_add(p, v, m) \ _os_atomic_c11_op((p), (v), m, add, +)
+就是+1操作。
+
+后面的方法_dispatch_semaphore_signal_slow表示持续加一的状态，最后返回1，表示为非阻塞状态。
+
+----------------------------------------
+创建信号量
+方法：dispatch_semaphore_create(long value)
+如果 value > 0，就相当于创建了个信号量，并同时发出value个信号。
+如果 value = 0，就相当于单纯仅仅创建了个信号量，还没发信号。
+如果 value < 0，直接failure，返回一个NULL。
+
+value	信号量的初始数量（>=0）。
+注意：传递一个小于零的值将会返回NULL。
+
+发送信号量
+方法：dispatch_semaphore_signal(dispatch_semaphore_t dsema);
+dispatch_semaphore_t	传入所要发送信号的信号量。
+dispatch_semaphore_t的信号计数+1。
+
+等待信号量
+方法：dispatch_semaphore_wait(dispatch_semaphore_t dsema, dispatch_time_t timeout);
+dispatch_semaphore_t
+传入所要等待信号的信号量。dispatch_semaphore_t的信号计数-1。
+dispatch_time_t
+超时等待时间。超过该时间就返回非0，并会直接往下执行。也可以设置为DISPATCH_TIME_FOREVER，永久等待。
+
+返回值	说明
+Int	成功收到信号返回0，超时未收到返回非0。
+
+信号量的应用
+使用信号量使“异步”线程完成“同步”操作。
+即使是在多线程并发的场景，也可以通过控制信号量来保证操作的同步。
+举个例子：通常，我们要实现异步线程完成同步操作。有两种做法：
+1. 第一种：使用串行队列+异步操作。
+这种情况只会开启一条子线程，并按顺序执行串行操作。
+dispatch_queue_t queue = dispatch_queue_create("serial", DISPATCH_QUEUE_SERIAL);
+dispatch_async(queue, ^{
+	NSLog(@"111:%@",[NSThread currentThread]);
+});
+dispatch_async(queue, ^{
+	NSLog(@"222:%@",[NSThread currentThread]);
+});
+dispatch_async(queue, ^{
+	NSLog(@"333:%@",[NSThread currentThread]);
+});
+这种方式有些缺陷：
+第一： 因为是异步操作，所以会开启一个新的子线程， 同时又是串行队列，所以只会开启一条子线程进行同步操作。 丧失了多线程的优势。
+第二： 需要写在一个方法里去做， 而实际开发中，可能异步分布在各个方法中，但同时又想串行去执行。
+
+2. 第二种：使用信号量，控制多线程下的同步操作。
+dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+dispatch_async(dispatch_get_global_queue(0, 0), ^{
+	
+	NSLog(@"任务1:%@",[NSThread currentThread]);
+	dispatch_semaphore_signal(sem);
+});
+
+dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+
+dispatch_async(dispatch_get_global_queue(0, 0), ^{
+	NSLog(@"任务2:%@",[NSThread currentThread]);
+	dispatch_semaphore_signal(sem);
+});
+
+dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+
+dispatch_async(dispatch_get_global_queue(0, 0), ^{
+	NSLog(@"任务3:%@",[NSThread currentThread]);
+});
+这里只是个例子
+
+==================================================调度组dispatch_group_t
+dispatch_group_create()
+
+dispatch_group_enter()
+dispatch_group_leave() 
+
+dispatch_group_async(<#dispatch_group_t  _Nonnull group#>, <#dispatch_queue_t  _Nonnull queue#>, ^{
+
+});
+
+dispatch_group_notify(, , );
+
+先看创建dispatch_group_create()
+dispatch_group_create(void)
+{
+	return _dispatch_group_create_with_count(0);
+}
+
+_dispatch_group_create_with_count(uint32_t n)
+{
+	dispatch_group_t dg = _dispatch_object_alloc(DISPATCH_VTABLE(group),
+			sizeof(struct dispatch_group_s));
+	dg->do_next = DISPATCH_OBJECT_LISTLESS;
+	dg->do_targetq = _dispatch_get_default_queue(false);
+	if (n) {
+		os_atomic_store2o(dg, dg_bits,
+				-n * DISPATCH_GROUP_VALUE_INTERVAL, relaxed);
+		os_atomic_store2o(dg, do_ref_cnt, 1, relaxed); // <rdar://22318411>
+	}
+	return dg;
+}
+可以看出就是创建了一个dispatch_group_t类型的对象
+
+dispatch_group_enter(dispatch_group_t dg)
+{
+	// The value is decremented on a 32bits wide atomic so that the carry
+	// for the 0 -> -1 transition is not propagated to the upper 32bits.
+	uint32_t old_bits = os_atomic_sub_orig2o(dg, dg_bits,
+			DISPATCH_GROUP_VALUE_INTERVAL, acquire);
+	uint32_t old_value = old_bits & DISPATCH_GROUP_VALUE_MASK;
+	if (unlikely(old_value == 0)) {
+		_dispatch_retain(dg); // <rdar://problem/22318411>
+	}
+	if (unlikely(old_value == DISPATCH_GROUP_VALUE_MAX)) {
+		DISPATCH_CLIENT_CRASH(old_bits,
+				"Too many nested calls to dispatch_group_enter()");
+	}
+}
+
+#define os_atomic_sub_orig2o(p, f, v, m) \ os_atomic_sub_orig(&(p)->f, (v), m)
+#define os_atomic_sub_orig(p, v, m) \ _os_atomic_c11_op_orig((p), (v), m, sub, -)
+然后判断，等于0直接返回，造成堵塞。
+
+dispatch_group_leave(dispatch_group_t dg)
+{
+	// The value is incremented on a 64bits wide atomic so that the carry for
+	// the -1 -> 0 transition increments the generation atomically.
+	uint64_t new_state, old_state = os_atomic_add_orig2o(dg, dg_state,
+			DISPATCH_GROUP_VALUE_INTERVAL, release);
+	uint32_t old_value = (uint32_t)(old_state & DISPATCH_GROUP_VALUE_MASK);
+
+	if (unlikely(old_value == DISPATCH_GROUP_VALUE_1)) {
+		// 省略一些无关代码
+		return _dispatch_group_wake(dg, old_state, true);
+	}
+
+	if (unlikely(old_value == 0)) {
+		DISPATCH_CLIENT_CRASH((uintptr_t)old_value,
+				"Unbalanced call to dispatch_group_leave()");
+	}
+}
+第一步就是执行+1的操作
+
+_dispatch_group_wake(dispatch_group_t dg, uint64_t dg_state, bool needs_release)
+{
+	uint16_t refs = needs_release ? 1 : 0; // <rdar://problem/22318411>
+
+	if (dg_state & DISPATCH_GROUP_HAS_NOTIFS) {
+		dispatch_continuation_t dc, next_dc, tail;
+
+		// Snapshot before anything is notified/woken <rdar://problem/8554546>
+		dc = os_mpsc_capture_snapshot(os_mpsc(dg, dg_notify), &tail);
+		do {
+			dispatch_queue_t dsn_queue = (dispatch_queue_t)dc->dc_data;
+			next_dc = os_mpsc_pop_snapshot_head(dc, tail, do_next);
+			_dispatch_continuation_async(dsn_queue, dc,
+					_dispatch_qos_from_pp(dc->dc_priority), dc->dc_flags);
+			_dispatch_release(dsn_queue);
+		} while ((dc = next_dc));
+
+		refs++;
+	}
+
+	if (dg_state & DISPATCH_GROUP_HAS_WAITERS) {
+		_dispatch_wake_by_address(&dg->dg_gen);
+	}
+
+	if (refs) _dispatch_release_n(dg, refs);
+}
+走到这步就表明出里调度组，执行队列里的所有任务，里面有个do...while循环。
+
+dispatch_group_async(dispatch_group_t dg, dispatch_queue_t dq,
+		dispatch_block_t db)
+{
+	dispatch_continuation_t dc = _dispatch_continuation_alloc();
+	uintptr_t dc_flags = DC_FLAG_CONSUME | DC_FLAG_GROUP_ASYNC;
+	dispatch_qos_t qos;
+
+	qos = _dispatch_continuation_init(dc, dq, db, 0, dc_flags);
+	_dispatch_continuation_group_async(dg, dq, dc, qos);
+}
+第一步_dispatch_continuation_init()操作是保存任务块
+接着看_dispatch_continuation_group_async()
+
+_dispatch_continuation_group_async(dispatch_group_t dg, dispatch_queue_t dq,
+		dispatch_continuation_t dc, dispatch_qos_t qos)
+{
+	dispatch_group_enter(dg);
+	dc->dc_data = dg;
+	_dispatch_continuation_async(dq, dc, qos, dc->dc_flags);
+}
+
+
+_dispatch_group_notify(dispatch_group_t dg, dispatch_queue_t dq,
+		dispatch_continuation_t dsn)
+{
+	prev = os_mpsc_push_update_tail(os_mpsc(dg, dg_notify), dsn, do_next);
+	if (os_mpsc_push_was_empty(prev)) _dispatch_retain(dg);
+	os_mpsc_push_update_prev(os_mpsc(dg, dg_notify), prev, dsn, do_next);
+	if (os_mpsc_push_was_empty(prev)) {
+		os_atomic_rmw_loop2o(dg, dg_state, old_state, new_state, release, {
+			new_state = old_state | DISPATCH_GROUP_HAS_NOTIFS;
+			if ((uint32_t)old_state == 0) {
+				os_atomic_rmw_loop_give_up({
+					return _dispatch_group_wake(dg, new_state, false);
+				});
+			}
+		});
+	}
+}
+
+其实dispatch_group_async()与_dispatch_group_notify()就是对dispatch_group_enter()和dispatch_group_leave()的封装

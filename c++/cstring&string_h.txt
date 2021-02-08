@@ -1,0 +1,1 @@
+http://www.cplusplus.com/reference/cstring/

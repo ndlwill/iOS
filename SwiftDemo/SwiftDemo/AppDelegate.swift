@@ -8,7 +8,17 @@
 
 // 16进制 两位算一个字节（0x00）
 // 0xff(16进制) == 11111111（2进制） == 255(10进制)
-// 0xf == 1111
+// 0xf == 1111 // 1个16进制位等于4个2进制位
+/**
+ // 0x00 00 00 00 00 00 00 0A （8个字节的内存存储）
+ var age = 10
+ */
+
+// MARK: CA && WK
+// https://juejin.cn/user/588993965333309/posts
+
+// MARK: 网络
+// https://juejin.cn/post/6885167775409504269 // https://github.com/ifgyong/iOSDataFactory
 
 // MARK: swift源码分析
 // https://www.cnblogs.com/huahuahu/
@@ -30,9 +40,14 @@
 
 // MARK: AVFoundation相关
 // https://juejin.cn/user/1714893870076253/posts
+// https://www.jianshu.com/p/11bb9f2a9233
+
+// MARK: 金山视频云
+// https://www.jianshu.com/u/b2227c3472fd
 
 // MARK: 字节跳动/bytedance
 // https://juejin.cn/user/2788017221155176/posts
+// https://juejin.cn/user/3421335918753102/posts
 
 // MARK: M3U
 // https://zh.wikipedia.org/wiki/M3U
