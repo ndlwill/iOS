@@ -14,6 +14,18 @@
  var age = 10
  */
 
+/**
+ NSObject *obj = [[NSObject alloc] init];
+ NSLog(@"%p %p", &obj, obj);// &obj: 局部变量（指针变量）obj的地址，obj：局部变量（指针变量）obj所指向的堆空间地址
+ 
+ 0x7ffee6152088 0x60000232c530
+ (lldb)x/g 0x7ffee6152088
+ 0x7ffee6152088: 0x000060000232c530// 局部变量（指针变量）obj的地址中存的值即为指向的堆空间地址
+ */
+
+// MARK: ali
+// https://github.com/wsl2ls // iOS_Tip
+
 // MARK: CA && WK
 // https://juejin.cn/user/588993965333309/posts
 
@@ -120,6 +132,9 @@ directory that contains your module map.
 
 // MARK: objccn
 // https://onevcat.com/
+
+// MARK: objc.io
+// https://www.objc.io/issues/13-architecture/viper/
 
 // MARK: swift开源框架
 // https://www.jianshu.com/p/0797ca000ee1

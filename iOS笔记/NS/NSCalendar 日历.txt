@@ -1,0 +1,208 @@
+NSCalendar 对世界上现存的常用的历法进行了封装，既提供了不同历法的时间信息，又支持日历的计算。可以很方便的用来表示日期，获取日期的各种信息，包括年、月、日，时分秒。可以很方便的计算两个日期之前的关系。也可以很方便的根据一个日期获取另一个日期。
+
+NSCalendar -- 日历类，它提供了大部分的日期计算接口，并且允许您在NSDate和NSDateComponents之间转换
+NSTimeZone -- 时区信息
+NSLocale -- 本地化信息
+NSDate -- 表示一个绝对的时间点
+NSDateComponents -- 一个封装了具体年月日、时秒分、周、季度等的类
+NSDateFormatter -- 用来在日期和字符串之间转换
+
+日历的创建
+根据提供的日历标示符初始化。
+identifier 的范围可以是:
+NSCalendarIdentifierGregorian         公历
+NSCalendarIdentifierBuddhist          佛教日历
+NSCalendarIdentifierChinese           中国农历
+NSCalendarIdentifierHebrew            希伯来日历
+NSCalendarIdentifierIslamic           伊斯兰日历
+NSCalendarIdentifierIslamicCivil      伊斯兰教日历
+NSCalendarIdentifierJapanese          日本日历
+NSCalendarIdentifierRepublicOfChina   中华民国日历（台湾）
+NSCalendarIdentifierPersian           波斯历
+NSCalendarIdentifierIndian            印度日历
+NSCalendarIdentifierISO8601           ISO8601
+
+// 使用用户手机设置的日期信息，有缓存，用户手机日历改变后不会变
+@property (class, readonly, copy) NSCalendar *currentCalendar;  
+// 使用用户手机设置的日期信息，并且用户改变之后会跟着改变
+@property (class, readonly, strong) NSCalendar *autoupdatingCurrentCalendar API_AVAILABLE(macos(10.5), ios(2.0), watchos(2.0), tvos(9.0)); // tracks changes to user's preferred calendar identifier
+// 使用指定的标识获取日期，比如农历、佛历，常用的是格里高利历（NSCalendarIdentifierGregorian）
++ (nullable NSCalendar *)calendarWithIdentifier:(NSCalendarIdentifier)calendarIdentifierConstant API_AVAILABLE(macos(10.9), ios(8.0), watchos(2.0), tvos(9.0));
+- (nullable id)initWithCalendarIdentifier:(NSCalendarIdentifier)ident NS_DESIGNATED_INITIALIZER;
+
+NSCalendar中有一个重要的概念NSCalendarUnit，这是一个位枚举，意味着作为参数可以采用位运算的方式传参。
+另外一个比较重要的类是NSDateComponents，上面是通过位参数获取每个单位（年月日）的信息，返回的结构可以看到是一个NSDateComponents，如果我要表示一个日期的信息，构建日期或者进行日期的计算，就少不了NSDateComponents，它可以将日期按照单位的形式封装起来，然后通过NSCalendar的方法进行计算
+
+NSDateComponents *comps = [NSCalendar.currentCalendar components:NSCalendarUnitYear | NSCalendarUnitMonth | NSCalendarUnitDay fromDate:[NSDate date]];
+
+
+NSCalendar *calendar = [NSCalendar currentCalendar];
+
+// 获取日历标示符
+NSString *calendarIdentifier =  calendar.calendarIdentifier;
+
+// 获取地区信息
+/*
+语言地区
+*/
+NSString *localeIdentifier = calendar.locale.localeIdentifier;
+NSString *localeIdentifier2 = [calendar.locale objectForKey:NSLocaleIdentifier];
+
+// 获取时区信息
+NSTimeZone *timeZone = calendar.timeZone;
+
+// 获取每周的第一天从星期几开始
+/*
+缺省为星期天
+*/
+NSUInteger firstWeekday = calendar.firstWeekday;
+
+// 获取第一周必须包含的最少天数
+/*
+缺省为 1
+*/
+NSUInteger minimumDaysInFirstWeek = calendar.minimumDaysInFirstWeek;
+
+
+3. 日历信息的获取
+1） 获取一个小的单位在一个大的单位里面的序数
+NSUInteger count = [calendar ordinalityOfUnit:NSCalendarUnitWeekday
+inUnit:NSCalendarUnitWeekOfMonth
+forDate:[NSDate date]];
+
+NSCalendarUnitEra                 -- 纪元单位。对于 NSGregorianCalendar (公历)来说，只有公元前(BC)和公元(AD)；
+                                    而对于其它历法可能有很多，例如日本和历是以每一代君王统治来做计算。
+NSCalendarUnitYear                -- 年单位。值很大，相当于经历了多少年，未来多少年。
+NSCalendarUnitMonth               -- 月单位。范围为1-12
+NSCalendarUnitDay                 -- 天单位。范围为1-31
+NSCalendarUnitHour                -- 小时单位。范围为0-24
+NSCalendarUnitMinute              -- 分钟单位。范围为0-60
+NSCalendarUnitSecond              -- 秒单位。范围为0-60
+NSCalendarUnitWeekOfMonth / NSCalendarUnitWeekOfYear -- 周单位。范围为1-53
+NSCalendarUnitWeekday             -- 星期单位，每周的7天。范围为1-7
+NSCalendarUnitWeekdayOrdinal      -- 没完全搞清楚
+NSCalendarUnitQuarter             -- 几刻钟，也就是15分钟。范围为1-4
+NSCalendarUnitWeekOfMonth         -- 月包含的周数。最多为6个周
+NSCalendarUnitWeekOfYear          -- 年包含的周数。最多为53个周
+NSCalendarUnitYearForWeekOfYear   -- 没完全搞清楚
+NSCalendarUnitTimeZone            -- 没完全搞清楚
+
+当小单位为 NSCalendarUnitWeekday，大单位为 NSCalendarUnitWeekOfMonth / NSCalendarUnitWeekOfYear 时
+(即某个日期在这一周是第几天)，根据 firstWeekday 属性不同，返回的结果也不同。
+当 firstWeekday 被指定为星期天(即 = 1)时，它返回的值与星期几对应的数值保持一致。比如:
+fromDate 传入的参数是星期日，则函数返回 1
+fromDate 传入的参数是星期一，则函数返回 2
+当 firstWeekday 被指定为其它值时(即 <> 1)时，假设firstWeekday 被指定为星期一(即 = 2)，那么:
+fromDate 传入的参数是星期一，则函数返回 1
+fromDate 传入的参数是星期二，则函数返回 2
+fromDate 传入的参数是星期日，则函数返回 7
+
+当小单位为 参数为 NSCalendarUnitWeekOfMonth / NSCalendarUnitWeekOfYear，大单位为 NSCalendarUnitYear 时
+(即某个日期在这一年中是第几周)，minimumDaysInFirstWeek 属性影响它的返回值。
+
+2005年1月
+日   一    二   三   四    五   六
+--------------------------------
+                            1
+2    3    4    5    6    7    8
+9    10   11   12   13   14   15
+16   17   18   19   20   21   22
+23   24   25   26   27   28   29
+30   31
+
+2005年1月第一周包括1号。
+a. 如果将 minimumDaysInFirstWeek 设定 = 1
+则 fromDate 传入1月1号，方法均返回1  ==> 满足 minimumDaysInFirstWeek 指定的天数(最少1天)，所以方法将其归为
+                                    2005年的第1周
+则 fromDate 传入1月2-8号，方法均返回2
+则 fromDate 传入1月9-15号，方法均返回3
+......
+
+b. 如果将 minimumDaysInFirstWeek 设定为 > 1，比如2
+则 fromDate 传入1月1号，方法均返回53  ==> 不足2天，所以方法将其归为2004年的第53周
+则 fromDate 传入1月2-8号，方法均返回1
+则 fromDate 传入1月9-15号，方法均返回2
+......
+
+2008年1月
+日   一    二   三   四    五   六
+---------------------------------
+        1    2    3    4    5
+6    7    8    9    10   11   12
+13   14   15   16   17   18   19
+20   21   22   23   24   25   26
+27   28   29   30   31
+
+2005年1月第一周包括1-5号共5天。
+a. 如果将 minimumDaysInFirstWeek 设定为 <= 5时
+则 fromDate 传入1月1-5号，方法均返回1  ==> 满足 minimumDaysInFirstWeek 指定的天数，所以方法将其归为2008年的第1周
+则 fromDate 传入1月6-12号，方法均返回2
+则 fromDate 传入1月13-19号，方法均返回3
+......
+
+b. 如果将 minimumDaysInFirstWeek 设定为 > 5，比如6
+则 fromDate 传入1月1-5号，方法均返回53  ==> 当周不足6天，所以方法将其归为2007年的第53周
+则 fromDate 传入1月2-8号，方法均返回1
+则 fromDate 传入1月9-15号，方法均返回2
+......
+
+当小单位为 参数为 NSCalendarUnitWeekOfMonth / NSCalendarUnitWeekOfYear，大单位为 NSCalendarUnitMonth 时
+(即某个日期在这一个月中是第几周)，minimumDaysInFirstWeek 属性影响它的返回值。
+
+2008年4月
+日   一    二   三   四    五   六
+---------------------------------
+        1    2    3    4    5
+6    7    8    9    10   11   12
+13   14   15   16   17   18   19
+20   21   22   23   24   25   26
+27   28   29   30
+
+2008年4月第一周包括1、2、3、4、5号。
+a. 如果将 minimumDaysInFirstWeek 设定为小于或等于5的数
+则 fromDate 传入4月1-5号，方法均返回1
+则 fromDate 传入4月6-12号，方法均返回2
+则 fromDate 传入4月13-19号，方法均返回3
+....
+
+b. 如果将 minimumDaysInFirstWeek 设定为大于5的数
+则 fromDate 传入1-5号，方法均返回0
+则 fromDate 传入6-12号，方法均返回1
+则 fromDate 传入13-19号，方法均返回2
+....
+
+2）获取一个小的单位在一个大的单位里面的取值范围
+NSRange range = [calendar rangeOfUnit:NSCalendarUnitDay inUnit:NSCalendarUnitMonth forDate:[NSDate date]];
+NSLog(@"%zi -- %zi", range.location, range.length);
+- (NSRange)rangeOfUnit:(NSCalendarUnit)smaller inUnit:(NSCalendarUnit)larger forDate:(NSDate *)date;
+
+调用这个方法要明确一点，取得的是"范围"而不是"包含"，下面是一些例子：
+
+<1>、小单位是 NSCalendarUnitDay，大单位是 NSCalendarUnitYear，并不是要取这一年包含多少天，而是要取"天"(Day)这个单位
+在这一年(Year)的取值范围。其实不管你提供的日期是多少，返回的值都是"1--31"。
+
+<2>、小单位是 NSCalendarUnitDay，大单位是 NSCalendarUnitMonth。要取得参数时间点所对应的月份下，"天"(Day)的取值范围。
+根据参数时间的月份不同，值也不同。例如2月是1--28、3月是 1--31、4月是1--30。
+
+<3>、小单位是 NSCalendarUnitWeekOfMonth / NSCalendarUnitWeekOfYear，大单位是 NSCalendarUnitMonth。要取得参数
+时间点所对应的月份下，"周"(Week)的取值范围。需要注意的是结果会受到 minimumDaysInFirstWeek 属性的影响。在默认 
+minimumDaysInFirstWeek 情况下，取得的范围值一般是"1--5"，从日历上可以看出来这个月包含5排，即5个周。
+
+<4>、小单位是 NSCalendarUnitDay，大单位是 NSCalendarUnitWeekOfMonth / NSCalendarUnitWeekOfYear。要取得周所包含
+的"天"(Day)的取值范围。下面是一个示例日历图：
+
+2013年4月
+日   一    二   三   四    五   六
+---------------------------------
+        1    2    3    4    5    6    
+7    8    9    10   11   12  13   
+14   15   16   17   18   19  20   
+21   22   23   24   25   26  27   
+28   29   30
+
+在上图的日期条件下，假如提供的参数是4月1日--4月6日，那么对应的 week 就是1(第一个周)，可以看到第一个周包含有6天，
+从1号开始，那么最终得到的范围值为1--6。
+
+假如提供的参数是4月18日，那么对应的 week 是3(第三个周)，第三个周包含有7天，从14号开始，那么最终得到的范围值是14--7。
+
+假如提供的参数是4月30日，那么对应的 week 是5(第五个周)，第五个周只包含3天，从28号开始，那么最终得到的范围值是28--3。
