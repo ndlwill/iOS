@@ -1,0 +1,290 @@
+官方文档
+https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Streams/Streams.html#//apple_ref/doc/uid/10000188-SW1
+
+a stream can be an input (or read) stream or an output (or write) stream.
+NSStream is built on the CFStream layer of Core Foundation.
+This close relationship means that the concrete subclasses of NSStream, NSOutputStream and NSInputStream, are toll-free bridged with their Core Foundation counterparts CFWriteStream and CFReadStream.
+The Cocoa stream classes use the delegation model for asynchronous behavior (assuming run-loop scheduling) while Core Foundation uses client callbacks.
+
+In Cocoa, reading from an NSInputStream instance consists of several steps:
+Create and initialize an instance of NSInputStream from a source of data.
+Schedule the stream object on a run loop and open the stream.
+Handle the events that the stream object reports to its delegate.
+When there is no more data to read, dispose of the stream object.
+
+Reading From Input Streams:
+To begin using an NSInputStream object you must have (after first locating, if necessary) a source of data for the stream. The source of data can be a file, an NSData object, or a network socket.
+
+- (void)setUpStreamForFile:(NSString *)path {
+    // iStream is NSInputStream instance variable
+    iStream = [[NSInputStream alloc] initWithFileAtPath:path];
+    [iStream setDelegate:self];
+    [iStream scheduleInRunLoop:[NSRunLoop currentRunLoop]
+        forMode:NSDefaultRunLoopMode];
+    [iStream open];
+}
+Before you open the stream to begin the streaming of data, send a scheduleInRunLoop:forMode: message to the stream object to schedule it to receive stream events on a run loop. 
+By doing this, you are helping the delegate to avoid blocking when there is no data on the stream to read. 
+If streaming is taking place on another thread, be sure to schedule the stream object on that thread’s run loop. 
+You should never attempt to access a scheduled stream from a thread different than the one owning the stream’s run loop.
+
+Handling Stream Events：
+streamStatus
+hasBytesAvailable
+streamError
+
+For NSInputStream objects, the most common types of events are NSStreamEventOpenCompleted, NSStreamEventHasBytesAvailable, and NSStreamEventEndEncountered. 
+
+Handling a bytes-available event：
+- (void)stream:(NSStream *)stream handleEvent:(NSStreamEvent)eventCode {
+    switch(eventCode) {
+        case NSStreamEventHasBytesAvailable:
+        {
+            if(!_data) {
+                _data = [[NSMutableData data] retain];
+            }
+            uint8_t buf[1024];
+            NSInteger len = 0;
+            len = [(NSInputStream *)stream read:buf maxLength:1024];
+            if(len) {
+                [_data appendBytes:(const void *)buf length:len];
+                // bytesRead is an instance variable of type NSNumber.
+                [bytesRead setIntValue:[bytesRead intValue]+len];
+            } else {
+                NSLog(@"no buffer!");
+            }
+            break;
+        }
+        // continued
+
+Closing and releasing the NSInputStream object：
+- (void)stream:(NSStream *)stream handleEvent:(NSStreamEvent)eventCode
+{
+    switch(eventCode) {
+        case NSStreamEventEndEncountered:
+        {
+            [stream close];
+            [stream removeFromRunLoop:[NSRunLoop currentRunLoop]
+                forMode:NSDefaultRunLoopMode];
+            [stream release];
+            stream = nil; // stream is ivar, so reinit it
+            break;
+        }
+        // continued ...
+    }
+}
+
+Writing To Output Streams：
+Using an NSOutputStream instance to write to an output stream requires several steps:
+Create and initialize an instance of NSOutputStream with a repository for the written data. Also set a delegate.
+Schedule the stream object on a run loop and open the stream.
+Handle the events that the stream object reports to its delegate.
+If the stream object has written data to memory, obtain the data by requesting the NSStreamDataWrittenToMemoryStreamKey property.
+When there is no more data to write, dispose of the stream object.
+
+Creating and initializing an NSOutputStream object for memory：
+- (void)createOutputStream {
+    NSLog(@"Creating and opening NSOutputStream...");
+    // oStream is an instance variable
+    oStream = [[NSOutputStream alloc] initToMemory];
+    [oStream setDelegate:self];
+    [oStream scheduleInRunLoop:[NSRunLoop currentRunLoop]
+        forMode:NSDefaultRunLoopMode];
+    [oStream open];
+}
+
+Handling Stream Events：
+streamStatus
+hasSpaceAvailable
+streamError
+
+For NSOutputStream objects, the most common types of events are NSStreamEventOpenCompleted, NSStreamEventHasSpaceAvailable, and NSStreamEventEndEncountered. 
+
+Handling a space-available event：
+- (void)stream:(NSStream *)stream handleEvent:(NSStreamEvent)eventCode
+{
+    switch(eventCode) {
+        case NSStreamEventHasSpaceAvailable:
+        {
+            uint8_t *readBytes = (uint8_t *)[_data mutableBytes];
+            readBytes += byteIndex; // instance variable to move pointer
+            int data_len = [_data length];
+            unsigned int len = ((data_len - byteIndex >= 1024) ?
+                1024 : (data_len-byteIndex));
+            uint8_t buf[len];
+            (void)memcpy(buf, readBytes, len);
+            len = [stream write:(const uint8_t *)buf maxLength:len];
+            byteIndex += len;
+            break;
+        }
+        // continued ...
+    }
+}
+
+Closing and releasing the NSInputStream object：
+- (void)stream:(NSStream *)stream handleEvent:(NSStreamEvent)eventCode
+{
+    switch(eventCode) {
+        case NSStreamEventEndEncountered:
+        {
+            NSData *newData = [oStream propertyForKey:
+                NSStreamDataWrittenToMemoryStreamKey];
+            if (!newData) {
+                NSLog(@"No data written to memory!");
+            } else {
+                [self processData:newData];
+            }
+            [stream close];
+            [stream removeFromRunLoop:[NSRunLoop currentRunLoop]
+                forMode:NSDefaultRunLoopMode];
+            [stream release];
+            oStream = nil; // oStream is instance variable
+            break;
+        }
+        // continued ...
+    }
+}
+
+Polling Versus Run-Loop Scheduling: 轮询 vs 运行循环调度(推荐)
+A potential problem with stream processing is blocking.
+A thread that is writing to or reading from a stream might have to wait indefinitely until there is (respectively) space on the stream to put bytes or bytes on the stream that can be read.
+
+With Cocoa streams you have two ways to handle stream events:
+Run-loop scheduling. You schedule a stream object on a run loop so that the delegate receives messages reporting stream-related events only when blocking is unlikely to take place. For read and write operations, the pertinent NSStreamEvent constants are NSStreamHasBytesAvailable and NSStreamHasSpaceAvailable.
+Polling. In a closed loop broken only at the end of the stream or upon error, you keep asking the stream object if it has (for read streams) bytes available to read or (for write streams) space available for writing. The pertinent methods are hasBytesAvailable (NSInputStream) and hasSpaceAvailable (NSOutputStream).
+
+Writing to an output stream using polling：
+- (void)createNewFile {
+    oStream = [[NSOutputStream alloc] initToMemory];
+    [oStream open];
+    uint8_t *readBytes = (uint8_t *)[data mutableBytes];
+    uint8_t buf[1024];
+    int len = 1024;
+ 
+    while (1) {
+        if (len == 0) break;
+        if ( [oStream hasSpaceAvailable] ) {
+        (void)strncpy(buf, readBytes, len);
+        readBytes += len;
+        if ([oStream write:(const uint8_t *)buf maxLength:len] == -1) {
+            [self handleError:[oStream streamError]];
+            break;
+        }
+        [bytesWritten setIntValue:[bytesWritten intValue]+len];
+        len = (([data length] - [bytesWritten intValue] >= 1024) ? 1024 :
+            [data length] - [bytesWritten intValue]);
+        }
+    }
+    NSData *newData = [oStream propertyForKey:
+        NSStreamDataWrittenToMemoryStreamKey];
+    if (!newData) {
+        NSLog(@"No data written to memory!");
+    } else {
+        [self processData:newData];
+    }
+    [oStream close];
+    [oStream release];
+    oStream = nil;
+}
+It should be pointed out that neither the polling nor run-loop scheduling approaches are airtight defenses against blocking. 
+
+Handling Stream Errors：
+The NSStream and NSOutputStream classes inform you if an error occurred in several ways:
+If the stream object is scheduled on a run loop, the object reports a NSStreamEventErrorOccurred event to its delegate in a stream:handleEvent: message.
+At any time, the client can send a streamStatus message to a stream object and see if it returns NSStreamStatusError.
+If you attempt to write to an NSOutputStream object by sending it write:maxLength: and it returns -1, a write error has occurred
+
+- (void)stream:(NSStream *)stream handleEvent:(NSStreamEvent)eventCode {
+    NSLog(@"stream:handleEvent: is invoked...");
+ 
+    switch(eventCode) {
+        case NSStreamEventErrorOccurred:
+        {
+            NSError *theError = [stream streamError];
+            NSAlert *theAlert = [[NSAlert alloc] init];
+            [theAlert setMessageText:@"Error reading stream!"];
+            [theAlert setInformativeText:[NSString stringWithFormat:@"Error %i: %@",
+                [theError code], [theError localizedDescription]]];
+            [theAlert addButtonWithTitle:@"OK"];
+            [theAlert beginSheetModalForWindow:[NSApp mainWindow]
+                modalDelegate:self
+                didEndSelector:@selector(alertDidEnd:returnCode:contextInfo:)
+                contextInfo:nil];
+            [stream close];
+            [stream release];
+            break;
+        }
+        // continued ....
+    }
+}
+
+Setting Up Socket Streams：
+You can use the CFStream API to establish a socket connection and, with the stream object (or objects) created as a result, send data to and receive data from a remote host. You can also configure the connection for security.
+
+The NSStream class does not support connecting to a remote host on iOS. CFStream does support this behavior, however, and once you have created your streams with the CFStream API, you can take advantage of the toll-free bridge between CFStream and NSStream to cast your CFStreams to NSStreams. 
+Just call the CFStreamCreatePairWithSocketToHost function, providing a host name and a port number, to receive both a CFReadStreamRef and a CFWriteStreamRef for the given host. You can then cast these objects to an NSInputStream and an NSOutputStream and proceed.
+
+This example shows the creation of both a CFReadStreamRef object and a CFWriteStreamRef object. If you want to receive only one of these objects, just specify NULL as the parameter value for the unwanted object.
+
+Setting up a network socket stream：
+- (IBAction)searchForSite:(id)sender
+{
+    NSString *urlStr = [sender stringValue];
+    if (![urlStr isEqualToString:@""]) {
+        NSURL *website = [NSURL URLWithString:urlStr];
+        if (!website) {
+            NSLog(@"%@ is not a valid URL");
+            return;
+        }
+ 
+        CFReadStreamRef readStream;
+        CFWriteStreamRef writeStream;
+        CFStreamCreatePairWithSocketToHost(NULL, (CFStringRef)[website host], 80, &readStream, &writeStream);
+ 
+        NSInputStream *inputStream = (__bridge_transfer NSInputStream *)readStream;
+        NSOutputStream *outputStream = (__bridge_transfer NSOutputStream *)writeStream;
+        [inputStream setDelegate:self];
+        [outputStream setDelegate:self];
+        [inputStream scheduleInRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+        [outputStream scheduleInRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+        [inputStream open];
+        [outputStream open];
+ 
+        /* Store a reference to the input and output streams so that
+           they don't go away.... */
+        ...
+    }
+}
+
+Securing and Configuring the Connection：
+Before you open a stream object, you might want to set security and other features for the connection to the remote host (which might be, for example, an HTTPS server). NSStream defines properties that affect the security of TCP/IP socket connections in two ways:
+Secure Socket Layer (SSL).
+A security protocol using digital certificates to provide data encryption, server authentication, message integrity, and (optionally) client authentication for TCP/IP connections.
+SOCKS proxy server.
+A server that sits between a client application and a real server over a TCP/IP connection. It intercepts requests to the real server and, if it cannot fulfill them from a cache of recently requested files, forwards them to the real server. SOCKS proxy servers help improve performance over a network and can also be used to filter requests.
+
+For SSL security, NSStream defines various security-level properties (for example, NSStreamSocketSecurityLevelSSLv2). You set these properties by sending setProperty:forKey: to the stream object using the key NSStreamSocketSecurityLevelKey, as in this sample message:
+[inputStream setProperty:NSStreamSocketSecurityLevelTLSv1 forKey:NSStreamSocketSecurityLevelKey];
+
+
+Initiating an HTTP Request：
+Making an HTTP GET request：
+- (void)stream:(NSStream *)stream handleEvent:(NSStreamEvent)eventCode {
+    NSLog(@"stream:handleEvent: is invoked...");
+ 
+    switch(eventCode) {
+        case NSStreamEventHasSpaceAvailable:
+        {
+            if (stream == oStream) {
+                NSString * str = [NSString stringWithFormat:
+                    @"GET / HTTP/1.0\r\n\r\n"];
+                const uint8_t * rawstring =
+                    (const uint8_t *)[str UTF8String];
+                [oStream write:rawstring maxLength:strlen(rawstring)];
+                [oStream close];
+            }
+            break;
+        }
+        // continued ...
+    }
+}

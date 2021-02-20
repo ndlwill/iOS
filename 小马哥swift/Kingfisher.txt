@@ -1,0 +1,570 @@
+========================================kf前缀
+public typealias KFCrossPlatformImage = UIImage
+public struct KingfisherWrapper<Base> {
+    public let base: Base
+    public init(_ base: Base) {
+        self.base = base
+    }
+}
+
+public protocol KingfisherCompatible: AnyObject { }
+
+extension KingfisherCompatible {
+    public var kf: KingfisherWrapper<Self> {
+        get { return KingfisherWrapper(self) }// KingfisherWrapper<Self>，这里的Self理解为协议约束，需要遵守KingfisherCompatible协议的类型；
+        set { }
+    }
+}
+extension KFCrossPlatformImage: KingfisherCompatible { }
+
+
+
+extension String {
+    ///计算属性===方法,下面两种完全等价
+    //方法
+    func numberCount() -> Int {
+        var count = 0
+        for c in self where ("0"..."9").contains(c) {
+            count += 1
+        }
+        return count
+    }
+    
+    //计算属性
+    var numberCount1: Int {
+        var count = 0
+        for c in self where ("0"..."9").contains(c) {
+            count += 1
+        }
+        return count
+    }
+    
+}
+print("1234dafdaf1234".numberCount())
+
+如果想进一步凸显封装和代码的可读性，可以这样做：
+struct HCC<Base> {
+    var base: Base
+    init(_ base: Base) {
+        self.base = base
+    }
+}
+
+extension String {
+    var hcc: HCC<String> {HCC(self)}
+}
+
+class Person{}
+extension Person {
+    var hcc: HCC<Person> {HCC(self)}
+}
+
+extension HCC where Base == String {
+    var numberCount: Int {
+        var count = 0
+        for c in base where("0"..."9").contains(c){
+            count += 1
+        }
+        return count
+    }
+}
+
+extension HCC where Base == Person {
+    func run() {
+        print("run")
+    }
+}
+
+"1234dafdaf1234".hcc.numberCount
+Person().hcc.run()
+
+最终版本：
+POP的好处−是面向协议编程,将公共的地方抽出来(协议只能声明一些东西,想扩充一些东西,就是在extension加入)
+///前缀类型
+struct HCC<Base> {
+    var base: Base
+    init(_ base: Base) {
+        self.base = base
+    }
+}
+
+///利用协议扩展前缀属性
+protocol HCCCompatible {}
+extension HCCCompatible {
+    var hcc: HCC<Self> {HCC(self)}
+    static var hcc: HCC<Self>.Type {HCC<Self>.self}
+}
+
+///给字符串扩展功能
+//让String拥有前缀属性
+extension String: HCCCompatible {}
+//给string.hcc以及String().hcc前缀扩展功能
+extension HCC where Base == String {
+    var numberCount: Int {
+        var count = 0
+        for c in base where("0"..."9").contains(c){
+            count += 1
+        }
+        return count
+    }
+    static func test() {
+        print("test")
+    }
+}
+ 
+class Person{}
+extension Person: HCCCompatible{}
+class Dog{}
+extension Dog: HCCCompatible{}
+extension HCC where Base == Person {
+    func run() {
+        print("run")
+    }
+}
+
+========================================枚举的使用
+枚举定义了含义相同，但行为策略可能不同的一组值。
+
+public enum KingfisherError: Error {
+    
+    // MARK: Member Cases
+    case requestError(reason: RequestErrorReason)
+
+    case responseError(reason: ResponseErrorReason)
+   
+    // MARK: Helper Properties & Methods
+    public var isTaskCancelled: Bool {
+        if case .requestError(reason: .taskCancelled) = self {
+            return true
+        }
+        return false
+    }
+    
+    ///请求失败原因
+    public enum RequestErrorReason {
+        
+        case emptyRequest
+
+        case invalidURL(request: URLRequest)
+        
+        case taskCancelled(task: SessionDataTask, token: SessionDataTask.CancelToken)
+    }
+    
+    ///响应失败原因
+    public enum ResponseErrorReason {
+        
+        case invalidURLResponse(response: URLResponse)
+        
+        case invalidHTTPStatusCode(response: HTTPURLResponse)
+        
+        case URLSessionError(error: Error)
+        
+        case dataModifyingFailed(task: SessionDataTask)
+
+        case noURLResponse(task: SessionDataTask)
+    }
+}
+
+// MARK: - LocalizedError Conforming
+extension KingfisherError: LocalizedError {
+    
+    /// A localized message describing what error occurred.
+    public var errorDescription: String? {
+        switch self {
+        case .requestError(let reason):
+            return reason.errorDescription
+            
+        case .responseError(let reason):
+            return reason.errorDescription
+        }
+    }
+}
+
+extension KingfisherError.RequestErrorReason {
+    var errorDescription: String? {
+        switch self {
+        case .emptyRequest:
+            return "The request is empty or `nil`."
+        case .invalidURL(let request):
+            return "The request contains an invalid or empty URL. Request: \(request)."
+        case .taskCancelled(let task, let token):
+            return "The session task was cancelled. Task: \(task), cancel token: \(token)."
+        }
+    }
+    
+    var errorCode: Int {
+        switch self {
+        case .emptyRequest: return 1001
+        case .invalidURL: return 1002
+        case .taskCancelled: return 1003
+        }
+    }
+}
+
+extension KingfisherError.ResponseErrorReason {
+    var errorDescription: String? {
+        switch self {
+        case .invalidURLResponse(let response):
+            return "The URL response is invalid: \(response)"
+        case .invalidHTTPStatusCode(let response):
+            return "The HTTP status code in response is invalid. Code: \(response.statusCode), response: \(response)."
+        case .URLSessionError(let error):
+            return "A URL session error happened. The underlying error: \(error)"
+        case .dataModifyingFailed(let task):
+            return "The data modifying delegate returned `nil` for the downloaded data. Task: \(task)."
+        case .noURLResponse(let task):
+            return "No URL response received. Task: \(task),"
+        }
+    }
+    
+    var errorCode: Int {
+        switch self {
+        case .invalidURLResponse: return 2001
+        case .invalidHTTPStatusCode: return 2002
+        case .URLSessionError: return 2003
+        case .dataModifyingFailed: return 2004
+        case .noURLResponse: return 2005
+        }
+    }
+}
+
+
+guard let httpResponse = response as? HTTPURLResponse else {
+            let error = KingfisherError.responseError(reason: .invalidURLResponse(response: response))
+            onCompleted(task: dataTask, result: .failure(error))
+            completionHandler(.cancel)
+            return
+}
+
+
+/// Constants for some time intervals
+struct TimeConstants {
+    static let secondsInOneMinute = 60
+    static let minutesInOneHour = 60
+    static let hoursInOneDay = 24
+    static let secondsInOneDay = 86_400
+}
+
+public enum StorageExpiration {
+    /// The item never expires.
+    case never
+    /// The item expires after a time duration of given seconds from now.
+    case seconds(TimeInterval)
+    /// The item expires after a time duration of given days from now.
+    case days(Int)
+    /// The item expires after a given date.
+    case date(Date)
+    /// Indicates the item is already expired. Use this to skip cache.
+    case expired
+
+    func estimatedExpirationSince(_ date: Date) -> Date {
+        switch self {
+        case .never: return .distantFuture
+        case .seconds(let seconds):
+            return date.addingTimeInterval(seconds)
+        case .days(let days):
+            let duration: TimeInterval = TimeInterval(TimeConstants.secondsInOneDay) * TimeInterval(days)
+            return date.addingTimeInterval(duration)
+        case .date(let ref):
+            return ref
+        case .expired:
+            return .distantPast
+        }
+    }
+    
+    var estimatedExpirationSinceNow: Date {
+        return estimatedExpirationSince(Date())
+    }
+    
+    var isExpired: Bool {
+        return timeInterval <= 0
+    }
+
+    var timeInterval: TimeInterval {
+        switch self {
+        case .never: return .infinity
+        case .seconds(let seconds): return seconds
+        case .days(let days): return TimeInterval(TimeConstants.secondsInOneDay) * TimeInterval(days)
+        case .date(let ref): return ref.timeIntervalSinceNow
+        case .expired: return -(.infinity)
+        }
+    }
+}
+
+========================================协议增加拓展性
+协议是定义了某种能力，由协议遵循者去实现这些能力，但是由于Swift中协议扩展的存在，就可以让协议自己就提供某些能力，只要让协议遵循者去遵循协议，就能自动获取这些能力，减少了遵循协议的复杂性。并且协议仅仅定义了某种能力，不涉及具体类型，更方面的去扩展。
+
+import UIkit
+
+protocol OptionalProtocol {
+    func optionalMethod()
+    func mustMethods()
+    func anotherOptionalMethod()
+}
+
+extension OptionalProtocol {
+    func optionalMethod() {
+        print("一个可选方法")
+    }
+    
+    func anotherOptionalMethod() {
+        print("另一个可选方法")
+    }
+    
+}
+
+class MyClass: OptionalProtocol {
+    func mustMethods() {
+        print("必须要实现的方法")
+    }
+}
+
+
+
+public protocol Resource {
+    
+    /// The key used in cache.
+    var cacheKey: String { get }
+    
+    /// The target image URL.
+    var downloadURL: URL { get }
+    
+}
+
+extension Resource {
+
+    public func convertToSource(overrideCacheKey: String? = nil) -> Source {
+        return downloadURL.isFileURL ?
+            .provider(LocalFileImageDataProvider(fileURL: downloadURL, cacheKey: overrideCacheKey ?? cacheKey)) :
+            .network(ImageResource(downloadURL: downloadURL, cacheKey: overrideCacheKey ?? cacheKey))
+    }
+}
+
+public struct ImageResource: Resource {
+
+    public init(downloadURL: URL, cacheKey: String? = nil) {
+        self.downloadURL = downloadURL
+        self.cacheKey = cacheKey ?? downloadURL.absoluteString
+    }
+
+    // MARK: Protocol Conforming
+    /// The key used in cache.
+    public let cacheKey: String
+
+    /// The target image URL.
+    public let downloadURL: URL
+}
+
+extension URL: Resource {
+    public var cacheKey: String { return absoluteString }
+    public var downloadURL: URL { return self }
+}
+
+项目使用:
+1.定义公共协议，为每个模块创建基本的协议
+public protocol Routable {
+    // 公共协议
+}
+
+2.创建模块协议遵守基本协议，定义模块方法
+public protocol Broker_Routable: Routable {
+    
+    /// 交易商详情页
+    /// - Parameters:
+    ///   - brokerId: 交易商id
+    ///   - collectionHandle: 收藏操作(取消或者添加)
+    func brokerDetailVC(brokerId: Int, collectionHandle: @escaping ((_ isCandel: Bool) -> Void)) -> UIViewController
+    
+}
+
+3. 因为要Router.broker.方法，使用share为了遵守各个模块的协议的单例
+public class Router {
+    static let shared: Router = Router()
+    private init() {}
+    
+    /// 交易商模块
+    public static var broker: Broker_Routable { shared as! Broker_Routable }
+    
+}
+
+4. 实现协议的方法
+extension Router: Broker_Routable {
+    public func brokerDetailVC(brokerId: Int, collectionHandle: @escaping ((Bool) -> Void)) -> UIViewController {
+        let (vc, input) = BrokerDetailModuleBuilder.setupModule()
+        input.configBrokerDetailScene(brokerId: brokerId)
+        input.configCancelCollectionCallback(collectionHandle)
+        return vc
+    }
+}
+
+调用如下
+let vc = Router.broker.brokerDetailVC(brokerId: id) { (_) in}
+self.navigationController?.pushViewController(vc, animated: true)
+
+public class Router {
+    static let shared: Router = Router()
+    private init() {}
+    
+
+    public static var home: Home_Routable { shared as! Home_Routable}
+    
+    /// 交易商模块
+    public static var broker: Broker_Routable { shared as! Broker_Routable }
+    
+    /// 模块
+    public static var grade: Grade_Routable { shared as! Grade_Routable }
+    
+    /// 客诉中心模块
+    public static var complainCenter: ComplainCenter_Routable { shared as! ComplainCenter_Routable }
+    
+    /// 我的模块
+    public static var mine: Mine_Routable { shared as! Mine_Routable }
+    
+    /// 账户模块
+    public static var account: Account_Routable { shared as! Account_Routable }
+    
+}
+
+========================================defer
+private func cancelTask(_ dataTask: URLSessionDataTask) {
+    lock.lock()
+    defer { lock.unlock() }
+    dataTask.cancel()
+}
+
+func foo() {
+  let fileDescriptor = open(url.path, O_EVTONLY)
+  defer {
+    close(fileDescriptor)
+  }
+  // use fileDescriptor...
+}
+
+class MessageCenterCircleDot: UIView {
+    
+    fileprivate var fillColor: UIColor = UIColor.rgbColor(254, 98, 98)
+    
+    convenience init(frame: CGRect, fillColor: UIColor) {
+        self.init()
+        self.fillColor = fillColor
+        self.backgroundColor = UIColor.clear
+    }
+    
+    override func draw(_ rect: CGRect) {
+        super.draw(rect)
+
+        let size = rect.size.width
+        let context = UIGraphicsGetCurrentContext()!
+        context.setFillColor((self.backgroundColor?.cgColor ?? UIColor.white.cgColor)!)
+        context.fill(rect)
+        
+        context.saveGState()
+        defer { context.restoreGState() }
+        let path = UIBezierPath.init(roundedRect: rect, cornerRadius: size * 0.5)
+
+        context.addPath(path.cgPath)
+        context.closePath()
+
+        context.setFillColor(self.fillColor.cgColor)
+        context.fillPath()
+    }
+}
+
+========================================关联Associate封装
+func getAssociatedObject<T>(_ object: Any, _ key: UnsafeRawPointer) -> T? {
+    return objc_getAssociatedObject(object, key) as? T
+}
+
+func setRetainedAssociatedObject<T>(_ object: Any, _ key: UnsafeRawPointer, _ value: T) {
+    objc_setAssociatedObject(object, key, value, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+}
+
+private var animatedImageDataKey: Void?
+
+private(set) var animatedImageData: Data? {
+    get { return getAssociatedObject(base, &animatedImageDataKey) }
+    set { setRetainedAssociatedObject(base, &animatedImageDataKey, newValue) }
+}
+
+
+========================================通知
+let notifications: [(Notification.Name, Selector)]
+    #if !os(macOS) && !os(watchOS)
+    #if swift(>=4.2)
+    notifications = [
+        (UIApplication.didReceiveMemoryWarningNotification, #selector(clearMemoryCache)),
+        (UIApplication.willTerminateNotification, #selector(cleanExpiredDiskCache)),
+        (UIApplication.didEnterBackgroundNotification, #selector(backgroundCleanExpiredDiskCache))
+    ]
+    #else
+    notifications = [
+        (NSNotification.Name.UIApplicationDidReceiveMemoryWarning, #selector(clearMemoryCache)),
+        (NSNotification.Name.UIApplicationWillTerminate, #selector(cleanExpiredDiskCache)),
+        (NSNotification.Name.UIApplicationDidEnterBackground, #selector(backgroundCleanExpiredDiskCache))
+    ]
+    #endif
+    #elseif os(macOS)
+    notifications = [
+        (NSApplication.willResignActiveNotification, #selector(cleanExpiredDiskCache)),
+    ]
+    #else
+    notifications = []
+    #endif
+    notifications.forEach {
+        NotificationCenter.default.addObserver(self, selector: $0.1, name: $0.0, object: nil)
+}
+
+========================================判断图片格式的原理
+一般图片格式的都在data的前几个字节里，只要按对应的规则去取，然后进行判断就行了
+
+public enum ImageFormat {
+    /// The format cannot be recognized or not supported yet.
+    case unknown
+    /// PNG image format.
+    case PNG
+    /// JPEG image format.
+    case JPEG
+    /// GIF image format.
+    case GIF
+    
+    struct HeaderData {
+        static var PNG: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        static var JPEG_SOI: [UInt8] = [0xFF, 0xD8]
+        static var JPEG_IF: [UInt8] = [0xFF]
+        static var GIF: [UInt8] = [0x47, 0x49, 0x46]
+    }
+        
+}
+
+extension Data: KingfisherCompatibleValue {}
+
+// MARK: - Misc Helpers
+extension KingfisherWrapper where Base == Data {
+    /// Gets the image format corresponding to the data.
+    public var imageFormat: ImageFormat {
+        guard base.count > 8 else { return .unknown }
+        
+        var buffer = [UInt8](repeating: 0, count: 8)
+        base.copyBytes(to: &buffer, count: 8)
+        
+        if buffer == ImageFormat.HeaderData.PNG {
+            
+            return .PNG
+            
+        } else if buffer[0] == ImageFormat.HeaderData.JPEG_SOI[0],
+            buffer[1] == ImageFormat.HeaderData.JPEG_SOI[1],
+            buffer[2] == ImageFormat.HeaderData.JPEG_IF[0]{
+            
+            return .JPEG
+            
+        } else if buffer[0] == ImageFormat.HeaderData.GIF[0],
+            buffer[1] == ImageFormat.HeaderData.GIF[1],
+            buffer[2] == ImageFormat.HeaderData.GIF[2] {
+            
+            return .GIF
+        }
+        
+        return .unknown
+    }
+    
+}

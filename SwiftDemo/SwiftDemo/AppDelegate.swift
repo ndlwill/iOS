@@ -23,14 +23,19 @@
  0x7ffee6152088: 0x000060000232c530// 局部变量（指针变量）obj的地址中存的值即为指向的堆空间地址
  */
 
-// MARK: ali
+// MARK: NetEase
+// https://juejin.cn/user/3438928103236920/posts
+
+// MARK: ali_p blog
 // https://github.com/wsl2ls // iOS_Tip
 
-// MARK: CA && WK
+// MARK: ###CA && WK### viper
 // https://juejin.cn/user/588993965333309/posts
 
 // MARK: 网络
 // https://juejin.cn/post/6885167775409504269 // https://github.com/ifgyong/iOSDataFactory
+// 网络诊断
+// https://juejin.cn/post/6844903789720240136
 
 // MARK: swift源码分析
 // https://www.cnblogs.com/huahuahu/
@@ -962,6 +967,7 @@ directory that contains your module map.
 // MARK: 直播 && 音视频
 // https://www.jianshu.com/p/7d1f6c20799d
 // https://juejin.im/user/58ec343861ff4b00691b4f26/posts
+// https://juejin.cn/user/1556564196984760/posts
 
 // MARK: interview
 // https://www.jianshu.com/u/b0a8b4cbff94
@@ -1061,6 +1067,8 @@ directory that contains your module map.
 // https://www.jianshu.com/p/c3f2b8ef9c4b
 // XLPagerTabStrip
 // https://github.com/xmartlabs/XLPagerTabStrip
+// FluentDarkModeKit (dark mode)
+// https://github.com/microsoft/FluentDarkModeKit
 
 // 唱吧
 // https://github.com/ChangbaDevs
