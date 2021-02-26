@@ -45,4 +45,12 @@
 // 高斯模糊图片 （brush stroke 笔触）
 - (UIImage *)ndl_blurImage:(UIImage *)image withBlurValue:(CGFloat)blur;
 
+- (UIImage *)applyLightEffect;
+- (UIImage *)applyExtraLightEffect;
+- (UIImage *)applyDarkEffect;
+- (UIImage *)applyTintEffectWithColor:(UIColor *)tintColor;
+
+- (UIImage *)applyBlurWithRadius:(CGFloat)blurRadius tintColor:(UIColor *)tintColor saturationDeltaFactor:(CGFloat)saturationDeltaFactor maskImage:(UIImage *)maskImage;
+
+
 @end

@@ -1,0 +1,113 @@
+== 比较两个对象的内存地址
+
+isEqualToString: 比较两个字符串的内容
+
+isEqual: 默认情况下是比较两个对象的内存地址，但是有一些系统自带的类(比如Foundation中的NSString,NSArray等)重写了这个方法，改变了这个方法的判断规则(一般改为比较两个对象的内容，不是内存地址)
+
+- (void)test1
+{
+   NSString *string1 = @"jack";
+   NSString *string2 = [NSString stringWithFormat:@"jack"];
+
+//理论上存储在内存不同区域,为不同对象,但系统重写后改成了比较内容
+   NSLog(@"%p %p", string1, string2);
+
+   NSLog(@"string1 == string2 -> %zd", string1 == string2); // 结果为0
+
+   NSLog(@"[string1 isEqualToString:string2] -> %zd", [string1 isEqualToString:string2]); // 结果为1
+
+   NSLog(@"[string1 isEqual:string2] -> %zd", [string1 isEqual:string2]); // 结果为1
+
+}
+
+- (void)test2
+{
+    NSString *string1 = [NSString stringWithFormat:@"111"];
+    NSString *string2 = [NSString stringWithFormat:@"222"];
+    //两个存储不同对象的数组,但内容是相同的
+    NSArray *array1 = @[string1, @"222", @"333"];
+    NSArray *array2 = @[@"111", string2, @"333"];
+
+    NSArray *array = @[array1, array2];
+
+    NSLog(@"%zd", [array indexOfObject:array2]);//结果为0
+}
+
+如果有两个内容相同的MYPerson对象,则会被认为是不同的,因为此时是对内存地址进行比较,看是不是同一个对象
+//没有重写isEqual
+- (void)test3
+{
+    MYPerson *p1 = [[MYPerson alloc] init];
+    p1.age = 20;
+    p1.no = 30;
+
+    MYPerson *p2 = [[MYPerson alloc] init];
+    p2.age = 20;
+    p2.no = 30;
+
+    NSLog(@"%p %p", p1, p2);
+    NSLog(@"p1 == p2 -> %zd", p1 == p2); // 0
+    NSLog(@"[p1 isEqual:p2] -> %zd", [p1 isEqual:p2]); // 0
+}
+
+
+如果希望MYPerson也能像系统的类NSString一样,能够对内容相同的两个不同对象也认定为相同,需要重写isEqual方法
+#import <Foundation/Foundation.h>
+
+@class MYCar;
+
+@interface MYPerson : NSObject
+@property (nonatomic, assign) NSInteger age;
+@property (nonatomic, assign) NSInteger no;
+@property (nonatomic, copy) NSString *name;
+@property (nonatomic, strong) MYCar *car;
+
+- (BOOL)isEqualToPerson:(MYPerson *)person;
+@end
+
+#import "MYPerson.h"
+#import "MYCar.h"
+
+/*
+ 一旦重写了isEqual:方法，最好重写hash方法，而且要遵守以下原则：
+ 1.isEqual:返回YES的2个对象，hash值一定要一样
+ 2.hash值一样的2个对象，isEqual:返回不一定是YES
+ */
+
+@implementation MYPerson
+
+- (NSUInteger)hash
+{
+    return self.age + self.no + self.name.hash + self.car.hash;
+}
+
+- (BOOL)isEqual:(MYPerson *)object
+{
+    return [self isEqualToPerson:object];
+}
+
+- (BOOL)isEqualToPerson:(MYPerson *)person
+{
+    // 如果是完全相同的对象，就省去后面的判断
+    if (self == person) return YES;
+
+    // 如果object的类型不对，就不需要比较
+    if (![person isKindOfClass:self.class]) return NO;
+
+    // 基本数据类型
+    BOOL result = (self.age == person.age && self.no == person.no);
+    if (result == NO) return result;
+
+    // 对象类型,两个对象为nil时isEqual:的结果为0(NO),所以需要专门处理
+    if (self.name || person.name) {
+        if (![self.name isEqual:person.name]) return NO;
+    }
+
+    if (self.car || person.car) {
+        if (![self.car isEqual:person.car]) return NO;
+    }
+
+    return YES;
+}
+
+@end

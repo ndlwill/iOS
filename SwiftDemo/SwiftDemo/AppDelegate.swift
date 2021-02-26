@@ -23,6 +23,12 @@
  0x7ffee6152088: 0x000060000232c530// 局部变量（指针变量）obj的地址中存的值即为指向的堆空间地址
  */
 
+// UI即User Interface(用户界面)的简称
+// raw pointer: 原始指针
+
+// MARK: Core Animation: Advanced Techniques中文译本
+// https://zsisme.gitbooks.io/ios-/content/
+
 // MARK: NetEase
 // https://juejin.cn/user/3438928103236920/posts
 
@@ -42,6 +48,9 @@
 
 // MARK: RFC规范
 // https://www.ietf.org/rfc/
+
+// MARK: ##MJ##
+// https://www.jianshu.com/nb/45474325
 
 // MARK: 面试
 // https://github.com/DevDragonLi/iOSInterviewsAndDevNotes // 必须看
@@ -968,6 +977,7 @@ directory that contains your module map.
 // https://www.jianshu.com/p/7d1f6c20799d
 // https://juejin.im/user/58ec343861ff4b00691b4f26/posts
 // https://juejin.cn/user/1556564196984760/posts
+// https://www.jianshu.com/c/639cef195201
 
 // MARK: interview
 // https://www.jianshu.com/u/b0a8b4cbff94
@@ -1069,6 +1079,11 @@ directory that contains your module map.
 // https://github.com/xmartlabs/XLPagerTabStrip
 // FluentDarkModeKit (dark mode)
 // https://github.com/microsoft/FluentDarkModeKit
+// JXPagingView
+// https://github.com/pujiaxin33/JXPagingView
+// ZJScrollPageView
+// https://github.com/jasnig/ZJScrollPageView
+// https://www.jianshu.com/u/fb31a3d1ec30
 
 // 唱吧
 // https://github.com/ChangbaDevs
@@ -1083,6 +1098,10 @@ directory that contains your module map.
 // MARK: URLSession-tutorial
 // https://www.raywenderlich.com/3244963-urlsession-tutorial-getting-started
 
+// MARK: Error
+/**
+ SKError
+ */
 
 // MARK: 工具
 // Zeplin Lookin3

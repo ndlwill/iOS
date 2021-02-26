@@ -887,6 +887,45 @@
 
 /*
  MARK:autorelease对象在什么时刻释放:
+ https://www.jianshu.com/p/82440f9ad872
+ 分两种情况：手动干预释放时机、系统自动去释放。
+
+ 手动干预释放时机：手动指定 autoreleasepool 的 autorelease 对象，在当前作用域大括号结束时释放。
+ 系统自动去释放：不手动指定 autoreleasepool 的 autorelease 对象出了作用域之后，会被添加到最近一次创建的自动释放池中，并会在当前的 runloop 迭代结束时释放。而它能够释放的原因是系统在每个 runloop 迭代中都加入了自动释放池 Push 和 Pop。一个典型的例子是在一个类方法中创建一个对象并作为返回值，这时就需要将该对象放置到对应的 autoreleasepool 中。
+ __weak id reference = nil;
+ - (void)viewDidLoad {
+     [super viewDidLoad];
+     NSString *str = [NSString stringWithFormat:@"aaa"];
+     // str 是一个 autorelease 对象，设置一个 weak 的引用来观察它。
+     reference = str;
+ }
+ - (void)viewWillAppear:(BOOL)animated {
+     [super viewWillAppear:animated];
+     NSLog(@"%@", reference); // Console: aaa
+ }
+ - (void)viewDidAppear:(BOOL)animated {
+     [super viewDidAppear:animated];
+     NSLog(@"%@", reference); // Console: (null)
+ }
+ 由于这个 vc 在 loadView 之后便 add 到了 window 层级上，所以 viewDidLoad 和 viewWillAppear 是在同一个 runloop 调用的，因此在 viewWillAppear 中，这个 autorelease 的变量依然有值。而在 viewDidAppear 执行之前这个 autorelease 的变量已经被释放了。
+ 从程序启动到加载完成是一个完整的 runloop，然后会停下来，等待用户交互
+ 所有 autorelease 的对象，在出了作用域之后，会被自动添加到最近创建的自动释放池中。
+ 但是如果每次都放进应用程序的 main.m 中的 autoreleasepool 中，迟早有被撑满的一刻。所以在每一次完整的 runloop 结束之前，对于的自动释放池里面的 autorelease 对象会被销毁。那这个自动释放池是什么时候创建的呢？答案是，在 runloop 检测到事件并启动后，就会创建对应的自动释放池。
+ 子线程的 runloop 默认是不工作，无法主动创建，必须手动创建。
+ 自定义的 NSOperation 和 NSThread 需要手动创建自动释放池。比如：自定义的 NSOperation 类中的 main 方法里就必须添加自动释放池。否则出了作用域后，自动释放对象会因为没有自动释放池去处理它，而造成内存泄露。但对于 blockOperation 和 invocationOperation 这种默认的 Operation ，系统已经帮我们封装好了，不需要手动创建自动释放池。
+ @autoreleasepool 当自动释放池被销毁或者耗尽时，会向自动释放池中的所有对象发送 release 消息，释放自动释放池中的所有对象。
+
+ ###
+ Observer 监视的事件是 Entry(即将进入Loop)，其回调内会调用 _objc_autoreleasePoolPush() 创建自动释放池。其 order 是-2147483647，优先级最高，保证创建释放池发生在其他所有回调之前。
+ 这个用我的话称为“外围释放池”的创建！
+ Observer 监视了两个事件： BeforeWaiting(准备进入休眠) 时调用_objc_autoreleasePoolPop() 和 _objc_autoreleasePoolPush() 释放旧的池并创建新池；
+ Exit(即将退出Loop) 时调用 _objc_autoreleasePoolPop() 来释放自动释放池。这个 Observer 的 order 是 2147483647，优先级最低，保证其释放池子发生在其他所有回调之后。
+ Observer 监视事件是exit(即讲退出runloop)，其回调内会调用 _objc_autoreleasePoolpop() 释放自动释放池。
+ 这个用我的话称为“外围析放池”的释放！
+ 在非手动添加Autorelease pool下，Autorelease对象是在当前runloop进入休眠等待前被释放的
+ ###
+ 
+ 
  
  用于自动对释放池内的对象进行引用计数-1的操作，即自动执行release方法
  

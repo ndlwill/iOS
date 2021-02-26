@@ -1,3 +1,6 @@
+https://www.objc.io/issues/13-architecture/viper/
+
+
 交互器（Interactor） — 包括关于数据和网络请求的业务逻辑，例如创建一个实体（Entities），或者从服务器中获取一些数据。为了实现这些功能，需要使用服务、管理器，但是他们并不被认为是VIPER架构内的模块，而是外部依赖。
 展示器（Presenter） — 包含UI层面的业务逻辑以及交互器层面的方法调用，用户输入做出反应（通过Interator使用的基本模型对象）。
 实体（Entities） — 普通的数据对象，不属于数据访问层，因为数据访问属于交互器（Interactor）的职责。
@@ -45,15 +48,134 @@ An Interactor represents a single use case in the app.
 It contains the business logic to manipulate model objects (Entities) to carry out a specific task. 
 The work done in an Interactor should be independent of any UI. The same Interactor could be used in an iOS app or an OS X app.
 
-Common
+PONSO (Plain Old NSObject,普通的 NSObject)
+Because the Interactor is a PONSO (Plain Old NSObject) that primarily contains logic, it is easy to develop using TDD.
+
+The primary use case for the sample app is to show the user any upcoming to-do items (i.e. anything due by the end of next week). 
+The business logic for this use case is to find any to-do items due between today and the end of next week and assign a relative due date: today, tomorrow, later this week, or next week.
+
+Entity:
+Entities are the model objects manipulated by an Interactor. 
+Entities are only manipulated by the Interactor. 
+The Interactor never passes entities to the presentation layer (i.e. Presenter).
+
+If you are using Core Data, you will want your managed objects to remain behind your data layer. 
+Interactors should not work with NSManagedObjects.
+
+Presenter:
+The Presenter is a PONSO that mainly consists of logic to drive the UI. 
+It knows when to present the user interface. 
+It gathers input from user interactions so it can update the UI and send requests to an Interactor.
+
+The Presenter also receives results from an Interactor and converts the results into a form that is efficient to display in a View.
+
+Entities are never passed from the Interactor to the Presenter. 
+Instead, simple data structures that have no behavior are passed from the Interactor to the Presenter. 
+This prevents any ‘real work’ from being done in the Presenter. 
+The Presenter can only prepare the data for display in the View.
+
+View:
+It waits for the Presenter to give it content to display; it never asks the Presenter for data.
+The Presenter does not know about the existence of UILabel, UIButton, etc. 
+The Presenter only knows about the content it maintains and when it should be displayed. 
+It is up to the View to determine how the content is displayed.
+
+The View is an abstract interface, defined in Objective-C with a protocol. 
+A UIViewController or one of its subclasses will implement the View protocol. 
+
+Views and view controllers also handle user interaction and input. 
+To keep our view controllers lean, we need to give them a way to inform interested parties when a user takes certain actions. 
+The view controller shouldn’t be making decisions based on these actions, but it should pass these events along to something that can.
+
+When the user taps on the cancel button, the view controller tells this event handler that the user has indicated that it should cancel the add action. 
+
+The boundary between the View and the Presenter is also a great place for ReactiveCocoa.
+In this example, the view controller could also provide methods to return signals that represent button actions. 
+This would allow the Presenter to easily respond to those signals without breaking separation of responsibilities.
+
+Routing:
+Routes from one screen to another are defined in the wireframes created by an interaction designer. 
+In VIPER, the responsibility for Routing is shared between two objects: the Presenter, and the wireframe. 
+Since the Presenter contains the logic to react to user inputs, it is the Presenter that knows when to navigate to another screen, and which screen to navigate to.
+Meanwhile, the wireframe knows how to navigate. So, the Presenter will use the wireframe to perform the navigation. Together, they describe a route from one screen to the next.
+The wireframe is also an obvious place to handle navigation transition animations.
+
+
+
+Apps are usually much more compelling when they are connected to the network. 
+But where should this networking take place and what should be responsible for initiating it? 
+It’s typically up to the Interactor to initiate a network operation, but it won’t handle the networking code directly. 
+It will ask a dependency, like a network manager or API client. 
+The Interactor may have to aggregate data from multiple sources to provide the information needed to fulfill a use case. 
+Then it’s up to the Presenter to take the data returned by the Interactor and format it for presentation.
+
+A data store is responsible for providing entities to an Interactor. 
+As an Interactor applies its business logic, it will need to retrieve entities from the data store, manipulate the entities, and then put the updated entities back in the data store. 
+The data store manages the persistence of the entities. Entities do not know about the data store, so entities do not know how to persist themselves.
+
+The Interactor should not know how to persist the entities either. 
+Sometimes the Interactor may want to use a type of object called a data manager to facilitate its interaction with the data store. 
+The data manager handles more of the store-specific types of operations, like creating fetch requests, building queries, etc. 
+This allows the Interactor to focus more on application logic and not have to know anything about how entities are gathered or persisted. 
+
+When using TDD to develop an Interactor, it is possible to switch out the production data store with a test double/mock. 
+Not talking to a remote server (for a web service) or touching the disk (for a database) allows your tests to be faster and more repeatable.
+
+One reason to keep the data store as a distinct layer with clear boundaries is that it allows you to delay choosing a specific persistence technology. 
+If your data store is a single class, you can start your app with a basic persistence strategy, and then upgrade to SQLite or Core Data later if and when it makes sense to do so, all without changing anything else in your application’s code base.
+
+We wanted to make the separation between modules very clear in the to-do list example, so we defined two protocols for the add module. 
+The first is the module interface, which defines what the module can do. 
+The second is the module delegate, which describes what the module did.
+
+Since a module has to be presented to be of much value to the user, the module’s Presenter usually implements the module interface.
+When another module wants to present this one, its Presenter will implement the module delegate protocol, so that it knows what the module did while it was presented.
+
+A module might include a common application logic layer of entities, interactors, and managers that can be used for multiple screens.
+This, of course, depends on the interaction between these screens and how similar they are. A module could just as easily represent only a single screen, as is shown in the to-do list example. 
+In this case, the application logic layer can be very specific to the behavior of its particular module.
+
+Modules are also just a good simple way to organize code. 
+Keeping all of the code for a module tucked away in its own folder and group in Xcode makes it easy to find when you need to change something.
+
+Another benefit to building modules with VIPER is they become easier to extend to multiple form factors. 
+Having the application logic for all of your use cases isolated at the Interactor layer allows you to focus on building the new user interface for tablet, phone, or Mac, while reusing your application layer.
+
+
+
+Testing with VIPER:
+Following VIPER encourages a separation of concerns that makes it easier to adopt TDD. 
+The Interactor contains pure logic that is independent of any UI, which makes it easy to drive with tests.
+The Presenter contains logic to prepare data for display and is independent of any UIKit widgets. Developing this logic is also easy to drive with tests.
+
+
+
+VIPER is an architecture based on the Single Responsibility Principle. 
+
+
+###Common###
+-----Model
+@interface VTDTodoItem : NSObject
+@property (nonatomic, strong)   NSDate*     dueDate;
+@property (nonatomic, copy)     NSString*   name;
++ (instancetype)todoItemWithDueDate:(NSDate *)dueDate name:(NSString *)name;
+@end
 -----Store
 @class VTDManagedTodoItem;
+typedef void(^VTDDataStoreFetchCompletionBlock)(NSArray *results);
 @interface VTDCoreDataStore : NSObject
+- (void)fetch... completionBlock:(VTDDataStoreFetchCompletionBlock)completionBlock;
+@end
+    -----Entities
+@interface VTDManagedTodoItem : NSManagedObject // CoreData
+@property (nonatomic, retain) NSString *name;
+@property (nonatomic, retain) NSDate *date;
 @end
 
-Module_List
+###Module_List###
 -----Application Logic
     -----Interactor
+VTDListInteractorIO.h
 @protocol VTDListInteractorInput <NSObject>
 - (void)findUpcomingItems;
 @end
@@ -73,12 +195,102 @@ Module_List
 @property (nonatomic, strong)   VTDListDataManager *dataManager;
 @property (nonatomic, strong)   id<VTDClock>        clock;
 @end
+@implementation VTDListInteractor
+- (void)findUpcomingItems;// 获取数据源,实际调用VTDListDataManager.todoItems.....获取，然后对数据进行处理转换，然后回调output.foundUpcomingItems:(NSArray *)upcomingItems;
+@end
+
+@interface VTDUpcomingItem : NSObject
+@property (nonatomic, readonly, assign) VTDNearTermDateRelation dateRelation;
+@property (nonatomic, readonly, strong) NSDate*                 dueDate;
+@property (nonatomic, readonly, copy)   NSString*               title;
++ (instancetype)upcomingItemWithDateRelation:(VTDNearTermDateRelation)dateRelation
+                                     dueDate:(NSDate *)dueDate
+                                       title:(NSString *)title;
+@end
+
     -----Manager
 @class VTDCoreDataStore;
 @class VTDTodoItem;
 @interface VTDListDataManager : NSObject
 @property (nonatomic, strong) VTDCoreDataStore *dataStore;
-- (void)todoItemsBetweenStartDate:(NSDate *)startDate endDate:(NSDate *)endDate completionBlock:(void (^)(NSArray *todoItems))completionBlock;
+- (void)todoItemsBetweenStartDate:(NSDate *)startDate endDate:(NSDate *)endDate completionBlock:(void (^)(NSArray *todoItems))completionBlock;// 
+@end
+
+
+-----Module Interface
+view上面的交互事件，需要在Presenter让Interactor处理
+@protocol VTDListModuleInterface <NSObject>
+- (void)updateView;
+- (void)addNewEntry;
+@end
+
+
+-----User Interface
+    -----Presenter
+@protocol VTDListViewInterface;
+@interface VTDListPresenter : NSObject <VTDListInteractorOutput, VTDListModuleInterface, VTDAddModuleDelegate>
+@property (nonatomic, strong) id<VTDListInteractorInput>    listInteractor;// Interactor
+@property (nonatomic, strong) VTDListWireframe*             listWireframe;// Router
+@property (nonatomic, strong) UIViewController<VTDListViewInterface> *userInterface;// 外界赋值
+@end
+
+@implementation VTDListPresenter
+// VTDListInteractorOutput
+- (void)foundUpcomingItems:(NSArray *)upcomingItems// Interactor处理后的回调，里面（也会作数据处理，使用VTDUpcomingDisplayDataCollector处理，先处理为VTDUpcomingDisplayItem，再为VTDUpcomingDisplaySection，再为VTDUpcomingDisplayData）再回调给View
+@end
+
+
+@class VTDUpcomingDisplayData;
+@interface VTDUpcomingDisplayDataCollector : NSObject
+- (void)addUpcomingItems:(NSArray*)upcomingItems;
+- (VTDUpcomingDisplayData*)collectedDisplayData;
+@end
+
+@interface VTDUpcomingDisplayData : NSObject
+@property (nonatomic, readonly, copy,) NSArray*    sections;   // array of VTDUpcomingDisplaySection
++ (instancetype)upcomingDisplayDataWithSections:(NSArray *)sections;
+@end
+
+@interface VTDUpcomingDisplaySection : NSObject
+@property (nonatomic, readonly, copy)   NSString*   name;
+@property (nonatomic, readonly, copy)   NSString*   imageName;
+@property (nonatomic, readonly, copy)   NSArray*    items;  // array of VTDUpcomingDisplayItem
++ (instancetype)upcomingDisplaySectionWithName:(NSString *)name
+                                     imageName:(NSString *)imageName
+                                         items:(NSArray *)items;
+@end
+
+@interface VTDUpcomingDisplayItem : NSObject
+@property (nonatomic, readonly, copy)   NSString*   title;
+@property (nonatomic, readonly, copy)   NSString*   dueDay;
++ (instancetype)upcomingDisplayItemWithTitle:(NSString*)title dueDay:(NSString*)dueDay;
+
+@end
+
+    -----View
+@interface VTDListViewController : UITableViewController <VTDListViewInterface>
+@property (nonatomic, strong) IBOutlet UIView*              noContentView;
+@property (nonatomic, strong) id<VTDListModuleInterface>    eventHandler;// Presenter 外界赋值
+@end
+
+@class VTDUpcomingDisplayData;
+// Defines the public interface that something else can use to drive the user interface
+@protocol VTDListViewInterface <NSObject>// Presenter更新View的方法
+- (void)showNoContentMessage;
+- (void)showUpcomingDisplayData:(VTDUpcomingDisplayData *)data;
+- (void)reloadEntries;
+@end
+    -----Wireframe //类似于router
+@class VTDAddWireframe;
+@class VTDListPresenter;
+@class VTDListViewController;
+@class VTDRootWireframe;
+@interface VTDListWireframe : NSObject
+@property (nonatomic, strong) VTDAddWireframe *addWireframe;
+@property (nonatomic, strong) VTDListPresenter *listPresenter;// 外界赋值
+@property (nonatomic, strong) VTDRootWireframe *rootWireframe;
+- (void)presentListInterfaceFromWindow:(UIWindow *)window;
+- (void)presentAddInterface;
 @end
 
 
