@@ -1,0 +1,128 @@
+libevent是事件驱动的网络库，事件驱动是他的核心
+libevent事件机制：当事件发生， libevent就会根据用户设定的方式自动执行指定的回调函数，来处理事件。
+这是一种reactor方式的事件通知方式，由事件驱动。reactor的优点：响应快，编程简单等等。。。
+
+1.event_base
+我的理解是当前线程中所有事件的一个管理者。
+
+//事件基础管理
+struct event_base {
+    //I/O复用类型，select、epoll...linux默认是epoll
+    const struct eventop *evsel;
+    //具体的I/O复用，是epollop类型，通过eventop中的init函数返回，包含了具体的I/O复用各种信息
+    void *evbase;
+    //总共的事件个数
+    int event_count;        /* counts number of total events */
+    //总共的活动事件个数
+    int event_count_active;    /* counts number of active events */
+
+    //退出
+    int event_gotterm;        /* Set to terminate loop */
+    //立即退出
+    int event_break;        /* Set to terminate loop immediately */
+
+    /* active event management */
+    //活动事件队列，二维链表。第一维是根据优先级，第二维是每个优先级中对应加入的事件
+    struct event_list **activequeues;
+    //优先级队列数量。数组第一维必须告诉大小。因为如果是数组，参入函数，第一维肯定退化为指针，无法知道长度
+    int nactivequeues;
+
+    //信号信息
+    /* signal handling info */
+    struct evsignal_info sig;
+
+    //所有事件队列
+    struct event_list eventqueue;
+
+    //event_base创建时间
+    struct timeval event_tv;
+
+    //event_base时间小根堆
+    struct min_heap timeheap;
+
+    //event_base缓存时间
+    struct timeval tv_cache;
+};
+
+2.eventop
+当前选用的I/O复用模型的封装。
+
+//I/O复用封装
+struct eventop {
+    const char *name;
+    void *(*init)(struct event_base *);        //初始化
+    int (*add)(void *, struct event *);        //注册
+    int (*del)(void *, struct event *);        //删除
+    int (*dispatch)(struct event_base *, void *, struct timeval *); //事件分发
+    void (*dealloc)(struct event_base *, void *);//释放资源
+    /* set if we need to reinitialize the event base */
+    int need_reinit;
+};
+
+3.event
+事件信息的封装
+struct event {
+    //事件在队列中的节点
+    TAILQ_ENTRY (event) ev_next;
+    TAILQ_ENTRY (event) ev_active_next;
+    TAILQ_ENTRY (event) ev_signal_next;
+    //事件在最小时间堆中位置
+    unsigned int min_heap_idx;    /* for managing timeouts */
+
+    //事件的当前管理类
+    struct event_base *ev_base;
+    //事件对应的文件描述符，一切皆文件
+    int ev_fd;
+    //事件类型
+    short ev_events;
+    //发送到活动队列后要执行的次数
+    short ev_ncalls;
+    //ev_pncalls指向ev_ncalls，允许在回调中将自己的事件执行次数置为0，然后退出
+    short *ev_pncalls;    /* Allows deletes in callback */
+
+    //事件触发的时间
+    struct timeval ev_timeout;
+
+    //事件优先级
+    int ev_pri;        /* smaller numbers are higher priority */
+
+    //事件到来回调
+    void (*ev_callback)(int, short, void *arg);
+    //事件到来回调的参数
+    void *ev_arg;
+
+    //事件在活动队列中的事件类型，发送给回调函数，让回调函数知道发生事件的原因
+    int ev_res;        /* result passed to event callback */
+
+    //标识该事件在哪个队列中，插入的是哪个队列
+    int ev_flags;
+};
+
+4.接着看几个比较重要的宏定义
+//队列标记
+//定时器队列，与时间有关的事件加入此队列
+#define EVLIST_TIMEOUT    0x01
+//总队列，代表已经插入过
+#define EVLIST_INSERTED    0x02
+//信号队列
+#define EVLIST_SIGNAL    0x04
+//活动队列
+#define EVLIST_ACTIVE    0x08
+//内部队列
+#define EVLIST_INTERNAL    0x10
+//初始化队列
+#define EVLIST_INIT    0x80
+
+/* EVLIST_X_ Private space: 0x1000-0xf000 */
+#define EVLIST_ALL    (0xf000 | 0x9f)
+//事件类型，发生了什么事件
+
+//定时超时，表明事件超时，如果在活动队列中，需要执行
+#define EV_TIMEOUT    0x01
+//I/O事件
+#define EV_READ        0x02
+#define EV_WRITE    0x04
+//信号
+#define EV_SIGNAL    0x08
+//持续事件
+#define EV_PERSIST    0x10    /* Persistant event */

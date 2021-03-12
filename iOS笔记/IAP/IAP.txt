@@ -4,12 +4,15 @@ SKProductsRequest返回的数据是根据测试账号所在地区决定的(沙�
 
 内购商品一共有四种类型:
 消耗型:可以购买多次，多次结果累加，并且在App内作为“货币”消耗。典型的是虚拟货币，用户先通过IAP购买虚拟货币，再消耗虚拟货币购买商品。
+
 非消耗型:只能购买一次，可跨设备使用，业务场景较少。典型的是图书App中的一本电子书，或者游戏中的一个关卡。
 无法被消耗的商品，比如一些教育型APP中的课程, 再比如一些赛车游戏中的赛道, 
 这类商品需要在审核添加恢复购买按钮, 用于用户购买过后再误删除或其他原因卸载APP后的恢复流程, 否则提交审核会被拒绝
 我们发现你们的app包含内购功能，却没有给用户提供一个“恢复购买”的按钮。用户可以使用“恢复购买”功能保持对已购买内容的访问。例如，当他们升级到新手机时，他们不会丢失在旧手机上购买的所有商品。
+
 自动续期订阅:和时间相关的服务，在有效期内用户可享受服务，要到期的时候自动扣费。典型的是连续包月的会员。
-非续期订阅:和时间相关的服务，但是不会自动扣费。典型的是一个月会员
+
+非续期订阅:和时间相关的服务，但是不会自动扣费。典型的是一个月会员。
 
 像一些游戏中的金币，宝石的交易都是采用IAP支付。
 苹果官方规定，当APP涉及到虚拟货币的交易时，只能使用IAP进行支付，否则会在APP审核过程中被拒绝。
@@ -195,9 +198,6 @@ Product Identifier: com.fvcorp.group.auto.m1.AJSPremium
 Optional("1000000632060487")  Optional("1000000623879269")
 }
 
-================验证字段的含义说明
-https://developer.apple.com/library/archive/releasenotes/General/ValidateAppStoreReceipt/Chapters/ReceiptFields.html#//apple_ref/doc/uid/TP40010573-CH106-SW2
-
 ================已验证
 购买产品，弹出输入密码，购买弹窗时，杀死app，下次打开app会走
 func paymentQueue(_ queue: SKPaymentQueue, updatedTransactions transactions: [SKPaymentTransaction]) 的SKPaymentTransactionState.failed
@@ -216,6 +216,7 @@ https://help.apple.com/app-store-connect/#/dev0067a330b
 https://developer.apple.com/documentation/storekit/in-app_purchase/subscriptions_and_offers/enabling_server-to-server_notifications?preferredLanguage=occ
 
 
+##########
 =====================自动订阅归属的问题：
 a. 苹果设计自动订阅的初衷是 ，订阅一个服务， 这个服务需要跟着 Apple ID走。
 说白了，就是你A设备 用了Apple账号100001购买了，你换了B设备 用Apple账号100001登录app store，你同样能享受到服务。
@@ -225,12 +226,7 @@ b. 目前国内的一些应用或是游戏，希望的是自动订阅 关联的�
 说白了，就是你购买了一个自动订阅服务，我不管你哪个apple id 支付的， 但是只能我一个 APP的 唯一用户可以享受服务。
 这时候就需要APP自身做处理了，就是记住首次购买的transaction-id，并且绑定某个用户。
 以后自动续费的话，都会有original-transaction-id，这个id 是第一次购买的transaction-id，根据这个服务器可以联系初始购买的服务。
-有点描述偏了，当transaction-id绑定了用户，再次收到其它用户transaction-id请求时候，视情况处理了。（你也可以根据unique-vendor-identifier处理）
-
-=====================是否需要实现restoreCompletedTransactions ？
-答案：视需求吧。有少量文章说2014年起苹果审核严格了，必须要有一个按钮实现restoreCompletedTransactions。另外，我听百度一位同学说，爱奇艺2015年因为这个被拒过。
-但是，目前来看很多使用了订阅的应用或是游戏，并没有这个功能。
-我是感觉，看需求了。订阅 是跟着 userid 唯一呢？ 还是跟着apple id 呢？在国内，一般都是前者。
+##########
 
 =====================关于掉单的问题
 答案：一定要在服务器校验完票据后，客户端收到服务器的反馈结果后再：
@@ -312,10 +308,24 @@ b. 目前国内的一些应用或是游戏，希望的是自动订阅 关联的�
 # endif
 }
 
+##########升级
 #####同一个订阅组中更换订阅 xxx_2 升级到 xxx_3#####
 这个更换订阅，目前发现两种情况，就是都会出现pending_renewal_info字段，此字段记录了自动续期的待处理信息，例如订阅的变更等
 
 https://developer.apple.com/documentation/appstorereceipts/responsebody/pending_renewal_info
+
+Pending_renewal_info：
+A pending renewal may refer to a renewal that the system scheduled in the future or a renewal that failed in the past for some reason.
+If customers voluntarily cancel a subscription renewal while in grace period, App Store pauses billing retry, and removes the transaction from pending_renewal_info. 
+The subscription is in grace period if the key grace_period_expires_date_ms is present and the expiration date has not passed.
+
+auto_renew_status：
+The renewal status for the auto-renewable subscription.
+Possible Values
+1
+The subscription will renew at the end of the current subscription period.
+0
+The customer has turned off automatic renewal for the subscription.
 
 "pending_renewal_info" =     (
         {
@@ -381,7 +391,9 @@ https://developer.apple.com/documentation/appstorereceipts/responsebody/pending_
 }
 );
 这样的一个方式，根据苹果的内购提示都是很一致的 “当前xxx订阅到期时，将支付新订阅的费用。”。意思不是立刻补钱，也不是立刻切换，而是下次变更订阅的同时，变更收费。
+##########
 
+##########降级
 #####同一个订阅组降级套餐 xxx_3 降级到 xxx_2#####
 降级订阅与升级订阅有所不同，会立即生效并按照一定的计算方式退费（可能按未使用时间折算返回），这样的意思就是说这个降级订阅会立即产生一条记录，
 并且pending_renewal_info 里面的product_id 和 auto_renew_product_id 会一致
@@ -415,6 +427,7 @@ https://developer.apple.com/documentation/appstorereceipts/responsebody/pending_
 );
 
 所以在确定订阅生效的情况下，以latest_receipt_info的数据来计算是否过期即可。
+##########
 
 ========================================================================2020.11.13最新沙盒账号测试
 日本账号:

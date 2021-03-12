@@ -1,5 +1,1019 @@
+路由器的功能：在不同网段之间传递数据包
+如果不在路由规则里，就会把数据传送到默认的网关里。
+默认网关负责所有非本网络内的数据包的传送。
+
+==================================================信号
+SIGHUP信号
+进程组：
+进程组就是一系列相互关联的进程集合，系统中的每一个进程也必须从属于某一个进程组；
+每个进程组中都会有一个唯一的 ID(process group id)，简称 PGID；
+PGID 一般等同于进程组的创建进程的 Process ID，而这个进程一般也会被称为进程组先导(process group leader)，同一进程组中除了进程组先导外的其他进程都是其子进程；
+进程组的存在，方便了系统对多个相关进程执行某些统一的操作，例如，我们可以一次性发送一个信号量给同一进程组中的所有进程。
+会话：
+会话（session）是一个若干进程组的集合，同样的，系统中每一个进程组也都必须从属于某一个会话；
+一个会话只拥有最多一个控制终端（也可以没有），该终端为会话中所有进程组中的进程所共用。
+一个会话中前台进程组只会有一个，只有其中的进程才可以和控制终端进行交互；除了前台进程组外的进程组，都是后台进程组；
+和进程组先导类似，会话中也有会话先导(session leader)的概念，用来表示建立起到控制终端连接的进程。
+在拥有控制终端的会话中，session leader 也被称为控制进程(controlling process)，一般来说控制进程也就是登入系统的 shell 进程(login shell)；
+
+SIGHUP 信号在用户终端连接(正常或非正常)结束时发出, 通常是在终端的控制进程结束时, 通知同一session内的各个作业, 这时它们与控制终端不再关联. 
+系统对SIGHUP信号的默认处理是终止收到该信号的进程。所以若程序中没有捕捉该信号，当收到该信号时，进程就会退出。
+
+SIGPIPE
+在网络编程中，SIGPIPE这个信号是很常见的。当往一个写端关闭的管道或socket连接中连续写入数据时会引发SIGPIPE信号,引发SIGPIPE信号的写操作将设置errno为EPIPE。在TCP通信中，当通信的双方中的一方close一个连接时，若另一方接着发数据，根据TCP协议的规定，会收到一个RST响应报文，若再往这个服务器发送数据时，系统会发出一个SIGPIPE信号给进程，告诉进程这个连接已经断开了，不能再写入数据。
+
+server.c：
+
+#include <stdio.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <errno.h>
+#include <signal.h>
+
+#define port 8888
+
+void handle(int sig)
+{
+    printf("SIGPIPE : %d\n",sig);
+}
+
+void mysendmsg(int fd)
+{
+
+    // 写入第一条消息
+    char* msg1 = "first msg"; 
+    int n = write(fd, msg1, strlen(msg1));
+
+    if(n > 0)  //成功写入第一条消息,server 接收到 client 发送的 RST
+    {
+        printf("success write %d bytes\n", n);
+    }
+
+    // 写入第二条消息,触发SIGPIPE
+    char* msg2 = "second msg";
+    n = write(fd, msg2, strlen(msg2));
+    if(n < 0)
+    {
+        printf("write error: %s\n", strerror(errno));
+    }
+}
+int main()
+{
+    signal(SIGPIPE , handle); //注册信号捕捉函数
+
+    struct sockaddr_in server_addr;
+
+    bzero(&server_addr, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    server_addr.sin_port = htons(port);
+
+    int listenfd = socket(AF_INET , SOCK_STREAM , 0);
+
+    bind(listenfd, (struct sockaddr *)&server_addr, sizeof(server_addr));
+
+    listen(listenfd, 128);
+
+    int fd = accept(listenfd, NULL, NULL);
+    if(fd < 0)
+    {
+        perror("accept");
+        exit(1);
+    }
+
+    mysendmsg(fd);
+
+    return 0;
+}
+
+client.c
+
+#include<stdio.h>
+#include<stdlib.h>
+#include<errno.h>
+#include<string.h>
+#include<sys/types.h>
+#include<netinet/in.h>
+#include<sys/socket.h>
+#include<sys/wait.h>
+#include<arpa/inet.h>
+#include<unistd.h>
+
+#define PORT 8888
+#define MAX 1024
+
+int main()
+{
+
+    char buf[MAX] = {'0'};
+    int sockfd;
+    int n;
+    socklen_t slen;
+    slen = sizeof(struct sockaddr);
+    struct sockaddr_in seraddr;
+
+    bzero(&seraddr,sizeof(seraddr));
+    seraddr.sin_family = AF_INET;
+    seraddr.sin_port = htons(PORT);
+    seraddr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+
+    //socket()
+    if((sockfd = socket(AF_INET,SOCK_STREAM,0)) == -1)
+    {
+        perror("socket");
+        exit(-1);
+    }
+    //connect()
+    if(connect(sockfd,(struct sockaddr *)&seraddr,slen) == -1)
+    {
+        perror("connect");
+        exit(-1);
+    }
+
+    int ret = shutdown(sockfd , SHUT_RDWR);
+    if(ret < 0)
+    {
+        perror("shutdown perror");
+    }
+
+    return 0;
+}
+
+SIGURG：
+带外数据
+带外数据用于迅速告知对方本端发生的重要的事件。它比普通的数据（带内数据）拥有更高的优先级，不论发送缓冲区中是否有排队等待发送的数据，它总是被立即发送。带外数据的传输可以使用一条独立的传输层连接，也可以映射到传输普通数据的连接中。实际应用中，带外数据是使用很少见，有，telnet和ftp等远程非活跃程序。
+UDP没有实现带外数据传输，TCP也没有真正的带外数据。不过TCP利用头部的紧急指针标志和紧急指针，为应用程序提供了一种紧急方式，含义和带外数据类似。TCP的紧急方式利用传输普通数据的连接来传输紧急数据。
+
+内核通知应用程序带外数据到达的方式有两种：一种就是利用ＩＯ复用技术的系统调用（如select）在接受到带外数据时将返回，并向应用程序报告socket上的异常事件。
+
+https://blog.csdn.net/u014470361/article/details/83591513?utm_medium=distribute.pc_relevant.none-task-blog-baidujs_baidulandingword-2&spm=1001.2101.3001.4242
+
+==================================================Reactor
+https://blog.csdn.net/bingxuesiyang/article/details/89888664
+
+https://zhuanlan.zhihu.com/p/87443227
+
 ==================================================函数调用的原理
 https://zhuanlan.zhihu.com/p/51856114
+
+==================================================TAILQ 队列（尾队列）
+TAILQ队列有HEAD和ENTRY两种基本的数据结构
+
+#define    TAILQ_HEAD(name, type)                        \
+struct name {                                \
+    struct type *tqh_first;    /* first element */            \
+    struct type **tqh_last;    /* addr of last next element */        \
+}
+
+#define TAILQ_ENTRY(type)                                            \
+struct {                                                             \
+    struct type *tqe_next;  /* next element */                       \
+    struct type **tqe_prev;/* addr of previous next element*/        \
+}   
+
+数据结构中的filed都是type类型的指针(或者是二级指针)
+这里的type是用户的队列元素类型，将ENTRY结构内嵌到用户的QUEUE_ITEM结构中：
+struct QUEUE_ITEM{  
+    int value;  
+    TAILQ_ENTRY(QUEUE_ITEM) entries;  
+};  
+
+TAILQ_HEAD(headname,QUEUE_ITEM) queue_head; 
+
+TAILQ队列中为什么tqh_prev和tqh_last要使用二级指针？
+我们可以考虑如果不使用二级指针会怎么样？ 就像定义成下面这样。
+#define    FAKE_TAILQ_HEAD(name, type)                        \
+struct name {                                \
+    struct type *tqh_first;    /* first element */            \
+    struct type *tqh_last;    /* last element */        \
+}
+
+#define FAKE_TAILQ_ENTRY(type)                                            \
+struct {                                                             \
+    struct type *tqe_next;  /* next element */                       \
+    struct type *tqe_prev;  /*   previous element*/        \
+}   
+
+如果我们想要删除队列的任意一个元素，对FAKE_TAILQ，我们需要特殊处理该元素是第一个元素的情况(第一个元素的tqe_prev指针为空)，而TAILQ就没有这个烦恼！
+
+TAILQ队列的遍历性能
+Linux中的list只将struct list_head作为用户元素的挂接点，因此在正向遍历链表时，需要使用container_of这类接口才能获取用户的数据，
+而TAILQ由于tqe_next指针直接指向用户元素的类型，所以理论上，正向遍历TAILQ比list更快.但逆向遍历时,由于TAILQ的取用prev元素的操作比next麻烦的多，
+因此逆向遍历是比正向慢的：
+
+==========================================================================================================================================================================================================================================================
+==================================================Libevent源码分析—event, event_base
+https://zhuanlan.zhihu.com/p/93612337
+在处理web请求时，通常有两种体系结构，分别为：thread-based architecture（基于线程）、event-driven architecture（事件驱动）
+thread-based architecture
+基于线程的体系结构通常会使用多线程来处理客户端的请求，每当接收到一个请求，便开启一个独立的线程来处理。这种方式虽然是直观的，但是仅适用于并发访问量不大的场景，
+因为线程需要占用一定的内存资源，且操作系统在线程之间的切换也需要一定的开销，当线程数过多时显然会降低web服务器的性能。并且，当线程在处理I/O操作，在等待输入的这段时间线程处于空闲的状态，
+同样也会造成cpu资源的浪费。
+event-driven architecture
+事件驱动体系结构是目前比较广泛使用的一种。这种方式会定义一系列的事件处理器来响应事件的发生，并且将服务端接受连接与对事件的处理分离。
+其中，事件是一种状态的改变。比如，tcp中socket的new incoming connection、ready for read、ready for write。
+
+reactor:
+reactor设计模式是event-driven architecture的一种实现方式，处理多个客户端并发的向服务端请求服务的场景。每种服务在服务端可能由多个方法组成。
+reactor会解耦并发请求的服务并分发给对应的事件处理器来处理。目前，许多流行的开源框架都用到了reactor模式，如：netty、node.js等，包括java的nio。
+
+Reactor:
+The reactor design pattern is an event handling pattern for handling service requests delivered concurrently to a service handler by one or more inputs. 
+The service handler then demultiplexes the incoming requests and dispatches them synchronously to the associated request handlers.
+事件驱动（event handling）
+可以处理一个或多个输入源（one or more inputs）
+通过Service Handler同步的将输入事件（Event）采用多路复用分发给相应的Request Handler（多个）处理
+
+为何要用Reactor:
+常见的网络服务中，如果每一个客户端都维持一个与登陆服务器的连接。
+那么服务器将维护多个和客户端的连接以出来和客户端的contnect 、read、write ，特别是对于长链接的服务，有多少个c端，就需要在s端维护同等的IO连接。
+这对服务器来说是一个很大的开销。
+
+event和event_base是libevent的两个核心结构体，分别是反应堆模式中的Event和Reactor。
+1.event:
+struct event {
+        TAILQ_ENTRY (event) ev_next;  //I/O事件
+        TAILQ_ENTRY (event) ev_active_next;  //所有激活事件的链表
+        TAILQ_ENTRY (event) ev_signal_next;  //Signal事件
+        //定时事件在小根堆中的索引
+        unsigned int min_heap_idx;      /* for managing timeouts */
+        struct event_base *ev_base; //event所属的Reactor
+        int ev_fd; //IO事件：绑定的文件描述符；Signal事件：绑定的信号
+        short ev_events;  //I/O、信号、定时器
+        short ev_ncalls;  //调用回调函数的次数
+        short *ev_pncalls; //指向ev_ncalls      /* Allows deletes in callback */
+        struct timeval ev_timeout;  //定时事件的超时值
+        int ev_pri; //event优先级               /* smaller numbers are higher priority */
+        void (*ev_callback)(int, short, void *arg);  //回调函数:ev_fd, ev_events, ev_arg
+        void *ev_arg;
+        int ev_res;  //调用回调函数时，传递给回调函数，保存回调函数的返回值           /* result passed to event callback */
+        int ev_flags;  //event的当前状态
+};
+从event这个结构体我们可以看到libevent将I/O、信号、定时器3种事件统一封装成一个event来对待。
+
+其中ev_events取值有：
+// event.ev_events
+#define EV_TIMEOUT      0x01
+#define EV_READ         0x02
+#define EV_WRITE        0x04
+#define EV_SIGNAL       0x08
+//永久事件
+#define EV_PERSIST      0x10    /* Persistant event */
+
+ev_flags取值有：
+// event.ev_flags
+// event在time堆中
+#define EVLIST_TIMEOUT  0x01
+//event在已注册事件链表中
+#define EVLIST_INSERTED 0x02
+#define EVLIST_SIGNAL   0x04
+//event在激活链表中
+#define EVLIST_ACTIVE   0x08
+#define EVLIST_INTERNAL 0x10
+//event已被初始化
+#define EVLIST_INIT     0x80
+/* EVLIST_X_ Private space: 0x1000-0xf000 */
+#define EVLIST_ALL      (0xf000 | 0x9f)
+
+2.event_base:
+struct event_base {
+        const struct eventop *evsel;  //I/O多路复用机制的封装,eventops[]数组中一项
+        void *evbase;  //I/O多路复用机制的一个实例，执行具体任务
+        int event_count; //该event_base上的总的event            /* counts number of total events */
+        int event_count_active;  //该event_base上的总的激活的event /* counts number of active events */
+        int event_gotterm;              /* Set to terminate loop */
+        int event_break;                /* Set to terminate loop immediately */
+        /* active event management */
+        struct event_list **activequeues; //指针数组，activequeues[priority]指向优先级为priority的链表
+        int nactivequeues;
+        /* signal handling info */
+        struct evsignal_info sig;  //管理Signal事件
+        struct event_list eventqueue; //链表，保存了所有注册事件event的指针
+        struct timeval event_tv;  //时间管理
+        struct min_heap timeheap;  //管理定时事件的小根堆
+        struct timeval tv_cache;  //时间管理
+};
+
+其中eventop结构体和evbase是保存了I/O多路复用机制相关信息。evsel会调用init()去初始化evbase。
+eventop结构体如下：
+struct eventop {
+        const char *name;
+        void *(*init)(struct event_base *);  //初始化
+        int (*add)(void *, struct event *);  //注册事件
+        int (*del)(void *, struct event *);  //删除事件
+        int (*dispatch)(struct event_base *, void *, struct timeval *);  //事件分发
+        void (*dealloc)(struct event_base *, void *);  //注销，释放资源
+        /* set if we need to reinitialize the event base */
+        int need_reinit;
+};
+
+==================================================Libevent源码分析—event_init()
+初始化event_base结构的相关函数
+event_init()
+首先调用event_init()初始化event_base结构体
+struct event_base *
+event_init(void)
+{
+    struct event_base *base = event_base_new();    //event_init()调用event_base_new()
+    if (base != NULL)
+        current_base = base;
+    return (base);
+}
+我们发现event_init()工作量很少，只是调用event_base_new()函数，所以真正初始化event_base的工作是在event_base_new()函数内完成。
+
+event_base_new():
+struct event_base *
+event_base_new(void)    //初始化libevent的event_base
+{
+    int i;
+    struct event_base *base;
+    if ((base = calloc(1, sizeof(struct event_base))) == NULL)    //在堆上分配内存存储event_base，所有字段初始化为0
+        event_err(1, "%s: calloc", __func__);
+    event_sigcb = NULL;
+    event_gotsig = 0;
+    detect_monotonic();    //设置use_monotonic变量
+    gettime(base, &base->event_tv);    //base->tv_cache.tv_sec非0，则赋给base->event_tv
+    
+    min_heap_ctor(&base->timeheap);    //初始化定时事件的小根堆base->timeheap    min_heap.h
+    TAILQ_INIT(&base->eventqueue);    //初始化注册事件链表base->eventqueue    sys/queue.h
+    base->sig.ev_signal_pair[0] = -1;    //初始化信号base->sig
+    base->sig.ev_signal_pair[1] = -1;
+    
+    base->evbase = NULL;    //初始化I/O多路复用 base->evbase
+    //遍历全局数组eventops[]，初始化libevent的I/O多路复用机制
+    for (i = 0; eventops[i] && !base->evbase; i++) {    //以NULL标志数组结尾，只选取一个I/O多路复用机制
+        base->evsel = eventops[i];    //初始化base->evsel
+        base->evbase = base->evsel->init(base);    //初始化base->evbase
+    }
+    if (base->evbase == NULL)    //没有I/O多路复用
+        event_errx(1, "%s: no event mechanism available", __func__);
+    if (evutil_getenv("EVENT_SHOW_METHOD")) //调用getenv()获取环境变量EVENT_SHOW_METHOD    evutil.c
+        event_msgx("libevent using: %s\n",
+               base->evsel->name);
+    /* allocate a single active event queue */
+    //event_base_new()内调用event_base_priority_init()
+    event_base_priority_init(base, 1);    //设置优先级base->nactivequeues；分配数组base->activequeues。数组大小和优先级相同
+    return (base);
+}
+
+其中由3点需要注意：
+1.该函数调用calloc()在堆上分配内存来存储event_base；
+2.使用全局数组eventops[]存储系统支持的I/O多路复用机制，然后遍历该数组，选取第1个I/O多路复用机制。
+3.libevent支持event有优先级，所以又调用了event_base_priority_init()来完成优先级相关的设置。
+
+event_base_priority_init()：
+//设置不同event的优先级，值越小，优先级越高
+//返回值：0，成功；-1，出错
+int
+event_base_priority_init(struct event_base *base, int npriorities)
+{
+    int i;
+    if (base->event_count_active)    //当前base上有活跃的events则不能设置优先级，返回。
+        return (-1);
+    if (npriorities == base->nactivequeues)    //设置的优先级和当前优先级相同，则直接返回
+        return (0);
+    if (base->nactivequeues) {    //不同，则先释放原先的activequeues数组
+        for (i = 0; i < base->nactivequeues; ++i) {
+            free(base->activequeues[i]);
+        }
+        free(base->activequeues);
+    }
+    /* Allocate our priority queues */
+    base->nactivequeues = npriorities;    //设置新的优先级
+    base->activequeues = (struct event_list **)
+        calloc(base->nactivequeues, sizeof(struct event_list *));    //设置和优先级值相同大小的event_list数组
+    if (base->activequeues == NULL)
+        event_err(1, "%s: calloc", __func__);
+    for (i = 0; i < base->nactivequeues; ++i) {
+        base->activequeues[i] = malloc(sizeof(struct event_list));    //初始化activequeues数组中每个元素
+        if (base->activequeues[i] == NULL)
+            event_err(1, "%s: malloc", __func__);
+        TAILQ_INIT(base->activequeues[i]);
+    }
+    return (0);
+}
+该函数设置优先级，初始化了event_base的nactivequeues成员和activequeues成员。优先级值越小，优先级越高。在活跃事件链表中，优先级高的event先被处理。
+
+==================================================Libevent源码分析—event_set()
+初始化完event_base后，下面要初始化event，通过调用event_set()实现 。
+event_set():
+void
+event_set(struct event *ev, int fd, short events,
+      void (*callback)(int, short, void *), void *arg)
+{
+    /* Take the current base - caller needs to set the real base later */
+    ev->ev_base = current_base;    //设置event属于当前base；current_base通过event_init()设置
+    ev->ev_callback = callback;    //设置回调函数
+    ev->ev_arg = arg;    //设置回调函数的3个参数
+    ev->ev_fd = fd;
+    ev->ev_events = events;
+    ev->ev_res = 0;
+    ev->ev_flags = EVLIST_INIT;    //设置event状态
+    ev->ev_ncalls = 0;
+    ev->ev_pncalls = NULL;
+    min_heap_elem_init(ev);    //初始化event在小根堆中索引为-1    min_heap.h
+    /* by default, we put new events into the middle priority */
+    if(current_base)
+        ev->ev_pri = current_base->nactivequeues/2;    //设置event优先级
+}
+通过传入的参数：fd, events, 回调函数,arg设置event的相应成员，并初始化event在小根堆中的索引为-1，以及设置event的优先级。
+
+接下来调用event_base_set()设置event所属的event_base。
+其实在event_set()中已经将event所属的event_base设置为当前的current_base，而current_base在event_init()中被赋值为新建的event_base。所以，如果要将一个新的event捆绑的event_base设置为新建的event_base，则可以不需要event_base_set()这步调用。
+如果有多个event_base，则才需要这步；就一个event_base时，是不需要这步的，因为此时current_base就等于event_base。
+
+event_base_set():
+int
+event_base_set(struct event_base *base, struct event *ev)
+{
+    /* Only innocent events may be assigned to a different base */
+    if (ev->ev_flags != EVLIST_INIT)    //只能对新建的event设置其所属event_base
+        return (-1);
+    ev->ev_base = base;    //设置所属event_base
+    ev->ev_pri = base->nactivequeues/2;    //设置优先级
+    return (0);
+}
+只能对新建的状态为EVLIST_INIT的event设置所属event_base
+event有优先级，我们还可以单独调用下面的函数来专门设置event的优先级，但要求不能对活跃的event设置。
+
+event_priority_set():
+int
+event_priority_set(struct event *ev, int pri)
+{
+    if (ev->ev_flags & EVLIST_ACTIVE)    //不能对活跃的event设置优先级
+        return (-1);
+    if (pri < 0 || pri >= ev->ev_base->nactivequeues)
+        return (-1);
+    ev->ev_pri = pri;    //设置优先级
+    return (0);
+}
+
+==================================================Libevent源码分析—event_add()
+接下来就是将已经初始化的event注册到libevent的事件链表上，通过event_add()来实现，源码位于event.c中。
+event_add()
+这个函数主要完成了下面几件事：
+1.将event注册到event_base的I/O多路复用要监听的事件中
+2.将event注册到event_base的已注册事件链表中
+3.如果传入了超时时间，则删除旧的超时时间，重新设置，并将event添加到event_base的小根堆中；如果没有传入超时时间，则不会添加到小根堆中。
+只有步骤1成功，才会执行步骤2和3；否则什么都没做，直接返回，保证不会改变event的状态。
+
+将event添加到已注册事件链表、添加到小根堆、从活跃事件链表移除、从小根堆中移除，都是通过两个函数完成的：event_queue_insert()、event_queue_remove()
+int
+event_add(struct event *ev, const struct timeval *tv)
+{
+    struct event_base *base = ev->ev_base;    //event所属的event_base
+    const struct eventop *evsel = base->evsel;    //event_base的I/O多路复用机制
+    void *evbase = base->evbase;    //event_base的I/O多路复用机制
+    int res = 0;
+    //DEBUG log.h
+    event_debug((
+         "event_add: event: %p, %s%s%scall %p",
+         ev,
+         ev->ev_events & EV_READ ? "EV_READ " : " ",
+         ev->ev_events & EV_WRITE ? "EV_WRITE " : " ",
+         tv ? "EV_TIMEOUT " : " ",
+         ev->ev_callback));
+    assert(!(ev->ev_flags & ~EVLIST_ALL));
+    /*
+     * prepare for timeout insertion further below, if we get a
+     * failure on any step, we should not change any state.
+     */
+    //如果传入了超时时间并且event不再time小根堆上，则在小根堆上预留一个位置
+    //以保证如果后面有步骤失败，不会改变初始状态，保证是个原子操作
+    if (tv != NULL && !(ev->ev_flags & EVLIST_TIMEOUT)) {
+        if (min_heap_reserve(&base->timeheap,    //min_heap.h
+            1 + min_heap_size(&base->timeheap)) == -1)
+            return (-1);  /* ENOMEM == errno */
+    }
+    //如果event不在已注册链表或活跃链表中，
+    //则调用evsel->add()注册event事件到I/O多路复用监听的事件上
+    if ((ev->ev_events & (EV_READ|EV_WRITE|EV_SIGNAL)) &&
+        !(ev->ev_flags & (EVLIST_INSERTED|EVLIST_ACTIVE))) {
+        res = evsel->add(evbase, ev);    //将event注册到监听事件上
+        //注册监听事件成功，则将event注册到已注册事件链表上
+        if (res != -1)
+            event_queue_insert(base, ev, EVLIST_INSERTED);  //插入  
+    }
+    /* 
+     * we should change the timout state only if the previous event
+     * addition succeeded.
+     */
+    //前面操作都成功情况下，才能执行下面步骤
+    //改变超时状态
+    if (res != -1 && tv != NULL) {
+        struct timeval now;
+        /* 
+         * we already reserved memory above for the case where we
+         * are not replacing an exisiting timeout.
+         */
+        //EVLIST_TIMEOUT表明event已在定时器堆中
+        //则删除旧的定时器
+        if (ev->ev_flags & EVLIST_TIMEOUT)
+            event_queue_remove(base, ev, EVLIST_TIMEOUT);  //移除
+        /* Check if it is active due to a timeout.  Rescheduling
+         * this timeout before the callback can be executed
+         * removes it from the active list. */
+        //如果事件是由于超时而变成活跃事件
+        //则从活跃事件链表中删除
+        if ((ev->ev_flags & EVLIST_ACTIVE) &&
+            (ev->ev_res & EV_TIMEOUT)) {
+            /* See if we are just active executing this
+             * event in a loop
+             */
+            if (ev->ev_ncalls && ev->ev_pncalls) {
+                /* Abort loop */
+                *ev->ev_pncalls = 0;  //调用次数清0
+            }
+            //从活跃事件链表移除
+            event_queue_remove(base, ev, EVLIST_ACTIVE);  //移除
+        }
+        gettime(base, &now);
+        evutil_timeradd(&now, tv, &ev->ev_timeout);    //为event添加超时时间
+        event_debug((
+             "event_add: timeout in %ld seconds, call %p",
+             tv->tv_sec, ev->ev_callback));
+        //将event插入到小根堆中
+        event_queue_insert(base, ev, EVLIST_TIMEOUT);  //插入
+    }
+    return (res);
+}
+
+event_queue_insert():
+该函数根据不同的输入队列，即不同的事件，在不同的队列中插入，并增加相应的事件计数，更新event状态；
+EVLIST_INSERTED：在已注册事件链表event_base.eventqueue插入
+EVLIST_ACTIVE：根据event优先级，在活跃事件链表event_base.activequeues[event.ev_pri]插入
+EVLIST_TIMEOUT：在小根堆event_base.timeheap中插入
+
+void
+event_queue_insert(struct event_base *base, struct event *ev, int queue)
+{
+    //如果event已经在活跃链表中，则返回；否则，出错
+    if (ev->ev_flags & queue) {
+        /* Double insertion is possible for active events */
+        if (queue & EVLIST_ACTIVE)
+            return;
+        event_errx(1, "%s: %p(fd %d) already on queue %x", __func__,
+               ev, ev->ev_fd, queue);
+    }
+    if (~ev->ev_flags & EVLIST_INTERNAL)
+        base->event_count++;  //增加注册事件数
+    ev->ev_flags |= queue;  //改变event状态
+    switch (queue) {  //根据不同的输入参数队列，选择在不同的事件集合中插入
+    case EVLIST_INSERTED:  //I/O或Signal事件
+        TAILQ_INSERT_TAIL(&base->eventqueue, ev, ev_next);  //在已注册事件链表插入
+        break;
+    case EVLIST_ACTIVE:  //活跃事件
+        base->event_count_active++;  //增加活跃事件数
+        TAILQ_INSERT_TAIL(base->activequeues[ev->ev_pri],  //在活跃事件链表插入
+            ev,ev_active_next);
+        break;
+    case EVLIST_TIMEOUT: {  //定时器事件
+        min_heap_push(&base->timeheap, ev);  //在小根堆插入
+        break;
+    }
+    default:
+        event_errx(1, "%s: unknown queue %x", __func__, queue);
+    }
+}
+
+event_queue_remove()：
+和event_queue_insert()相对应，这个函数主要根据不同的输入参数，从不同的事件集合中删除事件。
+void
+event_queue_remove(struct event_base *base, struct event *ev, int queue)
+{
+    if (!(ev->ev_flags & queue))
+        event_errx(1, "%s: %p(fd %d) not on queue %x", __func__,
+               ev, ev->ev_fd, queue);
+    if (~ev->ev_flags & EVLIST_INTERNAL)
+        base->event_count--;
+    ev->ev_flags &= ~queue;
+    switch (queue) {
+    case EVLIST_INSERTED:  //I/O、Signal事件
+        TAILQ_REMOVE(&base->eventqueue, ev, ev_next);
+        break;
+    case EVLIST_ACTIVE:  //活跃事件
+        base->event_count_active--;
+        TAILQ_REMOVE(base->activequeues[ev->ev_pri],
+            ev, ev_active_next);
+        break;
+    case EVLIST_TIMEOUT:  //定时器事件
+        min_heap_erase(&base->timeheap, ev);
+        break;
+    default:
+        event_errx(1, "%s: unknown queue %x", __func__, queue);
+    }
+}
+
+event_del()：
+libevent还提供了event_del()这个函数，该函数从直接删除event事件，该函数就是主要通过调用event_queue_remove()函数完成删除的功能。
+另外，该函数还将event从I/O多路复用监听的事件中删除。
+int
+event_del(struct event *ev)
+{
+    struct event_base *base;
+    const struct eventop *evsel;
+    void *evbase;
+    event_debug(("event_del: %p, callback %p",
+         ev, ev->ev_callback));
+    /* An event without a base has not been added */
+    if (ev->ev_base == NULL)
+        return (-1);
+    base = ev->ev_base;
+    evsel = base->evsel;
+    evbase = base->evbase;
+    assert(!(ev->ev_flags & ~EVLIST_ALL));
+    /* See if we are just active executing this event in a loop */
+    //计数清0
+    if (ev->ev_ncalls && ev->ev_pncalls) {
+        /* Abort loop */
+        *ev->ev_pncalls = 0;
+    }
+    //根据event不同的状态，从相应的event集合中删除
+    if (ev->ev_flags & EVLIST_TIMEOUT)
+        event_queue_remove(base, ev, EVLIST_TIMEOUT);
+    if (ev->ev_flags & EVLIST_ACTIVE)
+        event_queue_remove(base, ev, EVLIST_ACTIVE);
+    if (ev->ev_flags & EVLIST_INSERTED) {
+        event_queue_remove(base, ev, EVLIST_INSERTED);
+        return (evsel->del(evbase, ev));  //从I/O多路复用监听的事件中删除
+    }
+    return (0);
+}
+
+==================================================Libevent源码分析—event_base_dispatch()
+libevent是一个Reactor模式的事件驱动的网络库。
+在这个主循环中，是如何检测事件、分发事件、调用事件的回调函数的。
+Reactor模式中的Event、Event Handler、Reactor目前都完成了，下面就剩Event Demultiplexer了。
+这一步通过event_base_dispatch()完成
+int
+event_base_dispatch(struct event_base *event_base)
+{
+  return (event_base_loop(event_base, 0));  //调用event_base_loop()
+}
+
+event_base_loop()
+该函数完成以下工作：
+1.信号标记被设置，则调用信号的回调函数
+2.根据定时器最小时间，设置I/O多路复用的最大等待时间，这样即使没有I/O事件发生，也能在最小定时器超时时返回。
+3.调用I/O多路复用，监听事件，将活跃事件添加到活跃事件链表中
+4.检查定时事件，将就绪的定时事件从小根堆中删除，插入到活跃事件链表中
+5.对event_base的活跃事件链表中的事件，调用event_process_active(）函数，在该函数内调用event的回调函数，优先级高的event先处理。
+
+该函数内部调用了eventop.dispatch()监听事件，event_sigcb函数指针处理信号事件，timeout_process()将超时的定时事件加入到活跃事件链表中，event_process_active()处理活跃事件链表中的事件，调用相应的回调函数。
+
+int
+event_base_loop(struct event_base *base, int flags)
+{
+    const struct eventop *evsel = base->evsel;
+    void *evbase = base->evbase;  //event_base的I/O多路复用
+    struct timeval tv;
+    struct timeval *tv_p;
+    int res, done;
+    /* clear time cache */
+    //清空时间缓存
+    base->tv_cache.tv_sec = 0;
+    //处理Signal事件时，指定信号所属的event_base
+    if (base->sig.ev_signal_added)
+        evsignal_base = base;
+    done = 0;
+    while (!done) {  //进入事件主循环
+        /* Terminate the loop if we have been asked to */
+        //设置event_base的标记，以表明是否需要跳出循环
+        if (base->event_gotterm) {  //event_loopexit_cb()可设置
+            base->event_gotterm = 0;
+            break;
+        }
+        if (base->event_break) {  //event_base_loopbreak()可设置
+            base->event_break = 0;
+            break;
+        }
+        /* You cannot use this interface for multi-threaded apps */
+        //当event_gotsig被设置时，则event_sigcb就是信号处理的回调函数
+        while (event_gotsig) {
+            event_gotsig = 0;
+            if (event_sigcb) {
+                res = (*event_sigcb)();  //调用信号处理的回调函数
+                if (res == -1) {
+                    errno = EINTR;
+                    return (-1);
+                }
+            }
+        }
+        timeout_correct(base, &tv);  //校准时间
+        tv_p = &tv;
+        //根据定时器堆中最小超时时间计算I/O多路复用的最大等待时间tv_p
+        if (!base->event_count_active && !(flags & EVLOOP_NONBLOCK)) {
+            timeout_next(base, &tv_p);
+        } else {
+            /* 
+             * if we have active events, we just poll new events
+             * without waiting.
+             */
+            evutil_timerclear(&tv);
+        }
+        
+        /* If we have no events, we just exit */
+        //没有注册事件，则退出
+        if (!event_haveevents(base)) {
+            event_debug(("%s: no events registered.", __func__));
+            return (1);
+        }
+        /* update last old time */
+        gettime(base, &base->event_tv);
+        /* clear time cache */
+        base->tv_cache.tv_sec = 0;
+        //调用I/O多路复用，监听事件
+        res = evsel->dispatch(base, evbase, tv_p);
+        if (res == -1)
+            return (-1);
+        //将time cache赋值为当前系统时间
+        gettime(base, &base->tv_cache);
+        
+        //检查定时事件，将就绪的定时事件从小根堆中删除，插入到活跃事件链表中
+        timeout_process(base);
+        if (base->event_count_active) {
+            //处理event_base的活跃链表中的事件
+            //调用event的回调函数，优先级高的event先处理
+            event_process_active(base);  
+            if (!base->event_count_active && (flags & EVLOOP_ONCE))
+                done = 1;
+        } else if (flags & EVLOOP_NONBLOCK)
+            done = 1;
+    }
+    /* clear time cache */
+    //循环结束，清空时间缓存
+    base->tv_cache.tv_sec = 0;
+    event_debug(("%s: asked to terminate loop.", __func__));
+    return (0);
+}
+
+epoll_dispatch()
+event_base_loop()中通过I/O多路复用的dispatch()函数完成监听事件功能。在之前的event_init()中我们看到，通过遍历eventops数组，从中选择一个I/O多路复用机制，所以不同的I/O多路复用机制有不同的eventop结构体，相应的也就有不同的dispatch()函数。
+
+eventop结构体(event-internal.h)
+struct eventop {
+        const char *name;
+        void *(*init)(struct event_base *);  //初始化
+        int (*add)(void *, struct event *);  //注册事件
+        int (*del)(void *, struct event *);  //删除事件
+        int (*dispatch)(struct event_base *, void *, struct timeval *);  //事件分发
+        void (*dealloc)(struct event_base *, void *);  //注销，释放资源
+        /* set if we need to reinitialize the event base */
+        int need_reinit;
+};
+
+在event_add()中通过add()成员函数注册event到监听事件中，现在在event_base_loop()中通过dispatch()成员函数监听事件。
+libevent支持多种I/O多路复用机制，下面先看下epoll的eventop结构体(epoll.c)
+
+const struct eventop epollops = {
+    "epoll",
+    epoll_init,
+    epoll_add,
+    epoll_del,
+    epoll_dispatch,
+    epoll_dealloc,
+    1 /* need reinit */
+};
+
+然后看下epoll的dispatch()函数(epoll.c)
+从下面源码可见，epoll_dispatch()的工作主要有：
+1.调用epoll_wait()监听事件
+2.如果有信号发生，调用evsignal_process()处理信号
+3.将活跃的event根据其活跃的类型注册到活跃事件链表上
+4.如果events数组大小不够，则重新分配为原来2倍大小
+
+==================================================Libevent源码分析—从使用Libevent库开始
+练习libevent库的使用，主要是几个API的调用顺序。根据event.h的开头注释部分可知，要使用libevent库，主要的几个API及调用顺序为：
+event_base()初始化event_base
+event_set()初始化event
+event_base_set()将event绑定到指定的event_base上
+event_add()将event添加到事件链表上，注册事件
+event_base_dispatch()循环、检测、分发事件
+
+每隔1s打印一条信息:
+#include <stdio.h>
+#include <event.h>
+#include <time.h>
+
+struct event ev;
+struct timeval tv;
+
+void timer_cb(int fd, short event, void *arg)    //回调函数
+{
+        printf("callback function\n");
+        event_add(&ev, &tv);    //重新注册
+}
+
+int main()
+{
+        struct event_base *base = event_init();  //初始化libevent库
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+
+        event_set(&ev, -1, 0, timer_cb, NULL);  //初始化event结构中成员
+        event_base_set(base, &ev);
+        event_add(&ev, &tv);  //将event添加到events事件链表，注册事件
+        event_base_dispatch(base);  //循环、分发事件
+
+        return 0;
+}
+
+==========================================================================================================================================================================================================================================================
+==================================================libevent快速入门
+(1)初始化事件根基
+struct event_base *event_base_new(void);
+struct event_base *event_init(void);
+event_base_new()函数分配并且返回一个新的具有默认设置的event_base.
+event_init() 会调用event_base_new()创建一个event_base,并以此初始化一个全局的变量current_base .
+例：
+struct event_base *base = event_init();
+
+(2)初始化事件event，设置回调函数和关注的事件，并关联对应的事件根基event_base
+typedef void (*event_callback_fn)(evutil_socket_t, short, void*);
+
+struct event *event_new(struct event_base *, evutil_socket_t, short, 
+                        event_callback_fn, void *);
+
+int event_assign(struct event *, struct event_base *, evutil_socket_t, short, event_callback_fn, void *);
+
+void event_set(struct event *ev, int fd, short events, 
+               event_callback_fn, void *arg);
+void event_base_set(struct event_base *,struct event*);
+
+event_assign（）的作用就是把给定的event类型对象的每一个成员赋予一个指定的值。
+event_new（）的实现其实是间接的调用的event_assign（），首先调用mm_malloc分配一块内存，然后调用event_assign来给event类型的对象各个成员赋值。
+event_set()　使用指定的句柄、关注的事件、事件发生时的回调函数、回调函数的额外参数，初始化设置struct event结构对象，绑定到全局current_base，设置此event结构对象的优先级，默认为current_base中总有限级数的一半
+event_base_set() 将事件绑定到事件根基,即设置event从属的event_base,指明event注册到哪个event_base实例上
+
+例：
+//SIGINT 信号事件初始化
+//假定已创建事件根基struct event_base *base　
+//方式一：
+struct event sigint_ev;
+event_assign(&sigint_ev,base,SIGINT, EV_SIGNAL | EV_PERSIST,sigint_cb,NULL);
+//方式二：
+struct event sigint_ev ;
+event_set(&sigint_ev, SIGINT, EV_SIGNAL | EV_PERSIST, sigint_cb, NULL);
+event_base_set(base, &sigint_ev);
+//方式三：
+struct event *sigint_ev;
+sigint_ev = event_new(base,SIGINT,EV_SIGNAL | EV_PERSIST, sigint_cb, NULL);
+//方式四：
+struct event* sigint_ev = (struct event*)malloc(sizeof(struct event));
+//sigint_ev检测非空和置零后，用event_assign 或者event_set + event_base_set 初始化事件．
+
+定时器事件：
+#define evtimer_set(ev, cb, arg)    event_set(ev, -1, 0, cb, arg)
+
+信号事件：
+#define evsignal_new(base,signum,cb,arg) \
+	event_new(base,signum,EV_SIGNAL|EV_PERSIST,cb,arg)
+
+(3)添加事件，将事件变成未决态，即，将event加入到event_base中，等待监听
+void event_add(struct event* ,struct timeval *);
+
+(4)程序进入无限循环，事件根基event_base开始工作，对注册的event进行监听．若注册的事件的对应事件类型触发，或者超时，会自动触发event对应的回调函数执行
+void event_base_dispatch(struct event_base *);
+void event_base_loop(struct event_base *,int );
+
+入门例子：
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <malloc.h>
+#include <event.h>
+#include <sys/time.h>
+#include <signal.h>
+#include <string.h>
+#define BUF_SIZE 1024
+
+typedef struct{
+	struct event *ev;
+	char *buf;
+	struct timeval *tv;
+}rw_st;
+
+void wr_cb(int fd, short event, void *arg);
+void rd_cb(int fd, short event, void *arg);
+
+struct event_base *base = NULL;
+//定时事件
+struct timeval tv;
+struct event time_ev;
+void time_cb(int fd, short event, void *arg)
+{
+	printf("time_cb : 5s timer wakeup\n");
+	event_add(&time_ev,&tv);
+}
+
+//标准输入 读事件
+//输入一行，把读事件删掉,添加写事件
+void rd_cb(int fd,short event, void *arg)
+{
+	if(event & EV_TIMEOUT){
+		printf("io read time out(2s)!\n");
+		return ;
+	}
+	rw_st* rd_st = (rw_st*)arg;
+	int len = read(fd, rd_st->buf, BUF_SIZE);
+	rd_st->buf[len-1] = '\0';
+	printf("rd_cb (stdin): %s \n",rd_st->buf);
+	
+	event_del(rd_st->ev);
+	event_set(rd_st->ev, STDOUT_FILENO,  EV_WRITE | EV_PERSIST,
+					wr_cb,(void*)rd_st);
+	event_add(rd_st->ev,NULL);
+}
+
+//标准输出 写事件
+//输出,把写事件删掉,添加读事件,边写边读
+void wr_cb(int fd, short event, void *arg)
+{
+	rw_st *wr_st = (rw_st*)arg;
+	printf("wr_cb (stdout): %s\n",wr_st->buf);
+	memset(wr_st->buf,0,BUF_SIZE);
+	event_del(wr_st->ev);
+	event_set(wr_st->ev, STDIN_FILENO, EV_READ | EV_PERSIST,
+					rd_cb, (void*)wr_st);
+	event_add(wr_st->ev,wr_st->tv);
+}
+
+//SIGINT 信号事件
+void sigint_cb(int fd, short event, void *arg)
+{
+	struct timeval tv_1s = {1,0};
+	printf("SIGINT : EXIT IN 1s\n");
+	event_base_loopexit(base,&tv_1s);
+}
+
+//SIGHUB 信号事件
+void sighup_cb(int fd, short event, void *arg)
+{
+	printf("SIGHUP: EXIT AT ONCE\n");
+	event_base_loopbreak(base);
+}
+
+int main()
+{
+	printf("pid = %ld\n",getpid());
+	base = event_init();
+	//定时器
+	tv.tv_sec = 5;
+	tv.tv_usec = 0;
+	evtimer_set(&time_ev, time_cb, NULL);//一次性,默认全局的current_base
+//　event_set(&time_ev,-1,0,time_cb,NULL);
+
+//	event_base_set(base, &time_ev);  //可省，在这里current_base等同base
+	event_add(&time_ev,&tv);
+
+	//io 读事件  指针 event_new
+	char buf[1024] = {0};
+	struct timeval io_tv = {2,0};
+	rw_st *rd_st = (rw_st*)malloc(sizeof(rw_st));
+	memset(rd_st,0,sizeof(rw_st));
+
+	struct event *io_ev = (struct event*)malloc(sizeof(struct event));
+	memset(io_ev,0,sizeof(struct event));
+	
+	rd_st->ev = io_ev;
+	rd_st->buf = buf;
+	rd_st->tv = &io_tv;
+	event_assign(rd_st->ev,base,STDIN_FILENO,
+					EV_TIMEOUT | EV_READ | EV_PERSIST,rd_cb,(void*)rd_st);
+	event_add(rd_st->ev,rd_st->tv);
+
+	//SIGINT 信号事件
+	struct event sigint_ev;
+
+	event_assign(&sigint_ev,base,SIGINT, EV_SIGNAL | EV_PERSIST,sigint_cb,NULL);
+//	event_set(&sigint_ev, SIGINT, EV_SIGNAL | EV_PERSIST, 
+//											sigint_cb, NULL);
+	//event_base_set(base, &sigint_ev);
+	event_add(&sigint_ev,NULL);
+  
+//	struct event *sigint_ev = event_new(base,SIGINT,
+//			 EV_SIGNAL | EV_PERSIST, sigint_cb, NULL);
+//	event_add(sigint_ev,NULL);
+
+	//SIGHUP 信号事件  
+	//测试: $ kill -SIGHUP pid
+	struct event *sighup_ev;
+	sighup_ev = evsignal_new(base, SIGHUP, sighup_cb, NULL);	
+	event_add(sighup_ev,NULL);
+
+	event_base_dispatch(base);
+	//event_base_loop(base,0);
+	
+	event_free(sighup_ev);
+	event_base_free(base);
+	free(rd_st);
+
+	printf("EXIT\n");
+	return 0;
+}
 
 ==================================================libevent1
 poll 轮询
@@ -61,4 +1075,142 @@ int main()
         return 0;
 }
 
-==================================================libevent2
+==================================================libevent2 源码介绍
+malloc()函数有一个参数，即要分配的内存空间的大小:
+void *malloc(size_t size);
+calloc()函数有两个参数，分别为元素的数目和每个元素的大小，这两个参数的乘积就是要分配的内存空间的大小。
+void *calloc(size_t numElements, size_t sizeOfElement);
+如果调用成功，函数malloc()和函数calloc()都将返回所分配的内存空间的首地址。
+
+如果由malloc()函数分配的内存空间原来没有被使用过，则其中的每一位可能都是0；反之，如果这部分内存曾经被分配过，则其中可能遗留有各种各样的数据。
+也就是说，使用malloc()函数的程序开始时(内存空间还没有被重新分配)能正常进行，但经过一段时间(内存空间还已经被重新分配)可能会出现问题。
+函数calloc()会将所分配的内存空间中的每一位都初始化为零，也就是说，如果你是为字符类型或整数类型的元素分配内存，那么这些元素将保证会被初始化为0；
+如果你是为指针类型的元素分配内存，那么这些元素通常会被初始化为空指针；如果你为实型数据分配内存,则这些元素会被初始化为浮点型的零。
+
+event_base_new()函数分配并且返回一个新的具有默认设置的event_base.
+event_init() 会调用event_base_new()创建一个event_base,并以此初始化一个全局的变量current_base .
+
+1.event_init()
+
+struct event_base *
+event_init(void)
+{
+struct event_base *base = event_base_new();
+
+if (base != NULL)
+current_base = base;
+
+return (base);
+}
+event_init()函数主要调用event_base_new()函数，返回event_base结构体；
+其实，到后面会发现，我们直接调用event_base_new()函数也是可以的；
+
+2.event_base_new()
+struct event_base *
+event_base_new(void)
+{
+int i;
+struct event_base *base;
+
+//用calloc而不用malloc的原因?
+//calloc动态分配完内存后，自动初始化该内存为零
+if ((base = calloc(1, sizeof(struct event_base))) == NULL)
+event_err(1, "%s: calloc", __func__);
+
+event_sigcb = NULL;
+event_gotsig = 0;
+
+detect_monotonic();//设置use_monotonic
+gettime(base, &base->event_tv);
+//初始化定时事件的小根堆
+min_heap_ctor(&base->timeheap);
+//初始化事件链表，头 ==   尾
+TAILQ_INIT(&base->eventqueue);
+//初始化信号
+base->sig.ev_signal_pair[0] = -1;
+base->sig.ev_signal_pair[1] = -1;
+//初始化IO多路复用机制
+base->evbase = NULL;
+//选取以NULL 结尾，初始化
+for (i = 0; eventops[i] && !base->evbase; i++) {
+base->evsel = eventops[i];
+
+base->evbase = base->evsel->init(base);
+}
+//如果没有IO多路复用
+
+if (base->evbase == NULL)
+event_errx(1, "%s: no event mechanism available", __func__);
+
+if (evutil_getenv("EVENT_SHOW_METHOD")) 
+event_msgx("libevent using: %s\n",
+   base->evsel->name);
+
+/* allocate a single active event queue */
+//设置优先级
+//活跃事件链表中，优先级值越小，越优先
+event_base_priority_init(base, 1);
+
+return (base);
+}
+
+event_base_new()做的工作主要就是对结构体event_base的初始化的作用，设置一些参数这类的；
+
+3.event_set
+void
+event_set(struct event *ev, int fd, short events,
+  void (*callback)(int, short, void *), void *arg)
+{
+/* Take the current base - caller needs to set the real base later */
+//初始化中event_init()
+ev->ev_base = current_base;// 设置event属于当前base；current_base通过event_init()设置
+
+ev->ev_callback = callback;//设置回调函数
+ev->ev_arg = arg;//设置回调函数的3个参数
+ev->ev_fd = fd;
+ev->ev_events = events;
+ev->ev_res = 0;
+//设置event状态
+ev->ev_flags = EVLIST_INIT;//设置event状态
+ev->ev_ncalls = 0;
+ev->ev_pncalls = NULL;
+//初始化小根堆索引-1 //初始化event在小根堆中索引为-1
+min_heap_elem_init(ev);
+
+/* by default, we put new events into the middle priority */
+if(current_base)
+ev->ev_pri = current_base->nactivequeues/2;//设置event优先级
+}
+​
+根据初始化参数，设置event参数；
+
+event_base_set():
+int
+event_base_set(struct event_base *base, struct event *ev)
+{
+    /* Only innocent events may be assigned to a different base */
+    if (ev->ev_flags != EVLIST_INIT)    //只能对新建的event设置其所属event_base
+        return (-1);
+    ev->ev_base = base;    //设置所属event_base
+    ev->ev_pri = base->nactivequeues/2;    //设置优先级
+    return (0);
+}
+
+其实在event_set()中已经将event所属的event_base设置为当前的current_base，而current_base在event_init()中被赋值为新建的event_base。
+所以，如果要将一个新的event捆绑的event_base设置为新建的event_base，则可以不需要event_base_set()这步调用。
+如果有多个event_base，则才需要这步；就一个event_base时，是不需要这步的，因为此时current_base就等于event_base。
+
+###只能对新建的状态为EVLIST_INIT的event设置所属event_base###
+
+event有优先级，我们还可以单独调用下面的函数来专门设置event的优先级，但要求不能对活跃的event设置。
+event_priority_set():
+int
+event_priority_set(struct event *ev, int pri)
+{
+    if (ev->ev_flags & EVLIST_ACTIVE)    //不能对活跃的event设置优先级
+        return (-1);
+    if (pri < 0 || pri >= ev->ev_base->nactivequeues)
+        return (-1);
+    ev->ev_pri = pri;    //设置优先级
+    return (0);
+}

@@ -1,0 +1,96 @@
+libevent用bufferevent来负责管理缓冲区与buffer读写事件。
+使用bufferevent处理事件的数据，是buffer和event的综合。
+
+struct bufferevent {
+    struct event_base *ev_base;
+
+    //读事件
+    struct event ev_read;
+    //写事件
+    struct event ev_write;
+    //读缓冲区，输入缓冲
+    struct evbuffer *input;
+    //写缓冲区，输出缓冲
+    struct evbuffer *output;
+
+    //读水位
+    struct event_watermark wm_read;
+    //写水位
+    struct event_watermark wm_write;
+
+    //发生读触发用户设置的回调
+    evbuffercb readcb;
+    //发生写触发用户设置的回调
+    evbuffercb writecb;
+    //发生错误触发用户设置的回调
+    everrorcb errorcb;
+    //当前设置的回调函数传递的参数，和上面3个回调配合使用
+    void *cbarg;
+
+    //设置读超时时间，默认为0
+    int timeout_read;    /* in seconds */
+    //设置写超时时间，默认为0
+    int timeout_write;    /* in seconds */
+
+    //当前事件是否可用
+    short enabled;    /* events that are currently enabled */
+};
+//水位
+struct event_watermark {
+    //低水位
+    size_t low;
+    //高水位
+    size_t high;
+};
+
+evbuffer中有2个缓冲区，一个是读缓冲区，一个写缓冲区。分别用来处理读写事件的数据。
+evbuffer中有读水位和写水位，分别对应了读缓冲区和写缓冲区。
+里面有个水位的概念。其实很好理解。水位有一个高水位，一个低水位。
+如果水位达到高水位时，不能再往里面灌水了。如果水位达到低水位，不能再从中取水了。
+
+读操作发生时：如果高于高水位，那就不能再读入数据了，等待数据被读掉然后再开始读入数据。低水位只做判断。低水位不为0，如果缓冲区低于低水位，可以继续直接读数据到缓冲区。
+写操作发生时：如果写缓冲区数据长度小于等于低水位，触发用户写事件，通知用户。写数据高水位没用。因为写数据是把缓冲区的数据读出写到对应的文件描述符中，所以水位肯定是下降的。
+我的理解：水位控制了信息的颗粒度，多少数据触发次用户事件。数据缓冲区降低了频繁申请内存带来的开销。
+
+1.bufferevent_new
+进行一些初始化。最重要的是指定了eventbuffer内部读写事件的回调，bufferevent_readcb与bufferevent_writecb。当前也可以通过后面的bufferevent_setcb实现。
+
+struct bufferevent *
+bufferevent_new(int fd, evbuffercb readcb, evbuffercb writecb,
+    everrorcb errorcb, void *cbarg)
+{
+    struct bufferevent *bufev;
+
+    //申请内存空间并且初始化，使用calloc
+    if ((bufev = calloc(1, sizeof(struct bufferevent))) == NULL)
+        return (NULL);
+
+    if ((bufev->input = evbuffer_new()) == NULL) {
+        free(bufev);
+        return (NULL);
+    }
+
+    if ((bufev->output = evbuffer_new()) == NULL) {
+        evbuffer_free(bufev->input);
+        free(bufev);
+        return (NULL);
+    }
+    //读事件关联回调，传递参数
+    event_set(&bufev->ev_read, fd, EV_READ, bufferevent_readcb, bufev);
+
+    //写事件关联回调，传递参数
+    event_set(&bufev->ev_write, fd, EV_WRITE, bufferevent_writecb, bufev);
+
+    //设置bufferevent的读、写和出错事件回调，并且传递cbarg参数。
+    bufferevent_setcb(bufev, readcb, writecb, errorcb, cbarg);
+
+    /*
+     * Set to EV_WRITE so that using bufferevent_write is going to
+     * trigger a callback.  Reading needs to be explicitly enabled
+     * because otherwise no data will be available.
+     */
+    //开启可写，否则无法执行写入回调
+    bufev->enabled = EV_WRITE;
+
+    return (bufev);
+}

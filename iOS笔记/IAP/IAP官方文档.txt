@@ -1,0 +1,228 @@
+==================================================App Store Receipt Data Types
+https://developer.apple.com/documentation/appstorereceipts/app_store_receipt_data_types
+
+Transaction Identifiers:
+type original_transaction_id
+The transaction identifier of the original purchase.
+
+type transaction_id
+A unique identifier for a transaction such as a purchase, restore, or renewal.
+
+Receipt and Subscription Status：
+type status
+The status of the app receipt.
+
+type auto_renew_status
+The renewal status for the auto-renewable subscription.
+
+type is_in_billing_retry_period
+An indicator of whether an auto-renewable subscription is in the billing retry period.
+
+type is_in_intro_offer_period
+An indicator of whether an auto-renewable subscription is in the introductory price period.
+
+type is_trial_period
+An indicator of whether an auto-renewable subscription is in the free trial period.
+
+Dates and Intent：
+type expiration_intent
+The reason a subscription expired.
+
+type cancellation_date_ms
+The time and date that Apple customer support canceled a transaction or the time and date the user upgraded an auto-renewable subscription.
+
+type expires_date_ms
+The time in milliseconds a subscription expires or renews.
+
+Promotions and Offers：
+type promotional_offer_id
+The identifier of the promotional offer for an auto-renewable subscription that the user redeemed.
+
+type offer_code_ref_name
+The offer-reference name of the subscription offer code that the customer redeemed.
+
+Family Sharing：
+type in_app_ownership_type
+The relationship of the user with the family-shared purchase to which they have access.
+
+==================================================Choosing a Receipt Validation Technique
+There are two ways to verify a receipt's authenticity:
+Local, on-device receipt validation, recommended to validate the signature of the receipt for apps with in-app purchases.
+Server-side receipt validation with the App Store, recommended for persisting in-app purchases to maintain and manage purchase records.
+
+For auto-renewable subscription management, server-side receipt validation gives key advantages over on-device receipt validation.
+
+On-device versus server-side validation for auto-renewable subscriptions：
+On-device validation            Server-side validation
+
+Validates authenticity of receipt   Yes     Yes
+Includes renewal transactions       Yes     Yes
+Includes additional user subscription information       No      Yes
+Handles renewals without client dependency      No      Yes
+Resistant to device clock change        No      Yes
+
+In order for on-device receipt validation to include renewal transactions, there must be an internet connection to refresh the receipt.
+
+###
+Although receipts typically update immediately after a completed purchase or restored purchase, changes can happen at other times when the app is not running. 
+When necessary, call SKReceiptRefreshRequest to ensure the receipt you are working with is up-to-date, such as when a subscription renews in the background. This refresh requires a network connection.
+###
+
+------------------------------Validating Receipts with the App Store
+Fetch the Receipt Data：
+Send this Base64-encoded data to your server.
+
+// Get the receipt if it's available
+if let appStoreReceiptURL = Bundle.main.appStoreReceiptURL,
+    FileManager.default.fileExists(atPath: appStoreReceiptURL.path) {
+
+    do {
+        let receiptData = try Data(contentsOf: appStoreReceiptURL, options: .alwaysMapped)
+        print(receiptData)
+
+        let receiptString = receiptData.base64EncodedString(options: [])
+
+        // Read receiptData
+    }
+    catch { print("Couldn't read receipt data with error: " + error.localizedDescription) }
+}
+
+Send the Receipt Data to the App Store：
+On your server, create a JSON object with the receipt-data, password (if the receipt contains an auto-renewable subscription), 
+and exclude-old-transactions keys detailed in requestBody.
+
+Submit this JSON object as the payload of an HTTP POST request. 
+Use the test environment URL https://sandbox.itunes.apple.com/verifyReceipt when testing your app in the sandbox and while your application is in review. 
+Use the production URL https://buy.itunes.apple.com/verifyReceipt when your app is live in the App Store.
+
+Important：
+Verify your receipt first with the production URL; 
+then verify with the sandbox URL if you receive a 21007 status code. 
+This approach ensures you do not have to switch between URLs while your application is tested, reviewed by App Review, or live in the App Store.
+
+Parse the Response：
+The App Store's response payload is a JSON object that contains the keys and values detailed in responseBody.
+The in_app array contains the non-consumable, non-renewing subscription, and auto-renewable subscription items previously purchased by the user. 
+Check the values in the response for these in-app purchase types to verify transactions as needed.
+
+###
+For auto-renewable subscription items, parse the response to get information about the currently active subscription period. 
+When you validate the receipt for a subscription, latest_receipt contains the latest encoded receipt, which is the same as the value for receipt-data in the request, 
+and latest_receipt_info contains all the transactions for the subscription, including the initial purchase and subsequent renewals but not including any restores.
+###
+
+You can use these values to check whether an auto-renewable subscription has expired. Use these values along with the expiration_intent subscription field to get the reason for expiration.
+
+###
+Receipts for auto-renewable subscriptions can grow over time since the renewal transactions stay in the receipt forever. 
+To optimize performance, the App Store may truncate sandbox receipts to remove old transactions. 
+When validating receipts for transactions made in the sandbox environment, consider creating new test accounts instead of reusing old accounts to test subscription purchases.
+###
+
+------------------------------requestBody
+The JSON contents you submit with the request to the App Store.
+Properties：
+receipt-data    byte        
+(Required) The Base64-encoded receipt data.
+
+password    string      
+(Required) Your app’s shared secret, which is a hexadecimal string.
+
+exclude-old-transactions    boolean
+Set this value to true for the response to include only the latest renewal transaction for any subscriptions.
+Use this field only for app receipts that contain auto-renewable subscriptions.
+
+------------------------------responseBody
+The JSON data returned in the response from the App Store.
+Properties：
+environment     string
+The environment for which the receipt was generated.
+Possible values: Sandbox, Production
+
+is-retryable        boolean
+An indicator that an error occurred during the request. A value of 1 indicates a temporary issue; retry validation for this receipt at a later time. A value of 0 indicates an unresolvable issue; do not retry validation for this receipt. Only applicable to status codes 21100-21199.
+
+latest_receipt      byte
+The latest Base64 encoded app receipt. Only returned for receipts that contain auto-renewable subscriptions.
+
+latest_receipt_info     [responseBody.Latest_receipt_info]
+An array that contains all in-app purchase transactions. This excludes transactions for consumable products that have been marked as finished by your app. Only returned for receipts that contain auto-renewable subscriptions.
+
+pending_renewal_info        [responseBody.Pending_renewal_info]
+In the JSON file, an array where each element contains the pending renewal information for each auto-renewable subscription identified by the product_id. Only returned for app receipts that contain auto-renewable subscriptions.
+
+receipt     responseBody.Receipt
+A JSON representation of the receipt that was sent for verification.
+
+status      status
+Either 0 if the receipt is valid, or a status code if there is an error. The status code reflects the status of the app receipt as a whole. See status for possible status codes and descriptions.
+
+
+responseBody.Pending_renewal_info：
+An array of elements that refers to open or failed auto-renewable subscription renewals.
+https://developer.apple.com/documentation/appstorereceipts/responsebody/pending_renewal_info
+
+responseBody.Latest_receipt_info：
+An array that contains all in-app purchase transactions.
+https://developer.apple.com/documentation/appstorereceipts/responsebody/latest_receipt_info
+
+responseBody.Receipt：
+The decoded version of the encoded receipt data sent with the request to the App Store.
+https://developer.apple.com/documentation/appstorereceipts/responsebody/receipt
+
+------------------------------status
+The status of the app receipt.
+
+21000
+The request to the App Store was not made using the HTTP POST request method.
+
+21001
+This status code is no longer sent by the App Store.
+
+21002
+The data in the receipt-data property was malformed or the service experienced a temporary issue. Try again.
+
+21003
+The receipt could not be authenticated.
+
+21004
+The shared secret you provided does not match the shared secret on file for your account.
+
+21005
+The receipt server was temporarily unable to provide the receipt. Try again.
+
+21006
+This receipt is valid but the subscription has expired. When this status code is returned to your server, the receipt data is also decoded and returned as part of the response. Only returned for iOS 6-style transaction receipts for auto-renewable subscriptions.
+
+21007
+This receipt is from the test environment, but it was sent to the production environment for verification.
+
+21008
+This receipt is from the production environment, but it was sent to the test environment for verification.
+
+21009
+Internal data access error. Try again later.
+
+21010
+The user account cannot be found or has been deleted.
+
+------------------------------expiration_intent
+The reason a subscription expired.// 订阅过期的原因
+
+This field is returned in the JSON response, in the responseBody.Pending_renewal_info array.
+
+Possible Values：
+1
+The customer voluntarily canceled their subscription.
+
+2
+Billing error; for example, the customer's payment information was no longer valid.
+
+3
+The customer did not agree to a recent price increase.
+
+4
+The product was not available for purchase at the time of renewal.
+
+5
+Unknown error.

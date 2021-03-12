@@ -52,8 +52,9 @@
 // MARK: ##MJ##
 // https://www.jianshu.com/nb/45474325
 
-// MARK: 面试
+// MARK: ==========面试==========
 // https://github.com/DevDragonLi/iOSInterviewsAndDevNotes // 必须看
+// https://github.com/SunshineBrother/JHBlog
 // https://juejin.cn/user/2348212570038446/posts
 // https://juejin.cn/user/2242659450368119/posts
 
@@ -2144,8 +2145,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // MARK: dispatch_once && method swizzling
         OnceClass.takeOnceTimeFunc()
         OnceClass.takeOnceTimeFunc()
-        
-        
+
+        #warning("TODO")
         // MARK: UserDefaults
         /**
          ["INNextHearbeatDate": 615967481.533718, "INNextFreshmintRefreshDateKey": 615536873.3292, "AppleKeyboards": <__NSCFArray 0x281d04a80>(
