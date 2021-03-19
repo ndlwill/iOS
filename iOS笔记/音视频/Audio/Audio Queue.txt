@@ -1,0 +1,97 @@
+它可以让你的应用程序使用硬件进行录音和回放音频（如麦克风和扬声器），而不需要知道硬件接口。
+
+录制的音频队列：
+一个录制的音频队列，使用 AudioQueueNewInput 函数创建
+
+播放的音频队列：
+一个播放的音频队列，使用AudioQueueNewOutput函数创建
+
+Audio Queue Buffers(音频队列缓冲区)
+typedef struct AudioQueueBuffer {
+    const UInt32   mAudioDataBytesCapacity;
+    void *const    mAudioData;
+    UInt32         mAudioDataByteSize;
+    void           *mUserData;
+} AudioQueueBuffer;
+typedef AudioQueueBuffer *AudioQueueBufferRef;
+
+音频队列可以使用你的应用程序指定的任意数量的缓冲区。不过一般都是指定为3个。
+这样就允许一个去写数据到磁盘，另一个正在填充新的数据，如果需要补偿诸如磁盘I / O延迟之类的事情，则第三缓冲器可用。
+
+Audio queues(音频队列)为其缓冲区提供内存管理。
+当您调用AudioQueueAllocateBuffer函数时，audio queue会分配一个缓冲区
+当您通过调用AudioQueue Dispose函数释放audio queue（音频队列）时，队列释放其缓冲区
+
+控制播放过程：
+音频队列缓冲区总是按它们入队的顺序播放。 
+但是，音频队列服务使用AudioQueueEnqueueBufferWithParameters函数为您提供了对播放过程的一些控制。 此功能允许您：
+设置缓冲区的精确播放时间。 这允许您支持同步。
+修剪音频队列缓冲区的开始或结束处的帧。 这允许您删除前导或尾部静音。
+以缓冲区的粒度设置播放增益
+
+回调使用AudioQueueEnqueueBuffer函数将缓冲区添加到缓冲区队列的末尾。
+
+录制音频队列的回调函数：
+AudioQueueInputCallback (
+    void                               *inUserData,
+    AudioQueueRef                      inAQ,
+    AudioQueueBufferRef                inBuffer,
+    const AudioTimeStamp               *inStartTime,
+    UInt32                             inNumberPacketDescriptions,
+    const AudioStreamPacketDescription *inPacketDescs
+);
+
+回放音频队列的回调函数：
+AudioQueueOutputCallback (
+    void                  *inUserData,
+    AudioQueueRef         inAQ,
+    AudioQueueBufferRef   inBuffer
+);
+
+#####使用编解码器和音频数据格式#####
+音频队列服务可以根据不同的音频格式来转换需要使用的编解码器(音频数据编码和解码)。
+每一个音频队列对应一种音频数据格式，音频数据格式使用AudioStreamBasicDescription描述。
+当你为 mFormatID字段设置值得时候，音频队列就会使用与之相对应的编解码器，然后你再为其定义采样率和通道数。
+
+音频队列控制和状态：
+音频队列在创建和处理之间有一个生命周期。 您的应用程序管理此生命周期，并使用AudioQueue.h头文件中声明的六个函数来控制音频队列的状态：
+Start(AudioQueueStart). Call to initiate recording or playback.
+Prime (AudioQueuePrime).For playback, call before calling AudioQueueStart to ensure that there is data available immediately for the audio queue to play. This function is not relevant to recording。
+Stop (AudioQueueStop).Call to reset the audio queue (see the description below for AudioQueueReset) and to then stop recording or playback. A playback audio queue callback calls this function when there’s no more data to play.
+Pause (AudioQueuePause).Call to pause recording or playback without affecting buffers or resetting the audio queue. To resume, call the AudioQueueStart function.
+Flush (AudioQueueFlush).Call after enqueuing the last audio queue buffer to ensure that all buffered data, as well as all audio data in the midst of processing, gets recorded or played.
+Reset (AudioQueueReset).Call to immediately silence an audio queue, remove all buffers from previously scheduled use, and reset all decoder and DSP state.
+
+
+AudioQueueStop：
+功能：停止音频的播放或录制
+同步停止(synchronous stops)会立刻执行播放或录制，无论音频队列中是否有音频内容；异步停止(asynchronous stops)直到音频队列中的音频数据被播放完后，才会停止播放或者录制。
+
+AudioQueuePause：
+功能： 暂停音频播放或录制
+
+AudioQueueFlush
+功能：重置音频队列的解码器状态
+
+AudioQueueReset
+功能：重置音频队列
+
+==============================================================================================================AudioQueueNewInput
+extern OSStatus             
+AudioQueueNewInput(                 const AudioStreamBasicDescription *inFormat,
+                                    AudioQueueInputCallback         inCallbackProc,
+                                    void * __nullable               inUserData,
+                                    CFRunLoopRef __nullable         inCallbackRunLoop,
+                                    CFStringRef __nullable          inCallbackRunLoopMode,
+                                    UInt32                          inFlags,
+                                    AudioQueueRef __nullable * __nonnull outAQ);
+inFormt: 所录制音频的格式，是AudioStreamBasicDescription的实例。AudioStreamBasicDescription是对音频格式的描述。
+inCallbackProc : 是一个回调，当一个buffer被填充完成时，会触发这个回调。
+inCallbackRunLoop：要调用inCallbackProc的事件循环。如果指定NULL，则在其中一个音频队列的内部线程上调用回调。这个参数一般填写NULL
+inCallbackRunLoopMode：为RunLoop模式，如果传入NULL就相当于kCFRunLoopCommonModes，一般这个参数也是填写NULL
+inFlags : 保留字段，直接传0
+outAQ: 返回生成的AudioQueue实例,返回值用来判断是否成功创建（OSStatus == noErr)
+
+官方:
+In uncompressed audio, a Packet is one frame, (mFramesPerPacket == 1). In compressed audio, a Packet is an
+indivisible chunk of compressed data, for example an AAC packet will contain 1024 sample frames.

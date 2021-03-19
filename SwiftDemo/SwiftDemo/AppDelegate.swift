@@ -26,6 +26,9 @@
 // UI即User Interface(用户界面)的简称
 // raw pointer: 原始指针
 
+// MARK: leetcode
+// https://books.halfrost.com/leetcode/
+
 // MARK: Core Animation: Advanced Techniques中文译本
 // https://zsisme.gitbooks.io/ios-/content/
 
@@ -987,6 +990,8 @@ directory that contains your module map.
 // https://www.jianshu.com/u/8367278ff6cf
 // https://www.jianshu.com/p/2b1d9e9eb10d
 // https://www.jianshu.com/u/57da48d44319
+// https://juejin.cn/user/1151943916921885/posts
+// https://juejin.cn/user/2735240659351112/posts // Tencent
 
 // MARK: Swift 语法规范 && SwiftLint
 // https://github.com/github/swift-style-guide
@@ -1094,7 +1099,7 @@ directory that contains your module map.
 
 // https://github.com/JoanKing/JKSwiftExtension // Extension
 // https://github.com/HeathWang/HWPanModal
-// https://github.com/indulgeIn/YBImageBrowser 
+// https://github.com/indulgeIn/YBImageBrowser  
 
 // MARK: URLSession-tutorial
 // https://www.raywenderlich.com/3244963-urlsession-tutorial-getting-started

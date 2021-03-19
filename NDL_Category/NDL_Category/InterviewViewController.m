@@ -6040,6 +6040,93 @@ TCP(传输控制协议) 建立连接，形成传输数据的通道 在连接中�
  
  
  MARK: weak底层原理：
+ -(void)dealloc{__weak typeof(self)weakSelf =  self;}// 会崩溃
+ objc[4572]: Cannot form weak reference to instance (0x160f6f890) of class MFChatRoomBoardController. It is possible that this object was over-released, or is in the process of deallocation.
+ (lldb)
+ error: empty command
+ (lldb) bt
+ * thread #1: tid = 0x35914d, 0x0000000182307aac libobjc.A.dylib`_objc_trap(), queue = ‘com.apple.main-thread‘, stop reason = EXC_BREAKPOINT (code=1, subcode=0x182307aac)
+   * frame #0: 0x0000000182307aac libobjc.A.dylib`_objc_trap()
+     frame #1: 0x0000000182307b24 libobjc.A.dylib`_objc_fatal(char const*, ...) + 88
+     frame #2: 0x0000000182319890 libobjc.A.dylib`weak_register_no_lock + 316
+     frame #3: 0x0000000182320688 libobjc.A.dylib`objc_initWeak + 224
+     frame #4: 0x000000010022bf8c MakeFriends`-[MFChatRoomBoardController dealloc](self=0x0000000160f6f890, _cmd="dealloc") + 36 at MFChatRoomBoardController.m:31
+ 不允许在 dealloc 的时候取 weak self.
+ id
+ weak_register_no_lock(weak_table_t *weak_table, id referent_id, id *referrer_id)
+ {
+     objc_object *referent = (objc_object *)referent_id;// 参照物
+     objc_object **referrer = (objc_object **)referrer_id;// 引用者
+
+     if (!referent  ||  referent->isTaggedPointer()) return referent_id;
+
+     // ensure that the referenced object is viable
+     bool deallocating;
+     if (!referent->ISA()->hasCustomRR()) {
+         deallocating = referent->rootIsDeallocating();
+     }
+     else {
+         BOOL (*allowsWeakReference)(objc_object *, SEL) =
+             (BOOL(*)(objc_object *, SEL))
+             object_getMethodImplementation((id)referent,
+                                            SEL_allowsWeakReference);
+         if ((IMP)allowsWeakReference == _objc_msgForward) {
+             return nil;
+         }
+         deallocating =
+             ! (*allowsWeakReference)(referent, SEL_allowsWeakReference);
+     }
+
+     if (deallocating) {
+         _objc_fatal("Cannot form weak reference to instance (%p) of "
+                     "class %s. It is possible that this object was "
+                     "over-released, or is in the process of deallocation.",
+                     (void*)referent, object_getClassName((id)referent));
+     }
+
+     // now remember it and where it is being stored
+     weak_entry_t *entry;
+     if ((entry = weak_entry_for_referent(weak_table, referent))) {
+         append_referrer(entry, referrer);
+     }
+     else {
+         weak_entry_t new_entry;
+         new_entry.referent = referent;
+         new_entry.out_of_line = 0;
+         new_entry.inline_referrers[0] = referrer;
+         for (size_t i = 1; i < WEAK_INLINE_COUNT; i++) {
+             new_entry.inline_referrers[i] = nil;
+         }
+
+         weak_grow_maybe(weak_table);
+         weak_entry_insert(weak_table, &new_entry);
+     }
+
+     // Do not set *referrer. objc_storeWeak() requires that the
+     // value not change.
+
+     return referent_id;
+ }
+ 
+ void _objc_fatal(const char *fmt, ...)
+ {
+     va_list ap;
+     char *buf1;
+     char *buf2;
+
+     va_start(ap,fmt);
+     vasprintf(&buf1, fmt, ap);
+     va_end (ap);
+
+     asprintf(&buf2, "objc[%d]: %s\n", getpid(), buf1);
+     _objc_syslog(buf2);
+     _objc_crashlog(buf2);
+
+     _objc_trap();
+ }
+ 
+ ==========
+ 
  objc_initWeak->
  storeWeak
  ->
