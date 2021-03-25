@@ -60,6 +60,7 @@
 // https://github.com/SunshineBrother/JHBlog
 // https://juejin.cn/user/2348212570038446/posts
 // https://juejin.cn/user/2242659450368119/posts
+// https://github.com/liberalisman/iOS-InterviewQuestion-collection
 
 // MARK: apple document
 // https://developer.apple.com/library/archive/navigation/
@@ -1094,8 +1095,10 @@ directory that contains your module map.
 // 唱吧
 // https://github.com/ChangbaDevs
 
+// 播放器
 // ZFPlayer
 // https://github.com/renzifeng/ZFPlayer
+// SJVideoPlayer
 
 // https://github.com/JoanKing/JKSwiftExtension // Extension
 // https://github.com/HeathWang/HWPanModal

@@ -46,7 +46,11 @@ p3 和 p4 都是 shared_ptr 类型的智能指针，因此可以用 p3 来初始
 注意，同一普通指针不能同时为多个 shared_ptr 对象赋值，否则会导致程序发生异常。例如：
 int* ptr = new int;
 std::shared_ptr<int> p1(ptr);
-std::shared_ptr<int> p2(ptr);//错误
+std::shared_ptr<int> p2(ptr);//错误,编译没问题，运行的时候，当两个指针变量生命周期结束释放的时候，会由于重复释放ptr所指向的内存，导致崩溃
+
+int *a = new int(10);
+shared_ptr<int> p1(a);
+shared_ptr<int> p2(a);
 
 4) 在初始化 shared_ptr 智能指针时，还可以自定义所指堆内存的释放规则，这样当堆内存的引用计数为 0 时，会优先调用我们自定义的释放规则。
 在某些场景中，自定义释放规则是很有必要的。比如，对于申请的动态数组来说，shared_ptr 指针默认的释放规则是不支持释放数组的，只能自定义对应的释放规则，才能正确地释放申请的堆内存。
@@ -109,3 +113,28 @@ int main()
 p1 为空
 10
 1
+
+==================================================
+struct A {
+  void func() {
+    // only have "this" ptr ?
+  }
+};
+
+int main() {
+  A* a;
+  std::shared_ptr<A> sp_a(a);
+}
+当A* a被shared_ptr托管的时候,如何在func获取自身的shared_ptr成了问题.如果写成:void func() {
+  std::shared_ptr<A> local_sp_a(this);
+  // do something with local_sp_a
+}
+又用a新生成了一个shared_ptr: local_sp_a, 这个在生命周期结束的时候可能将a直接释放掉.这里就需要用enable_shared_from_this改写:
+
+struct A : public enable_shared_from_this {
+  void func() {
+    std::shared_ptr<A> local_sp_a = shared_from_this();
+    // do something with local_sp
+  }
+};
+shared_from_this会从weak_ptr安全的生成一个自身的shared_ptr.

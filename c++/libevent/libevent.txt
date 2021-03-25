@@ -157,7 +157,93 @@ https://blog.csdn.net/bingxuesiyang/article/details/89888664
 https://zhuanlan.zhihu.com/p/87443227
 
 ==================================================函数调用的原理
-https://zhuanlan.zhihu.com/p/51856114
+https://www.jianshu.com/p/e7a22923867f
+
+一个由C/C++编译的程序占用的内存分为以下几个部分：
+1、栈区（stack）：又编译器自动分配释放，存放函数的参数值，局部变量的值等，其操作方式类似于数据结构的栈。
+2、堆区（heap）：一般是由程序员分配释放，若程序员不释放的话，程序结束时可能由OS回收，值得注意的是他与数据结构的堆是两回事，分配方式倒是类似于数据结构的链表。
+3、全局区（static）：也叫静态数据内存空间，存储全局变量和静态变量，全局变量和静态变量的存储是放一块的，初始化的全局变量和静态变量放一块区域，没有初始化的在相邻的另一块区域，程序结束后由系统释放。
+4、文字常量区：常量字符串就是放在这里，程序结束后由系统释放。
+5、程序代码区：存放函数体的二进制代码。
+
+什么是栈：
+栈是一种LIFO形式的数据结构，所有的数据都是后进先出。这种形式的数据结构正好满足我们调用函数的方式：父函数调用子函数，父函数在前，子函数在后；返回时，子函数先返回，父函数后返回。
+栈支持两种基本操作，push和pop。push将数据压入栈中，pop将栈中的数据弹出并存储到指定寄存器或者内存中。
+
+栈的生长方向是从高地址到低地址的，这是因为在下文讲的栈帧中，栈就是向下生长的，因此这里也用这种形式的栈；
+第二，pop操作后，栈中的数据并没有被清空，只是该数据我们无法直接访问。
+
+函数栈：
+1.栈帧
+也就是stack frame，其本质就是一种栈，只是这种栈专门用于保存函数调用过程中的各种信息（参数，返回地址，本地变量等）。
+栈帧有栈顶和栈底之分，其中栈顶的地址最低，栈底的地址最高，SP(栈指针)就是一直指向栈顶的。
+我们用 %ebp 指向栈底，也就是基址指针；用 %esp 指向栈顶，也就是栈指针。
+
+一般来说，我们将 %ebp 到 %esp 之间区域当做栈帧（也有人认为该从函数参数开始，不过这不影响分析）。
+并不是整个栈空间只有一个栈帧，每调用一个函数，就会生成一个新的栈帧。
+在函数调用过程中，我们将调用函数的函数称为“调用者(caller)”，将被调用的函数称为“被调用者(callee)”。在这个过程中，
+1）“调用者”需要知道在哪里获取“被调用者”返回的值；
+2）“被调用者”需要知道传入的参数在哪里，
+3）返回的地址在哪里。
+同时，我们需要保证在“被调用者”返回后，%ebp, %esp 等寄存器的值应该和调用前一致。因此，我们需要使用栈来保存这些数据。
+
+2.函数调用实例
+这是一个有参数但没有调用任何函数的简单函数，我们假设它被其他函数调用。
+
+int MyFunction(int x, int y, int z){ 
+int a, b, c;
+a = 10;
+b = 5;
+c = 2;
+...
+}
+
+int TestFunction(){ 
+int x = 1, y = 2, z = 3;
+MyFunction1(1, 2, 3);
+...
+}
+
+对于这个函数，当调用时，MyFunction() 的汇编代码大致如下：
+_MyFunction:
+push %ebp ; //保存%ebp的值
+movl %esp, $ebp ; //将%esp的值赋给%ebp，使新的%ebp指向栈顶
+movl -12(%esp), %esp ; //分配额外空间给本地变量
+movl $10, -4(%ebp) ;
+movl $5, -8(%ebp) ;
+movl $2, -12(%ebp) ;
+
+调用者做了两件事情：第一，将被调用函数的参数按照从右到左的顺序压入栈中。第二，将返回地址压入栈中。
+这两件事都是调用者负责的，因此压入的栈应该属于调用者的栈帧。
+我们再来看看被调用者，它也做了两件事情：第一，将老的（调用者的） %ebp 压入栈，此时 %esp 指向它。
+第二，将 %esp 的值赋给 %ebp, %ebp 就有了新的值，它也指向存放老 %ebp 的栈空间。
+这时，它成了是函数 MyFunction() 栈帧的栈底。
+这样，我们就保存了“调用者”函数的 %ebp，并且建立了一个新的栈帧。
+
+在 %ebp 更新后，我们先分配一块0x12字节的空间用于存放本地变量，这步一般都是用 sub 或者 mov 指令实现。
+在这里使用的是 movl。通过使用 mov 配合 -4(%ebp), -8(%ebp) 和 -12(%ebp) 我们便可以给 a, b 和 c 赋值了。
+
+3.函数的返回
+上面讲的都是函数的调用过程，我们现在来看看函数是如何返回的。
+和调用函数时正好相反。当函数完成自己的任务后，它会将 %esp 移到 %ebp 处，然后再弹出旧的 %ebp 的值到 %ebp。这样，%ebp 就恢复到了函数调用前的状态了。
+
+int MyFunction( int x, int y, int z ){ int a, int b, int c;
+... return;
+}
+
+其汇编大致如下：
+_MyFunction:
+push %ebp
+movl %esp, %ebp
+movl -12(%esp), %esp
+...
+mov %ebp, %esp
+pop %ebp
+ret
+
+我们注意到最后有一个 ret 指令，这个指令相当于 pop + jum。它首先将数据（返回地址）弹出栈并保存到 %eip 中，然后处理器根据这个地址无条件地跳到相应位置获取新的指令。
+
+函数的调用其实不难，只要搞懂了如何保存以及还原 %ebp 和 %esp，就能明白函数是如何通过栈帧进行调用和返回的了。
 
 ==================================================TAILQ 队列（尾队列）
 TAILQ队列有HEAD和ENTRY两种基本的数据结构
@@ -204,7 +290,7 @@ Linux中的list只将struct list_head作为用户元素的挂接点，因此在�
 而TAILQ由于tqe_next指针直接指向用户元素的类型，所以理论上，正向遍历TAILQ比list更快.但逆向遍历时,由于TAILQ的取用prev元素的操作比next麻烦的多，
 因此逆向遍历是比正向慢的：
 
-==========================================================================================================================================================================================================================================================
+博客园==========================================================================================================================================================================================================================================================
 ==================================================Libevent源码分析—event, event_base
 https://zhuanlan.zhihu.com/p/93612337
 在处理web请求时，通常有两种体系结构，分别为：thread-based architecture（基于线程）、event-driven architecture（事件驱动）
@@ -662,7 +748,8 @@ event_base_loop()
 4.检查定时事件，将就绪的定时事件从小根堆中删除，插入到活跃事件链表中
 5.对event_base的活跃事件链表中的事件，调用event_process_active(）函数，在该函数内调用event的回调函数，优先级高的event先处理。
 
-该函数内部调用了eventop.dispatch()监听事件，event_sigcb函数指针处理信号事件，timeout_process()将超时的定时事件加入到活跃事件链表中，event_process_active()处理活跃事件链表中的事件，调用相应的回调函数。
+该函数内部调用了eventop.dispatch()监听事件，event_sigcb函数指针处理信号事件，
+timeout_process()将超时的定时事件加入到活跃事件链表中，event_process_active()处理活跃事件链表中的事件，调用相应的回调函数。
 
 int
 event_base_loop(struct event_base *base, int flags)
@@ -784,6 +871,124 @@ const struct eventop epollops = {
 2.如果有信号发生，调用evsignal_process()处理信号
 3.将活跃的event根据其活跃的类型注册到活跃事件链表上
 4.如果events数组大小不够，则重新分配为原来2倍大小
+
+static int
+epoll_dispatch(struct event_base *base, void *arg, struct timeval *tv)
+{
+    struct epollop *epollop = arg;
+    struct epoll_event *events = epollop->events;
+    struct evepoll *evep;
+    int i, res, timeout = -1;
+    if (tv != NULL)
+        timeout = tv->tv_sec * 1000 + (tv->tv_usec + 999) / 1000;  //转换为微米
+    if (timeout > MAX_EPOLL_TIMEOUT_MSEC) {  //设置最大超时时间
+        /* Linux kernels can wait forever if the timeout is too big;
+         * see comment on MAX_EPOLL_TIMEOUT_MSEC. */
+        timeout = MAX_EPOLL_TIMEOUT_MSEC;
+    }
+    res = epoll_wait(epollop->epfd, events, epollop->nevents, timeout);  //监听事件发生
+    if (res == -1) {
+        if (errno != EINTR) {
+            event_warn("epoll_wait");
+            return (-1);
+        }
+        evsignal_process(base);  //由于Signal事件发生中断，处理Signal事件
+        return (0);
+    } else if (base->sig.evsignal_caught) {
+        evsignal_process(base);  //有Signal事件发生，处理Signal事件
+    }
+    event_debug(("%s: epoll_wait reports %d", __func__, res));
+    for (i = 0; i < res; i++) {  //处理活跃事件
+        int what = events[i].events;  //活跃类型
+        struct event *evread = NULL, *evwrite = NULL;
+        int fd = events[i].data.fd;  //event的文件描述符
+        if (fd < 0 || fd >= epollop->nfds)
+            continue;
+        evep = &epollop->fds[fd];
+        if (what & (EPOLLHUP|EPOLLERR)) {  //判断epoll的events类型，并找到注册的event
+            evread = evep->evread;
+            evwrite = evep->evwrite;
+        } else {
+            if (what & EPOLLIN) {
+                evread = evep->evread;
+            }
+            if (what & EPOLLOUT) {
+                evwrite = evep->evwrite;
+            }
+        }
+        if (!(evread||evwrite))
+            continue;
+        
+        //添加event到活跃事件链表中
+        if (evread != NULL)
+            event_active(evread, EV_READ, 1);
+        if (evwrite != NULL)
+            event_active(evwrite, EV_WRITE, 1);
+    }
+    //如果注册的事件全部变为活跃，则增大events数组为原来两倍
+    if (res == epollop->nevents && epollop->nevents < MAX_NEVENTS) {
+        /* We used all of the event space this time.  We should
+           be ready for more events next time. */
+        int new_nevents = epollop->nevents * 2;
+        struct epoll_event *new_events;
+        new_events = realloc(epollop->events,
+            new_nevents * sizeof(struct epoll_event));
+        if (new_events) {
+            epollop->events = new_events;
+            epollop->nevents = new_nevents;
+        }
+    }
+    return (0);
+}
+
+event_process_active()：
+现在活跃的I/O事件、定时器事件已经全部添加到活跃事件链表中了。
+下面就开始调用这些event的回调函数进行处理了，这步是在event_base_loop()中调用event_process_active()来完成的。
+该函数从event_base的activequeueus链表数组上取出一个链表；对该链表上的event调用回调函数；优先调用优先级值最小的event
+
+/*
+ * Active events are stored in priority queues.  Lower priorities are always
+ * process before higher priorities.  Low priority events can starve high
+ * priority ones.
+ */
+static void
+event_process_active(struct event_base *base)
+{
+    struct event *ev;
+    struct event_list *activeq = NULL;
+    int i;
+    short ncalls;
+    for (i = 0; i < base->nactivequeues; ++i) {  //取出第一个活跃链表
+        if (TAILQ_FIRST(base->activequeues[i]) != NULL) {
+            activeq = base->activequeues[i];
+            break;
+        }
+    }
+    assert(activeq != NULL);
+
+    //优先处理优先级值最小的event
+    for (ev = TAILQ_FIRST(activeq); ev; ev = TAILQ_FIRST(activeq)) {
+        if (ev->ev_events & EV_PERSIST)
+            event_queue_remove(base, ev, EVLIST_ACTIVE);  //是持久事件，则从活跃链表移除
+        else
+            event_del(ev);  //不是持久事件，则直接删除该事件
+        
+        /* Allows deletes to work */
+        ncalls = ev->ev_ncalls;
+        ev->ev_pncalls = &ncalls;
+        while (ncalls) {
+            ncalls--;
+            ev->ev_ncalls = ncalls;
+            //调用该event的回调函数，event.ev_res保存返回值
+            (*ev->ev_callback)((int)ev->ev_fd, ev->ev_res, ev->ev_arg);  
+            if (event_gotsig || base->event_break) {
+                  ev->ev_pncalls = NULL;
+                return;
+            }
+        }
+        ev->ev_pncalls = NULL;
+    }
+}
 
 ==================================================Libevent源码分析—从使用Libevent库开始
 练习libevent库的使用，主要是几个API的调用顺序。根据event.h的开头注释部分可知，要使用libevent库，主要的几个API及调用顺序为：
@@ -1015,6 +1220,8 @@ int main()
 	return 0;
 }
 
+libevent从入门到掌握==========================================================================================================================================================================================================================================================
+https://www.zhihu.com/column/c_1051625776130146304
 ==================================================libevent1
 poll 轮询
 
@@ -1074,6 +1281,16 @@ int main()
 
         return 0;
 }
+
+timer_cb
+timer_cb
+timer_cb
+timer_cb
+timer_cb
+timer_cb
+timer_cb
+timer_cb
+timer_cb
 
 ==================================================libevent2 源码介绍
 malloc()函数有一个参数，即要分配的内存空间的大小:
@@ -1184,7 +1401,7 @@ ev->ev_pri = current_base->nactivequeues/2;//设置event优先级
 ​
 根据初始化参数，设置event参数；
 
-event_base_set():
+4.event_base_set():
 int
 event_base_set(struct event_base *base, struct event *ev)
 {
@@ -1195,6 +1412,7 @@ event_base_set(struct event_base *base, struct event *ev)
     ev->ev_pri = base->nactivequeues/2;    //设置优先级
     return (0);
 }
+将event_base_set()将event绑定到指定的event_base上
 
 其实在event_set()中已经将event所属的event_base设置为当前的current_base，而current_base在event_init()中被赋值为新建的event_base。
 所以，如果要将一个新的event捆绑的event_base设置为新建的event_base，则可以不需要event_base_set()这步调用。
@@ -1213,4 +1431,2160 @@ event_priority_set(struct event *ev, int pri)
         return (-1);
     ev->ev_pri = pri;    //设置优先级
     return (0);
+}
+
+5.event_add()
+int
+event_add(struct event *ev, const struct timeval *tv)
+{
+struct event_base *base = ev->ev_base;
+const struct eventop *evsel = base->evsel;
+void *evbase = base->evbase;
+int res = 0;
+
+event_debug((
+"event_add: event: %p, %s%s%scall %p",
+ev,
+ev->ev_events & EV_READ ? "EV_READ " : " ",
+ev->ev_events & EV_WRITE ? "EV_WRITE " : " ",
+tv ? "EV_TIMEOUT " : " ",
+ev->ev_callback));
+
+assert(!(ev->ev_flags & ~EVLIST_ALL));
+
+/*
+* prepare for timeout insertion further below, if we get a
+* failure on any step, we should not change any state.
+*/
+if (tv != NULL && !(ev->ev_flags & EVLIST_TIMEOUT)) {
+if (min_heap_reserve(&base->timeheap,
+1 + min_heap_size(&base->timeheap)) == -1)
+return (-1);  /* ENOMEM == errno */
+}
+
+if ((ev->ev_events & (EV_READ|EV_WRITE|EV_SIGNAL)) &&
+    !(ev->ev_flags & (EVLIST_INSERTED|EVLIST_ACTIVE))) {
+res = evsel->add(evbase, ev);
+if (res != -1)
+event_queue_insert(base, ev, EVLIST_INSERTED);
+}
+
+/* 
+* we should change the timout state only if the previous event
+* addition succeeded.
+*/
+if (res != -1 && tv != NULL) {
+struct timeval now;
+
+/* 
+* we already reserved memory above for the case where we
+* are not replacing an exisiting timeout.
+*/
+if (ev->ev_flags & EVLIST_TIMEOUT)
+event_queue_remove(base, ev, EVLIST_TIMEOUT);
+
+/* Check if it is active due to a timeout.  Rescheduling
+* this timeout before the callback can be executed
+* removes it from the active list. */
+if ((ev->ev_flags & EVLIST_ACTIVE) &&
+    (ev->ev_res & EV_TIMEOUT)) {
+/* See if we are just active executing this
+* event in a loop
+*/
+if (ev->ev_ncalls && ev->ev_pncalls) {
+/* Abort loop */
+*ev->ev_pncalls = 0;
+}
+event_queue_remove(base, ev, EVLIST_ACTIVE);
+}
+
+gettime(base, &now);
+evutil_timeradd(&now, tv, &ev->ev_timeout);
+
+event_debug((
+"event_add: timeout in %ld seconds, call %p",
+tv->tv_sec, ev->ev_callback));
+
+event_queue_insert(base, ev, EVLIST_TIMEOUT);
+}
+
+return (res);
+}
+
+根据时间类型添加到不同的列表中：
+1.将event注册到event_base的I/O多路复用要监听的事件链表中
+2.将event注册到event_base的已注册事件链表中
+3.如果传入了超时时间，则删除旧的超时时间，重新设置，并将event添加到event_base的小根堆中；
+如果没有传入超时时间，则不会添加到小根堆中。
+函数内添加到I/O多路复用监听事件链表、已注册事件链表、小根堆中都是通过event_queue_insert()完成的，
+相应的删除工作都是通过event_queue_remove()完成的。
+
+6.event_base_dispatch()
+int
+event_base_dispatch(struct event_base *event_base)
+{
+  return (event_base_loop(event_base, 0));
+}
+​
+event_base_dispatch什么也没有做，调用了event_base_loop函数;
+
+
+7.event_base_loop()
+int
+event_base_loop(struct event_base *base, int flags)
+{
+//IO复用方式
+const struct eventop *evsel = base->evsel;
+void *evbase = base->evbase;
+struct timeval tv;
+struct timeval *tv_p;
+int res, done;
+
+/* clear time cache */
+base->tv_cache.tv_sec = 0;
+
+if (base->sig.ev_signal_added)
+evsignal_base = base;
+done = 0;
+while (!done) {
+/* Terminate the loop if we have been asked to */
+if (base->event_gotterm) {
+//设置中止循环
+base->event_gotterm = 0;
+break;
+}
+
+if (base->event_break) {
+base->event_break = 0;
+break;
+}
+
+/* You cannot use this interface for multi-threaded apps */
+while (event_gotsig) {
+event_gotsig = 0;
+if (event_sigcb) {
+res = (*event_sigcb)();
+if (res == -1) {
+errno = EINTR;
+return (-1);
+}
+}
+}
+
+timeout_correct(base, &tv);
+
+tv_p = &tv;
+if (!base->event_count_active && !(flags & EVLOOP_NONBLOCK)) {
+timeout_next(base, &tv_p);
+} else {
+/* 
+* if we have active events, we just poll new events
+* without waiting.
+*/
+evutil_timerclear(&tv);
+}
+/* If we have no events, we just exit */
+if (!event_haveevents(base)) {
+event_debug(("%s: no events registered.", __func__));
+return (1);
+}
+
+/* update last old time */
+gettime(base, &base->event_tv);
+
+/* clear time cache */
+base->tv_cache.tv_sec = 0;
+
+res = evsel->dispatch(base, evbase, tv_p);
+
+if (res == -1)
+return (-1);
+gettime(base, &base->tv_cache);
+
+timeout_process(base);
+//有就绪事件则调用事件注册的回调函数
+if (base->event_count_active) {
+event_process_active(base);
+if (!base->event_count_active && (flags & EVLOOP_ONCE))
+done = 1;
+} else if (flags & EVLOOP_NONBLOCK)
+done = 1;
+}
+
+/* clear time cache */
+base->tv_cache.tv_sec = 0;
+
+event_debug(("%s: asked to terminate loop.", __func__));
+return (0);
+}
+
+event_base_loop()主要就是循环、检测、分发事件
+按照代码流程：
+1.信号标记被设置，则调用信号的回调函数
+2.根据定时器最小时间，设置I/O多路复用的最大等待时间，这样即使没有I/O事件发生，也能在最小定时器超时时返回。
+3.调用I/O多路复用，监听事件，将活跃事件添加到活跃事件链表中
+4.检查定时事件，将就绪的定时事件从小根堆中删除，插入到活跃事件链表中
+
+libevent的核心就event_base_loop()；在这其中检测和分发通过I/O多路复用来完成
+
+==================================================libevent3 socket通信
+cli.cpp:
+
+#include<iostream>
+#include<sys/types.h>
+#include<sys/socket.h>
+#include<netinet/in.h>
+#include<arpa/inet.h>
+#include<errno.h>
+#include<unistd.h>
+#include<stdio.h>
+#include<string.h>
+#include<stdlib.h>
+#include<event.h>
+#include<event2/util.h>
+ 
+using namespace std;
+ 
+typedef struct sockaddr cli;
+ 
+void send_msg_cb(int fd, short events, void* arg)
+{
+    char msg[1024] = {};
+
+    int ret = read(fd, msg, sizeof(msg));
+    if( ret <= 0 )
+    {
+        perror("read fail ");
+        exit(1);
+    }
+//cout<<"msg:"<<msg<<endl;
+    int sockfd = *((int*)arg);
+ 
+    write(sockfd, msg, ret);
+cout<<"write:"<<msg<<endl;
+}
+ 
+ 
+void read_msg_cb(int fd, short events, void *arg)
+{
+    char msg1[1024];
+ 
+    int len = read(fd, msg1, sizeof(msg1)-1);
+    if( len <= 0 )
+    {
+        perror("read error!!!");
+        exit(1);
+    }
+    msg1[len] = '\0';
+ 
+    cout<<"read is ok,msg:"<<msg1<<endl;
+}
+ 
+ 
+ 
+
+int connect_ser(const char* server_ip, const int port)
+{
+    int sockfd, status;
+    struct sockaddr_in sock;
+ 
+    memset(&sock, 0, sizeof(sock) );
+ 
+    sock.sin_family = AF_INET;
+    sock.sin_port = htons(port);
+    status = inet_aton(server_ip, &sock.sin_addr);
+ 
+    if( status == 0 )
+    {
+        errno = EINVAL;
+        return -1;
+    }
+//创建套接字
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if( -1 == sockfd )
+{
+perror("socket is error");
+exit(-1);
+} 
+ 
+    status = connect(sockfd, (cli*)&sock, sizeof(sock) );
+ 
+    if( status == -1 )
+    {
+perror("connect");
+        close(sockfd);
+        return -1;
+    }
+ 
+    evutil_make_socket_nonblocking(sockfd);
+ 
+    return sockfd;
+}
+ 
+int main(int argc, char** argv)
+{
+    if( argc < 3 )
+    {
+        cout<<"please input two param:"<<endl;
+        return -1;
+    }
+
+    int sockfd = connect_ser(argv[1], atoi(argv[2]));
+    if( sockfd == -1)
+    {
+cout<<"connect is error"<<endl;
+        return -1;
+    }
+//初始化base
+    struct event_base* base = event_base_new();
+ 
+    struct event *ev1 = event_new(base, sockfd,
+                                        EV_READ | EV_PERSIST,
+                                        read_msg_cb, NULL);
+    event_add(ev1, NULL);
+//键盘输入
+    struct event* ev2 = event_new(base, STDIN_FILENO,
+                                      EV_READ | EV_PERSIST, send_msg_cb,
+                                      (void*)&sockfd);
+ 
+ 
+    event_add(ev2, NULL);
+ 
+    event_base_dispatch(base);
+ 
+    cout<<"ending>>>>>"<<endl;
+    return 0;
+}
+
+
+
+ser.cpp
+
+
+
+#include<stdio.h>
+#include<string.h>
+#include<errno.h>
+#include<iostream>
+#include<unistd.h>
+#include<event.h>
+ 
+using namespace std;
+
+void accept_cb(int fd, short events, void* arg)
+{
+    evutil_socket_t sockfd;
+ 
+    struct sockaddr_in client;
+    socklen_t len = sizeof(cli);
+ 
+    sockfd = accept(fd, (struct sockaddr*)&cli, &len );
+    evutil_make_socket_nonblocking(sockfd);
+ 
+    printf("accept a cli %d\n", sockfd);
+ 
+    struct event_base* base = (event_base*)arg;
+ 
+    //仅仅是为了动态创建一个event结构体
+    struct event *ev = event_new(NULL, -1, 0, NULL, NULL);
+    //将动态创建的结构体作为event的回调参数
+    event_assign(ev, base, sockfd, EV_READ | EV_PERSIST,
+                 socket_read_cb, (void*)ev);
+ 
+    event_add(ev, NULL);
+}
+ 
+ 
+void socket_read_cb(int fd, short events, void *arg)
+{
+    char msg[4096];
+    struct event *ev = (struct event*)arg;
+    int len = read(fd, msg, sizeof(msg) - 1);
+ 
+ 
+ 
+    if( len <= 0 )
+    {
+        printf("some error happen when read\n");
+        event_free(ev);
+        close(fd);
+        return ;
+    }
+ 
+    msg[len] = '\0';
+    printf("recv the cli msg: %s", msg);
+ 
+    char reply_msg[4096] = "I have recvieced the msg: ";
+    strcat(reply_msg + strlen(reply_msg), msg);
+ 
+    write(fd, reply_msg, strlen(reply_msg) );
+}
+ 
+ 
+ 
+typedef struct sockaddr SA;
+int tcp_server_init(int port, int listen_num)
+{
+    int errno_save;
+    evutil_socket_t listener;
+ 
+    listener = socket(AF_INET, SOCK_STREAM, 0);
+    if( listener == -1 )
+        return -1;
+ 
+    //允许多次绑定同一个地址。要用在socket和bind之间
+    evutil_make_listen_socket_reuseable(listener);
+ 
+    struct sockaddr_in sin;
+    sin.sin_family = AF_INET;
+    sin.sin_addr.s_addr = 0;
+    sin.sin_port = htons(port);
+ 
+    if( ::bind(listener, (SA*)&sin, sizeof(sin)) < 0 )
+        goto error;
+ 
+    if( ::listen(listener, listen_num) < 0)
+        goto error;
+ 
+ 
+    //跨平台统一接口，将套接字设置为非阻塞状态
+    evutil_make_socket_nonblocking(listener);
+ 
+    return listener;
+ 
+    error:
+        errno_save = errno;
+        evutil_closesocket(listener);
+        errno = errno_save;
+ 
+        return -1;
+}
+
+int main(int argc, char** argv)
+{
+ 
+    int listener = tcp_server_init(9999, 10);
+    if( listener == -1 )
+    {
+        perror(" tcp_server_init error ");
+        return -1;
+    }
+ 
+    struct event_base* base = event_base_new();
+ 
+    //添加监听客户端请求连接事件
+    struct event* ev_listen = event_new(base, listener, EV_READ | EV_PERSIST,
+                                        accept_cb, base);
+    event_add(ev_listen, NULL);
+ 
+ 
+    event_base_dispatch(base);
+ 
+    return 0;
+}
+
+
+
+makefile:
+all:ser1 cli1
+
+ser1:ser1.cpp
+g++ ser1.cpp -o ser1 -levent
+
+cli1:cli1.cpp
+g++ cli1.cpp -o cli1 -levent
+
+clean:
+rm -f ser1 cli1
+
+这两断代码主要就是使用了前面的event事件进行通信；和之前socket通信是一样的，只是增加的注册函数event，不需要循环检测消息的到来，这些工作被event替代了
+
+==================================================libevent4 数据缓冲Bufferevent
+很多时候,除了响应事件之外,应用还希望做一定的数据缓冲。比如说,写入数据的时候 ,通常的运行模式是:
+决定要向连接写入一些数据,把数据放入到缓冲区中
+等待连接可以写入
+写入尽量多的数据
+记住写入了多少数据,如果还有更多数据要写入,等待连接再次可以写入
+这种缓冲 IO 模式很通用,libevent 为此提供了一种通用机制,即bufferevent。
+
+bufferevent 由一个底层的传输端口(如套接字 ),一个读取缓冲区和一个写入缓冲区组成。与通常的事件在底层传输端口已经就绪,
+可以读取或者写入的时候执行回调不同的是,bufferevent 在读取或者写入了足够量的数据之后调用用户提供的回调。
+
+bufferevent和evbuffer:
+每个 bufferevent 都有一个输入缓冲区和一个输出缓冲区 ,它们的类型都是“struct evbuffer”。 
+有数据要写入到 bufferevent 时,添加数据到输出缓冲区 ;bufferevent 中有数据供读取的时候,从输入缓冲区抽取(drain)数据。
+
+回调和水位：
+每个 bufferevent 有两个数据相关的回调:一个读取回调和一个写入回调。
+默认情况下,从底层传输端口读取了任意量的数据之后会调用读取回调 ;
+输出缓冲区中足够量的数据被清空到底层传输端口后写入回调会被调用。
+通过调整 bufferevent 的读取和写入 “水位 (watermarks )”可以覆盖这些函数的默认行为。
+
+每个 bufferevent 有四个水位:
+读取低水位 :读取操作使得输入缓冲区的数据量在此级别或者更高时 ,读取回调将被调用。默认值为 0,所以每个读取操作都会导致读取回调被调用。
+读取高水位 :输入缓冲区中的数据量达到此级别后, bufferevent 将停止读取,直到输入缓冲区中足够量的数据被抽取 ,使得数据量低于此级别 。默认值是无限 ,所以永远不会因为输入缓冲区的大小而停止读取。
+写入低水位 :写入操作使得输出缓冲区的数据量达到或者低于此级别时 ,写入回调将被调用。默认值是 0,所以只有输出缓冲区空的时候才会调用写入回调。
+写入高水位 :bufferevent 没有直接使用这个水位。
+
+bufferevent 接口：
+1.bufferevent_socket_new()
+struct bufferevent *bufferevent_socket_new(
+struct event_base *base,
+evutil_socket_t fd,
+enum bufferevent_options options);
+
+enum bufferevent_options options：
+BEV_OPT_CLOSE_ON_FREE :释放 bufferevent 时关闭底层传输端口。这将关闭底层套接字,释放底层 bufferevent 等。
+BEV_OPT_THREADSAFE :自动为 bufferevent 分配锁,这样就可以安全地在多个线程中使用 bufferevent。
+BEV_OPT_DEFER_CALLBACKS :设置这个标志时, bufferevent 延迟所有回调,如上所述。
+BEV_OPT_UNLOCK_CALLBACKS :默认情况下,如果设置 bufferevent 为线程安全 的,则 bufferevent 会在调用用户提供的回调时进行锁定。设置这个选项会让 libevent 在执行回调的时候不进行锁定。
+用于创建基于套接字的 bufferevent。
+
+2.bufferevent_socket_connect()
+int bufferevent_socket_connect(struct bufferevent *bev,
+    struct sockaddr *address, int addrlen);
+address 和 addrlen 参数跟标准调用 connect()的参数相同。如果还没有为 bufferevent 设置套接字,调用函数将为其分配一个新的流套接字,并且设置为非阻塞的。
+
+3.bufferevent_free()
+void bufferevent_free(struct bufferevent *bev);
+这个函数释放 bufferevent。bufferevent 内部具有引用计数,所以,如果释放 时还有未决的延迟回调,则在回调完成之前 bufferevent 不会被删除。
+如果设置了 BEV_OPT_CLOSE_ON_FREE 标志,并且 bufferevent 有一个套接字或者底层 bufferevent 作为其传输端口,则释放 bufferevent 将关闭这个传输端口。
+
+4.bufferevent_setcb()
+typedef void (*bufferevent_data_cb)(struct bufferevent *bev, void *ctx);
+typedef void (*bufferevent_event_cb)(struct bufferevent *bev,
+short events, void *ctx);
+
+void bufferevent_setcb(struct bufferevent *bufev,
+bufferevent_data_cb readcb, bufferevent_data_cb writecb,
+bufferevent_event_cb eventcb, void *cbarg);
+
+void bufferevent_getcb(struct bufferevent *bufev,
+bufferevent_data_cb *readcb_ptr,
+bufferevent_data_cb *writecb_ptr,
+bufferevent_event_cb *eventcb_ptr,
+void **cbarg_ptr);
+
+bufferevent_setcb()函数修改 bufferevent 的一个或者多个回调 。readcb、writecb和eventcb函数将分别在已经读取足够的数据 、已经写入足够的数据 ,或者发生错误时被调用 。
+每个回调函数的第一个参数都是发生了事件的bufferevent ,最后一个参数都是调用bufferevent_setcb()时用户提供的 cbarg 参数:可以通过它向回调传递数据。事件回调 的 events 参数是一个表示事件标志的位掩码
+
+5.bufferevent_enable()
+void bufferevent_enable(struct bufferevent *bufev, short events);
+void bufferevent_disable(struct bufferevent *bufev, short events);
+short bufferevent_get_enabled(struct bufferevent *bufev);
+
+可以启用或者禁用 bufferevent 上的 EV_READ、EV_WRITE 或者 EV_READ | EV_WRITE 事件。没有启用读取或者写入事件时, bufferevent 将不会试图进行数据读取或者写入。
+没有必要在输出缓冲区空时禁用写入事件: bufferevent 将自动停止写入,然后在有数据等 待写入时重新开始。
+
+类似地,没有必要在输入缓冲区高于高水位时禁用读取事件 :bufferevent 将自动停止读取, 然后在有空间用于读取时重新开始读取。
+
+默认情况下,新创建的 bufferevent 的写入是启用的,但是读取没有启用。 可以调用 bufferevent_get_enabled()确定 bufferevent 上当前启用的事件。
+
+6.通过bufferevent得到evbuffer
+如果只是通过网络读取或者写入数据 ,而不能观察操作过程,是没什么好处的。bufferevent 提供了下列函数用于观察要写入或者读取的数据。
+struct evbuffer *bufferevent_get_input(struct bufferevent *bufev);
+struct evbuffer *bufferevent_get_output(struct bufferevent *bufev);
+这两个函数提供了非常强大的基础 :它们分别返回输入和输出缓冲区 。
+
+如果写入操作因为数据量太少而停止(或者读取操作因为太多数据而停止 ),则向输出缓冲 区添加数据(或者从输入缓冲区移除数据)将自动重启操作。
+
+7.向bufferevent的输出缓冲区添加数据
+int bufferevent_write(struct bufferevent *bufev,
+const void *data, size_t size);
+int bufferevent_write_buffer(struct bufferevent *bufev,
+struct evbuffer *buf);
+
+这些函数向 bufferevent 的输出缓冲区添加数据。 
+bufferevent_write()将内存中从 data 处开 始的 size 字节数据添加到输出缓冲区的末尾 。
+bufferevent_write_buffer()移除 buf 的所有内 容,将其放置到输出缓冲区的末尾。成功时这些函数都返回 0,发生错误时则返回-1。
+
+8.从bufferevent的输入缓冲区移除数据
+size_t bufferevent_read(struct bufferevent *bufev, void *data, size_t size);
+int bufferevent_read_buffer(struct bufferevent *bufev,
+struct evbuffer *buf);
+
+这些函数从 bufferevent 的输入缓冲区移除数据。bufferevent_read()至多从输入缓冲区移除 size 字节的数据,将其存储到内存中 data 处。函数返回实际移除的字节数。 bufferevent_read_buffer()函数抽空输入缓冲区的所有内容,将其放置到 buf 中,成功时返 回0,失败时返回 -1。
+注意,对于 bufferevent_read(),data 处的内存块必须有足够的空间容纳 size 字节数据。
+
+9.bufferevent的清空操作
+int bufferevent_flush(struct bufferevent *bufev,
+short iotype, enum bufferevent_flush_mode state);
+
+清空 bufferevent 要求 bufferevent 强制从底层传输端口读取或者写入尽可能多的数据 ,而忽略其他可能保持数据不被写入的限制条件 。函数的细节功能依赖于 bufferevent 的具体类型。
+otype 参数应该是 EV_READ、EV_WRITE 或者 EV_READ | EV_WRITE,用于指示应该处 理读取、写入,还是二者都处理。 state 参数可以是 BEV_NORMAL、BEV_FLUSH 或者 BEV_FINISHED。BEV_FINISHED 指示应该告知另一端,没有更多数据需要发送了; 而 BEV_NORMAL 和 BEV_FLUSH 的区别依赖于具体的 bufferevent 类型。
+
+失败时 bufferevent_flush()返回-1,如果没有数据被清空则返回 0,有数据被清空则返回 1。
+
+
+一般操作流程：(服务端)
+socket->bind->listen->event_base_new()->event_new()->accept->bufferevent_socket_new()->bufferevent_setcb()->bufferevent_enable()->event_add->event_base_dispatch
+
+案例：
+cli.cpp:
+
+
+#include<sys/types.h>
+#include<sys/socket.h>
+#include<netinet/in.h>
+#include<arpa/inet.h>
+#include<errno.h>
+#include<unistd.h>
+
+#include<stdio.h>
+#include<string.h>
+#include<stdlib.h>
+
+#include<event.h>
+#include<event2/bufferevent.h>
+#include<event2/buffer.h>
+#include<event2/util.h>
+
+
+
+
+int tcp_connect_server(const char* server_ip, int port);
+
+
+void cmd_msg_cb(int fd, short events, void* arg);
+void server_msg_cb(struct bufferevent* bev, void* arg);
+void event_cb(struct bufferevent *bev, short event, void *arg);
+
+int main(int argc, char** argv)
+{
+    if( argc < 3 )
+    {
+        printf("please input 2 parameter\n");
+        return -1;
+    }
+
+
+    //两个参数依次是服务器端的IP地址、端口号
+    int sockfd = tcp_connect_server(argv[1], atoi(argv[2]));
+    if( sockfd == -1)
+    {
+        perror("tcp_connect error ");
+        return -1;
+    }
+
+    printf("connect to server successful\n");
+
+    struct event_base* base = event_base_new();
+
+    struct bufferevent* bev = bufferevent_socket_new(base, sockfd,
+                                                     BEV_OPT_CLOSE_ON_FREE);
+
+    //监听终端输入事件
+    struct event* ev_cmd = event_new(base, STDIN_FILENO,
+                                      EV_READ | EV_PERSIST, cmd_msg_cb,
+                                      (void*)bev);
+    event_add(ev_cmd, NULL);
+
+    //当socket关闭时会用到回调参数
+    bufferevent_setcb(bev, server_msg_cb, NULL, event_cb, (void*)ev_cmd);
+    bufferevent_enable(bev, EV_READ | EV_PERSIST);
+
+
+    event_base_dispatch(base);
+
+    printf("finished \n");
+    return 0;
+}
+
+
+
+
+
+
+void cmd_msg_cb(int fd, short events, void* arg)
+{
+    char msg[1024];
+
+    int ret = read(fd, msg, sizeof(msg));
+    if( ret < 0 )
+    {
+        perror("read fail ");
+        exit(1);
+    }
+
+    struct bufferevent* bev = (struct bufferevent*)arg;
+
+    //把终端的消息发送给服务器端
+    bufferevent_write(bev, msg, ret);
+}
+
+
+void server_msg_cb(struct bufferevent* bev, void* arg)
+{
+    char msg[1024];
+
+    size_t len = bufferevent_read(bev, msg, sizeof(msg));
+    msg[len] = '\0';
+
+    printf("recv %s from server\n", msg);
+}
+
+
+void event_cb(struct bufferevent *bev, short event, void *arg)
+{
+
+    if (event & BEV_EVENT_EOF)
+        printf("connection closed\n");
+    else if (event & BEV_EVENT_ERROR)
+        printf("some other error\n");
+
+    //这将自动close套接字和free读写缓冲区
+    bufferevent_free(bev);
+
+    struct event *ev = (struct event*)arg;
+    //因为socket已经没有，所以这个event也没有存在的必要了
+    event_free(ev);
+}
+
+
+typedef struct sockaddr SA;
+int tcp_connect_server(const char* server_ip, int port)
+{
+    int sockfd, status, save_errno;
+    struct sockaddr_in server_addr;
+
+    memset(&server_addr, 0, sizeof(server_addr) );
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    status = inet_aton(server_ip, &server_addr.sin_addr);
+
+    if( status == 0 ) //the server_ip is not valid value
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    sockfd = ::socket(PF_INET, SOCK_STREAM, 0);
+    if( sockfd == -1 )
+        return sockfd;
+
+
+    status = ::connect(sockfd, (SA*)&server_addr, sizeof(server_addr) );
+
+    if( status == -1 )
+    {
+        save_errno = errno;
+        ::close(sockfd);
+        errno = save_errno; //the close may be error
+        return -1;
+    }
+
+    evutil_make_socket_nonblocking(sockfd);
+
+    return sockfd;
+}
+
+ser.cpp:
+
+#include<stdio.h>
+#include<string.h>
+#include<errno.h>
+
+#include<event.h>
+#include<event2/bufferevent.h>
+
+
+
+void accept_cb(int fd, short events, void* arg);
+void socket_read_cb(bufferevent* bev, void* arg);
+void event_cb(struct bufferevent *bev, short event, void *arg);
+int tcp_server_init(int port, int listen_num);
+
+int main(int argc, char** argv)
+{
+
+    int listener = tcp_server_init(9999, 10);
+    if( listener == -1 )
+    {
+        perror(" tcp_server_init error ");
+        return -1;
+    }
+
+    struct event_base* base = event_base_new();
+
+    //添加监听客户端请求连接事件
+    struct event* ev_listen = event_new(base, listener, EV_READ | EV_PERSIST,
+                                        accept_cb, base);
+    event_add(ev_listen, NULL);
+
+
+    event_base_dispatch(base);
+    event_base_free(base);
+
+
+    return 0;
+}
+
+
+
+void accept_cb(int fd, short events, void* arg)
+{
+    evutil_socket_t sockfd;
+
+    struct sockaddr_in client;
+    socklen_t len = sizeof(client);
+
+    sockfd = ::accept(fd, (struct sockaddr*)&client, &len );
+    evutil_make_socket_nonblocking(sockfd);
+
+    printf("accept a client %d\n", sockfd);
+
+    struct event_base* base = (event_base*)arg;
+
+    bufferevent* bev = bufferevent_socket_new(base, sockfd, BEV_OPT_CLOSE_ON_FREE);
+    bufferevent_setcb(bev, socket_read_cb, NULL, event_cb, arg);
+
+    bufferevent_enable(bev, EV_READ | EV_PERSIST);
+}
+
+
+
+void socket_read_cb(bufferevent* bev, void* arg)
+{
+    char msg[4096];
+
+    size_t len = bufferevent_read(bev, msg, sizeof(msg));
+
+    msg[len] = '\0';
+    printf("recv the client msg: %s", msg);
+
+
+    char reply_msg[4096] = "I have recvieced the msg: ";
+
+    strcat(reply_msg + strlen(reply_msg), msg);
+    bufferevent_write(bev, reply_msg, strlen(reply_msg));
+}
+
+
+
+void event_cb(struct bufferevent *bev, short event, void *arg)
+{
+
+    if (event & BEV_EVENT_EOF)
+        printf("connection closed\n");
+    else if (event & BEV_EVENT_ERROR)
+        printf("some other error\n");
+
+    //这将自动close套接字和free读写缓冲区
+    bufferevent_free(bev);
+}
+
+
+typedef struct sockaddr SA;
+int tcp_server_init(int port, int listen_num)
+{
+    int errno_save;
+    evutil_socket_t listener;
+
+    listener = ::socket(AF_INET, SOCK_STREAM, 0);
+    if( listener == -1 )
+        return -1;
+
+    //允许多次绑定同一个地址。要用在socket和bind之间
+    evutil_make_listen_socket_reuseable(listener);
+
+    struct sockaddr_in sin;
+    sin.sin_family = AF_INET;
+    sin.sin_addr.s_addr = 0;
+    sin.sin_port = htons(port);
+
+    if( ::bind(listener, (SA*)&sin, sizeof(sin)) < 0 )
+        goto error;
+
+    if( ::listen(listener, listen_num) < 0)
+        goto error;
+
+
+    //跨平台统一接口，将套接字设置为非阻塞状态
+    evutil_make_socket_nonblocking(listener);
+
+    return listener;
+
+    error:
+        errno_save = errno;
+        evutil_closesocket(listener);
+        errno = errno_save;
+
+        return -1;
+}
+
+==================================================libevent5 链接监听器evconnlistener
+evconnlistener 机制提供了监听和接受 TCP 连接的方法
+
+创建和释放evconnlistener:
+struct evconnlistener *
+evconnlistener_new(struct event_base *base,
+    evconnlistener_cb cb, void *ptr, unsigned flags, int backlog,
+    evutil_socket_t fd);
+
+struct evconnlistener *
+evconnlistener_new_bind(struct event_base *base,
+    evconnlistener_cb cb, void *ptr, unsigned flags, int backlog,
+    const struct sockaddr *sa, int socklen);
+
+void evconnlistener_free(struct evconnlistener *lev);
+
+两个 evconnlistener_new*()函数都分配和返回一个新的连接监听器对象。连接监听器使 用 event_base 来得知什么时候在给定的监听套接字上有新的 TCP 连接。
+新连接到达时,监听 器调用你给出的回调函数。
+两个函数中,base参数都是监听器用于监听连接的 event_base。cb是收到新连接时要调 用的回调函数;
+如果 cb 为 NULL,则监听器是禁用的,直到设置了回调函数为止。
+ptr 指针将传递给回调函数。
+flags 参数控制回调函数的行为
+backlog 是任何 时刻网络栈允许处于还未接受状态的最大未决连接数。
+
+如果 backlog 是负的,libevent 会试图挑选一个较好的值 ; 如果为0,libevent 认为已 经对提供的套接字调用了listen()。
+两个函数的不同在于如何建立监听套接字。 evconnlistener_new()函数假定已经将套接字绑定到要监听的端口,然后通过 fd 传入这个套接字。
+如果要 libevent 分配和绑定套接字,可以调用 evconnlistener_new_bind() ,传输要绑定到的地址和地址长度。
+
+要释放连接监听器,调用 evconnlistener_free()。
+
+可识别的标志:
+可以给 evconnlistener_new() 函数的 flags 参数传入一些标志。可以用或 (OR)运算任意连接 下述标志:
+LEV_OPT_LEAVE_SOCKETS_BLOCKING
+默认情况下,连接监听器接收新套接字后,会将其设置为非阻塞的,以便将其用于 libevent。如果不想要这种行为,可以设置这个标志。
+
+LEV_OPT_CLOSE_ON_FREE
+如果设置了这个选项,释放连接监听器会关闭底层套接字。
+
+LEV_OPT_CLOSE_ON_EXEC
+如果设置了这个选项,连接监听器会为底层套接字设置 close-on-exec 标志。更多信息请查 看 fcntl 和 FD_CLOEXEC 的平台文档。
+
+LEV_OPT_REUSEABLE
+某些平台在默认情况下 ,关闭某监听套接字后 ,要过一会儿其他套接字才可以绑定到同一个 端口。设置这个标志会让 libevent 标记套接字是可重用的,这样一旦关闭,可以立即打开其 他套接字,在相同端口进行监听。
+
+LEV_OPT_THREADSAFE
+为监听器分配锁,这样就可以在多个线程中安全地使用了。
+
+
+链接监听器回调:
+typedef void (*evconnlistener_cb)(struct evconnlistener *listener,
+    evutil_socket_t sock, struct sockaddr *addr, int len, void *ptr);
+接收到新连接会调用提供的回调函数:
+listener 参数是接收连接的连接监听器 。
+sock 参数是 新接收的套接字。
+addr 和 len 参数是接收连接的地址和地址长度。
+ptr 是调 用 evconnlistener_new() 时用户提供的指针。
+
+启用和禁用 evconnlistener:
+int evconnlistener_disable(struct evconnlistener *lev);
+int evconnlistener_enable(struct evconnlistener *lev);
+这两个函数暂时禁止或者重新允许监听新连接。
+
+调整 evconnlistener 的回调函数:
+void evconnlistener_set_cb(struct evconnlistener *lev,
+    evconnlistener_cb cb, void *arg);
+函数调整 evconnlistener 的回调函数和其参数。
+
+==================================================libevent6 在libevent中，封装了http模块
+创建http方式有很多种，这里只是一种简单的方式；
+http程序创建步骤：
+1、初始化event模块
+2、启动http服务端
+3、设置事件处理函数
+4、监听事件
+
+接口说明：
+1、event_init()
+
+2、evhttp_start()
+/*
+ * Start a web server on the specified address and port.
+ */
+
+struct evhttp *
+evhttp_start(const char *address, ev_uint16_t port)
+{
+struct evhttp *http = NULL;
+//初始化结构体evhttp
+http = evhttp_new_object();
+if (http == NULL)
+return (NULL);
+//绑定监听地址和端口
+if (evhttp_bind_socket(http, address, port) == -1) {
+mm_free(http);
+return (NULL);
+}
+
+return (http);
+}
+
+
+
+static struct evhttp*
+evhttp_new_object(void)
+{
+struct evhttp *http = NULL;
+//申请内存
+if ((http = mm_calloc(1, sizeof(struct evhttp))) == NULL) {
+event_warn("%s: calloc", __func__);
+return (NULL);
+}
+//清空时间延时
+evutil_timerclear(&http->timeout_read);
+evutil_timerclear(&http->timeout_write);
+//设置包头和包体的最大值
+evhttp_set_max_headers_size(http, EV_SIZE_MAX);
+evhttp_set_max_body_size(http, EV_SIZE_MAX);
+evhttp_set_default_content_type(http, "text/html; charset=ISO-8859-1");
+//设置支持的操作类型
+evhttp_set_allowed_methods(http,
+    EVHTTP_REQ_GET |
+    EVHTTP_REQ_POST |
+    EVHTTP_REQ_HEAD |
+    EVHTTP_REQ_PUT |
+    EVHTTP_REQ_DELETE);
+
+TAILQ_INIT(&http->sockets);
+TAILQ_INIT(&http->callbacks);
+TAILQ_INIT(&http->connections);
+TAILQ_INIT(&http->virtualhosts);
+TAILQ_INIT(&http->aliases);
+
+return (http);
+}
+
+struct evhttp *
+evhttp_new(struct event_base *base)
+{
+struct evhttp *http = NULL;
+
+http = evhttp_new_object();
+if (http == NULL)
+return (NULL);
+http->base = base;
+
+return (http);
+}
+
+
+
+struct evhttp *
+evhttp_new(struct event_base *base)
+{
+struct evhttp *http = NULL;
+
+http = evhttp_new_object();
+if (http == NULL)
+return (NULL);
+http->base = base;
+
+return (http);
+}
+
+开启服务中，最后一步是绑定和监听IP和端口：
+int
+evhttp_bind_socket(struct evhttp *http, const char *address, ev_uint16_t port)
+{
+//什么也没做，直接调用了evhttp_bind_socket_with_handle()函数
+struct evhttp_bound_socket *bound =
+evhttp_bind_socket_with_handle(http, address, port);
+if (bound == NULL)
+return (-1);
+return (0);
+}
+
+struct evhttp_bound_socket *
+evhttp_bind_socket_with_handle(struct evhttp *http, const char *address, ev_uint16_t port)
+{
+evutil_socket_t fd;
+struct evhttp_bound_socket *bound;
+int serrno;
+//申请socket,bind,绑定端口
+if ((fd = bind_socket(address, port, 1 /*reuse*/)) == -1)
+return (NULL);
+
+if (listen(fd, 128) == -1) {
+serrno = EVUTIL_SOCKET_ERROR();
+event_sock_warn(fd, "%s: listen", __func__);
+evutil_closesocket(fd);
+EVUTIL_SET_SOCKET_ERROR(serrno);
+return (NULL);
+}
+//accept 处理
+bound = evhttp_accept_socket_with_handle(http, fd);
+
+if (bound != NULL) {
+event_debug(("Bound to port %d - Awaiting connections ... ",
+port));
+return (bound);
+}
+
+return (NULL);
+}
+
+
+3、evhttp_set_timeout()
+void
+evhttp_set_timeout(struct evhttp* http, int timeout)
+{
+//设置读超时
+evhttp_set_timeout_(&http->timeout_read,  timeout, -1);
+//设置写超时
+evhttp_set_timeout_(&http->timeout_write, timeout, -1);
+}
+
+
+4、evhttp_set_cb()
+int
+evhttp_set_cb(struct evhttp *http, const char *uri,
+    void (*cb)(struct evhttp_request *, void *), void *cbarg)
+{
+struct evhttp_cb *http_cb;
+
+TAILQ_FOREACH(http_cb, &http->callbacks, next) {
+if (strcmp(http_cb->what, uri) == 0)
+return (-1);
+}
+//申请内存
+if ((http_cb = mm_calloc(1, sizeof(struct evhttp_cb))) == NULL) {
+event_warn("%s: calloc", __func__);
+return (-2);
+}
+
+http_cb->what = mm_strdup(uri);
+if (http_cb->what == NULL) {
+event_warn("%s: strdup", __func__);
+mm_free(http_cb);
+return (-3);
+}
+http_cb->cb = cb;
+http_cb->cbarg = cbarg;
+//插入事件列表中
+TAILQ_INSERT_TAIL(&http->callbacks, http_cb, next);
+
+return (0);
+}
+
+
+5、event_dispatch()
+int
+event_dispatch(void)
+{
+//调用event_loop
+return (event_loop(0));
+}
+
+int
+event_loop(int flags)
+{
+//调用event_base_loop
+return event_base_loop(current_base, flags);
+}
+
+
+简单案例：
+#include <stdio.h>
+#include <stdlib.h>
+#include <evhttp.h>
+#include <event.h>
+#include <string.h>
+#include "event2/http.h"
+#include "event2/event.h"
+#include "event2/buffer.h"
+#include "event2/bufferevent.h"
+#include "event2/bufferevent_compat.h"
+#include "event2/http_struct.h"
+#include "event2/http_compat.h"
+#include "event2/util.h"
+#include "event2/listener.h"
+
+
+void Test_Get(struct evhttp_request *req,void *arg)
+{
+{
+//解析头，进行处理
+//这里只做了回复
+}
+struct evbuffer* retbuff = evbuffer_new();
+if(NULL == retbuff)
+{
+printf("retbuff is NULL\n");
+return ;
+}
+evbuffer_add_printf(retbuff,"Test_Get is OK!");
+evhttp_send_reply(req,HTTP_OK,"Client is OK",retbuff);
+evbuffer_free(retbuff);
+}
+void Test_Post(struct evhttp_request *req,void *arg)
+{
+{
+//获取数据，然后进行处理
+//evbuffer_pullup()获取数据接口
+}
+//只做回复
+struct evbuffer* retbuff = evbuffer_new();
+if(NULL == retbuff)
+{
+printf("retbuff is NULL\n");
+return ;
+}
+evbuffer_add_printf(retbuff,"Test_post is OK!");
+evhttp_send_reply(req,HTTP_OK,"Client is OK",retbuff);
+evbuffer_free(retbuff);
+}
+
+int main()
+{
+    short http_port = 8081;
+    char *http_addr = "127.0.0.1";
+
+    //初始化
+    event_init();
+    //启动http服务端
+    struct evhttp *http_server = evhttp_start(http_addr,http_port);
+    if(http_server == NULL)
+    {
+        printf("====line:%d,%s\n",__LINE__,"http server start failed.");
+        return -1;
+    }
+
+    //设置请求超时时间(s)
+    evhttp_set_timeout(http_server,5);
+    //设置事件处理函数，evhttp_set_cb针对每一个事件(请求)注册一个处理函数，
+    //区别于evhttp_set_gencb函数，是对所有请求设置一个统一的处理函数
+    evhttp_set_cb(http_server,"/hello/post",Test_Post,NULL);
+    evhttp_set_cb(http_server,"/hello/get",Test_Get,NULL);
+
+    //循环监听
+    event_dispatch();
+    evhttp_free(http_server);
+
+    return 0;
+}
+
+==================================================socket总结
+1.1 nonblock socket
+对应block，如果一个socket设置为nonblock，那么其相关的操作将变为非阻塞的。这里所说的非阻塞，并不是说异步回调什么的，例如，调用recv()函数：
+#include <sys/types.h>
+#include <sys/socket.h>
+ssize_t recv(int sockfd, void *buf, size_t len, int flags);
+read = recv(sock, buf, len, 0);
+
+如果是默认的block情形，这个函数将一直等待直到获取到数据，或者报错。在高并发中，这显然是悲剧的。
+如果设置为noblock，同样的调用将直接返回。
+
+下边详细描述一下的recv的情形：
+连接失败
+block：立即返回，返回值-1，同时设置errno := ENOTCONN
+nonblock: 同上
+
+缓冲区中有数据：
+block: 立即返回，将缓冲区的数据写入buf，最多写入len字节，返回值为写入的字节数
+nonblock: 同上
+
+缓冲区无数据：
+block：将阻塞等待缓冲区有数据
+nonblock：立即返回，返回值-1，同时设置errno := EAGAIN
+类似的，对于send(), connect(), bind(), accept()，均有类似一样的区别
+
+设置：
+有如下方式设置nonblock
+新建 socket 时设置
+在传入 socket type 时，同时置SOCK_NONBLOCK位为1
+sock = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+
+使用fcntl()设置
+int flag = fcntl(sock, F_GETFL);
+fcntl(sock, F_SETFL, flag | O_NONBLOCK); 
+
+使用even2设置
+#inlcude <event2/util.h>
+int evutil_make_socket_nonblocking(evutil_socket_t sock);
+
+1.2 reuseable socket
+一个socket在系统中的表示如下
+{<protocol>, <src addr>, <src port>, <dest addr>, <dest port>}
+如果指定src addr为0.0.0.0，将不再表示某一个具体的地址，而是表示本地的所有的可用地址。
+
+reuse有三个级别:
+non-reuse: src addr和src port不能冲突(同一个protocol下), 0.0.0.0和其他IP视为冲突
+reuse-addr: src addr和src port不能冲突(同一个protocol下), 0.0.0.0和其他IP视为不冲突
+reuse-port: src addr和src port可以冲突
+
+
+系统有两个网口，分别是192.168.0.101和10.0.0.101。
+情形1：
+sock1绑定了192.168.0.101:8080，sock2尝试绑定10.0.0.101:8080
+non-reuse - 可以绑定成功，虽然端口一样，但是addr不同
+reuse - 同上
+
+情形2：
+sock1绑定了0.0.0.0:8080, sock2尝试绑定192.168.0.101:8080
+non-reuse - 不能绑定成功，系统认为0.0.0.0包含了所有的本地ip，发生冲突
+reuse - 可以绑定成功，系统认为0.0.0.0和192.168.0.101不是一样的地址
+
+情形3：
+sock1绑定了192.168.0.101:8080,sock2尝试绑定0.0.0.0:8080
+non-reuse - 不能绑定成功，系统认为0.0.0.0包含了所有的本地ip，发生冲突
+reuse - 可以绑定成功，系统认为0.0.0.0和192.168.0.101不是一样的地址
+
+情形4：
+sock1绑定了0.0.0.0:8080,sock2尝试绑定0.0.0.0:8080
+non-reuse - 不能绑定成功，系统认为0.0.0.0包含了所有的本地ip，发生冲突
+reuse-addr - 不能绑定成功，系统认为0.0.0.0包含了所有的本地ip，发生冲突
+reuse-port - 可以绑定成功
+
+设置reuse
+使用setsockopt()
+必须设置所有相关的sock。
+
+设置reuse-addr：
+setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int));
+设置reuse-port：
+setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &(int){1}, sizeof(int));
+使用event2设置
+#inlcude <event2/util.h>
+int evutil_make_listen_socket_reuseable(evutil_socket_t sock);
+
+
+2. 常用的系统API接口
+新建一个socket：
+#include <sys/socket.h>
+int socket(int domain, int type, int protocol);
+domain 一般设置为:
+AF_UNIX - 本地socket
+AF_INET - ipv4
+AF_INET6 - ipv6
+type 一般设置为:
+SOCK_STREAM - TCP
+SOCK_DGRAM - UDP
+
+连接到远程端口：
+#include <sys/socket.h>
+int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+对于不同协议，addr的类型不同，长度也不同，这里需要把不同的类型强转为struct sockaddr *，在强转中，addr的类型信息丢失，所以需要在addrlen中指定原有类型的长度。
+
+绑定到本地端口：
+#include <sys/socket.h>
+int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+addr类似connect()，这个函数常用语服务器端，但是实际上客户端也是可以使用的(然并卵一般没啥意义)
+
+读写数据：
+#include <sys/types.h>
+#include <sys/socket.h>
+ssize_t recv(int sockfd, void *buf, size_t len, int flags);
+ssize_t send(int sockfd, const void *buf, size_t len, int flags);
+读写数据涉及的问题较多，第一是失败时候返回-1而不是0，如果是0表示socket关闭。
+第二就是读写不一定100%完成，计划读写512字节，但是读到256字节的时候发生了中断或者没有数据/空闲缓冲区都是是可能的，返回值表示实际读入和写出的字节数。
+
+监听数据：
+#include <sys/socket.h>
+int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+int listen(int sockfd, int backlog);
+int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+和主动发起连接不同，被动接收连接分为三个阶段，bind()用来设置本地端口，listen()表示socket开始接收到来的连接，而不会建立连接，要真正建立连接，使用accept()
+
+关闭连接：
+#include <unistd.h>
+int close(int fd);
+
+3. 常用的event2的接口
+旧版libevent中，一般只能操作一个全局的event_base，而在新版libevent中，event_base交由用户来管理，用户可以创建删除event_base，也可以把event注册到不同的event_base上。
+
+新建一个 event_base：
+#include <event2/event.h>
+struct event_base *event_base_new(void);
+
+释放一个event_base：
+#include <event2/event.h>
+void event_base_free(struct event_base *eb);
+
+用户自己创建的event是uninitialized的，需要使用event_assign()进行初始化，或者直接使用event_new()从无到有创建一个新的初始化了的event。在初始化时，完成了回调函数的绑定。
+event的初始状态是non-pending，表示这个event不会被触发。
+
+新建(并初始化)一个 event：
+struct event *event_new(struct event_base *base, evutil_socket_t fd, short events,
+event_callback_fn callback, void *callback_arg);
+
+新建event需要给定event_base, evutil_socket_t与系统相兼容，在linux下实际就是int，与socket()返回的类型一致
+#ifdef WIN32
+#define evutil_socket_t intptr_t
+#else
+#define evutil_socket_t int
+#endif
+
+events是一组flag，用于表示要监视的事件类型，还会影响event的一些行为，包括：
+EV_TIMEOUT - 监视超时的事件
+需要说明的是，在调用event_new()时，这个flag是不用设置的，如果event发生超时，则必然会触发，无论设置与否
+EV_READ - 监视可读的事件
+EV_WRITE - 监视可写的事件
+EV_SIGNAL - 监视信号量
+EV_PERSIST - 永久生效，否则触发一次后就失效了
+EV_ET - 设置边缘触发(edge-triggered)
+callback和callback_arg是回调操作所需的
+
+新建的event是non-pending状态的：
+初始化一个event
+int event_assign(struct event *ev,
+                 struct event_base *base, evutil_socket_t fd, short events, 
+                 event_callback_fn callback, void *callback_arg);
+这个不会申请内存，其他同event_new()
+
+释放一个event：
+void event_free(struct event *ev);
+
+判断event是否初始化/被释放：
+int event_initialized(const struct event *ev);
+
+将event置为pending状态：
+int event_add(struct event *ev, const struct timeval *timeout);
+其中timeout可以指定超时时间，超时和EV_TIMEOUT配合使用。如果timeout如果为NULL，则表示永不超时，struct timeval的结构为：
+struct timeval {
+    time_t      tv_sec;     /* seconds */
+    suseconds_t tv_usec;    /* microseconds */
+};
+
+操作当前时间对应的timeval可以用：
+#include <sys/time.h>
+int gettimeofday(struct timeval *tv, struct timezone *tz);
+int settimeofday(const struct timeval *tv, const struct timezone *tz);
+
+将event置为non-pending状态：
+int event_del(struct event *ev);
+
+检查event是否为pending状态：
+int event_pending(const struct event *ev, short events, struct timeval *tv);
+
+不需要查询event是否为active状态，因为在active时，线程正在执行回调函数，其他函数需要等到回调执行完毕，而此时已经退出了active状态
+
+将event置为active状态：
+void event_active(struct event *ev, int res, short/* deprecated */);
+`res`是要手动指派的flag
+
+
+##################################################Libevent源码分析##################################################
+https://blog.csdn.net/luotuo44/category_2435521.html
+
+##################################################libevent编程疑难解答##################################################
+https://blog.csdn.net/luotuo44/article/details/39547391
+
+struct event_base* base = (event_base *)arg; 
+对于C++来说关键字struct是不需要的，对于C语言中则是需要的。
+
+socket函数的前面老是加::
+调用全局函数，从socket库里调用socket函数，避免函数名字相同的冲突
+
+##################################################Libevent使用例子，从简单到复杂##################################################
+https://blog.csdn.net/luotuo44/article/details/39670221
+
+==========初等
+客户端代码：
+#include<sys/types.h>  
+#include<sys/socket.h>  
+#include<netinet/in.h>  
+#include<arpa/inet.h>  
+#include<errno.h>  
+#include<unistd.h>  
+  
+#include<stdio.h>  
+#include<string.h>  
+#include<stdlib.h>  
+  
+#include<event.h>  
+#include<event2/util.h>  
+  
+int tcp_connect_server(const char* server_ip, int port);  
+  
+void cmd_msg_cb(int fd, short events, void* arg);  
+void socket_read_cb(int fd, short events, void *arg);  
+  
+int main(int argc, char** argv)  
+{  
+    if( argc < 3 )  
+    {  
+        printf("please input 2 parameter\n");  
+        return -1;  
+    }  
+  
+  
+    //两个参数依次是服务器端的IP地址、端口号  
+    int sockfd = tcp_connect_server(argv[1], atoi(argv[2]));  
+    if( sockfd == -1)  
+    {  
+        perror("tcp_connect error ");  
+        return -1;  
+    }  
+  
+    printf("connect to server successful\n");  
+  
+    struct event_base* base = event_base_new();  
+  
+    struct event *ev_sockfd = event_new(base, sockfd,  
+                                        EV_READ | EV_PERSIST,  
+                                        socket_read_cb, NULL);  
+    event_add(ev_sockfd, NULL);  
+  
+    //监听终端输入事件  
+    struct event* ev_cmd = event_new(base, STDIN_FILENO,  
+                                      EV_READ | EV_PERSIST, cmd_msg_cb,  
+                                      (void*)&sockfd);  
+  
+  
+    event_add(ev_cmd, NULL);  
+  
+    event_base_dispatch(base);  
+  
+    printf("finished \n");  
+    return 0;  
+}  
+  
+void cmd_msg_cb(int fd, short events, void* arg)  
+{  
+    char msg[1024];  
+  
+    int ret = read(fd, msg, sizeof(msg));  
+    if( ret <= 0 )  
+    {  
+        perror("read fail ");  
+        exit(1);  
+    }  
+  
+    int sockfd = *((int*)arg);  
+  
+    //把终端的消息发送给服务器端  
+    //为了简单起见，不考虑写一半数据的情况  
+    write(sockfd, msg, ret);  
+}  
+  
+  
+void socket_read_cb(int fd, short events, void *arg)  
+{  
+    char msg[1024];  
+  
+    //为了简单起见，不考虑读一半数据的情况  
+    int len = read(fd, msg, sizeof(msg)-1);  
+    if( len <= 0 )  
+    {  
+        perror("read fail ");  
+        exit(1);  
+    }  
+  
+    msg[len] = '\0';  
+  
+    printf("recv %s from server\n", msg);  
+}  
+  
+typedef struct sockaddr SA;  
+int tcp_connect_server(const char* server_ip, int port)  
+{  
+    int sockfd, status, save_errno;  
+    struct sockaddr_in server_addr;  
+  
+    memset(&server_addr, 0, sizeof(server_addr) );  
+  
+    server_addr.sin_family = AF_INET;  
+    server_addr.sin_port = htons(port);  
+    status = inet_aton(server_ip, &server_addr.sin_addr);  
+  
+    if( status == 0 ) //the server_ip is not valid value  
+    {  
+        errno = EINVAL;  
+        return -1;  
+    }  
+  
+    sockfd = ::socket(PF_INET, SOCK_STREAM, 0);  
+    if( sockfd == -1 )  
+        return sockfd;  
+  
+  
+    status = ::connect(sockfd, (SA*)&server_addr, sizeof(server_addr) );  
+  
+    if( status == -1 )  
+    {  
+        save_errno = errno;  
+        ::close(sockfd);  
+        errno = save_errno; //the close may be error  
+        return -1;  
+    }  
+  
+    evutil_make_socket_nonblocking(sockfd);  
+  
+    return sockfd;  
+}
+
+服务器端代码：
+#include<stdio.h>  
+#include<string.h>  
+#include<errno.h>  
+  
+#include<unistd.h>  
+#include<event.h>  
+ 
+void accept_cb(int fd, short events, void* arg);  
+void socket_read_cb(int fd, short events, void *arg);  
+  
+int tcp_server_init(int port, int listen_num);  
+  
+int main(int argc, char** argv)  
+{  
+  
+    int listener = tcp_server_init(9999, 10);  
+    if( listener == -1 )  
+    {  
+        perror(" tcp_server_init error ");  
+        return -1;  
+    }  
+  
+    struct event_base* base = event_base_new();  
+  
+    //添加监听客户端请求连接事件  
+    struct event* ev_listen = event_new(base, listener, EV_READ | EV_PERSIST,  
+                                        accept_cb, base);  
+    event_add(ev_listen, NULL);  
+  
+  
+    event_base_dispatch(base);  
+  
+    return 0;  
+}  
+void accept_cb(int fd, short events, void* arg)  
+{  
+    evutil_socket_t sockfd;  
+  
+    struct sockaddr_in client;  
+    socklen_t len = sizeof(client);  
+  
+    sockfd = ::accept(fd, (struct sockaddr*)&client, &len );  
+    evutil_make_socket_nonblocking(sockfd);  
+  
+    printf("accept a client %d\n", sockfd);  
+  
+    struct event_base* base = (event_base*)arg;  
+  
+    //仅仅是为了动态创建一个event结构体  
+    struct event *ev = event_new(NULL, -1, 0, NULL, NULL);  
+    //将动态创建的结构体作为event的回调参数  
+    event_assign(ev, base, sockfd, EV_READ | EV_PERSIST,  
+                 socket_read_cb, (void*)ev);  
+  
+    event_add(ev, NULL);  
+}  
+  
+  
+void socket_read_cb(int fd, short events, void *arg)  
+{  
+    char msg[4096];  
+    struct event *ev = (struct event*)arg;  
+    int len = read(fd, msg, sizeof(msg) - 1);  
+  
+  
+  
+    if( len <= 0 )  
+    {  
+        printf("some error happen when read\n");  
+        event_free(ev);  
+        close(fd);  
+        return ;  
+    }  
+  
+    msg[len] = '\0';  
+    printf("recv the client msg: %s", msg);  
+  
+    char reply_msg[4096] = "I have recvieced the msg: ";  
+    strcat(reply_msg + strlen(reply_msg), msg);  
+  
+    write(fd, reply_msg, strlen(reply_msg) );  
+}  
+  
+  
+  
+typedef struct sockaddr SA;  
+int tcp_server_init(int port, int listen_num)  
+{  
+    int errno_save;  
+    evutil_socket_t listener;  
+  
+    listener = ::socket(AF_INET, SOCK_STREAM, 0);  
+    if( listener == -1 )  
+        return -1;  
+  
+    //允许多次绑定同一个地址。要用在socket和bind之间  
+    evutil_make_listen_socket_reuseable(listener);  
+  
+    struct sockaddr_in sin;  
+    sin.sin_family = AF_INET;  
+    sin.sin_addr.s_addr = 0;  
+    sin.sin_port = htons(port);  
+  
+    if( ::bind(listener, (SA*)&sin, sizeof(sin)) < 0 )  
+        goto error;  
+  
+    if( ::listen(listener, listen_num) < 0)  
+        goto error;  
+  
+  
+    //跨平台统一接口，将套接字设置为非阻塞状态  
+    evutil_make_socket_nonblocking(listener);  
+  
+    return listener;  
+  
+    error:  
+        errno_save = errno;  
+        evutil_closesocket(listener);  
+        errno = errno_save;  
+  
+        return -1;  
+}
+
+==========中等
+客户端代码：
+#include<sys/types.h>  
+#include<sys/socket.h>  
+#include<netinet/in.h>  
+#include<arpa/inet.h>  
+#include<errno.h>  
+#include<unistd.h>  
+  
+#include<stdio.h>  
+#include<string.h>  
+#include<stdlib.h>  
+  
+#include<event.h>  
+#include<event2/bufferevent.h>  
+#include<event2/buffer.h>  
+#include<event2/util.h>  
+
+int tcp_connect_server(const char* server_ip, int port);  
+  
+void cmd_msg_cb(int fd, short events, void* arg);  
+void server_msg_cb(struct bufferevent* bev, void* arg);  
+void event_cb(struct bufferevent *bev, short event, void *arg);  
+  
+int main(int argc, char** argv)  
+{  
+    if( argc < 3 )  
+    {  
+        printf("please input 2 parameter\n");  
+        return -1;  
+    }  
+  
+  
+    //两个参数依次是服务器端的IP地址、端口号  
+    int sockfd = tcp_connect_server(argv[1], atoi(argv[2]));  
+    if( sockfd == -1)  
+    {  
+        perror("tcp_connect error ");  
+        return -1;  
+    }  
+  
+    printf("connect to server successful\n");  
+  
+    struct event_base* base = event_base_new();  
+  
+    struct bufferevent* bev = bufferevent_socket_new(base, sockfd,  
+                                                     BEV_OPT_CLOSE_ON_FREE);  
+  
+    //监听终端输入事件  
+    struct event* ev_cmd = event_new(base, STDIN_FILENO,  
+                                      EV_READ | EV_PERSIST, cmd_msg_cb,  
+                                      (void*)bev);  
+    event_add(ev_cmd, NULL);  
+  
+    //当socket关闭时会用到回调参数  
+    bufferevent_setcb(bev, server_msg_cb, NULL, event_cb, (void*)ev_cmd);  
+    bufferevent_enable(bev, EV_READ | EV_PERSIST);  
+  
+  
+    event_base_dispatch(base);  
+  
+    printf("finished \n");  
+    return 0;  
+} 
+void cmd_msg_cb(int fd, short events, void* arg)  
+{  
+    char msg[1024];  
+  
+    int ret = read(fd, msg, sizeof(msg));  
+    if( ret < 0 )  
+    {  
+        perror("read fail ");  
+        exit(1);  
+    }  
+  
+    struct bufferevent* bev = (struct bufferevent*)arg;  
+  
+    //把终端的消息发送给服务器端  
+    bufferevent_write(bev, msg, ret);  
+}  
+void server_msg_cb(struct bufferevent* bev, void* arg)  
+{  
+    char msg[1024];  
+  
+    size_t len = bufferevent_read(bev, msg, sizeof(msg));  
+    msg[len] = '\0';  
+  
+    printf("recv %s from server\n", msg);  
+}  
+  
+  
+void event_cb(struct bufferevent *bev, short event, void *arg)  
+{  
+  
+    if (event & BEV_EVENT_EOF)  
+        printf("connection closed\n");  
+    else if (event & BEV_EVENT_ERROR)  
+        printf("some other error\n");  
+  
+    //这将自动close套接字和free读写缓冲区  
+    bufferevent_free(bev);  
+  
+    struct event *ev = (struct event*)arg;  
+    //因为socket已经没有，所以这个event也没有存在的必要了  
+    event_free(ev);  
+}  
+
+typedef struct sockaddr SA;  
+int tcp_connect_server(const char* server_ip, int port)  
+{  
+    int sockfd, status, save_errno;  
+    struct sockaddr_in server_addr;  
+  
+    memset(&server_addr, 0, sizeof(server_addr) );  
+  
+    server_addr.sin_family = AF_INET;  
+    server_addr.sin_port = htons(port);  
+    status = inet_aton(server_ip, &server_addr.sin_addr);  
+  
+    if( status == 0 ) //the server_ip is not valid value  
+    {  
+        errno = EINVAL;  
+        return -1;  
+    }  
+  
+    sockfd = ::socket(PF_INET, SOCK_STREAM, 0);  
+    if( sockfd == -1 )  
+        return sockfd;  
+  
+  
+    status = ::connect(sockfd, (SA*)&server_addr, sizeof(server_addr) );  
+  
+    if( status == -1 )  
+    {  
+        save_errno = errno;  
+        ::close(sockfd);  
+        errno = save_errno; //the close may be error  
+        return -1;  
+    }  
+  
+    evutil_make_socket_nonblocking(sockfd);  
+  
+    return sockfd;  
+}
+
+服务器端代码：
+#include<stdio.h>  
+#include<string.h>  
+#include<errno.h>  
+  
+#include<event.h>  
+#include<event2/bufferevent.h>  
+
+void accept_cb(int fd, short events, void* arg);  
+void socket_read_cb(bufferevent* bev, void* arg);  
+void event_cb(struct bufferevent *bev, short event, void *arg);  
+int tcp_server_init(int port, int listen_num);  
+  
+int main(int argc, char** argv)  
+{  
+    int listener = tcp_server_init(9999, 10);  
+    if( listener == -1 )  
+    {  
+        perror(" tcp_server_init error ");  
+        return -1;  
+    }  
+  
+    struct event_base* base = event_base_new();  
+  
+    //添加监听客户端请求连接事件  
+    struct event* ev_listen = event_new(base, listener, EV_READ | EV_PERSIST,  
+                                        accept_cb, base);  
+    event_add(ev_listen, NULL);  
+  
+    event_base_dispatch(base);  
+    event_base_free(base);  
+  
+    return 0;  
+}  
+void accept_cb(int fd, short events, void* arg)  
+{  
+    evutil_socket_t sockfd;  
+  
+    struct sockaddr_in client;  
+    socklen_t len = sizeof(client);  
+  
+    sockfd = ::accept(fd, (struct sockaddr*)&client, &len );  
+    evutil_make_socket_nonblocking(sockfd);  
+  
+    printf("accept a client %d\n", sockfd);  
+  
+    struct event_base* base = (event_base*)arg;  
+  
+    bufferevent* bev = bufferevent_socket_new(base, sockfd, BEV_OPT_CLOSE_ON_FREE);  
+    bufferevent_setcb(bev, socket_read_cb, NULL, event_cb, arg);  
+  
+    bufferevent_enable(bev, EV_READ | EV_PERSIST);  
+} 
+void socket_read_cb(bufferevent* bev, void* arg)  
+{  
+    char msg[4096];  
+  
+    size_t len = bufferevent_read(bev, msg, sizeof(msg));  
+  
+    msg[len] = '\0';  
+    printf("recv the client msg: %s", msg);  
+  
+  
+    char reply_msg[4096] = "I have recvieced the msg: ";  
+  
+    strcat(reply_msg + strlen(reply_msg), msg);  
+    bufferevent_write(bev, reply_msg, strlen(reply_msg));  
+}  
+void event_cb(struct bufferevent *bev, short event, void *arg)  
+{  
+  
+    if (event & BEV_EVENT_EOF)  
+        printf("connection closed\n");  
+    else if (event & BEV_EVENT_ERROR)  
+        printf("some other error\n");  
+  
+    //这将自动close套接字和free读写缓冲区  
+    bufferevent_free(bev);  
+}  
+typedef struct sockaddr SA;  
+int tcp_server_init(int port, int listen_num)  
+{  
+    int errno_save;  
+    evutil_socket_t listener;  
+  
+    listener = ::socket(AF_INET, SOCK_STREAM, 0);  
+    if( listener == -1 )  
+        return -1;  
+  
+    //允许多次绑定同一个地址。要用在socket和bind之间  
+    evutil_make_listen_socket_reuseable(listener);  
+  
+    struct sockaddr_in sin;  
+    sin.sin_family = AF_INET;  
+    sin.sin_addr.s_addr = 0;  
+    sin.sin_port = htons(port);  
+  
+    if( ::bind(listener, (SA*)&sin, sizeof(sin)) < 0 )  
+        goto error;  
+  
+    if( ::listen(listener, listen_num) < 0)  
+        goto error;  
+  
+  
+    //跨平台统一接口，将套接字设置为非阻塞状态  
+    evutil_make_socket_nonblocking(listener);  
+  
+    return listener;  
+  
+    error:  
+        errno_save = errno;  
+        evutil_closesocket(listener);  
+        errno = errno_save;  
+  
+        return -1;  
+}
+
+==========高等
+客户端代码：
+#include<sys/types.h>  
+#include<sys/socket.h>  
+#include<netinet/in.h>  
+#include<arpa/inet.h>  
+#include<errno.h>  
+#include<unistd.h>  
+  
+#include<stdio.h>  
+#include<string.h>  
+#include<stdlib.h>  
+  
+#include<event.h>  
+#include<event2/bufferevent.h>  
+#include<event2/buffer.h>  
+#include<event2/util.h>  
+  
+ 
+int tcp_connect_server(const char* server_ip, int port);  
+  
+void cmd_msg_cb(int fd, short events, void* arg);  
+void server_msg_cb(struct bufferevent* bev, void* arg);  
+void event_cb(struct bufferevent *bev, short event, void *arg);  
+  
+int main(int argc, char** argv)  
+{  
+    if( argc < 3 )  
+    {  
+        //两个参数依次是服务器端的IP地址、端口号  
+        printf("please input 2 parameter\n");  
+        return -1;  
+    }  
+  
+    struct event_base *base = event_base_new();  
+  
+    struct bufferevent* bev = bufferevent_socket_new(base, -1,  
+                                                     BEV_OPT_CLOSE_ON_FREE);  
+  
+    //监听终端输入事件  
+    struct event* ev_cmd = event_new(base, STDIN_FILENO,  
+                                     EV_READ | EV_PERSIST,  
+                                     cmd_msg_cb, (void*)bev);  
+    event_add(ev_cmd, NULL);  
+  
+    struct sockaddr_in server_addr;  
+  
+    memset(&server_addr, 0, sizeof(server_addr) );  
+  
+    server_addr.sin_family = AF_INET;  
+    server_addr.sin_port = htons(atoi(argv[2]));  
+    inet_aton(argv[1], &server_addr.sin_addr);  
+  
+    bufferevent_socket_connect(bev, (struct sockaddr *)&server_addr,  
+                               sizeof(server_addr));  
+  
+  
+    bufferevent_setcb(bev, server_msg_cb, NULL, event_cb, (void*)ev_cmd);  
+    bufferevent_enable(bev, EV_READ | EV_PERSIST);  
+  
+  
+    event_base_dispatch(base);  
+  
+    printf("finished \n");  
+    return 0;  
+}  
+void cmd_msg_cb(int fd, short events, void* arg)  
+{  
+    char msg[1024];  
+  
+    int ret = read(fd, msg, sizeof(msg));  
+    if( ret < 0 )  
+    {  
+        perror("read fail ");  
+        exit(1);  
+    }  
+  
+    struct bufferevent* bev = (struct bufferevent*)arg;  
+  
+    //把终端的消息发送给服务器端  
+    bufferevent_write(bev, msg, ret);  
+}  
+  
+  
+void server_msg_cb(struct bufferevent* bev, void* arg)  
+{  
+    char msg[1024];  
+  
+    size_t len = bufferevent_read(bev, msg, sizeof(msg));  
+    msg[len] = '\0';  
+  
+    printf("recv %s from server\n", msg);  
+}  
+  
+void event_cb(struct bufferevent *bev, short event, void *arg)  
+{  
+  
+    if (event & BEV_EVENT_EOF)  
+        printf("connection closed\n");  
+    else if (event & BEV_EVENT_ERROR)  
+        printf("some other error\n");  
+    else if( event & BEV_EVENT_CONNECTED)  
+    {  
+        printf("the client has connected to server\n");  
+        return ;  
+    }  
+  
+    //这将自动close套接字和free读写缓冲区  
+    bufferevent_free(bev);  
+  
+    struct event *ev = (struct event*)arg;  
+    event_free(ev);  
+}
+
+服务器端代码：
+#include<netinet/in.h>    
+#include<sys/socket.h>    
+#include<unistd.h>    
+    
+#include<stdio.h>    
+#include<string.h>    
+    
+#include<event.h>    
+#include<listener.h>    
+#include<bufferevent.h>    
+#include<thread.h>    
+    
+void listener_cb(evconnlistener *listener, evutil_socket_t fd,    
+                 struct sockaddr *sock, int socklen, void *arg);    
+    
+void socket_read_cb(bufferevent *bev, void *arg);    
+void socket_event_cb(bufferevent *bev, short events, void *arg);    
+    
+int main()    
+{    
+    //evthread_use_pthreads();//enable threads    
+    
+    struct sockaddr_in sin;    
+    memset(&sin, 0, sizeof(struct sockaddr_in));    
+    sin.sin_family = AF_INET;    
+    sin.sin_port = htons(9999);    
+    
+    event_base *base = event_base_new();    
+    evconnlistener *listener    
+            = evconnlistener_new_bind(base, listener_cb, base,    
+                                      LEV_OPT_REUSEABLE|LEV_OPT_CLOSE_ON_FREE,    
+                                      10, (struct sockaddr*)&sin,    
+                                      sizeof(struct sockaddr_in));    
+    
+    event_base_dispatch(base);    
+    
+    evconnlistener_free(listener);    
+    event_base_free(base);    
+    
+    return 0;    
+}    
+//一个新客户端连接上服务器了    
+//当此函数被调用时，libevent已经帮我们accept了这个客户端。该客户端的  
+//文件描述符为fd  
+void listener_cb(evconnlistener *listener, evutil_socket_t fd,    
+                 struct sockaddr *sock, int socklen, void *arg)    
+{    
+    printf("accept a client %d\n", fd);    
+    
+    event_base *base = (event_base*)arg;    
+    
+    //为这个客户端分配一个bufferevent    
+    bufferevent *bev =  bufferevent_socket_new(base, fd,    
+                                               BEV_OPT_CLOSE_ON_FREE);    
+    
+    bufferevent_setcb(bev, socket_read_cb, NULL, socket_event_cb, NULL);    
+    bufferevent_enable(bev, EV_READ | EV_PERSIST);    
+}       
+void socket_read_cb(bufferevent *bev, void *arg)    
+{    
+    char msg[4096];    
+    
+    size_t len = bufferevent_read(bev, msg, sizeof(msg)-1 );    
+    
+    msg[len] = '\0';    
+    printf("server read the data %s\n", msg);    
+    
+    char reply[] = "I has read your data";    
+    bufferevent_write(bev, reply, strlen(reply) );    
+}     
+void socket_event_cb(bufferevent *bev, short events, void *arg)    
+{    
+    if (events & BEV_EVENT_EOF)    
+        printf("connection closed\n");    
+    else if (events & BEV_EVENT_ERROR)    
+        printf("some other error\n");    
+    
+    //这将自动close套接字和free读写缓冲区    
+    bufferevent_free(bev);    
 }
