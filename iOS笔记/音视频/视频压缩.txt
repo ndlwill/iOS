@@ -1,0 +1,400 @@
+使用AVAssetExportSession作为导出工具，指定压缩质量AVAssetExportPresetMediumQuality，这样能有效的减少视频体积，
+但是视频画面清晰度比较差，举个例子：一个25秒的1080p视频，经过压缩后从1080p变为320p，大小从34m变成2.6m。
+
+
+AVAssetExportSession *exportSession = [[AVAssetExportSession alloc] initWithAsset:avAsset presetName:AVAssetExportPresetMediumQuality];
+
+exportSession.outputURL= url;
+
+exportSession.shouldOptimizeForNetworkUse = YES;
+
+exportSession.outputFileType = AVFileTypeMPEG4;
+
+[exportSessionexportAsynchronouslyWithCompletionHandler:^{
+
+            switch([exportSessionstatus]) {
+
+                case AVAssetExportSessionStatusFailed:
+
+                    NSLog(@"Export canceled");
+
+                    break;
+
+                case AVAssetExportSessionStatusCancelled:
+
+                    NSLog(@"Export canceled");
+
+                    break;
+
+                case AVAssetExportSessionStatusCompleted:{
+
+                    NSLog(@"Successful!");
+
+                    break;
+
+                }
+
+                default:break;
+
+            }
+
+我们的场景对视频质量要求稍高，对视频的大小容忍比较高，所以将最大分辨率设为720p。
+所以我们的压缩设置改为AVAssetExportPreset1280x720，压缩后大小几乎没变，从34m变成32.5m。我们可以用mideaInfo来查看下两个视频文件到底有什么区别
+
+H264编码:
+Bit Rate:
+比特率是指每秒传送的比特(bit)数。单位为 bps(Bit Per Second)，比特率越高，每秒传送数据就越多，画质就越清晰。
+声音中的比特率是指将模拟声音信号转换成数字声音信号后，单位时间内的二进制数据量，是间接衡量音频质量的一个指标。 
+视频中的比特率（码率）原理与声音中的相同，都是指由模拟信号转换为数字信号后，单位时间内的二进制数据量。
+
+所以选择适合的比特率是压缩视频大小的关键，比特率设置太小的话，视频会变得模糊，失真。比特率太高的话，视频数据太大，又达不到我们压缩的要求。
+
+Format profile:
+作为行业标准，H.264编码体系定义了4种不同的Profile(类)：Baseline(基线类),Main(主要类), Extended(扩展类)和High Profile(高端类)（它们各自下分成许多个层）：
+Baseline Profile 提供I/P帧，仅支持progressive(逐行扫描)和CAVLC；
+Extended Profile 提供I/P/B/SP/SI帧，仅支持progressive(逐行扫描)和CAVLC；
+Main Profile 提供I/P/B帧，支持progressive(逐行扫描)和interlaced(隔行扫描)，提供CAVLC或CABAC；
+High Profile （也就是FRExt）在Main Profile基础上新增：8x8 intra prediction(8x8 帧内预测), custom quant(自定义量化), lossless video coding(无损视频编码), 更多的yuv格式（4:4:4...）；
+从压缩比例来说，baseline< main < high，由于上图中720p是Main@L3.1，1080p是High@L4，这就是明明分辨率不一样，但是压缩后的大小却差不多的原因。
+
+GOP：
+GOP 指的就是两个I帧之间的间隔。
+在视频编码序列中，主要有三种编码帧：I帧、P帧、B帧。
+
+I帧即Intra-coded picture（帧内编码图像帧），不参考其他图像帧，只利用本帧的信息进行编码
+P帧即Predictive-codedPicture（预测编码图像帧），利用之前的I帧或P帧，采用运动预测的方式进行帧间预测编码
+B帧即Bidirectionallypredicted picture（双向预测编码图像帧)，提供最高的压缩比，它既需要之前的图像帧(I帧或P帧)，也需要后来的图像帧(P帧)，采用运动预测的方式进行帧间双向预测编码
+在视频编码序列中，GOP即Group of picture（图像组），指两个I帧之间的距离，Reference（参考周期）指两个P帧之间的距离。一个I帧所占用的字节数大于一个P帧，一个P帧所占用的字节数大于一个B帧。
+
+所以在码率不变的前提下，GOP值越大，P、B帧的数量会越多，平均每个I、P、B帧所占用的字节数就越多，也就更容易获取较好的图像质量；Reference越大，B帧的数量越多，同理也更容易获得较好的图像质量。
+需要说明的是，通过提高GOP值来提高图像质量是有限度的，在遇到场景切换的情况时，H.264编码器会自动强制插入一个I帧，此时实际的GOP值被缩短了。另一方面，在一个GOP中，P、B帧是由I帧预测得到的，当I帧的图像质量比较差时，会影响到一个GOP中后续P、B帧的图像质量，直到下一个GOP开始才有可能得以恢复，所以GOP值也不宜设置过大。
+同时，由于P、B帧的复杂度大于I帧，所以过多的P、B帧会影响编码效率，使编码效率降低。另外，过长的GOP还会影响Seek操作的响应速度，由于P、B帧是由前面的I或P帧预测得到的，所以Seek操作需要直接定位，解码某一个P或B帧时，需要先解码得到本GOP内的I帧及之前的N个预测帧才可以，GOP值越长，需要解码的预测帧就越多，seek响应的时间也越长。
+M 和 N ：M值表示I帧或者P帧之间的帧数目，N值表示GOP的长度。N的至越大，代表压缩率越大。因为图2中N=15远小于图一中N=30。这也是720p尺寸压缩不理想的原因。
+
+解决思路
+由上可知压缩视频主要可以采用以下几种手段:
+降低分辨率
+降低码率
+指定高的 Format profile
+
+由于业务指定分辨率为720p，所以我们只能尝试另外两种方法。
+
+降低码率
+根据http://www.lighterra.com/papers/videoencodingh264/#maximumkeyframeinterval
+推荐了适合720p的推荐码率为2400~3700之间。之前压缩的文件码率为9979,所以码率还是有很大的优化空间的。
+
+指定高的 Format profile
+由于现在大部分的设备都支持High Profile level,所以我们可以把Format profile 从Main Profile level改为High Profile level。
+
+解决方法:
+由于之前的AVAssetExportSession不能指定码率和Format profile,我们这里需要使用AVAssetReader和AVAssetWriter。
+AVAssetReader负责将数据从asset里拿出来，AVAssetWriter负责将得到的数据存成文件。
+//生成reader 和 writer
+    self.reader = [AVAssetReader.alloc initWithAsset:self.asset error:&readerError];
+
+    self.writer = [AVAssetWriter assetWriterWithURL:self.outputURL fileType:self.outputFileType error:&writerError];
+//视频
+    if (videoTracks.count > 0) {
+        self.videoOutput = [AVAssetReaderVideoCompositionOutput assetReaderVideoCompositionOutputWithVideoTracks:videoTracks videoSettings:self.videoInputSettings];
+        self.videoOutput.alwaysCopiesSampleData = NO;
+        if (self.videoComposition)
+        {
+            self.videoOutput.videoComposition = self.videoComposition;
+        }
+        else
+        {
+            self.videoOutput.videoComposition = [self buildDefaultVideoComposition];
+        }
+        if ([self.reader canAddOutput:self.videoOutput])
+        {
+            [self.reader addOutput:self.videoOutput];
+        }
+
+        //
+        // Video input
+        //
+        self.videoInput = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeVideo outputSettings:self.videoSettings];
+        self.videoInput.expectsMediaDataInRealTime = NO;
+        if ([self.writer canAddInput:self.videoInput])
+        {
+            [self.writer addInput:self.videoInput];
+        }
+        NSDictionary *pixelBufferAttributes = @
+        {
+            (id)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA),
+            (id)kCVPixelBufferWidthKey: @(self.videoOutput.videoComposition.renderSize.width),
+            (id)kCVPixelBufferHeightKey: @(self.videoOutput.videoComposition.renderSize.height),
+            @"IOSurfaceOpenGLESTextureCompatibility": @YES,
+            @"IOSurfaceOpenGLESFBOCompatibility": @YES,
+        };
+        self.videoPixelBufferAdaptor = [AVAssetWriterInputPixelBufferAdaptor assetWriterInputPixelBufferAdaptorWithAssetWriterInput:self.videoInput sourcePixelBufferAttributes:pixelBufferAttributes];
+    }
+
+//音频
+   NSArray *audioTracks = [self.asset tracksWithMediaType:AVMediaTypeAudio];
+    if (audioTracks.count > 0) {
+      self.audioOutput = [AVAssetReaderAudioMixOutput assetReaderAudioMixOutputWithAudioTracks:audioTracks audioSettings:nil];
+      self.audioOutput.alwaysCopiesSampleData = NO;
+      self.audioOutput.audioMix = self.audioMix;
+      if ([self.reader canAddOutput:self.audioOutput])
+      {
+          [self.reader addOutput:self.audioOutput];
+      }
+    } else {
+        // Just in case this gets reused
+        self.audioOutput = nil;
+    }
+
+    //
+    // Audio input
+    //
+    if (self.audioOutput) {
+        self.audioInput = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeAudio outputSettings:self.audioSettings];
+        self.audioInput.expectsMediaDataInRealTime = NO;
+        if ([self.writer canAddInput:self.audioInput])
+        {
+            [self.writer addInput:self.audioInput];
+        }
+    }
+
+//开始读写
+    [self.writer startWriting];
+    [self.reader startReading];
+    [self.writer startSessionAtSourceTime:self.timeRange.start];
+
+//压缩完成的回调
+
+__block BOOL videoCompleted = NO;
+    __block BOOL audioCompleted = NO;
+    __weak typeof(self) wself = self;
+    self.inputQueue = dispatch_queue_create("VideoEncoderInputQueue", DISPATCH_QUEUE_SERIAL);
+    if (videoTracks.count > 0) {
+        [self.videoInput requestMediaDataWhenReadyOnQueue:self.inputQueue usingBlock:^
+        {
+            if (![wself encodeReadySamplesFromOutput:wself.videoOutput toInput:wself.videoInput])
+            {
+                @synchronized(wself)
+                {
+                    videoCompleted = YES;
+                    if (audioCompleted)
+                    {
+                        [wself finish];
+                    }
+                }
+            }
+        }];
+    }
+    else {
+        videoCompleted = YES;
+    }
+    
+    if (!self.audioOutput) {
+        audioCompleted = YES;
+    } else {
+        [self.audioInput requestMediaDataWhenReadyOnQueue:self.inputQueue usingBlock:^
+         {
+             if (![wself encodeReadySamplesFromOutput:wself.audioOutput toInput:wself.audioInput])
+             {
+                 @synchronized(wself)
+                 {
+                     audioCompleted = YES;
+                     if (videoCompleted)
+                     {
+                         [wself finish];
+                     }
+                 }
+             }
+         }];
+    }
+其中self.videoInput里的self.videoSettings我们需要对视频压缩参数做设置
+self.videoSettings = @
+{
+    AVVideoCodecKey: AVVideoCodecH264,
+    AVVideoWidthKey: @1280,
+    AVVideoHeightKey: @720,
+    AVVideoCompressionPropertiesKey: @
+    {
+        AVVideoAverageBitRateKey: @3000000,
+        AVVideoProfileLevelKey: AVVideoProfileLevelH264High40,
+    },
+};
+
+封装好的控件可以参考https://github.com/rs/SDAVAssetExportSession
+
+视频转码时遇到的坑:
+使用 SDAVAssetExportSession 时遇到一个坑，大部分视频转码没问题，部分视频转码会有黑屏问题，最后定位出现问题的代码如下：
+
+- (AVMutableVideoComposition *)buildDefaultVideoComposition
+{
+    AVMutableVideoComposition *videoComposition = [AVMutableVideoComposition videoComposition];
+    AVAssetTrack *videoTrack = [[self.asset tracksWithMediaType:AVMediaTypeVideo] objectAtIndex:0];
+
+    // get the frame rate from videoSettings, if not set then try to get it from the video track,
+    // if not set (mainly when asset is AVComposition) then use the default frame rate of 30
+    float trackFrameRate = 0;
+    if (self.videoSettings)
+    {
+        NSDictionary *videoCompressionProperties = [self.videoSettings objectForKey:AVVideoCompressionPropertiesKey];
+        if (videoCompressionProperties)
+        {
+            NSNumber *frameRate = [videoCompressionProperties objectForKey:AVVideoAverageNonDroppableFrameRateKey];
+            if (frameRate)
+            {
+                trackFrameRate = frameRate.floatValue;
+            }
+        }
+    }
+    else
+    {
+        trackFrameRate = [videoTrack nominalFrameRate];
+    }
+
+    if (trackFrameRate == 0)
+    {
+        trackFrameRate = 30;
+    }
+
+    videoComposition.frameDuration = CMTimeMake(1, trackFrameRate);
+    CGSize targetSize = CGSizeMake([self.videoSettings[AVVideoWidthKey] floatValue], [self.videoSettings[AVVideoHeightKey] floatValue]);
+    CGSize naturalSize = [videoTrack naturalSize];
+    CGAffineTransform transform = videoTrack.preferredTransform;
+    // Workaround radar 31928389, see https://github.com/rs/SDAVAssetExportSession/pull/70 for more info
+    if (transform.ty == -560) {
+        transform.ty = 0;
+    }
+
+    if (transform.tx == -560) {
+        transform.tx = 0;
+    }
+
+    CGFloat videoAngleInDegree  = atan2(transform.b, transform.a) * 180 / M_PI;
+    if (videoAngleInDegree == 90 || videoAngleInDegree == -90) {
+        CGFloat width = naturalSize.width;
+        naturalSize.width = naturalSize.height;
+        naturalSize.height = width;
+    }
+    videoComposition.renderSize = naturalSize;
+    // center inside
+    {
+        float ratio;
+        float xratio = targetSize.width / naturalSize.width;
+        float yratio = targetSize.height / naturalSize.height;
+        ratio = MIN(xratio, yratio);
+
+        float postWidth = naturalSize.width * ratio;
+        float postHeight = naturalSize.height * ratio;
+        float transx = (targetSize.width - postWidth) / 2;
+        float transy = (targetSize.height - postHeight) / 2;
+
+        CGAffineTransform matrix = CGAffineTransformMakeTranslation(transx / xratio, transy / yratio);
+        matrix = CGAffineTransformScale(matrix, ratio / xratio, ratio / yratio);
+        transform = CGAffineTransformConcat(transform, matrix);
+    }
+
+    // Make a "pass through video track" video composition.
+    AVMutableVideoCompositionInstruction *passThroughInstruction = [AVMutableVideoCompositionInstruction videoCompositionInstruction];
+    passThroughInstruction.timeRange = CMTimeRangeMake(kCMTimeZero, self.asset.duration);
+
+    AVMutableVideoCompositionLayerInstruction *passThroughLayer = [AVMutableVideoCompositionLayerInstruction videoCompositionLayerInstructionWithAssetTrack:videoTrack];
+
+    [passThroughLayer setTransform:transform atTime:kCMTimeZero];
+
+    passThroughInstruction.layerInstructions = @[passThroughLayer];
+    videoComposition.instructions = @[passThroughInstruction];
+
+    return videoComposition;
+}
+
+1. transform 不正确引起的黑屏
+CGAffineTransform transform = videoTrack.preferredTransform;
+
+/// 获取优化后的视频转向信息
+- (AVMutableVideoComposition *)fixedCompositionWithAsset:(AVAsset *)videoAsset {
+    AVMutableVideoComposition *videoComposition = [AVMutableVideoComposition videoComposition];
+    // 视频转向
+    int degrees = [self degressFromVideoFileWithAsset:videoAsset];
+    if (degrees != 0) {
+        CGAffineTransform translateToCenter;
+        CGAffineTransform mixedTransform;
+        videoComposition.frameDuration = CMTimeMake(1, 30);
+        
+        NSArray *tracks = [videoAsset tracksWithMediaType:AVMediaTypeVideo];
+        AVAssetTrack *videoTrack = [tracks objectAtIndex:0];
+        
+        AVMutableVideoCompositionInstruction *roateInstruction = [AVMutableVideoCompositionInstruction videoCompositionInstruction];
+        roateInstruction.timeRange = CMTimeRangeMake(kCMTimeZero, [videoAsset duration]);
+        AVMutableVideoCompositionLayerInstruction *roateLayerInstruction = [AVMutableVideoCompositionLayerInstruction videoCompositionLayerInstructionWithAssetTrack:videoTrack];
+        
+        if (degrees == 90) {
+            // 顺时针旋转90°
+            translateToCenter = CGAffineTransformMakeTranslation(videoTrack.naturalSize.height, 0.0);
+            mixedTransform = CGAffineTransformRotate(translateToCenter,M_PI_2);
+            videoComposition.renderSize = CGSizeMake(videoTrack.naturalSize.height,videoTrack.naturalSize.width);
+            [roateLayerInstruction setTransform:mixedTransform atTime:kCMTimeZero];
+        } else if(degrees == 180){
+            // 顺时针旋转180°
+            translateToCenter = CGAffineTransformMakeTranslation(videoTrack.naturalSize.width, videoTrack.naturalSize.height);
+            mixedTransform = CGAffineTransformRotate(translateToCenter,M_PI);
+            videoComposition.renderSize = CGSizeMake(videoTrack.naturalSize.width,videoTrack.naturalSize.height);
+            [roateLayerInstruction setTransform:mixedTransform atTime:kCMTimeZero];
+        } else if(degrees == 270){
+            // 顺时针旋转270°
+            translateToCenter = CGAffineTransformMakeTranslation(0.0, videoTrack.naturalSize.width);
+            mixedTransform = CGAffineTransformRotate(translateToCenter,M_PI_2*3.0);
+            videoComposition.renderSize = CGSizeMake(videoTrack.naturalSize.height,videoTrack.naturalSize.width);
+            [roateLayerInstruction setTransform:mixedTransform atTime:kCMTimeZero];
+        }else {//增加异常处理
+            videoComposition.renderSize = CGSizeMake(videoTrack.naturalSize.width,videoTrack.naturalSize.height);
+        }
+        
+        roateInstruction.layerInstructions = @[roateLayerInstruction];
+        // 加入视频方向信息
+        videoComposition.instructions = @[roateInstruction];
+    }
+    return videoComposition;
+}
+
+/// 获取视频角度
+- (int)degressFromVideoFileWithAsset:(AVAsset *)asset {
+    int degress = 0;
+    NSArray *tracks = [asset tracksWithMediaType:AVMediaTypeVideo];
+    if([tracks count] > 0) {
+        AVAssetTrack *videoTrack = [tracks objectAtIndex:0];
+        CGAffineTransform t = videoTrack.preferredTransform;
+        if(t.a == 0 && t.b == 1.0 && t.c == -1.0 && t.d == 0){
+            // Portrait
+            degress = 90;
+        } else if(t.a == 0 && t.b == -1.0 && t.c == 1.0 && t.d == 0){
+            // PortraitUpsideDown
+            degress = 270;
+        } else if(t.a == 1.0 && t.b == 0 && t.c == 0 && t.d == 1.0){
+            // LandscapeRight
+            degress = 0;
+        } else if(t.a == -1.0 && t.b == 0 && t.c == 0 && t.d == -1.0){
+            // LandscapeLeft
+            degress = 180;
+        }
+    }
+    return degress;
+}
+
+视频黑边问题:
+视频黑边应该是视频源尺寸和目标尺寸比例不一致造成的，需要根据原尺寸的比例算出目标尺寸
+   
+CGSize targetSize = CGSizeMake(videoAsset.pixelWidth, videoAsset.pixelHeight);
+//尺寸过大才压缩，否则不更改targetSize
+if (targetSize.width * targetSize.height > 1280 * 720) {
+    int width = 0,height = 0;
+    if (targetSize.width > targetSize.height) {
+        width = 1280;
+        height = 1280 * targetSize.height/targetSize.width;
+    }else {
+        width = 720;
+        height = 720 * targetSize.height/targetSize.width;
+    }
+    targetSize = CGSizeMake(width, height);
+}else if (targetSize.width == 0 || targetSize.height == 0) {//异常情况处理
+    targetSize = CGSizeMake(720, 1280);
+}
+
+修改后的 https://github.com/YaoSu/SDAVAssetExportSession

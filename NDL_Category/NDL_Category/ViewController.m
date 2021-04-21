@@ -139,6 +139,8 @@
 
 #import "NDL_Category-Swift.h"
 
+#import "NDLTestAudioViewController.h"
+
 typedef id (^WeakReference)(void);
 
 // TODO: Import
@@ -2179,10 +2181,15 @@ NSLog(@"viewDidLoad 22");
 //        KeyWindow.rootViewController = [[BaseNavigationController alloc] initWithRootViewController:[TestRotateViewController new]];
 //    });
     
-    // MARK: test touch event
+    // MARK: test AV
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        KeyWindow.rootViewController = [[BaseNavigationController alloc] initWithRootViewController:[TestTouchEventViewController new]];
+        KeyWindow.rootViewController = [[BaseNavigationController alloc] initWithRootViewController:[NDLTestAudioViewController new]];
     });
+    
+    // MARK: test touch event
+//    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+//        KeyWindow.rootViewController = [[BaseNavigationController alloc] initWithRootViewController:[TestTouchEventViewController new]];
+//    });
     
     // MARK: test tabBarVC
 //    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{

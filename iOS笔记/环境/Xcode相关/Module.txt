@@ -1,0 +1,116 @@
+一、Module简介
+Module(模块)-最小的代码单元:
+1.一个Module是机器代码和数据的最小单元，可以独立于其他代码单元进行链接
+2.通常，Module是通过编译单个源文件生成的目标文件。例如，当前的test.m被编译成目标文件test.o时，当前的目标文件就代表一个Module
+3.但有一个问题，Module在调用的时候会产生开销，比如我们在使用一个静态库的时候，可以这样使用:
+假设有A.h、B.h两个头文件、c.m、d.m两个实现文件，两个.m文件都使用#include引入A、B两个头文件。当编译两个.m文件会导致A、B两个头文件分别被编译两次。
+为了解决头文件重复编译这个问题现在基本上都使用#import引入头文件，使用#import会默认开启Module，这样头文件会预先编译成二进制，再有文件导入时就不会重新编译。
+
+二、分析Module文件
+2.1、通过Module编译代码
+Module文件夹：A.h, B.h, build.sh, module.modulemap, use.c
+prebuilt文件夹
+
+/* A.h */
+#ifdef ENABLE_A
+void a() {}
+#endif
+
+/* B.h */
+#import "A.h"
+
+/* module.modulemap */
+module A {
+  header "A.h"
+}
+
+module B {
+  header "B.h"
+  export A
+}
+
+/* use.c */
+#import "B.h"
+void use() {
+#ifdef ENABLE_A
+  a();
+#endif
+}
+
+build.sh文件代码如下：
+# -fmodules：允许使用module语言来表示头文件
+# -fmodule-map-file：module map的路径。如不指明默认module.modulemap
+# -fmodules-cache-path：编译后的module缓存路径
+clang -fmodules -fmodule-map-file=module.modulemap -fmodules-cache-path=../prebuilt -c use.c -o use.o
+
+执行build.sh文件会在prebuilt文件夹中生成两个pcm文件：
+两个文件就是预编译好的二进制代码，如果其他文件再引入A和B就不用重新编译了。
+
+2.2、查看AFNetworking文件的modulemap文件
+// 声明framework的module名称为AFNetworking
+framework module AFNetworking {
+  // 导入文件的集合（如果没有关键字header那么umbrella后面需要跟上头文件的文件夹名称）
+  umbrella header "AFNetworking-umbrella.h"
+
+  export * //把引入的头文件重新导出。
+  module * { export * } //把导入头文件修饰成子module，并把符号全部导出（第一个通配符*表示子module名称和父module名称一致）
+
+// 如果要指定子module的名称需要使用explicit关键字
+// eg：
+  explicit module NANetworking {
+    header "NANetworking.h"
+    export *
+  }
+}
+
+由于我们的项目中会默认开启module，因此无论我们使用#include，#import都会自动转变为@import，编译的时候都会被优化成module形式，也就是同一个文件只会被编译一次。
+如果希望使用我们自定的module文件，那么需要在Build Setting中设置module map file的路径。
+
+module官方介绍:
+https://clang.llvm.org/docs/Modules.html#export-declaration
+
+三、Swift Framework中使用Module
+如果我们的Framework中需要用到Swift-OC混编，但是Framework中不能使用桥接文件，因此这种情况下可以使用Module解决。
+
+创建NASwiftFramework和NAOCFramework项目时选择Framework
+由于NASwiftFramework中使用了Swift-OC混编，因此编译出现错误，现在我们需要创建Module文件解决这个问题。
+
+1.创建NASwiftFramework.modulemap文件
+framework module NASwiftFramework {
+  umbrella "Headers"
+
+  export *
+}
+
+2.设置NAOCStudent.h头文件为Public, 在Build Phases
+
+3.设置Module Map File文件路径，在Build Settings
+
+现在NASwiftFramework能够编译成功，并且在NAApp项目中也能使用NAOCStudent
+#import <NASwiftFramework/NAOCStudent.h>
+
+4.Private Module
+如果我们不想直接对外暴漏我们的OC类，我们可以创建NASwiftFramework.private.modulemap
+
+framework module NASwiftFramework_Private { // _Private必须添加，且首字母大写
+    module NAOCStudent {
+        header "NAOCStudent.h"
+        export *
+    }
+}
+然后在Private Module Map File 中指定路径。切换到NASwiftFramework项目进行重新编译
+
+现在NAApp项目中#import <NASwiftFramework/NAOCStudent.h>会报错，但是我们可以通过
+@import NASwiftFramework_Private.NAOCStudent;来访问NAOCStudent。如果这一步报如下错误:
+
+Undefined symbols for architecture arm64:
+  "_OBJC_CLASS_$_NAOCStudent", referenced from:
+      objc-class-ref in ViewController.o
+ld: symbol(s) not found for architecture arm64
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+
+需要将NASwiftFramework.framework拖到NAApp项目中
+因此Private Module不是真正意义上的私有，只是供开发者区分。
+如果确实希望隐藏OC代码可以定义相关的协议，Swift通过协议调用OC代码，只对协议进行公开（Build Phases->Headers 中设置协议为Public，OC头文件为Private。
+如果上面Private Module例子中将NAOCStudent.h设置为Private那么Swift类中也不能使用NAOCStudent）。
+

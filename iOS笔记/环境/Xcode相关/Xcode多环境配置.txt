@@ -1,0 +1,100 @@
+一、多环境配置
+Project： 包含了项目的所有的代码、资源文件、所有信息...
+Target： 对指定代码和资源文件的具体构建方法
+Scheme：对指定Target的环境配置
+xconfig：将配置写到对应的文件中
+
+1、创建多Target
+通过多Target可对不同的Target设置不同的Bundle ID用于区分开发ID或生产ID
+也可以针对不同的Target配置不同的App Icon、App Display Name
+还可以在Build Phases中针对不同的Target增减编译的源文件和资源文件
+
+应用场景：仅在开发Target下测试一个功能
+选中新Target
+如果是OC代码中使用DEV预定义宏：
+Build Settings->Apple Clang - Preprocessing->
+Debug: DEV=1
+Release: DEV=0
+如果是Swift代码中使用DEV预定义宏：
+Build Settings->Swift Compiler - Custom Flags->
+Debug: -D DEV
+其中-D的含义查看如下：(也就是将声明的变量设置为TRUE)
+
+swiftc --help | grep -- '-D'
+
+#if DEV
+    NSLog(@"DEV");
+#else
+    NSLog(@"xxx");
+#endif
+
+2、创建Scheme
+1个Target时，手动创建Scheme
+
+PROLECT->Configuration-> + Beta // 为了Edit Scheme时，选择里面的Build Configuration
+New Scheme...  // 1个Scheme选择对应的一个Build Configuration
+
+应用场景：不同的开发环境配置不同的HOST
+Target->Build Settings-> + Add User-Defined Settings
+HOST_URL:
+Beta 1.com
+Debug 2.com
+Release 3.com
+
+Info.plist中添加如下字段供外界调用：
+HOST_URL String ${HOST_URL}
+
+NSString *infoPath = [NSBundle.mainBundle pathForResource:@"Info" ofType:@"plist"];
+NSDictionary *infoDic = [[NSDictionary alloc] initWithContentsOfFile:infoPath];
+NSLog(@"%@",infoDic[@"HOST_URL"]);
+
+通过多Scheme也可以通过Build Settings配置不同的图标
+
+3、通过xcconfig文件管理Build Settings中的配置
+Pod 中引入的文件就是通过xcconfig文件管理Build Settings中的配置
+
+创建自己的xcconfig文件，并修改系统xcconfig文件配置：
+PROLECT->Configuration->选择对应的.xcconfig
+注意：xcconfig文件的命名需要以所在文件夹的名称作为前缀然后是项目名、环境名称
+
+使用xcconfig定义不同环境的HOST_URL
+Config-TestCode-debug.xcconfig文件中添加：HOST_URL = http://192.168.1.100
+
+Info.plist中添加如下字段供外界调用：
+
+NSString *infoPath = [NSBundle.mainBundle pathForResource:@"Info" ofType:@"plist"];
+NSDictionary *infoDic = [[NSDictionary alloc] initWithContentsOfFile:infoPath];
+NSLog(@"%@",infoDic[@"HOST_URL"]);
+
+Config-TestCode-debug.xcconfig文件中添加动态库的配置：OTHER_LDFLAGS = -framework "AFNetworking"
+
+HOST_URL = 192.168.1.100
+// ld
+OTHER_LDFLAGS = -framework "AFNetworking"
+
+xcconfig文件本质就是Key-Value，可以配置Build Settings中的绝大部分字段
+xcconfig文件中对应Build Settings中字段的缩写对应关系参考：https://xcodebuildsettings.com/
+
+二、xcconfig文件冲突解决
+如果使用自己创建的xcconfig文件那么执行pod install就会提示我们pod生成的xcconfig文件可能不会产生效果。
+要解决这个问题就需要在我们自己创建的xcconfig文件中引入pod生成的xcconfig文件:
+
+// 绝对路径、相对路径都可以
+#include "Pods/Target Support Files/Pods-TestCode/Pods-TestCode.debug.xcconfig"
+
+自己创建的xcconfig文件中存在pod生成的xcconfig文件中相同的字段，那么就会覆盖pod中的字段，因此要想两个文件中的字段都生效需要使用继承标识：
+
+OTHER_LDFLAGS = $(inherited) -framework "AFNetworking"
+
+三、xconfig文件使用中的问题
+1、URL变量中存在//，后面的字符串会被当做注释
+// 通过定义一个变量来解决
+SLASH =/
+HOST_URL = http:${SLASH}/192.168.1.100
+
+2、使用变量时${}和$()包括变量作用相同
+
+3、条件设置
+OTHER_LDFLAGS[config=Debug][sdk=iphonesimulator*][arch=x86_64] = $(inherited) -framework "AFNetworking"
+经过上述条件设置后AFNetworking库仅会在Debug、模拟器、X86_64架构下编译
+[sdk=iphoneos*]表示真机

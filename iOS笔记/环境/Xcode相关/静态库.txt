@@ -1,0 +1,307 @@
+一、.a与.framework静态库介绍
+1、常用库文件格式有以下几种：
+.a：静态库
+.framework：既有静态库也有动态库
+.dylib：传统意义上的动态库
+.xcframework：2019年苹果推出的用于解决不同架构的库导致的开发问题
+
+2、Framework
+Framework 实际上是一种打包方式，###将库的二进制文件，头文件和有关的资源文件打包到一起，方便管理和分发。###
+Framework和系统的UlKit.Framework还是有很大区别。系统的Framework不需要拷贝到目标程序中，我们自己做出来的Framework哪怕是动态的，最后也还是要拷贝到App中(App 和Extension的Bundle是共享的)，因此苹果又把这种Framework称为Embedded Framework。
+
+3、什么是库(Library) ？
+库(Library)说白了就是一段编译好的二进制代码，加上头文件就可以供别人使用。
+
+4、什么时候会用到库(Library) ?
+某些代码需要给别人使用，但是我们不希望别人看到源码，就需要以库的形式进行封装，只暴露出头文件。
+对于某些不会进行大的改动的代码，我们想减少编译的时间，就可以把它打包成库，因为库是已经编译好的二进制了，编译的时候只需要Link一下，不会浪费编译时间。
+
+5、链接静态库
+main.m文件中的代码使用了AFNetworking.h中的代码，因此需要libAFNetworking.a静态库链接到main.m文件。
+通过如下命令我们可以看到.a静态库就是.o文件的合集:
+
+file libAFNetworking.a//查看当前文件类型
+ar -t libAFNetworking.a//查看静态库中的内容
+
+二、静态库的链接
+我们知道整个编译过程先是把源文件编译生成目标文件(.o)，再通过链接器生成可执行文件或者动态库。因此接下来的步骤如下：
+
+1、生成目标文件
+使用clang命令编译代码
+
+cd main.m 文件目录下
+
+clang -x objective-c \
+-target arm64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-I./AFNetworking \
+-c test.m -o test.o
+
+编译链接三要素：头文件、库文件路径、库名称
+###生成目标文件过程中只用到了./AFNetworking目录下的头文件，并将代码中AFHTTPSessionManager等放到重定位符号表###
+
+2、链接静态库生成可执行文件
+使用clang命令链接静态库命令如下：
+
+clang -target arm64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-L./AFNetworking \
+-lAFNetworking \
+test.o -o test
+
+这里libAFNetworking.a构建的架构需要和这里的目标架构一致，否者无法生成可执行文件。
+
+###生成可执行文件时需要用到静态库中的符号，并和目标文件中的重定位符号表融合成一个符号表###
+
+三、静态库的创建与合并
+StaticLibrary: TestExample.h TestExample.m
+test.m
+
+//test.m
+#import <Foundation/Foundation.h>
+#import "TestExample.h"
+
+int main() {
+    NSLog(@"---main---");
+    TestExample *test = [TestExample new];
+    [test testFunc];
+    return 0;
+}
+
+// TestExample.m
+#import "TestExample.h"
+@implementation TestExample
+- (void)testFunc {
+    NSLog(@"testFunc");
+}
+@end
+
+现在需要将TestExample.m文件编译成静态库文件
+
+1、将TestExample.m文件编译成.o目标文件
+代码如下（和将test.m编译成test.o的区别就是没有引入其他头文件、-x: 指定编译文件语言类型）：
+
+cd TestExample.m 所在目录
+
+clang -x objective-c  \
+-target arm64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-c TestExample.m -o TestExample.o
+
+2、将.o目标文件变成静态库
+由于静态库就是.o文件的合集，因此一个.o文件也能变成静态库，这里直接通过修改TestExample.o文件的后缀变成静态库（之前的系统直接将TestExample.o改为TestExample.a即可），操作如下：
+TestExample.o-->libTestExample.dylib-->libTestExample
+或者使用ar命令: ar -rc libTestExample.a TestExample.o
+
+3、使用test.m文件链接TestExample静态库以验证该静态库是否的正确性
+先将test.m编译成test.o，命令和之前一样，只是路径有变化：
+test.o链接libTestExample静态库生成test可执行文件，注意库的路径和名称(-lTestExample)
+
+4、在终端执行test可执行文件
+终端输入lldb进入到lldb环境中
+file test //将可以test可执行文件包装为一个Target
+r // 运行Target
+
+注意：如果r 运行Target出现错误：error: process exited with status -1 (attach failed ( (os/kern) invalid a rgument)需要进行如下操作：
+应用程序-->终端-->显示简介-->取消勾选“使用Rosetta打开”
+因为test可执行文件是指定arm64架构生成的，因此需要直接在M1的arm64芯片上运行
+
+5、静态库的合并
+使用如下代码合并两个静态库：
+
+libtool -static \
+-o libDiffer.a \
+/Users/ztkj/Desktop/静态库合并/libAFNetworking.a \
+/Users/ztkj/Desktop/静态库合并/libSDWebImage.a
+
+四、创建Framework
+使用上面的文件和生成静态库并创建TestExample.framework文件，结构如下：
+Frameworks->TestExample.framework->Headers（里面包含TestExample.h）文件夹 和 TestExample（删除lib前缀和.a后缀）
+
+删除后缀的libTestExample.a静态库必须是文稿类型，不能是Archive否则会报错：ld: framework not found TestExample
+M1 MacOS删除.a后缀后如果还是Archive后缀就在简介中删除后缀：
+
+将test.m编译成test.o
+clang -target arm64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-I./Frameworks/TestExample.framework/Headers \
+-c test.m -o test.o
+
+test.o链接我们创建的Framework（-F和-framework参数与直接链接静态库有区别）
+clang -target arm64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-F./Frameworks \
+-framework TestExample \
+test.o -o test
+
+
+五、shell
+在前面静态库创建的时候主要涉及到以下几个步骤：
+将TestExample.m文件编译成.o目标文件
+将.o目标文件变成静态库
+将test.m编译成test.o
+test.o链接libTestExample.a静态库生成test可执行文件
+
+build.sh文件中的代码如下，都是上面的命令，只是定义了一些变量：
+
+
+#定义变量，等号两边不能有空格
+LANGUAGE=objective-c
+TAREGT=arm64-apple-macos11.1
+SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk
+
+FILE_NAME=test
+STATICLIBRARY=TestExample
+HEAD_PATH=./StaticLibrary
+LIBRARY_PATH=./StaticLibrary
+
+#和cd不同的是pushd是压栈一个目录到目录栈的栈顶，而cd 这是直接修改栈顶目录因此无法回到上次的目录
+echo "-------------进入到StaticLibrary目录------------------"
+pushd ${HEAD_PATH}
+echo "-------------编译TestExample.m to TestExample.o------------------"
+clang -x $LANGUAGE  \
+-target $TAREGT     \
+-fobjc-arc          \
+-isysroot $SYSROOT  \
+-c ${STATICLIBRARY}.m -o ${STATICLIBRARY}.o
+
+echo "-------------创建libTestExample.a静态库------------------"
+ar -rc lib${STATICLIBRARY}.a ${STATICLIBRARY}.o
+
+echo "-------------退出StaticLibrary目录------------------"
+popd
+
+echo "-------------编译test.m to test.o------------------"
+clang -x $LANGUAGE  \
+-target $TAREGT     \
+-fobjc-arc          \
+-isysroot $SYSROOT  \
+-I${HEAD_PATH}   \
+-c ${FILE_NAME}.m -o ${FILE_NAME}.o
+
+
+echo "-------------test.o链接libTestExample.a to test EXEC------------------"
+clang -target $TAREGT   \
+-fobjc-arc              \
+-isysroot $SYSROOT      \
+-L${LIBRARY_PATH}       \
+-l${STATICLIBRARY}           \
+$FILE_NAME.o -o $FILE_NAME
+
+终端执行以下命令执行build.sh文件：
+// cd build.sh文件所在目录
+// 为build.sh添加可执行权限
+chmod +x ./build.sh 
+//  执行build.sh 脚本
+./build.sh 
+
+
+六、dead_strip与静态库
+准备如下代码，文件结构如下：
+build.sh
+test.m
+StaticLib: TestExample.h TestExample.m
+
+修改test.m中的代码，将TestExample的代码使用注释掉：
+#import <Foundation/Foundation.h>
+#import "TestExample.h"
+
+int main() {
+    NSLog(@"---main---");
+//    TestExample *test = [TestExample new];
+//    [test testFunc];
+    return 0;
+}
+
+运行shell.sh脚本
+
+objdump --macho -d test
+查看test可执行文件Mach-O中__TEXT Section的代码
+
+可以看到虽然main.m中的代码引入了TestExample.h但没有使用TestExample类，因此ld默认情况下进行了dead_strip剥离了TestExample中的代码。
+这在正常情况下没有问题，但是如果静态库中有使用OC中的分类（分类是在运行过程中动态创建的），dead_strip默认剥离所有未使用的代码就会出现问题。
+dead_strip默认剥离所有未使用的代码就会出现问题。
+
+解决方法：在xcconfig文件中添加一下参数，让ld链接静态库的时候遵循我们指定的规则剥离相应的符号：
+// -Xlinker -noall_load：dead strip，默认不加载所有静态库的所有代码
+// -Xlinker -all_load：不dead strip，加载所有静态库的全部代码
+// -Xlinker -ObjC：加载全部OC相关代码，包括分类
+// -force_load： 指定要加载那个静态库的全部代码
+STATIC_FRAMEWORK_PATH=${BUILD_DIR}/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/StaticFramework.framework/StaticFramework
+OTHER_LDFLAGS=-Xlinker -force_load ${STATIC_FRAMEWORK_PATH}
+
+-Xlinker就是告诉clang向ld传递参数，并且以上四个参数只对链接静态库时起作用，Xcode Build Settings中的dead_strip是链接器提供的一种优化方式，和这里链接静态库传递的参数不是一回事。
+
+如果dead_strip不能剥离完不需要的代码，链接器还提供了另一个链接参数LTO，能够在dead_strip之后进一步优化代码：
+Build Settings->Apple Clang - Code Generation
+Link-Time Optimization
+
+==========命令详解==========
+1、ar命令向静态库添加.o文件 / 查看静态库中的目标文件
+
+/**
+ `ar`压缩目标文件，并对其进行编号和索引，形成静态库。同时也可以解压缩静态库，查看有哪些目标文件：
+ ar -rc a.a a.o
+    -r: 向a.a添加or替换.o文件（没有静态库就创建静态库）
+    -c: 不输出任何信息
+    -t: 列出包含的目标文件
+ */
+
+ 2、将test.m编译成test.o
+
+/**
+ clang命令参数：
+     -x: 指定编译文件语言类型
+     -g: 生成调试信息
+     -c: 生成目标文件，只运行preprocess，compile，assemble，不链接
+     -o: 输出文件
+     -isysroot: 使用的SDK路径
+     1. -I<directory> 在指定目录寻找头文件  对应：Header Search Path
+     2. -L<dir> 指定库文件目录（.a\.dylib库文件） 对应：Library Search Path
+     3. -l<library_name> 指定链接的库文件名称（.a\.dylib库文件）对应：Other Link Flags -lAFNetworking
+     -F<directory> 在指定目录寻找framework 对应：Framework Search Path
+     -framework <framework_name> 指定链接的framework名称 对应：Other Link Flags -framework AFNetworking
+ */
+
+/**
+    将test.m编译成test.o:
+    1. 使用OC
+    2. 生成的是x86_64-apple-macos11.1架构的代码、M1:arm64-apple-macos11.1
+    3. 使用ARC
+    4. 使用的SDK(Foundation)的路径在：/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk
+    5. 用到的其他库(AFNetworking)的头文件地址在./Frameworks
+ */
+clang -x objective-c \
+-target arm64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-I./AFNetworking \
+-c test.m -o test.o
+
+3、test.o链接libAFNetworking.a生成test可执行文件
+
+/**
+    test.o链接libAFNetworking.a生成test可执行文件
+    -L./AFNetworking 在当前目录的子目录AFNetworking查找需要的库文件
+    -lAFNetworking 链接的名称为libAFNetworking/AFNetworking的动态库或者静态库
+    查找规则：先找lib+<library_name>的动态库，找不到，再去找lib+<library_name>的静态库，还找不到，就报错
+ */
+clang -target arm64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-L./AFNetworking \
+-lAFNetworking \
+test.o -o test
+
+4、合并静态库
+
+/**
+    OutputName.a: 合并后输出的静态库名称
+    Library1.a Library2.a需要合并的静态库
+ */
+libtool -static -o OutputName.a Library1.a Library2.a

@@ -138,7 +138,9 @@ static NDLAudioQueueCaptureManager *_instance;
  inAQ: 当前使用的Audio Queue
  inBuffer: Audio Queue产生的音频数据
  inStartTime其中包含音频数据产生的时间戳
- inNumberPacketDescriptions: 数据包描述参数.如果你正在录制VBR格式,音频队列会提供此参数的值.如果录制文件需要将其传递给AudioFileWritePackets函数.CBR格式不使用此参数(值为0).
+ inNumberPacketDescriptions: 数据包描述参数.
+ 如果你正在录制VBR格式,音频队列会提供此参数的值.如果录制文件需要将其传递给AudioFileWritePackets函数.
+ CBR格式不使用此参数(值为0).
  inPacketDescs: 音频数据中一组packet描述.如果是VBR格式数据,如果录制文件需要将此值传递给AudioFileWritePackets函数
  
  通过回调函数,就可以拿到当前采集到的音频数据,你可以对数据做你需要的任何自定义操作.以下以写入文件为例,我们在拿到音频数据后,将其写入音频文件

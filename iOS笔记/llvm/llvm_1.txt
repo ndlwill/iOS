@@ -1,0 +1,134 @@
+LLVM是构架编译器(compiler)的框架系统，以C+ +编写而成，
+用于优化以任意程序语言编写的程序的编译时间(compile- time)、链接时间(ink-time)、 运行时间(run-time)以及空闲时间(idle-time),对开发者保持开放，并兼容已有脚本。
+
+目前LLVM已经被苹果IOS开发工具、Xilinx Vivado、Facebook、Google等各大公司采用。
+
+编译器前端(Frontend)
+编译器前端的任务是解析源代码。它会进行:词法分析，语法分析，语义分析，检查源代码是否存在错误，然后构建抽象语法树(Abstract Syntax Tree,AST) ,LLVM的前端还会生成中间代码(intermediate representation, IR)。
+
+优化器(Optimizer)
+优化器负责进行各种优化，改善代码的运行时间，例如消除冗余计算等。优化器接收和输出均是IR。
+
+后端(Backend) /代码生成器(CodeGenerator)
+将代码映射到目标指令集。生成机器语言，并且进行机器相关的代码优化。
+
+iOS的编译器架构
+Objective C/C/C++使用的编译器前端是Clang, Swift是Swift，后端都是LLVM。
+
+LLVM的设计
+当编译器决定支持多种源语言或多种硬件架构时，LLVM最重要的地方就来了。
+LLVM设计的最重要方面是，使用通用的代码表示形式(IR) ，它是用来在编译器中表示代码的形式。所以LLVM可以为任何编程语言独立编写前端，并且可以为任意硬件架构独立编写后端。
+
+https://clang.llvm.org/docs/
+Clang是LLVM项目中的一个子项目。它是基于LLVM架构的轻量级编译器，诞生之初是为了替代GCC，提供更快的编译速度。
+它是负责编译C、C++、 Objecte-C语言的编译器，它属于整个LLVM架构中的，编译器前端。
+
+
+==========编译流程
+1.通过命令打印源码编译的各个阶段
+clang -ccc-print-phases main.m
+
+0: input, "main.m", objective-c
+1: preprocessor, {0}, objective-c-cpp-output
+2: compiler, {1}, ir
+3: backend, {2}, assembler
+4: assembler, {3}, object
+5: linker, {4}, image
+6: bind-arch, "x86_64", {5}, image
+
+0:输入文件:找到源文件。
+1:预处理阶段:这个过程处理包括宏的替换，头文件的导入。
+2:编译阶段:进行词法分析、语法分析、检测语法是否正确，最终生成IR。
+3:后端:这里LLVM会通过一个一个的Pass去优化，每个Pass做一些事情，最终生成汇编代码。
+4:生成目标文件。
+5:链接:链接需要的动态库和静态库，生成可执行文件。
+6:通过不同的架构，生成对应的可执行文件。
+
+2.预处理阶段
+#import <stdio.h>
+#define C 30
+
+int main(int argc, const char * argv[]) {
+    @autoreleasepool {
+        int a = 10;
+        int b = 10;
+        printf("%d",a + b + C);
+    }
+    return 0;
+}
+
+clang -E main.m >> main2.m
+执行完毕可以看到头文件的导入和宏的替换
+
+define用于给数据取别名(宏)，预处理阶段会被替换；typedef用于给类型取别名，预处理阶段不会被替换。
+
+define使用例子：由于会在预处理阶段被替换，因此可用来给敏感的数据、方法、类名取别名，代码混淆，方法加盐等。eg：#define isVIP isxxxVxxxIxxxP
+
+3.编译阶段
+(1)词法分析
+预处理完成后就会进行词法分析。这里会把代码切成一个个Token，比如大小括号，等于号还有字符串等。
+clang - fmodules -fsyntax-only -Xclang -dump-tokens main.m
+
+(2)语法分析
+词法分析完成之后就是语法分析，它的任务是验证语法是否正确。在词法分析的基础上将单词序列组合成各类语法短语，如“程序”， “语句”， “表达式”等等，
+然后将所有节点组成抽象语法树(Abstract Syntax Tree, AST)。 语法分析程序判断源程序在结构上是否正确。
+clang -fmodules -fsyntax-only -Xclang -ast-dump main.m
+
+如果导入头文件找不到（比如导入Foundation.h或者UIKit.h），那么可以指定SDK
+clang -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/
+iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator12.2.sdk(自己S
+DK路径) -fmodules -fsyntax-only -Xclang -ast-dump main.m
+
+(3)生成中间代码IR(intermediate representation )
+完成以上步骤后就开始生成中间代码IR了，代码生成器(Code Generation)会将语法树自顶向下遍历逐步翻译成LLVM IR。
+通过下面命令可以生成.ll的文本文件，查看IR代码。
+
+clang -S -fobjc-arc -emit-llvm main.m
+Objective C代码在这一步 会进行runtime的桥接: property合成， ARC处理等
+
+IR的基本语法:
+@全局标识
+%局部标识
+alloca开辟空间
+align内存对齐
+i32 32个bit, 4个字节
+store写入内存
+load读取数据
+call调用函数
+ret返回
+
+IR的优化
+LLVM的优化级别分别是-O0 -O1 -O2 -O3 -Os(第一个是大写英文字母O)
+clang -Os -S - fobjc-arc -emit-llvm main.m -o main.ll
+
+bitCode
+xcode7以后开启bitcode苹果会做进一步的优化。 生成.bc的中间代码。
+我们通过优化后的IR代码生成.bc代码
+clang -emit-llvm -c main.ll -o main.bc
+
+4.生成汇编代码
+我们通过最终的.bc或者.ll代码生成汇编代码
+clang -S -fobjc-arc main.bc -o main.s
+clang -S - fobjc-arc main.ll -o main.s
+
+生成汇编代码也可以进行优化
+clang -Os -S -fobjc-arc main.m -o main.s
+
+-o <file>
+Write output to <file>
+
+5.生成目标文件(汇编器)
+目标文件的生成，是汇编器以汇编代码作为输入，将汇编代码转换为机器代码，最后输出目标文件(object file)。
+clang -fmodules -c main.s -o main.o
+通过nm命令，查看下main.o中的符号
+xcrun nm -nm main.o
+xcrun nm --help // llvm symbol table dumper
+undefined表示在当前文件暂时找不到符号.
+external表示这个符号是外部可以访问的。
+
+6、生成可执行文件（链接）
+链接器把编译产生的.o文件和(.dylib.a)文件，生成一个mach-o文件。
+clang main.o -o main
+
+查看链接之后的符号
+xcrun nm -nm main

@@ -26,6 +26,9 @@
 // UI即User Interface(用户界面)的简称
 // raw pointer: 原始指针
 
+// MARK: VPN
+// https://github.com/yichengchen/clashX/releases/download/1.50.0/ClashX.dmg
+
 // MARK: leetcode
 // https://books.halfrost.com/leetcode/
 
@@ -72,6 +75,7 @@
 // MARK: AVFoundation相关
 // https://juejin.cn/user/1714893870076253/posts
 // https://www.jianshu.com/p/11bb9f2a9233
+// https://www.jianshu.com/u/08ef8e6eb2f6
 
 // MARK: 金山视频云
 // https://www.jianshu.com/u/b2227c3472fd
@@ -88,6 +92,10 @@
 // https://github.com/WeMobileDev/article/blob/master/IPv6%20socket%E7%BC%96%E7%A8%8B.md#%E9%97%AE%E9%A2%98%E5%A4%8D%E6%9D%82%E6%80%A7
 
 // MARK: LG
+// https://www.jianshu.com/u/7a85a6956d1d // ######
+// https://www.jianshu.com/p/412b20d9a0f6 // 底层
+// https://www.jianshu.com/p/5fbedf309237 // swift
+// https://www.jianshu.com/p/5445fb11e06b // opengl
 // https://www.jianshu.com/u/1e8432e01e5a
 
 // MARK: ping
@@ -1161,7 +1169,7 @@ directory that contains your module map.
  print(address: array2) //0x6000000aa100
  */
 
-// MARK: ==Error==
+// MARK: - Error Tips
 /**
  public protocol Error {
  }

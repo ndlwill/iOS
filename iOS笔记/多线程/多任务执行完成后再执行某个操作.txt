@@ -1,0 +1,242 @@
+1. 有两个加载图片的任务，全部加载完成后在进行相应操作，耗时操作不应该放在主线程，所以开启子线程加载，通过队列组实现：
+{
+    // 创建队列组
+    dispatch_group_t group =  dispatch_group_create();
+    // 创建并发队列
+    dispatch_queue_t queue = dispatch_get_global_queue(0, 0);
+ 
+    // 开子线程，任务1
+    dispatch_group_async(group, queue, ^{
+        [NSData dataWithContentsOfURL:[NSURL URLWithString:@"https://img-blog.csdn.net/20180421152137506"]];
+        NSLog(@"任务1 完成，线程：%@", [NSThread currentThread]);
+    });
+ 
+    // 开子线程，任务2
+    dispatch_group_async(group, queue, ^{
+        [NSData dataWithContentsOfURL:[NSURL URLWithString:@"https://img-blog.csdn.net/20170112145924755?watermark/2/text/aHR0cDovL2Jsb2cuY3Nkbi5uZXQvaGVyb193cWI=/font/5a6L5L2T/fontsize/400/fill/I0JBQkFCMA==/dissolve/70/gravity/Center"]];
+        NSLog(@"任务2 完成，线程：%@", [NSThread currentThread]);
+    });
+ 
+    // 全部完成
+    dispatch_group_notify(group, queue, ^{
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSLog(@"全部完成，线程：%@", [NSThread currentThread]);
+        });
+    });
+}
+输出结果：
+任务1 完成，线程：<NSThread: 0x604000263380>{number = 3, name = (null)}
+任务2 完成，线程：<NSThread: 0x60400007c4c0>{number = 4, name = (null)}
+全部完成，线程：<NSThread: 0x604000070600>{number = 1, name = main}
+
+2. 通过NSOperation实现1中的需求，并添加依赖关系：
+{
+    // 创建队列
+    NSOperationQueue *queue = [[NSOperationQueue alloc] init];
+ 
+    // 任务1
+    NSBlockOperation *op1 = [NSBlockOperation blockOperationWithBlock:^{
+        [NSData dataWithContentsOfURL:[NSURL URLWithString:@"https://img-blog.csdn.net/20180421152137506"]];
+        NSLog(@"任务1 完成，线程：%@", [NSThread currentThread]);
+    }];
+ 
+    // 任务2
+    NSBlockOperation *op2 = [NSBlockOperation blockOperationWithBlock:^{
+        [NSData dataWithContentsOfURL:[NSURL URLWithString:@"https://img-blog.csdn.net/20170112145924755?watermark/2/text/aHR0cDovL2Jsb2cuY3Nkbi5uZXQvaGVyb193cWI=/font/5a6L5L2T/fontsize/400/fill/I0JBQkFCMA==/dissolve/70/gravity/Center"]];
+        NSLog(@"任务2 完成，线程：%@", [NSThread currentThread]);
+    }];
+ 
+    // 添加操作依赖，注意不能循环依赖
+    [op1 addDependency:op2];
+ 
+    op1.completionBlock = ^{
+        NSLog(@"全部完成，线程：%@", [NSThread currentThread]);
+    };
+ 
+    // 添加操作到队列
+    [queue addOperation:op1];
+    [queue addOperation:op2];
+}
+输出结果：
+任务2 完成，线程：<NSThread: 0x600000277c80>{number = 3, name = (null)}
+任务1 完成，线程：<NSThread: 0x60400046c0c0>{number = 4, name = (null)}
+全部完成，线程：<NSThread: 0x600000277d40>{number = 5, name = (null)}
+
+
+3. 如果1中的任务本身就是异步的，按1中操作是无法实现全部加载完成后在进行相应操作：
+{
+    NSURLSession *session = [NSURLSession sharedSession];
+ 
+    // 创建队列组
+    dispatch_group_t group =  dispatch_group_create();
+    // 创建并发队列
+    dispatch_queue_t queue = dispatch_get_global_queue(0, 0);
+ 
+    // 任务1
+    dispatch_group_async(group, queue, ^{
+        NSURLSessionDataTask *task1 = [session dataTaskWithURL:[NSURL URLWithString:@"https://www.apple.com/105/media/us/imac-pro/2018/d0b63f9b_f0de_4dea_a993_62b4cb35ca96/hero/large.mp4"] completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+            NSLog(@"任务1 完成，线程：%@", [NSThread currentThread]);
+        }];
+        [task1 resume];
+    });
+ 
+    // 任务2
+    dispatch_group_async(group, queue, ^{
+        NSURLSessionDataTask *task2 = [session dataTaskWithURL:[NSURL URLWithString:@"https://www.apple.com/105/media/us/imac-pro/2018/d0b63f9b_f0de_4dea_a993_62b4cb35ca96/thumbnails/erin-sarofsky/large.mp4"] completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+            NSLog(@"任务2 完成，线程：%@", [NSThread currentThread]);
+        }];
+        [task2 resume];
+    });
+ 
+    // 全部完成
+    dispatch_group_notify(group, queue, ^{
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSLog(@"全部完成，线程：%@", [NSThread currentThread]);
+        });
+    });
+}
+ 
+输出结果：
+全部完成，线程：<NSThread: 0x60000007f480>{number = 1, name = main}
+任务2 完成，线程：<NSThread: 0x604000468a80>{number = 3, name = (null)}
+任务1 完成，线程：<NSThread: 0x60400046a900>{number = 4, name = (null)}
+
+4. 通过dispatch_group_enter、dispatch_group_leave实现3的需求：
+{
+    NSURLSession *session = [NSURLSession sharedSession];
+ 
+    // 创建队列组
+    dispatch_group_t group = dispatch_group_create();
+ 
+    // 任务1
+    dispatch_group_enter(group);
+    NSURLSessionDataTask *task1 = [session dataTaskWithURL:[NSURL URLWithString:@"https://www.apple.com/105/media/us/imac-pro/2018/d0b63f9b_f0de_4dea_a993_62b4cb35ca96/hero/large.mp4"] completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+        NSLog(@"任务1 完成，线程：%@", [NSThread currentThread]);
+        dispatch_group_leave(group);
+    }];
+    [task1 resume];
+ 
+    // 任务2
+    dispatch_group_enter(group);
+    NSURLSessionDataTask *task2 = [session dataTaskWithURL:[NSURL URLWithString:@"https://www.apple.com/105/media/us/imac-pro/2018/d0b63f9b_f0de_4dea_a993_62b4cb35ca96/thumbnails/erin-sarofsky/large.mp4"] completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+        NSLog(@"任务2 完成，线程：%@", [NSThread currentThread]);
+        dispatch_group_leave(group);
+    }];
+    [task2 resume];
+ 
+    // 全部完成
+    dispatch_group_notify(group, dispatch_get_main_queue(), ^(){
+        NSLog(@"全部完成，线程：%@", [NSThread currentThread]);
+    });
+}
+ 
+输出结果：
+任务2 完成，线程：<NSThread: 0x60400046bd00>{number = 3, name = (null)}
+任务1 完成，线程：<NSThread: 0x60400046c700>{number = 4, name = (null)}
+全部完成，线程：<NSThread: 0x60400007cdc0>{number = 1, name = main}
+
+5. 通过信号量实现3的需求：
+{
+    // 初始化信号量
+    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+ 
+    NSURLSession *session = [NSURLSession sharedSession];
+ 
+    // 创建队列组
+    dispatch_group_t group =  dispatch_group_create();
+    // 创建并发队列
+    dispatch_queue_t queue = dispatch_get_global_queue(0, 0);
+ 
+    // 任务1
+    dispatch_group_async(group, queue, ^{
+        NSURLSessionDataTask *task1 = [session dataTaskWithURL:[NSURL URLWithString:@"https://www.apple.com/105/media/us/imac-pro/2018/d0b63f9b_f0de_4dea_a993_62b4cb35ca96/hero/large.mp4"] completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+            NSLog(@"任务1 完成，线程：%@", [NSThread currentThread]);
+            // 发送信号，使信号量+1
+            dispatch_semaphore_signal(semaphore);
+        }];
+        [task1 resume];
+    });
+    // 信号量等于0时会一直等待，大于0时正常执行，并让信号量-1
+    dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
+ 
+    // 任务2
+    dispatch_group_async(group, queue, ^{
+        NSURLSessionDataTask *task2 = [session dataTaskWithURL:[NSURL URLWithString:@"https://www.apple.com/105/media/us/imac-pro/2018/d0b63f9b_f0de_4dea_a993_62b4cb35ca96/thumbnails/erin-sarofsky/large.mp4"] completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+            NSLog(@"任务2 完成，线程：%@", [NSThread currentThread]);
+            dispatch_semaphore_signal(semaphore);
+        }];
+        [task2 resume];
+    });
+    dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
+ 
+    // 全部完成
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSLog(@"全部完成，线程：%@", [NSThread currentThread]);
+    });
+}
+ 
+输出结果：
+任务1 完成，线程：<NSThread: 0x600000468040>{number = 3, name = (null)}
+任务2 完成，线程：<NSThread: 0x600000468040>{number = 3, name = (null)}
+全部完成，线程：<NSThread: 0x60000007d680>{number = 1, name = main}
+ 
+可以看出，这样执行，是先执行任务1，然后执行任务2。如果想同时执行任务1和任务2，只需要把22行代码移到33行位置。
+注意一点：使用信号量，dispatch_semaphore_signal和dispatch_semaphore_wait需要成对使用，不然会造成crash。
+
+6.还有barrier
+
+7.
+-(void)Btn3{
+    NSString *str = @"http://www.jianshu.com/p/6930f335adba";
+    NSURL *url = [NSURL URLWithString:str];
+    NSURLRequest *request = [NSURLRequest requestWithURL:url];
+    NSURLSession *session = [NSURLSession sharedSession];
+    
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    for (int i=0; i<10; i++) {
+        
+        NSURLSessionDataTask *task = [session dataTaskWithRequest:request completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+            
+            NSLog(@"%d---%d",i,i);
+            count++;
+            if (count==10) {
+                dispatch_semaphore_signal(sem);
+                count = 0;
+            }
+            
+        }];
+        
+        [task resume];
+    }
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSLog(@"end");
+    });
+}
+
+============================================================
+==========顺序执行==========
+-(void)Btn5{
+    NSString *str = @"http://www.jianshu.com/p/6930f335adba";
+    NSURL *url = [NSURL URLWithString:str];
+    NSURLRequest *request = [NSURLRequest requestWithURL:url];
+    NSURLSession *session = [NSURLSession sharedSession];
+    
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    for (int i=0; i<10; i++) {
+        
+        NSURLSessionDataTask *task = [session dataTaskWithRequest:request completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+            
+            NSLog(@"%d---%d",i,i);
+            dispatch_semaphore_signal(sem);
+        }];
+        
+        [task resume];
+        dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    }
+    
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSLog(@"end");
+    });
+}

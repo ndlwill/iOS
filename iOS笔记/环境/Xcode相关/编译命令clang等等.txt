@@ -1,0 +1,170 @@
+生成目标文件:
+目标文件包含了机器指令代码、数据，链接时需要的信息，符号表、调试信息，字符串表。
+
+1.不指定target, 默认是Mach-O 64-bit object x86_64
+clang -x c -g -c a.c -o a.o
+-x:指定编译文件语言类型
+-g:生成调试信息
+-c:生成目标文件，只运行preprocess, compile, assemble, 不链接
+-o:输出文件
+-I<directory>在指定目录寻找头文件
+-L<dir>指定库文件路径(. a\.dylib库文件)
+-l<library_name>指定链接的库文件名称(. a\.dylib库文件)
+-F<directory>在指定目录寻找framework头文件
+-framework <framework_name>在指定链接的framework名称生成相应的LLVM文件格式，来进行链接时间优化
+当我们配合着-S使用时，生成汇编语言文件。否则生成bitcode格式的目标文件
+-flto=<value>设置LTO的模式: full or thin
+-flto 设置LTO的模式: full
+-flto=full, 默认值，单片(monolithic) LTO通过将所有输入合并到单个模块中来实现此目的
+-flto=thin,使用ThinLTO代替
+-emit-llvm
+-install_name指定动态库初次安装时的默认路径，向'LC_ID_DYLIB '添加安装路径，该路径作为dyld定位该库。
+
+clang -o是将.c源文件编译成为一个可执行的二进制代码( -o 选项其实是指定输出文件文件名，如果不加-c选项，clang默认会编译链接生成可执行文件，文件的名称由-o选项指定)。
+clang -c是使用LLVM汇编器将源文件转化为目标代码。
+
+2.指定生成Mach-O 64-bit x86-64目标文件格式
+clang -x c -target x86_64-apple-macos10.15 -g -c a.c -o a.o
+
+3.如果指定target不带apple系统版本(包括macOS，ipadOS，iOS， 真机和模拟器)。例如x86_64， 那么生成的目标文件是Linux的ELF 64-bit
+clang -x c -target x86_64 -g -c a.c -o a.o
+
+4.编译.m
+clang -x objective-c -target x86_64-apple-macos10.15 \
+-fobjc-arc -fmodules -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.15.sdk \
+-c test.m -o test.o
+
+clang -x c -g -target arm64- apple-ios13.5 \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS13.6.sdk \
+-c a.c -o a.o
+
+5.编译.mm:
+在mac上编译:
+
+clang -x objective-c++ \
+-target x86_64-apple -macos10.15 \
+-std=c++11 \
+-stdlib=libc++ \
+-fobjc-arc \
+-fmodules \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.15.sdk \
+-c test.mm -o test.o
+
+在模拟器上编译:
+clang -x objective-c \
+-target x86_64-apple-ios13.5-simulator \
+-fobjc-arc \
+-fmodules \
+-isysroot /Applications/Xcodе.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator13.6.sdk \
+-c test.m o test.0
+
+在模拟器上链接其他三方库:
+clang -x objective-c \
+-target x86_64-apple-ios13.5-simulator \
+-fobjc-arc \
+- fmodules \
+-isysroot /Applications/Xcode. app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator13.6.sdk \
+-I/Users/ws/Desktop/Library/AFNetworking.framework/Headers -F/Users/ws/Desktop/Library \
+-c test.m -o test.o
+
+clang -target x86_64-apple-ios13.5-simulator \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator13.6.sdk \
+-F/Users/ws/Desktop/Library \
+-fobjc-arc \
+-framework AFNetworking \
+-v test.o -o test
+
+clang -target x86_64-apple-ios13.5-simulator \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator13.6.sdk \
+-L/Users/ws/Desktop/Library \
+-fobjc-arc \
+-lAFNetworking \
+-dead-strip \
+test.o -o test
+
+编译成arm64真机:
+clang -target arm64-apple-ios13.5 \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS13.6.sdk \
+-L/Users/ ws/Desktop/Library \
+-fobjc-arc \
+-lAFNetworking \
+test.o -o test
+
+clang -target arm64-apple-ios13.5 \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS13.6.sdk \
+-F/Users/ws/Desktop//Library \
+-fobjc-arc \
+-framework AFNetworking \
+test.o -o test
+
+6.生成dSYM文件
+clang -x c -g1 a.c -o a.o
+-g1: 将调试信息写入DWARF格式文件
+
+==========查看调试信息:
+dwarfdump取出并验证DWARF格式调试信息:
+
+dwarfdump a.o
+dwarfdump a.dSYM
+dwarfdump --lookup 0x100000f20 --arch=x86_64 a.dSYM
+--lookup查看地址的调试信息。将显示出所在的目录，文件，函数等信息
+
+==========查看文件内容:
+otool用来查看Mach-O文件内部结构:
+otool -l liba.dylib
+otool -h libTest.a
+
+-l:显示解析后的mach header和load command
+-h:显示未解析的mach header
+-L:打印所有链接的动态库路径
+-D:打印当前动态库的install_ name
+
+==========objdump用来查看文件内部结构，包括ELF和Mach-O:
+objdump --macho -h a.o
+objdump --macho -x a.o
+objdump --macho -s -d a.o
+objdump --macho --syms a.o
+
+--macho:指定Mach-O类型
+-h: 打印各个段的基本信息
+-x: 打印各个段更详细的信息
+-d: 将所有包含指定的段反汇编
+-s:将所有段的内容以16进制的方式打印出来
+--lazy-bind:打印lazy binding info
+--syms打印符号表
+
+==========静态库的压缩和解压缩:
+ar压缩目标文件，并对其进行编号和索引，形成静态库。同时也可以解压缩静态库，查看有哪些目标文件:
+ar -rc a.a a.o
+-r:添加or替换文件
+-c: 不输出任何信息
+-t:列出包含的.o目标文件
+
+==========创建静态库
+创建库命令:libtool。 可以创建静态库和动态库:
+libtool -static -arch_only x86_64 a.o -o a.a 
+
+libtool -static -arch_only arm64 \
+-D \
+-syslibroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS13.6.sdk \
+test.o -o libTest.a
+
+==========创建动态库
+clang -dynamiclib \
+-target arm64-apple-ios13.5 \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS13.6.sdk \
+a.o -o a.dylib
+
+==========查看符号表
+nm命令:
+
+nm -pa a.o
+-a:显示符号表的所有内容
+-g:显示全局符号
+-p:不排序。显示符号表本来的顺序
+-r:逆转顺序
+-u: 显示未定义符号
+
+==========
+
+==========
