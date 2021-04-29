@@ -1,0 +1,31 @@
+https://sock-raw.org/papers/sock_raw
+
+============================================================
+真正从网卡进来的数据是完整的以太网帧，底层用sk_buff 数据结构描述，最终进入接收缓冲区recv buffer，而我们应用层调用read / recv /recvfrom 从接收缓冲区拷贝数据到应用层提供的buffer，
+对一般的套接字，如SOCK_STREAM， SOCK_DGRAM 来说，此时缓冲区只有user data，其他各层的头部已经被去除，而对于SOCK_RAW 来说是IP head + IP payload，当然也可以是arp/rarp 包，甚至是完整的帧（加上MAC头）。
+
+假设现在我们要通过SOCK_RAW 发送数据，则需要调用setsockopt 设置IP_HDRINCL 选项（如果protocol 设为IPPROTO_RAW 则默认设置了IP_HDRINCL），即告诉内核我们自己来封装IP头部
+需要注意的是，如果我们自己来封装IP头部，那么数据包传递出去的时候IP 层就不会参与运作，即如果数据包大于接口的MTU，那么不会进行分片而直接丢弃。
+
+sock_raw = socket(AF_INET , SOCK_RAW , IPPROTO_TCP);
+while( 1)
+{
+    data_size = recvfrom(sock_raw , buffer ,  65535 ,  0 , &saddr , &saddr_size);
+     //Now process the packet
+    ProcessPacket(buffer , data_size);
+}
+即创建原始套接字，调用recvfrom 接收数据，再调用processpacket 处理IP包，可以读出ip head 和 tcp head 各字段。
+上述程序只可以接收tcp 包，当然udp 和 icmp 可以这样写：
+sock_raw = socket(AF_INET , SOCK_RAW , IPPROTO_UDP);
+sock_raw = socket(AF_INET , SOCK_RAW , IPPROTO_ICMP);
+但是不能以为 sock_raw = socket(AF_INET , SOCK_RAW , IPPROTO_IP); 就能接收所有种类的IP包，如前所述，这是错误的。
+上述程序只能监测到输入的数据包，而且读取的数据包中已经没有了以太网头部。
+
+只需要稍稍改进一下：
+sock_raw = socket( AF_PACKET , SOCK_RAW , htons(ETH_P_ALL)) ;
+ETH_P_IP 0X0800只接收发往目的MAC是本机的IP类型的数据帧
+ETH_P_ARP 0X0806只接收发往目的MAC是本机的ARP类型的数据帧
+ETH_P_RARP 0X8035只接受发往目的MAC是本机的RARP类型的数据帧
+ETH_P_ALL 0X0003接收发往目的MAC是本机的所有类型(ip,arp,rarp)的数据帧，同时还可以接收从本机发出去的所有数据帧。在混杂模式打开的情况下，还会接收到发往目的MAC为非本地硬件地址的数据帧。
+
+注意family 是AF_PACKET，这样就能监测所有输入和输出的数据包，而且不仅限于IP包（tcp/udp/icmp），如arp/rarp 包也可以监测，并且数据包还包含以太网头部。

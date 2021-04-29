@@ -2,51 +2,67 @@
 Module(模块)-最小的代码单元:
 1.一个Module是机器代码和数据的最小单元，可以独立于其他代码单元进行链接
 2.通常，Module是通过编译单个源文件生成的目标文件。例如，当前的test.m被编译成目标文件test.o时，当前的目标文件就代表一个Module
-3.但有一个问题，Module在调用的时候会产生开销，比如我们在使用一个静态库的时候，可以这样使用:
-假设有A.h、B.h两个头文件、c.m、d.m两个实现文件，两个.m文件都使用#include引入A、B两个头文件。当编译两个.m文件会导致A、B两个头文件分别被编译两次。
-为了解决头文件重复编译这个问题现在基本上都使用#import引入头文件，使用#import会默认开启Module，这样头文件会预先编译成二进制，再有文件导入时就不会重新编译。
 
-二、分析Module文件
-2.1、通过Module编译代码
-Module文件夹：A.h, B.h, build.sh, module.modulemap, use.c
-prebuilt文件夹
+module在调用的时候会产生开销，当使用一个静态库的时：
+@import TestStaticFramework;
+如果静态库中包含许多.o文件。这岂不是会导入很多module？
+当然不会。在静态链接的时候，也就是静态库链接到主项目或者动态库，最终生成可执行文件或者动态库时，
+静态链接器可以把多个module链接优化成一个，来减少本来多个module直接调用的问题
 
-/* A.h */
+module原理:
+未开启module时，当B文件导入A.h，C文件又导入了A.h和B.h
+#include：A.h会跟随B文件和C文件编译多次。使用#include造成C文件重复包含A.h，所以当C文件编译时，A.h又会被编译多次，相当于编译了N * M次
+#import：A.h依然会跟随B文件和C文件编译多次。但使用#import可以避免C文件重复包含A.h，此时C文件编译，A.h只编译一次，相当于编译了N + M次
+开启module时，头文件会被预先编译成二进制文件，并且每个头文件只会被编译一次。此时无论有多少文件导入头文件，都不会被重复编译，只需要执行N次即可
+
+使用#import会默认开启Module，这样头文件会预先编译成二进制，再有文件导入时就不会重新编译。
+
+Cat目录中，有A.h和B.h两个头文件，还有一个use.c代码和一个module.modulemap文件。和Cat目录平级，创建prebuilt目录，用来存储编译后的module缓存
+打开A.h文件，写入以下代码：
 #ifdef ENABLE_A
 void a() {}
 #endif
 
-/* B.h */
+打开B.h文件，写入以下代码：
 #import "A.h"
 
-/* module.modulemap */
-module A {
-  header "A.h"
-}
-
-module B {
-  header "B.h"
-  export A
-}
-
-/* use.c */
+打开use.c文件，写入以下代码：
 #import "B.h"
 void use() {
 #ifdef ENABLE_A
-  a();
+ a();
 #endif
 }
 
-build.sh文件代码如下：
-# -fmodules：允许使用module语言来表示头文件
-# -fmodule-map-file：module map的路径。如不指明默认module.modulemap
-# -fmodules-cache-path：编译后的module缓存路径
-clang -fmodules -fmodule-map-file=module.modulemap -fmodules-cache-path=../prebuilt -c use.c -o use.o
+在use.c文件中，使用了B.h，同时B.h使用了A.h
+打开module.modulemap文件，写入以下代码：
+module A {
+ header "A.h"
+}
 
-执行build.sh文件会在prebuilt文件夹中生成两个pcm文件：
-两个文件就是预编译好的二进制代码，如果其他文件再引入A和B就不用重新编译了。
+module B {
+ header "B.h"
+ export A
+}
+module.modulemap文件的作用，它是用来描述头文件与module之间映射的关系
+定义了名称为A和B的两个module
+在module A中，定义了header A.h，表示module A和A.h的映射关系
+在module B中，定义了header B.h，和A同理。export A表示将B.h导入的A.h头文件重新导出
 
-2.2、查看AFNetworking文件的modulemap文件
+通过clang命令，开启module并将use.c编译成目标文件
+clang  -fmodules -fmodule-map-file=module.modulemap -fmodules-cache-path=../prebuilt -c use.c -o use.o
+-fmodules：允许使用module语言来表示头文件
+-fmodule-map-file：module map的路径。此参数缺失，默认找module.modulemap文件。如果文件不存在，执行会报错
+-fmodules-cache-path：编译后的module缓存路径
+打开prebuilt目录，两个.pcm文件，分别对应A.h和B.h，它们就是预编译头文件后的产物.如果其他文件再引入A和B就不用重新编译了。
+
+module在Xcode中是默认开启的
+Apple Clang - Language - Modules->Enable Modules Yes
+如果在Build Settings中，将Enable Modules设置为NO，导入头文件将不能使用@import方式 eg: @import UIKit;
+开启module后，项目中导入头文件，无论使用#include、#import、@import中何种方式，最终都会映射为@import方式
+
+==========module解读
+查看AFNetworking文件的modulemap文件
 // 声明framework的module名称为AFNetworking
 framework module AFNetworking {
   // 导入文件的集合（如果没有关键字header那么umbrella后面需要跟上头文件的文件夹名称）
@@ -54,63 +70,644 @@ framework module AFNetworking {
 
   export * //把引入的头文件重新导出。
   module * { export * } //把导入头文件修饰成子module，并把符号全部导出（第一个通配符*表示子module名称和父module名称一致）
-
-// 如果要指定子module的名称需要使用explicit关键字
-// eg：
-  explicit module NANetworking {
-    header "NANetworking.h"
-    export *
-  }
 }
 
-由于我们的项目中会默认开启module，因此无论我们使用#include，#import都会自动转变为@import，编译的时候都会被优化成module形式，也就是同一个文件只会被编译一次。
-如果希望使用我们自定的module文件，那么需要在Build Setting中设置module map file的路径。
+定义module名称为AFNetworking，模块是framework
+umbrella：可以理解为伞柄。一把雨伞的伞柄下有很多伞骨，umbrella的作用是指定一个目录，这个目录即为伞柄，目录下所有.h头文件即为伞骨
+umbrella header AFNetworking-umbrella.h：指定module AFNetworking映射AFNetworking-umbrella.h文件中所有.h头文件
+export *：*表示通配符。将AFNetworking-umbrella.h文件中，所有.h头文件重新导出
+module * { export * }：创建子module，使用*通配符，将AFNetworking-umbrella.h中导入的头文件，按照头文件名称命名为子module名称。再使用export *将子module中导入的头文件重新导出
+
+打开AFNetworking-umbrella.h文件
+#ifdef __OBJC__
+#import <UIKit/UIKit.h>
+#else
+#ifndef FOUNDATION_EXPORT
+#if defined(__cplusplus)
+#define FOUNDATION_EXPORT extern "C"
+#else
+#define FOUNDATION_EXPORT extern
+#endif
+#endif
+#endif
+
+#import "AFNetworking.h"
+#import "AFHTTPSessionManager.h"
+#import "AFURLSessionManager.h"
+#import "AFCompatibilityMacros.h"
+#import "AFNetworkReachabilityManager.h"
+#import "AFSecurityPolicy.h"
+#import "AFURLRequestSerialization.h"
+#import "AFURLResponseSerialization.h"
+#import "AFAutoPurgingImageCache.h"
+#import "AFImageDownloader.h"
+#import "AFNetworkActivityIndicatorManager.h"
+#import "UIActivityIndicatorView+AFNetworking.h"
+#import "UIButton+AFNetworking.h"
+#import "UIImageView+AFNetworking.h"
+#import "UIKit+AFNetworking.h"
+#import "UIProgressView+AFNetworking.h"
+#import "UIRefreshControl+AFNetworking.h"
+#import "WKWebView+AFNetworking.h"
+
+FOUNDATION_EXPORT double AFNetworkingVersionNumber;
+FOUNDATION_EXPORT const unsigned char AFNetworkingVersionString[];
+
+AFNetworking-umbrella.h文件，相当于伞柄
+AFNetworking-umbrella.h文件中，导入的所有.h头文件，相当于伞骨
+项目中，使用@import AFNetworking，可以.出一个子module列表，它对应的也是伞柄下的伞骨列表
+
+查看开源项目AsyncDisplayKit中的module.modulemap
+打开module.modulemap文件
+framework module AsyncDisplayKit {
+ umbrella header "AsyncDisplayKit.h"
+ 
+ export *
+ module * {
+   export *
+ }
+ 
+ explicit module ASControlNode_Subclasses {
+   header "ASControlNode+Subclasses.h"
+   export *
+ }
+ 
+ explicit module ASDisplayNode_Subclasses {
+   header "ASDisplayNode+Subclasses.h"
+   export *
+ }
+ 
+}
+
+定义module名称为AsyncDisplayKit，模块是framework
+定义伞柄AsyncDisplayKit.h
+将AsyncDisplayKit.h文件中，所有.h头文件重新导出
+创建子module，使用*通配符，将AsyncDisplayKit.h中导入的头文件，按照头文件名称命名为子module名称。将子module中导入的头文件重新导出
+explicit：显示指明子module名称
 
 module官方介绍:
+https://clang.llvm.org/docs/Modules.html
 https://clang.llvm.org/docs/Modules.html#export-declaration
 
-三、Swift Framework中使用Module
-如果我们的Framework中需要用到Swift-OC混编，但是Framework中不能使用桥接文件，因此这种情况下可以使用Module解决。
 
-创建NASwiftFramework和NAOCFramework项目时选择Framework
-由于NASwiftFramework中使用了Swift-OC混编，因此编译出现错误，现在我们需要创建Module文件解决这个问题。
+==========自定义module
+搭建LGOCFramework项目
+LGOCFramework是一个动态库项目，创建项目后，系统默认并不提供.modulemap文件
+项目编译后，在LGOCFramework.framework中的Modules目录下，会自动生成module.modulemap文件
+打开module.modulemap文件，里面存储了基本的头文件与module之间映射的关系
 
-1.创建NASwiftFramework.modulemap文件
-framework module NASwiftFramework {
-  umbrella "Headers"
+/* module.modulemap */
 
-  export *
+framework module LGOCFramework {
+   // umbrella<目录>
+   umbrella header "LGOCFramework.h"
+ 
+   explicit module LGTeacher {
+       header "LGTeacher.h"
+       export *
+   }
+   explicit module LGStudent {
+       header "LGStudent.h"
+       export *
+   }
+}
+如果想对module进行配置，例如：定义子module，此时需要自己创建modulemap文件
+在项目LGOCFramework目录下，创建LGOCFramework.modulemap文件
+在BuildSetting中，修改Module Map File配置项：
+如果希望使用我们自定的module文件，那么需要在Build Setting中设置module map file的路径。
+Module Map File：设置.modulemap文件路径，填写${SRCROOT}之后的路径即可
+
+打开LGOCFramework.modulemap文件，写入以下代码：
+framework module LGOCFramework {
+   umbrella header "LGOCFramework.h"
+ 
+   explicit module LGTeacher {
+       header "LGTeacher.h"
+       export *
+   }
+   explicit module LGStudent {
+       header "LGStudent.h"
+       export *
+   }
 }
 
-2.设置NAOCStudent.h头文件为Public, 在Build Phases
+定义module名称为LGOCFramework，模块是framework
+定义伞柄LGOCFramework.h
+显示指明子module名称为LGTeacher，映射LGTeacher.h，将LGTeacher.h中导入的头文件重新导出
+显示指明子module名称为LGStudent，映射LGStudent.h，将LGStudent.h中导入的头文件重新导出
+项目编译后，在LGOCFramework.framework中的Modules目录下，生成的依然是名称为module.modulemap的文件
 
-3.设置Module Map File文件路径，在Build Settings
+由于系统默认识别.modulemap文件的名称是module.modulemap，所以自定义的LGOCFramework.modulemap文件在编译后，名称依然是module.modulemap，但里面的内容已经生效
 
-现在NASwiftFramework能够编译成功，并且在NAApp项目中也能使用NAOCStudent
-#import <NASwiftFramework/NAOCStudent.h>
 
-4.Private Module
-如果我们不想直接对外暴漏我们的OC类，我们可以创建NASwiftFramework.private.modulemap
+创建MulitProject.xcworkspace，加入LGOCFramework动态库项目，LGApp项目
+LGApp链接LGOCFramework动态库
+打开ViewController.m文件，导入LGOCFramework动态库的头文件
+可以@import LGOCFramework.LGStudent
+也可以#import <LGOCFramework/LGStudent.h>
 
-framework module NASwiftFramework_Private { // _Private必须添加，且首字母大写
-    module NAOCStudent {
-        header "NAOCStudent.h"
-        export *
-    }
+==================================================Swift Framework中使用Module
+==========Swift库使用OC代码
+module映射
+搭建LGSwiftFramework项目
+LGSwiftFramework是一个Swift动态库项目
+打开LGOCStudent.h文件，写入以下代码：
+#import <Foundation/Foundation.h>
+
+@interface LGOCStudent : NSObject
+
+- (void)speek;
+
+@end
+打开LGOCStudent.m文件，写入以下代码：
+#import "LGOCStudent.h"
+
+@implementation LGOCStudent
+
+- (void)speek {
+   NSLog(@"LGOCStudent--speek");
 }
-然后在Private Module Map File 中指定路径。切换到NASwiftFramework项目进行重新编译
 
-现在NAApp项目中#import <NASwiftFramework/NAOCStudent.h>会报错，但是我们可以通过
-@import NASwiftFramework_Private.NAOCStudent;来访问NAOCStudent。如果这一步报如下错误:
+@end
 
-Undefined symbols for architecture arm64:
-  "_OBJC_CLASS_$_NAOCStudent", referenced from:
-      objc-class-ref in ViewController.o
-ld: symbol(s) not found for architecture arm64
-clang: error: linker command failed with exit code 1 (use -v to see invocation)
+打开LGSwiftTeacher.swift文件，写入以下代码：
+import Foundation
 
-需要将NASwiftFramework.framework拖到NAApp项目中
+@objc open class LGSwiftTeacher: NSObject {
+
+   public func speek() {
+       let s = LGOCStudent() // 会报错
+       s.speek()
+       print("speek!")
+   }
+
+   @objc public func walk() {
+       print("walk!")
+   }
+}
+在LGSwiftTeacher.swift文件中，调用了OC代码。在日常项目中，使用桥接文件即可。但在Framework项目中，没有桥接文件的概念，此时编译报错
+
+解决办法：
+创建LGSwiftFramework.modulemap文件，写入以下代码：
+framework module LGSwiftFramework {
+   umbrella "Headers"
+   export *
+}
+
+定义module名称为LGSwiftFramework，模块是framework
+定义伞柄Headers目录
+将Headers目录下所有.h头文件重新导出
+在BuildSetting中，修改Module Map File配置项：
+此时LGSwiftTeacher.swift文件中，使用的OC代码不再报错，项目编译成功
+
+==========App使用Swift库
+承接上面自定义module的案例
+打开MulitProject.xcworkspace文件，加入LGSwiftFramework动态库项目。LGApp链接LGSwiftFramework动态库
+
+在LGApp中，打开ViewController.m文件，使用@import LGSwiftFramework导入头文件，只能找到一个.Swift
+
+LGSwiftFramework项目在编译时，系统在.framework中生成的module.modulemap文件，会自动生成以下代码：
+framework module LGSwiftFramework {
+   umbrella "Headers"
+   export *
+}
+
+module LGSwiftFramework.Swift {
+   header "LGSwiftFramework-Swift.h"
+   requires objc
+}
+但这种导入方式，无法使用LGOCStudent类
+解决办法：
+使用#import方式，也无法找到LGOCStudent.h头文件
+但LGSwiftFramework中的.modulemap文件，将Headers目录下所有.h文件全部重新导出。所以可以强行导入<LGSwiftFramework/LGOCStudent.h>，导入后LGOCStudent类可以正常使用
+另一种解决办法，通过.modulemap文件，暴露出LGOCStudent：
+打开LGSwiftFramework.modulemap文件，改为以下代码：
+framework module LGSwiftFramework {
+   umbrella "Headers"
+   export *
+}
+
+module LGSwiftFramework.LGOCStudent {
+   header "LGOCStudent.h"
+   requires objc
+}
+再次编译项目，使用@import方式，此时可以找到LGOCStudent
+导入LGSwiftFramework.LGOCStudent后，LGOCStudent类可以正常使用
+
+==========私有module映射
+在某些情况下，是否使用特定头文件用于区分指定库的公共API和私有API
+
+例如：一个库可能包含分别提供公共API和私有API的头文件LGOCStudent.h和LGOCStudent_Private.h。
+此外，LGOCStudent_Private.h可能仅在某些版本的库中可用，而在其他版本库中不可用。
+使用统一的module.modulemap文件无法表达这一点
+
+LGSwiftFramework项目
+
+创建LGOCStudent_Private.h文件，写入以下代码：
+
+#import <Foundation/Foundation.h>
+
+@interface LGOCStudent_Private : NSObject
+
+- (void)speek;
+
+@end
+创建LGOCStudent_Private.m文件，写入以下代码：
+#import "LGOCStudent_Private.h"
+
+@implementation LGOCStudent_Private
+
+- (void)speek {
+   NSLog(@"LGOCStudent_Private--speek");
+}
+
+@end
+
+创建LGSwiftFramework.private.modulemap文件，写入以下代码：
+framework module LGSwiftFramework_Private {
+   module LGOCStudent {
+       header "LGOCStudent_Private.h"
+       export *
+   }
+}
+私有.modulemap文件的名称，中间的.private一定要加，这个是命名规则
+定义module名称为LGSwiftFramework_Private，模块是framework
+定义私有module名称，后面一定要加Private后缀，并且首字母大写
+定义module名称为LGOCStudent，映射LGOCStudent_Private.h
+将LGOCStudent_Private.h中导入的头文件重新导出
+在BuildSetting中，修改Private Module Map File配置项：
+
+LGApp项目
+打开ViewController.m文件，导入LGOCStudent.h和LGOCStudent_Private.h头文件，此时它们被彻底分开了
+#import "ViewController.h"
+@import LGSwiftFramework.LGOCStudent;
+@import LGSwiftFramework_Private.LGOCStudent;
+
+@implementation ViewController
+
+- (void)viewDidLoad {
+   [super viewDidLoad];
+
+   LGOCStudent *student=[LGOCStudent new];
+   LGOCStudent_Private *sp=[LGOCStudent_Private new];
+}
+
+@end
+
 因此Private Module不是真正意义上的私有，只是供开发者区分。
-如果确实希望隐藏OC代码可以定义相关的协议，Swift通过协议调用OC代码，只对协议进行公开（Build Phases->Headers 中设置协议为Public，OC头文件为Private。
-如果上面Private Module例子中将NAOCStudent.h设置为Private那么Swift类中也不能使用NAOCStudent）。
+如果确实希望隐藏OC代码可以定义相关的协议，Swift通过协议调用OC代码，只对协议进行公开
+（Build Phases->Headers 中设置协议为Public，OC头文件为Private。如果上面Private Module例子中将LGOCStudent_Private.h设置为Private那么Swift类中也不能使用LGOCStudent_Private）。
 
+==========Swift静态库
+在Xcode 9之后，Swift开始⽀持静态库
+Swift没有头⽂件的概念，外界如何使⽤Swift中public修饰的类和函数？
+Swift库中引⼊了⼀个全新的⽂件.swiftmodule
+
+.swiftmodule包含序列化过的AST（抽象语法树，Abstract Syntax Tree），也包含SIL（Swift中间语⾔，Swift Intermediate Language）
+
+==========Swift静态库合并
+搭建LGSwiftA项目
+LGSwiftA是一个Swift静态库项目
+
+打开LGSwiftTeacher.swift文件，写入以下代码：
+
+import Foundation
+
+@objc open class LGSwiftTeacher: NSObject {
+
+   public func speek() {
+       print("speek!")
+   }
+
+   @objc public func walk() {
+       print("walk!")
+   }
+}
+搭建LGSwiftB项目
+LGSwiftB是一个Swift静态库项目
+打开LGSwiftTeacher.swift文件，写入以下代码：
+
+
+import Foundation
+
+@objc open class LGSwiftTeacher: NSObject {
+
+   public func speek() {
+       print("speek!")
+   }
+
+   @objc public func walk() {
+       print("walk!")
+   }
+}
+
+创建MulitProject.xcworkspace，加入LGSwiftA、LGSwiftB两个静态库项目
+
+创建Products目录，和MuiltProject.xcworkspace平级
+
+在LGSwiftA、LGSwiftB项目中，选择Build Phases，创建Run Script，写入以下代码：
+cp -Rv -- "${BUILT_PRODUCTS_DIR}/" "${SOURCE_ROOT}/../Products"
+使用cp命令,将编译后的.framework文件拷贝到Products目录
+编译LGSwiftA、LGSwiftB项目，打开Products目录，.framework文件已成功拷贝
+
+使用libtool命令，合并LGSwiftA和LGSwiftB两个静态库
+libtool -static \
+-o \
+libLGSwiftC.a \
+LGSwiftA.framework/LGSwiftA \
+LGSwiftB.framework/LGSwiftB
+
+由于LGSwiftA、LGSwiftB项目中，都存在了相同的LGSwiftTeacher.swift文件，使用libtool命令合并后提示警告
+libtool: warning same member name (LGSwiftTeacher.o) in output file used for input files: LGSwiftA.framework/LGSwiftA(LGSwiftTeacher.o) and: LGSwiftB.framework/LGSwiftB(LGSwiftTeacher.o) due to use of basename, truncation and blank padding
+
+使用ar -t libLGSwiftC.a命令，查看libLGSwiftC.a的文件列表
+__.SYMDEF
+LGSwiftA_vers.o
+LGSwiftTeacher.o
+LGSwiftB_vers.o
+LGSwiftTeacher.o
+
+解决办法：
+Products目录下，创建LGSwiftC目录，将库文件libLGSwiftC.a拷贝到LGSwiftC目录下
+仿照Cocoapods生成三方库的目录结构，在LGSwiftC目录下，创建Public目录，将LGSwiftA.framework和LGSwiftB.framework拷贝到Public目录下
+
+打开LGSwiftA.framework和LGSwiftB.framework文件，将里面的库文件、.plist文件、签名等信息全部删除，最终只保留Headers和Modules两个目录
+虽然生成.framework时，自动创建了Modules目录。但编译时，.modulemap文件和x.swiftmodule目录，应该和Headers目录平级
+将.modulemap文件和x.swiftmodule目录，从Modules目录移动到.framework文件下，和Headers目录平级。然后删除Modules目录
+
+此时静态库合并完成
+
+==========App使用合并后的静态库
+搭建LGApp项目
+LGApp是一个App项目
+
+将LGSwiftC目录，拷贝到LGApp项目的根目录下
+
+将libLGSwiftC.a库文件，拖动到项目中的Frameworks目录
+
+创建xcconfig文件，并配置到Tatget上，写入以下代码：
+HEADER_SEARCH_PATHS = $(inherited) '${SRCROOT}/LGSwiftC/Public/LGSwiftA.framework/Headers'
+HEADER_SEARCH_PATHS = $(inherited) '${SRCROOT}/LGSwiftC/Public/LGSwiftB.framework/Headers'
+指定头文件路径Header Search Paths
+在ViewController.m中，使用module方式导入LGSwiftA，编译报错
+
+使用module方式，还需要加载modulemap文件的路径
+HEADER_SEARCH_PATHS = $(inherited) '${SRCROOT}/LGSwiftC/Public/LGSwiftA.framework/Headers'
+HEADER_SEARCH_PATHS = $(inherited) '${SRCROOT}/LGSwiftC/Public/LGSwiftB.framework/Headers'
+
+OTHER_CFLAGS = $(inherited) '-fmodule-map-file=${SRCROOT}/LGSwiftC/Public/LGSwiftA.framework/module.modulemap'
+OTHER_CFLAGS = $(inherited) '-fmodule-map-file=${SRCROOT}/LGSwiftC/Public/LGSwiftB.framework/module.modulemap'
+
+OTHER_CFLAGS：传递给用来编译C或者OC的编译器，当前就是clang
+加载modulemap文件的路径
+对应Build Setting中的配置项
+
+打开ViewController.m，写入以下代码：
+#import "ViewController.h"
+@import LGSwiftA;
+
+@implementation ViewController
+
+- (void)viewDidLoad {
+   [super viewDidLoad];
+   
+   LGSwiftTeacher *teacher = [LGSwiftTeacher new];
+}
+
+@end
+编译成功，Swift静态库中的LGSwiftTeacher类，可以在OC下正常使用
+
+
+但此时还有另一个问题：
+在LGSwiftTest.swift中，使用import导入LGSwiftA，还是编译报错
+在Swift中，还需要加载swiftmodule文件的路径
+HEADER_SEARCH_PATHS = $(inherited) '${SRCROOT}/LGSwiftC/Public/LGSwiftA.framework/Headers'
+HEADER_SEARCH_PATHS = $(inherited) '${SRCROOT}/LGSwiftC/Public/LGSwiftB.framework/Headers'
+
+OTHER_CFLAGS = $(inherited) '-fmodule-map-file=${SRCROOT}/LGSwiftC/Public/LGSwiftA.framework/module.modulemap'
+OTHER_CFLAGS = $(inherited) '-fmodule-map-file=${SRCROOT}/LGSwiftC/Public/LGSwiftB.framework/module.modulemap'
+
+SWIFT_INCLUDE_PATHS = $(inherited) '${SRCROOT}/LGSwiftC/Public/LGSwiftA.framework'
+SWIFT_INCLUDE_PATHS = $(inherited) '${SRCROOT}/LGSwiftC/Public/LGSwiftB.framework'
+
+SWIFT_INCLUDE_PATHS：传递给SwiftC编译器
+在指定路径下查找swiftmodule文件
+对应Build Setting中的配置项
+
+打开LGSwiftTest.swift文件，写入以下代码：
+
+import Foundation
+import LGSwiftA
+
+@objc open class LGSwiftTest: NSObject {
+
+   public override init() {
+       super.init()
+       
+       let t = LGSwiftTeacher()
+       t.speek()
+   }
+}
+编译成功，Swift静态库中的LGSwiftTeacher类，可以在Swift下正常使用
+
+在LGSwiftA.framework和LGSwiftB.framework两个静态库中，都存在LGSwiftTeacher，有时甚至会存在头文件相同的情况。
+所以在案例中，手动构建的目录结构，可以有效避免相同头文件的冲突。并且在使用的时候，导入的头文件是谁的，使用的LGSwiftTeacher对应就是谁的
+
+链接静态库，只要没指定-all_load或-ObjC参数，默认会使用-noall_load参数。
+所以在同一个文件内，即使导入两个头文件，当链接一个文件找到代码后，就不会链接另一个，因此也不会冲突
+
+==========OC映射到Swift方式
+搭建OCFramework项目
+OCFramework是一个OC动态库项目
+
+打开LGToSwift.h文件，写入以下代码：
+#import <Foundation/Foundation.h>
+
+typedef NS_ENUM(NSUInteger, LGTeacherName) {
+   LGTeacherNameHank,
+   LGTeacherNameCat,
+};
+
+typedef NSString * LGTeacherNameString;
+
+extern NSString *getTeacherName(void);
+extern NSString * const LGTeacherCat;
+extern LGTeacherNameString const LGTeacherHank;
+
+@interface LGToSwift : NSObject
+
+- (nullable NSString *)teacherNameForIndex:(NSUInteger)index;
+
+- (BOOL)changeTeacherName:(nullable NSDictionary<NSString *, id> *)options;
+
+@end
+
+打开LGToSwift.m文件，写入以下代码：
+#import "LGToSwift.h"
+
+NSString *getTeacherName(void) {
+   return nil;
+}
+
+NSString * const LGTeacherCat = @"Cat";
+LGTeacherNameString const LGTeacherHank = @"Hank";
+
+@implementation LGToSwift
+
+- (nullable NSString *)teacherNameForIndex:(NSUInteger)pageIndex {
+   return nil;
+}
+
+- (BOOL)changeTeacherName:(nullable NSDictionary<NSString *, id> >*)options {
+   return NO;
+}
+
+@end
+
+搭建SwiftProject项目
+SwiftProject是一个App项目
+创建MulitProject.xcworkspace，加入OCFramework动态库项目。SwiftProject链接OCFramework动态库
+
+在ViewController.swift中，使用OCFramework动态库的方法，出现问题：
+无法对LGTeacherNameString类型的属性赋值枚举值
+teacherName方法的命名，被改为teacherName(for:)，但我们预期的是teacherName(forIndex:)
+changeTeacherName方法，我们希望它作为私有方法，并以双下划线字符__开头
+
+解决办法：
+可以使用特定宏，改变映射规则
+在OCFramework中，打开LGToSwift.h文件，改为以下代码：
+#import <Foundation/Foundation.h>
+
+typedef NS_ENUM(NSUInteger, LGTeacherName) {
+   LGTeacherNameHank,
+   LGTeacherNameCat,
+};
+
+typedef NSString * LGTeacherNameString NS_TYPED_EXTENSIBLE_ENUM;
+
+extern NSString *getTeacherName(void);
+extern NSString * const LGTeacherCat;
+extern LGTeacherNameString const LGTeacherHank;
+
+@interface LGToSwift : NSObject
+
+- (nullable NSString *)teacherNameForIndex:(NSUInteger)index NS_SWIFT_NAME(teacherName(forIndex:));
+
+- (BOOL)changeTeacherName:(nullable NSDictionary<NSString *, id> *)options NS_REFINED_FOR_SWIFT;
+
+@end
+
+NS_TYPED_EXTENSIBLE_ENUM：属性指示编译器，使用struct(swift_wrapper(struct)属性)，通过指定NS_TYPED_ENUM宏，编译器被指示使用enum(swift_wrapper(enum)属性)
+NS_SWIFT_NAME：通过指定NS_SWIFT_NAME宏，可以添加一些详细信息以使函数清晰可见
+NS_REFINED_FOR_SWIFT：通过指定NS_REFINED_FOR_SWIFT宏，Swift的Clang Importer将做一些额外的工作，将该方法导入为私有方法，并以双下划线字符__开头
+
+在SwiftProject中，打开ViewController.swift文件，写入以下代码：
+
+
+import UIKit
+import OCFramework
+
+class ViewController: UIViewController {
+
+   override func viewDidLoad() {
+       super.viewDidLoad()
+
+       let Hank: LGTeacherNameString = .hank
+       
+       let teacher: LGToSwift = LGToSwift()
+       teacher.teacherName(forIndex: 1)
+   }
+}
+
+extension LGToSwift {
+   func change() -> Bool {
+       return __changeTeacherName(nil)
+   }
+}
+
+问题解决，OC中的方法和属性，在Swift中使用符合预期
+
+但另一个问题又出现了：
+通过指定宏的方式，需要修改原有代码。如果一个使用OC开发的SDK需要适配Swift，需要为每一个方法或属性指定宏，这将是工程浩大且费时费力的事情
+
+解决办法：
+使用.apinotes文件，代替宏的方式
+在OCFramework目录下，创建OCFramework.apinotes文件
+在OCFramework中，将OCFramework.apinotes文件加入到项目
+.apinotes文件必须要放在SDK的目录中，采用yaml格式书写，类似JSON格式
+
+打开OCFramework.apinotes文件，写入以下代码：
+---
+Name: OCFramework
+Classes:
+- Name: LGToSwift
+#  SwiftName: ToSwift #Swift代码中使用的类名
+ Methods:
+ - Selector: "changeTeacherName:"
+   Parameters:
+   - Position: 0
+     Nullability: O
+   MethodKind: Instance
+   SwiftPrivate: true
+   # Availability: nonswift   #在Swift中是否可用
+   # AvailabilityMsg: "prefer 'deinit'"  #在Swift中不可用的原因
+   Availability: nonswift
+   AvailabilityMsg: "prefer 'deinit'"
+
+将changeTeacherName:方法，在Swift中设置为不可用
+编译项目，显示自定义错误提示：prefer 'deinit'
+
+.apinotes文件最终会被放入编译后的.framework中
+
+OC代码映射到Swift的方式：
+为了让OC代码在Swift使用中做一定的规范，可以进行以下操作。
+5.1使用宏
+NS_SWIFT_NAME(<#*name#>):给OC方法取别名
+NS_TYPED_ENUM：让编译器使用enum
+NS_TYPED_EXTENSIBLE_ENUM：让编译器使用Struct
+NS_REFINED_FOR_SWIFT 在Swift方法中， 编译器会在名称前加上双下划线__
+
+5.2.使用apinotes文件
+官方文档
+https://clang.llvm.org/docs/APINotes.html
+
+==========Module 相关的 Build Setting 参数
+对module自身的描述：
+DEFINES_MODULE：YES/NO，module 化需要设置为 YES
+MODULEMAP_FILE：指向 module.modulemap 路径
+HEADER_SEARCH_PATHS：modulemap 内定义的 Objective-C 头文件，必须在 HEADER_SEARCH_PATHS 内能搜索到
+PRODUCT_MODULE_NAME：module 名称，默认和 Target name 相同
+
+对外部module的引用
+FRAMEWORK_SEARCH_PATHS：依赖的 Framework 搜索路径
+OTHER_CFLAGS：编译选项，可配置依赖的其他 modulemap 文件路径 -fmodule-map-file={modulemap_path}
+HEADER_SEARCH_PATHS：头文件搜索路径，可用于配置源码中引用的其他 Library 的头文件
+OTHER_LDFLAGS：依赖其他二进制的编译依赖选项 
+SWIFT_INCLUDE_PATHS：swiftmodule 搜索路径，可用于配置依赖的其他swiftmodule
+OTHER_SWIFT_FLAGS：Swift 编译选项，可配置依赖的其他 modulemap 文件路径 -Xcc -fmodule-map-file=
+
+==========总结
+module（模块）：最小的代码单元，表示头文件与目标文件的关系
+modulemap：最小的代码单元，表示头文件与目标文件的映射
+
+定义一个module：
+export：导出当前代表的头文件使用的头文件
+export *：匹配目录下所有的头文件
+module *：目录下所有的头文件都当作一个子module
+explicit *：显式声明一个module的名称
+
+Swift库使用OC代码：
+不能使用桥接文件
+OC的头文件放到modulemap下
+使用私有modulemap更好的表达公共API和私有API
+
+Swift静态库合并：
+必须保留.swiftmodule文件（Swift的头文件）
+使用libtool命令，合并静态库本身
+用到的头文件、Swift头文件以及modulemap文件，通过目录的形式放到一起
+OC要用合并的静态库：clang: other c flags：-fmodule-map-file <modulemap path>
+Swift要用合并的静态库：SwiftC :other swift flags显式告诉SwiftC <modulemap dir>
+
+OC映射到Swift方式：
+宏
+使用.apinotes文件：<工程名称>.apinotes

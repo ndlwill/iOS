@@ -1,0 +1,146 @@
+clang 是一个 c 、c++ 和 oc 的编译器
+
+#import <Foundation/Foundation.h>
+#import <AFNetworking.h>
+int main(){
+    AFHTTPSessionManager *manager = [AFHTTPSessionManager manager];
+    NSLog(@"testApp----%@", manager);
+    return 0;
+}
+
+clang -x ：来指定编译的语言
+-target : 指定编译的架构
+-fobjc-arc : 指定为 arc环境
+-isysroot : 这就是用到的系统库所在的位置(我们.m 里面引用了<Foundation/Foundation.h>)
+-I :指定里面引用的第三方库头文件的路径 header serach path
+-c :输出
+\ 换行输入 为了好看
+
+.o 里边有重定位符号表,重定位符号里保存的是 当前用到的符号.
+那它的作用是什么？
+其实就是当我们进行链接的时候,通过这个重定位符号表再次重定位，生成具体的一个符号信息。
+这也就是为什么我们生成目标文件只需要一个头文件的地址就可以了
+因为再生成目标文件的时候，只需要告诉clang 哪个地方需要进行重定位就好了
+
+进行链接 静态库 生成可执行文件：
+-isysroot : 系统库所在的位置 如NSLog
+-L ：静态库的位置
+-l:上面我们告诉了连接器我的静态库放在哪里，那接下来就需要告诉它我连接哪个库文件（注意：这里说的是库文件并没有说静态库）
+-lAFNetworking，因为它是有一个查找规则的，它会先查找lib+<library_name>的动态库，找不到再去找lib+<library_name>的静态库 ，在找不到就会报错。
+
+链接的过程就需要把重定位符号表的符号进行重定位
+也就是说需要符号的真实的地址
+向我们用到的AFHTTPSessionManager 它真实的地址在哪? 
+是不是保存在静态库.a 里面的.o文件里去了，也就是在.a的重定位符号表里
+我们生成的.o也有重定位符号表
+当生成可执行文件的时候会将其融合生成一个完整的符号表
+因为在可执行文件中只有一个符号表。
+
+链接成功一个库的三要素：
+-I<directory>（大i）指定目录寻找头文件
+xcode: Header Search Paths
+
+-L<dir> 指定库文件路径
+xcode: :Library Search Paths
+
+-l<library_name>(小L)指定链接库文件名称（.a.dylib库文件）
+xcode: Other link flags配置的 如-lAFNetworking
+
+ar: 创建和维护library 文档格式。
+静态库的合并: libtool
+libtool \
+-static \
+-o \     
+libABTest.a \
+libA_LibTest.a \
+libB_LibTest.a
+
+Libtool可以创建动态链接的共享库（使用动态）,也可以创建静态链接（存档）库（使用-static）。
+
+libtool: 创建库
+ranlib: 添加或更新存档库的目录
+
+Framework实际上是一种打包方式，将库的二进制文件，头文件和有关的资源打包在一起，方便管理和分发。
+Framework 和系统的UIKit.Framework还是有很大的区别。系统的Framework不需要拷贝到目标程序中，我们自己做出来的Framework 哪怕是动态的，
+最后也还是要拷贝到App中（App 和Extension的Bundle 是共享的）因此苹果又把这种Framework称为 Embedded Framework.
+
+Embedded Framework:
+开发中使用的动态库会被放入到ipa下的framework目录下，基于沙盒运行。
+不同的App使用相同的动态库，并不会只在系统中存在一份。而是会在多 个App中各自打包、签名、加载一份。
+
+手动创建Framework:
+新建文件夹并改为A_LibTest .framework将上面编译出来的libA_LibTest.a放进 A_LibTest .framework 中 并新建立 heards 文件夹 将头文件 扔进去，按照Framework的格式我们将lib 还有.a 都去掉
+使用clang进行链接
+-F 指定Framework 所在的目录当前我们的在./Frameworks
+xcode: :framework search path
+-framework 指定要链接哪个Framework 当前我们链接的是 A_libTest
+xcode: Other link flags 配置的如-framework AFNetworking
+
+
+
+将 A_Manager.o 打包为.a
+// 选项参数c: 建立备存文件。 必要参数-r: 将文件插入备存文件中。
+ar -rc libA_Manager.a A_Manager.o
+
+==========dead_strip==========
+// 看可执行文件test它的__Text section
+objdump --macho -d test 
+可以看到包含静态库的符号 在连接的时候会把静态库的符号放在一起。保存在可执行文件中。
+我们将main函数里使用到的方法（调用的静态库的方法）去掉
+我们引入了静态库的头文件 但是并没有使用它里面的任何代码
+那么生成的可执行文件test有没有包含A_Manager.m中的代码？
+再次查看 mach-O
+objdump --macho -d test 
+可以看到只有一个main 函数。这其实就是编译器默认的将没有用到的符号给我们脱掉了。
+分类是在运行时创建的还是 在编译时创建的？肯定时运行时了。所以分类会出现问题？（静态库framework里面包含一个调用分类方法的方法）
+调用失败，报找不到方法（分类的那个方法），这就是因为由于分类是运行时加载的，所以 编译器默认将它符合进行了死代码剥离。
+如何解决：
+-all_load : 全部加载不要给我脱
+-ObjC : 只保留OC的其他的该脱脱,告诉链接器，把库中的类和category都加载进来
+-force_load:指定 哪些静态库你不需要脱
+没有使用静态库的代码所以它默认是-noall_load
+
+而且如果.a静态库中只有分类没有类的话这样也不行。这时候就要在添加了-ObjC的基础上再添加一行-all_load.
+-all_load是专门处理-ObjC的一个bug的，用了-ObjC后，如果类库中只有category，没有类的话，这样category还是加载不进来。
+这时候再加入-all_load就是告诉链接器强制把所有的目标文件都加载进来。
+但是这样在导入多个.a文件的时候如果都这样做，可能会导致你的目标程序大小增大，而且往往容易引起一些冲突，而这些冲突往往你无法解决（常常出现在你链接的各种库中）。
+
+这时候可以使用-force_load只加载你方法所需要的库，但是使用它需要再添加.a文件的路径。不需再添加-ObjC
+
+dead strip 两种方案的区别：
+方案一
+-noall_load /-all_load /-ObjC /-force_load<file> :在链接静态库的时候进行死代码删除。
+方案二
+linking
+dead Code Stripping : xxx ，它是链接器给我们提供了一种优化方式。
+
+
+修改.sh 给连接器传入-Xlinker -all_load
+objdump --macho -d test 
+即使main函数没有调用静态库的方法，此时发现我们没有用到的静态库的函数也被存在了mach-o中，所以说方案一的参数设定对静态库来说是非常有用的。
+
+我们看一下 ld的优化方案 dead strip
+-dead_strip
+移除代码或方法，没有被入口点(main)或导出符号用到的。就会被删除
+在.sh 中拼接上-Xlinker -dead_strip 再次编译
+查看一下符号表
+objdump --macho -t test 
+此时我们看到 明明 test.m我写了一个全局符号，但是我并没有用到，此时就会被干掉。
+我们将其在main函数中使用，再次编译并查看符号表
+此时发现 现在它出现在了符号表中
+
+从这里我们就可以分析出 dead_strip和我们的n-noall_load all_load 等它并不是一个东西
+它只是我们的链接器给我提供的一种优化方式，它是有一定规则的
+1、没有被我们入口点使用就被干掉
+2、没有被导出符号用到就会干掉
+
+下面我在将 all_load 添加上
+-Xlinker -dead_strip -Xlinker -all_load
+编译并 再次查看符号表
+此时发现 除了OC的其他的全部被脱掉了
+为啥？因为OC是动态语言现在给干掉它不敢啊。
+
+还可以通过-Xlinker -why_live -Xlinker _xxxx 来查看这个符号为什么没有被干掉
+-Xlinker -why_live -Xlinker _global_Function
+
+现在我们知道 dead strip 和all_load /noall_load 是两码事。

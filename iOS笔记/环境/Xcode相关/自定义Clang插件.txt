@@ -1,0 +1,246 @@
+一、LLVM编译
+1.1、LLVM 下载
+https://github.com/llvm/llvm-project/releases/tag/llvmorg-11.0.0
+下载 Source code(zip)
+
+1.2、LLVM编译
+由于最新的L LVM只支持cmake来编译了，我们还需要安装cmake。
+
+查看brew是否安装cmake:
+brew list
+通过brew安装cmake
+brew install cmake
+
+1.2.1、通过Xcode编译LLVM
+cd llvm-project文件夹
+mkdir build_xcode
+cd build_xcode
+cmake -G Xcode ../llvm
+
+cmake完成后会在build_xcode中出现Xcode项目
+在Xcode中使用Automatically Create Schemes然后选择ALL_BUILD Schemes编译项目（Xcode能编译成功）
+
+1.2.2、通过ninja编译LLVM
+使用ninja进行编译则还需要安装ninja。使用brew install ninja命令即可安装ninja。
+在llvm源码文件夹中新建一个build_ninja目录， 最终会在build_ninja目录下生成build.ninja。
+在llvm源码文件夹中新建一个llvm_release目录，最终编译文件会在llvm_release文件夹路径下。
+
+cd build_ninja
+cmake -G Ninja ../llvm -DCMAKE_INSTALL_PREFIX= 安装路径(本机为/Users/xxx/xxx/LLVM/llvm_release)
+注意DCMAKE_INSTALL_PREFIX后面不能有空格。
+
+依次执行编译、安装指令。
+ninja
+ninja install
+
+二、创建自定义Clang插件
+2.1、创建插件
+1、在/llvm-project/clang/tools目录下新建插件TestPlugin
+
+2 、修改/llvm-project/clang/tools目录下的CMakeLists.txt文件，新增add_clang_subdirectory(TestPlugin)
+
+3、在TestPlugin目录下新建一个名为TestPlugin.cpp的文件和CMakeLists.txt的文件。在CMakeLists.txt中添加如下代码：
+add_llvm_library( TestPlugin MODULE BUILDTREE_ONLY
+  TestPlugin.cpp
+)
+
+4、接下来利用cmake重新生成一下Xcode项目
+cd build_xcode
+cmake -G Xcode -DLLVM_ENABLE_PROJECTS="clang;libcxx;libcxxabi" ../llvm //此命令会编译clang目录下的自定义插件
+
+5、最后可以在LLVM的Xcode项目中可以看到Loadable modules目录下有自己的Plugin目录了。我们可以在这里面编写插件代码。
+
+2.2、编写插件代码
+#include <iostream>
+#include "clang/AST/AST.h"
+#include "clang/AST/DeclObjC.h"
+#include "clang/AST/ASTConsumer.h"
+#include "clang/ASTMatchers/ASTMatchers.h"
+#include "clang/Frontend/CompilerInstance.h"
+#include "clang/ASTMatchers/ASTMatchFinder.h"
+#include "clang/Frontend/FrontendPluginRegistry.h"
+
+using namespace clang;
+using namespace std;
+using namespace llvm;
+using namespace clang::ast_matchers;
+
+namespace CJPlugin {
+class CJASTConsumer: public ASTConsumer {
+public:
+    // clang 解析完一个顶级的声明的回调
+    bool HandleTopLevelDecl(DeclGroupRef D) {
+        cout<<"正在解析..."<<endl;
+        return true;
+    }
+    
+    // clang 解析完整个文件的回调
+    void HandleTranslationUnit(ASTContext &context) {
+        cout<<"文件解析完毕！"<<endl;
+    }
+};
+
+// 继承PluginASTAction实现我们自定义的Action
+class CJASTAction: public PluginASTAction {
+public:
+    unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI, StringRef iFile) {
+        return unique_ptr<CJASTConsumer> (new CJASTConsumer);
+    }
+    
+    bool ParseArgs(const CompilerInstance &CI, const std::vector<std::string> &args) {
+        return true;
+    }
+};
+
+// 注册插件
+static FrontendPluginRegistry::Add<CJPlugin::CJASTAction> CJ("CJPlugin", "This is the description of the plugin");
+}
+
+2.3、测试插件代码
+编译Xcode项目
+编写测试源码
+
+vi hello.m
+
+int sum (int a);
+int a;
+int sum (int a) {
+       int b = 10;
+       return a + b + 10;
+}
+
+int sum2 (int a, int b) {
+       int c = 10;
+       return a + b + c;
+}
+
+使用自己编译的clang文件路径和插件路径测试
+
+命令如下：
+自己编译的clang文件路径 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator14.3.sdk -Xclang -load -Xclang 插件(.dylib)路径 -Xclang -add-plugin -Xclang CJPlugin(插件名) -c 源码路径
+
+2.4、Xcode集成插件
+1、新建测试项目Test_LLVM，并添加如下代码：
+@interface ViewController ()
+
+@property (nonatomic, strong) NSString *name;
+@property (nonatomic, strong) NSArray *arrs;
+
+@end
+
+我们接下来使用我们自定义的clang插件提示属性定义存在的问题。
+
+使用原生的clang解析ViewController.m并生成AST：
+cd ViewController.m所在的目录
+clang -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator14.2.sdk -fmodules -fsyntax-only -Xclang -ast-dump ViewController.m
+
+从AST中我们发现属性定义节点名为ObjCPropertyDecl，因此我们自定clang中需要过滤出ObjCPropertyDecl节点。
+
+2、修改代码过滤出ViewController.m中的ObjCPropertyDecl节点
+namespace CJPlugin {
+
+class CJMatchCallback: public MatchFinder::MatchCallback {
+private:
+    CompilerInstance &CI;
+    // 排除系统的属性
+    bool isUserSourceCode(const string filename) {
+        if (filename.empty()) return false;
+        if (filename.find("/Applications/Xcode.app/") == 0) return false;
+        return true;
+    }
+
+    // 判断是否使用copy修饰
+    bool isShouldUseCopy(const string typeStr) {
+        if (typeStr.find("NSString") != string::npos || typeStr.find("NSArray") != string::npos || typeStr.find("NSDictionary") != string::npos/*...*/) {
+            return true;
+        }
+        return false;
+    }
+
+public:
+    CJMatchCallback(CompilerInstance &CI) :CI(CI) {}
+    void run(const MatchFinder::MatchResult &Result) {
+        // 通过Result获取到节点
+        const ObjCPropertyDecl *propertyDecl = Result.Nodes.getNodeAs<ObjCPropertyDecl>("objcPropertyDecl");
+        // 获取文件名称
+        string fileName = CI.getSourceManager().getFilename(propertyDecl->getSourceRange().getBegin()).str();
+        
+        if (propertyDecl && isUserSourceCode(fileName)) {
+            string typeStr = propertyDecl->getType().getAsString();
+            cout<<"拿到属性："<<typeStr<<"属于文件："<<fileName<<endl;
+            // 拿到节点的描述信息
+            ObjCPropertyAttribute::Kind attrKind = propertyDecl->getPropertyAttributes();
+            if (propertyDecl->getTypeSourceInfo() && isShouldUseCopy(typeStr) && !(attrKind & ObjCPropertyAttribute::kind_copy)) {
+                cout<<"推荐使用 copy 修饰"<<endl;
+            }
+        }
+    }
+};
+
+class CJASTConsumer: public ASTConsumer {
+private:
+    MatchFinder matcher;// AST节点查找过滤器
+    CJMatchCallback callback;
+public:
+    CJASTConsumer(CompilerInstance &CI) :callback(CI) {
+        // 添加一个MatchFinder去匹配objcPropertyDecl节点
+        // 回调在CJMatchCallback中的run方法中
+        matcher.addMatcher(objcPropertyDecl().bind("objcPropertyDecl"), &callback);//绑定标记"objcPropertyDecl"和取的时候一致即可
+    }
+    // clang 解析完一个顶级的声明的回调
+    bool HandleTopLevelDecl(DeclGroupRef D) {
+        cout<<"正在解析..."<<endl;
+        return true;
+    }
+    
+    // clang 解析完整个文件的回调
+    void HandleTranslationUnit(ASTContext &context) {
+        matcher.matchAST(context);
+        cout<<"文件解析完毕！"<<endl;
+    }
+};
+
+// 继承PluginASTAction实现我们自定义的Action
+class CJASTAction: public PluginASTAction {
+public:
+    unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI, StringRef iFile) {
+        return unique_ptr<CJASTConsumer> (new CJASTConsumer(CI));//CI用于户过滤系统属性
+    }
+    
+    bool ParseArgs(const CompilerInstance &CI, const std::vector<std::string> &args) {
+        return true;
+    }
+};
+
+// 注册插件
+static FrontendPluginRegistry::Add<CJPlugin::CJASTAction> CJ("CJPlugin", "This is the description of the plugin");
+}
+
+使用自定义clang解析ViewController.m代码如下:
+cd ViewController.m所在的目录
+/Users/ztkj/Projects/LLVM_Projects/llvm-project/build_xcode/Debug/bin/clang -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator14.3.sdk  -Xclang -load -Xclang /Users/ztkj/Projects/LLVM_Projects/llvm-project/build_xcode/Debug/lib/CJPlugin.dylib -Xclang -add-plugin -Xclang CJPlugin -c ViewController.m 
+
+3、添加Xcode显示自定义提示的代码
+cout<<"推荐使用 copy 修饰"<<endl;
+// 诊断引擎
+DiagnosticsEngine &diag = CI.getDiagnostics();
+diag.Report(propertyDecl->getBeginLoc(), diag.getCustomDiagID(DiagnosticsEngine::Warning, "%0推荐使用 copy 修饰"))<<typeStr;//%必须带参数否者会报错
+
+4、加载插件
+打开测试项目，在Build Settings -> Other C Flags添加如下内容：
+
+-Xclang -load -Xclang (.dylib)动态库路径 -Xclang -add-plugin -Xclang CJPlugin
+
+5、设置编译器
+由于Clang插件需要使用对应的版本去加载，如果版本不一致就会导致编译错误
+
+在Build Settings栏目中新增两项用户定义的设置
+分别是CC 和 CXX
+CC对应的是自己编译的clang的绝对路径
+CXX对应的是自己编译的clang++的绝对路径
+
+接下来在Build Settings栏目中搜索index，将Enable Index-Wihle-Building Functionality的Default改为NO。
+
+6、编译Test_LLVM项目成功后即可看到Xcode显示自定义clang插件中的提示
+
+目前自定义的插件必须编译后才能显示提示，代码修改后也不会自动更新提示，且还没完善Fix功能。

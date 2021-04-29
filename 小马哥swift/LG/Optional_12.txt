@@ -1,0 +1,375 @@
+Optional的本质是⼀个enum
+
+当前枚举接收⼀个泛型参数，有none和some两个case ，⽽当前some的关联值是传入的Wrapped
+
+下⾯两种写法是完全等价的
+var age: Int?
+var age1: Optional<Int>
+
+既然是枚举，也可以通过模式匹配来匹配对应的值
+var age: Int? = 10
+
+switch age{
+   case .none:
+       print("age的值：nil")
+   case .some(10):
+       print("age的值：\(age)")
+   default:
+       print("age的值：unKonwn")
+}
+
+//输出以下结果：
+//age的值：Optional(10)
+
+==========解包
+涉及到Optional就要面临解包的问题。因为当前可选项是对值做了包装，如果当前不为nil，需要从中拿到需要的值
+
+强制解包
+使用强制解包，好处是省事，坏处是当前age为nil，程序就会崩溃
+
+if let
+var age: Int? = nil
+
+if let unWrappedValue = age {
+   print("value: \(unWrappedValue)")
+}
+else {
+   print("age为nil")
+}
+
+//输出以下结果：
+//age为nil
+使⽤if let是通过可选项绑定的⽅式，判断当前可选项是否有值
+使⽤if let定义的unWrappedValue仅能在当前if分⽀的⼤括号内访问
+
+guard let
+func test(_ age: Int?) {
+   guard let unWrappedValue = age else {
+       print("age为nil")
+       return
+   }
+
+   print(unWrappedValue)
+}
+
+test(nil)
+
+//输出以下结果：
+//age为nil
+
+使用guard let的判断条件为false，才会执⾏⼤括号内的代码，反之执⾏后⾯的代码
+使用guard let定义的unWrappedValue在当前⼤括号外部也能访问
+guard需要return或throw配合使用，达到不符合条件时提前退出的目的
+
+==========Equatable
+Swift中的类型，可以通过遵循Equatable协议，使⽤相等运算符==和不等运算符!=，用来⽐较两个值相等还是不相等。Swift标准库中绝⼤多数的类型都默认实现了Equatable协议
+比如Int类型，系统默认实现了==
+var age1: Int = 10
+var age2: Int = 20
+var isEqual = age1 == age2
+
+print(isEqual)
+
+//输出以下结果：
+//false
+
+Optional类型，同样遵循了Equatable协议，并重载了==运算符
+var age1: Int? = 10
+var age2: Optional<Int> = Optional(10)
+var isEqual = age1 == age2
+
+print(isEqual)
+
+//输出以下结果：
+//true
+
+遵循Equatable协议，实现⾃定类型的==运算符
+struct LGTeacher: Equatable {
+    var age: Int
+    var name: String
+}
+
+var t1 = LGTeacher(age: 18, name: "Zang")
+var t2 = LGTeacher(age: 18, name: "Zang")
+var isEqual = t1 == t2
+
+print(isEqual)
+
+//输出以下结果：
+//true
+
+系统能够正确判断出t1、t2两个结构体是否相等，也就意味着系统默认实现==运算符
+将上述代码生成SIL文件：swiftc -emit-sil main.swift | xcrun swift-demangle
+
+如果是结构体中嵌套结构体，内嵌结构体也要遵循Equatable协议，否则编译报错
+struct LGTeacher: Equatable {
+    var age: Int
+    var name: String
+    var child: LGChild
+}
+
+struct LGChild: Equatable {
+    var age: Int
+    var name: String
+}
+
+var t1 = LGTeacher(age: 18, name: "Zang", child: LGChild(age: 10, name: "Child"))
+var t2 = LGTeacher(age: 18, name: "Zang", child: LGChild(age: 10, name: "Child"))
+var isEqual = t1 == t2
+
+print(isEqual)
+
+//输出以下结果：
+//true
+只有LGTeacher和LGChild都遵循Equatable协议，才能使用==运算符
+
+如果是Class，除了遵循Equatable协议，还要自行实现func ==方法，否则编译报错
+class LGTeacher: Equatable {
+    var age: Int
+    var name: String
+    
+    init(age: Int, name: String) {
+        self.age = age
+        self.name = name
+    }
+    
+    static func == (lhs: LGTeacher, rhs: LGTeacher) -> Bool {
+        return lhs.age == rhs.age && lhs.name == rhs.name
+    }
+}
+
+var t1 = LGTeacher.init(age: 18, name: "Zang")
+var t2 = LGTeacher.init(age: 18, name: "Zang")
+var isEqual = t1 == t2
+
+print(isEqual)
+
+//输出以下结果：
+//true
+Class必须自行实现func ==方法，才能使用==运算符
+
+==运算符⽤来判断值是否相等，也就是equal to。如果判断两个对象是否是同⼀个实例对象，需要使用===
+class LGTeacher: Equatable {
+    var age: Int
+    var name: String
+    
+    init(age: Int, name: String) {
+        self.age = age
+        self.name = name
+    }
+    
+    static func == (lhs: LGTeacher, rhs: LGTeacher) -> Bool {
+        return lhs.age == rhs.age && lhs.name == rhs.name
+    }
+}
+
+var t1 = LGTeacher.init(age: 18, name: "Zang")
+var t2 = LGTeacher.init(age: 18, name: "Zang")
+
+var isEqual1 = t1 == t2
+var isEqual2 = t1 === t2
+
+print(isEqual1)
+print(isEqual2)
+
+//输出以下结果：
+//true
+//false
+
+==========Comparable
+Comparable自动遵循Equatable协议，支持更多比较方式
+
+public protocol Comparable : Equatable {
+    static func < (lhs: Self, rhs: Self) -> Bool
+
+    static func <= (lhs: Self, rhs: Self) -> Bool
+
+    static func >= (lhs: Self, rhs: Self) -> Bool
+
+    static func > (lhs: Self, rhs: Self) -> Bool
+}
+
+遵循Comparable协议，还要自行实现func <方法，否则编译报错
+遵循Comparable协议实现func <方法，编译器会通过<自动实现其它运算符
+
+struct LGTeacher: Comparable {
+    var age: Int
+    var name: String
+
+    static func < (lhs: LGTeacher, rhs: LGTeacher) -> Bool {
+        return lhs.age < rhs.age
+    }
+}
+
+var t1 = LGTeacher(age: 20, name: "Zang")
+var t2 = LGTeacher(age: 18, name: "Zang")
+
+var isEqual1 = t1 < t2
+var isEqual2 = t1 > t2
+
+print(isEqual1)
+print(isEqual2)
+
+//输出以下结果：
+//false
+//true
+
+实现func <方法，<、<=、>=、>等运算符都能使用
+
+==========空合运算符（??）
+var age: Int?
+print("age：\(age1 ?? 10)")
+
+//输出以下结果：
+//age：10
+如果age为nil，返回10
+
+空合运算符在源码中有两个方法，一个返回T，一个返回T?
+这两个方法的调用，跟空合运算符后面的返回值类型有关
+如果返回的是非可选类型，调用上面返回T的方法
+如果是返回是可选类型，调用下面返回T?的方法
+
+var age1: Int?
+var age2: Int? = 20
+
+var tmp = age1 ?? age2
+
+print("tmp：\(tmp)")
+
+//输出以下结果：
+//tmp：Optional(20)
+age2是可选类型，返回的就是T?
+
+空合运算符后面返回值的类型，还要跟当前值的类型保持一致。当前值是Int类型，就不能返回String类型，否则编译报错
+
+==========可选链
+可选链：允许在链上通过可选项去访问属性、方法
+class LGTeacher {
+    var name: String? = "LGTeacher"
+    var child: LGChild?
+}
+
+class LGChild {
+    var name: String? = "LGChild"
+}
+
+var t: LGTeacher? = LGTeacher()
+
+if let name = t?.child?.name {
+    print(name)
+}
+无论t或child哪个值为nil，后面的链式调用都不会执行，直接返回nil
+
+class LGTeacher {
+    var name: String? = "LGTeacher"
+    var child: LGChild?
+}
+
+class LGChild {
+    var name: String? = "LGChild"
+    
+    func test() {
+        print("test")
+    }
+}
+
+var t: LGTeacher? = LGTeacher()
+t?.child?.test()
+对于方法也是一样的，无论t或child哪个值为nil，后面的test方法都不会被调用
+
+==========unsafelyUnwrapped
+unsafelyUnwrapped和强制解包的作用一致，但Release模式下又有一些区别
+var age: Int? = 30
+
+print(age!)
+print(age.unsafelyUnwrapped)
+
+//输出以下结果：
+//30
+//30
+如果age的值是nil，使用age.unsafelyUnwrapped访问，同样是程序崩溃
+
+unsafelyUnwrapped和强制解包在Release模式下的一些区别
+使用age!强制解包，程序崩溃
+使用age.unsafelyUnwrapped，程序没有崩溃，打印结果0
+
+==========as
+as用于类型转换，可以使用as、as?、as!几种方式
+
+as
+var age: Int = 10
+var age1 = age as Any
+print(age1)
+
+//输出以下结果：
+//10
+使用as将Int类型转换为Any、AnyObject都没问题。但转换为Double类型，编译报错
+
+as?
+var age: Int = 10
+var age1 = age as? Double
+print(age1)
+
+//输出以下结果：
+//nil
+as?可以避免编译报错，使用as?返回的是可选项，如果转换失败，直接返回nil
+
+as!
+var age: Int = 10
+var age1 = age as! Double
+print(age)
+使用as!强制类型转换，如果转换失败，程序直接崩溃
+
+==========访问控制
+但Swift中针对源⽂件和模块的代码，提供不同程度的访问控制
+
+访问级别由低到高：private<filePrivate<internal<public<open
+不指定访问级别，默认都是internal
+
+private
+访问级别仅在当前定义的作⽤域内有效
+案例1：在LGTeacher中定义了⼀个private变量，这时当前变量的访问控制权限，仅在这个类定义的作⽤域内有效。如果在当前作⽤域之外访问，编译报错
+
+案例2：Swift单例的正确写法就是通过private控制访问权限，限制当前init⽅法，仅在这个类定义的作⽤域内有效
+class LGTeacher{
+  static let sha = LGTeacher()
+  private init(){}
+}
+
+var t = LGTeacher.sha
+
+filePrivate
+此访问限制仅限制在当前定义的源⽂件中
+
+案例1：在access.swift中定义LGTeacher类，访问权限设置为fileprivate。将全局变量t声明为LGTeacher类型，编译报错
+变量t属于全局变量，访问权限是internal，变量访问权限高于类型访问权限，所以编译报错
+fileprivate class LGTeacher{
+   var age: Int = 10
+}
+
+fileprivate var t1: LGTeacher = LGTeacher()
+private var t2: LGTeacher = LGTeacher()
+需要将变量访问权限设置为filePrivate，或级别更低的private，才能声明成功
+
+
+案例2：在access.swift中定义LGTeacher类，将age属性设置为filePrivate
+//  access.swift
+class LGTeacher{
+   fileprivate var age: Int = 10
+}
+在main.swift中访问age属性，编译报错
+
+internal
+默认访问级别，允许定义模块中的任意源⽂件访问，但不能被该模块之外的任何源⽂件访问
+模块是指框架或应用程序，使用import导入的框架都是模块，例如Foundation
+import Foundation
+
+public
+开放式访问
+允许任意模块、任意源⽂件的访问
+只能在定义的模块中继承和⼦类重写
+
+open
+最不受限制的访问级别
+允许任意模块、任意源⽂件的访问
+允许任意模块中继承和⼦类重写

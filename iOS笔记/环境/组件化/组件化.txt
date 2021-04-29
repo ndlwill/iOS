@@ -1,0 +1,246 @@
+组件化
+组件化其实就是将模块单独抽离、分层，并指定模块间的通讯方式，从而实现解耦的一种方式，主要运用与团队开发
+
+为什么需要组件化？
+1、模块间解耦
+2、模块重用
+3、提高团队协作开发效率
+4、单元测试
+
+如果此时的各个模块之间是互相调用，即你中有我，我中有你这种情况时，会造成高耦合的情况。一旦我们需要对某一块代码进行修改时，就会牵一发而动全身，导致项目难以维护
+
+其问题主要体现在以下几个方面：
+1、修改某个功能时，同时需要修改其他模块的代码，因为在其他模块中有该模块的引用。可以理解为高耦合导致代码修改困难
+2、模块对外接口不明确，甚至暴露了本不该暴露的私有接口，修改时费时费力。可以理解为接口不固定导致的接口混乱
+3、高耦合代码产生的后果就是会影响团队其他成员的开发，产生代码冲突
+4、当模块需要重用到其他项目时，难以单独抽离
+5、模块间耦合的接口导致接口和依赖关系混乱，无法进行单元测试
+
+为了解决以上问题，我们需要采用更规范的方式来降低模块间的耦合度，这就是组件化，也可以理解为模块化
+
+因为组件化也是需要一定成本的，需要花费时间设计接口、分离代码等，所以并不是所有的项目都需要组件化。如果你的项目有以下这些特征就不需要组件化：
+1、项目较小，模块间交互简单，耦合少
+2、项目没有被多个外部模块引用，只是一个单独的小模块
+3、模块不需要重用，代码也很少被修改
+4、团队规模很小
+5、不需要编写单元测试
+
+如果你的有以下特性，说明你就必须要考虑进行组件化了：
+1、模块逻辑复杂，多个模块之间频繁互相引用
+2、项目规模逐渐变大，修改代码变的越来越困难（这里可以理解为：修改一处代码，需要同时修改其他多个地方）
+3、团队人数变多，提交的代码经常和其他成员冲突
+4、项目编译耗时较大
+5、模块的单元测试经常由于其他模块的修改而失败
+
+组件化方案的8条指标：
+1、模块之间没有耦合，模块内部的修改不会应该其他模块
+2、模块可以单独编译
+3、模块间数据传递明确
+4、模块可以随时被另一个提供了相同功能的模块替换
+5、模块对外接口清晰且易维护
+6、当模块接口改变时，此模块的外部代码能够被高效重构
+7、尽量用最少的修改和代码，让现有的项目实现模块化
+8、支持OC和Swift，以及混编
+前4条主要用于衡量一个模块是否真正解耦，后4条主要用于衡量在项目中实践中的易用程度
+
+组件化原则：
+一个项目主要分为3层：业务层、通用层以及基础层
+
+只能上层对依赖，不能下层对上层的依赖，因为下层是对上层的抽象
+项目公共代码资源下沉
+横向的依赖尽量少有，最好下层至通用模块，或者基础模块
+
+组件化方案
+常用的组件化方案主要有两种：
+本地组件化：主要是通过在工程中创建library，利用cocoapods的workspec进行本地管理，不需要将项目上传git，而是直接在本项目中以framework的方法进行调用
+cocoapods组件化：主要是利用cocoapods来进行模块的远程管理，需要将项目上传git（需要注意：这里的组件化模块分为公有库和私有库，对公司而言，一般是私有库）
+
+本地组件化
+1、创建主工程
+首先创建一个工程
+集成cocopods，进行本地管理
+编辑podfile，并执行pod install
+
+2、创建组件
+假设有以下几个模块：
+主工程：承载主要的表层业务代码
+Core：独立存在，应用加密、接口请求等敏感代码
+Base：基类封装，拓展，基本的数据处理
+Service：服务层，封装业务工具类，例如网络层服务、持久化服务等
+Pods：三方依赖
+
+我们来进行模块的创建，以Core模块为例：
+选择new -> project -> iOS -> Framework，新建一个模块
+选择正确的Group 和 WorkSpace（这里需要注意一点：创建的library最好放在主工程根目录下，否则后续podfile执行pod install时会报错）
+将创建的library的Build Settings -> Mach-O Type修改为静态库 Static Library
+
+3、主工程调用library
+在CJLCore中新建一个文件，并添加如下代码
+
+//类需要声明为public
+public class CJLCoreSetting: NSObject {
+    //属性需要声明为public
+    public static let SCRET_KEY = "SCRET_KEY"
+}
+
+在Build Phases -> Headers -> Public中将新建的文件添加为public，这样主工程才能访问该文件
+
+在主工程中，选择target -> Linked Frameworks Library中添加CJLCore，只需要build主工程，library能够自动联编
+
+4、使用
+首先import CJLCore，然后使用
+
+这里需要注意的是，子library之间的互相调用，与主工程调用library类似，主需要添加依赖、暴露header即可
+
+5、使用cocoapods管理三方依赖
+
+假设我们需要在CJLCore中封装网络层代码，需要用到三方库Alamofire，在podfile中
+
+platform :ios, '9.0'
+inhibit_all_warnings!
+use_frameworks!
+
+#配置workspace路径
+workspace 'Modularization.xcworkspace'
+
+################# 三方依赖
+# 公有
+def workspace_pods
+  pod 'SwiftyJSON'
+end
+
+# 主工程
+def project_only_pods
+  pod 'SnapKit'
+end
+
+#网络
+def network_layer_pods
+  pod 'Alamofire'
+end
+
+################# 模块
+target 'CJLCore' do
+  #配置libray路径
+  project 'CJLCore/CJLCore.xcodeproj'
+  
+  workspace_pods
+  network_layer_pods
+
+end
+
+################# 主工程
+target 'Modularization' do
+  
+  workspace_pods
+  project_only_pods
+  network_layer_pods
+
+  target 'ModularizationTests' do
+    inherit! :search_paths
+
+  end
+
+  target 'ModularizationUITests' do
+
+  end
+
+end
+
+================================================================================
+cocoapods组件化:
+1、创建私有仓库
+
+在github上创建一个MySpecs仓库
+具体步骤：登录github-->点击右上角“+”-->选择 new repository-->输入Repository name为MySpecs，选择仓库类型为 private，点击Create repository。
+
+将私有仓库添加至本地~/.cocoapods/repos目录
+
+2、创建pods 工程，即组件化工程
+
+使用终端创建CJLServices模块
+pod lib create CJLServices
+
+根据提示依次输入：ios、swift、yes、none、no、CJL
+
+进入模块的目录，将文件拷贝至CJLServices -> Classes中
+
+执行pod install,会将Classes更新至pods中
+
+3、配置pods工程
+
+修改模块的配置文件，即CJLServices.podspec
+
+如果需要依赖三方库，需要配置s.dependency
+s.dependency 'AFNetworking'
+
+如果模块间需要相互引用，同样需要配置s.dependency，以CJLBase为例，需要引用CJLService
+//********1、修改 podspec 文件
+s.dependency 'CJLServices'
+
+//********2、修改 podfile 文件
+pod 'CJLServices', :path => '../../CJLServices'
+
+如果需要加载资源，例如图片、json、bundle文件等
+1、在模块的Assets文件夹 中添加资源文件
+2、在specs里配置资源路径（必须配置！！否则无法读取资源）
+3、访问时需要指定资源文件路径
+//*****1、修改 podspec 文件
+s.resource_bundles = {
+     'CJLBase' => ['CJLBase/Assets/*']
+   }
+   
+//*****2、使用
+let bundlePath: String = Bundle.init(for: dynamicClass.self).resourcePath! + "/CJLBase.bundle"
+let bundle = Bundle(path: bundlePath)
+if let path = bundle?.path(forResource: "mouse", ofType: "jpg"){
+    self.imgView.image = UIImage(contentsOfFile: path)
+}           
+
+4、提交至git
+
+这里提交至git的模块是pods工程才可以，以CJLBase为例
+
+需要在github上创建一个私有repository，命名为CJLBase
+
+执行以下终端命令
+
+$git init
+$git add .
+$ git commit -am "第一次提交" 
+//即第一个步骤中创建的仓库地址
+$ git remote add origin https://github.com/xxx/CJLBase.git
+ 
+$ git push origin master 
+//一定要有标签，不然会有下面的警告
+//podspec文件中获取Git版本控制的项目需要tag号，
+$ git tag -m "first release" "0.1.0" 
+$ git push --tags 
+
+5、验证podspec文件
+
+执行终端命令 pod spec lint
+
+注意：pod spec相对于pod lib会更为精确，
+
+pod lib相当于只验证一个本地仓库，
+pod spec会同时验证本地仓库和远程仓库。
+
+
+6、提交到私有仓库
+
+执行以下命令
+
+pod repo push [本地Spec Repo名称][podspec文件路径]
+ 
+//******举例
+$ pod repo push MySpecs CJLBase.podspec
+提交成功后，可在本地仓库中看到提交路径MySpecs -> CJLBase
+
+7、使用
+
+新建一个工程，在项目的podfile里添加
+#私有spec仓库的地址，而不是某个pod仓库的地址
+source 'https://github.com/xxx/MySpecs'
+pod 'CJLBase'
+执行pod install即可

@@ -1,0 +1,118 @@
+nm命令：打印nlist结构的符号表Symbol Table
+
+常用命令参数
+nm -pa a.o
+
+-a：显示符号表的所有内容
+-g：显示全局符号
+-p：不排序。显示符号表本来的顺序
+-r：逆转顺序
+-u：显示未定义符号
+-U：不显示未定义符号
+-m：显示N_SECT类型的符号（Mach-O符号）显示
+-n：按照符号值的数字大小排序而不是字母表顺序
+-o：输出符号的所有位置，一个符号可能会出现多次
+-x：以16进制形式显示符号，后面跟随符号名称
+-j：只显示符号，不显示值和类型
+-A：显示每个文件的路径和库名称
+-P：输出可移植接口格式的符号
+-f：按指定格式输出，支持如下bsd、sysv、posix、darwin四种格式；默认darwin
+-t：给输出可移植接口格式的符号按照指定格式输出；-d十进制、-o八进制、-x十六进制；默认-d
+-s：仅列出section中的部分符号（segname、sectname），对于lvm-nm(1)选项，必须是命令行的最后一个，并且在文件之后
+-l：如果没有符号以section的起始地址为值，则列出一个伪符号.section_start。与上面的-s选项一起使用
+-arch：只显示universal file中指定架构的符号；如果指定文件包含这个符号，则显示指定架构的符号，否则显示所有的符号
+
+// 定义符号的具体表示含义:
+struct nlist {
+    // 表示垓符号在string table的索引
+    union {
+        //在Mach-0中不使用此字段
+        char *n_name;
+        // 索引
+        long n_strx;
+    } n_un;
+    unsigned char n_type;  /* type flag, see below */
+    unsigned char n_sect;  /* section number or NO_ SECT */
+    short          n_desc; /* see <mach-o/stab.h> */
+    unsigned long n_value; /* value of this symbol (or stab offset) */
+};
+
+==========n_type
+n_type占1字节，通过四位掩码保存数据：
+
+N_STAB（0xe0）：如果当前的n_type包含这3位中的任何一位，则该符号为调试符号表（stab）。在这种情况下，整个n_type字段将被解释为stab value。请参阅/usr/include/mach-o/stab.h以获取有效的stab value
+N_PEXT（0x10）：如果当前的n_type包含此位。则将此符号标记为私有外部符号__private_extern__(visibility=hidden)， 只在程序内可引用和访问。当文件通过静态链接器链接的时候，不要将其转换成静态符号（可以通过ld的-keep_private_externs关闭静态链接器的这种行为）
+N_TYPE（0x0e）：如果当前的n_type包含此位。则使用预先定义的符号类型
+N_EXT（0x01）：如果当前的n_type包含此位。则此符号为外部符号。该符号在该文件外部定义或在该文件中定义，但可在其他文件中使用
+stab value包括:
+
+#define N_GSYM    0x20 /* 全局符号: name, ,N0_ SECT,type,0 */
+#define N_FNAME   0x22 /* procedure name (f77 kludge): name,,N0_ SECT,0,0 */
+#define N_FUN     0x24 /* 方法/函数: name,,n_ sect,linenumber , address */
+#define N_STSYM   0x26 /* 静态符号: name,,n sect, type , address */
+#define N_LCSYM   0x28 /* .lcomm 符号: name,,n sect , type , address */
+#define N_BNSYM   0x2e /* nsect符号开始: 0,,n sect,0, address */
+#define N_OPT     0x3c /* emitted with gccZ_ compiled and in gcc source */
+#define N_RSYM    0x40 /* 寄存器符号: name,NO_ _SECT, type,register */
+#define N_SLINE   0x44 /* 代码行数: 0,,n ,sect,linenumber , address */
+#define N_ENSYM   0x4e /* nsect符号结束: ø,,n sect,ø, address */
+#define N_SSYM    0x60 /* 结构体符号: name,, NO SECT, type,struct_ offset */
+#define N_SO      0x64 /* 源码名称: name,,n sect, 0, address */
+#define N_OSO     0x66 /* 目标代码名称: name, ,0,0,st_ mtime */
+#define N_LSYM    0x80 /* 本地符号: name, ,N0_ SECT,type ,offset */
+#define N_BINCL   0x82 /* include file 开始: name,,NO_ SECT,0,sum */
+#define N_SOL     0x84 /* #included file 名称: name,,n sect ,0, address */
+#define N_PARAMS  0x86 /* 编译器参数: name,,NO_ SECT,0,0 */
+#define N_VERSION 0x88 /* 编译器版本: name,,N0_ SECT,0,0 */
+#define N_OLEVEL  0x8A /* 编译器-O级别: name,NO_ _SECT,0,0 */
+#define N_PSYM    0xa0 /* 参数: name,,No_ _SECT, type,offset */
+#define N_EINCL   0xa2 /* include file 结束: name,,NO_ SECT,0,0 */
+#define N_ENTRY   0xa4 /* alternate entry: name, ,n. sect,linenumber , address */
+#define N_LBRAC   0xc0 /* 左括号: 0,,N0_ SECT,nesting level,address */
+#define N_EXCL    0xc2 /* deleted include file: name, ,NO_ SECT,0,sum */
+#define N_RBRAC   0xe0 /* 右括号: 0,,N0. _SECT ,nesting level , address */
+#define N_BCOMM   0xe2 /* 通用符号开始: name,,NO. SECT,0,0 */
+#define N_ECOMM   0xe4 /* 通用符号结束: name,n. sect,0,0 */
+#define N_ECOML   0xe8 /* end common (local name): 0,,n_ sect , 0, address */
+#define N_LENG    0xfe /* second stab entry with length information */
+
+/*
+ * for the berkeley pascal compiler, pC(1):
+ */
+#define N_ _PC    0x30 /* global pascal symbol: name, ,NO_ SECT, subtype,line */
+
+N_TYPE
+N_TYPE字段的值包括:
+
+N_UNDF（0x0）：该符号未定义。未定义符号是在当前模块中引用，但是被定义在其他模块中的符号。n_sect字段设置为NO_SECT
+N_ABS（0x2）：该符号是绝对符号。链接器不会更改绝对符号的值。n_sect字段设置为NO_SECT
+N_SECT（0xe）：该符号在n_sect中指定的段号中定义
+N_PBUD（0xc）：该符号未定义，镜像使用该符号的预绑定值。n_sect字段设置为NO_SECT
+N_INDR（0xa）：该符号定义为与另一个符号相同。n_value字段是string table中的索引，用于指定另一个符号的名称。链接该符号时，此符号和另一个符号都具有相同的定义类型和值
+
+==========n_ sect
+n_ sect为整数，用来在指定编号的section中找到此符号；如果在该image的任何部分都找不到该符号，则为NO_SECT。
+根据section在LC_SEGMENT加载命令中出现的顺序，这些section从1开始连续编号
+
+==========n_desc
+n_desc：16-bit值，用来描述非调试符号。低三位使用REFERENCE_TYPE：
+
+REFERENCE_FLAG_UNDEFINED_NON_LAZY（0x0）：该符号是外部非延迟（数据）符号的引用
+REFERENCE_FLAG_UNDEFINED_LAZY（0x1）：该符号是外部延迟性符号（即对函数调用）的引用
+REFERENCE_FLAG_DEFINED（0x2）：该符号在该模块中定义
+REFERENCE_ FLAG_ PRIVATE_ DEFINED（0x3）：该符号在该模块中定义，但是仅对该共享库中的模块可见
+REFERENCE_FLAG_PRIVATE_UNDEFINED_NON_LAZY（0x4）：该符号在该文件的另一个模块中定义，是非延迟加载（数据）符号，并且仅对该共享库中的模块可见
+REFERENCE_FLAG_PRIVATE_LUNDEFINED_LAZY（0x5）：该符号在该文件的另一个模块中定义，是延迟加载（函数）符号，仅对该共享库中的模块可见
+另外还可以设置如下标识位:
+
+REFERENCED_DYNAMICALLY（0x10）：定义的符号必须是使用在动态加载器中（例如dlsym和NSLookupSymbolInImage）。而不是普通的未定义符号引用。strip使用该位来避免删除那些必须存在的符号（如果符号设置了该位，则strip不会剥离它）
+N_DESC_DISCARDED（0x20）：在完全链接的image在运行时动态链接器有可能会使用此符号。不要在完全链接的image中设置此位
+N_NO_DEAD_STRIP（0x20）：定义在可重定位目标文件（类型为MH_0BJECT）中的符号设置时，指示静态链接器不对该符号进行dead-strip（请注意，与N_DESC_DISCARDED（0x20）用于两个不同的目的）
+N_WEAK_REF（0x40）：表示此未定义符号是弱引用。如果动态链接器找不到该符号的定义，则将其符号地址设置为0。静态链接器会将此符号设置弱链接标志
+N_WEAK_DEF（0x80）：表示此符号为弱定义符号。如果静态链接器或动态链接器为此符号找到另一个（非弱）定义，则弱定义将被忽略。只能将合并部分中的符号标记为弱定义
+如果该文件是两级命名two-level namespace image（即如果mach_header中设置了MH_TWOLEVEL标志），则n_desc的高8位表示定义此未定义符号的库的编号。使用宏GET_LIBRARY_ORDINAL来获取此值，或者使用宏SET_LIBRARY_0RDINAL来设置此值。0指定当前image。1到253根据文件中LC_LOAD_DYLIB命令的顺序表明库号。254用于需要动态查找的未定义符号（仅在OS X v10.3和更高版本中受支持）。对于从可执行程序加载符号的插件，255用来指定可执行image。对于flat namespace images，高8位必须为0
+
+==========n_ value
+n_ value：符号值。对于symbol table中的每一项，该值的表达的意思都不同（具体由n_type字段说明）。对于N_SECT符号类型，n_value是符号的地址。有关其他可能值的信息，请参见n_type字段的描述。
+
+Common symbols必须为N_UNDF类型，并且必须设置N_EXT位。Common symbols的n_value是符号表示的数据的大小（以字节为单位）。在C语言中，Common symbol是在该文件中声明但未初始化的变量。Common symbols只能出现在MH_OBJECT类型的Mach-0文件中

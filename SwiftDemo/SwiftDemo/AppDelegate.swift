@@ -96,7 +96,12 @@
 // https://www.jianshu.com/p/412b20d9a0f6 // 底层
 // https://www.jianshu.com/p/5fbedf309237 // swift
 // https://www.jianshu.com/p/5445fb11e06b // opengl
-// https://www.jianshu.com/u/1e8432e01e5a
+// https://www.jianshu.com/u/1e8432e01e5a // swift+逆向+opengl+oc底层
+// https://www.jianshu.com/u/f4cc4a629941 // swift底层，逆向, 静态动态库 ##推荐
+// https://www.jianshu.com/u/f2349bd49c87 // macho
+// https://www.jianshu.com/u/abc807e72f0e // lldb 汇编
+// https://www.jianshu.com/p/9c98d5271e25
+// https://www.jianshu.com/u/67af4fcb405b
 
 // MARK: ping
 // https://developer.apple.com/library/archive/samplecode/SimplePing/Introduction/Intro.html
@@ -1001,6 +1006,7 @@ directory that contains your module map.
 // https://www.jianshu.com/u/57da48d44319
 // https://juejin.cn/user/1151943916921885/posts
 // https://juejin.cn/user/2735240659351112/posts // Tencent
+// https://blog.csdn.net/ByteDanceTech?type=blog // dytedance
 
 // MARK: Swift 语法规范 && SwiftLint
 // https://github.com/github/swift-style-guide

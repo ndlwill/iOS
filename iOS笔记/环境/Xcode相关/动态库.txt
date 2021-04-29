@@ -1,0 +1,227 @@
+一、可执行文件链接动态库.dylib
+准备好
+test.m
+AFNetWorking-> .h, .dylib
+
+test.m文件中代码如下:
+#import <Foundation/Foundation.h>
+#import <AFNetworking.h>
+
+int main(){
+    AFHTTPSessionManager *manager = [AFHTTPSessionManager manager];
+    NSLog(@"testApp----%@", manager);
+    return 0;
+}
+
+1、生成目标文件
+使用clang命令编译main.m代码
+
+cd main.m 文件目录下
+
+clang -x objective-c \
+-target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-I./AFNetworking \
+-c test.m -o test.o
+
+2、链接动态库生成可执行文件
+使用clang命令链接动态库命令如下：
+
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-L./AFNetworking \
+-lAFNetworking \
+test.o -o test
+
+3、在终端执行test可执行文件
+lldb
+file test
+r
+
+这里就出现链接动态库和链接静态不同的地方
+
+二、dyld加载动态库流程
+我们可以看到dyld从Mach-O中读取LC_LOAD_DYLIB保存动态库信息来加载动态库，因此上面链接AFNetworking动态库的test可执行文件中没有找到动态库的路径所以运行时报了错。
+
+1.查看Mach-O中LC_LOAD_DYLIB信息
+// -A：向下寻找   -B：向上寻找    5：5行
+otool -l test | grep 'DYLIB' -A 5
+
+由此可以看出动态库的路径由两部分组成，一部分是@rpath可执行文件提供，另一部分是动态库中提供
+
+2、@rpath
+Runpath search Paths：dyld搜索路径，谁需要链接动态库谁就需要提供@rpath
+运行时@rpath指示dyld按顺序搜索路径列表，以找到动态库。@rpath保存一个或 多个路径的变量
+
+因此可以分析出test可执行文件没有提供@rpath，导致动态库的路径不完整。
+
+查看Mach-O中@rpath信息
+otool -l test | grep 'RPATH' -A 5
+可以看到此Mach-O中的确没有@rpath
+
+3.Mach-O中添加@rpath
+install_name_tool -add_rpath /Users/ztkj/Desktop/链接动态库AFN test
+otool -l test | grep 'RPATH' -A 5
+
+4、修改动态库中的路径
+由于AFNetworking生成动态库时的路径和我们现在的文件结构不一致，所以还需要修改动态库中的路径
+otool -l libAFNetWorking.dylib | grep 'DYLIB' -A 5
+
+这里和前面查看Mach-O中LC_LOAD_DYLIB信息是一致的，修改路径(name-->参数使用-id)代码如下：
+install_name_tool -id @rpath/AFNetworking libAFNetworking.dylib
+otool -l libAFNetWorking.dylib | grep 'DYLIB' -A 5
+
+重新链接动态库生成可执行文件test
+Xcode如果引入了第三方动态库，那么在Build Settings中也会自动加上install name 和rpath
+
+三、创建动态库.dylib
+准备好
+build.sh
+test.m
+dylib->TestExample.h, TestExample.m
+
+build.sh中的代码如下：
+
+echo "编译test.m --- test.o"
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-I./dylib \
+-c test.m -o test.o
+
+pushd ./dylib
+echo "编译TestExample.m --- TestExample.o"
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-c TestExample.m -o TestExample.o
+
+echo "编译TestExample.o --- libTestExample.a"
+
+# Xcode提供的工具生成静态库
+libtool -static -arch_only x86_64 TestExample.o -o libTestExample.a
+
+
+echo "编译TestExample.a --- libTestExample.dylib"
+# 通过.o生成动态库
+#clang -dynamiclib \
+#-target x86_64-apple-macos11.1 \
+#-fobjc-arc \
+#-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+#-Xlinker -install_name -Xlinker @rpath/TestExample \
+#TestExample.o -o libTestExample.dylib
+
+# dylib 最终链接产物 -》
+ld -dylib -arch x86_64 \
+-macosx_version_min 11.1 \
+-syslibroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-lsystem -framework Foundation \
+-Xlinker -install_name -Xlinker @rpath/TestExample \
+-all_load \
+libTestExample.a -o libTestExample.dylib
+
+popd
+
+echo "链接libTestExample.dylib -- test EXEC"
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-Xlinker -rpath -Xlinker @executable_path/dylib \
+-L./dylib \
+-lTestExample \
+test.o -o test
+
+# 添加@rpath
+#install_name_tool -add_rpath @executable_path/dylib test
+
+echo "-------DYLIB---------"
+otool -l test | grep 'DYLIB' -A 5
+echo "-------RPATH---------"
+otool -l test | grep 'RPATH' -A 5
+
+其中为动态库(install_name)和可执行文件(rpath)添加路径的参数如下：
+
+-Xlinker -install_name -Xlinker @rpath/TestExample \
+
+//添加@rpath
+-Xlinker -rpath -Xlinker @executable_path/dylib \
+或 install_name_tool -add_rpath @executable_path/dylib test
+
+四、创建动态库Framework
+准备目录
+build.sh
+test.m
+Frameworks->TestExample.framework->build.sh, TestExample.m Headers(TestExample.h)
+
+第一个build.sh文件代码如下：
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-I./Frameworks/TestExample.framework/Headers \
+-c test.m -o test.o
+
+clang   \
+-target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-F./Frameworks \
+-framework TestExample \
+test.o -o test
+
+install_name_tool -add_rpath @executable_path/Frameworks test
+
+echo "-------DYLIB---------"
+otool -l test | grep 'DYLIB' -A 5
+echo "-------RPATH---------"
+otool -l test | grep 'RPATH' -A 5
+
+第二个build.sh文件代码如下：
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-I./Headers \
+-c TestExample.m -o TestExample.o
+#需要再链接动态库的头文件
+#-I./Frameworks/TestExampleLog.framework/Headers \
+
+clang -dynamiclib  \
+-target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-Xlinker -install_name -Xlinker @rpath/TestExample.framework/TestExample \
+-F./Frameworks \
+TestExample.o -o TestExample
+#需要再链接动态库的库名
+#-framework TestExampleLog \
+
+#如果这个动态库中需要再链接动态库，就需要在这里为链接的动态库提供rpath
+#install_name_tool -add_rpath @loader_path/Frameworks TestExample
+
+echo "-------DYLIB---------"
+otool -l TestExample | grep 'DYLIB' -A 5
+echo "-------ID---------"
+otool -l TestExample | grep 'ID' -A 5
+echo "-------RPATH---------"
+otool -l TestExample | grep 'RPATH' -A 5
+
+@executable_path: 表示可执行程序所在的目录，解析为可主程序执行文件的绝对路径。
+@loader_path: 表示被加载的Mach-O所在的目录，用于动态库链接其他动态库时提供的rpath路径。
+
+先执行第二个build.sh文件再执行第一个build.sh文件即可生成动态库Framework。此外在第二个build.sh文件中还可以添加动态库链接动态库的参数。
+lldb
+file test
+r
+q
+
+五、tdb格式
+什么是tdb格式?
+tbd全称是text based stub libraries, 本质上就是一个YAML描述的文本文件。他的作用是用于记录动态库的一些信息，包括导出的符号、动态库的架构信息、动态库的依赖信息。用于避免在真机开发过程中直接使用传统的dylib。
+对于真机来说，由于动态库都是在设备上，在Xcode上使用基于tbd格式的伪framework可以大大减少Xcode的大小。
+Xcode编译时通过读取动态库的tbd即可完成编译，只有运行时才会在执行动态库中的代码。
+
+总结:
+静态库可以链接变成动态库，动态库是最终的编译参物，因此动态库不能合并。
+上架动态库需要签名，过多的动态库会影响启动速度
+SDK提供商一般选择动态库，自己开发中最好使用静态库

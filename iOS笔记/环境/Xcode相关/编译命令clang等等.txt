@@ -165,6 +165,84 @@ nm -pa a.o
 -r:逆转顺序
 -u: 显示未定义符号
 
-==========
+==========生成dSYM文件
+dsymutil可以被理解为是调试信息链接器。它按照步骤执行:
 
-==========
+读取debug map
+从.o文件中加载DWARF
+重新定位所有地址
+最后将全部的DWARF打包成dSYM Bundle
+有了dsYM后，我们就拥有了最标准的DWARF的文件,任何可以dwarf读取工具(可以处理Mach-O二进制文件)都可以处理该标准DWARF)。
+dsymutil操作DWARF格式的debug symbol。 可以将可执行文件debug symbol的生成DWARF格式的文件:
+
+dsymutil -f a -o a.dSYM
+-f: .dwarf格式文件
+-o <filename>: 输出.dSYM格式文件
+
+==========移除符号
+strip用来移除和修改符号表
+
+strip -S a.o
+-S删除调试符号
+-X移除本地符号，‘L '开头的
+-x移除全部的本地符号，只保留全局符号
+
+==========链接器
+ld
+-all_load加载静态库的包含的所有文件。
+-ObjC 加载静态库的包含的所有义的Objective-C类和Category.
+-force_load <path_to_archive> 加载静态库中指定的文件
+
+==========链接动态库与静态库
+ld -dylib -arch x86_64 -macosx_version_min 10.13 a.dylib -o a
+ld -static -arch x86_64 -e _main a.a -o a
+
+==========Xcode打印加载的库
+Pre-main Time指main函数执行之前的加载时间，包括dylib动态库加载， Mach-O 文件加载， Rebase/Binding，Objective-C Runtime加载等。
+Xcode自身提供了一个在控制台打印这些时间的方法:在Xcode中Edit Scheme -> Run -> Auguments添加环境变量DYLD_PRINT_STATISTICS并把其值设为1。
+DYLD_PRINT_LIBRARIES:打印出所有被加载的库。
+DYLD_PRINT_LIBRARIES_POST_LAUNCH:打印的是通过dlopen调用返回的库，包括动态库的依赖库，主要发生在main函数运行之后。
+
+==========二进制重排
+链接order.fle
+
+ld -o test test.o -lsystem -order_file test.order
+ld -o test test.o -lsystem -lc++ -framework Foundation -order_file test.order
+ld -map output.map -lsystem -o output a.o
+
+生成Link Map文件
+ld -map output.map -lsystem -lc++ -framework Foundation test.o -o output
+
+-map map_file_path生成map文件
+
+主要包括三大部分:
+Object Files: 生成二进制用到的`link`单元的路径和文件编号
+Sections:记录 Mach-O 每个Segment/section 的地址范围
+Symbols:按顺序记录每 个符号的地址范围
+
+==========install_name_tool
+更改动态共享库的安装名称并操纵运行路径
+
+install_name_tool -add_rpath <directory> libs_File 
+install name_tool -delete_rpath <directory> libs_File
+install_name_tool -rpath <old> <new> libs_File
+
+==========Mach-O File Format
+一个Mach-O文件由两部分组成header 和data。
+header:代表了文件的映射，描述了文件的内容以及文件所有内容所在的位置。
+data:紧跟header之后，由多个二进制组成，one by one。
+
+header：
+header:包含三种类型。Mach header, segment, sections
+header内的section描述了对应的二进制信息。
+注意:Mach header属于header的一部分，它包含了整个文件的信息和segment信息
+
+segment：
+Segments(segment commands);指定操作系统应该将Segments加载到内存中的什么位置，以及为该Segments分配的字节数。还指定文件中的哪些字节属于该Segments，以及文件包含多少sections。始终是4096字节或4KB的倍数，其中4096字节是最小大小。
+
+sections：
+Section:所有sections都在每个segment之后一个接个地描述。 sections里面定义其名称，在内存中的地址，大小，文件中section数据的偏移量和segment名称。
+
+Load Commands
+进制文件加载进内存要执行的一些指令。
+这里的指令主要在负责我们APP对应进程的创建和基本设置(分配虚拟内存，创建主线程，处理代码签名/加密的工作)，然后对动态链接库(.dylib系统库和我们自己创建的动态库)进行库加载和符号解析的工作。
