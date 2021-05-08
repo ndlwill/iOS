@@ -1,0 +1,206 @@
+泛型是为Swift编程提供灵活性的一种语法，可以提升代码的复用性和抽象能力
+例如：Swift的Array和Dictionary类型都是泛型集合
+泛型在函数、枚举、结构体、类中都能得到充分应用，它的引入可以起到占位符的作用，当类型暂时不确定时，只有等到调用函数时才能确定具体类型的时候可以引入泛型
+
+func swap<T>(_ a: inout T, _ b: inout T) {
+    let tmp = a
+    a = b
+    b = tmp
+}
+例如交换两个值，使用泛型，可以无视参数类型，提升方法的复用性和抽象能力
+
+
+类型约束:
+在⼀个类型参数后⾯放置协议或者类，⽐如要求类型参数T遵循Equatable协议
+func test<T: Equatable>(_ a: T ,_ b: T) -> Bool{
+    return a == b
+}
+例如未遵循Equatable协议的结构体类型，将实例对象传入方法，编译报错
+
+func test<T: Equatable>(_ a: T ,_ b: T) -> Bool{
+    return a == b
+}
+
+struct LGTeacher: Equatable {
+    var age: Int = 18
+}
+
+var t1 = LGTeacher()
+var t2 = LGTeacher()
+
+var isTest = test(t1, t2)
+只有遵循Equatable协议的类型可以使用方法
+
+关联类型:
+在定义协议的时候，使⽤关联类型给协议中⽤到的类型起⼀个占位符名称
+protocol StackProtocol {
+    associatedtype Item
+}
+
+struct LGStack: StackProtocol {
+    
+    typealias Item = Int
+    
+    private var items = [Item]()
+    
+    mutating func push(_ item: Item){
+        items.append(item)
+    }
+
+    mutating func pop() -> Item?{
+        
+        if items.isEmpty { return nil }
+        
+        return items.removeLast()
+    }
+}
+上述代码，StackProtocol协议中使用associatedtype关联类型定义的Item，相当于占位符。在LGStack中使用，必须先指定Item的实际类型，使用typealias关键字
+
+
+结构体内指定Int类型显然不够灵活，这里使用泛型进一步修改：
+protocol StackProtocol {
+    associatedtype Item
+}
+
+struct LGStack<T>: StackProtocol {
+    
+    typealias Item = T
+    
+    private var items = [Item]()
+    
+    mutating func push(_ item: Item){
+        items.append(item)
+    }
+
+    mutating func pop() -> Item?{
+        
+        if items.isEmpty { return nil }
+        
+        return items.removeLast()
+    }
+}
+
+var t = LGStack<Int>()
+
+
+Where语句:
+protocol StackProtocol {
+    associatedtype Item
+    var itemCount: Int{ get }
+    mutating func pop() -> Item?
+    func index(of index: Int) -> Item
+}
+
+struct LGStack<T>: StackProtocol{
+    typealias Item = T
+    private var items = [Item]()
+
+    var itemCount: Int{
+
+        get{
+            return items.count
+        }
+    }
+
+    mutating func push(_ item: Item){
+        items.append(item)
+    }
+
+    mutating func pop() -> Item?{
+        if items.isEmpty { return nil }
+
+        return items.removeLast()
+    }
+
+    func index(of index: Int) -> Item {
+        return items[index]
+    }
+}
+
+func compare<T1: StackProtocol, T2: StackProtocol>(_ stack1: T1, _ stack2: T2)-> Bool where T1.Item == T2.Item, T1.Item: Equatable {
+
+    guard stack1.itemCount == stack2.itemCount else {
+        return false
+    }
+
+    for i in 0..<stack1.itemCount {
+        if stack1.index(of: i) != stack2.index(of: i) {
+            return false
+        }
+    }
+
+    return true
+}
+        
+var s1 = LGStack<Int>()
+var s2 = LGStack<Int>()
+
+var isTest = compare(s1, s2)
+
+上述代码，where语句要求T1.Item和T2.Item必须类型相同，且T1.Item必须遵循Equatable协议，这意味着T2.Item也必须遵循Equatable协议
+
+where语句也可以在扩展中使用:
+extension LGStack where Item: Equatable{}
+如果希望在当前泛型制定类型的时候拥有特定功能，可以使用这种写法：
+protocol StackProtocol {
+    associatedtype Item
+}
+
+extension LGStack where Item == Int {
+    func test(){
+        print("Item == Int")
+    }
+}
+
+struct LGStack<T>: StackProtocol{
+    typealias Item = T
+}
+
+var stack = LGStack<Int>()
+stack.test()
+
+
+泛型函数:
+func testGenric<T>(_ value: T) -> T {
+    let tmp = value
+    return tmp
+}
+
+class LGTeacher {
+    
+}
+
+var t = LGTeacher()
+
+testGenric(10)
+testGenric(t)
+
+将上述代码生成IR文件：swiftc -emit-ir main.swift | xcrun swift-demangle
+
+所以泛型是通过ValueWitnessTable来进⾏内存操作，ValueWitnessTable就是VWT值目击表
+ValueWitnessTable也是一个结构体，里面存储了size、alignment、stride、copy、destory等信息。
+
+NativeBox用于值类型，例如Int类型，系统会询问Metadata中的VWT，获取到size、stride进行内存空间的分配。然后调用VWT的copy方法拷贝值，将结果返回，返回后销毁局部变量
+RetainableBoxBase用于引用类型，同样是通过Metadata中的VWT进行一系列的操作
+
+泛型类型使⽤VWT进⾏内存管理，VWT由编译器⽣成，其存储了该类型的size、aligment（对⻬⽅式）以及针对该类型的基本内存操作
+当对泛型类型进⾏内存操作（如：内存拷⻉）时，最终会调⽤对应泛型类型的VWT中的基本内存操作。泛型类型不同，其对应的VWT也不同
+对于⼀个值类型，例如：Int：该类型的copy和move操作会进⾏内存拷⻉。destroy操作则不进⾏任何操作。
+对于⼀个引⽤类型，例如：class：该类型的copy操作会对引⽤计数+1。move操作会拷⻉指针，⽽不会更新引⽤计数。destroy操作会对引⽤计数-1
+
+
+泛型的⽅法调⽤：
+func makeIncrement() -> (Int) -> Int{
+    var  runningTotal = 10
+    return {
+        runningTotal += $0
+        return runningTotal
+    }
+}
+
+func testGen<T>(_ value: T) {
+
+}
+
+let makeInc = makeIncrement()
+testGen(makeInc)

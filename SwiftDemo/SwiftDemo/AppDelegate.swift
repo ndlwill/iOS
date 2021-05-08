@@ -91,6 +91,9 @@
 // MARK: ipv6
 // https://github.com/WeMobileDev/article/blob/master/IPv6%20socket%E7%BC%96%E7%A8%8B.md#%E9%97%AE%E9%A2%98%E5%A4%8D%E6%9D%82%E6%80%A7
 
+// MARK: 组件化相关
+// https://juejin.cn/user/2717648476705773/posts
+
 // MARK: LG
 // https://www.jianshu.com/u/7a85a6956d1d // ######
 // https://www.jianshu.com/p/412b20d9a0f6 // 底层
@@ -102,6 +105,7 @@
 // https://www.jianshu.com/u/abc807e72f0e // lldb 汇编
 // https://www.jianshu.com/p/9c98d5271e25
 // https://www.jianshu.com/u/67af4fcb405b
+// https://www.jianshu.com/u/e28ac341c88f // 
 
 // MARK: ping
 // https://developer.apple.com/library/archive/samplecode/SimplePing/Introduction/Intro.html

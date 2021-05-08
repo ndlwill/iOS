@@ -1,0 +1,711 @@
+https://developer.apple.com/cn/app-store/subscriptions/
+当用户更改订阅级别时，根据更改的具体内容不同，更改生效的时间也有所不同：
+升级。用户购买服务级别高于当前订阅的订阅。他们的订阅服务会立即升级，并会获得原始订阅的按比例退款。如果您希望用户能够立即访问更多内容或功能，请为该订阅指定较高排名，将其作为升级选项。
+降级。用户选择服务级别低于当前订阅的订阅。订阅会继续保持不变，直到下一个续订日期，然后以较低级别和价格续订。
+跨级。用户切换到相同级别的新订阅。如果两个订阅的持续时间相同，新订阅会立即生效。如果持续时间不同，新订阅会在下一个续订日期生效。
+
+“家人共享”功能：
+借助“家人共享”功能，订阅用户可以与最多五名其他家庭成员在他们的 Apple 设备上共享自动续期订阅的访问权限。
+一个订阅是否会默认与订阅用户的家人共享，取决于订阅用户的订阅共享设置，以及该用户是否在您于 App Store Connect 中启用了“家人共享”功能之后，才购买该订阅。如果订阅用户没有将订阅设置为默认共享，Apple 会通过推送通知告知他们可以与家人共享相应的订阅。
+
+https://help.apple.com/app-store-connect/?lang=zh-cn#/dev0067a330b
+
+关于取消 Apple 提供的订阅:
+除非您取消订阅，否则大部分订阅会自动续订。
+如果您取消一个付费订阅，则在下一个账单日期到来之前，您可以继续使用这个订阅。
+如果您在免费试用期内取消订阅，则您可能立即就无法再访问订阅内容。
+如果您注册了免费或打折的试用订阅，但不想续订，请在试用期结束前至少 24 小时取消订阅。
+
+==================================================自己的服务器怎么处理苹果的续订？
+订阅状态的处理
+答：
+首先用户第一次购买订阅，server需要把票据存储（最好把过期时间也记录一下，字段record_expires_date），苹果会通知我们的server的，其中notification_type 对应值为 INITIAL_BUY。
+服务器需要做个定期（每天）检测，检测目前已有的所有订阅订单是否过期，如果发现过期了，就去苹果服务器验证receipt，其中苹果返回的latest_receipt_info 字段，会告诉最新的订阅订单情况，你可以校验expires-date与当前时间比较，判断该订阅有没有续订成功，并同时更新上述让记录的record_expires_date字段.
+我们为什么做上述的处理？大家都知道苹果服务器会在订阅过期的前一天，对用户进行自动扣费，如果扣费成功了，苹果服务器并不会通知我们的服务器，这是重点。不过有个特例，如果苹果订阅过期前一天扣费失败了，苹果服务器后面几天还会尝试对用户自动扣费，如果后面扣费成功了（这时候用户实际状态是没有续订成功），苹果会通知我们的server的，其中notification_type 对应值为 RENEWAL,对于RENEWAL我们还是需要给用户更新为正在订阅的状态。
+正式环境下，用户主动取消订阅，苹果会通知我们的server的，其中notification_type 对应值为 CANCEL，我们需要更新用户订阅的状态为取消。
+总结，对于自动续订订阅，我们自己的服务器完全可以与apple server的交互应对用户的订阅状态，只需要确定客户端传来的用户第一次购买， user id 对应 original-transaction-id的关系。后面的续订，取消，变更套餐，完全不依赖于客户端传来的信息。
+
+==================================================server to server 的通知，后台就会收到下面的几种状态更新通知类型
+NOTIFICATION_TYPE	描述
+INITIAL_BUY	初次购买订阅。latest_receipt通过在App Store中验证，可以随时将您的服务器存储在服务器上以验证用户的订阅状态。
+CANCEL	Apple客户支持取消了订阅。检查Cancellation Date以了解订阅取消的日期和时间。
+RENEWAL	已过期订阅的自动续订成功。检查Subscription Expiration Date以确定下一个续订日期和时间。
+INTERACTIVE_RENEWAL	客户通过使用应用程序界面或在App Store中的App Store中以交互方式续订订阅。服务立即可用。
+DID_CHANGE_RENEWAL_PREF	客户更改了在下次续订时生效的计划。当前的有效计划不受影响。
+
+
+RENEWAL:
+ If you read the description of the RENEWAL event, you will note - "Automatic renewal was successful for an expired subscription. 
+ Check Subscription Expiration Date to determine the next renewal date and time." In general, 
+ iTunes will attempt to charge the user account a day before an auto-renewing subscription is scheduled to expire. 
+ If the renewal is successful, there is no server-to server notification because the auto-renewing subscription did not enter into an expired state. 
+ However, in the few cases that iTunes is unable to renew the subscription (generally there was a connection problem with the credit card server) 
+ and the auto-renewing subscription is not renewed before the expiration_date passes, the auto-renewing subscription is technically considered “expired”. 
+ However, iTunes will still continue to attempt to renew the subscription. It iTunes is successful, then the “RENEWAL” event is sent. 
+ for this reason, the advice is presented - “Check Subscription Expiration Date to determine the next renewal date and time.”
+
+==================================================
+要验证自动续订订阅In-App Purchase是否是最新的，请使用verifyReceipt服务器验证appStoreReceipt。
+假设in_app数组中存在自动续订订阅项，则查看latest_receipt_info记录并查找具有晚于当前日期的expires_date的订阅记录，其中一个未设置cancellation_date字段。
+备注：被退款订单的唯一标识是：它带有一个cancellation_date字段。
+
+in_app与latest_receipt_info
+测试时发现，这两个字段的数值几乎相同，不过有几点需要注意：
+（1）自动续订订阅类型，在到期后会再生成一条购买记录，这条记录会出现在last_receipt_info里，但不会出现在in_app里
+（2）自动续订订阅类型可以配置试用，试用记录只有在latest_receipt_info里，is_trial_period字段才是true
+（3）消耗型购买记录有可能不会出现在latest_receipt_info，因此需要检查in_app来确保校验正确
+
+官网:
+Parse the Response:
+The in_app array contains the non-consumable, non-renewing subscription, and auto-renewable subscription items previously purchased by the user. 
+Check the values in the response for these in-app purchase types to verify transactions as needed.
+
+For auto-renewable subscription items, parse the response to get information about the currently active subscription period. 
+When you validate the receipt for a subscription, latest_receipt contains the latest encoded receipt, 
+which is the same as the value for receipt-data in the request, and latest_receipt_info contains all the transactions for the subscription, 
+including the initial purchase and subsequent renewals but not including any restores.
+
+You can use these values to check whether an auto-renewable subscription has expired. 
+Use these values along with the expiration_intent subscription field to get the reason for expiration.
+
+用户取消订阅:
+购买了一个订阅后得全额付款，只有通过联系苹果客服服务才能退款。 比如，如果用户意外买错了产品，客服中心可以取消该交易并退款。 用户不能在订阅周期中间改变注意不支付剩余的订阅。
+要想确认某次交易是否已经被取消，在收据 (receipt) 中查找 Cancellation Date (取消日期)字段。 如果该字段有日期，不管该订阅的过期日期是什么，该交易都已经被取消---取消交易就是跟没有购买过一样。
+
+iOS7.0 订阅模式 收据：
+{
+
+    environment = Sandbox;
+
+    "latest_receipt" = "XXXXXX”;
+
+    "latest_receipt_info" =    (//注意这里是数组
+
+                                 {
+
+                                     "expires_date" = "2015-04-09 10:05:35 Etc/GMT";
+
+                                     "expires_date_ms" = 1428573935000;//注意这里的字段也不同
+
+                                     "expires_date_pst" = "2015-04-09 03:05:35 America/Los_Angeles";
+
+                                     "is_trial_period" = false;
+
+                                     "original_purchase_date" = "2015-04-09 10:02:36 Etc/GMT";
+
+                                     "original_purchase_date_ms" = 1428573756000;
+
+                                     "original_purchase_date_pst" = "2015-04-09 03:02:36 America/Los_Angeles";
+
+                                     "original_transaction_id" = 1000000151042480;
+
+                                     "product_id" = "com.caocao.subscription";
+
+                                     "purchase_date" = "2015-04-09 10:02:35 Etc/GMT";
+
+                                     "purchase_date_ms" = 1428573755000;
+
+                                     "purchase_date_pst" = "2015-04-09 03:02:35 America/Los_Angeles";
+
+                                     quantity = 1;
+
+                                     "transaction_id" = 1000000151042480;
+
+                                     "web_order_line_item_id" = 1000000029454808;
+
+                                 },
+
+                                 //......
+
+                                 {
+
+                                     "expires_date" = "2015-05-20 11:18:21 Etc/GMT";
+
+                                     "expires_date_ms" = 1432120701000;
+
+                                     "expires_date_pst" = "2015-05-20 04:18:21 America/Los_Angeles";
+
+                                     "is_trial_period" = false;
+
+                                     "original_purchase_date" = "2015-05-20 11:14:39 Etc/GMT";
+
+                                     "original_purchase_date_ms" = 1432120479000;
+
+                                     "original_purchase_date_pst" = "2015-05-20 04:14:39 America/Los_Angeles";
+
+                                     "original_transaction_id" = 1000000151202398;
+
+                                     "product_id" = "com.caocao.subscription";
+
+                                     "purchase_date" = "2015-05-20 11:15:21 Etc/GMT";
+
+                                     "purchase_date_ms" = 1432120521000;
+
+                                     "purchase_date_pst" = "2015-05-20 04:15:21 America/Los_Angeles";
+
+                                     quantity = 1;
+
+                                     "transaction_id" = 1000000155963876;
+
+                                     "web_order_line_item_id" = 1000000029780652;
+
+                                 },
+
+                                 {
+
+                                     "expires_date" = "2015-06-03 10:00:37 Etc/GMT";
+
+                                     "expires_date_ms" = 1433325637000;
+
+                                     "expires_date_pst" = "2015-06-03 03:00:37 America/Los_Angeles";
+
+                                     "is_trial_period" = false;
+
+                                     "original_purchase_date" = "2015-06-03 09:57:37 Etc/GMT";
+
+                                     "original_purchase_date_ms" = 1433325457000;
+
+                                     "original_purchase_date_pst" = "2015-06-03 02:57:37 America/Los_Angeles";
+
+                                     "original_transaction_id" = 1000000151202398;
+
+                                     "product_id" = "com.caocao.subscription";
+
+                                     "purchase_date" = "2015-06-03 09:57:37 Etc/GMT";
+
+                                     "purchase_date_ms" = 1433325457000;
+
+                                     "purchase_date_pst" = "2015-06-03 02:57:37 America/Los_Angeles";
+
+                                     quantity = 1;
+
+                                     "transaction_id" = 1000000157762774;
+
+                                     "web_order_line_item_id" = 1000000029780676;
+
+                                 }
+
+                                 );
+
+    receipt =     {
+
+        "adam_id" = 0;
+
+        "app_item_id" = 0;
+
+        "application_version" = 1;
+
+        "bundle_id" = "com.LHB.caocao";
+
+        "download_id" = 0;
+
+        "in_app" =         (
+
+                            {
+
+                                "is_trial_period" = false;
+
+                                "original_purchase_date" = "2015-04-27 03:58:31 Etc/GMT";
+
+                                "original_purchase_date_ms" = 1430107111000;
+
+                                "original_purchase_date_pst" = "2015-04-26 20:58:31 America/Los_Angeles";
+
+                                "original_transaction_id" = 1000000153126218;
+
+                                "product_id" = "com.caocao.subscription";
+
+                                "purchase_date" = "2015-04-27 03:58:31 Etc/GMT";
+
+                                "purchase_date_ms" = 1430107111000;
+
+                                "purchase_date_pst" = "2015-04-26 20:58:31 America/Los_Angeles";
+
+                                quantity = 1;
+
+                                "transaction_id" = 1000000153126218;
+
+                            },
+
+                            //......
+
+                            {
+
+                                "expires_date" = "2015-05-20 11:18:21 Etc/GMT";
+
+                                "expires_date_ms" = 1432120701000;
+
+                                "expires_date_pst" = "2015-05-20 04:18:21 America/Los_Angeles";
+
+                                "is_trial_period" = false;
+
+                                "original_purchase_date" = "2015-05-20 11:14:39 Etc/GMT";
+
+                                "original_purchase_date_ms" = 1432120479000;
+
+                                "original_purchase_date_pst" = "2015-05-20 04:14:39 America/Los_Angeles";
+
+                                "original_transaction_id" = 1000000151202398;
+
+                                "product_id" = "com.caocao.subscription";
+
+                                "purchase_date" = "2015-05-20 11:15:21 Etc/GMT";
+
+                                "purchase_date_ms" = 1432120521000;
+
+                                "purchase_date_pst" = "2015-05-20 04:15:21 America/Los_Angeles";
+
+                                quantity = 1;
+
+                                "transaction_id" = 1000000155963876;
+
+                                "web_order_line_item_id" = 1000000029780652;
+
+                            },
+
+                            {
+
+                                "expires_date" = "2015-06-03 10:00:37 Etc/GMT";
+
+                                "expires_date_ms" = 1433325637000;
+
+                                "expires_date_pst" = "2015-06-03 03:00:37 America/Los_Angeles";
+
+                                "is_trial_period" = false;
+
+                                "original_purchase_date" = "2015-06-03 09:57:37 Etc/GMT";
+
+                                "original_purchase_date_ms" = 1433325457000;
+
+                                "original_purchase_date_pst" = "2015-06-03 02:57:37 America/Los_Angeles";
+
+                                "original_transaction_id" = 1000000151202398;
+
+                                "product_id" = "com.caocao.subscription";
+
+                                "purchase_date" = "2015-06-03 09:57:37 Etc/GMT";
+
+                                "purchase_date_ms" = 1433325457000;
+
+                                "purchase_date_pst" = "2015-06-03 02:57:37 America/Los_Angeles";
+
+                                quantity = 1;
+
+                                "transaction_id" = 1000000157762774;
+
+                                "web_order_line_item_id" = 1000000029780676;
+
+                            }
+
+                            );
+
+        "original_application_version" = "1.0";
+
+        "original_purchase_date" = "2013-08-01 07:00:00 Etc/GMT";
+
+        "original_purchase_date_ms" = 1375340400000;
+
+        "original_purchase_date_pst" = "2013-08-01 00:00:00 America/Los_Angeles";
+
+        "receipt_type" = ProductionSandbox;
+
+        "request_date" = "2015-06-03 09:58:07 Etc/GMT";
+
+        "request_date_ms" = 1433325487766;
+
+        "request_date_pst" = "2015-06-03 02:58:07 America/Los_Angeles";
+
+        "version_external_identifier" = 0;
+
+    };
+
+    status = 0;
+
+}
+
+==================================================RMStore
+###RMAppDelegate###
+id<RMStoreReceiptVerifier> _receiptVerifier;
+RMStoreKeychainPersistence *_persistence;
+
+const BOOL iOS7OrHigher = floor(NSFoundationVersionNumber) > NSFoundationVersionNumber_iOS_6_1;
+_receiptVerifier = iOS7OrHigher ? [[RMStoreAppReceiptVerifier alloc] init] : [[RMStoreTransactionReceiptVerifier alloc] init];
+[RMStore defaultStore].receiptVerifier = _receiptVerifier;
+
+_persistence = [[RMStoreKeychainPersistence alloc] init];
+[RMStore defaultStore].transactionPersistor = _persistence;
+
+###RMStoreTransactionPersistor###
+@protocol RMStoreTransactionPersistor<NSObject>
+
+- (void)persistTransaction:(SKPaymentTransaction*)transaction;
+
+@end
+
+###RMStoreKeychainPersistence###
+@interface RMStoreKeychainPersistence : NSObject<RMStoreTransactionPersistor>
+
+/** Remove all persisted transactions from the keychain.
+ */
+- (void)removeTransactions;
+
+/** Consume the given product if available. Intended for consumable products.
+ @param productIdentifier Identifier of the product to be consumed.
+ @return YES if the product was consumed, NO otherwise.
+ */
+- (BOOL)consumeProductOfIdentifier:(NSString*)productIdentifier;
+
+/** Returns the number of persisted transactions for the given product that have not been consumed. Intended for consumable products.
+ @param productIdentifier Identifier of the product to be counted.
+ @return The number of persisted transactions for the given product that have not been consumed.
+ */
+- (NSInteger)countProductOfdentifier:(NSString*)productIdentifier;
+
+/**
+ Indicates wheter the given product has been purchased. Intended for non-consumables.
+ @param productIdentifier Identifier of the product.
+ @return YES if there is at least one transaction for the given product, NO otherwise. Note that if the product is consumable this method will still return YES even if all transactions have been consumed.
+ */
+- (BOOL)isPurchasedProductOfIdentifier:(NSString*)productIdentifier;
+
+/** Returns the product identifiers of all products whose transactions have been persisted.
+ */
+@property (nonatomic, readonly, copy) NSSet *purchasedProductIdentifiers;
+
+@end
+
+#import "RMStoreKeychainPersistence.h"
+#import <Security/Security.h>
+
+NSString* const RMStoreTransactionsKeychainKey = @"RMStoreTransactions";
+
+#pragma mark - Keychain
+
+NSMutableDictionary* RMKeychainGetSearchDictionary(NSString *key)
+{
+    NSMutableDictionary *dictionary = [NSMutableDictionary dictionary];
+    dictionary[(__bridge id)kSecClass] = (__bridge id)kSecClassGenericPassword;
+    
+    NSData *encodedIdentifier = [key dataUsingEncoding:NSUTF8StringEncoding];
+    
+    dictionary[(__bridge id)kSecAttrGeneric] = encodedIdentifier;
+    dictionary[(__bridge id)kSecAttrAccount] = encodedIdentifier;
+    
+    NSString *serviceName = [NSBundle mainBundle].bundleIdentifier;
+    dictionary[(__bridge id)kSecAttrService] = serviceName;
+    
+    return dictionary;
+}
+
+void RMKeychainSetValue(NSData *value, NSString *key)
+{
+    NSMutableDictionary *searchDictionary = RMKeychainGetSearchDictionary(key);
+    OSStatus status = errSecSuccess;
+    CFTypeRef ignore;
+    if (SecItemCopyMatching((__bridge CFDictionaryRef)searchDictionary, &ignore) == errSecSuccess)
+    { // Update
+        if (!value)
+        {
+            status = SecItemDelete((__bridge CFDictionaryRef)searchDictionary);
+        } else {
+            NSMutableDictionary *updateDictionary = [NSMutableDictionary dictionary];
+            updateDictionary[(__bridge id)kSecValueData] = value;
+            status = SecItemUpdate((__bridge CFDictionaryRef)searchDictionary, (__bridge CFDictionaryRef)updateDictionary);
+        }
+    }
+    else if (value)
+    { // Add
+        searchDictionary[(__bridge id)kSecValueData] = value;
+        status = SecItemAdd((__bridge CFDictionaryRef)searchDictionary, NULL);
+    }
+    if (status != errSecSuccess)
+    {
+        NSLog(@"RMStoreKeychainPersistence: failed to set key %@ with error %ld.", key, (long)status);
+    }
+}
+
+NSData* RMKeychainGetValue(NSString *key)
+{
+    NSMutableDictionary *searchDictionary = RMKeychainGetSearchDictionary(key);
+    searchDictionary[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
+    searchDictionary[(__bridge id)kSecReturnData] = (id)kCFBooleanTrue;
+    
+    CFDataRef value = nil;
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)searchDictionary, (CFTypeRef *)&value);
+    if (status != errSecSuccess && status != errSecItemNotFound)
+    {
+        NSLog(@"RMStoreKeychainPersistence: failed to get key %@ with error %ld.", key, (long)status);
+    }
+    return (__bridge NSData*)value;
+}
+
+@implementation RMStoreKeychainPersistence {
+    NSDictionary *_transactionsDictionary;
+}
+
+#pragma mark - RMStoreTransactionPersistor
+
+- (void)persistTransaction:(SKPaymentTransaction*)paymentTransaction
+{
+    SKPayment *payment = paymentTransaction.payment;
+    NSString *productIdentifier = payment.productIdentifier;
+    NSDictionary *transactions = [self transactionsDictionary];
+    NSInteger count = [transactions[productIdentifier] integerValue];
+    count++;
+    NSMutableDictionary *updatedTransactions = [NSMutableDictionary dictionaryWithDictionary:transactions];
+    updatedTransactions[productIdentifier] = @(count);
+    [self setTransactionsDictionary:updatedTransactions];
+}
+
+#pragma mark - Public
+
+- (void)removeTransactions
+{
+    [self setTransactionsDictionary:nil];
+}
+
+- (BOOL)consumeProductOfIdentifier:(NSString*)productIdentifier
+{
+    NSDictionary *transactions = [self transactionsDictionary];
+    NSInteger count = [transactions[productIdentifier] integerValue];
+    if (count > 0)
+    {
+        count--;
+        NSMutableDictionary *updatedTransactions = [NSMutableDictionary dictionaryWithDictionary:transactions];
+        updatedTransactions[productIdentifier] = @(count);
+        [self setTransactionsDictionary:updatedTransactions];
+        return YES;
+    } else {
+        return NO;
+    }
+}
+
+- (NSInteger)countProductOfdentifier:(NSString*)productIdentifier
+{
+    NSDictionary *transactions = [self transactionsDictionary];
+    NSInteger count = [transactions[productIdentifier] integerValue];
+    return count;
+}
+
+- (BOOL)isPurchasedProductOfIdentifier:(NSString*)productIdentifier
+{
+    NSDictionary *transactions = [self transactionsDictionary];
+    return transactions[productIdentifier] != nil;
+}
+
+- (NSSet*)purchasedProductIdentifiers
+{
+    NSDictionary *transactions = [self transactionsDictionary];
+    NSArray *productIdentifiers = transactions.allKeys;
+    return [NSSet setWithArray:productIdentifiers];
+}
+
+#pragma mark - Private
+
+- (NSDictionary*)transactionsDictionary
+{
+    if (!_transactionsDictionary)
+    { // Reading the keychain is slow so we cache its values in memory
+        NSData *data = RMKeychainGetValue(RMStoreTransactionsKeychainKey);
+        NSDictionary *transactions = @{};
+        if (data)
+        {
+            NSError *error;
+            transactions = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
+            if (!transactions)
+            {
+                NSLog(@"RMStoreKeychainPersistence: failed to read JSON data with error %@", error);
+            }
+        }
+        _transactionsDictionary = transactions;
+    }
+    return _transactionsDictionary;
+    
+}
+
+- (void)setTransactionsDictionary:(NSDictionary*)dictionary
+{
+    _transactionsDictionary = dictionary;
+    NSData *data = nil;
+    if (dictionary)
+    {
+        NSError *error;
+        data = [NSJSONSerialization dataWithJSONObject:dictionary options:0 error:&error];
+        if (!data)
+        {
+            NSLog(@"RMStoreKeychainPersistence: failed to write JSON data with error %@", error);
+        }
+    }
+    RMKeychainSetValue(data, RMStoreTransactionsKeychainKey);
+}
+
+@end
+
+
+###RMStoreTransaction###
+@interface RMStoreTransaction : NSObject<NSCoding>
+
+@property(nonatomic, assign) BOOL consumed;
+@property(nonatomic, copy) NSString *productIdentifier;
+@property(nonatomic, copy) NSDate *transactionDate;
+@property(nonatomic, copy) NSString *transactionIdentifier;
+#if __IPHONE_OS_VERSION_MIN_REQUIRED < 70000
+@property(nonatomic, strong) NSData *transactionReceipt;
+#endif
+
+- (instancetype)initWithPaymentTransaction:(SKPaymentTransaction*)paymentTransaction;
+
+@end
+
+###RMStoreReceiptVerifier###
+@protocol RMStoreReceiptVerifier <NSObject>
+
+/** Verifies the given transaction and calls the given success or failure block accordingly.
+ @param transaction The transaction to be verified.
+ @param successBlock Called if the transaction passed verification. Must be called in the main queu.
+ @param failureBlock Called if the transaction failed verification. If verification could not be completed (e.g., due to connection issues), then error must be of code RMStoreErrorCodeUnableToCompleteVerification to prevent RMStore to finish the transaction. Must be called in the main queu.
+ */
+- (void)verifyTransaction:(SKPaymentTransaction*)transaction
+                  success:(void (^)())successBlock
+                  failure:(void (^)(NSError *error))failureBlock;
+
+@end
+
+###RMAppReceipt###
+@interface RMAppReceipt : NSObject
+
+Validating Receipts Locally:
+https://developer.apple.com/library/archive/releasenotes/General/ValidateAppStoreReceipt/Chapters/ValidateLocally.html#//apple_ref/doc/uid/TP40010573-CH1-SW5
+
+
+==================================================推介促销优惠
+创建推介促销优惠
+1. 选择订阅群组 ==> 订阅价格 ==> 查看所有订阅定价
+
+2.  推介促销优惠  ==> +
+
+3. 选择优惠地区 ==>  设置优惠时间区间
+
+推介优惠的三种类型：
+假设现在的订阅类型为每个月连续订阅，原价为20元/月
+**随用随付：**以下设置表示新用户前三个月，每个月可以以10元的价格订阅
+
+**提前支付：**以下设置表示新用户可以支付30元，一次性开通三个月的会员（原价为20元/月，三个月需要支付60元，所以相当于5折）
+
+**免费：**以下设置表示新用户前一个月为免费使用
+
+==================================================notification_type
+https://developer.apple.com/documentation/appstoreservernotifications/notification_type
+
+Declaration
+string notification_type
+
+Possible Values
+CANCEL
+Indicates that Apple Support canceled the auto-renewable subscription and the customer received a refund as of the timestamp in cancellation_date_ms.
+
+DID_CHANGE_RENEWAL_PREF
+Indicates that the customer made a change in their subscription plan that takes effect at the next renewal. The currently active plan isn’t affected.
+
+DID_CHANGE_RENEWAL_STATUS
+Indicates a change in the subscription renewal status. In the JSON response, check auto_renew_status_change_date_ms to know the date and time of the last status update. Check auto_renew_status to know the current renewal status.
+
+DID_FAIL_TO_RENEW
+Indicates a subscription that failed to renew due to a billing issue. Check is_in_billing_retry_period to know the current retry status of the subscription. Check grace_period_expires_date to know the new service expiration date if the subscription is in a billing grace period.
+
+DID_RECOVER
+Indicates a successful automatic renewal of an expired subscription that failed to renew in the past. Check expires_date to determine the next renewal date and time.
+
+DID_RENEW
+Indicates that a customer’s subscription has successfully auto-renewed for a new transaction period.
+
+INITIAL_BUY
+Occurs at the user’s initial purchase of the subscription. Store latest_receipt on your server as a token to verify the user’s subscription status at any time by validating it with the App Store.
+
+INTERACTIVE_RENEWAL
+Indicates the customer renewed a subscription interactively, either by using your app’s interface, or on the App Store in the account’s Subscriptions settings. Make service available immediately.
+
+PRICE_INCREASE_CONSENT
+Indicates that App Store has started asking the customer to consent to your app’s subscription price increase. In the unified_receipt.Pending_renewal_info object, the price_consent_status value is 0, indicating that App Store is asking for the customer’s consent, and hasn’t received it. The subscription won’t auto-renew unless the user agrees to the new price. When the customer agrees to the price increase, the system sets price_consent_status to 1. Check the receipt using verifyReceipt to view the updated price-consent status.
+
+REFUND
+Indicates that App Store successfully refunded a transaction for a consumable or non-consumable in-app purchase. The cancellation_date_ms contains the timestamp of the refunded transaction. The original_transaction_id and product_id identify the original transaction and product. The cancellation_reason contains the reason.
+
+RENEWAL (DEPRECATED IN SANDBOX)
+Indicates a successful automatic renewal of an expired subscription that failed to renew in the past. Check expires_date to determine the next renewal date and time. This notification is deprecated in the sandbox environment, and scheduled for deprecation in production in March 2021. Update your existing code to rely on DID_RECOVER notification type instead.
+
+REVOKE
+Indicates that an in-app purchase the user was entitled to through Family Sharing is no longer available through sharing. StoreKit sends this notification when a purchaser disabled Family Sharing for a product, the purchaser (or family member) left the family group, or the purchaser asked for and received a refund. Your app will also receive a paymentQueue(_:didRevokeEntitlementsForProductIdentifiers:) call. For more information about Family Sharing, see Supporting Family Sharing in Your App.
+
+
+The notification_type appears in the responseBody.
+https://developer.apple.com/documentation/appstoreservernotifications/responsebody
+
+
+Handle Use Cases for Notification Events:
+Subscription or in-app purchase event   Notification types
+
+Customer completed an initial purchase of a subscription
+
+INITIAL_BUY
+
+Subscription is active; customer upgraded to another SKU
+
+DID_CHANGE_RENEWAL_STATUS, INTERACTIVE_RENEWAL
+
+Subscription is active; customer downgraded to another SKU
+
+DID_CHANGE_RENEWAL_PREF
+
+Subscription has expired; customer resubscribed to the same SKU
+
+DID_CHANGE_RENEWAL_STATUS
+
+Subscription has expired; customer resubscribed to another SKU (upgrade or downgrade)
+
+INTERACTIVE_RENEWAL, DID_CHANGE_RENEWAL_STATUS
+
+Customer canceled the subscription from the App Store Subscriptions settings page. Their subscription will not auto-renew and will expire on the expires_date
+
+DID_CHANGE_RENEWAL_STATUS
+
+Customer previously canceled the subscription, but now resubscribed to same product before the subscription expired. The subscription will auto-renew on the expires_date
+
+DID_CHANGE_RENEWAL_STATUS
+
+AppleCare refunded a subscription
+
+CANCEL, DID_CHANGE_RENEWAL_STATUS
+
+Subscription failed to renew because of a billing issue
+
+DID_FAIL_TO_RENEW
+
+Expired subscription recovered by App Store through a billing retry
+
+DID_RECOVER
+
+Subscription churned after failed billing retry attempts
+
+DID_CHANGE_RENEWAL_STATUS
+
+AppleCare successfully refunded the transaction for a consumable, non-consumable, or a non-renewing subscription
+
+REFUND
+
+You’ve increased the price of a subscription, and the customer must agree to the increase before the subscription auto-renews
+
+PRICE_INCREASE_CONSENT
+
+Subscription succesfully auto-renewed
+
+DID_RENEW
+
+A purchaser disabled Family Sharing for a product, the purchaser (or family member) left the family group, or the purchaser asked for and received a refund.
+
+REVOKE
+
+
+
+Test Notification Events with Sandbox:
+The following notification types are available in sandbox: INITIAL_BUY, DID_CHANGE_RENEWAL_PREF, DID_CHANGE_RENEWAL_STATUS, DID_RENEW, and INTERACTIVE_RENEWAL.

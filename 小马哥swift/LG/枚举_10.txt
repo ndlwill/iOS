@@ -1,0 +1,559 @@
+C语⾔的枚举
+enum week {
+    MON, TUE, WED, THU, FRI, SAT, SUN
+};
+第⼀个枚举成员默认值为0，后⾯枚举值依次类推
+
+定义⼀个枚举变量week：
+enum Week {
+    MON = 1, TUE, WED, THU, FRI, SAT, SUN
+} week;
+
+同样是定义⼀个枚举变量week，省略枚举名称：
+enum {
+    MON = 1, TUE, WED, THU, FRI, SAT, SUN
+} week;
+
+
+Swift中的枚举
+enum Week {
+    case MONDAY
+    case TUEDAY
+    case WEDDAY
+    case THUDAY
+    case FRIDAY
+    case SATDAY
+    case SUNDAY
+}
+上述代码也可以直接⼀个case，然后⽤逗号隔开：
+enum Week {
+    case MON, TUE, WED, THU, FRI, SAT, SUN
+}
+
+Swift中可以创建String类型枚举。在Swift中=左边的值叫枚举值，右边的叫rawValue原始值，case 枚举值 = rawValue原始值
+enum Week: String {
+    case MON = "MON"
+    case TUE = "TUE"
+    case WED = "WED"
+    case THU = "THU"
+    case FRI = "FRI"
+    case SAT = "SAT"
+    case SUN = "SUN"
+}
+如果不想写后⾯的字符串，这时可以使⽤隐⼠rawValue分配。
+
+Int类型枚举，枚举值FRI分配rawValue为10，MON依然是从0开始，后⾯枚举值依次类推。在FRI之后的枚举值从11开始，依次类推
+enum Week: Int {
+    case MON, TUE, WED, THU, FRI = 10, SAT, SUN
+}
+
+print("MON：\(Week.MON.rawValue),SAT：\(Week.SAT.rawValue)")
+
+//输出以下内容：
+//MON：0,SAT：11
+
+String类型枚举，枚举值FRI分配rawValue打印Hello，其他未分配rawValue打印自身枚举值
+enum Week: String {
+    case MON, TUE, WED, THU, FRI = "Hello", SAT, SUN
+}
+
+print("MON：\(Week.MON.rawValue),FRI：\(Week.FRI.rawValue),SUN：\(Week.SUN.rawValue)")
+
+//输出以下内容：
+//MON：MON,FRI：Hello,SUN：SUN
+
+
+
+通过SIL代码，分析String类型枚举，是如何打印rawValue的
+enum Week: String {
+    case MON, TUE, WED, THU, FRI, SAT, SUN
+}
+let w: Week = .MON
+将上述代码生成SIL文件：swiftc -emit-sil main.swift | xcrun swift-demangle
+enum Week : String {
+  case MON, TUE, WED, THU, FRI, SAT, SUN
+  typealias RawValue = String
+  init?(rawValue: String)
+  var rawValue: String { get }
+}
+SIL代码的枚举声明除了case还多了一些东西：
+首先通过typealias取别名，在枚举Week里把String取名为RawValue
+生成可选的初始化方法init?(rawValue: String)，也就是说初始化可以返回nil
+生成rawValue计算属性，所以在代码中访问rawValue属性，本质就是访问它的get方法
+
+rawValue.getter返回的字符串在编译时期已经存储好
+rawValue的字符串存储在__TEXT.__cstring段，而且内存地址是连续的
+在上述SIL代码中构建枚举值字符串，本质就是从Mach-O里把对应地址的字符串取出来
+
+
+
+关联值枚举
+如果想⽤枚举表达更复杂的信息，⽽不仅仅是⼀个rawValue这么简单，这个时候可以使⽤关联值
+enum Shape {
+    case circle(radious: Double)
+    case rectangle(width: Int, height: Int)
+}
+关联值枚举，没有rawValue属性。因为关联值枚举可以使用单个值或一组值来表示，但rawValue只能针对单个值
+关联值枚举可以省略关联值的标签，例如radious、width、height，但并不推荐这种书写方式，因为可读性太差
+enum Shape {
+    case circle(Double)
+    case rectangle(Int, Int)
+}
+//创建
+var circle = Shape.circle(radious: 10.0)
+//重新分配
+circle = Shape.circle(radious: 20.0)
+
+
+模式匹配
+使⽤switch匹配enum的时候，必须列举当前所有可能的情况，否则编译报错
+匹配enum可以列举出所有情况，也可以使用default表示默认情况
+enum Week: String {
+    case MON = "MON"
+    case TUE = "TUE"
+    case WED = "WED"
+    case THU = "THU"
+    case FRI = "FRI"
+    case SAT = "SAT"
+    case SUN = "SUN"
+}
+
+var week: Week?
+
+switch week {
+    case .MON:
+        print(Week.MON.rawValue)
+    default:
+        print("unknow day")
+}
+
+
+
+匹配关联值枚举
+方式一：通过switch匹配所有case
+enum Shape {
+    case circle(radious: Double)
+    case rectangle(width: Int, height: Int)
+}
+
+var shape = Shape.circle(radious: 10.0)
+
+switch shape {
+    case let .circle(radious):
+        print("circle-radious：\(radious)")
+    case let .rectangle(width, height):
+        print("rectangle-width：\(width)，height：\(height)")
+}
+
+//输出以下内容：
+//circle-radious：10.0
+case let .circle(radious)相当于做了value-binding，如果case匹配上，相当于把10.0赋值给常量radious
+
+另一种写法：将关联值的参数使用let、var修饰
+switch shape {
+    case .circle(var radious):
+        print("circle-radious：\(radious)")
+    case .rectangle(let width, let height):
+        print("rectangle-width：\(width)，height：\(height)")
+}
+
+方式二：通过单个case进行匹配
+enum Shape {
+    case circle(radious: Double)
+    case rectangle(width: Int, height: Int)
+}
+
+var shape = Shape.circle(radious: 10.0)
+
+if case let Shape.circle(radious) = shape {
+    print("circle-radious：\(radious)")
+}
+
+//输出以下内容：
+//circle-radious：10.0
+
+
+匹配不同枚举值的相同关联值
+enum Shape {
+    case circle(radious: Double, diameter: Double)
+    case rectangle(width: Double, height: Double)
+    case square(width: Double, width: Double)
+}
+
+var shape = Shape.circle(radious: 10.0, diameter: 20.0)
+
+switch shape {
+    case let .circle(x, 20.0), let .square(x, 20.0):
+        print("x：\(x)")
+    default:
+        print("default")
+}
+
+//输出以下内容：
+//x：10.0
+上述代码，将多个枚举值中，我们想要匹配的关联值用x代替。如果枚举值为circle或square，且第二个关联值为20.0，即为匹配成功
+不同枚举值里，用到匹配的变量或常量x，必须名称相同，不能一个用x一个用y，否则编译报错
+
+使用通配符_方式匹配:
+enum Shape {
+    case circle(radious: Double, diameter: Double)
+    case rectangle(width: Double, height: Double)
+    case square(width: Double, width: Double)
+}
+
+var shape = Shape.circle(radious: 10.0, diameter: 30.0)
+
+switch shape {
+    case let .circle(x, _), let .square(x, _):
+        print("x：\(x)")
+    default:
+        print("default")
+}
+
+//输出以下内容：
+//x：10.0
+上述代码，我们不关心第二个关联值是什么，可以使用通配符_代替。如果枚举值为circle或square，第二个关联为任意值，都能匹配成功
+
+同样使用单个case进行匹配，也可以使用通配符_
+var shape = Shape.circle(radious: 10.0, diameter: 20.0)
+
+if case let Shape.circle(x, _) = shape{
+    print("x：\(x)")
+}
+
+//输出以下内容：
+//x：10.0
+
+
+枚举嵌套
+enum CombineDirect{
+    enum BaseDirect{
+        case up
+        case down
+        case left
+        case right
+    }
+
+    case leftUp(baseDirect1: BaseDirect, baseDirect2: BaseDirect)
+    case rightUp(baseDirect1: BaseDirect, baseDirect2: BaseDirect)
+    case leftDown(baseDirect1: BaseDirect, baseDirect2: BaseDirect)
+    case rightDown(baseDirect1: BaseDirect, baseDirect2: BaseDirect)
+}
+
+var combind = CombineDirect.leftDown(baseDirect1: .left, baseDirect2: .down)
+上述代码，通过BaseDirect枚举的up、down、left、right四个case，组合出CombineDirect枚举中leftUp、rightUp、leftDown、rightDown四个case。这种方式下BaseDirect枚举相当于是私有的，外界无法直接访问
+
+
+结构体中嵌套枚举:
+struct Skill{
+    enum KeyType{
+        case up
+        case down
+        case left
+        case right
+    }
+
+    let key: KeyType
+
+    func launchSkill(){
+        switch key {
+            case .left,.right:
+                print("left, right")
+            case .up,.down:
+                print("up, down")
+        }
+    }
+}
+
+let kill = Skill.init(key: .up)
+kill.launchSkill()
+
+//输出以下内容：
+//up, down
+
+
+枚举中包含属性:
+enum中能包含计算属性，类型属性，不能包含存储属性
+enum Shape {
+
+    case circle(radius: Double)
+    case rectangle(width: Double, height: Double)
+
+    var width: Double{
+        get{
+            return 10.0
+        }
+    }
+
+    static let height = 20.0
+}
+
+结构体可以包含存储属性，因为结构体的大小就是存储属性的大小。但enum大小取决于case的个数，只要case个数没有超过255，enum的大小就是1字节
+计算属性本质是get、set方法，对于值类型来说根本不用存储方法
+类型属性是全局变量，它的存储也和enum没有任何关系
+
+
+枚举中包含⽅法
+可以在enum中定义实例⽅法，static修饰的⽅法
+enum Week: Int {
+    case MON, TUE, WED, THU, FRI, SAT, SUN
+    
+    mutating func nextDay(){
+        if self == .SUN {
+            self = Week(rawValue: 0)!
+        }
+        else {
+            self = Week(rawValue: self.rawValue + 1)!
+        }
+    }
+}
+
+var week: Week = .SUN
+week.nextDay()
+
+print(week)
+在enum的nextDay方法中修改自身，需要使用mutating关键字修饰
+
+
+枚举的大小
+rawValue枚举值大小
+enum NoMean{
+    case a
+}
+
+print("stride：\(MemoryLayout<NoMean>.stride)")
+print("size：\(MemoryLayout<NoMean>.size)")
+
+//输出以下内容：
+//stride：1
+//size：0
+enum中只有一个case，大小为0，步长为1。当只有一个case的枚举，大小为0表示这个enum是没有意义的
+
+
+enum NoMean{
+    case a
+    case b
+}
+
+print("stride：\(MemoryLayout<NoMean>.stride)")
+print("size：\(MemoryLayout<NoMean>.size)")
+
+//输出以下内容：
+//stride：1
+//size：1
+
+enum NoMean{
+    case a
+    case b
+    case c
+    case d
+    case e
+}
+
+print("stride：\(MemoryLayout<NoMean>.stride)")
+print("size：\(MemoryLayout<NoMean>.size)")
+
+//输出以下内容：
+//stride：1
+//size：1
+enum中存在更多case，依然是大小为1，步长为1
+
+
+将枚举值a、b、c赋值给三个常量
+通过断点可以看出a、b、c分别是0x0、0x1、0x2，对系统来说就是0、1、2。所以rawValue枚举值默认是UInt8类型，占1字节，最大可以存储255。超过255个枚举值，系统会将UInt8升级为UInt16、UInt32、UInt64
+当前枚举的步⻓是1字节，也就意味着如果在内存中连续存储NoMean，需要跨越1字节的⻓度。1字节也就是8 位，最⼤可以表达的数字是255
+
+
+关联值枚举的大小
+enum Shape {
+    case circle(radius: Double)
+    case rectangle(width: Double, height: Double)
+}
+
+print("stride：\(MemoryLayout<Shape>.stride)")
+print("size：\(MemoryLayout<Shape>.size)")
+
+//输出以下内容：
+//stride：24
+//size：17
+
+关联值枚举⼤⼩，取决于最⼤关联值⼤⼩，并加上1字节枚举值大小。
+
+circle有一个Double类型关联值，占8字节
+rectangle有两个Double类型关联值，占16字节
+enum的大小，就是最大关联值16字节，再加枚举值1字节，共占17字节
+stride由于8字节对齐，所以自动补齐到24字节
+
+
+枚举嵌套的大小
+enum CombineDirect{
+    enum BaseDirect{
+        case up
+        case down
+        case left
+        case right
+    }
+
+    case leftUp(baseDirect1: BaseDirect, baseDirect2: BaseDirect)
+    case rightUp(baseDirect1: BaseDirect, baseDirect2: BaseDirect)
+    case leftDown(baseDirect1: BaseDirect, baseDirect2: BaseDirect)
+    case rightDown(baseDirect1: BaseDirect, baseDirect2: BaseDirect)
+}
+
+print("stride：\(MemoryLayout<CombineDirect>.stride)")
+print("size：\(MemoryLayout<CombineDirect>.size)")
+
+//输出以下内容：
+//stride：2
+//size：2
+枚举嵌套和关联值枚举一样，同样取决于关联值大小
+BaseDirect中的up、down、left、right对应的枚举值分别为0、1、2、3
+CombineDirect中的leftUp、rightUp、leftDown、rightDown对应的枚举值分别为0、4、8、12。这里并没有规律可寻，如果加入更多case，也会变成0、1、2、3...向后递增，通过源码分析目前还未找到相关定义
+图中输出的02是left的枚举值，81要拆开来看，8是leftDown的枚举值，1是down的枚举值
+enum大小占2字节，因为leftDown的枚举值和down的枚举值存储在同一字节内，属于系统优化
+
+
+
+结构体中嵌套枚举的大小
+struct Skill{
+    enum KeyType{
+        case up
+        case down
+        case left
+        case right
+    }
+
+    let key: KeyType
+}
+
+print("stride：\(MemoryLayout<Skill>.stride)")
+print("size：\(MemoryLayout<Skill>.size)")
+
+//输出以下内容：
+//stride：1
+//size：1
+结构体中有一个KeyType枚举类型的成员变量key，所以结构体大小为1，步长为1
+
+
+
+indirect关键字
+如果想要表达的enum是⼀个复杂的关键数据结构，可以通过indrect关键字让当前的enum更简洁
+创建链表结构enum，对应当前递归枚举来说，不添加indirect关键字，编译报错
+因为enum是值类型，它会在编译时期确定大小。但对于接收泛型T的enum，编译时期无法确定enum大小，系统无法分配空间
+
+enum List<T>{
+    case end
+    indirect case node(T, next: List<T>)
+}
+在case node前面添加indirect关键字，可以编译通过
+
+indirect enum List<T>{
+    case end
+    case node(T, next: List<T>)
+}
+另一种方式，可以在enum List<T>前面添加indirect关键字，同样可以编译通过
+
+indirect enum List<T>{
+    case end
+    case node(T, next: List<T>)
+}
+
+print("List<Int> stride：\(MemoryLayout<List<Int>>.stride)")
+print("List<Int> size：\(MemoryLayout<List<Int>>.size)")
+
+print("List<String> stride：\(MemoryLayout<List<String>>.stride)")
+print("List<String> size：\(MemoryLayout<List<String>>.size)")
+
+上述代码，分别将Int和String传入enum，打印出来的大小都是8字节
+打印case end，存储的是end枚举值
+打印case node，存储的是堆区地址
+
+indirect关键字本质就是通知编译器，当前enum是递归枚举，无法确定大小，需要在堆区空间分配内存，并存储enum
+通过断点查看汇编代码，确实执行了swift_allocObject
+
+
+
+枚举-Swift和OC混编:
+OC调用Swift的枚举：
+OC只能调用Swift中Int类型枚举
+@objc enum NoMean: Int{
+    case a
+    case b
+    case c
+    case d
+}
+通过@objc声明后，桥接文件中自动生成SWIFT_ENUM
+typedef SWIFT_ENUM(NSInteger, NoMean, closed) {
+  NoMeanA = 0,
+  NoMeanB = 1,
+  NoMeanC = 2,
+  NoMeanD = 3,
+};
+如果enum不声明类型，同时使用@objc修饰，编译报错
+如果enum声明String类型，同时使用@objc修饰，编译报错
+
+Swift调用OC的枚举：
+OC的LGTest.h中，使用typedef NS_ENUM声明枚举
+
+typedef NS_ENUM(NSInteger, CEnum) {
+    CEnumInvalid = 0,
+    CEnumA = 1,
+    CEnumB,
+    CEnumC
+};
+
+在桥接文件中，自动生成enum CEnum
+public enum CEnum : Int {
+    case invalid = 0
+    case A = 1
+    case B = 2
+    case C = 3
+}
+
+OC的LGTest.h中，使用typedef enum声明枚举
+typedef enum{
+    Num1,
+    Num2
+} OCNum;
+
+在桥接文件中，自动生成struct OCNum，变成了结构体，并遵循了 Equatable和RawRepresentable协议
+public struct OCNum : Equatable, RawRepresentable {
+    public init(_ rawValue: UInt32)
+    public init(rawValue: UInt32)
+    public var rawValue: UInt32
+}
+
+在Swift的main.swift文件中可以直接调用
+let a: CEnum = .A
+let b: OCNum = OCNum.init(rawValue: 1)
+
+print("CEnum：\(a.rawValue)")
+print("OCNum：\(b.rawValue)")
+
+//输出以下内容：
+//CEnum：1
+//OCNum：1
+
+
+内存对齐 & 字节对齐：
+内存对齐：iOS采用8字节对齐方式，只会在对象初始化分配内存时出现。例如malloc、calloc
+字节对齐：第一个数据成员放在offset为0的位置，以后每个数据成员存储的起始位置要从该成员大小或该成员的子成员大小（只要该成员有子成员，比如数组、结构体等）的整数倍开始。比如Int为8字节，则要从8的整数倍地址开始存储
+
+enum Shape {
+    case circle(radius: Double)
+    case rectangle(width: Int8, height: Int, w: Int16, h: Int32)
+}
+
+print("stride：\(MemoryLayout<Shape>.stride)")
+print("size：\(MemoryLayout<Shape>.size)")
+
+//输出以下内容：
+//stride：24
+//size：24
+
+width：Int8类型，占1字节
+height：Int类型，占8字节
+w：Int16类型，占2字节
+h：Int32类型，占4字节
+width占1字节，但第二成员height占8字节。按字节对齐规则，height起始位置必须是自身的整数倍，所以width要补齐到8字节。
+而w占2字节，但h占4字节，所以同理w要补齐到4字节。最终size大小：8 + 8 + 4 + 4 = 24字节 （前面是后面的整数倍）
