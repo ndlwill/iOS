@@ -1,0 +1,79 @@
+静态库也叫做静态链接库，可以简单的看做一组目标文件的集合。即多个目标文件经过压缩打包后形成的文件。
+
+在iOS开发中，常见的静态库有：
+.a文件（是一个文档格式）
+.framework文件（该文件可以是静态库，也可以是动态库）
+
+静态库的缺点：浪费内存和磁盘空间，模块更新困难。
+
+/**
+ clang命令参数：
+     -x: 指定编译文件语言类型
+     -g: 生成调试信息
+     -c: 生成目标文件，只运行preprocess，compile，assemble，不链接
+     -o: 输出文件
+     -isysroot: 使用的SDK路径
+     1. -I<directory> 在指定目录寻找头文件 header search path
+     2. -L<dir> 指定库文件路径（.a\.dylib库文件） library search path
+     3. -l<library_name> 指定链接的库文件名称（.a\.dylib库文件）other link flags -lAFNetworking
+     -F<directory> 在指定目录寻找framework framework search path
+     -framework <framework_name> 指定链接的framework名称 other link flags -framework AFNetworking
+
+    -l的查找规则：先找lib+<library_name>的动态库，找不到，再去找lib+<library_name>的静态库，还找不到，就报错
+ */
+
+
+ar -t 这个命令来打印一下libAFNetworking.a里面的内容
+可以看到libAFNetworking.a就是.o文件的集合。
+
+
+静态库链接:
+将.a文件与我们的代码链接生出可执行程序
+指令中的\是shell里面的转移字符，可以让指令换行，但是还是一条指令，这样方便阅读。
+
+静态库的合并:
+静态库是.o问价的合集，那么静态库的合并其实就是将.a先解压，然后再合并成一个.a文件。
+这里我们用libtool（ar也可以做到，看上ar的解释；通常会用libtool来做这件事）。
+现在有两个静态库libAFNetworking.a & libSDWebImage.a，执行下面的指令进行合并：
+libtool -static -o test.a libAFNetworking.a libSDWebImage.a
+
+Framework:
+Mac OS / iOS 平台还可以使用Framework。
+Framework 实际上是一种打包方式，将库的二进制文件，头文件和有关的资源文件打包到一起，方便管理和分发。
+在使用到Framework里面的文件的时候，那么生成.o文件和上面试一样，因为-I只是一个路径，头文件和库文件本身并不一定要放到一起。
+
+这里YSExample.o 生成 YSExample.a的时候用到了下面的命令：
+ar -rc TestExample.a TestExample.o
+
+/**
+ `ar`压缩目标文件，并对其进行编号和索引，形成静态库。同时也可以解压缩静态库，查看有哪些目标文件：
+ ar -rc a.a a.o
+    -r: 像a.a添加or替换文件
+    -c: 不输出任何信息
+    -t: 列出包含的目标文件
+ */
+
+
+-noall_load:
+clang链接的过程中-noall_load默认就是生效的。
+那么这个时候就产生了一个问题，大家都知道，OC的分类（Category）是在运行时动态创建的。那么在链接的时候，发现分类的方法没有被调用，就会被剥离。
+
+因为链接的过程中将ys_test_category剥离了（分类是在运行时创建的）。
+
+不要把我们APP工程里面的分类 和 静态库里面的分类搞混了:
+.o 和 .o 生成可执行文件 ，是先合并成一个大的.o 然后再去链接
+.o 和 .a 是先dead code strip 再去链接
+-noall_load这些只针对静态库有效
+
+这个时候我们可以通过添加链接器参数也保留静态库的符号：
+LGSTATIC_FRAMEWORK_PATH=${BUILD_DIR}/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/YSStaticLibrary.framework/YSStaticLibrary
+OTHER_LDFLAGS=-Xlinker -force_load $LGSTATIC_FRAMEWORK_PATH
+
+// OTHER_LDFLAGS 通过clang 给ld传递参数
+// -Xlinker 告诉clange 参数是传给 ld的不是传给你的
+
+// -noall_load 不全部加载
+// -all_load 所有的都加载
+// -Objc 除了OC的代码，其他的正常剥离
+// -force_load 指定哪些静态库不要 dead code strip
+/// 以上四个参数只是针对我们的静态库

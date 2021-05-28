@@ -1,0 +1,341 @@
+==================================================编译、链接过程（一）
+平时用Xcode去Build，一键从源码到程序。这个过程中隐藏了预处理、编译、汇编和链接4个过程如下：
+预处理（预编译Prepressing）
+clang -E main.m -o main.i
+处理源代码文件中的以"#"开头的预编译指令。规则如下：
+"#define"删除并展开对应宏定义。
+处理所有的条件预编译指令。如#if/#ifdef/#else/#endif。
+"#include/#import"包含的文件递归插入到此处。
+删除所有的注释"//或/**/"。
+添加行号和文件名标识。如“# 1 "main.m"”,编译调试会用到。
+
+
+编译（Compilation）
+clang -S main.i -o main.s
+编译就是把上面得到的.i文件进行：词法分析、语法分析、静态分析、优化生成相应的汇编代码，得到.s文件。
+
+词法分析：源代码的字符序列分割成一个个token（关键字、标识符、字面量、特殊符号），比如把标识符放到符号表（静态链接那篇，重点讲符号表）。
+语法分析：生成抽象语法树 AST，此时运算符号的优先级确定了；有些符号具有多重含义也确定了，比如“*”是乘号还是对指针取内容；表达式不合法、括号不匹配等，都会报错。
+静态分析：分析类型声明和匹配问题。比如整型和字符串相加，肯定会报错。
+中间语言生成：CodeGen根据AST自顶向下遍历逐步翻译成 LLVM IR，并且在编译期就可以确定的表达式进行优化，比如代码里t1=2+6，可以优化t1=8。（假如开启了bitcode，）
+目标代码生成与优化：根据中间语言生成依赖具体机器的汇编语言。并优化汇编语言。这个过程中，假如有变量且定义在同一个编译单元里，那给这个变量分配空间，确定变量的地址。假如变量或者函数不定义在这个编译单元，得链接时候，才能确定地址。
+
+
+汇编（Assembly）
+clang -c main.s -o main.o
+汇编就是把上面得到的.s文件里的汇编指令一一翻译成机器指令。得到.o文件，也就是目标文件
+
+
+链接（Linking）
+clang main.o -o main
+现在程序都是分模块组成，比如一个App，对应有多个源代码文件。每个源代码文件汇编成目标文件，根据上面流程A目标文件访问B目标文件的函数或者变量，是不知道地址的，链接就是要解决这个问题。链接过程主要包括地址和空间分配、符号决议和重定位。
+链接就是把目标文件（一个或多个）和需要的库（静态库/动态库）链接成可执行文件。
+
+==================================================MachO文件结构分析（二）
+可执行文件
+进程是特殊文件在内存中加载得到的结果。那这种文件的格式必须是系统内核可以理解的，系统内核才能正确解析。
+
+不同操作系统的可执行文件格式不同：
+可执行格式
+魔数
+用途
+
+PE32/PE32+
+MZ
+Windows的可执行文件
+
+ELF
+\x7FELF
+Linux和大部分UNIX的可执行文件和库文件
+
+脚本
+#!
+主要用于shell脚本，也有一些解释器脚本使用这个格式。这是一种特殊的二进制文件格式，#! 后面指向真正的可执行文件（比如python），而脚本其它内容，都被当做输入传递给这个命令。
+
+通用二进制格式（胖二进制格式）
+0xcafebabe(小端)
+包含多种架构支持的Mach-O格式，iOS和OS X支持的格式
+
+Mach-O
+0xfeedface(32位) 0xfeedfacf(64位)
+iOS和OS x支持的格式
+
+系统内核将文件读入内存，然后寻找文件的头签名（魔数magic），根据magic就可以判断二进制文件的格式。
+其实PE/ELF/Mach-O这三种可执行文件格式都是COFF（Common file format）格式的变种。COFF的主要贡献是目标文件里面引入了“段”的机制，不同的目标文件可以拥有不同数量和不同类型的“段”。
+
+
+通用二进制文件：
+为什么有通用二进制文件
+为什么有了Mach-O格式了，苹果还搞通用二进制格式？因为不同CPU平台支持的指令不同，比如arm64和x86，那我们是不是可以把arm64和x86对应的Mach-O格式打包在一起，然后系统根据自己的CPU平台，选择合适的Mach-O。通用二进制格式就是多种架构的Mach-O文件“打包”在一起，所以通用二进制格式，更多被叫做胖二进制格式。
+
+通用二进制格式定义在<mach-o/fat.h>中
+#define FAT_MAGIC	0xcafebabe
+#define FAT_CIGAM	0xbebafeca	/* NXSwapLong(FAT_MAGIC) */
+
+struct fat_header {
+	uint32_t	magic;		/* FAT_MAGIC or FAT_MAGIC_64 */
+	uint32_t	nfat_arch;	/* number of structs that follow */
+};
+
+struct fat_arch {
+	cpu_type_t	cputype;	/* cpu specifier (int) */
+	cpu_subtype_t	cpusubtype;	/* machine specifier (int) */
+	uint32_t	offset;		/* file offset to this object file */
+	uint32_t	size;		/* size of this object file */
+	uint32_t	align;		/* alignment as a power of 2 */
+};
+
+通用二进制文件开始是fat_header结构体，magic可以让系统内核读取该文件时候知道是通用二进制文件；nfat_arch表明下面有多少个fat_arch结构体（也可以说这个通用二进制文件包含多少个Mach-O）。
+fat_arch结构体是描述Mach-O。cputype和cpusubtype说明Mach-O适用什么平台；offset（偏移）、size（大小）和align（页对齐）可以清楚描述Mach-O二进制位于通用二进制文件哪里。
+
+file 命令查看
+$ file bq   
+bq: Mach-O universal binary with 2 architectures: [arm_v7:Mach-O executable arm_v7] [arm64]
+bq (for architecture armv7):	Mach-O executable arm_v7
+bq (for architecture arm64):	Mach-O 64-bit executable arm64
+
+otool 命令查看fat_header信息
+$ otool -f -V bq
+Fat headers
+fat_magic FAT_MAGIC
+nfat_arch 2
+architecture armv7
+    cputype CPU_TYPE_ARM
+    cpusubtype CPU_SUBTYPE_ARM_V7
+    capabilities 0x0
+    offset 16384
+    size 74952848
+    align 2^14 (16384)
+architecture arm64
+    cputype CPU_TYPE_ARM64
+    cpusubtype CPU_SUBTYPE_ARM64_ALL
+    capabilities 0x0
+    offset 74973184
+    size 84135936
+    align 2^14 (16384)
+    
+    
+lipo(脂肪) 可以增、删、提取胖二进制文件中的特定架构（Mach-O）
+
+提取特定Mach-O
+lipo bq -extract armv7 -o bq_v7   
+
+删除特定Mach-O
+lipo bq -remove armv7 -o bq_v7
+
+瘦身为Mach-O文件格式
+lipo bq -thin armv7 -o bq_v7
+
+通用二进制文件意义
+从上面可以知道，尽管通用二进制文件会占用大量的磁盘空间，但是系统会挑选合适的Mach-O来执行，不相关的架构代码不会占用内存空间，且执行效率高了。
+挑选合适的Mach-O的函数定义在<mach-o/arch.h>中，NXGetLocalArchInfo()函数获得主机的架构信息，NXFindBestFatArch()函数匹配最合适的Mach-O。
+
+
+Mach-O文件：
+Mach-O文件格式就是COFF（Common file format）格式的变种。而COFF引入了“段”的机制，不同的Mach-O文件可以拥有不同数量和不同类型的“段”。
+Mach-O目标文件是源代码编译得到的文件，那至少文件里有机器指令、数据吧。其实除了这些之外，还有链接时候需要的一些信息，比如符号表、调试信息、字符串等。
+然后按照不同的信息，放在不同的“段”（segment）中。机器指令一般放在代码段里，全局变量和局部静态变量一般放在数据段里。
+
+这里简单说下数据分段的好处，比如数据和机器指令分段：
+数据和指令可以被映射到两个不同的虚拟内存区域。数据区域是可读写的，指令区域是只读可执行。那就可以方便分别设置这两个区域的操作权限。
+两个区域分离，有助于提高缓存的命中率。（提高了程序的局部性）
+最主要是，系统运行多个该程序的副本时，它们指令是一样的，那内存只需要保存一份指令部分，可读写的数据区域进程私有。是不是节约了内存，动态链接也是这样的方式来节约内存。
+
+Mach-O文件由：Header、Load Commands、Data三部分组成。
+文件最开始的Header是mach_header结构体，定义在<mach-o/loader.h>
+//后面默认都讲64位操作系统的，老早就淘汰的古董机iPhone5s就是64位操作系统了。。。
+struct mach_header_64 {
+	uint32_t	magic;		/* mach magic number identifier */
+	cpu_type_t	cputype;	/* cpu specifier */
+	cpu_subtype_t	cpusubtype;	/* machine specifier */
+	uint32_t	filetype;	/* type of file */
+	uint32_t	ncmds;		/* number of load commands */
+	uint32_t	sizeofcmds;	/* the size of all the load commands */
+	uint32_t	flags;		/* flags */
+	uint32_t	reserved;	/* reserved */
+};
+magic：0xfeedface(32位) 0xfeedfacf(64位)，系统内核用来判断是否是mach-o格式
+cputype和cpusubtype： 作用同上面胖二进制文件里的
+filetype：由于可执行文件、目标文件、静态库和动态库等都是mach-o格式，所以需要filetype来说明mach-o文件是属于哪种文件。
+ncms：加载命令的条数 （加载命令紧跟Header之后）
+sizeofcmds：加载命令的大小
+动态连接器（dyld）的标志
+reserved：保留字段
+
+其中filetype常取字段有：
+#define	MH_OBJECT	0x1	 目标文件	
+#define	MH_EXECUTE	0x2	可执行文件	
+#define	MH_DYLIB	0x6	 动态库	
+#define	MH_DYLINKER	0x7	动态连接器	
+#define	MH_DSYM		0xa	存储二进制文件符号信息，用于Debug分析
+
+加载命令：
+Mach-O有不同类型的“段”，且系统内核（或链接器）需要不同的加载方式来加载对应的段，而加载命令就是指导系统内核如何加载，所以有了不同的加载命令。
+讲一个最普通且有代表意义的加载命令：段加载命令（LC_SEGMENT_64）
+
+LC_SEGMENT_64
+// 定义在<mach-o/loader.h>
+struct segment_command_64 { /* for 64-bit architectures */
+	uint32_t	cmd;		/* LC_SEGMENT_64 */
+	uint32_t	cmdsize;	/* includes sizeof section_64 structs */
+	char		segname[16];	/* segment name */
+	uint64_t	vmaddr;		/* memory address of this segment */
+	uint64_t	vmsize;		/* memory size of this segment */
+	uint64_t	fileoff;	/* file offset of this segment */
+	uint64_t	filesize;	/* amount to map from the file */
+	vm_prot_t	maxprot;	/* maximum VM protection */
+	vm_prot_t	initprot;	/* initial VM protection */
+	uint32_t	nsects;		/* number of sections in segment */
+	uint32_t	flags;		/* flags */
+};
+cmd表示加载命令类型，cmdsize表示加载命令大小（还包括了紧跟其后的nsects个section的大小）；需要知道的是，虽然不同加载命令的结构体不同，但是所有结构体的前两个字段都是cmd和cmdsize。这样系统在迭代所有加载命令时候，可以准确找到每个加载命令。
+segname：加载命令名字
+从fileoff（偏移）处，取filesize字节的二进制数据，放到内存的vmaddr处的vmsize字节。（fileoff处到filesize字节的二进制数据，就是“段”）
+每一个段的权限相同（或者说，编译时候，编译器把相同权限的数据放在一起，成为段），其权限根据initprot初始化，initprot指定了如何通过读/写/执行位初始化页面的保护级别。段的保护设置可以动态改变，但是不能超过maxprot中指定的值（在iOS中，+x和+w是互斥的）。
+nsects：段中section数量
+
+section
+struct section_64 { /* for 64-bit architectures */
+	char		sectname[16];	/* name of this section */
+	char		segname[16];	/* segment this section goes in */
+	uint64_t	addr;		/* memory address of this section */
+	uint64_t	size;		/* size in bytes of this section */
+	uint32_t	offset;		/* file offset of this section */
+	uint32_t	align;		/* section alignment (power of 2) */
+	uint32_t	reloff;		/* file offset of relocation entries */
+	uint32_t	nreloc;		/* number of relocation entries */
+	uint32_t	flags;		/* flags (section type and attributes)*/
+	uint32_t	reserved1;	/* reserved (for offset or index) */
+	uint32_t	reserved2;	/* reserved (for count or sizeof) */
+	uint32_t	reserved3;	/* reserved */
+};
+
+加载命令如果有section，后面会紧跟nsects个section。section的header结构体是一样的。
+
+为什么要同时存在segment和section：
+需要理解虚拟内存
+其实从链接的角度来看，Mach-O文件是按照section来存储文件的，segment只不过是把多个section打包放在一起而已；但是从Mach-O文件装载到内存的角度来看，Mach-O文件是按照segment（编译时候，编译器把相同权限的数据放在一起，成为segment）来存储的，即使一个segment里的内容小于1页空间的内存，但是还是会占用一页空间的内存，所以segment里不仅有filesize，也有vmsize，而section不需要有vmsize。
+
+查看Mach-O文件格式：
+命令： otool -l mach-o文件
+MachOView
+
+==================================================MachO文件静态链接（三）
+// a.c 文件
+extern int global_var;
+void func(int a);
+int main() {
+    int a = 100;
+    func(a+global_var);
+    return 0;
+}
+
+// b.c 文件
+int global_var = 1;
+void func(int a) {
+    global_var = a;
+}
+
+//生成a.o b.o
+xcrun -sdk iphoneos clang -c a.c b.c -target arm64-apple-ios12.2
+
+// a.o和b.o链接成可执行文件ab
+xcrun -sdk iphoneos clang a.o b.o -o ab -target arm64-apple-ios12.2
+
+生成的a.o和b.o目标文件，都是基于arm64。a.o和b.o目标文件通过静态链接后生成可执行文件ab。（由于基于arm64，其实链接过程，也有动态链接库libSystem.B.dylib(系统库)参与,但本文忽略动态链接的参与，只讨论静态链接。要是基于X86，就不会有动态库的参与。
+
+两个概念：模块和符号。
+模块：我们可以理解一个源代码文件为一个模块。比如上面a模块和b模块。我们现在写一个程序，不可能所有代码都在一个源代码文件上，都是分模块的，一般一个类在一个源文件上，就成为一个模块，模块化好处就是复用、维护，还有编译时候，未改动的模块，不用重新编译，直接用之前编译好的缓存。
+符号：简单理解就是函数名和变量名，比如上面总共有三个符号：global_var、main、func。
+
+空间和地址分配：
+相似段合并
+静态链接：输入多个目标文件，输出一个文件（一般是可执行文件）。这个过程中，把多个目标文件里相同性质的段合并到一起。比如：上面a.o和b.o目标文件合并成可执行文件ab。合并过程是a.o里面的代码段和b.o里面的代码段一起合并成ab里面的代码段，数据段同理，两个目标文件里面的数据段一起合并成ab里的数据段...
+
+两步链接
+第一步 空间与地址分配
+扫描所有的输入目标文件，并且获得他们各个段的长度、属性和位置，将输入目标文件中的符号表中所有的符号定义和符号引用收集起来（就是收集函数和变量的定义与引用），统一放到一个全局符号表。这一步中，链接器能够获得所有的输入目标文件的段的长度，将它们合并，计算出输出文件中各个段合并后的长度和位置，并建立映射关系。
+第二步 符号解析与重定位
+使用上面第一步收集到的信息，读取输入文件中段的数据、重定位信息，并且进行符号解析和重定位，调整代码中的地址等。
+
+重定位
+a模块使用了global_var和func两个符号，那是怎么知道这两个符号的地址呢？
+在a.o目标文件中：
+global_var（地址0）和func（地址0x2c，这条指令本身地址）都是假地址。编译器暂时用0x0和0x2c替代着，把真正地址计算工作留给链接器。
+通过前面的空间与地址分配可以得知，链接器在完成地址与空间分配后，就可以确定所有符号的虚拟地址了。那么链接器就可以根据符号的地址对每个需要重定位的指令进行地址修正。
+在链接后的ab可执行文件中：
+可以看到global_var（地址0x100008000，指向data段，值为1）和func（地址0x100007f90，指向func函数地址）都是真正的地址。
+
+重定位表：
+链接器是怎么知道a模块里哪些指令要被调整，这些指令如何调整。事实上a.o里，有一个重定位表，专门保存这些与重定位相关的信息。
+而且每个section的section_64的header的reloff（重定位表里的偏移）和nreloc（几个需要重定位的符号），让链接器知道a模块的哪个section里的指令需要调整。
+struct section_64 { /* for 64-bit architectures */
+	char		sectname[16];	/* name of this section */
+	char		segname[16];	/* segment this section goes in */
+	uint64_t	addr;		/* memory address of this section */
+	uint64_t	size;		/* size in bytes of this section */
+	uint32_t	offset;		/* file offset of this section */
+	uint32_t	align;		/* section alignment (power of 2) */
+	uint32_t	reloff;		/* file offset of relocation entries */
+	uint32_t	nreloc;		/* number of relocation entries */
+	uint32_t	flags;		/* flags (section type and attributes)*/
+	uint32_t	reserved1;	/* reserved (for offset or index) */
+	uint32_t	reserved2;	/* reserved (for count or sizeof) */
+	uint32_t	reserved3;	/* reserved */
+};
+重定位表可以认为是一个数组，数组里的元素为结构体relocation_info。
+//定义在<mach-o/reloc.h>里
+struct relocation_info {
+   int32_t	r_address;	/* offset in the section to what is being
+				   relocated */
+   uint32_t     r_symbolnum:24,	/* symbol index if r_extern == 1 or section
+				   ordinal if r_extern == 0 */
+		r_pcrel:1, 	/* was relocated pc relative already */
+		r_length:2,	/* 0=byte, 1=word, 2=long, 3=quad */
+		r_extern:1,	/* does not include value of sym referenced */
+		r_type:4;	/* if not 0, machine specific relocation type */
+};
+每个参数都有注释，r_address和r_length足够让我们知道要重定位的字节了；r_symbolnum（当为外部符号）是符号表的index。
+
+例如a.o中，重定位表记录符号_func和_global_var，两个符号需要重定位。并且给出了两个符号在代码段的位置，和指向符号表的index，链接时候（a.o里面有这两符号的引用，然后b.o里面有这两符号的定义，一起合并到全局符号表里），在全局符号表里，可以找到这两个符号的虚拟内存位置和其它信息（见下面符号表），就可以完成重定位工作了。
+
+上面说r_symbolnum（当为外部符号）是符号表的index，我们这里再给大家介绍一个加载命令：符号表
+加载命令--符号表
+//定义在<mach-o/loader.h>中
+struct symtab_command {
+	uint32_t	cmd;		/* LC_SYMTAB */
+	uint32_t	cmdsize;	/* sizeof(struct symtab_command) */
+	uint32_t	symoff;		/* symbol table offset */
+	uint32_t	nsyms;		/* number of symbol table entries */
+	uint32_t	stroff;		/* string table offset */
+	uint32_t	strsize;	/* string table size in bytes */
+};
+加载命令的前两个参数都是cmd和cmdsize。符号表加载命令的symoff和nsyms告诉了链接器符号表的位置（偏移）和个数；stroff和strsize告诉字符串表的位置和大小。
+
+符号表也是一个数组，里面元素是结构体nlist_64
+struct nlist_64 {
+    union {
+        uint32_t n_strx;   /* index into the string table */
+    } n_un;
+    uint8_t  n_type;       /* type flag, see below */
+    uint8_t  n_sect;       /* section number or NO_SECT */
+    uint16_t n_desc;       /* see <mach-o/stab.h> */
+    uint64_t n_value;      /* value of this symbol (or stab offset) */
+};
+n_un历史原因，忽略；n_strx字符串表的index，可以找到符号对应的字符串；n_sect第几个section；n_valuen符号的地址值。
+可以去头文件<mach-o/nlist.h>查看。
+
+符号解析：
+从普通程序员的角度看，为什么要链接，因为一个模块（a模块）可能引用了其它模块（b模块）的符号，所以需要把所有模块（目标文件）链接在一起。重定位就是：链接器会去查找由所有输入的目标文件的符号表组成的全局符号表，找到相应的符号后进行重定位。其中有2个常见的错误：
+“ld: dumplicate symbols”，多个目标文件里有相同的符号，导致全局符号表出现多个一样的符号。
+“Undefined symbols”，需要重定位的符号，在全局符号表里没有找到(一个符号：有引用，未定义)。
+
+静态库链接
+一个静态库可以简单看成一组目标文件的集合，即多个目标文件经过压缩打包后形成的一个文件。
+静态库链接：是指自己的模块与静态库里的某个模块（用到的某个目标文件，或多个目标文件）链接成可执行文件。其实和静态链接概念一样，只是这里，我们这里取了静态库里的某个/多个目标文件与我们自己的目标文件一起作为输入。
+静态库一般包含多个目标文件，一个目标文件可能只有一个函数。因为链接器在链接静态库的时候是以目标文件为单位的。假如我们把所有函数放在一个目标文件里，那我们可能只用到一个函数，确把很多没用的函数一起链接到可执行文件里。
+
+==================================================MachO文件动态链接（四）
+
+
+==================================================fishhook原理（五）

@@ -1,0 +1,50 @@
+main-myLibA-myLibB，如果main想调用myLibB里的方法改怎么办？
+
+1.修改main.m的代码
+
+#import <Foundation/Foundation.h>
+#import "myLibA.h"
+#import "myLibB.h"
+int main(){
+    myLibA *libA = [myLibA new];
+    NSLog(@"----libA:%@",libA);
+    [libA mylibAClass];
+    myLibB *libB = [myLibB new];
+    NSLog(@"----libB:%@",libB);
+    [libB MylibBClass];
+    return 0;
+}
+
+2.将myLibB的符号路径加入myLibA，使用
+-reexport_framework
+
+cd到myLibA.framework文件夹下，执行
+clang -dynamiclib  \
+-target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-Xlinker -install_name -Xlinker @rpath/myLibA.framework/myLibA \
+-Xlinker -reexport_framework -Xlinker myLibB \
+-F./Frameworks \
+-framework myLibB \
+myLibA.o -o myLibA
+
+main会通过LC_REEXPORT_DYLIB找到myLibB 1.将myLibB的头文件查找路径告诉编译器后，生成新的main cd到main所在目录下执行： 编译：
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-I./Frameworks/myLibA.framework/Headers \
+-I./Frameworks/myLibA.framework/Frameworks/myLibB.framework/Headers \
+-c main.m -o main.o
+
+链接：
+clang   \
+-target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-F./Frameworks \
+-framework myLibA \
+main.o -o main
+
+对main添加执行者路径：
+install_name_tool -add_rpath @executable_path/Frameworks main

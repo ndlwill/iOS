@@ -1,0 +1,64 @@
+void test(){
+    
+}
+void test1(){
+    
+}
+int global = 10;
+int main(){
+    global = 21;
+    global = 20;
+    test();
+    test1();
+   return 0;
+}
+
+查看代码段
+objdump --macho -d test
+
+_test:
+100003f60:
+...
+
+_test1:
+100003f70:
+...
+
+_main:
+100003f80(虚拟内存地址): 
+...
+
+查看.o文件的代码段
+objdump --macho -d test.o
+
+_test1:
+10:
+...
+
+_main:
+20:
+...
+43:         e8 00 00 00 00 (A框) callq _test
+48(B框):     e8 00 00 00 00 callq _test1
+
+编译是按照文件声明的顺序编译的，即:_text、_text1、_main
+e8固定机器码，代表callq指令
+函数_text地址等于A框偏移量加B框偏移量
+
+_text1函数的偏移量都是0，但是往上面看能够看到，_test1偏移量是10
+所以，当前函数调用的地址并不是真实的地址。
+链接的时候还会分配虚拟内存地址，链接的时候要告诉编译器将真实的地址拿过来覆盖这些占位的00 00 00 00 ，_test1放到重定位符号表里
+
+
+查看需要重定位的符号:
+objdump --macho --reloc test.o
+address  ...   symbolnum/value
+00000049 ...   _test1
+
+_test1的地址是49
+
+在编译成目标文件的时候，没有分配真实的虚拟内存地址，用了临时变量占位，把需要重新定位的函数放到重定位符号表里
+
+生成可执行文件并查看:
+clang test.m -o test
+objdump --macho -d test

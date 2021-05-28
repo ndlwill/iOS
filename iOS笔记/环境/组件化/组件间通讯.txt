@@ -1,0 +1,174 @@
+目前主流的主要有以下三种方式：
+1、URL路由
+2、target-action
+3、protocol匹配
+
+==========URL路由
+URL路由方式主要是以蘑菇街为代表的的MGJRouter
+
+其实现思路是：
+App启动时实例化各组件模块，然后这些组件向ModuleManager注册Url，有些时候不需要实例化，使用class注册
+当组件A需要调用组件B时，向ModuleManager传递URL，参数跟随URL以GET方式传递，类似openURL。然后由ModuleManager负责调度组件B，最后完成任务。
+
+// 1、注册某个URL
+MGJRouter.registerURLPattern("app://home") { (info) in
+    print("info: \(info)")
+}
+
+//2、调用路由
+MGJRouter.openURL("app://home")
+
+URL 路由的优点：
+极高的动态性，适合经常开展运营活动的app，例如电商
+方便地统一管理多平台的路由规则
+易于适配URL Scheme
+
+URl 路由的缺点：
+传参方式有限，并且无法利用编译器进行参数类型检查，因此所有的参数都是通过字符串转换而来
+只适用于界面模块，不适用于通用模块
+参数的格式不明确，是个灵活的 dictionary，也需要有个地方可以查参数格式。
+不支持storyboard
+依赖于字符串硬编码，难以管理，蘑菇街做了个后台专门管理。
+无法保证所使用的的模块一定存在
+解耦能力有限，url 的”注册”、”实现”、”使用”必须用相同的字符规则，一旦任何一方做出修改都会导致其他方的代码失效，并且重构难度大
+
+
+==========target-action
+这个方案是基于OC的runtime、category特性动态获取模块，例如通过NSClassFromString获取类并创建实例，通过performSelector + NSInvocation动态调用方法
+其主要的代表框架是casatwy的CTMediator
+
+其实现思路是：
+1、利用分类为路由添加新接口，在接口中通过字符串获取对应的类
+2、通过runtime创建实例，动态调用实例的方法
+
+//******* 1、分类定义新接口
+extension CTMediator{
+    @objc func A_showHome()->UIViewController?{
+        let params = [
+            kCTMediatorParamsKeySwiftTargetModuleName: "CJLBase_Example"
+        ]
+        
+        if let vc = self.performTarget("A", action: "Extension_HomeViewController", params: params, shouldCacheTarget: false) as? UIViewController{
+            return vc
+        }
+        return nil
+    }
+}
+
+//******* 2、模块提供者提供target-action的调用方式（对外需要加上public关键字）
+class Target_A: NSObject {
+    
+    @objc func Action_Extension_HomeViewController(_ params: [String: Any])->UIViewController{
+         
+        let home = HomeViewController()
+        return home
+    }
+
+}
+
+//******* 3、使用
+if let vc = CTMediator.sharedInstance().A_showHome() {
+    self.navigationController?.pushViewController(vc, animated: true)
+}
+
+优点：
+利用 分类 可以明确声明接口，进行编译检查
+实现方式轻量
+
+缺点：
+需要在mediator 和 target中重新添加每一个接口，模块化时代码较为繁琐
+在 category 中仍然引入了字符串硬编码，内部使用字典传参，一定程度上也存在和 URL 路由相同的问题
+无法保证使用的模块一定存在，target在修改后，使用者只能在运行时才能发现错误
+可能会创建过多的 target 类
+
+
+CTMediator源码分析：
+通过分类中调用的performTarget来到CTMediator中的具体实现，即performTarget:action:params:shouldCacheTarget:，主要是通过传入的name，找到对应的target 和 action
+- (id)performTarget:(NSString *)targetName action:(NSString *)actionName params:(NSDictionary *)params shouldCacheTarget:(BOOL)shouldCacheTarget
+{
+    if (targetName == nil || actionName == nil) {
+        return nil;
+    }
+    //在swift中使用时，需要传入对应项目的target名称，否则会找不到视图控制器
+    NSString *swiftModuleName = params[kCTMediatorParamsKeySwiftTargetModuleName];
+    
+    // generate target 生成target
+    NSString *targetClassString = nil;
+    if (swiftModuleName.length > 0) {
+        //swift中target文件名拼接
+        targetClassString = [NSString stringWithFormat:@"%@.Target_%@", swiftModuleName, targetName];
+    } else {
+        //OC中target文件名拼接
+        targetClassString = [NSString stringWithFormat:@"Target_%@", targetName];
+    }
+    //缓存中查找target
+    NSObject *target = [self safeFetchCachedTarget:targetClassString];
+    //缓存中没有target
+    if (target == nil) {
+        //通过字符串获取对应的类
+        Class targetClass = NSClassFromString(targetClassString);
+        //创建实例
+        target = [[targetClass alloc] init];
+    }
+
+    // generate action 生成action方法名称
+    NSString *actionString = [NSString stringWithFormat:@"Action_%@:", actionName];
+    //通过方法名字符串获取对应的sel
+    SEL action = NSSelectorFromString(actionString);
+    
+    if (target == nil) {
+        // 这里是处理无响应请求的地方之一，这个demo做得比较简单，如果没有可以响应的target，就直接return了。实际开发过程中是可以事先给一个固定的target专门用于在这个时候顶上，然后处理这种请求的
+        [self NoTargetActionResponseWithTargetString:targetClassString selectorString:actionString originParams:params];
+        return nil;
+    }
+    //是否需要缓存
+    if (shouldCacheTarget) {
+        [self safeSetCachedTarget:target key:targetClassString];
+    }
+    //是否响应sel
+    if ([target respondsToSelector:action]) {
+        //动态调用方法
+        return [self safePerformAction:action target:target params:params];
+    } else {
+        // 这里是处理无响应请求的地方，如果无响应，则尝试调用对应target的notFound方法统一处理
+        SEL action = NSSelectorFromString(@"notFound:");
+        if ([target respondsToSelector:action]) {
+            return [self safePerformAction:action target:target params:params];
+        } else {
+            // 这里也是处理无响应请求的地方，在notFound都没有的时候，这个demo是直接return了。实际开发过程中，可以用前面提到的固定的target顶上的。
+            [self NoTargetActionResponseWithTargetString:targetClassString selectorString:actionString originParams:params];
+            @synchronized (self) {
+                [self.cachedTarget removeObjectForKey:targetClassString];
+            }
+            return nil;
+        }
+    }
+}
+
+进入safePerformAction:target:params:实现，主要是通过invocation进行参数传递+消息转发
+
+- (id)safePerformAction:(SEL)action target:(NSObject *)target params:(NSDictionary *)params
+{
+    //获取方法签名
+    NSMethodSignature* methodSig = [target methodSignatureForSelector:action];
+    if(methodSig == nil) {
+        return nil;
+    }
+    //获取方法签名中的返回类型，然后根据返回值完成参数传递
+    const char* retType = [methodSig methodReturnType];
+    //void类型
+    if (strcmp(retType, @encode(void)) == 0) {
+        ...
+    }
+    //...省略其他类型的判断
+}
+
+
+==========protocol class
+protocol匹配的实现思路是：
+1、将protocol和对应的类进行字典匹配
+2、通过用protocol获取class，在动态创建实例
+
+protocol比较典型的三方框架就是阿里的BeeHive。
+BeeHive借鉴了Spring Service、Apache DSO的架构理念，采用AOP+扩展App生命周期API形式，将业务功能、基础功能模块以模块方式以解决大型应用中的复杂问题，并让模块之间以Service形式调用，将复杂问题切分，以AOP方式模块化服务。
+

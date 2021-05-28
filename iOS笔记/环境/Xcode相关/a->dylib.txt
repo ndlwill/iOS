@@ -1,0 +1,129 @@
+//TestDyLib.h代码
+
+#import <Foundation/Foundation.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+@interface TestDyLib : NSObject
+-(void)TestDyLib;
+
+@end
+
+//TestDyLib.m代码
+
+#import "TestDyLib.h"
+
+@implementation TestDyLib
+-(void)TestDyLib
+{
+    NSLog(@"---TestDyLib---");
+}
+@end
+
+
+#import <Foundation/Foundation.h>
+#import "TestDyLib.h"
+int main() {
+    TestDyLib *lib = [TestDyLib new];
+    NSLog(@"test---%@",lib);
+    return 0;
+}
+
+
+
+cd到TestDyLib.m文件所在目录，将TestDyLib.m编译成目标文件：
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-c TestDyLib.m -o TestDyLib.o
+
+使用libtool将TestDyLib.o编译成静态库
+libtool -static -arch_only x86_64 TestDyLib.o -o libTestDyLib.a
+
+使用ld链接器将libTestDyLib.a链接成动态库
+ld -dylib -arch x86_64 \
+-macosx_version_min 11.1 \
+-syslibroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-lsystem -framework Foundation \
+libTestDyLib.a -o libTestDyLib.dylib
+
+-lsystem：依赖系统框架
+
+cd到main.m所在目录，编译成目标文件
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-I./dylib \
+-c main.m -o main.o
+
+
+链接生成可执行文件
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-L./dylib \
+-lTestDyLib \
+main.o -o main
+
+发现报错，找不到这个符号。回到dylib目录下，修改链接器参数，再执行
+ld -dylib -arch x86_64 \
+-macosx_version_min 11.1 \
+-syslibroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-lsystem -framework Foundation \
+-all_load
+libTestDyLib.a -o libTestDyLib.dylib
+
+-all_load：告诉编译器，不管符号有没有被用到，全部都载入
+
+修改库文件中的LC_ID_DYLIB
+修改主工程文件添加LC_LOAD_DYLIB
+
+能够看到，能够将静态库链接成动态库。
+结论：动态库是.o文件链接过后的产物，是链接的最终产物，它比静态库要多走一次链接的过程。
+
+
+
+使用脚本文件编译链接
+pushd ./dylib
+echo "======TestDyLib编译成目标文件======start"
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-c TestDyLib.m -o TestDyLib.o
+echo "======TestDyLib编译成目标文件======end"
+
+
+echo "======将TestDyLib.o编译成静态库======start"
+# Xcode->静态库
+libtool -static -arch_only x86_64 TestDyLib.o -o libTestDyLib.a
+echo "======将TestDyLib.o编译成静态库======end"
+
+echo "======将TestDyLib.a链接成动态库======start"
+ld -dylib -arch x86_64 \
+-macosx_version_min 11.1 \
+-syslibroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-lsystem -framework Foundation \
+-all_load \
+libTestDyLib.a -o libTestDyLib.dylib
+echo "======将TestDyLib.a链接成动态库======end"
+install_name_tool -id @rpath/dylib/libTestDyLib.dylib libTestDyLib.dylib
+popd
+
+echo "======main编译成目标文件======start"
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-I./dylib \
+-c main.m -o main.o
+echo "======main编译成目标文件======end"
+
+echo "======链接lTestDyLib.dylib======start"
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-L./dylib \
+-lTestDyLib \
+main.o -o main
+echo "======链接lTestDyLib.dylib======end"
+install_name_tool -add_rpath @executable_path main
+

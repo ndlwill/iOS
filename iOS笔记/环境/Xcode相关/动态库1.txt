@@ -1,0 +1,109 @@
+动态库在编译时并不会被拷贝到目标程序中，目标程序中只会存储指向动态库的引用。等到程序运行时，动态库才会被真正加载进来。
+动态库的格式有：.framework、.dylib、.tbd。
+缺点：会导致一些性能损失。但是可以优化，比如延迟绑定 (Lazy Binding) 技术。
+
+tbd：全称text-based stub libraries，本质上就是一个YAML描述的文本文件。
+它的作用是用于记录动态库的一些信息，包括导出的符号、动态库的架构信息、动态库的依赖信息等等。用于避免在真机开发过程中直接使用传统的dylib。
+
+
+动态库原理：
+1、动态库是编译链接的最终产物（是.o文件链接后的产物）。
+2、之前我们讲过静态库是.o文件的合集，那么静态库就能够链接成动态库。
+
+clang -dynamiclib \
+-target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+TestExample.o -o libTestExample.dylib
+我们上面是直接将.o链接成.dylib，上面我们也说了静态库可以链接成动态库。那么接下来，我们就在上面的"编译TestExample.o ---> libTestExample.dylib" 这个一步改一下，改成下面的指令：
+# Xcode ---> 静态库
+libtool -static -arch_only x86_64 TestExample.o -o libTestExample.a
+
+echo "编译libTestExample.a ---> libTestExample.dylib"
+# -dynamiclib: 动态库
+# dylib 最终链接的产物
+ld -dylib -arch x86_64 \
+-macosx_version_min 11.1 \ # 设置支持的最小版本
+-syslibroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-lsystem -framewoek Foundation \
+-all_load \
+libTestExample.a -o libTestExample.dylib
+注意上面的-all_load
+这里因为dylib并没有使用.a文件里面的函数，所有如果不单独设置，默认是-noall_load。
+
+那么dyld: Library not loaded这个错误的是怎么产生的呢？
+首先我们要明确一点，我们的动态库是通过dyld在运行时动态加载的。
+那么我们在编译的时候只是告诉了test符号，但是在运行过程中，dyld动态加载动态库，此时去找符号的真实的地址，发现找不到。
+
+
+动态库Framework：
+下面通过Framework来讲解一下，来解决一下上面的问题：
+Framework本质上就是对静态库或者动态库的一层包装。
+
+当我们的dyld去加载一个Mach-O的时候，Mach-O里面有一个Load Command叫做LC_LOAD_DYLIB，里面保存了使用到的动态库的路径。
+动态库是运行时加载的，其实就是通过LC_LOAD_DYLIB找到动态库的路径，然后去加载的。
+
+那么我们怎么去告诉可执行文件，动态库的路径呢?
+这里大家要明确一点，动态库的路径肯定是需要动态库自己去告诉可执行文件的。
+这就需要我们在生成动态库的时候，有一个专门的字段来保存动态库的路径。
+
+下面我们就来修改一下动态库的路径。
+otool -l test | grep 'rpath' -A 5 -i
+/// 这条指令是大小写敏感的，如果想要大小写不敏感，就在末尾加一个 "-i"
+方法一：install_name_tool
+通过 install_name_tool的id指令，从外部修改LC_ID_DYLIB。
+
+方法二：在生成动态库的时候，就将地址写进入
+上面的方法是在生成动态库之后，才去修改动态库地址。
+其实我们可以在生成的过程中，就去修改。
+install_name是连接器(ld)的一个参数：
+install_name就是用来设置LC_ID_DYLIB的值的。
+
+这个时候我们来引入另一个知识点：@rpath
+上面我们在给LC_ID_DYLIB，设置值的时候，传入的是一个绝对路径，这就有一个不好的地方。那就是我们动态库不能在其他的地方使用了。
+@rpath：Runpath search Paths，dyld搜索路径，运行时@rpath指示dyld按顺序搜索路径列表，以找到动态库。
+@rpath保存一个或多个路径的变量。
+
+@rpath是由可执行文件提供的，也就是说：谁链接 动态库，谁就给 动态库 提供 @rpath
+@executable_path：表示可执行文件所在的目录，解析问可执行程序的绝对路径。
+@loader_path：表示被加载的Mach-O所在的目录，每次加载时都可能被设置为不同的路径，由上层指定。
+这次我们不使用install_name_tool
+
+1.首先我们在TestExampleBuild.sh文件中的TestExample.o链接生成TestExample.dylib的时候加上这样一条指令(这里是直接通过ld链接器操作的，所以不需要Xlinker；当然也可以使用clang
+ld -dylib -arch x86_64 \
+-macosx_version_min 11.1 \
+-syslibroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-lsystem -framework Foundation \
+-install_name @rpath/TestExample.framework/TestExample \
+TestExample.o -o TestExample
+2、接着在最后生成test可执行文件的时候，加上这样一条指令:
+echo "链接test.o ---> test"
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-F./Frameworks \
+-framework TestExample \
+-Xlinker -rpath -Xlinker @executable_path/Frameworks \
+test.o -o test
+注意：LC_RPATH可以有多条，所以使用的时候需要注意。
+
+
+多个动态库嵌套：
+多个动态库嵌套的原理，跟使用单个动态库一样。因为本身动态库就是编译连接的最终产物。比如中间动态库需要给下一级动态库设置rpath的时候
+注意，此时中间动态库给下一级动态库提供rpath的时候，使用的是@loader_path
+-Xlinker -rpath -Xlinker @loader_path/Frameworks \
+同时，中间动态库处理引入自己的头文件之外，还要引入下一级动态库的头文件：
+
+
+下面讲一下多个动态库的另一个问题：
+动态库TestExample里面嵌套者SubTestExample，如果说test想要使用SubTestExample里面的函数，这个时候应该怎么办？
+因为TestExample里面的符号对于test是暴露的；SubTestExample里面的符号对于TestExample是暴露的；
+但是，SubTestExample里面的符号对于test不是暴露。（打印一下TestExample的导出符号表objdump --macho --exports-trie TestExample）
+这个时候我们就要用到链接器的参数-reexport_framework
+我们在中间动态库的插件TestExampleBuild.sh里面添加这样一条指令（链接生成动态库的时候，不是编译的时候）：
+-Xlinker -reexport_framework -Xlinker SubTestExample \
+这样，中间动态库就会增加一条Load Command : LC_REEXPORT_DYLIB。
+这样我们的可执行文件test就可以通过读取LC_REEXPORT_DYLIB找到后面的动态库。
+使用的时候，在test的build.sh里面，test.m -> test.o的时候，引入SubTestExample的头文件：
+-I./Frameworks/TestExample.framework/Frameworks/SubTestExample.framework/Headers \
+这样test就可以正常使用SubTestExample里面的函数了。

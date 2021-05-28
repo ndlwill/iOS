@@ -83,6 +83,7 @@
 // MARK: 字节跳动/bytedance
 // https://juejin.cn/user/2788017221155176/posts
 // https://juejin.cn/user/3421335918753102/posts
+// https://juejin.cn/user/4142615543154669/posts
 
 // MARK: M3U
 // https://zh.wikipedia.org/wiki/M3U
@@ -93,6 +94,9 @@
 
 // MARK: 组件化相关
 // https://juejin.cn/user/2717648476705773/posts
+
+// MARK: MachO
+// https://juejin.cn/user/2867942500608493/posts // LG提高
 
 // MARK: LG
 // https://www.jianshu.com/u/7a85a6956d1d // ######
@@ -105,7 +109,9 @@
 // https://www.jianshu.com/u/abc807e72f0e // lldb 汇编
 // https://www.jianshu.com/p/9c98d5271e25
 // https://www.jianshu.com/u/67af4fcb405b
-// https://www.jianshu.com/u/e28ac341c88f // 
+// https://www.jianshu.com/u/e28ac341c88f //
+// https://www.jianshu.com/u/fc862e5d5651 // opengl
+// https://www.jianshu.com/u/db4c495158ca // swift,库，底层
 
 // MARK: ping
 // https://developer.apple.com/library/archive/samplecode/SimplePing/Introduction/Intro.html
