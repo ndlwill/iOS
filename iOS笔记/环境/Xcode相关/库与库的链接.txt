@@ -1,0 +1,113 @@
+库与库的链接有下列四种形式
+
+==================================================动态库链接动态库
+App链接动态库，动态库链接AFNetworking 1.创建工程MyApp 2.添加一个Target，选择Framework, MyDylib
+
+3.在MyApp目录下创建Podfile，在target 'MyDylib' do下添加如下代码： ###这是手动创建的###
+target 'MyDylib' do
+  # Comment the next line if you don't want to use dynamic frameworks
+  use_frameworks!
+
+  # Pods for MyDylib
+  pod 'AFNetworking'
+
+end
+
+----------pod init创建
+# Uncomment the next line to define a global platform for your project
+# platform :ios, '9.0'
+
+// ###写这个target，能正常运行，不写这个到时候运行会报错###
+target 'MyApp' do
+  # Comment the next line if you don't want to use dynamic frameworks
+  use_frameworks!
+
+  # Pods for MyApp
+
+end
+
+target 'MyDylib' do
+  # Comment the next line if you don't want to use dynamic frameworks
+  use_frameworks!
+
+  # Pods for MyDylib
+  pod 'AFNetworking'
+end
+----------
+
+4.重新使用xcworkspace打开项目，在MyDylib添加文件：
+#import <Foundation/Foundation.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+@interface MyDyLibTest : NSObject
+-(void)myDyLibTest;
+@end
+
+NS_ASSUME_NONNULL_END
+复制代码
+#import "MyDyLibTest.h"
+#import <AFNetworking/AFNetworking.h>
+@implementation MyDyLibTest
+-(void)myDyLibTest
+{
+    AFNetworkReachabilityManager *manager = [AFNetworkReachabilityManager sharedManager];
+    NSLog(@"myDyLibTest===%@",manager);
+}
+@end
+
+5.MyDylib Build Phases->将头文件拖到指定位置
+
+6.ViewController.m中添加调用代码：
+#import "ViewController.h"
+#import <MyDylib/MyDyLibTest.h>
+
+@interface ViewController ()
+
+@end
+
+@implementation ViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    MyDyLibTest *libTest = [MyDyLibTest new];
+    [libTest myDyLibTest];
+    
+    // Do any additional setup after loading the view.
+}
+
+@end
+
+但是我觉得标准是应该在
+MyDylib.h中写#import <MyDylib/MyDyLibTest.h>
+ViewController.m中写#import <MyDylib/MyDylib.h>
+当然ViewController.m中也可以使用#import <AFNetworking/AFNetworking.h>
+
+7.Scheme选择MyApp运行工程
+###
+如果报错
+###
+按照MyDylib保存的@rpath路径找，找不到AFNetworking
+
+动态库MyDylib被App正常链接，但是动态库AFNetworking并不在动态库MyDylib保存的@rpath与动态库AFNetworking的install_name的组合路径下
+动态库AFNetworking的路径 = MyDylib的@rpath + 动态库AFNetworking的install_name
+
+解决方法有两种分别是：
+第一种是拷贝到动态库AFNetworking到指定路径下。
+在主工程target添加pod 'AFNetworking'重新pod一下。
+这种方式能解决问题是因为在Pods-MyApp-frameworks.sh这个文件中，已经通过脚本进行拷贝了
+if [[ "$CONFIGURATION" == "Debug" ]]; then
+  install_framework "${BUILT_PRODUCTS_DIR}/AFNetworking/AFNetworking.framework"
+fi
+if [[ "$CONFIGURATION" == "Release" ]]; then
+  install_framework "${BUILT_PRODUCTS_DIR}/AFNetworking/AFNetworking.framework"
+fi
+
+第二种是修改动态库MyDylib的@rpath为动态库AFNetworking的install_name之前的绝对路径
+${BUILD_DIR}/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/AFNetworking
+
+==================================================
+
+==================================================
+
+==================================================

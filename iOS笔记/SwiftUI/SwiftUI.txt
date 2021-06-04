@@ -1,0 +1,149 @@
+// https://swiftui.jokerhub.cn/tutorials/
+// https://developer.apple.com/tutorials/swiftui
+
+// https://juejin.cn/user/2928754707933677/posts
+==========SwiftUI 和 Swift 5.1 新特性(1) some + 协议名称作为返回类型
+Swift 5.1 在 协议上的改进：Opaque Result Type 不透明结果类型。
+
+// 'some' return types are only available in iOS 13.0.0 or newer
+
+先来看一段代码，它展现了原来协议能力上的缺陷：
+protocol Shape {}
+
+struct Rectangle: Shape {}
+
+struct Union<A: Shape, B: Shape>: Shape {
+    var a: Shape
+    var b: Shape
+}
+
+struct Transformed<S: Shape>: Shape {
+    var shape: S
+}
+
+protocol GameObject {
+    associatedtype ShapeType: Shape
+    var shape: ShapeType { get }
+}
+
+struct EightPointedStar: GameObject {
+    var shape: Union<Rectangle, Transformed<Rectangle>> {
+        return Union(a:Rectangle(), b:Transformed(shape: Rectangle()))
+    }
+}
+
+上述代码是可以编译通过的，但是 EightPointedStar 的 Shape 返回类型又臭又长，被暴露了出去；如果换成 Shape 则编译不通过，原因是 associatedtype ShapeType 要求必须指定具体的类型，而 Shape 不实现 Shape 本身。
+假如 Shape 协议中含有 Self 或者 associatedtype，无法作为函数的返回参数。这是 Swift 泛型系统长久以来的一个问题。
+
+Swift 5.1 Opaque Result Type 特性，解决了上述问题，它为协议作为返回类型提供以下能力：
+语法上隐藏具体类型，所以叫做不透明结果类型
+强类型：类型参数不丢失
+允许带有 Self 或者 associatedtype 的协议作为返回类型
+
+在 Swift 5.1 中，将返回类型改成 some + 协议名称的形式：
+struct EightPointedStar: GameObject {
+    var shape: some Shape {
+        return Union(a:Rectangle(), b:Transformed(shape: Rectangle()))
+    }
+}
+这类的泛型特性也被称作“反向泛型”，因为具体的类型参数是由“实现部分”指定并隐藏起来的，而一般的泛型是由“调用者”所指定的。
+
+上面这个例子中：语法上隐藏具体类型很明显，再举一个例子说明其它 2 个特性：
+// 这个例子在Xcode 11 beta 2 之后能 work
+func foo<T: Equatable>(_ x: T, _ y: T) -> some Equatable {
+    let condition = x == y
+    return condition ? 42 : 11
+}
+
+func test() {
+  let x = foo("apples", "bananas")
+  let y = foo("apples", "oranges")
+  print(x == y) // 这里可以被调用是因为泛型系统保留了强类型
+}
+这个例子显示了不透明结果类型的三个特性：既对外隐藏了具体的 Equatable 类型；又保留了强类型（使得 x == y）可以比较；还支持了 Equatable 这个带 Self 的泛型约束。
+不透明结果类型对于函数实现有一个增强的要求：函数实现必须返回同一个具体类型，以上述代码为例：不能返回 Equatable 或者是 不同类型的 Equatable 的实现。
+这里还有一个小问题：既然 x 和 y 可以直接比较，那么它们可否直接赋值给 var i: Int 呢？答案是对于静态类型系统是不可以的，它保留了 some Equatable 的具体类型隐藏功能，但是如果使用动态类型判断 as? Int，则可以转换成 Int。
+
+
+在SwiftUI 上的应用:
+SwiftUI 中的视图类型的基本定义是一个协议 View
+public protocol View : _View {
+    // body 属性的类型
+    associatedtype Body : View
+
+    // 唯一属性 body 的类型是另一个具体类型 View
+    var body: Self.Body { get }
+}
+
+SwiftUI 最大特点的是声明式以及高度可组合，View 的唯一属性 body 是另一个满足 View 约束的具体 View 类型，我们在这里看到了组合以及递归两个特性。下面来看一个具体的 View 类型 ContentView：
+struct ContentView : View {
+    var body: some View {
+      VStack {
+        Text("Hello World")
+        Text("Love & Peace")
+      }
+    }
+}
+ContentView 使用了不透明结果类型的特性，对外隐藏了具体类型 VStack。
+此外，ContentView 的具体类型都是通过它的 body 属性递归定义的（取决于它所包含的具体 View）：
+
+
+// associatedtype定义关联类型，相当于类型的占位符，让实现协议的类型来指定具体的类型
+protocol Food {
+    
+}
+
+protocol Animal {
+    associatedtype F: Food
+    func eat(_ food: F)
+}
+
+struct Meat: Food {
+    
+}
+
+struct Grass: Food {
+    
+}
+
+struct Tiger: Animal {
+    func eat(_ food: Meat) {
+        print("eat \(food)")
+    }
+}
+
+
+==========SwiftUI 和 Swift 5.1 新特性(2) 属性代理Property Delegates
+@State 和 @Binding
+这种标记的本质是属性代理（Property Delegates），也叫属性包装器（Property Wrappers）。
+struct OrderForm : View {
+  @State private var order: Order
+  
+  var body: some View {
+    Stepper(value: $order.quantity, in: 1...10) {
+      Text("Quantity: \(order.quantity)")
+    }
+  }
+}
+这个语言特性非常通用，任何对于属性的存取有“套路”的访问，都可以用它来包装这种“套路”。
+我们先来学习一下几个套路。
+
+==========SwiftUI 和 Swift 5.1 新特性(3) Key Path Member Lookup
+@Binding 和 @State 类型背后包含的另一个特性：Key Path Member Lookup
+
+KeyPath 而不是 #keyPath
+Swift 中两个叫做 "Key Path" 的特性，一个是 #keyPath(Person.name)，它返回的是String类型，通常用在传统 KVO 的调用中，addObserver:forKeyPath: 中，如果该类型中不存在这个属性，则会在编译的时候提示你。
+我们今天着重聊的是另一个 Swift Smart Key Path KeyPath<Root,Value>，这是个泛型类型，用来表示从 Root 类型到 某个 Value 属性的访问路径，我们来看一个例子
+struct Person {
+  let name: String
+  let age: Int
+}
+
+let keyPath = \Person.name
+let p = Person(name: "Leon", age: 32)
+print(p[keyPath: keyPath]) // 打印出 Leon
+
+我们看到获取 KeyPath 的实例需要用到一个特殊的语法 \Person.name，它的类型是 KeyPath<Person, String>
+在使用 KeyPath 的地方，可以使用下标操作符来使用这个 keyPath
+上面是个简单的例子，而它的实际用途需要跟泛型结合起来：
+
