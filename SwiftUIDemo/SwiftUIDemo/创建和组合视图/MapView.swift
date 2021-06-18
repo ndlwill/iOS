@@ -10,6 +10,8 @@ import MapKit
 
 // 要在SwiftUI中使用UIView及其子类，需要把这些UIView包裹在一个遵循UIViewRepresentable协议的SwiftUI视图中
 struct MapView: UIViewRepresentable {
+    
+    var coordinate: CLLocationCoordinate2D
 
     // 第一个方法用来创建MKMapView
     // 替换body，用makeUIView(context:)方法来代替
@@ -19,7 +21,6 @@ struct MapView: UIViewRepresentable {
     
     // 第二个方法用来配置视图响应状态变化
     func updateUIView(_ uiView: MKMapView, context: Context) {
-        let coordinate = CLLocationCoordinate2D(latitude: 34.011286, longitude: -116.166868)
         let span = MKCoordinateSpan(latitudeDelta: 2.0, longitudeDelta: 2.0)
         let region = MKCoordinateRegion(center: coordinate, span: span)
         uiView.setRegion(region, animated: true)
@@ -31,6 +32,6 @@ struct MapView: UIViewRepresentable {
 
 struct MapView_Previews: PreviewProvider {
     static var previews: some View {
-        MapView()
+        MapView(coordinate: landmarkData[0].locationCoordinate)
     }
 }

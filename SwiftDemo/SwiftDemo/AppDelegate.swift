@@ -129,8 +129,12 @@
 // MARK: Runloop
 // https://juejin.im/user/78820566645534/posts
 
+// MARK: iOS14 - Widget
+// https://www.jianshu.com/u/dc87a43e2c18
+
 // MARK: 图片裁剪功能
 // https://juejin.im/post/6844904006649987085
+// TOCropViewController
 
 // MARK: Swift Package Manager(SPM) 
 
@@ -3355,4 +3359,65 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
  指令:
  callq 表示函数调用
  addq 加法
+ */
+
+// MARK: - 算法
+/**
+ 反转链表
+ class ListNode {
+     var val: Int
+     var next: ListNode?
+     
+     init(val: Int) {
+         self.val = val
+     }
+ }
+
+ class Solution {
+     class func Reverselist(head: ListNode?) -> ListNode? {
+         var cur = head
+         var pre: ListNode?
+         var next: ListNode?
+         
+         while cur != nil {
+             next = cur?.next
+             cur?.next = pre
+             pre = cur
+             cur = next
+         }
+         return pre
+     }
+     
+     class func printCurrent(head: ListNode?) {
+         var cur = head
+         if cur == nil {
+             print("空链表")
+         }
+         var string = ""
+         while cur != nil {
+             string = string + "\(cur!.val)"  + " -> "
+             cur = cur?.next
+         }
+         print(string + "Null")
+     }
+ }
+
+ 
+var head: ListNode?
+var pre: ListNode?
+for i in 1...5 {
+ let cur = ListNode(val: i)
+ if pre == nil {
+     head = cur
+     pre = head
+ } else {
+     pre?.next = cur
+     pre = cur
+ }
+}
+
+Solution.printCurrent(head: head)
+
+let reserver = Solution.Reverselist(head: head)
+Solution.printCurrent(head: reserver)
  */

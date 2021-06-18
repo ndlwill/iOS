@@ -1,0 +1,224 @@
+SwiftUI数据流采用单向数据流驱动，将数据流进行统一管理。
+简单的单向数据流（unidirectional data flow）是指用户访问View，View发出用户交互的Action，在Action里对State进行相应更新。State更新后会触发View更新页面的过程。
+
+属性包装器
+SwiftUI gives us @State, @Binding, @ObservedObject, @EnvironmentObject, and @Environment Property Wrappers.
+
+@State
+@State is a Property Wrapper which we can use to describe View’s state. 
+SwiftUI will store it in special internal memory outside of View struct. 
+Only the related View can access it. As soon as the value of @State property changes SwiftUI rebuilds View to respect state changes.
+我们使用@State来描述视图的状态， SwiftUI会将其存储在View结构之外的特殊内部存储器中。 只有相关的视图可以访问它。@State属性的值更改后，SwiftUI就会立即重建View以尊从状态更改。
+
+
+// 这里只创建Product的简单结构体
+struct Product: Identifiable {
+    var id: Int
+    var title: String
+    var isFavorited: Bool
+}
+
+// 本地数据
+let products = [
+    Product(id: 0, title: "wechat", isFavorited: false),
+    Product(id: 1, title: "qq", isFavorited: true),
+    Product(id: 2, title: "alipay", isFavorited: true),
+    Product(id: 3, title: "Tik Tok", isFavorited: false)
+]
+
+
+struct ProductsView: View {
+    let products: [Product]// 从参数中获取数据
+    @State private var showFavorited: Bool = false //为私有变量showFavorited添加@State属性包装器
+    var body: some View {
+        List {
+            
+            Toggle(isOn: $showFavorited) {
+                Text("Show Favorite")
+            }
+            
+            ForEach(products) { product in
+                if !self.showFavorited || product.isFavorited { //根据属性来更新view视图列表
+                    Text(product.title)
+                }
+            }
+        }
+    }
+}
+
+struct ProductsView_Previews: PreviewProvider {
+    static var previews: some View {
+        ProductsView(products: products)
+    }
+}
+
+当我们按下按钮，它会修改 @State 属性，从而导致 SwiftUI 重绘视图。
+
+@Binding
+@Binding provides reference like access for a value type. 
+Sometimes we need to make the state of our View accessible for its children. 
+But we can’t simply pass that value because it is a value type and Swift will pass the copy of that value. 
+And this is where we can use @Binding Property Wrapper.
+@Binding提供一个访问值类型的引用。有时我们需要在子视图中访问父视图的属性，但我们不能直接传递这个属性因为他是值类型，Swift将会传递一份值的拷贝。这时我们可以使用@Binding属性包装器实现子视图访问修改父视图存储属性。
+
+// 加入子视图代码，设立@Binding属性
+struct FilterView: View {
+    @Binding var showFavorited: Bool
+    var body: some View {
+        Toggle(isOn: $showFavorited) {
+            Text("Show Favorite")
+        }
+    }
+}
+
+struct ProductsView: View {
+    let products: [Product]
+    @State private var showFavorited: Bool = false
+    var body: some View {
+        List {
+            FilterView(showFavorited: $showFavorited) //传递@state属性包装器下值属性的引用
+            
+            ForEach(products) { product in
+                if !self.showFavorited || product.isFavorited { 
+                    Text(product.title)
+                }
+            }
+        }
+    }
+}
+
+我们用 @Binding 修饰 FilterView 的 showFavorited 属性。
+同时通过 $ 关键字来绑定值属性的引用，如果没有 $ 符号的话，Swift 传递的就是属性的值拷贝而非绑定的引用了。
+FilterView 需要对 ProductsView 的 showFavorited 属性进行读写操作，但是它不需要观察值的改变。
+一旦 FilterView 修改了 showFavorited 属性时，SwiftUI 会重建 ProductsView 及其子视图 FilterView。
+
+
+@ObservedObject
+@ObservedObject work very similarly to @State Property Wrapper, 
+but the main difference is that we can share it between multiple independent Views which can subscribe and observe changes on that object, 
+and as soon as changes appear SwiftUI rebuilds all Views bound to this object.
+@ObservedObject 的工作机制和 @State 属性包装器类似，但主要的区别是我们能够在多个独立的视图共享数据，描绘和观察对象的变化，当改变发生时，SwiftUI 会重建所有绑定到这个对象上的视图。
+
+// 遵循ObservableObject协议，绑定可观察对象
+final class PodcastPlayer: ObservableObject {
+    @Published private(set) var isPlaying: Bool = false
+    
+    func play() {
+        isPlaying = true
+    }
+    
+    func pause() {
+        isPlaying = false
+    }
+}
+
+我们有PodcastPlayer类在应用程序的屏幕之间共享。 当应用播放播客时，每个屏幕都必须显示浮动暂停按钮。 
+SwiftUI借助@Published属性包装器跟踪ObservableObject上的更改，并在标记为@Published更改的属性后立即SwiftUI重建绑定到该PodcastPlayer对象的所有View。 
+在这里我们使用@ObservedObject属性包装器将EpisodesView绑定到PodcastPlayer类
+
+struct EpisodesView: View {
+  //使用被绑定的可观察对象
+    @ObservedObject var player: PodcastPlayer
+    let episodes: [Episode]
+
+    var body: some View {
+        List {
+            Button(
+                action: {
+                    if self.player.isPlaying {
+                        self.player.pause()
+                    } else {
+                        self.player.play()
+                    }
+            }, label: {
+                    Text(player.isPlaying ? "Pause": "Play")
+                }
+            )
+            ForEach(episodes) { episode in
+                Text(episode.title)
+            }
+        }
+    }
+}
+
+Remember, we can share ObservableObject between multiple views, that’s why it must be a reference type/class.
+记住我们可以在多页面之间分享ObservableObject，那就是它为什么是引用类型。
+
+
+@EnvironmentObject
+Instead of passing ObservableObject via init method of our View we can implicitly inject it into Environment of our View hierarchy. 
+By doing this, we create the opportunity for all child Views of current Environment access this ObservableObject.
+
+无需通过View的init方法传递ObservableObject，而是可以将其隐式注入到View层次结构的Environment中。 这样我们为当前环境的所有子视图访问此ObservableObject创造了机会。
+
+class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+
+    var window: UIWindow?
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        let episodes = [
+            Episode(id: 1, title: "First episode"),
+            Episode(id: 2, title: "Second episode")
+        ]
+
+        let player = PodcastPlayer()
+        window.rootViewController = UIHostingController(
+            rootView: EpisodesView(episodes: episodes)
+                .environmentObject(player)
+        )
+        self.window = window
+        window.makeKeyAndVisible()
+    }
+}
+
+struct EpisodesView: View {
+    @EnvironmentObject var player: PodcastPlayer
+    let episodes: [Episode]
+
+    var body: some View {
+        List {
+            Button(
+                action: {
+                    if self.player.isPlaying {
+                        self.player.pause()
+                    } else {
+                        self.player.play()
+                    }
+            }, label: {
+                    Text(player.isPlaying ? "Pause": "Play")
+                }
+            )
+            ForEach(episodes) { episode in
+                Text(episode.title)
+            }
+        }
+    }
+}
+
+我们必须通过View的EnvironmentObject修饰符传递PodcastPlayer对象。 这样我们可以通过使用@EnvironmentObject属性包装器定义PodcastPlayer来轻松访问它。
+@EnvironmentObject使用动态成员查找功能在环境中查找PodcastPlayer类实例，这就是为什么您不需要通过EpisodesView的init方法传递它的原因。 在SwiftUI中，环境是依赖注入的正确方法。 它像魔术一样工作。
+
+
+@Environment
+As we discussed in the previous chapter, we can pass custom objects into the Environment of a View hierarchy inside SwiftUI. 
+But SwiftUI already has an Environment populated with system-wide settings. We can easily access them with @Environment Property Wrapper.
+如上一章所述，我们可以将自定义对象传递到SwiftUI内的View层次结构环境中。 但是SwiftUI已经有一个环境填充了系统范围的设置。 我们可以使用@Environment属性包装器轻松访问它们。可以为我们的view提供各种环境（包括暗黑模式的适配）@Environment使这一切适配变得更加容易。
+
+struct CalendarView: View {
+    @Environment(\.calendar) var calendar: Calendar
+    @Environment(\.locale) var locale: Locale
+    @Environment(\.colorScheme) var colorScheme: ColorScheme
+
+    var body: some View {
+        return Text(locale.identifier)
+    }
+}
+通过使用@Environment属性包装器标记我们的属性，我们可以访问和绘制系统范围设置的更改。 
+一旦系统的Locale，Calendar或ColorScheme更改，SwiftUI就会重新创建我们的CalendarView。
+
+@State—值类型，用于对单视图响应。
+@Binding—引用类型，用于子视图引用父视图属性。
+@ObservedObject—引用类型，用于多视图外部数据。
+@EnvironmentObject—引用类型，用于多视图分享数据。
+@Environment—配置系统环境

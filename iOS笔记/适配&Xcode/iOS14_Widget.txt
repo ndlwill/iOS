@@ -1,0 +1,451 @@
+https://developer.apple.com/design/human-interface-guidelines/widgets/overview/introduction/
+https://developer.apple.com/documentation/widgetkit
+https://developer.apple.com/documentation/widgetkit/building_widgets_using_widgetkit_and_swiftui
+
+
+// Demo
+https://blog.csdn.net/HQ_LIN
+
+To implement a widget, you add a widget extension to your app. 
+You configure the widget with a timeline provider, and use SwiftUI views to display the widget’s content. 
+The timeline provider tells WidgetKit when to update your widget’s content.
+
+Two kinds of configurations are available:
+StaticConfiguration: For a widget with no user-configurable properties. For example, a stock market widget that shows general market information, or a news widget that shows trending headlines.
+IntentConfiguration: For a widget with user-configurable properties. Use a SiriKit custom intent to define the properties. For example, a weather widget that needs a zip or postal code for a city, or a package-tracking widget that needs a tracking number.
+
+The Include Configuration Intent checkbox determines which configuration Xcode uses. 
+When you select this checkbox, Xcode uses an intent configuration; otherwise, it uses a static configuration. 
+To initialize the configuration, supply the following information:
+Kind: A string that identifies the widget. This is an identifier you choose, and should be descriptive of what the widget represents.
+Provider: An object that conforms to TimelineProvider and produces a timeline telling WidgetKit when to render the widget. A timeline contains a custom TimelineEntry type that you define. Timeline entries identify the date when you want WidgetKit to update the widget’s content. Include properties your widget’s view needs to render in the custom type.
+Content Closure: A closure that contains SwiftUI views. WidgetKit invokes this to render the widget’s content, passing a TimelineEntry parameter from the provider.
+Custom Intent: A custom intent that defines user-configurable properties. For more information about adding customization, see Making a Configurable Widget.
+
+Important:
+For an app’s widget to appear in the widget gallery, the user must launch the app that contains the widget at least once after the app is installed.
+
+###getSnapshot###
+To show your widget in the widget gallery, WidgetKit asks the provider for a preview snapshot. 
+Identify this preview request by checking the isPreview property of the context parameter passed to the getSnapshot(in:completion:) method. 
+When isPreview is true, WidgetKit displays your widget in the widget gallery.
+In response, you need to create the preview snapshot quickly. 
+If your widget needs assets or information that take time to generate or fetch from a server, use sample data instead.
+
+In the following code, the game status widget’s provider implements the snapshot method by showing an empty status if it hasn’t finished fetching the status from its server:
+struct GameStatusProvider: TimelineProvider {
+    var hasFetchedGameStatus: Bool
+    var gameStatusFromServer: String
+
+    func getSnapshot(in context: Context, completion: @escaping (Entry) -> Void) {
+        let date = Date()
+        let entry: GameStatusEntry
+
+        if context.isPreview && !hasFetchedGameStatus {
+            entry = GameStatusEntry(date: date, gameStatus: "—")
+        } else {
+            entry = GameStatusEntry(date: date, gameStatus: gameStatusFromServer)
+        }
+        completion(entry)
+    }
+
+###getTimeline###
+After requesting the initial snapshot, WidgetKit calls getTimeline(in:completion:) to request a regular timeline from the provider. 
+The timeline consists of one or more timeline entries and a reload policy that informs WidgetKit when to request a subsequent timeline.
+
+The following example shows how the game-status widget’s provider generates a timeline that consists of a single entry with the current game status from the server, 
+and a reload policy to request a new timeline in 15 minutes:
+struct GameStatusProvider: TimelineProvider {
+    func getTimeline(in context: Context, completion: @escaping (Timeline<GameStatusEntry>) -> Void) {
+        // Create a timeline entry for "now."
+        let date = Date()
+        let entry = GameStatusEntry(
+            date: date,
+            gameStatus: gameStatusFromServer
+        )
+
+        // Create a date that's 15 minutes in the future.
+        let nextUpdateDate = Calendar.current.date(byAdding: .minute, value: 15, to: date)!
+
+        // Create the timeline with the entry and a reload policy with the date
+        // for the next update.
+        let timeline = Timeline(
+            entries:[entry],
+            policy: .after(nextUpdateDate)
+        )
+
+        // Call the completion to pass the timeline to WidgetKit.
+        completion(timeline)
+    }
+}
+In this example, if the widget didn’t have the current status from the server, it could store a reference to the completion, 
+perform an asynchronous request to the server to fetch the game status, and call the completion when that request completes.
+
+For more information about generating timelines, including handling network requests in a widget, see
+Keeping a Widget Up To Date:
+https://developer.apple.com/documentation/widgetkit/keeping-a-widget-up-to-date
+
+
+###Display a Placeholder Widget###
+When WidgetKit displays your widget for the first time, it renders the widget’s view as a placeholder. A placeholder view displays a generic representation of your widget, giving the user a general idea of what the widget shows. WidgetKit calls placeholder(in:) to request an entry representing the widget’s placeholder configuration. 
+For example, the game status widget would implement this method as follows:
+
+struct GameStatusProvider: TimelineProvider {
+    func placeholder(in context: Context) -> SimpleEntry {
+        GameStatusEntry(date: Date(), gameStatus: "—")
+    }
+}
+
+###Display Content in Your Widget###
+struct GameStatusView : View {
+    @Environment(\.widgetFamily) var family: WidgetFamily
+    var gameStatus: GameStatus
+
+    @ViewBuilder
+    var body: some View {
+        switch family {
+        case .systemSmall: GameTurnSummary(gameStatus)
+        case .systemMedium: GameStatusWithLastTurnResult(gameStatus)
+        case .systemLarge: GameStatusWithStatistics(gameStatus)
+        default: GameDetailsNotAvailable()
+        }
+    }
+}
+
+###Respond to User Interactions###
+When users interact with your widget, the system launches your app to handle the request.
+When the system activates your app, navigate to the details that correspond to the widget’s content. 
+Your widget can specify a URL to inform the app what content to display. To configure custom URLs in your widget:
+
+For all widgets, add the widgetURL(_:) view modifier to a view in your widget’s view hierarchy.
+
+For widgets that use WidgetFamily.systemMedium or WidgetFamily.systemLarge, add one or more Link controls to your widget’s view hierarchy. 
+You can use both widgetURL and Link controls.
+If the interaction targets a Link control, the system uses the URL in that control. 
+For interactions anywhere else in the widget, the system uses the URL specified in the widgetURL view modifier.
+
+For example, a widget that displays details of a single character in a game can use widgetURL to open the app to that character’s detail.
+
+If the widget displays a list of characters, each item in the list can be in a Link control. Each Link control specifies the URL for the specific character it displays.
+
+When the widget receives an interaction, the system activates the containing app and passes the URL to onOpenURL(perform:), application(_:open:options:), or application(_:open:), depending on the life cycle your app uses.
+
+If the widget doesn’t use widgetURL or Link controls, 
+the system activates the containing app and passes an NSUserActivity to onContinueUserActivity(_:perform:), 
+application(_:continue:restorationHandler:), or application(_:continue:restorationHandler:). 
+The user activity’s userInfo dictionary contains details about the widget the user interacted with. 
+Use the keys in WidgetCenter.UserInfoKey to access these values from Swift code. To access the userInfo values from Objective-C, 
+use the keys WGWidgetUserInfoKeyKind and WGWidgetUserInfoKeyFamily instead.
+
+For widgets using IntentConfiguration, the user activity’s interaction property contains the widget’s INIntent.
+
+==================================================TimelineProvider
+At various times, WidgetKit requests a timeline from the provider. A timeline is an array of objects conforming to TimelineEntry. 
+Each timeline entry has a date, and you can specify additional properties for displaying the widget.
+
+WidgetKit makes the timeline request after the user adds your widget from the widget gallery. 
+Because your widget extension is not always running, WidgetKit needs to know when to activate it to update the widget.
+The timeline your provider generates informs WidgetKit when you would like to update the widget.
+
+struct CharacterDetailProvider: TimelineProvider {
+    func getTimeline(in context: Context, completion: @escaping (Timeline<CharacterDetailEntry>) -> Void) {
+        var date = Date()
+        var healthLevel = 0.25
+        var entries: [CharacterDetailEntry] = []
+
+        while healthLevel <= 1 {
+            // Add the current health level for a given date.
+            entries.append(CharacterDetailEntry(date: date, healthLevel: healthLevel))
+
+            // Health recovers at 25 percent per hour, with a maximum of 100 percent.
+            healthLevel = min(1, healthLevel + 0.25)
+
+            // Move the date forward by 1 hour.
+            date = Calendar.current.date(byAdding: .hour, value: 1, to: date)!
+        }
+
+        // Create the timeline and call the completion handler.
+        let timeline = Timeline(entries: entries, policy: .atEnd)
+        completion(timeline)
+    }
+}
+
+If your provider needs to do asynchronous work to generate the timeline, such as fetching data from a server, store a reference to the completion handler and call it when you are done with your asynchronous work.
+
+###Determining a Refresh Policy###
+When creating the timeline, the provider specifies a refresh policy that controls when WidgetKit requests a new timeline. The default behavior is to use .atEnd to request a new timeline after the last date specified by the entries in a timeline.
+
+// Request a timeline refresh after 2.5 hours.
+let date = Calendar.current.date(byAdding: .minute, value: 150, to: Date())
+let timeline = Timeline(entries: entries, policy: .after(date))
+completion(timeline)
+
+Alternatively, if future events are unpredictable, you can tell WidgetKit to not request a new timeline at all by specifying .never for the policy. In that case, your app calls the WidgetCenter function reloadTimelines(ofKind:) when a new timeline is available. Some examples of when using .never makes sense include:
+1. When the user has a widget configured to display the health of a character, but that character is no longer actively engaging in battle and its health level won’t change.
+2. When a widget’s content is dependent on the user being logged into an account and they aren’t currently logged in.
+In both examples, when your app determines that the status has changed, it calls the WidgetCenter function reloadTimelines(ofKind:) and WidgetKit requests a new timeline.
+
+==================================================Keeping a Widget Up To Date
+For a widget the user frequently views, a daily budget typically includes from 40 to 70 refreshes. 
+This rate roughly translates to widget reloads every 15 to 60 minutes, 
+but it’s common for these intervals to vary due to the many factors involved.
+
+The system takes a few days to learn the user’s behavior. During this learning period, your widget may receive more reloads than normal.
+
+If your widget can predict points in time that it should reload, the best approach is to generate a timeline for as many future dates as possible. 
+Keep the interval of entries in the timeline as large as possible for the content you display. 
+WidgetKit imposes a minimum amount of time before it reloads a widget. Your timeline provider should create timeline entries that are at least about 5 minutes apart. 
+WidgetKit may coalesce reloads across multiple widgets, affecting the exact time a widget is reloaded.
+
+==================================================Inform WidgetKit When a Timeline Changes
+WidgetCenter.shared.getCurrentConfigurations { result in
+    guard case .success(let widgets) = result else { return }
+
+    // Iterate over the WidgetInfo elements to find one that matches
+    // the character from the push notification.
+    if let widget = widgets.first(
+        where: { widget in
+            let intent = widget.configuration as? SelectCharacterIntent
+            return intent?.character == characterThatReceivedHealingPotion
+        }
+    ) {
+        WidgetCenter.shared.reloadTimelines(ofKind: widget.kind)
+    }
+}
+
+==================================================Display Dynamic Dates
+Even though your widget doesn’t run continually, it can display time-based information that WidgetKit updates live. 
+For example, it might display a countdown timer that continues to count down even if your widget extension isn’t running. 
+For more information, see Displaying Dynamic Dates in Widgets.
+
+https://developer.apple.com/documentation/widgetkit/displaying-dynamic-dates
+
+==================================================Debugging Widgets
+To debug your widget, select the widget-extension target in Xcode and choose Product > Run. Xcode automatically displays your widget on the target device, as follows:
+On iPhone, on the Home screen
+On iPad, in the Today view
+On Mac, in the WidgetKit Simulator app
+
+If your Home screen pages are full, Xcode instead uses the Today view.
+
+Debug Specific Widget Configurations
+To debug a specific family of your widget, set _XCWidgetFamily to small, medium, or large.
+If your widget extension supports multiple widgets using WidgetBundle, 
+select the specific widget to debug by setting _XCWidgetKind to a string that matches the kind property of the widget’s configuration.
+
+
+==================================================WidgetBundle
+https://developer.apple.com/documentation/SwiftUI/WidgetBundle
+@main
+struct GameWidgets: WidgetBundle {
+   var body: some Widget {
+       GameStatusWidget()
+       CharacterDetailWidget()
+   }
+}
+
+==================================================WidgetInfo
+A structure that contains information about user-configured widgets.
+
+let kind: String
+
+let family: WidgetFamily
+
+let configuration: INIntent?
+
+==================================================IntentConfiguration
+The intent is a custom SiriKit intent definition containing user-editable parameters.
+
+==================================================Making a Configurable Widget
+To add configurable properties to your widget:
+Add a custom intent definition that defines the configurable properties to your Xcode project.
+Use an IntentTimelineProvider in your widget to incorporate the user’s choices into your timeline entries.
+If the properties rely on dynamic data, implement an Intents extension.
+
+###Add a Custom Intent Definition to Your Project###
+To add and configure a custom intent that lets users select a character in a game:
+In the Project Navigator, select the intent file. Xcode shows an empty intent definition editor.
+Choose Editor > New Intent and select the intent under Custom Intents.
+Change the name of the custom intent to SelectCharacter. Note that the Attribute Inspector’s Custom Class field shows the class name you use when referring to the intent in your code. In this case, it’s SelectCharacterIntent.
+Set Category to View, and select the “Intent is eligible for widgets” checkbox to indicate that widgets can use the intent.
+Under Parameters, add a new parameter with the name character, which is the widget’s configurable setting.
+
+After you add a parameter, configure the details for it. 
+If a parameter gives users a static list of choices, choose the Add Enum menu item to create a static enumeration. 
+For example, if a parameter specifies the avatar for a character, and the list of possible avatars is a constant set that doesn’t change, 
+you can use a static enumeration that specifies the available choices in the intent definition file. 
+If the list of possible avatars can vary or is generated dynamically, use a type with dynamic options instead.
+
+In this example, the character property relies on a dynamic list of characters available in the app. To provide the dynamic data, create a new type:
+From the Type pop-up menu, choose Add Type. Xcode adds a new type in the Types section in the editor.
+Change the name of the type to GameCharacter.
+Add a new name property, and choose String from the Type pop-up menu.
+Select the SelectCharacter intent.
+In the intent editor, select the “Options are provided dynamically” checkbox to indicate that your code provides a dynamic list of items for this parameter.
+
+you’ll add code to provide the list of characters dynamically.
+
+Note:
+The order of the parameters in the intent determines the order in which they appear when users edit your widget. You can reorder items in the list by dragging them.
+
+###Add an Intents Extension to Your Project###
+To provide the list of characters dynamically, you’ll add an Intents extension to your app. When a user edits the widget, WidgetKit loads the Intents extension to provide the dynamic information. To add an Intents extension:
+Choose File > New > Target and choose the Intents extension.
+Click Next.
+Enter a name for your Intents Extension, and set Starting Point to None.
+Click Finish. If Xcode prompts you about activating the new scheme, click Activate.
+In the General tab of the new target’s properties, add an entry in the Supported Intents section and set Class Name to SelectCharacterIntent.
+In the Project navigator, select the custom intent definition file that you added earlier.
+Use the File Inspector to add the definition file to the intent extension target.
+
+Important
+In the File inspector, verify that the containing app, the widget extension, and the intent extension all include the intent definition file.
+
+
+###Implement an Intent Handler to Provide Dynamic Values###
+When users edit a widget with a custom intent that provides dynamic values, the system needs an object to provide those values. 
+It identifies this object by asking the Intents extension to provide a handler for the intent. When Xcode created the Intents extension, 
+it added a file to your project named IntentHandler.swift that contains a class named IntentHandler. 
+This class contains a method that returns the handler. You’ll extend this handler to provide the values for the widget’s customization.
+
+Based on the custom intent definition file, Xcode generates a protocol, SelectCharacterIntentHandling, 
+that the handler must conform to. Add this conformance to the declaration of the IntentHandler class. 
+(To see the details of this protocol, and other types that Xcode automatically generates, select SelectCharacterIntentHandling and choose Navigate > Jump to Definition.)
+
+class IntentHandler: INExtension, SelectCharacterIntentHandling {
+    ...
+}
+
+When a handler provides dynamic options, it must implement a method named provide[Type]OptionalCollection(for:with:), 
+where [Type] is the name of the type from the intent definition file. If this method is missing, 
+Xcode reports a build error, offering a fix-it to add the protocol stub. Build your project, and use the fix-it to add this stub.
+
+This method includes a completion handler that you call, passing an INObjectCollection<GameCharacter>. Note the GameCharacter type; 
+this is the custom type in the intent definition file. Xcode generates code to define it as follows:
+public class GameCharacter: INObject {
+    @available(iOS 13.0, macOS 11.0, watchOS 6.0, *)
+    @NSManaged public var name: String?
+}
+
+Note the name property, which also comes from the intent definition file for the custom type you added.
+
+To implement the provideCharacterOptionsCollection(for:with:) method, the widget uses a structure that exists in the game’s project. 
+This structure defines a list of available characters and their details, as follows:
+struct CharacterDetail {
+    let name: String
+    let avatar: String
+    let healthLevel: Double
+    let heroType: String
+
+    static let availableCharacters = [
+        CharacterDetail(name: "Power Panda", avatar: "🐼", healthLevel: 0.14, heroType: "Forest Dweller"),
+        CharacterDetail(name: "Unipony", avatar: "🦄", healthLevel: 0.67, heroType: "Free Rangers"),
+        CharacterDetail(name: "Spouty", avatar: "🐳", healthLevel: 0.83, heroType: "Deep Sea Goer")
+    ]
+}
+
+In the intent handler, the code iterates the availableCharacters array, creating a GameCharacter object for each character. 
+For simplicity, the identity for the GameCharacter is the character’s name. 
+The array of game characters is put into an INObjectCollection, and the handler passes the collection to the completion handler.
+
+class IntentHandler: INExtension, SelectCharacterIntentHandling {
+    func provideCharacterOptionsCollection(for intent: SelectCharacterIntent, with completion: @escaping (INObjectCollection<GameCharacter>?, Error?) -> Void) {
+
+        // Iterate the available characters, creating
+        // a GameCharacter for each one.
+        let characters: [GameCharacter] = CharacterDetail.availableCharacters.map { character in
+            let gameCharacter = GameCharacter(
+                identifier: character.name,
+                display: character.name
+            )
+            gameCharacter.name = character.name
+            return gameCharacter
+        }
+
+        // Create a collection with the array of characters.
+        let collection = INObjectCollection(items: characters)
+
+        // Call the completion handler, passing the collection.
+        completion(collection, nil)
+    }
+}
+
+With the configuration of the intent definition file done, and the Intents extension added to the app, users can edit the widget to select a specific character to display. 
+WidgetKit uses the information in the intent definition file to automatically create the user interface for editing the widget.
+
+Once the user edits the widget and selects a character, the next step is to incorporate that choice into the widget’s display.
+
+###Handle User-Customized Values###
+To support configurable properties, a widget uses the IntentTimelineProvider configuration. 
+For example, the character-details widget defines its configuration as follows:
+
+struct CharacterDetailWidget: Widget {
+    var body: some WidgetConfiguration {
+        IntentConfiguration(
+            kind: "com.mygame.character-detail",
+            intent: SelectCharacterIntent.self,
+            provider: CharacterDetailProvider(),
+        ) { entry in
+            CharacterDetailView(entry: entry)
+        }
+        .configurationDisplayName("Character Details")
+        .description("Displays a character's health and other details")
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+    }
+}
+
+The SelectCharacterIntent parameter determines the user-customizable properties for the widget. 
+The configuration uses CharacterDetailProvider to manage the timeline events for the widget. 
+
+After a user edits the widget, WidgetKit passes the user-customized values to the provider when requesting timeline entries. 
+You typically include relevant details from the intent in the timeline entries the provider generates. 
+In this example, the provider uses a helper method to look up the CharacterDetail using the name of the character in the intent, 
+and then creates a timeline with an entry containing the character’s detail:
+
+struct CharacterDetailProvider: IntentTimelineProvider {
+    func getTimeline(for configuration: SelectCharacterIntent, in context: Context, completion: @escaping (Timeline<CharacterDetailEntry>) -> Void) {
+        // Access the customized properties of the intent.
+        let characterDetail = lookupCharacterDetail(for: configuration.character.name)
+
+        // Construct a timeline entry for the current date, and include the character details.
+        let entry = CharacterDetailEntry(date: Date(), detail: characterDetail)
+
+        // Create the timeline and call the completion handler. The .never reload 
+        // policy indicates that the containing app will use WidgetCenter methods 
+        // to reload the widget's timeline when the details change.
+        let timeline = Timeline(entries: [entry], policy: .never)
+        completion(timeline)
+    }
+}
+
+When you include the user-customized values in the timeline entry, your widget can display the appropriate content.
+
+==================================================OC调用WidgetCenter
+import WidgetKit
+
+@objc
+@available(iOS 14.0, *)
+class WidgetKitManager: NSObject {
+
+    @objc
+    static let shareManager = WidgetKitManager()
+    
+    /// MARK: 刷新所有小组件
+    @objc
+    func reloadAllTimelines() {
+       #if arch(arm64) || arch(i386) || arch(x86_64)
+            WidgetCenter.shared.reloadAllTimelines()
+            #endif
+    }
+
+    /// MARK: 刷新单个小组件
+    /*
+     kind: 小组件Configuration 中的kind
+     */
+    @objc
+    func reloadTimelines(kind: String) {
+          #if arch(arm64) || arch(i386) || arch(x86_64)
+        WidgetCenter.shared.reloadTimelines(ofKind: kind)
+            #endif
+    }
+}

@@ -5,6 +5,9 @@
 //  Created by youdone-ndl on 2021/6/3.
 //
 
+// MARK: SwiftUI
+// https://www.jianshu.com/c/7b3e3b671970
+
 import UIKit
 
 @main

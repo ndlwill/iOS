@@ -19,7 +19,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         // This delegate does not imply the connecting scene or session are new (see `application:configurationForConnectingSceneSession` instead).
 
         // Create the SwiftUI view that provides the window contents.
-        let contentView = ContentView2()
+//        let contentView = ContentView2()
+        
+        // 对LandmarkList视图调用environmentObject修改器，这样可以把UserData的数据对象绑定到LandmarkList视图的环境变量中，子视图可以获得父视图环境中的变量。
+        let contentView = CategoryHome().environmentObject(UserData())// environmentObject(_:)修改器 可以把数据按视图层级关系传递下去
 
         // Use a UIHostingController as window root view controller.
         if let windowScene = scene as? UIWindowScene {

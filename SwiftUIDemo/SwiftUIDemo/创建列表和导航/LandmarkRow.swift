@@ -17,7 +17,15 @@ struct LandmarkRow: View {
                 .resizable()
                 .frame(width: 50, height: 50)
             Text(landmark.name)
+            
             Spacer()
+            
+            // 由于系统图片是矢量类型的，可以使用foregroundColor(_:)来改变它的颜色
+            if landmark.isFavorite {
+                Image(systemName: "star.fill")
+                    .imageScale(.medium)
+                    .foregroundColor(.yellow)
+            }
         }
     }
 }
