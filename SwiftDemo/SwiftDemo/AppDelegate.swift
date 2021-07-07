@@ -26,6 +26,13 @@
 // UI即User Interface(用户界面)的简称
 // raw pointer: 原始指针
 
+/**
+ // wide (utf16) string
+ typedef std::basic_string<WCHAR> string;
+ // ascii or utf8 string
+ typedef std::basic_string<char>  astring;
+ */
+
 // MARK: VPN
 // https://github.com/yichengchen/clashX/releases/download/1.50.0/ClashX.dmg
 
@@ -95,8 +102,11 @@
 // MARK: 组件化相关
 // https://juejin.cn/user/2717648476705773/posts
 
-// MARK: MachO
+// MARK: - MachO LG最新
 // https://juejin.cn/user/2867942500608493/posts // LG提高
+
+// MARK: - LG 算法
+// https://www.jianshu.com/u/219061ce49b9
 
 // MARK: LG
 // https://www.jianshu.com/u/7a85a6956d1d // ######
@@ -112,6 +122,8 @@
 // https://www.jianshu.com/u/e28ac341c88f //
 // https://www.jianshu.com/u/fc862e5d5651 // opengl
 // https://www.jianshu.com/u/db4c495158ca // swift,库，底层
+
+// https://www.jianshu.com/u/c1d3d2681143
 
 // MARK: ping
 // https://developer.apple.com/library/archive/samplecode/SimplePing/Introduction/Intro.html
@@ -131,6 +143,9 @@
 
 // MARK: iOS14 - Widget
 // https://www.jianshu.com/u/dc87a43e2c18
+
+// MARK: - 图片选择器
+// HXPhotoPicker
 
 // MARK: 图片裁剪功能
 // https://juejin.im/post/6844904006649987085

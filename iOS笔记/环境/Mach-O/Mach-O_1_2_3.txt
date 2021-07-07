@@ -1,0 +1,87 @@
+https://www.jianshu.com/p/fa5666308724
+
+==================================================1
+Header 的结构:
+struct mach_header_64 {
+    uint32_t magic;           /* mach magic number identifier */
+    cpu_type_t cputype;       /* cpu specifier */
+    cpu_subtype_t cpusubtype; /* machine specifier */
+    uint32_t filetype;        /* type of file */
+    uint32_t ncmds;           /* number of load commands */
+    uint32_t sizeofcmds;      /* the size of all the load commands */
+    uint32_t flags;           /* flags */
+    uint32_t reserved;        /* reserved */
+};
+Header的结构是固定的，size固定为32 bytes(64位架构)
+
+Load Commands 的结构:
+Load Commands 可以被看作是一个 command 列表，紧贴着 Header，所以它的 file offset 是固定的：0x20（上面说的header的size为32 bytes，即0x20）
+它们的 type 是以LC_为前缀常量，譬如 LC_SEGMENT、LC_SYMTAB 等。
+
+每个 command 都有独立的结构，但所有 command 结构的前两个字段是固定的：
+struct load_command {
+    uint32_t cmd;      /* type of load command */
+    uint32_t cmdsize;  /* total size of command in bytes */
+};
+第一个字段指定了类型，第二个字段指定了大小
+
+LC_SEGMENT_64 命令格式如下：
+struct segment_command_64 { /* for 64-bit architectures */
+    uint32_t   cmd;         /* LC_SEGMENT_64 */
+    uint32_t   cmdsize;     /* includes sizeof section_64 structs */
+    char       segname[16]; /* segment name */
+    uint64_t   vmaddr;      /* memory address of this segment */
+    uint64_t   vmsize;      /* memory size of this segment */
+    uint64_t   fileoff;     /* file offset of this segment */
+    uint64_t   filesize;    /* amount to map from the file */
+    vm_prot_t  maxprot;     /* maximum VM protection */
+    vm_prot_t  initprot;    /* initial VM protection */
+    uint32_t   nsects;      /* number of sections in segment */
+    uint32_t   flags;       /* flags */
+};
+它描述了文件映射的两大问题：从哪里来（fileoff、filesize）、到哪里去（vmaddr、vmsize）；
+它还告诉了内核该区域的名字（segname，即 segment name），以及该区域包含了几个 section（nsects），
+以及该区域的保护级别（initprot、maxprot）。
+
+每一个 segment 的 VP (Virtual Page) 都根据 initprot 进行初始化，initprot 指定了如何通过 读/写/可执行 初始化页面的保护级别；
+segment 的保护设置可以动态改变，但是不能超过 maxprot 中指定的值（在 iOS 中，+x(可执行) 和+w(可写) 是互斥的）；initprot、maxprot 的值均用八进制表示（1=r，2=w，4=x）
+vmsize 并不等于 filesize，对于 4KB 大小的 VP，vmsize 是 4K 的倍数；换句话说，vmsize 一般大于 segment 的实际大小
+
+对于 LC_SEGMENT_64 而言,如果其nsects字段大于 0，其命令后面还会紧接着挂载nsects个描述 section 的信息，这些信息是结构体section_64的列表，section_64结构体定义如下：
+struct section_64 { /* for 64-bit architectures */
+    char      sectname[16];    /* name of this section */
+    char      segname[16];     /* segment this section goes in */
+    uint64_t  addr;            /* memory address of this section */
+    uint64_t  size;            /* size in bytes of this section */
+    uint32_t  offset;          /* file offset of this section */
+    uint32_t  align;           /* section alignment (power of 2) */
+    uint32_t  reloff;          /* file offset of relocation entries */
+    uint32_t  nreloc;          /* number of relocation entries */
+    uint32_t  flags;           /* flags (section type and attributes)*/
+    uint32_t  reserved1;       /* reserved (for offset or index) */
+    uint32_t  reserved2;       /* reserved (for count or sizeof) */
+    uint32_t  reserved3;       /* reserved */
+};
+
+结构体section_64可以看做 section header，它描述了对应 section 的具体位置，以及要被映射的目标虚拟地址。
+
+segment_command_64的cmdsize字段，它的数值是segment_command_64的 size 大小，加上紧接在 command 后面的所有section_64结构体的大小。
+如果 segment 含有 2 个 section，那么对应的 segment_command_64 的 cmdsize 值为：
+72（segment_command_64本身大小） + 2 * 80（section_64的大小） = 232 bytes
+
+Data的结构:
+和 Header、Load Commands 不同，Mach-O 对 Data 区域没有任何公共的结构上的定义。
+
+Mach-O 的结构：
+一共包括三个 segment：__TEXT、__DATA、__LINKEDIT
+segment 的内容范围并非一定在 Data 区内（譬如 __TEXT segment）
+并非每一个 segment 都由 section 组成（譬如 __LINKEDIT segment）
+
+为啥 __TEXT 的地址范围从 0 开始而非从 _text 这个 section 开始呢？
+
+《OS X ABI Mach-O File Format Reference》
+The header and load commands are considered part of the first segment of the file for paging purposes. 
+In an executable file, this generally means that the headers and load commands live at the start of the __TEXT segment because that is the first segment that contains data.
+
+
+==================================================2

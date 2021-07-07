@@ -7,6 +7,7 @@
 
 // MARK: SwiftUI
 // https://www.jianshu.com/c/7b3e3b671970
+// https://www.cnblogs.com/bruce2077/tag/SwiftUI/
 
 import UIKit
 

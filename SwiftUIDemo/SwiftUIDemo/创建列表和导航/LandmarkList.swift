@@ -25,7 +25,7 @@ struct LandmarkList: View {
          */
         
         // 给列表添加导航能力，把列表视图嵌套到NavigationView视图中，然后把列表的每一个行视图嵌套进NavigationLink视图中，就可以建立起从地标列表视图到地标详情页的跳转。
-        NavigationView {
+        //NavigationView {
             // 创建列表时可以传入一个集合数据和一个闭包，闭包会针对每一个数据元素返回一个视图，这个视图就是列表的行视图。
             /**
              想让数据变成可辨别的数据类型有两种方法:
@@ -55,7 +55,7 @@ struct LandmarkList: View {
                 
             }
             .navigationBarTitle(Text("Landmarks"))// 导航条标题
-        }
+        //}
         
     }
 }
@@ -64,10 +64,14 @@ struct LandmarkList_Previews: PreviewProvider {
     static var previews: some View {
         
         ForEach(["iPhone 11", "iPhone SE (2nd generation)"], id: \.self) { deviceName in
-            LandmarkList()
-                .previewDevice(PreviewDevice(rawValue: deviceName))
-                .previewDisplayName(deviceName)
-                .environmentObject(UserData())
+            
+            NavigationView {
+                LandmarkList()
+                    .previewDevice(PreviewDevice(rawValue: deviceName))
+                    .previewDisplayName(deviceName)
+            }
+            .environmentObject(UserData())
+
         }
         
     }

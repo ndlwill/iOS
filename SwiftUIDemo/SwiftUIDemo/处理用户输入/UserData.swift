@@ -16,4 +16,5 @@ final class UserData: ObservableObject {
     // 给新建的数据模型的每一个属性添加@Published属性修饰词
     @Published var showFavoritesOnly = false
     @Published var landmarks = landmarkData
+    @Published var profile = Profile.default
 }

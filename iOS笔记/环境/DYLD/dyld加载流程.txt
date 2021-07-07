@@ -1,0 +1,93 @@
+在ViewController 中重写了load 方法，在 main中加了一个 C++方法，即kcFunc
+运行程序，查看load、kcFunc、main的打印顺序:
+load ->C++方法 -> main函数
+
+编译过程：
+源文件：载入.h .m .cpp等文件
+预处理：替换宏，删除注释，展开头文件，产生.i文件
+编译：将.i文件转换为汇编语言(进行词法分析、语法分析和语义分析，源代码优化)，产生.s文件
+汇编：将汇编文件转换为机器码文件，产生.o文件
+链接：对.o文件中引用其他库的地方进行引用，生成最后的可执行文件
+
+静态库：
+在链接阶段，会将汇编生成的目标程序与引用的静态库一起链接打包到可执行文件当中。此时的静态库就不会再改变了，因为它是编译时被直接拷贝一份，复制到目标程序里的。
+优点：编译完成后，库文件实际上就没啥作用了，目标程序没有外部依赖，直接就可以运行
+缺点：由于静态库会有两份，所以会导致目标程序体积增大，对内存、性能、速度消耗很大
+
+动态库：
+程序编译时并不会链接到目标程序中，目标程序只会存储指向动态库的引用，在程序运行时才被载入。
+优点：
+减少打包之后的 app 的大小；
+共享内存，节省资源，同一份库可以被多个程序使用；
+通过更新动态库，达到更新程序的目的，由于运行时才载入的特性，可以随时对库进行替换，而不需要重新编译代码
+缺点：
+动态载入会带来一部分性能损失，使用动态库也会使得程序依赖于外部环境，如果环境缺少了动态库，或者库的版本不正确，就会导致程序无法运行。
+
+
+dyld(the dynamic link editor)是苹果的动态链接器，是苹果操作系统的重要组成部分，在 app 被编译打包成可执行文件格式的 Mach-O文件后，交由 dyld负责链接，加载程序。
+
+共享缓存机制：在iOS系统中，每个程序依赖的动态库都需要通过 dyld 一个一个加载到内存，
+然而，很多系统库几乎都是每个程序都会用到的，如果每个程序运行的时候都重复的去加载一次，肯定会运行缓慢，
+所以为了优化启动速度，提高程序性能，就有了共享缓存机制。所有默认的动态链接库被合并成一个大的缓存文件，
+放到/System/Library/Caches/com.apple.dyld/目录下，按不同的架构保存分别保存着。
+
+https://opensource.apple.com/tarballs/dyld/
+
+（1）最开始是从dyld中的_dyld_start开始的
+dyld流程分析：
+在dyld-750.6源码中搜索_dyld_start，发现其在dyldStartUp.s文件中，查找arm64架构
+发现其调用了dyldbootstrap 命名空间下的start方法：
+// call dyldbootstrap::start(app_mh, argc, argv, dyld_mh, &startGlue)
+
+（2）dyldbootstrap::start
+源码中搜索找到dyldbootstrap命名空间，在这个文件中查找start方法
+uintptr_t start(const dyld3::MachOLoaded* appsMachHeader, int argc, const char* argv[],
+                const dyld3::MachOLoaded* dyldsMachHeader, uintptr_t* startGlue)
+{
+
+    // Emit kdebug tracepoint to indicate dyld bootstrap has started <rdar://46878536>
+    dyld3::kdebug_trace_dyld_marker(DBG_DYLD_TIMING_BOOTSTRAP_START, 0, 0, 0, 0);
+
+    // if kernel had to slide dyld, we need to fix up load sensitive locations
+    // we have to do this before using any global variables
+    rebaseDyld(dyldsMachHeader);
+
+    // kernel sets up env pointer to be just past end of agv array
+    const char** envp = &argv[argc+1];
+    
+    // kernel sets up apple pointer to be just past end of envp array
+    const char** apple = envp;
+    while(*apple != NULL) { ++apple; }
+    ++apple;
+
+    // set up random value for stack canary
+    __guard_setup(apple);
+
+#if DYLD_INITIALIZER_SUPPORT
+    // run all C++ initializers inside dyld
+    runDyldInitializers(argc, argv, envp, apple);
+#endif
+
+    // now that we are done bootstrapping dyld, call dyld's main
+    uintptr_t appsSlide = appsMachHeader->getSlide();
+    return dyld::_main((macho_header*)appsMachHeader, appsSlide, argc, argv, envp, apple, startGlue);
+}
+
+这个方法的核心是在返回值那调用了 dyld::_main 函数，同时做了很多 dyld 初始化相关的工作：
+1.rebaseDyld() dyld 重定位
+ASLR:是Address Space Layout Randomization(地址空间布局随机化)的简称。App在被启动的时候，程序会被映射到逻辑地址空间，这个逻辑地址空间有一个起始地址，ASLR技术让这个起始地址是随机的。这个地址如果是固定的，黑客很容易就用起始地址+函数偏移地址找到对应的函数地址。
+
+Code Sign：就是苹果代码加密签名机制，但是在Code Sign操作的时候，加密的哈希不是针对整个文件，而是针对每一个Page的。这个就保证了dyld在加载的时候，可以对每个page进行独立的验证。
+
+正是因为ASLR使得地址随机化，导致起始地址不固定，以及Code Sign，导致不能直接修改Image。所以需要rebase来处理符号引用问题，Rebase的时候只需要通过增加对应偏移量就行了。Rebase主要的作用就是修正内部(指向当前Mach-O文件)的指针指向，也就是基地址复位功能。
+
+2.mach_init()
+在 rebaseDyld 方法中进行 mach消息初始化
+
+3.__gurad_setup()栈溢出保护
+https://www.cnblogs.com/tcctw/p/11487645.html
+
+
+macho_header是 Mach-O文件的头部，而 dyld 加载的文件就是 Mach-O文件。
+
+（3）dyld::_main

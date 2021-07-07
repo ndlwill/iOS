@@ -19,11 +19,24 @@ struct Landmark: Hashable, Codable, Identifiable {
     var park: String
     var category: Category
     var isFavorite: Bool
+    var isFeatured: Bool
 
     var locationCoordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(
             latitude: coordinates.latitude,
             longitude: coordinates.longitude)
+    }
+    
+    var featureImage: Image? {
+        guard isFeatured else { return nil }
+        
+        // assets中的图片能用这个
+        // return Image("\(imageName)_feature")
+        
+        return Image(
+            ImageStore.loadImage(name: "\(imageName)_feature"),
+            scale: 2,
+            label: Text(name))
     }
 
     enum Category: String, CaseIterable, Codable, Hashable {

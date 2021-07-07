@@ -8,6 +8,7 @@
 import UIKit
 import SwiftUI
 
+// MARK: - https://swiftui.jokerhub.cn/
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     var window: UIWindow?
@@ -23,6 +24,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         
         // 对LandmarkList视图调用environmentObject修改器，这样可以把UserData的数据对象绑定到LandmarkList视图的环境变量中，子视图可以获得父视图环境中的变量。
         let contentView = CategoryHome().environmentObject(UserData())// environmentObject(_:)修改器 可以把数据按视图层级关系传递下去
+        
+        //let contentView = PageView(features.map { FeatureCard(landmark: $0) }).aspectRatio(3 / 2, contentMode: .fit).background(Color.red)
 
         // Use a UIHostingController as window root view controller.
         if let windowScene = scene as? UIWindowScene {
