@@ -204,7 +204,7 @@ chmod +x ./build.sh
 ./build.sh 
 
 
-六、dead_strip与静态库
+==========六、dead_strip与静态库
 准备如下代码，文件结构如下：
 build.sh
 test.m
@@ -228,7 +228,14 @@ objdump --macho -d test
 
 可以看到虽然main.m中的代码引入了TestExample.h但没有使用TestExample类，因此ld默认情况下进行了dead_strip剥离了TestExample中的代码。
 这在正常情况下没有问题，但是如果静态库中有使用OC中的分类（分类是在运行过程中动态创建的），dead_strip默认剥离所有未使用的代码就会出现问题。
-dead_strip默认剥离所有未使用的代码就会出现问题。
+
+主工程调用了静态库A 的一个 A_Test方法
+静态库 A_Test方法调用了 静态库中分类 A+Test 的方法testCategoryMethod方法
+这就是因为由于分类是运行时加载的，所以 编译器默认将它符合进行了死代码剥离。
+如何解决：
+-all_load : 全部加载不要给我脱
+-ObjC : 只保留OC的其他的该脱脱
+-force_load:指定 哪些静态库你需要脱
 
 解决方法：在xcconfig文件中添加一下参数，让ld链接静态库的时候遵循我们指定的规则剥离相应的符号：
 // -Xlinker -noall_load：dead strip，默认不加载所有静态库的所有代码
@@ -238,7 +245,28 @@ dead_strip默认剥离所有未使用的代码就会出现问题。
 STATIC_FRAMEWORK_PATH=${BUILD_DIR}/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/StaticFramework.framework/StaticFramework
 OTHER_LDFLAGS=-Xlinker -force_load ${STATIC_FRAMEWORK_PATH}
 
--Xlinker就是告诉clang向ld传递参数，并且以上四个参数只对链接静态库时起作用，Xcode Build Settings中的dead_strip是链接器提供的一种优化方式，和这里链接静态库传递的参数不是一回事。
+dead strip 两种方案的区别：
+方案一
+-noall_load /-all_load /-ObjC /-force_load<file>
+方案二
+linking
+dead Code Stripping : xxx ，它是链接器给我们提供了一种优化方式。
+
+###
+-Xlinker就是告诉clang向ld传递参数，并且以上四个参数只对链接静态库时起作用
+Xcode Build Settings中的dead_strip是链接器提供的一种优化方式，和这里链接静态库传递的参数不是一回事。 -Xlinker -dead_strip
+###
+
+dead_strip和我们的n-noall_load all_load 等它并不是一个东西
+它只是我们的链接器给我提供的一种优化方式，它是有一定规则的
+1、没有被我们入口点使用就被干掉
+2、没有被导出符号用到就会干掉
+
+如果-Xlinker -all_load -Xlinker -dead_strip 一起使用
+此时发现 除了OC的其他的全部被脱掉了,因为OC是动态语言现在给干掉它不敢啊
+
+还可以通过-Xlinker -why_live -Xlinker _xxxx 来查看这个符号为什么没有被干掉
+-Xlinker -why_live -Xlinker _global_Function
 
 如果dead_strip不能剥离完不需要的代码，链接器还提供了另一个链接参数LTO，能够在dead_strip之后进一步优化代码：
 Build Settings->Apple Clang - Code Generation

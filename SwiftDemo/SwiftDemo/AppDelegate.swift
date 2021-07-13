@@ -102,6 +102,9 @@
 // MARK: 组件化相关
 // https://juejin.cn/user/2717648476705773/posts
 
+// MARK: - MachO学习 1-6
+// https://www.jianshu.com/p/fa5666308724
+
 // MARK: - MachO LG最新
 // https://juejin.cn/user/2867942500608493/posts // LG提高
 
@@ -115,7 +118,7 @@
 // https://www.jianshu.com/p/5445fb11e06b // opengl
 // https://www.jianshu.com/u/1e8432e01e5a // swift+逆向+opengl+oc底层
 // https://www.jianshu.com/u/f4cc4a629941 // swift底层，逆向, 静态动态库 ##推荐
-// https://www.jianshu.com/u/f2349bd49c87 // macho
+// https://www.jianshu.com/u/f2349bd49c87 // macho 底层 库
 // https://www.jianshu.com/u/abc807e72f0e // lldb 汇编
 // https://www.jianshu.com/p/9c98d5271e25
 // https://www.jianshu.com/u/67af4fcb405b
