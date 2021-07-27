@@ -1,0 +1,161 @@
+防止DNS劫持
+因为DNS解析过程是运营商来操作的，我们不能去干涉他们，不然我们也就成了劫持者了，
+所以我们要做的就是在我们请求之前对我们的请求链接做一些修改，将我们原本的请求链接www.baidu.com 修改为180.149.132.47，然后请求出去，
+这样的话就运营商在拿到我们的请求后发现我们直接用的就是IP地址就会直接给我们放行，而不会去走他自己DNS解析了，也就是说我们把运营商要做的事情自己先做好了。
+不走他的DNS解析也就不会存在DNS被劫持的问题，从根本是解决了。
+
+DNSPOD
+DNS解析服务提供商
+
+==================================================NSURLProtocol
+NSURLProtocol属于iOS黑魔法的一种可以拦截任何从APP的 URL Loading System系统中发出的请求，其中包括如下：
+File Transfer Protocol (ftp://)
+Hypertext Transfer Protocol (http://)
+Hypertext Transfer Protocol with encryption (https://)
+Local file URLs (file:///)
+Data URLs (data://)
+如果你的请求不在以上列表中就不能进行拦截了，比如WKWebview，AVPlayer(比较特殊，虽然请求也是http/https但是就是不走这套系统）
+
+NSURLProtocol这个类我们不能直接使用，我们需要自己创建一个他的子类然后在我们的子类中操作他们像这样
+
+// 注册自定义protocol
+[NSURLProtocol registerClass:[CustomURLProtocol class]];
+NSURLSessionConfiguration *configuration = [NSURLSessionConfiguration defaultSessionConfiguration];
+configuration.protocolClasses = @[[CustomURLProtocol class]];
+
+在这个类中我们可以拦截到请求，然后进行处理。这个类中有四个非常重要的方法
++ (BOOL)canInitWithRequest:(NSURLRequest *)request;
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request;
+- (void)startLoading;
+//对于拦截的请求，NSURLProtocol对象在停止加载时调用该方法
+- (void)stopLoading;
+
++ (BOOL)canInitWithRequest:(NSURLRequest *)request;
+通过返回值来告诉NSUrlProtocol对进来的请求是否拦截
+比如我只拦截HTTP的，或者是某个域名的请求之类
+
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request;
+如果上面的方法返回YES那么request会传到这里，这个地方通常不做处理 直接返回request
+
+- (void)startLoading;
+这个地方就是对我们拦截的请求做一些处理，我们文中所做的IP对域名的替换就在这里进行，处理完之后将请求转发出去，比如这样
+- (void)startLoading {
+///其中customRequest是处理过的请求(域名替换后的)
+    NSURLSession *session = [NSURLSession sessionWithConfiguration:[[NSURLSessionConfiguration alloc] init] delegate:self delegateQueue:nil];
+    NSURLSessionDataTask *task = [session dataTaskWithRequest:customRequest];
+    [task resume];
+}
+
+你可以在 - startLoading 中使用任何方法来对协议对象持有的 request 进行转发，包括 NSURLSession、 NSURLConnection 甚至使用 AFNetworking 等网络库，
+只要你能在回调方法中把数据传回 client，帮助其正确渲染就可以，比如这样：
+
+- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didReceiveResponse:(NSURLResponse *)response completionHandler:(void (^)(NSURLSessionResponseDisposition))completionHandler {
+    [[self client] URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageAllowed];
+    
+    completionHandler(NSURLSessionResponseAllow);
+}
+
+- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didReceiveData:(NSData *)data {
+    [[self client] URLProtocol:self didLoadData:data];
+}
+
+- (void)stopLoading;
+请求完毕后调用
+
+/*! 
+    @method client
+    @abstract Returns the NSURLProtocolClient of the receiver. 
+    @result The NSURLProtocolClient of the receiver.  
+*/
+@property (nullable, readonly, retain) id <NSURLProtocolClient> client;
+这个是请求的发送者，打个比方，A想给B发送一个消息，由于距离遥远于是A去了邮局，A把消息内容告诉了邮局，并且A在邮局登记了自己名字方便B有反馈的时候邮局来通知A查收。
+这个例子中邮局就是NSURLProtocol，A在邮局登记的名字就是client。
+所有的 client 都实现了 NSURLProtocolClient 协议，协议的作用就是在 HTTP 请求发出以及接受响应时向其它对象传输数据：
+@protocol NSURLProtocolClient <NSObject>
+...
+- (void)URLProtocol:(NSURLProtocol *)protocol didReceiveResponse:(NSURLResponse *)response cacheStoragePolicy:(NSURLCacheStoragePolicy)policy;
+
+- (void)URLProtocol:(NSURLProtocol *)protocol didLoadData:(NSData *)data;
+
+- (void)URLProtocolDidFinishLoading:(NSURLProtocol *)protocol;
+...
+@end
+
+我们需要把原来的域名加到http请求的Header中的host字段下
+根据Http协议的规定，如果在URL中无法找到域名的话就会去Header中找
+[mutableRequest setValue:self.request.URL.host forHTTPHeaderField:@"HOST"];
+
+
+AfNetworking的问题：
+因为hook第三方的代码并不是一个很好的办法，所以我直接hook NSURLSession的sessionWithConfiguration方法，因为通过观察Afnetworking的源码最终都是走到这里的。Hook之后把自己的configuration换进去，像这样
++ (NSURLSession *)swizzle_sessionWithConfiguration:(NSURLSessionConfiguration *)configuration {
+    
+    NSURLSessionConfiguration *newConfiguration = configuration;
+    // 在现有的Configuration中插入我们自定义的protocol
+    if (configuration) {
+        NSMutableArray *protocolArray = [NSMutableArray arrayWithArray:configuration.protocolClasses];
+        [protocolArray insertObject:[CustomProtocol class] atIndex:0];
+        newConfiguration.protocolClasses = protocolArray;
+    }
+    else {
+        newConfiguration = [NSURLSessionConfiguration defaultSessionConfiguration];
+        NSMutableArray *protocolArray = [NSMutableArray arrayWithArray:configuration.protocolClasses];
+        [protocolArray insertObject:[CustomProtocol class] atIndex:0];
+        newConfiguration.protocolClasses = protocolArray;
+    }
+    
+    return [self swizzle_sessionWithConfiguration:newConfiguration];
+}
+
+注意下系统的是有两个方法的
+/*
+ * Customization of NSURLSession occurs during creation of a new session.
+ * If you only need to use the convenience routines with custom
+ * configuration options it is not necessary to specify a delegate.
+ * If you do specify a delegate, the delegate will be retained until after
+ * the delegate has been sent the URLSession:didBecomeInvalidWithError: message.
+ */
++ (NSURLSession *)sessionWithConfiguration:(NSURLSessionConfiguration *)configuration;
++ (NSURLSession *)sessionWithConfiguration:(NSURLSessionConfiguration *)configuration delegate:(nullable id <NSURLSessionDelegate>)delegate delegateQueue:(nullable NSOperationQueue *)queue;
+
+对于POST请求我们的NSURLProtocol是可以正常拦截的，但是我们拦截之后发现无论怎么样我们获得的body体都为nil
+为了解决这个问题，我们可以通过把Body数据放到Header中，不过Header的大小好像是有限制的
+而且当Body数据为二进制数据时这招也没辙了，因为Header里都是文本数据
+查了大量的资料发现：
+既然post请求的httpbody没有苹果复制下来，那我们就不用httpbody，我们再往底层去看就会发现HTTPBodyStream这个东西我们可以通过他来获取请求的body体具体代吗如下
+#pragma mark -
+#pragma mark 处理POST请求相关POST  用HTTPBodyStream来处理BODY体 ###方法无效###
+- (NSMutableURLRequest *)handlePostRequestBodyWithRequest:(NSMutableURLRequest *)request {
+    NSMutableURLRequest * req = [request mutableCopy];
+    if ([request.HTTPMethod isEqualToString:@"POST"]) {
+        if (!request.HTTPBody) {
+            uint8_t d[1024] = {0};
+            NSInputStream *stream = request.HTTPBodyStream;
+            NSMutableData *data = [[NSMutableData alloc] init];
+            [stream open];
+            while ([stream hasBytesAvailable]) {
+                NSInteger len = [stream read:d maxLength:1024];
+                if (len > 0 && stream.streamError == nil) {
+                    [data appendBytes:(void *)d length:len];
+                }
+            }
+            req.HTTPBody = [data copy];
+            [stream close];
+        }
+    }
+    return req;
+}
+这样之后的req就是携带了body体的request
+
+###
+在NSURLProtocol中的那几个类方法中是可以发送同步请求的，但是在实例方法发送同步请求就会卡死，所以实例方法中不能有任何的阻塞，进行同步操作。不然就卡死。
+###
+
+==================================================WKWebView
+
+
+
+业内已有的 WKWebView 请求拦截方案，主要分为如下两种:
+NSURLProtocol
+NSURLProtocol 默认会拦截所有经过 URL Loading System 的请求，因此只要 WKWebView 发出的请求经过 URL Loading System 就可以被拦截。
+经过我们的尝试，发现 WKWebView 独立于应用进程运行，发出去的请求默认是不会经过 URL Loading System

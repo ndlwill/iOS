@@ -1,0 +1,185 @@
+https://www.zhihu.com/column/c_1254403935512834048
+
+DSL: Domain Specific Language 领域特定语言
+
+==================================================CocoaPods Packager
+https://zhuanlan.zhihu.com/p/125702468
+
+作为 CococaPods 的官方插件之一，CocoaPods Packager 为 Pod 提供了 package 命令来生成 framework or static library。
+你可以仅凭一个 podspec 文件就能完成一个 framework 或 library 的生成。
+
+包管理，不得不提 RubyGems 和 Bundler。CocoaPods 背后的原型就是基于它们俩.
+
+RubyGems 是为 ruby library 提供集中代码托管的服务。Bundler 则是针对当前项目来管理 Gem 版本的工具.
+
+
+Bundler 依据项目中的 Gemfiles 文件来管理 Gem，就好比 CocoaPods 通过 Podfile 来管理 Pod 的版本一样。Gemfile 长这样：
+source 'https://gems.example.com' do
+  gem 'cocoapods', '1.8.4'
+  gem 'another_gem', :git => 'https://looseyi.github.io.git', :branch => 'master'
+end
+
+Podfile 的 DSL 和 Gemfile 如出一辙。
+
+
+那什么情况会用到 Gemfile 呢？
+比如，公司级项目中可以通过 gemfile 来统一 CocoaPods 的版本，不然大家各自为政会导致提交代码会因为 CocoaPods 版本不同导致对项目的配置产生各种差异
+当然还可以管理 CocoaPods 的插件版本，可以指向你自己的定制版本。
+
+
+Bundle 的使用也很简单，在 gem install bundler 后，通过添加 bundle exec 前缀来执行 pod 命令。
+这时会读取安装在本地 .bundle/ 目录或全局目录下所指定的 Gem 包来执行 pod 命令。
+bundle install #安装 gemfile 中的包
+bundle exec pod install
+
+Gem
+The software package is called a “gem” which contains a packaged Ruby application or library.
+
+Gem 则是包含 Ruby 代码的 application 或者 library
+CocoaPods Plugin 本质上就是 Gem
+
+看一眼 Gem 的文件结构：
+tree CocoaPods -L 2
+CocoaPods
+├── Rakefile
+├── cocoapods.gemspec
+├── bin
+│   ├── pod
+│   └── sandbox-pod
+├── lib
+│   ├── cocoapods
+│   ├── ...
+└── spec
+│   ├── cocoapods-integration-specs
+│   ...
+
+bin：可执行文件目录，当 gem install 的时候，会被加载到用户的 PATH 路径下；
+lib：gem 的源代码目录；
+spec：gem 的测试代码目录；
+Rakefile：是自动化测试程序 rake 的配置文件，也可用于生成代码或者其他任务；
+gemspec：描述了 gem 的关键信息
+
+
+GemSpec
+The gemspec specifies the information about a gem such as its name, version, description, authors and homepage.
+
+既然 CocoaPods 也是 Gem，它的 GemSpec 包含哪些信息呢：
+Gem::Specification.new do |s|
+  s.name     = "cocoapods"
+  s.version  = Pod::VERSION
+  s.files = Dir["lib/**/*.rb"] + %w{ bin/pod bin/sandbox-pod README.md LICENSE CHANGELOG.md }
+  s.executables   = %w{ pod sandbox-pod }
+  s.require_paths = %w{ lib }
+  s.add_runtime_dependency 'cocoapods-core',        "= #{Pod::VERSION}"
+  s.add_runtime_dependency 'claide',                '>= 1.0.2', '< 2.0'
+  s.add_runtime_dependency 'xcodeproj',             '>= 1.14.0', '< 2.0'
+  ...
+end
+
+如果你有搞过 Pod library 的话。PodSpec 类比 Gemspec
+
+CocoaPods Plugins:
+作为 CocoaPods 的 Plugin，CocoaPods 为我们提供了方便生成 plugin 模版的命令。
+
+pod plugins create NAME [TEMPLATE_URL]
+生成 plugin 模版的文件目录与 gem 相差无几，这里直接贴 cocoapods-packager 的文件目录：
+
+cocoapods-packager
+├── Gemfile
+├── Rakefile
+├── cocoapods-packager.gemspec
+├── lib
+│   ├── cocoapods-packager
+│   ├── cocoapods_packager.rb
+│   ├── cocoapods_plugin.rb
+│   └── pod
+└── spec
+    ├── command
+    ├── fixtures
+    ├── integration
+    ├── spec_helper.rb
+    └── unit
+...
+
+
+Package:
+基于 Packager 内部提供的测试 spec 来做示例，启动命令如下：
+bundle exec pod package ${workspaceRoot}/cocoapods-packager/spec/fixtures/KFData.podspec --dynamic
+
+Package 类：
+module Pod
+    class Command
+      class Package < Command
+         # functions ...
+    end
+end
+Package Command 继承自 CocoaPods 内部所提供的命令工具模块 CLAide::Command。所有扩展 Pod 的命令都需要继承它，同时需要重载它的 options、validate、initialize 和 run 四个方法。
+
+
+==================================================版本管理工具及 Ruby 工具链环境
+https://zhuanlan.zhihu.com/p/147537112
+
+Version Control System (VCS):
+版本控制系统是敏捷开发的重要一环，为后续的持续集成提供了保障。
+Source Code Manager (SCM) 源码管理就属于 VCS 的范围之中，熟知的工具有如 Git 。
+
+Package Manger (PM)也可以看作是 SCM 的一种
+
+Git 或 SVN 是针对项目的单个文件的进行版本控制，而 PM 则是以每个独立的 Package 作为最小的管理单元。
+包管理工具都是结合 SCM 来完成管理工作，对于被 PM 接管的依赖库的文件，通常会在 Git 的 .ignore 文件中选择忽略它们。
+
+在 Node 项目中一般会把 node_modules 目录下的文件 ignore 掉，在 iOS / macOS 项目则是 Pods。
+
+Git Submodule:
+Git submodules allow you to keep a git repository as a subdirectory of another git repository. 
+Git submodules are simply a reference to another repository at a particular snapshot in time. 
+Git submodules enable a Git repository to incorporate and track version history of external code.
+
+https://www.bootcss.com/p/git-guide/
+
+submodule项目和父项目本质上是两个独立的git仓库，只是父项目存储了它依赖的submodule项目的版本号信息。
+添加子模块:
+git submodule add <url> <path>
+url为子模块的路径，path为该子模块存储的目录路径。
+
+克隆含有子模块的项目：
+当一个git项目包含子模块时，直接克隆下来的子模块目录里面是空的。
+要克隆子模块需要执行下面的步骤：
+1、初始化本地子模块配置文件
+git submodule init
+2、更新项目，抓取子模块内容
+git submodule update
+
+git submodule类似于引用，父仓库引用了子仓库，两者的更新是独立的；
+
+Git Submodules 可以算是 PM 的“青春版”，它将单独的 git 仓库以子目录的形式嵌入在工作目录中。
+它不具备 PM 工具所特有的语义化版本[2]管理、无法处理依赖共享与冲突等。
+
+Git submodule 是依赖 .gitmodules 文件来记录子模块的。
+[submodule "ReactNative"]
+ path = ReactNative
+ url = https://github.com/facebook/ReactNative.git
+
+
+.gitmodules 仅记录了 path 和 url 以及模块名称的基本信息， 但是我们还需要记录每个 Submodule Repo 的 commit 信息，而这 commit 信息是记录在 .git/modules 目录下。
+同时被添加到 .gitmodules 中的 path 也会被 git 直接 ignore 掉。
+
+Package Manger:
+PM 基本都具备了语义化的版本检查能力，依赖递归查找，依赖冲突解决，以及针对具体依赖的构建能力和二进制包等。
+
+| **Key File** | **Git submodule** | **CocoaPods** | **SPM**          | **npm**           |
+| ------------ | ----------------- | ------------- | ---------------- | ----------------- |
+| **描述文件** | .gitmodules       | Podfile       | Package.swift    | Package.json      |
+| **锁存文件** | .git/modules      | Podfile.lock  | Package.resolved | package-lock.json 
+
+PM 工具基本围绕这个两个文件来现实包管理：
+描述文件：声明了项目中存在哪些依赖，版本限制；
+锁存文件（Lock 文件）：记录了依赖包最后一次更新时的全版本列表。
+
+除了这两个文件之外，中心化的 PM 一般会提供依赖包的托管服务.比如 npm 提供的 http://npmjs.com[3] 可以集中查找和下载 npm 包。
+如果是去中心化的 PM 比如 iOS 的 Carthage 和 SPM 就只能通过 Git 仓库的地址了。
+
+CocoaPods:
+CocoaPods 是开发 iOS/macOS 应用程序的一个第三方库的依赖管理工具。 
+利用 CocoaPods，可以定义自己的依赖关系（简称 Pods），以及在整个开发环境中对第三方库的版本管理非常方便。
+

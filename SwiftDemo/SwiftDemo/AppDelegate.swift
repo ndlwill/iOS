@@ -99,6 +99,10 @@
 // MARK: ipv6
 // https://github.com/WeMobileDev/article/blob/master/IPv6%20socket%E7%BC%96%E7%A8%8B.md#%E9%97%AE%E9%A2%98%E5%A4%8D%E6%9D%82%E6%80%A7
 
+// MARK: - 网易
+// https://juejin.cn/team/6932010947578069006/posts
+// https://www.jianshu.com/u/fd21f41fb522
+
 // MARK: 组件化相关
 // https://juejin.cn/user/2717648476705773/posts
 
