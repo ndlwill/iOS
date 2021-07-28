@@ -1,0 +1,175 @@
+==================================================用 SPM 依赖第三方
+
+添加 Swift Package Manager 依赖
+File -> Swift Package -> Add Package Dependency...
+或者点击到 PROJECT -> Swift Packages 也是可以的
+
+输入库链接
+这里我用 Alamofire 作为演示, 复制 github 的 git 地址, 点击 Next.
+
+下载代码选项的配置
+验证成功的话，出现以下该界面
+这里有三个选项, 是选择要以依赖的代码， 以哪种方式下载:
+Version: 对应库的 Release 版本.  这里可选择大于小于这些规则
+Branch: 直接下载某个分支的代码
+Commit: 某一个提交记录的 Id
+点击 Next, 这时候就开始下载代码了
+
+完成
+下载成功后, 这里一般可直接点击 Finish 就可以了
+
+更新依赖
+选择 File -> Swift Packages -> Update to Latest Package Versions 即可
+
+第三方源码存放位置
+其实我们在项目中对着 Alamofire 里面的文件, Show Finder 一下
+具体路径: ~/Library/Developer/Xcode/DerivedData/XQTestOne-dcchhjjlbxiykzfmyuzjpihdlfri/SourcePackages/checkouts/Alamofire
+这里就是 Xcode 项目编译缓存的地方
+
+依赖关系是写在哪里？
+一般配置文件, 都是在 xxx.xcodeproj/project.pbxproj 文件下
+
+
+==================================================自己如何去创建一个支持 Swift Package 的库
+创建 Swift Package 库
+
+初始化 Swift Package 项目
+命令行初始化:
+创建 TestSPM 文件夹, 然后打开终端 cd 到该文件夹下, 输入
+swift package init
+
+Package.swift: 是描述库的一些配置, 属性等等, 可以当做 CocoaPods 的 xxx.podspec 文件. 
+Source/xxx 文件夹: 放源码的文件夹, 我们直接把源码扔到这个文件夹下就可以了
+
+使用 Xcode 初始化:
+File->New->Swift Package
+
+编写库代码
+然后 command + build 一下, 看看是否正确.
+
+上传库到云端
+修改好后, 上传库到云端(github, gitee, gitlab 或者其他托管服务器都行),
+
+项目进行依赖
+如果你不想发 Release 版本, 就直接选择 Branch, 或者 Commit 就行.
+比如我当前没创建 Release (打Tag)版本, 直接进行依赖的话, 就会出现以下错误
+The package dependency graph can not be resolved; unable find any available tag for the following requirements:
+这个时候, 我们只需要把 Version 改为 Branch 或者 Commit 就行了.
+例如我这里选择 Branch, 并输入 master 分支, 这样就能点击 Next 了.
+
+
+库中, 依赖别的第三方:
+这个只要在库里的 Package.swift 文件, 添加依赖就行了
+
+import PackageDescription
+
+let package = Package(
+    name: "XQPackageTest",
+    platforms: [
+        .iOS(.v10),
+    ],
+    products: [
+        .library(
+            name: "XQPackageTest",
+            targets: ["XQPackageTest"]),
+    ],
+    
+    /// 依赖那些第三方
+    dependencies: [
+        .package(url: "https://github.com/SnapKit/SnapKit.git", from: .init(5, 0, 1)),
+    ],
+    
+    targets: [
+        .target(
+            name: "XQPackageTest",
+            dependencies: [
+                // 你依赖的第三方
+                "SnapKit",
+        ]),
+        .testTarget( name: "XQPackageTestTests", dependencies: ["XQPackageTest"]),
+        
+    ],
+)
+
+
+属性介绍:
+import PackageDescription
+
+let package = Package(
+    
+    name: "XQPackageTest",
+    
+    /// 支持平台多少版本以上
+    platforms: [
+        .iOS(.v10),
+//        .macOS(.v10_12),
+//        .tvOS(.v10),
+//        .watchOS()
+    ],
+    
+    /// 该库的一些配置
+    products: [
+        .library(
+            name: "XQPackageTest",
+            // 动态库 or 静态库
+            // 默认为 静态库
+            type: .static,
+            targets: ["XQPackageTest"]),
+    ],
+    
+    /// 依赖那些第三方
+    dependencies: [
+        
+        // 第三方有良好的版本格式: 大版本.小版本.测试版本
+        // 就可以直接用这个
+        .package(url: "https://github.com/SnapKit/SnapKit.git", from: .init(5, 0, 1)),
+        
+        // 如果第三方版本格式, 是其他的, 例如 1.2, 根本没用第三位, 那么我们也可以这样, 直接传入字符串
+        // .package(url: "https://github.com/SnapKit/SnapKit.git", from: .init(stringLiteral: "5.0.1")),
+        
+        // 如果第三方目前的 release 版本还没支持 SPM 的话, 我们可以直接指向他的 master 分支
+        // .package(url: "https://github.com/SnapKit/SnapKit.git", Package.Dependency.Requirement.branch("master")),
+        
+        // 当然, 也能关联本地的能支持 SwiftPM 的库
+        // .package(path: "../XQSwiftPMTest"),
+    ],
+    
+    
+    targets: [
+        // 你库的 target
+        .target(
+            name: "XQPackageTest",
+            dependencies: [
+                // 你关联的第三方
+                "SnapKit",
+        ]),
+        
+        // 测试的 target
+        .testTarget(
+            name: "XQPackageTestTests",
+            dependencies: ["XQPackageTest"]),
+        
+    ],
+    
+    // 库支持 Swift 语言版本
+    swiftLanguageVersions: [
+        .v5
+    ]
+)
+
+能编写 OC 和 C 这些的库
+.h是 ==Sources/[targetName]/include== 路径下.
+如果要修改为某个路径下的.h文件,  要自己重写 target 的 ==publicHeadersPath==.
+publickHeadersPath 默认的路径是在 ==[Sources]/[targetName]== 下.
+
+例如我要暴露整个库所有的 .h
+publicHeadersPath 就为 "../XQPackageTest" 即可
+
+
+库不会更新到最新:
+修改完自己的库, 提交上去, 偶尔会出现无法下拉最新代码.
+这时候选中 File -> Swift Packages -> Reset Package Caches
+如还没有, 那么尝试关闭 Xcode，或点击 Update tolatest Package Versions 操作.
+
+如还是没有的话...那么 Show Find 你的库, 进入到项目的编译缓存文件夹, 删除这个项目的编译缓存
+路径如这样 ==~/Library/Developer/Xcode/DerivedData/你项目的名称-随机码==
