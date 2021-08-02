@@ -1,8 +1,33 @@
+链接一个库的三要素：
+1、头文件（-I）
+2、库文件所在的位置（-F）
+3、库文件名称 (-framework)
+
+###
+framework的报错: 一般需要知道库文件所在的位置，后续在根据错误进行修改
+###
+
+HEADER_SEARCH_PATHS: Xcode会递归的在文件夹里面去寻找对应的###头文件###
+
+FRAMEWORKS_FOLDER_PATH = TestMyApp.app/Frameworks
+
 库与库的链接有下列四种形式
-
 ==================================================动态库链接动态库
-App链接动态库，动态库链接AFNetworking 1.创建工程MyApp 2.添加一个Target，选择Framework, MyDylib
+App->动态库A->动态库B
+对于App，动态库A正常链接，但是动态库B并不在动态库A（他链接的动态库B）保存的@rpath与动态库B的install_name组合的路径下：
+动态库B的路径 = 动态库A的rpath + 动态库B的install_name
+解决：修改动态库A的@rpath或者copy动态库B到指定路径中。
 
+修改动态库A的rpath为动态库B的install_name之前的绝对路径。这样在当前工作空间下，A就可以使用B的相关符号。
+LD_RUNPATH_SEARCH_PATHS = $(inherited) ${PODS_CONFIGURATION_BUILD_DIR}/AFNetworking
+如果同时想让APP也使用B，根据我们在动态库里面讲的，可以将B的符号暴露给APP。
+/// 动态库 A 的xcconfig
+OTHER_LDFLAGS=-Xlinker -reexport_framework -Xlinker AFNetworking
+
+通过Cocoapods向App中导入动态库B，在导入的过程中，Cocoapods会帮助我们将动态库B拷贝到App的Frameworks/目录下
+
+
+App链接动态库，动态库链接AFNetworking 1.创建工程MyApp 2.添加一个Target，选择Framework, MyDylib
 3.在MyApp目录下创建Podfile，在target 'MyDylib' do下添加如下代码： ###这是手动创建的###
 target 'MyDylib' do
   # Comment the next line if you don't want to use dynamic frameworks
@@ -17,7 +42,11 @@ end
 # Uncomment the next line to define a global platform for your project
 # platform :ios, '9.0'
 
-// ###写这个target，能正常运行，不写这个到时候运行会报错###
+###
+写MyApp这个target，能正常运行，不写这个到时候下面运行会报错
+写了MyApp这个target，就会生成Pods-MyApp.debug.xcconfig和Pods-MyApp.release.xcconfig，就会进行AFNetworking的相关配置，可以正常运行
+###
+
 target 'MyApp' do
   # Comment the next line if you don't want to use dynamic frameworks
   use_frameworks!
@@ -34,6 +63,16 @@ target 'MyDylib' do
   pod 'AFNetworking'
 end
 ----------
+
+###
+ViewController.m使用MyDyLibTest
+
+MyDyLib.h不写#import <MyDyLib/MyDyLibTest.h>
+ViewController.m写#import <MyDyLib/MyDyLibTest.h>,但有警告Missing submodule 'MyDyLib.MyDyLibTest'
+
+MyDyLib.h写#import <MyDyLib/MyDyLibTest.h>
+ViewController.m写#import <MyDyLib/MyDyLib.h> 应该使用这种方式
+###
 
 4.重新使用xcworkspace打开项目，在MyDylib添加文件：
 #import <Foundation/Foundation.h>
@@ -103,11 +142,140 @@ if [[ "$CONFIGURATION" == "Release" ]]; then
   install_framework "${BUILT_PRODUCTS_DIR}/AFNetworking/AFNetworking.framework"
 fi
 
+BUILT_PRODUCTS_DIR = /Users/youdone-ndl/Library/Developer/Xcode/DerivedData/MyTestApp-hercrpktlxlbnndxilalnflmfjtq/Build/Products/Debug-iphonesimulator
+
 第二种是修改动态库MyDylib的@rpath为动态库AFNetworking的install_name之前的绝对路径
 ${BUILD_DIR}/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/AFNetworking
 
-==================================================
+BUILD_DIR = /Users/youdone-ndl/Library/Developer/Xcode/DerivedData/MyTestApp-hercrpktlxlbnndxilalnflmfjtq/Build/Products
+CONFIGURATION = Debug
 
-==================================================
+#####
+动态库反向调用App代码
 
-==================================================
+动态库的反向依赖，因为符号的作用域空间问题，那么在运行时，动态库可以动态找到App的符号，所以只要在编译期间不报符号未定义的错误就可以。
+可以通过-U <符号>，来指定一个符号是动态查找符号。
+#####
+因为符号的作用空间问题，那么在运行时，动态库可以动态找到App的符号。
+所以只要在编译期间不报符号未定义的错误即可。可以通过-U <符号>，来指定一个符号的是动态查找符号。
+同时可以在App里面通过指定-upward-l<library name>或者-upward_framework <framework name>来标志这是一个向上引用的动态库。
+
+1.创建MyApp项目的类, MyAppClass
+2.MyApp -> Build Phases + New Headers Phase 将MyAppClass添加到Public
+3.动态库调用MyApp的MyAppClass代码
+4.远行项目报错
+Undefined symbol: _OBJC_CLASS_$_MyAppClass
+
+解决办法是告诉链接器动态查找。使用xcconfig配置：
+在动态库MyDyLib下创建
+MyDyLib.Debug.xcconfig
+在OPROJECT的Configurations中选择MyDyLib.Debug.xcconfig
+MyDyLib.Debug.xcconfig文件中导入Pod创建的xcconfig文件
+
+#include "Pods/Target\ Support\ Files/Pods-MyDyLib/Pods-MyDyLib.debug.xcconfig"
+可使用以下参数：
+OTHER_LDFLAGS = $(inherited) -Xlinker -undefined -Xlinker dynamic_lookup
+这种方式有个问题，就是其它未定义的符号都不会报错
+
+OTHER_LDFLAGS = $(inherited) -Xlinker -U -Xlinker _OBJC_CLASS_$_MyAppClass
+这种方式只是针对指定符号，忽略报错信息
+
+#####
+App调用动态库AFNetworking代码
+
+需要知道库的位置:  FRAMEWORK_SEARCH_PATHS = $(inherited) "${PODS_CONFIGURATION_BUILD_DIR}/AFNetworking"
+#####
+如果App想使用动态库B的方法，第一种方式是让App直接链接动态库B。第二种方式是动态库A通过-reexport_framework或者-reexport_l重新将动态库B通过动态库A导出给App。
+因为Cocoapods自动生成的xcconfig文件包含了-framework AFNetworking参数，要想重新将AFNetworking指定为-reexport_framework，需将其放在$(inherited)前面。
+
+第一种方式就是直接让MyApp工程下podAFNetworking
+第二种方式是通过App设置FRAMEWORK_SEARCH_PATHS
+${BUILD_DIR}/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/AFNetworking
+
+==================================================动态库链接静态库
+App -> 动态库A -> 静态库B
+因为动态库A生成的过程中在链接静态库B时，会把静态库B所有代码都链接进去。所以编译链接都不会报错。
+如果动态库A不想把静态库B的导出符号（全局符号）暴露出去，可以通过-hidden-l<library name>隐藏静态库的全局符号。
+因为Cocoapods自动生成的xcconfig文件包含了-l"AFNetworking"参数，要想重新将AFNetworking指定为-hidden-l，需将其放在$(inherited)前面。
+
+
+因为动态库A生成的过程中在链接静态库B时，会把静态库B所有代码都链接进去。所以编译链接都不会报错。
+此时如果想要APP使用静态库B，只需要在APP的xcconfig文件中设置HEADER_SEARCH_PATHS即可
+
+
+1.配置工程和上一个例子基本一样，不同的是在Podfile是使用静态库
+
+直接能够运行成功
+原因是在编译动态库的时候会把它依赖的静态库链接到动态库中，所以不会报错
+
+App使用AFNetworking的代码:
+头文件找不到，需要配置一下Header Search Paths
+"${SRCROOT}/Pods/Headers/Public"
+
+配置完成后，运行
+
+==================================================静态库链接静态库
+App -> 静态库A -> 静态库B
+静态库A生成时，只保存了静态库B的头文件信息或者静态库B的名称（Auto-Link）。
+App链接静态库A后，会把静态库A所有代码都链接进去。但是并不知道静态库B的位置和名称。
+
+Library Search Paths: ${BUILD_DIR}/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/AFNetworking
+Other Linker Flags: -ObjC -l"AFNetworking"
+
+
+1.配置工程，参照前两个配置，创建静态库MyStaticLib
+
+ViewController中使用#import <MyStaticLib/MyStaticLib.h>
+MyStaticLib *lib = [MyStaticLib new];
+[lib testMyStaticLib];
+
+MyStaticLib中使用AFNetworking
+AFNetworkReachabilityManager *manager = [AFNetworkReachabilityManager sharedManager];
+
+运行报错
+Undefined symbol: _OBJC_CLASS_$_AFNetworkReachabilityManager
+
+App去链接静态库的时候是没有问题的，但是当静态库去链接静态库AFNetworking的时候，会有问题。
+因为这个静态库AFNetworking并没有合并到我自己创建的静态库中，App不知道它在哪。 解决方式：
+告诉App，静态库AFNetworking在哪和叫什么
+
+==================================================静态库链接动态库
+App -> 静态库A -> 动态库B
+静态库A生成时，只保存了动态库B的名称（Auto-Link）。App链接静态库A后，会把静态库A所有代码都链接进去。但是App（他链接的动态库B）并不知道动态库B的位置，也没有提供rpath。
+保存的@rpath与动态库B的install_name组合的路径下：
+动态库B的路径 = App的rpath + 动态库B的install_name
+方式一
+通过Cocoapods将动态库B引入到App内
+方式二
+配置rpath并通过脚本将动态库B引入到App内
+
+
+1.工程配置，参考以上配置
+Could not find or use auto-linked framework 'AFNetworking'
+Undefined symbol: _OBJC_CLASS_$_AFNetworkReachabilityManager
+告诉App动态库AFNetworking在哪
+Framework Search Paths: ${BUILD_DIR}/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/AFNetworking
+
+又出现了熟悉的错误
+dyld: Library not loaded: @rpath/AFNetworking.framework/AFNetworking
+Referenced from: /Users/youdone-ndl/Library/Developer/CoreSimulator/Devices/3512EC86-7703-4EB6-920F-6EDBE6D0E90E/data/Containers/Bundle/Application/89A32E51-DC95-4266-B139-EDFDC1EEFF36/TestMyApp.app/TestMyApp
+Reason: image not found
+
+这个路径下找不到动态库AFNetworking
+使用脚本将动态库AFNetworking拷贝到TestMyApp.app/TestMyApp/Frameworks下
+编译运行,也正常运行了
+
+静态库生成的时候只保存了动态库的名称，App链接静态库后，会把静态库所有的代码都链接进去，但是App不知道动态库的位置。
+
+
+###
+弱引用动态库&&强制加载指定的静态库
+###
+==================================================弱引用动态库
+正常情况下，动态库链接一个库文件时，如果库文件不在指定的路径中，会报image not found。
+通过-weak-l<library name>或者-weak_framework <framework name>指定为库为weak imports，
+如果在运行时找不到该库，会自动将该库的地址及内容设置为0。
+
+==================================================强制加载指定的静态库
+如果两个静态库中内容相同可以指定需要加载的静态库
+OTHER_LDFLAGS = $(inherited) -l"AFNetworking -l"AFNetworking2" -Xlinker -force_load -Xlinker "${SRCROOT}/AFNetworking/libAFNetworking.a" -Xlinker -load_hidden -Xlinker -Xlinker "${SRCROOT}/AFNetworking2/libAFNetworking2.a"

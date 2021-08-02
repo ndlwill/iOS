@@ -151,11 +151,46 @@ AfNetworking的问题：
 在NSURLProtocol中的那几个类方法中是可以发送同步请求的，但是在实例方法发送同步请求就会卡死，所以实例方法中不能有任何的阻塞，进行同步操作。不然就卡死。
 ###
 
-==================================================WKWebView
+==================================================NSURLProtocol对WKWebView的处理
+WKWebview是和NSURLProtocol有一定关联，只是在NSURLProtocol的入口处返回NO所以导致NSURLProtocol不接管WKWebview的请求。
 
 
+//注册自己的protocol
+[NSURLProtocol registerClass:[CustomProtocol class]];
+
+//创建WKWebview
+WKWebViewConfiguration * config = [[WKWebViewConfiguration alloc] init];
+WKWebView * wkWebView = [[WKWebView alloc] initWithFrame:CGRectMake(0, 0, [UIScreen mainScreen].bounds.size.width, [UIScreen mainScreen].bounds.size.height) configuration:config];
+[wkWebView loadRequest:webViewReq];
+[self.view addSubview:wkWebView];
+
+//注册scheme
+Class cls = NSClassFromString(@"WKBrowsingContextController");
+SEL sel = NSSelectorFromString(@"registerSchemeForCustomProtocol:");
+if ([cls respondsToSelector:sel]) {
+    // 通过http和https的请求，同理可通过其他的Scheme 但是要满足ULR Loading System
+    [cls performSelector:sel withObject:@"http"];
+    [cls performSelector:sel withObject:@"https"];
+}
+
+关于私有API
+因为WKBrowsingContextController和registerSchemeForCustomProtocol应该是私有的所以使用时候需要对字符串做下处理，用加密的方式或者其他就可以了，实测可以过审核的。
+
+==================================================WKWebView请求拦截
+https://juejin.cn/post/6922625242796032007
 
 业内已有的 WKWebView 请求拦截方案，主要分为如下两种:
-NSURLProtocol
+NSURLProtocol:
 NSURLProtocol 默认会拦截所有经过 URL Loading System 的请求，因此只要 WKWebView 发出的请求经过 URL Loading System 就可以被拦截。
 经过我们的尝试，发现 WKWebView 独立于应用进程运行，发出去的请求默认是不会经过 URL Loading System
+
+WKURLSchemeHandler:
+WKURLSchemeHandler 是 iOS 11 引入的新特性，负责自定义请求的数据管理，
+如果需要支持 scheme 为 http 或 https请求的数据管理则需要 hook WKWebView 的 handlesURLScheme: 方法，然后返回NO即可。
+
+两种方案进行对比:
+隔离性：NSURLProtocol 一经注册就是全局开启。一般来讲我们只会拦截自己的业务页面，但使用了 NSURLProtocol 的方式后会导致应用内合作的三方页面也会被拦截从而被污染。WKURLSchemeHandler 则可以以页面为维度进行隔离，因为是跟随着 WKWebViewConfiguration 进行配置。
+稳定性：NSURLProtocol 拦截过程中会丢失 Body，WKURLSchemeHandler 在 iOS 11.3 之前 (不包含) 也会丢失 Body，在 iOS 11.3 以后 WebKit 做了优化只会丢失 Blob 类型数据。
+一致性：WKWebView 发出的请求被 NSURLProtocol 拦截后行为可能发生改变，比如想取消 video 标签的视频加载一般都是将资源地址 (src) 设置为空，但此时 stopLoading 方法却不会调用，相比而言 WKURLSchemeHandler 表现正常。
+
+调研的结论是：WKURLSchemeHandler 在隔离性、稳定性、一致性上表现优于 NSURLProtocol，但是想在生产环境投入使用必须要解决 Body 丢失的问题。

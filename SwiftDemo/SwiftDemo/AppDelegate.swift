@@ -125,7 +125,7 @@
 // https://www.jianshu.com/u/f2349bd49c87 // macho 底层 库
 // https://www.jianshu.com/u/abc807e72f0e // lldb 汇编
 // https://www.jianshu.com/p/9c98d5271e25
-// https://www.jianshu.com/u/67af4fcb405b
+// https://www.jianshu.com/u/67af4fcb405b // AV，底层，opengl
 // https://www.jianshu.com/u/e28ac341c88f //
 // https://www.jianshu.com/u/fc862e5d5651 // opengl
 // https://www.jianshu.com/u/db4c495158ca // swift,库，底层
