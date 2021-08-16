@@ -99,6 +99,9 @@
 // MARK: ipv6
 // https://github.com/WeMobileDev/article/blob/master/IPv6%20socket%E7%BC%96%E7%A8%8B.md#%E9%97%AE%E9%A2%98%E5%A4%8D%E6%9D%82%E6%80%A7
 
+// MARK: - 美团
+// https://tech.meituan.com/2016/09/02/ios-uitest-kif.html
+
 // MARK: - 网易
 // https://juejin.cn/team/6932010947578069006/posts
 // https://www.jianshu.com/u/fd21f41fb522

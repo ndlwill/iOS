@@ -1,0 +1,154 @@
+#####
+https://docs.gitlab.com/ee/ci/yaml/gitlab_ci_yaml.html
+#####
+
+==========Global keywords:
+Some keywords are not defined in a job. These keywords control pipeline behavior or import additional pipeline configuration:
+
+Keyword	Description
+stages	The names and order of the pipeline stages.
+workflow	Control what types of pipeline run.
+include	Import configuration from other YAML files.
+
+==========script
+job1:
+  script: "bundle exec rspec"
+
+job2:
+  script:
+    - uname -a
+    - bundle exec rspec
+
+
+https://docs.gitlab.com/ee/ci/yaml/script.html#use-special-characters-with-script
+Use special characters with script:
+Sometimes, script commands must be wrapped in single or double quotes. For example, commands that contain a colon (:) must be wrapped in single quotes ('). The YAML parser needs to interpret the text as a string rather than a “key: value” pair.
+For example, this script uses a colon:
+job:
+  script:
+    - curl --request POST --header 'Content-Type: application/json' "https://gitlab/api/v4/projects"
+To be considered valid YAML, you must wrap the entire command in single quotes. If the command already uses single quotes, you should change them to double quotes (") if possible:
+job:
+  script:
+    - 'curl --request POST --header "Content-Type: application/json" "https://gitlab/api/v4/projects"'
+
+
+Be careful when using these characters as well:
+{, }, [, ], ,, &, *, #, ?, |, -, <, >, =, !, %, @, `
+You can verify the syntax is valid with the CI Lint tool.
+
+==========before_script
+You can use it only as part of a job or in the default: section.
+
+Scripts you specify in before_script are concatenated with any scripts you specify in the main script. The combined scripts execute together in a single shell.
+
+==========after_script
+Scripts you specify in after_script execute in a new shell, separate from any before_script or script commands.
+If a job times out or is cancelled, the after_script commands do not execute. 
+
+==========stage
+Use stage to define which stage a job runs in. Jobs in the same stage can execute in parallel
+
+Jobs without a stage entry use the test stage by default. If you do not define stages in the pipeline, you can use the 5 default stages, which execute in this order:
+.pre
+build
+test
+deploy
+.post
+
+For example:
+stages:
+  - build
+  - test
+  - deploy
+
+job 0:
+  stage: .pre
+  script: make something useful before build stage
+
+job 1:
+  stage: build
+  script: make build dependencies
+
+job 2:
+  stage: build
+  script: make build artifacts
+
+job 3:
+  stage: test
+  script: make test
+
+job 4:
+  stage: deploy
+  script: make deploy
+
+job 5:
+  stage: .post
+  script: make something useful at the end of pipeline
+
+Use your own runners:
+When you use your own runners, each runner runs only one job at a time by default. Jobs can run in parallel if they run on different runners.
+
+If you have only one runner, jobs can run in parallel if the runner’s concurrent setting is greater than 1
+
+Use pre and post for jobs that need to run first or last in a pipeline.
+.pre is guaranteed to always be the first stage in a pipeline.
+.post is guaranteed to always be the last stage in a pipeline.
+
+User-defined stages are executed after .pre and before .post.
+You must have a job in at least one stage other than .pre or .post
+
+==========extends
+.tests:
+  script: rake test
+  stage: test
+  only:
+    refs:
+      - branches
+
+rspec:
+  extends: .tests
+  script: rake rspec
+  only:
+    variables:
+      - $RSPEC
+
+The result is this rspec job:
+
+rspec:
+  script: rake rspec
+  stage: test
+  only:
+    refs:
+      - branches
+    variables:
+      - $RSPEC
+
+==========rules
+Use rules to include or exclude jobs in pipelines.
+rules replaces only/except and they can’t be used together in the same job.
+
+rules accepts an array of rules defined with:
+if
+changes
+exists
+allow_failure
+variables
+when
+
+The job is added to the pipeline:
+If an if, changes, or exists rule matches and also has when: on_success (default), when: delayed, or when: always.
+If a rule is reached that is only when: on_success, when: delayed, or when: always.
+The job is not added to the pipeline:
+If no rules match.
+If a rule matches and has when: never.
+
+rules:if
+Use rules:if clauses to specify when to add a job to a pipeline:
+
+If an if statement is true, add the job to the pipeline.
+If an if statement is true, but it’s combined with when: never, do not add the job to the pipeline.
+If no if statements are true, do not add the job to the pipeline.
+
+==========tags
+Use tags to select a specific runner from the list of all runners that are available for the project.

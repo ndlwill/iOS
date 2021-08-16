@@ -1,0 +1,196 @@
+1. config（配置）
+例如提交commit需要的用户名和邮箱，使用--local设置当前提交的用户名
+git config --local user.name XXX
+直接修改 config 文件和使用命令行修改配置效果一样。
+[core]
+	repositoryformatversion = 0
+	filemode = false
+	bare = false
+	logallrefupdates = true
+	symlinks = false
+	ignorecase = true
+[user]
+	name = XXX
+
+2. description（描述）
+这个文件用于GitWeb。
+
+3. hooks/(钩子)
+hooks里存放 git 提交的各个阶段文件，用于在 git 命令前后做检查或做些自定义动作。
+
+prepare-commit-msg.sample*  # git commit 之前，编辑器启动之前触发，传入 COMMIT_FILE，COMMIT_SOURCE，SHA1
+commit-msg.sample*          # git commit 之前，编辑器退出后触发，传入 COMMIT_EDITMSG 文件名
+pre-commit.sample*          # git commit 之前，commit-msg 通过后触发，譬如校验文件名是否含中文
+pre-push.sample*            # git push 之前触发
+
+pre-receive.sample*         # git push 之后，服务端更新 ref 前触发
+update.sample*              # git push 之后，服务端更新每一个 ref 时触发，用于针对每个 ref 作校验等
+post-update.sample*         # git push 之后，服务端更新 ref 后触发
+
+pre-rebase.sample*          # git rebase 之前触发，传入 rebase 分支作参数
+
+如果要启用某个 hook，只需把 .sample(样本) 删除即可，然后编辑其内容来实现相应的逻辑。
+
+例如团队规定每次commit都有一个固定的格式，“[姓名]+具体信息”的格式，如果不使用hooks，每次都需要重复去写上"[姓名]"
+但利用Git的hooks功能处理每一条commit信息，在每条信息前自动添加"[姓名]"。
+那么具体的步骤就是在项目目录下找到.git/hooks/commit-msg.sample文件，将该文件重命名为commit-msg，修改该文件的内容为：
+
+name=[姓名]
+commit=${name}$(cat $1)
+echo "$commit" > "$1"
+
+这样的话，在commit时，只需要git commit -m 'message'，hooks会把"message"修改为"[姓名]msssage"。
+
+4. info/
+（1）info/exclude，初始化时只有这个文件，用于排除提交规则，与 .gitignore 功能类似。
+他们的区别在于.gitignore 这个文件本身会提交到版本库中去，用来保存的是公共需要排除的文件；
+而info/exclude 这里设置的则是你自己本地需要排除的文件，他不会影响到其他人，也不会提交到版本库中去。
+
+（2）info/refs，如果新建了分支后，还会有info/refs文件 ，用于跟踪各分支的信息。
+此文件一般通过命令 git update-server-info 生成
+
+53afb96110d0f8bea6a29ec83d5299bad3e00eeb	refs/heads/TestBranch
+53afb96110d0f8bea6a29ec83d5299bad3e00eeb	refs/heads/develop
+2838e9025fe77260ed4604d483d9b2562d2f3920	refs/heads/master
+53afb96110d0f8bea6a29ec83d5299bad3e00eeb	refs/remotes/origin/develop
+d0723092b4df8f25cf8dca6a9e5f63173384ead9	refs/remotes/origin/master
+3b484c4dbd1b68aa109c728f3583d452fc95d513	refs/tags/0.1.0
+1f2b5aad5195c6912677b67fa33241821ed520e7	refs/tags/testHotFix
+d0723092b4df8f25cf8dca6a9e5f63173384ead9	refs/tags/testHotFix^{}
+6f0cb8178d128c6b9821eced016bc89e64253e74	refs/tags/testRelease
+2838e9025fe77260ed4604d483d9b2562d2f3920	refs/tags/testRelease^{}
+
+创建分支： $ git branch mybranch
+切换分支： $ git checkout mybranch
+创建并切换分支： $ git checkout -b mybranch
+
+更新master主线上的东西到该分支上：$git rebase master
+
+切换到master分支：$git checkout master
+
+合并分支：(merge from) $ git checkout master
+$ git merge mybranch (merge from mybranch)
+
+info/refs其中一个作用就是用于git clone过程。执行git clone...后，它做的第一件事就是获取 info/refs 文件，这样就知道远程仓库的所有分支和引用信息。
+
+5. HEAD
+此文件永远存储当前位置指针，指向当前工作区的分支。
+
+当我们在master分支时，HEAD文件的内容为：
+
+$ git branch
+* master
+
+$ cat HEAD
+ref: refs/heads/master
+
+6. index（暂存区）
+index也称为stage，是一个索引文件。
+
+当执行git add后，文件就会存入Git的对象objects里，并使用索引进行定位。
+
+只要执行了git add，就算工作目录中的文件被误删除，也不会引起文件的丢失
+
+创建了一个提交(commit), 那么提交的是当前索引(index)里的内容, 而不是工作目录中的内容。
+
+.git/index是一个二进制文件，无法用编辑器直接打开查看内容
+git add .
+$ git ls-files --stage
+
+7. objects/
+在初始化的时候，objects里有两个空的文件夹：info和pack
+
+git add之后，文件就已经存入objects里。
+
+
+cd 6d
+ls -l
+// 文件名 + hash = 6d + c700c37fb6af03239b8ea6f1d58db1a8819464
+git cat-file -p 6dc700c37fb6af03239b8ea6f1d58db1a8819464
+
+git cat-file 命令显示版本库对象的内容、类型及大小信息。
+-t
+显示对象的类型。
+-p
+根据对象的类型，以优雅的方式显式对象内容。
+
+
+8. COMMIT_EDITMSG(commit-editmsg，最后一次commit的message)
+执行commit，把代码提交到本地仓库：
+
+$ git commit -m 'add setting.json'
+
+多了两个文件或文件夹：COMMIT-EDITMSG、logs/。
+COMMIT-EDITMSG是一个临时文件，存储最后一次提交的message，
+
+而执行git commit -m 'message'时，mssage就是COMMIT_EDITMSG的文件内容。
+
+该文件的一个应用场景：当你git pull 远程仓库后，新增了很多提交，淹没了本地提交记录，直接 cat .git/COMMIT_EDITMSG 就可以弄清楚自己最后工作的位置了。
+
+9. refs/(引用)
+refs文件夹存储着分支和标签的引用。下面创建一个分支feature/1，还有给master分支打了一个tag为“v1.0”，那么 现在有两个分支，分别是master和feature/1：
+
+$ git checkout -b feature/1
+Switched to a new branch 'feature/1'
+
+$ git checkout master
+Switched to branch 'master'
+
+$ git tag v1.0
+
+那么refs目录的项目结构为：
+
+|-- heads
+|   |-- master
+|   |-- feature
+|      |-- 1
+|-- tags
+    |-- v1.0
+
+$ cat .git/refs/heads/master
+4a51f60e47ca4c0878ff0fb1524d4413fd7ac459
+
+$ git cat-file -t 4a51f60e47ca4c
+commit
+
+$ git branch -v
+  feature/1 4a51f60 add setting.json
+* master    4a51f60 add setting.json
+
+$ cat .git/refs/tags/v1.0
+4a51f60e47ca4c0878ff0fb1524d4413fd7ac459
+
+可以看到 master 和 v1.0 都指向 4a51f60e47ca4c0878ff0fb1524d4413fd7ac459 这个 commit。
+refs/heads/ 文件夹内的 ref 一般通过 git branch 生成。git show-ref --heads 可以查看；
+refs/tags/ 文件夹内的 ref 一般通过 git tag 生成。git show-ref --tags 可以查看。
+
+10. logs/
+logs就是用来记录操作信息的
+
+git reflog
+
+HEAD直接记录所有分支上的操作：
+$ cat .git/logs/HEAD
+refs/heads里还有master和feature/1文件，记录各自分支的操作记录：
+cat .git/logs/refs/heads/master
+cat .git/logs/refs/heads/feature/1
+
+
+总结:
+└── .git
+    ├── COMMIT_EDITMSG    # 保存最新的commit message
+    ├── config    # 仓库的配置文件
+    ├── description    # 仓库的描述信息，主要给gitweb使用
+    ├── HEAD    # 指向当前分支
+    ├── hooks    # 存放一些shell脚本，可以设置特定的git命令后触发相应的脚本
+    ├── index    # 二进制暂存区（stage）
+    ├── info    # 仓库的其他信息
+    │   └── exclude # 本地的排除文件规则，功能和.gitignore类似
+    ├── logs    # 保存所有更新操作的引用记录，主要用于git reflog等
+    ├── objects    # 所有文件的存储对象
+    └── refs    # 具体的引用，主要存储分支和标签的引用
+
+当然除了上面说到的只是列举了一部分，执行一些特定的命令时，还会有别的文件出现。例如：
+1. ORIG_HEAD（此文件会在你进行危险操作时备份 HEAD，如git reset、git merge、git rebase、git pull）
+
+2. FETCH_HEAD（这个文件作用在于追踪远程分支的拉取与合并，与其相关的命令有 git pull/fetch/merge）
