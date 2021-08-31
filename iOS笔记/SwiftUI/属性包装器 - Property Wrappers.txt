@@ -3,4 +3,199 @@
 逻辑壳子可以是 Class、Struct，意味着它可以拥有自己的属性和方法。
 
 @frozen @propertyWrapper public struct State<Value> : DynamicProperty {
-public init(wrappedValue value: Value)
+    public init(wrappedValue value: Value)
+    public init(initialValue value: Value)
+    public var wrappedValue: Value { get nonmutating set }
+    public var projectedValue: Binding<Value> { get }
+}
+
+除了初始化方法外的两个参数wrappedValue 和 projectedValue。
+前者是属性包装器必要的参数，用来提供包装器逻辑的实际实现。
+后者是一个可选参数，用来映射自定义的值。
+在任何可以访问到属性的位置都可以使用 $ 符号访问属性，使用 $.XXX 实际上获取的是projectedValue。
+
+
+自定义属性包装器：
+很多属性都具有相同的行为，例如：
+1.表单数据属性具有范围限制（例如颜色属性 0-255）
+2.某些字符串具有约束（长度限定、大小写限定等）
+3.某些属性可被 Combine 订阅（具有发布者 Publisher）
+4.存储属性的存储行为
+5.属性的定制化的懒加载行为
+
+不论存储什么值，值都将其保存为大写：
+@propertyWrapper struct RJUpper {
+    private var value:String = ""
+    var wrappedValue:String {
+        get { value }
+        set {
+            value = newValue.uppercased()
+        }
+    }
+
+    init(wrappedValue: String) {
+        self.wrappedValue = wrappedValue
+    }
+}
+
+class MyTest {
+    // 使用自定义的属性包装器修饰字符串
+    @RJUpper var text = ""
+    init() {}
+}
+
+// 初始化 MyTest，并打印其 text 属性
+let demo = MyTest()
+demo.text = "123abc"
+print(demo.text) // 123ABC
+
+定义了一个名为 RJUpper 的属性包装器，实现了必要的 wrappedValue，并在其设置值时将字符串置为大写。
+wrappedValue 是个计算属性，并不负责值的存储，值存储在私有变量 value 中。
+实现 init(wrappedValue: String)后属性在定义初始化时将自动调用。
+
+像上面的例子将 wrappedValue 设计成一个计算属性.被包装器修饰的属性存取都会经过 wrappedValue 。又或者，将 wrappedValue 的 set 方法省去
+使其成为类似 let 修饰的常量。当然，也可以直接使用wrappedValue：
+@propertyWrapper struct RJUpper {
+    var wrappedValue:String = ""
+
+    init(wrappedValue:String) {
+        self.wrappedValue = wrappedValue.uppercased()
+    }
+}
+
+
+使用泛型让限制范围的属性包装器更加通用:
+@propertyWrapper struct RJRange<Type:Comparable> {
+    private var value: Type
+    private var min :Type
+    private var max :Type
+
+    var wrappedValue:Type {
+        get { value }
+        set {
+            value = (min < newValue) ? (max > newValue ? newValue : max) : min
+        }
+    }
+
+    init(wrappedValue:Type, min:Type, max:Type) {
+        assert((min <= wrappedValue && max >= wrappedValue), "\n\(wrappedValue)不在范围应\(min)-\(max)内")
+
+        self.min = min
+        self.max = max
+        value = wrappedValue
+    }
+}
+
+代码定义了名为 RJRange的属性包装器，其适合用于修饰所有符合 Comparable 协议的属性。
+min 和 max 为区间的最值，通过我们自定义的 init 方法配置。
+前面提到 init 方法会在定义属性初始化的时候调用，在此处加入了对初始化时传入数据的断言(assert)，用来提示开发者，初始化的值是否正常。
+
+class MyTest {
+    @RJRange(min: 0, max: 255) var color = 255
+    @RJRange(min: "A", max: "C") var text = "C"
+    @RJRange(wrappedValue: 0.5, min: 0.0, max: 1.0) var percent
+}
+
+let demo = MyTest()
+print(demo.color)
+print(demo.text)
+print(demo.percent)
+demo.percent = 1.1
+print(demo.percent)
+
+在修饰属性时，属性包装器的 wrappedValue 的入参是可选的，不显示传入 wrappedValue就需要给予属性初始值，
+推荐不显示传入，与其他代码统一规范。min 和 max 则需要显示传入。
+
+如果属性包装器指定了具体类型，则可以设定默认值
+@propertyWrapper struct RJRange {
+    init(wrappedValue:Int, min:Int = 0, max:Int = 100){}
+}
+@RJRange var color = 255
+此处的 color 会触发 assert，因为初始化值 255 不处于 属性包装器默认值的0到100之间。
+可以修改默认参数，也可以显示传入指定的范围：
+@RJRange(min:0, max:255) var color = 255
+
+
+
+属性包装器的组合:
+当需要使用多个属性包装器修饰同一个属性时，需要注意属性修饰器的顺序，属性修饰器的执行顺序是从内到外 的，以两个简单的属性包装器为例：
+// 仅打印新值的包装器
+@propertyWrapper struct RJPrint<Value> {
+    var wrappedValue:Value {
+        didSet { print(wrappedValue) }
+    }
+
+    init(wrappedValue: Value){ self.wrappedValue = wrappedValue }
+}
+
+// 本地存储的包装器
+@propertyWrapper struct RJStore<Value> {
+    let key:String
+
+    private var value:Value?
+
+    var wrappedValue:Value? {
+        get { value }
+        set {
+            value = newValue
+            saveDataToDB()
+        }
+    }
+
+    init(wrappedValue:Value? = nil, key:String) {
+        value = wrappedValue
+        self.key = key
+        if wrappedValue == nil {
+            loadFromLocalDB()
+        }
+    }
+
+    private mutating func loadFromLocalDB() {
+        if let obj = UserDefaults.standard.value(forKey: key) as? Value {
+            self.value = obj
+        }
+    }
+
+    private func saveDataToDB() {
+        UserDefaults.standard.setValue(value, forKey: key)
+    }
+}
+
+class MyTest {
+    @RJPrint var text = "123"
+    @RJStore<String>(key: "TestKey") var file = "abc"
+    @RJPrint @RJStore(key: "FuckerKey") var trump = "999"
+    @RJPrint @RJRange(min: 0, max: 255) var value = 123
+}
+
+let demo = MyTest()
+demo.text = "321"// output: 321
+print(demo.file)// output: Optional("abc")
+print(demo.trump)// output: Optional("999")
+
+两个包装器一个负责新值输出，一个负责本地存储，
+MyTest 中第三个和第四个属性属性均结合了两个包装器，这样的写法称为组合包装器，属性同时具有了多个包装器的行为。
+
+组合包装器的运行顺序是 从内向外的 ，或者说是从离属性最近的到最远的，例如上面两个组合包装器都是最后运行最左边的 @RJPrint 。
+
+
+新建一个组合包装器:
+@propertyWrapper struct RJPrintStore<Value> {
+    private var storage: RJPrint<RJStore<Value>>
+    var wrappedValue: Value? {
+        get { storage.wrappedValue.wrappedValue }
+        set { storage.wrappedValue.wrappedValue = newValue }
+    }
+
+    init(wrappedValue:Value, key:String) {
+        storage = RJPrint(wrappedValue: RJStore(wrappedValue: wrappedValue, key:key))
+    }
+}
+
+@RJPrintStore(key: "TestKey") var trump = 123
+
+let test = MyTest()
+print(test.trump)  // output: Optional(123)
+
+RJPrintStore 将两个包装器行为组合到了一起，并约束了执行顺序 RJPrint<RJStore<Value>> 。
+可见这样新生成一个组合包装器只对单一情形有效，并不能达到有效的“样板化”。
