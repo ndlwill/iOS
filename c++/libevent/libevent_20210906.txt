@@ -1,0 +1,1587 @@
+https://blog.csdn.net/windeal3203/article/month/2016/10
+
+###
+https://blog.csdn.net/motingqian/article/details/88953816
+
+https://libevent.org/
+git clone git://github.com/nmathewson/libevent-book.git
+http://www.wangafu.net/~nickm/libevent-book/TOC.html
+
+BUILDING AND INSTALLATION:
+Autoconf
+$ ./configure (./configure --disable-openssl --prefix=/Users/youdone-ndl/Desktop/Test/path)
+$ make
+$ make verify   # (optional)
+$ sudo make install
+
+或者
+
+$ mkdir build && cd build
+$ cmake .. # Default to Unix Makefiles  （cmake -DEVENT__DISABLE_OPENSSL=ON ..）
+$ make
+$ make verify # Optional
+
+
+写程序大体步骤为：
+1.用编辑器编写源代码，如.c文件。
+2.用编译器编译代码生成目标文件，如.o。
+3.用链接器连接目标代码生成可执行文件，如.exe。
+
+但如果源文件太多，一个一个编译时就会特别麻烦，于是人们想到，为什么不设计一种类似批处理的程序，来批处理编译源文件呢，
+于是就有了make工具，它是一个自动化编译工具，你可以使用一条命令实现完全编译。
+但是你需要编写一个规则文件，make依据它来批处理编译，这个文件就是makefile
+
+对于一个大工程，编写makefile实在是件复杂的事，于是人们又想，为什么不设计一个工具，读入所有源文件之后，自动生成makefile呢，
+于是就出现了cmake工具，它能够输出各种各样的makefile或者project文件,从而帮助程序员减轻负担。
+但是随之而来也就是编写cmakelist文件，它是cmake所依据的规则。
+
+源码的安装一般由3个步骤组成：配置(configure)、编译(make)、安装(make install)。
+configure文件是一个可执行的脚本文件，它有很多选项，在待安装的源码目录下使用命令./configure –help可以输出详细的选项列表。
+其中--prefix选项是配置安装目录，如果不配置该选项，安装后可执行文件默认放在/usr /local/bin，库文件默认放在/usr/local/lib，配置文件默认放在/usr/local/etc，其它的资源文件放在/usr /local/share
+如果配置了--prefix，如：
+$ ./configure --prefix=/usr/local/test
+安装后的所有资源文件都会被放在/usr/local/test目录中，不会分散到其他目录。
+使用--prefix选项的另一个好处是方便卸载软件或移植软件；当某个安装的软件不再需要时，只须简单的删除该安装目录，就可以把软件卸载得干干净净；而移植软件只需拷贝整个目录到另外一个机器即可（相同的操作系统下）。
+当然要卸载程序，也可以在原来的make目录下用一次make uninstall，但前提是Makefile文件有uninstall命令
+###
+
+
+阻塞IO:
+调用会一直阻塞，不会返回，直到发生下面两种情况之一: 要么操作完成；要么经历相当长的时间，网络协议栈自己放弃。
+比如，当在TCP连接上调用connect时，操作系统会发送SYN包到TCP的远端主机。connect会一直阻塞而不返回，直到它接收到了远端主机发来的SYN+ACK包，或者经历太长的时间而自己放弃。
+
+Example:A simple blocking HTTP client
+/* For  sockaddr_in */
+#include  <netinet/in.h>
+/* For socket functions */
+#include <sys/socket.h>
+/* For gethostbyname */
+#include <netdb.h>
+
+#include <unistd.h>
+#include <string.h>
+#include <stdio.h>
+
+int main(int c,char **v)
+{
+   const char query[] =
+        "GET / HTTP/1.0\r\n"
+        "Host: www.google.com\r\n"
+        "\r\n";
+   const char hostname[] = "www.google.com";
+   struct sockaddr_in sin;
+   struct hostent *h;
+   const char *cp;
+   int fd;
+    ssize_t n_written, remaining;
+   char buf[1024];
+
+    /* Look up the IP address for the hostname.   Watch out; this isn't
+       threadsafe on most platforms. */
+    h = gethostbyname(hostname);
+   if (!h) {
+        fprintf(stderr, "Couldn't lookup%s: %s", hostname, hstrerror(h_errno));
+       return 1;
+    }
+   if (h->h_addrtype != AF_INET) {
+        fprintf(stderr, "No ipv6 support,sorry.");
+       return 1;
+    }
+
+    /* Allocate a new socket */
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+   if (fd < 0) {
+        perror("socket");
+       return 1;
+    }
+
+    /* Connect to the remote host. */
+    sin.sin_family = AF_INET;
+    sin.sin_port = htons(80);
+    sin.sin_addr = *(struct in_addr*)h->h_addr;
+   if (connect(fd, (struct sockaddr*) &sin, sizeof(sin))) {
+        perror("connect");
+        close(fd);
+       return 1;
+    }
+
+    /* Write the query. */
+    /* XXX Can send succeed partially? */
+    cp = query;
+    remaining = strlen(query);
+   while (remaining) {
+      n_written = send(fd, cp, remaining, 0);
+     if (n_written <= 0) {
+        perror("send");
+       return 1;
+      }
+      remaining -= n_written;
+      cp += n_written;
+    }
+
+    /* Get an answer back. */
+   while (1) {
+        ssize_t result = recv(fd, buf,sizeof(buf), 0);
+       if (result == 0) {
+           break;
+        }elseif (result < 0) {
+            perror("recv");
+            close(fd);
+           return 1;
+        }
+        fwrite(buf, 1, result, stdout);
+    }
+
+    close(fd);
+   return 0;
+}
+
+上面例子中，所有的网络调用都是阻塞的：｀gethostbyname｀直到成功或失败的解析了｀www.google.com｀才会返回
+｀connect｀直到TCP建链成功了才会返回；
+｀recv｀直到收到数据时才会返回；
+｀send｀直到将输出flushed到内核的写缓冲区之后才会返回。
+当然，阻塞IO并不总是无用的。如果应用程序在同一时刻不需要做其他事，那么阻塞IO同样会很好的工作。　
+
+
+BadExample
+/* This  won't work. */
+charbuf[1024];
+int i, n;
+while(i_still_want_to_read()) {
+    for (i=0; i<n_sockets; ++i) {
+        n = recv(fd[i], buf, sizeof(buf), 0);
+        if (n==0)
+            handle_close(fd[i]);
+        else if (n<0)
+            handle_error(fd[i], errno);
+        else
+            handle_input(fd[i], buf, n);
+    }
+}
+
+如果fd[2]上首先有数据到来，但是上面的代码只有在fd[0]和fd[1]上接收到数据之后，才能去处理fd[2]上的数据。
+有时，可以通过多线程（进程）来处理这样的问题。一个最简单的方式就是每个链接用一个线程（进程）进行处理。这样每个链接都会有自己的线程（进程）处理，一个链接上的阻塞IO调用就不会影响到其他链接上的处理。
+
+例子：在TCP的40713端口上进行监听的ROT13服务器，每次从输入中接收一行数据，经过简单的处理后进行输出。它使用fork产生新的进程来处理每个链接。
+Example:Forking ROT13 server
+/* For sockaddr_in */
+#include  <netinet/in.h>
+/* For socket functions */
+#include <sys/socket.h>
+
+#include <unistd.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#define MAX_LINE 16384
+
+char rot13_char(char c)
+{
+    if ((c >= 'a' && c <= 'm') ||(c >= 'A' && c <= 'M'))
+        return c + 13;
+    else if ((c >= 'n' && c <='z') || (c >= 'N' && c <= 'Z'))
+        return c - 13;
+    else
+        return c;
+}
+
+void child(int fd)
+{
+    char outbuf[MAX_LINE+1];
+    size_t outbuf_used = 0;
+    ssize_t result;
+
+    while (1) 
+    {
+        char ch;
+        result = recv(fd, &ch, 1, 0);
+        if (result == 0) {
+            break;
+        } else if (result == -1) {
+            perror("read");
+            break;
+        }
+
+        /* We do this test to keep the userfrom overflowing the buffer. */
+        if (outbuf_used < sizeof(outbuf)) {
+            outbuf[outbuf_used++] = rot13_char(ch);
+        }
+
+        if (ch == '\n') {
+            send(fd, outbuf, outbuf_used, 0);
+            outbuf_used = 0;
+            continue;
+        }
+    }
+}
+
+void run(void)
+{
+    int listener;
+    struct sockaddr_in sin;
+
+    sin.sin_family = AF_INET;
+    sin.sin_addr.s_addr = 0;
+    sin.sin_port = htons(40713);
+
+    listener = socket(AF_INET, SOCK_STREAM, 0);
+
+#ifndef WIN32
+    {
+        int one = 1;
+        setsockopt(listener, SOL_SOCKET,SO_REUSEADDR, &one, sizeof(one));
+    }
+#endif
+
+    if (bind(listener, (struct sockaddr*)&sin, sizeof(sin)) < 0) {
+        perror("bind");
+        return;
+    }
+
+    if (listen(listener, 16)<0) {
+        perror("listen");
+        return;
+    }
+
+
+
+    while (1) {
+        struct sockaddr_storage ss;
+        socklen_t slen = sizeof(ss);
+        int fd = accept(listener, (struct sockaddr*)&ss, &slen);
+        if (fd < 0) {
+            perror("accept");
+        } else {
+            if (fork() == 0) {
+                child(fd);
+                exit(0);
+            }
+        }
+    }
+}
+
+int main(int c, char **v)
+{
+    run();
+    return 0;
+}
+
+是否已经完美解决了同一时刻多连接的问题了呢？事实并非如此：
+第一，某些平台上，创建新进程（甚至是线程）是十分昂贵的。当然在实际环境中，可以使用线程池，而不是每次都创建新线程。
+第二，更重要的是，线程无法如你所愿的规模化使用。如果你的程序需要同时处理成千上万个链接的时候，处理成千上万个线程就不是那么高效的了。
+如果线程不是处理多连接的答案，那什么才是呢？
+在unix系统上，将socket设置为非阻塞:｀fcntl(fd, F_SETFL, O_NONBLOCK)｀。一旦将fd置为非阻塞，那么从此刻起，无论何时进行网络调用，该调用会立即返回，要么完成操作，返回成功，要么就是返回一个特定的错误码指出“当前无法完成任务，再试一次”。
+
+BadExample: busy-polling all sockets
+/* This will work, but the performance will beunforgivably bad. */
+int i, n;
+char buf[1024];
+for (i=0;i < n_sockets; ++i)
+    fcntl(fd[i], F_SETFL, O_NONBLOCK);
+
+while(i_still_want_to_read()) {
+    for (i=0; i < n_sockets; ++i) {
+        n = recv(fd[i], buf, sizeof(buf), 0);
+        if (n == 0) {
+            handle_close(fd[i]);
+        }else if (n < 0) {
+            if (errno == EAGAIN)
+                 ; /* The kernel didn't haveany data for us to read. */
+            else
+                 handle_error(fd[i], errno);
+         } else {
+            handle_input(fd[i], buf, n);
+         }
+    }
+}
+
+上面就是使用非阻塞sockets的例子，它虽然可以工作，但是效率却很差，
+两个原因：第一，当每个链接都没有数据可读的时候，就会无限的轮训下去，用尽所有的CPU周期。
+第二，如果需要处理多个链接，那么不管是否有数据可读，每个链接都会进行一次内核调用。
+
+我们需要一种方法，可以告诉内核“一直等待，直到某个socket已经有准备好了，而且要告诉我那个socket准备好了”。
+古老的解决方法是使用select，目前仍在使用。select使用三个socket fd集合（位数组）：可读、可写和异常。它会一直等待，直到集合中的某一个socket已经准备好了，而且，select返回时，会更改集合，使其只包含那些已经准备好了的socket fd。使用select的例子如下：
+Example:Using select
+
+/* If youonly have a couple dozen fds, this version won't be awful */
+fd_setreadset;
+int i, n;
+charbuf[1024];
+
+while (i_still_want_to_read()){
+    int maxfd = -1;
+    FD_ZERO(&readset);
+
+    /* Add all of the interesting fds toreadset */
+    for (i=0; i < n_sockets; ++i) {
+         if (fd[i]>maxfd) maxfd = fd[i];
+         FD_SET(fd[i], &readset);
+    }
+
+    /*Wait until one or more fds are ready to read */
+    select(maxfd+1, &readset, NULL, NULL,NULL);
+
+    /* Process all of the fds that are stillset in readset */
+    for (i=0; i < n_sockets; ++i) {
+        if (FD_ISSET(fd[i], &readset)) {
+            n = recv(fd[i], buf, sizeof(buf),0);
+            if (n == 0) {
+                handle_close(fd[i]);
+            } else if (n < 0) {
+                if (errno == EAGAIN)
+                     ; /* The kernel didn'thave any data for us to read. */
+                else
+                     handle_error(fd[i],errno);
+             } else {
+                handle_input(fd[i], buf, n);
+             }
+        }
+    }
+}
+
+一个完整的使用select的ROT13的服务器例子如下：
+/* Forsockaddr_in */
+#include<netinet/in.h>
+/* For socketfunctions */
+#include<sys/socket.h>
+/* Forfcntl */
+#include<fcntl.h>
+/* forselect */
+#include<sys/select.h>
+
+#include<assert.h>
+#include<unistd.h>
+#include<string.h>
+#include<stdlib.h>
+#include<stdio.h>
+#include<errno.h>
+
+#defineMAX_LINE 16384
+
+char rot13_char(charc)
+{
+    /* We don't want to use isalpha here;setting the locale would change
+     * which characters are consideredalphabetical. */
+    if ((c >= 'a' && c <= 'm') ||(c >= 'A' && c <= 'M'))
+        return c + 13;
+    else if ((c >= 'n' && c <='z') || (c >= 'N' && c <= 'Z'))
+        return c - 13;
+    else
+        return c;
+}
+
+structfd_state {
+    char buffer[MAX_LINE];
+    size_t buffer_used;
+
+    int writing;
+    size_t n_written;
+    size_t write_upto;
+};
+
+structfd_state * alloc_fd_state(void)
+{
+    struct fd_state *state =malloc(sizeof(struct fd_state));
+    if (!state)
+        return NULL;
+    state->buffer_used = state->n_written= state->writing =
+        state->write_upto = 0;
+    return state;
+}
+
+void free_fd_state(structfd_state *state)
+{
+    free(state);
+}
+
+void make_nonblocking(intfd)
+{
+    fcntl(fd, F_SETFL, O_NONBLOCK);
+}
+
+int do_read(intfd, struct fd_state *state)
+{
+    char buf[1024];
+    int i;
+    ssize_t result;
+    while (1) {
+        result = recv(fd, buf, sizeof(buf), 0);
+        if (result <= 0)
+            break;
+
+        for (i=0; i < result; ++i)  {
+            if (state->buffer_used <sizeof(state->buffer))
+               state->buffer[state->buffer_used++] = rot13_char(buf[i]);
+            if (buf[i] == '\n') {
+                state->writing = 1;
+                state->write_upto =state->buffer_used;
+            }
+        }
+    }
+
+    if (result == 0) {
+        return 1;
+    } else if (result < 0) {
+        if (errno == EAGAIN)
+            return 0;
+        return -1;
+    }
+
+    return 0;
+}
+
+int do_write(intfd, struct fd_state *state)
+{
+    while (state->n_written <state->write_upto) {
+        ssize_t result = send(fd,state->buffer + state->n_written,
+                             state->write_upto - state->n_written, 0);
+        if (result < 0) {
+            if (errno == EAGAIN)
+                return 0;
+            return -1;
+        }
+        assert(result != 0);
+
+        state->n_written += result;
+    }
+
+    if (state->n_written ==state->buffer_used)
+        state->n_written =state->write_upto = state->buffer_used = 0;
+
+    state->writing = 0;
+
+    return 0;
+}
+
+void run(void)
+{
+    int listener;
+    struct fd_state *state[FD_SETSIZE];
+    struct sockaddr_in sin;
+    int i, maxfd;
+    fd_set readset, writeset, exset;
+
+    sin.sin_family = AF_INET;
+    sin.sin_addr.s_addr = 0;
+    sin.sin_port = htons(40713);
+
+    for (i = 0; i < FD_SETSIZE; ++i)
+        state[i] = NULL;
+
+    listener = socket(AF_INET, SOCK_STREAM, 0);
+    make_nonblocking(listener);
+
+#ifndefWIN32
+    {
+        int one = 1;
+        setsockopt(listener, SOL_SOCKET,SO_REUSEADDR, &one, sizeof(one));
+    }
+#endif
+
+    if (bind(listener, (structsockaddr*)&sin, sizeof(sin)) < 0) {
+        perror("bind");
+        return;
+    }
+
+    if (listen(listener, 16)<0) {
+        perror("listen");
+        return;
+    }
+
+    FD_ZERO(&readset);
+    FD_ZERO(&writeset);
+    FD_ZERO(&exset);
+
+    while (1) {
+        maxfd = listener;
+
+        FD_ZERO(&readset);
+        FD_ZERO(&writeset);
+        FD_ZERO(&exset);
+
+        FD_SET(listener, &readset);
+
+        for (i=0; i < FD_SETSIZE; ++i) {
+            if (state[i]) {
+                if (i > maxfd)
+                    maxfd = i;
+                FD_SET(i, &readset);
+                if (state[i]->writing) {
+                    FD_SET(i, &writeset);
+                }
+            }
+        }
+
+        if (select(maxfd+1, &readset,&writeset, &exset, NULL) < 0) {
+            perror("select");
+            return;
+        }
+
+        if (FD_ISSET(listener, &readset)) {
+            struct sockaddr_storage ss;
+            socklen_t slen = sizeof(ss);
+            int fd = accept(listener, (structsockaddr*)&ss, &slen);
+           if (fd < 0) {
+                perror("accept");
+            } else if (fd > FD_SETSIZE) {
+                close(fd);
+            } else {
+                make_nonblocking(fd);
+                state[fd] = alloc_fd_state();
+                assert(state[fd]);/*XXX*/
+            }
+        }
+
+        for (i=0; i < maxfd+1; ++i) {
+            int r = 0;
+            if (i == listener)
+                continue;
+
+            if (FD_ISSET(i, &readset)) {
+                r = do_read(i, state[i]);
+            }
+            if (r == 0 && FD_ISSET(i,&writeset)) {
+                r = do_write(i, state[i]);
+            }
+            if (r) {
+                free_fd_state(state[i]);
+                state[i] = NULL;
+                close(i);
+            }
+        }
+    }
+}
+
+int main(intc, char **v)
+{
+    setvbuf(stdout, NULL, _IONBF, 0);
+
+    run();
+    return 0;
+}
+但是问题还没有解决。因为产生和读取select的位数组耗费的时间与最大的socket fd数成正比，所以当socket fd数变得很大时，select调用的性能就会下降很多。
+
+不同的操作系统都提供了不同的select替代函数。
+包括poll,epoll,kqueue, evports和/dev/poll。所有这些接口都具有比select更好的性能，而且除了poll之外，他们在增加socket，删除socket，通知哪个socket准备好这些方面，都可以达到O(1)的性能。
+
+不幸的是，所有这些不同的接口都没有形成标准。linux提供了epoll，BSDs提供了kqueue，Solaris提供了evports和/dev/poll，而且这些操作系统提供的接口相互独立。所以，当你需要编写一个可移植的、高性能异步应用时，你需要一个封装所有这些接口的抽象，而且提供那个最高效的接口。
+这就是libeventAPI能提供的最底层的功能。它提供了一系列的select替代接口，并且使用当前操作系统所具有的，最高效的版本。
+下面是另一个ROT13服务器的例子。该实例使用libevent2替代select。去除了fd_sets，而是使用event_base添加和删除事件，当然这是通过poll，epoll，kqueue等来实现的。
+
+Example:A low-level ROT13 server with Libevent
+/* Forsockaddr_in */
+#include<netinet/in.h>
+/* Forsocket functions */
+#include<sys/socket.h>
+/* Forfcntl */
+#include<fcntl.h>
+
+#include<event2/event.h>
+
+#include<assert.h>
+#include<unistd.h>
+#include<string.h>
+#include<stdlib.h>
+#include<stdio.h>
+#include<errno.h>
+
+#define MAX_LINE16384
+
+voiddo_read(evutil_socket_t fd, short events, void *arg);
+voiddo_write(evutil_socket_t fd, short events, void *arg);
+
+char
+rot13_char(charc)
+{
+    /* We don't want to use isalpha here;setting the locale would change
+     * which characters are consideredalphabetical. */
+    if ((c >= 'a' && c <= 'm') ||(c >= 'A' && c <= 'M'))
+        return c + 13;
+    else if ((c >= 'n' && c <='z') || (c >= 'N' && c <= 'Z'))
+        return c - 13;
+    else
+        return c;
+}
+
+structfd_state {
+    char buffer[MAX_LINE];
+    size_t buffer_used;
+
+    size_t n_written;
+    size_t write_upto;
+
+    struct event *read_event;
+    struct event *write_event;
+};
+
+structfd_state * alloc_fd_state(struct event_base *base, evutil_socket_t fd)
+{
+    struct fd_state *state =malloc(sizeof(struct fd_state));
+    if (!state)
+        return NULL;
+    state->read_event = event_new(base, fd,EV_READ|EV_PERSIST, do_read, state);
+    if (!state->read_event) {
+        free(state);
+        return NULL;
+    }
+    state->write_event = event_new(base, fd,EV_WRITE|EV_PERSIST, do_write, state);
+
+    if (!state->write_event) {
+        event_free(state->read_event);
+        free(state);
+        return NULL;
+    }
+
+    state->buffer_used = state->n_written= state->write_upto = 0;
+
+    assert(state->write_event);
+    return state;
+}
+
+void free_fd_state(structfd_state *state)
+{
+    event_free(state->read_event);
+    event_free(state->write_event);
+    free(state);
+}
+
+void do_read(evutil_socket_tfd, short events, void *arg)
+{
+    struct fd_state *state = arg;
+    char buf[1024];
+    int i;
+    ssize_t result;
+    while (1) {
+        assert(state->write_event);
+        result = recv(fd, buf, sizeof(buf), 0);
+        if (result <= 0)
+            break;
+
+        for (i=0; i < result; ++i)  {
+            if (state->buffer_used <sizeof(state->buffer))
+               state->buffer[state->buffer_used++] = rot13_char(buf[i]);
+            if (buf[i] == '\n') {
+                assert(state->write_event);
+                event_add(state->write_event,NULL);
+                state->write_upto =state->buffer_used;
+            }
+        }
+    }
+
+    if (result == 0) {
+        free_fd_state(state);
+    } else if (result < 0) {
+        if (errno == EAGAIN) // XXXX use evutilmacro
+            return;
+        perror("recv");
+        free_fd_state(state);
+    }
+}
+
+void do_write(evutil_socket_tfd, short events, void *arg)
+{
+    struct fd_state *state = arg;
+
+    while (state->n_written <state->write_upto) {
+        ssize_t result = send(fd,state->buffer + state->n_written,
+                             state->write_upto - state->n_written, 0);
+        if (result < 0) {
+            if (errno == EAGAIN) // XXX useevutil macro
+                return;
+            free_fd_state(state);
+            return;
+        }
+        assert(result != 0);
+
+        state->n_written += result;
+    }
+
+    if (state->n_written ==state->buffer_used)
+        state->n_written =state->write_upto = state->buffer_used = 1;
+
+    event_del(state->write_event);
+}
+
+void do_accept(evutil_socket_tlistener, short event, void *arg)
+{
+    struct event_base *base = arg;
+    struct sockaddr_storage ss;
+    socklen_t slen = sizeof(ss);
+    int fd = accept(listener, (structsockaddr*)&ss, &slen);
+    if (fd < 0) { // XXXX eagain??
+        perror("accept");
+    } else if (fd > FD_SETSIZE) {
+        close(fd); // XXX replace all closeswith EVUTIL_CLOSESOCKET */
+    } else {
+        struct fd_state *state;
+        evutil_make_socket_nonblocking(fd);
+        state = alloc_fd_state(base, fd);
+        assert(state); /*XXX err*/
+        assert(state->write_event);
+        event_add(state->read_event, NULL);
+    }
+}
+
+void run(void)
+{
+    evutil_socket_t listener;
+    struct sockaddr_in sin;
+    struct event_base *base;
+    struct event *listener_event;
+
+    base = event_base_new();
+    if (!base)
+        return; /*XXXerr*/
+
+    sin.sin_family = AF_INET;
+    sin.sin_addr.s_addr = 0;
+    sin.sin_port = htons(40713);
+
+    listener = socket(AF_INET, SOCK_STREAM, 0);
+    evutil_make_socket_nonblocking(listener);
+
+#ifndefWIN32
+    {
+        int one = 1;
+        setsockopt(listener, SOL_SOCKET,SO_REUSEADDR, &one, sizeof(one));
+    }
+#endif
+
+    if (bind(listener, (structsockaddr*)&sin, sizeof(sin)) < 0) {
+        perror("bind");
+        return;
+    }
+
+    if (listen(listener, 16)<0) {
+        perror("listen");
+        return;
+    }
+
+    listener_event = event_new(base, listener,EV_READ|EV_PERSIST, do_accept, (void*)base);
+    /*XXX check it */
+    event_add(listener_event, NULL);
+
+    event_base_dispatch(base);
+}
+
+int main(intc, char **v)
+{
+    setvbuf(stdout, NULL, _IONBF, 0);
+
+    run();
+    return 0;
+}
+
+上面的代码需要注意的是，使用evutil_socket_t，而不是int作为socket的类型；
+使用evutil_make_socket_nonblocking而不是fcntl(O_NONBLOCK)，将socket转为非阻塞。
+这些改变使得我们的代码可以兼容win32平台下的网络API。
+
+使用libevent的上面的例子没有达到最佳的性能。在Windows上，高效的异步IO与并不是类似于select那样的机制，而是使用IOCP（IO Completion Ports）API。
+与其他高效网络API不同的是，IOCP并不通知你的程序哪个socket已经准备好操作了，相反的，程序告诉windows网络栈开始一个网络操作，而IOCP告诉程序操作已经完成了。
+幸运的是，libevent2的bufferevents接口可以解决上面的问题：它使得程序编写更加简单，而且可以在windows上、unix上都提供最高效的接口。下面是最后一个ROT13服务器的例子，它使用了bufferevents API：
+
+Example:A simpler ROT13 server with Libevent
+/* Forsockaddr_in */
+#include<netinet/in.h>
+/* Forsocket functions */
+#include<sys/socket.h>
+/* Forfcntl */
+#include<fcntl.h>
+
+#include<event2/event.h>
+#include<event2/buffer.h>
+#include<event2/bufferevent.h>
+
+#include<assert.h>
+#include<unistd.h>
+#include<string.h>
+#include<stdlib.h>
+#include<stdio.h>
+#include<errno.h>
+
+#defineMAX_LINE 16384
+
+void do_read(evutil_socket_tfd, short events, void *arg);
+voiddo_write(evutil_socket_t fd, short events, void *arg);
+
+char  rot13_char(char c)
+{
+    /* We don't want to use isalpha here;setting the locale would change
+     * which characters are consideredalphabetical. */
+    if ((c >= 'a' && c <= 'm') ||(c >= 'A' && c <= 'M'))
+        return c + 13;
+    else if ((c >= 'n' && c <='z') || (c >= 'N' && c <= 'Z'))
+        return c - 13;
+    else
+        return c;
+}
+
+void  readcb(struct bufferevent *bev, void *ctx)
+{
+    struct evbuffer *input, *output;
+    char *line;
+    size_t n;
+    int i;
+    input = bufferevent_get_input(bev);
+    output = bufferevent_get_output(bev);
+
+    while ((line = evbuffer_readln(input, &n,EVBUFFER_EOL_LF))) {
+        for (i = 0; i < n; ++i)
+            line[i] = rot13_char(line[i]);
+        evbuffer_add(output, line, n);
+        evbuffer_add(output, "\n",1);
+        free(line);
+    }
+
+    if (evbuffer_get_length(input) >=MAX_LINE) {
+        /* Too long; just process what there isand go on so that the buffer
+         * doesn't grow infinitely long. */
+        char buf[1024];
+        while (evbuffer_get_length(input)) {
+            int n = evbuffer_remove(input, buf,sizeof(buf));
+            for (i = 0; i < n; ++i)
+                buf[i] = rot13_char(buf[i]);
+            evbuffer_add(output, buf, n);
+        }
+        evbuffer_add(output, "\n",1);
+    }
+}
+
+void  errorcb(struct bufferevent *bev, short error,void *ctx)
+{
+    if (error & BEV_EVENT_EOF) {
+        /* connection has been closed, do anyclean up here */
+        /* ... */
+    } else if (error & BEV_EVENT_ERROR) {
+        /* check errno to see what erroroccurred */
+        /* ... */
+    } else if (error & BEV_EVENT_TIMEOUT) {
+        /* must be a timeout event handle,handle it */
+        /* ... */
+    }
+    bufferevent_free(bev);
+}
+
+void  do_accept(evutil_socket_t listener, shortevent, void *arg)
+{
+    struct event_base *base = arg;
+    struct sockaddr_storage ss;
+    socklen_t slen = sizeof(ss);
+    int fd = accept(listener, (structsockaddr*)&ss, &slen);
+    if (fd < 0) {
+        perror("accept");
+    } else if (fd > FD_SETSIZE) {
+        close(fd);
+    } else {
+        struct bufferevent *bev;
+        evutil_make_socket_nonblocking(fd);
+        bev = bufferevent_socket_new(base, fd,BEV_OPT_CLOSE_ON_FREE);
+        bufferevent_setcb(bev, readcb, NULL,errorcb, NULL);
+        bufferevent_setwatermark(bev, EV_READ,0, MAX_LINE);
+        bufferevent_enable(bev,EV_READ|EV_WRITE);
+    }
+}
+
+void run(void)
+{
+    evutil_socket_t listener;
+    struct sockaddr_in sin;
+    struct event_base *base;
+    struct event *listener_event;
+
+    base = event_base_new();
+    if (!base)
+        return; /*XXXerr*/
+
+    sin.sin_family = AF_INET;
+    sin.sin_addr.s_addr = 0;
+    sin.sin_port = htons(40713);
+
+    listener = socket(AF_INET, SOCK_STREAM, 0);
+    evutil_make_socket_nonblocking(listener);
+
+#ifndefWIN32
+    {
+        int one = 1;
+        setsockopt(listener, SOL_SOCKET,SO_REUSEADDR, &one, sizeof(one));
+    }
+#endif
+
+    if (bind(listener, (structsockaddr*)&sin, sizeof(sin)) < 0) {
+        perror("bind");
+        return;
+    }
+
+    if (listen(listener, 16)<0) {
+        perror("listen");
+        return;
+    }
+
+    listener_event = event_new(base, listener,EV_READ|EV_PERSIST, do_accept, (void*)base);
+    /*XXX check it */
+    event_add(listener_event, NULL);
+
+    event_base_dispatch(base);
+}
+
+int main(intc, char **v)
+{
+    setvbuf(stdout, NULL, _IONBF, 0);
+
+    run();
+    return 0;
+}
+
+==================================================通用结构体
+IPv4: struct sockaddr_in, 16个字节
+struct sockaddr_in {
+       sa_family_t sin_family;             /* AF_INET */
+       in_port_t sin_port;                 /* Port number.  */
+       struct in_addr sin_addr;            /* Internet address.  */
+  
+       /* Pad to size of `struct sockaddr'.  */
+       unsigned char sin_zero[sizeof (struct sockaddr) -
+                              sizeof (sa_family_t) -
+                              sizeof (in_port_t) -
+                             sizeof (struct in_addr)];
+};
+typedef uint32_t in_addr_t;
+struct in_addr  {
+     in_addr_t s_addr;                    /* IPv4 address */
+};
+
+
+IPv6: struct sockaddr_in6, 28个字节
+ struct sockaddr_in6 {
+     sa_family_t sin6_family;    /* AF_INET6 */
+     in_port_t sin6_port;        /* Transport layer port # */
+     uint32_t sin6_flowinfo;     /* IPv6 flow information */
+     struct in6_addr sin6_addr;  /* IPv6 address */
+     uint32_t sin6_scope_id;     /* IPv6 scope-id */
+ };
+ struct in6_addr {
+     union {
+         uint8_t u6_addr8[16];
+         uint16_t u6_addr16[8];
+         uint32_t u6_addr32[4];
+     } in6_u;
+ 
+     #define s6_addr                 in6_u.u6_addr8
+     #define s6_addr16               in6_u.u6_addr16
+     #define s6_addr32               in6_u.u6_addr32
+ };
+
+
+通用结构体1: struct sockaddr, 16个字节
+struct sockaddr { 
+     sa_family_t sa_family;       /* Address family */
+     char sa_data[14];            /* protocol-specific address */
+};
+
+通用结构体2: struct sockaddr_storage,128个字节
+  /* Structure large enough to hold any socket address 
+  (with the historical exception of AF_UNIX). 128 bytes reserved.  */
+  
+  #if ULONG_MAX > 0xffffffff
+  # define __ss_aligntype __uint64_t
+  #else
+  # define __ss_aligntype __uint32_t
+  #endif
+  #define _SS_SIZE        128
+ #define _SS_PADSIZE     (_SS_SIZE - (2 * sizeof (__ss_aligntype)))
+ 
+ struct sockaddr_storage
+ {
+     sa_family_t ss_family;      /* Address family */
+     __ss_aligntype __ss_align;  /* Force desired alignment.  */
+     char __ss_padding[_SS_PADSIZE];
+};
+
+
+==================================================event_base
+在使用任何libevent库函数之前，需要分配至少一个struct event_base的对象。每一个struct event_base对象都维护者一系列事件，并且能够轮询是是否有事件被激活。
+struct event_base *event_base_new(void);
+void event_base_free(struct event_base *base);
+
+libevent是一个事件驱动库，它主要是封装了事件发生的通知机制。
+一些常见的事件：
+文件描述符已经可读、可写
+文件描述符正在变得可读、可写（边沿触发）
+超时
+信号发生
+用户触发的事件
+
+libevent提供了事件的注册机制，让开发者将事件与事件处理函数关联在一起，并绑定到event_base中。
+
+libevent是创建了一个struct event的对象。该对象与event_base、事件、回调函数关联到了一起。
+#define EV_TIMEOUT      0x01
+#define EV_READ         0x02
+#define EV_WRITE        0x04
+#define EV_SIGNAL       0x08
+#define EV_PERSIST      0x10
+#define EV_ET           0x20
+typedef void (*event_callback_fn)(evutil_socket_t, short, void *);
+
+struct event *event_new(struct event_base *base, evutil_socket_t fd,
+    short what, event_callback_fn cb,
+    void *arg);
+
+void event_free(struct event *event);
+
+fd：， 要关注的文件描述符，即我们关心的是哪个文件描述符上的事件。
+what：表示关注的是哪一类事件，取值是上面定义的标志位：宏EV_TIMEOUT、EV_READ等。
+当fd上what对应的事件发生时，回调函数cb就会被调用。 参数arg是需要传递给回调函数cb的参数。
+
+那么怎么及时知道事件什么时候发生了。
+libevent提供了将事件设置为pending状态的方式，（所谓pengding状态，指的是一旦触发事件发生的条件具备时，就通知程序事件发生了）。
+
+int event_add(struct event *ev, const struct timeval *tv);  // makes event pending in its configured base
+int event_del(struct event *ev);  //non-pending and non-active.
+
+前面提到了一些flag宏， EV_TIMEOUT等都是用与指示监听的事件，但EV_PERSIST与EV_ET不太一样
+
++ EV_PERSIST:在默认情况下（不设置EV_PERSIST），事件发生，执行回调函数时，事件会自动变成non-pending状态，需要重新执行event_add()如果设置了EV_PERSIST标志，则事件会一直处于pending状态
++ EV_ET：表示边沿触发。
+
+#define evtimer_new(base, callback, arg) \
+    event_new((base), -1, 0, (callback), (arg))
+#define evtimer_add(ev, tv) \
+    event_add((ev),(tv))
+#define evtimer_del(ev) \
+    event_del(ev)
+#define evtimer_pending(ev, tv_out) \
+    event_pending((ev), EV_TIMEOUT, (tv_out))
+
+
+#define evsignal_new(base, signum, cb, arg) \
+    event_new(base, signum, EV_SIGNAL|EV_PERSIST, cb, arg)
+#define evsignal_add(ev, tv) \
+    event_add((ev),(tv))
+#define evsignal_del(ev) \
+    event_del(ev)
+#define evsignal_pending(ev, what, tv_out) \
+    event_pending((ev), (what), (tv_out))
+
+==================================================event loop
+一旦一些events在event_base注册之后，就可以使Libevent等待events，并且在events准备好时能够通知你。
+默认情况下，event_base_loop()会在event_base上一直运行，直到其上已经没有注册的events了。
+
+运行loop时，它会重复检查那些已经注册的events是否触发了（比如，一个读event的文件描述符变得可读，或者后一个超时event已经超时）。
+一旦触发，该函数会将这些触发的events标记为active，并且开始运行回调函数。
+
+#define EVLOOP_ONCE             0x01
+#define EVLOOP_NONBLOCK         0x02
+#define EVLOOP_NO_EXIT_ON_EMPTY 0x04
+
+int event_base_loop(struct event_base *base, int flags);
+
+可以通过设置一个或多个flag参数，来改变event_base_loop()函数的行为。
+如果设置了EVLOOP_ONCE，那么loop将会一直等待，直到一些events变为active，然后运行这些激活的events的回调函数，直到运行完所有激活的events为止，最后函数返回。
+如果设置了EVLOOP_NONBLOCK标志，则该函数不会等待events变为触发，它仅仅检查是否有事件准备好了，然后运行他们的回调函数，最后函数返回。
+
+event_base_loop函数返回0表示正常退出，返回-1表示后端方法发生了错误。返回1表示已经没有pending或active状态的events了。
+
+while(any events are registered with the loop,
+        or EVLOOP_NO_EXIT_ON_EMPTY was set) {
+
+    if (EVLOOP_NONBLOCK was set, or any eventsare already active)
+        If any registered events have triggered, mark them active.
+    else
+        Wait until at least one event has triggered, and mark it active.
+
+    for (p = 0; p < n_priorities; ++p) {
+       if (any event with priority of p isactive) {
+          Run all active events with priorityof p.
+          break; /* Do not run any events of aless important priority */
+       }
+    }
+
+    if (EVLOOP_ONCE was set or EVLOOP_NONBLOCKwas set)
+       break;
+}
+
+便起见，也可以使用下面的接口：
+intevent_base_dispatch(struct event_base *base);
+该函数等价于无标志的event_base_loop()函数。
+因此，直到没有注册的events，或者调用了event_base_loopbreak()、 event_base_loopexit()，该函数才会返回。
+
+
+停止loop
+如果希望在所有events移除之前，就停止event loop的运行，有两个略有不同的接口可以调用：
+int event_base_loopexit(struct event_base *base,  const struct timeval *tv);
+int event_base_loopbreak(struct event_base *base);
+
+event_base_loopexit()函数，使得event_base在经过了给定的超时时间之后，停止运行loop。如果tv参数为NULL，则event_base会立即停止loop。如果event_base正在运行active events的回调函数，则只有在运行完所有的回调之后，才停止loop。
+event_base_loopbreak()函数，使event_base立即退出loop。它与event_base_loopexit(base,NULL)不同之处在于，如果event_base当前正在运行任何激活events的回调函数，则会在当前的回调函数返回之后，就立即退出。
+
+注意: 当event loop没有运行时，event_base_loopexit(base, NULL)和 event_base_loopbreak(base)的行为是不同的：loopexit使下一轮event loop在下一轮回调运行之后立即停止（就像设置了EVLOOP_ONCE一样），而loopbreak仅仅停止当前loop的运行，而且在event loop未运行时没有任何效果。
+上述两个方法在成功是返回0， 失败时返回-1，
+
+立即停止：
+#include <event2/event.h>
+
+/*Here's a callback function that calls loopbreak */
+void cb(int sock, short what, void *arg)
+{
+    struct event_base *base = arg;
+    event_base_loopbreak(base);
+}
+
+void main_loop(struct event_base *base, evutil_socket_t watchdog_fd)
+{
+    struct event *watchdog_event;
+
+    /* Construct a new event to triggerwhenever there are any bytes to
+       read from a watchdog socket.  When that happens, we'll call the
+       cb function, which will make the loop exitimmediately without
+       running any other active events at all.
+     */
+    watchdog_event = event_new(base, watchdog_fd, EV_READ, cb, base);
+
+    event_add(watchdog_event, NULL);
+
+    event_base_dispatch(base);
+}
+
+运行event loop10秒钟，然后退出：
+#include <event2/event.h>
+
+void run_base_with_ticks(struct event_base *base)
+{
+  struct timeval ten_sec;
+
+  ten_sec.tv_sec = 10;
+  ten_sec.tv_usec = 0;
+
+  /* Now we run the event_base for a series of10-second intervals, printing
+     "Tick" after each.  For a much better way to implement a10-second
+     timer, see the section below aboutpersistent timer events. */
+  while (1) {
+     /* This schedules an exit ten seconds fromnow. */
+     event_base_loopexit(base, &ten_sec);
+
+     event_base_dispatch(base);
+     puts("Tick");
+  }
+}
+
+有些时候需要知道event_base_dispatch()或event_base_loop()的调用是正常退出，还是因为调用了event_base_loopexit()或event_base_break()而退出。可以使用下面的函数判断是否调用了loopexit或break：
+int event_base_got_exit(struct event_base *base);
+int event_base_got_break(structevent_base *base)
+
+上述函数，如果loop的停止是因为调用了event_base_loopexit()或event_base_break() ，则会返回True。否则，会返回False。他们的值会在下次启动eventloop时被重置。
+
+
+重新检查events:
+一般情况下，Libevent会检查events，然后从高优先级的激活events开始运行，然后再次检查events。
+有时，你可能希望在运行完当前运行的回调函数之后，告知Libevent重新检查events。与event_base_loopbreak()类似，这可以通过调用event_base_loopcontinue()实现。
+int event_base_loopcontinue(struct event_base *);
+如果当前没有运行events的回调函数的话，则该函数没有任何效果。
+
+转储event_base状态
+void event_base_dump_events(struct event_base *base, FILE *f);
+为了调试程序的方便，有时会需要得到所有关联到event_base的events的列表以及他们的状态。调用event_base_dump_events()可以讲该列表输出到文件f中。
+得到的列表格式是人可读的形式，将来版本 的Libevent可能会改变其格式。
+
+==================================================events
+Libevents的基本操作单元是event，每一个event代表了一些条件的集合，这些条件包括：
+文件描述符已经准备好读或写
+文件描述符正在变为就绪，准备好读或写（仅限于边沿触发）
+超时事件
+信号发生
+用户触发事件
+
+events都有类似的生命周期。一旦调用Libevent函数创建好event，并将其关联到一个event_base之后，他就是“已初始化”状态（initialized）。
+这种状态下，可以进行add操作，将其状态变为base中的“挂起”状态（pending），处于“挂起”状态的event，
+如果触发事件的条件发生了（比如，文件描述符的状态发生变化，或者超时了），那么event的状态变为“激活”状态（active）,然后它的回调函数（用户提供）开始运行。
+如果该event配置了“持久”属性（persistent），那么它的状态依然保持为“挂起”，否则，在回调函数运行时，它的状态就不再是“挂起”（“非挂起”状态）。
+可以通过delete操作，将一个“挂起”状态的event变为“非挂起”状态（non-pending），或者通过add操作，将“非挂起”的event变为“挂起”状态。
+
+构建event对象：
+#define EV_TIMEOUT      0x01
+#define EV_READ         0x02
+#define EV_WRITE        0x04
+#define EV_SIGNAL       0x08
+#define EV_PERSIST      0x10
+#define EV_ET           0x20
+
+typedef void  (*event_callback_fn)(evutil_socket_t,  short,  void*);
+
+struct event * event_new(struct  event_base *base,  evutil_socket_t  fd,
+                                                    short what,  event_callback_fn  cb,
+                                                    void* arg);
+
+void  event_free(struct  event * event);
+
+event_new函数分配并且创建一个新的event对象，并与base进行关联。what参数是上面列出标志的集合，它们的具体意义见下方。
+如果fd是非负的整数，则它代表了我们需要观察可读或可写事件的文件。
+当event变为激活时，Libevent就会调用回调函数cb，将文件描述符参数fd，所有触发事件的标志位域，以及event_new的最后一个参数：arg传递给cb。
+
+如果发生了内部错误，或者参数非法，则event_new返回NULL。
+所有新的events都是“已初始化”和“非挂起”状态，可以调用event_add函数将这样的event变为“挂起”状态。
+
+调用event_free可以销毁event。对“挂起”或“激活”状态的event调用event_free也是安全的：在销毁它之前，会将其变为“非挂起”以及“非激活”状态。
+
+
+event标志：
+EV_TIMEOUT：
+该标志表明，超时时间过后，该event变为“激活”状态。（注意：在构建event时，EV_TIMEOUT标志是被忽略的：当add event时可以设置超时时间，也可以不设置。当超时发生时，回调函数的what参数将会设置该标志。）
+EV_READ：
+该标志表明，当文件描述符准备好读时，event将会变为“激活”
+EV_WRITE：
+该标志表明，当文件描述符准备好写时，event将会变为“激活”
+EV_SIGNAL：
+用来实现信号探测
+EV_PERSIST：
+标志该event具有“持久”属性
+EV_ET：
+指明如果event_base的底层方法支持边沿触发的话，那么该event应该是边沿触发的。这将会影响到EV_READ和EV_WRITE
+
+Examples：
+#include <event2/event.h>
+
+void  cb_func(evutil_socket_t  fd,  short what,  void * arg)
+{
+        const char *data = arg;
+        printf("Got an event on socket %d:%s%s%s%s [%s]",
+            (int) fd,
+            (what&EV_TIMEOUT) ? " timeout" : "",
+            (what&EV_READ)    ? " read" : "",
+            (what&EV_WRITE)   ? " write" : "",
+            (what&EV_SIGNAL)  ? " signal" : "",
+            data);
+}
+
+void  main_loop(evutil_socket_t  fd1,  evutil_socket_t fd2)
+{
+        struct  event *ev1, *ev2;
+        struct  timeval  five_seconds = {5,0};
+        struct  event_base * base = event_base_new();
+
+        /* The caller has already set up fd1,fd2 somehow, and make them
+           nonblocking. */
+
+        ev1 = event_new(base,  fd1,  EV_TIMEOUT|EV_READ|EV_PERSIST,  cb_func,
+           (char*)"Reading event");
+        ev2 = event_new(base,  fd2,  EV_WRITE|EV_PERSIST,  cb_func,
+           (char*)"Writing event");
+
+        event_add(ev1,  &five_seconds);
+        event_add(ev2,  NULL);
+        event_base_dispatch(base);
+}
+
+
+事件持久性 EV_PERSIST：
+默认情况下，当一个“挂起”的event变为“激活”时（要么是因为fd准备好读或写，要么是超时时间到），那么在它的回调函数执行之后，它就会变为“非挂起”状态。
+因此，如果希望再次使event变为“挂起”状态，可以在回调函数内部再次调用event_add函数。
+如果event设置了EV_PERSIST标志，那么event就是“持久”的。这意味着event在回调函数激活的时候，依然保持“挂起”状态。如果希望在回调函数中将event变为“非挂起”状态，则可以调用event_del函数。
+
+当event的回调函数运行时，“持久”event的超时时间就会被重置。因此，如果某个event标志为EV_READ|EV_PERSIST，并且将超时时间设置为5秒，则该event在下面的条件发生时，会变为“激活”：当该socket准备好读时； 距离上次event变为激活状态后，又过了5秒钟.
+
+
+创建一个可以将自身作为回调函数参数的的event：
+经常可能会希望创建这样一个event，它本身就是是回调函数的参数之一。不能仅仅传递一个指向event的指针作为event_new的参数，因为彼时它还没有创建。此时，可以通过调用event_self_cbarg函数解决这样的问题。
+void*event_self_cbarg();
+该函数返回一个“魔术”指针，使得event_new创建一个本身就能作为回调函数参数的event。
+
+#include <event2/event.h>
+
+static int  n_calls = 0;
+
+void  cb_func(evutil_socket_t  fd,  short what,  void * arg)
+{
+    struct  event *me = arg;
+
+    printf("cb_func  called  %d times  so far.\n",  ++n_calls);
+
+    if (n_calls > 100)
+       event_del(me);
+}
+
+void  run(struct  event_base * base)
+{
+    struct  timeval  one_sec = { 1, 0 };
+    struct  event *ev;
+    /* We're going to set up a repeating timerto get called 100 times. */
+   ev = event_new(base,  -1,  EV_PERSIST, cb_func,  event_self_cbarg());
+    event_add(ev,  &one_sec);
+    event_base_dispatch(base);
+}
+
+该函数还可以与函数event_new,evtimer_new, evsignal_new, event_assign, evtimer_assign和evsignal_assign一起使用。然而对于非event来说，他不会作为回调函数的参数。
+
+
+纯超时events：
+Libevent提供了一系列以evtimer_开头的宏，这些宏可以代替event_*函数，来分配和操作纯超时events。使用这些宏仅能提高代码的清晰度而已。
+#define evtimer_new(base,  callback,  arg)   event_new((base), -1, 0, (callback), (arg))
+#define evtimer_add(ev,  tv)                              event_add((ev),(tv))
+#define evtimer_del(ev)                                                            event_del(ev)
+#define evtimer_pending(ev,  tv_out)   event_pending((ev), EV_TIMEOUT, (tv_out))
+
+构造信号事件：
+Libevent也可以监控POSIX类的信号。构建一个信号处理函数，可以使用下面的接口：
+#define evsignal_new(base,  signum,  cb,  arg)\
+    event_new(base,  signum,  EV_SIGNAL|EV_PERSIST,  cb,  arg)
+
+除了提供一个代表信号值的整数，而不是一个文件描述符之外。它的参数与event_new是一样的。
+struct event * hup_event;
+struct event_base  *base = event_base_new();
+
+/*call sighup_function on a HUP signal */
+hup_event= evsignal_new(base,  SIGHUP,  sighup_function,  NULL);
+
+注意：信号回调函数是在信号发生之后，在eventloop中调用的。所以，它们可以调用那些，对于普通POSIX信号处理函数来说不是信号安全的函数。
+注意：不要在一个信号event上设置超时，不支持这样做。
+
+#define evsignal_add(ev,  tv)                             event_add((ev), (tv))
+#define evsignal_del(ev)                                        event_del(ev)
+#define evsignal_pending(ev,  what,  tv_out)  event_pending((ev), (what), (tv_out))
+
+
+不在堆中分配event：
+出于性能或者其他原因的考虑，一些人喜欢将event作为一个大的结构体的一部分进行分配。对于这样的event，它节省了：
+
+内存分配器在堆上分配小对象的开销；
+event指针的解引用的时间开销；
+如果event没有在缓存中，缓存不命中的时间开销。
+
+这些开销都非常小，对于大多数应用来说是无关紧要的。除非确定知道，应用程序因为使用堆分配的event而存在严重的性能损失，否则应该坚持实用event_new。
+int  event_assign(struct  event * event, struct  event_base * base,
+                                 evutil_socket_t fd,  short  what,
+                                 void(*callback)(evutil_socket_t,  short,  void *),  void * arg);
+event_assign的参数与event_new相同，除了event参数，该参数指针必须指向一个未初始化的event。该函数成功时返回0，失败时返回-1.
+
+#include <event2/event.h>
+/*Watch out! Including event_struct.h means that your code willnot
+ * be binary-compatible with future versions ofLibevent. */
+#include <event2/event_struct.h>
+#include <stdlib.h>
+
+struct event_pair {
+         evutil_socket_t  fd;
+         struct event  read_event;
+         struct event  write_event;
+};
+void  readcb(evutil_socket_t,  short,  void*);
+void  writecb(evutil_socket_t,  short,  void*);
+struct event_pair * event_pair_new(struct  event_base * base,  evutil_socket_t  fd)
+{
+        struct  event_pair  *p = malloc(sizeof(struct  event_pair));
+        if (!p) return NULL;
+        p->fd = fd;
+        event_assign(&p->read_event,  base,  fd, EV_READ|EV_PERSIST,  readcb,  p);
+        event_assign(&p->write_event,  base,  fd,  EV_WRITE|EV_PERSIST,writecb, p);
+        return  p;
+}
+
+同样可以使用event_assign来初始化栈或者静态存储区中的events。
+
+警告：对于已经在event_base中处于“挂起”状态的event，永远不要调用event_assign。
+如果event已经初始化，并且处于“挂起”状态，那么在调用event_assign之前应该先调用event_del。
+
+对于使用event_assign分配的纯超时event或者信号event，同样有方便的宏可以使用：
+#define evtimer_assign(event,  base,  callback, arg) \
+              event_assign(event, base,  -1,  0,  callback,  arg)
+#define evsignal_assign(event,  base,  signum, callback,  arg) \
+              event_assign(event, base,  signum,  EV_SIGNAL|EV_PERSIST,  callback,  arg)
+
+如果需要在与未来版本的Libevent保持二进制兼容性的同时，使用event_assign，可以调用Libevent中的函数，得到运行时的event结构大小：
+size_t event_get_struct_event_size(void);
+
+
+将events置为“挂起”或者“非挂起”：
+刚创建的一个event，实际上不能做任何事，直到通过调用event_add进行adding操作，将其置为“挂起”状态。
+int event_add(struct event *ev, const struct timeval *tv);
+在“非挂起”状态的events上执行event_add操作，则会使得该event在配置的event_base上变为“挂起”状态。该函数返回0表示成功，返回-1表示失败。如果tv为NULL，则该event没有超时时间。否则，tv以秒和毫妙表示超时时间。
+
+
+如果在已经是“挂起”状态的event进行event_add操作，则会保持其“挂起”状态，并且会重置其超时时间。
+如果event已经是“挂起”状态，而且以NULL为超时时间对其进行re-add操作，则event_add没有任何作用。
+
+注意：不要设置tv为希望超时事件执行的时间，比如如果置tv->tv_sec=time(NULL)+10
+int  event_del(struct event *ev);
+在已经初始化状态的event上调用event_del，则会将其状态变为“非挂起”以及“非激活”状态。如果event的当前状态不是“挂起”或“激活”状态，则该函数没有任何作用。该函数返回0表示成功，返回-1表示失败。
+注意，如果在event刚变为“激活”状态，但是它的回调函数还没有执行时，调用event_del函数，则该操作使得它的回调函数不会执行。
+
+
+int event_remove_timer(struct event *ev);
+最后，可以在不删除event上的IO事件或信号事件的情况下，删除一个“挂起”状态的event上的超时事件。
+如果该event没有超时事件，则event_remove_timer没有作用。
+如果event没有IO事件或信号事件，只有超时事件的话，则event_remove_timer等同于event_del。该函数返回0表示成功，-1表示失败。
+
+
+事件的优先级：
+当多个事件在同一时间触发时，Libevent对于他们回调函数的调用顺序是没有定义的。可以通过优先级，定义某些“更重要”的events。
+每一个event_base都有一个或多个优先级的值。在event初始化之后，添加到event_base之前，可以设置该event的优先级。
+int event_priority_set(struct event *event, int priority);
+event的优先级数必须是位于0到event_base优先级-1这个区间内。该函数返回0表示成功，返回-1表示失败。
+
+当具有多种优先级的多个events同时激活的时候，低优先级的events不会运行。Libevent会只运行高优先级的events，然后重新检查events。只有当没有高优先级的events激活时，才会运行低优先级的events。
+#include <event2/event.h>
+
+void  read_cb(evutil_socket_t,  short,  void*);
+void  write_cb(evutil_socket_t,  short,  void*);
+
+voidmain_loop(evutil_socket_t  fd)
+{
+  struct  event  *important,  *unimportant;
+  struct  event_base  *base;
+
+  base = event_base_new();
+ event_base_priority_init(base, 2);
+  /* Now base has priority 0, and priority 1 */
+  important = event_new(base,  fd,  EV_WRITE|EV_PERSIST,  write_cb,  NULL);
+  unimportant = event_new(base,  fd,  EV_READ|EV_PERSIST, read_cb,  NULL);
+  event_priority_set(important, 0);
+  event_priority_set(unimportant, 1);
+
+  /*Now, whenever the fd is ready for writing, the write callback will
+     happen before the read callback.  The read callback won't happen at
+     all until the write callback is no longeractive.*/
+}
+
+如果没有设置一个event的优先级，则它的默认优先级是“event_base队列长度”除以2
+
+
+检查event状态：
+有时可能希望知道event是否已经添加了（处于“挂起”状态），或者检查他关联到哪个event_base等。
+int  event_pending(const struct  event *ev,  short  what,  struct timeval  *tv_out);
+
+#define event_get_signal(ev) /* ... */
+evutil_socket_t event_get_fd(const  struct  event *ev);
+struct event_base *event_get_base(const  struct event  *ev);
+short event_get_events(const  struct  event  *ev);
+event_callback_fn event_get_callback(const  struct event *ev);
+void*event_get_callback_arg(const  struct  event  *ev);
+int  event_get_priority(const struct  event *ev);
+
+void  event_get_assignment(const struct event*event,
+        struct  event_base  **base_out,
+        evutil_socket_t  *fd_out,
+        short  *events_out,
+        event_callback_fn  *callback_out,
+        void  **arg_out);
+
+event_pending函数检查给定的event是否处于“挂起”或“激活”状态。如果确实如此，并且在what参数中设置了任何EV_READ, EV_WRITE, EV_SIGNAL或EV_TIMEOUT标志的话，则该函数返回所有该event当前正在“挂起”或“激活”的标志。
+如果提供了tv_out参数，且在what参数中设置了EV_TIMEOUT参数，并且当前event确实在超时事件上“挂起”或者“激活”，则tv_out就会设置为event的超时时间。
+
+event_get_fd和event_get_signal函数返回event上配置的文件描述符或者信号值。
+event_get_base()返回其配置的event_base。
+event_get_events()返回event上配置的事件标志（EV_READ,EV_WRITE等）。
+event_get_callback函数和event_get_callback_arg函数返回event的回调函数和参数指针。
+event_get_priority函数返回event的当前优先级。
+
+event_get_assignment函数在提供的参数指针中返回event的所有成分，如果参数指针为NULL，则该成分被忽略。
+#include <event2/event.h>
+#include <stdio.h>
+
+/*Change the callback and callback_arg of 'ev', which must not be pending. */
+int  replace_callback(struct  event *ev,  event_callback_fn  new_callback,
+     void* new_callback_arg)
+{
+    struct  event_base  *base;
+    evutil_socket_t  fd;
+    short  events;
+
+    int  pending;
+    pending = event_pending(ev, EV_READ|EV_WRITE|EV_SIGNAL|EV_TIMEOUT, NULL);
+    if (pending) {
+        /*We want to catch this here so that we do notre-assign a
+         * pending event.  That would be very very bad.*/
+       fprintf(stderr, "Error! replace_callbackcalled on a pending event!\n");
+        return -1;
+    }
+
+    event_get_assignment(ev,  &base, &fd,  &events,
+                         NULL /* ignore oldcallback */ ,
+                         NULL /* ignore oldcallback argument */);
+
+   event_assign(ev,  base,  fd,  events,new_callback,  new_callback_arg);
+    return 0;
+}
+
+
+
+找到当前正在运行的event：
+在调试程序时，可以得到当前正在运行的event的指针。
+struct event * event_base_get_running_event(struct event_base * base);
+注意，只有在base的loop中调用该函数，该函数才有意义。在其他线程调用时不支持的，而且会导致未定义的行为。
+
+
+配置一次性的events：
+如果不需要对一个event进行多次添加，或者对一个非持久的event，在add之后就会delete，则可以使用event_base_once函数。
+int event_base_once(struct event_base *,  evutil_socket_t,  short,
+                   void (*) (evutil_socket_t,  short,  void*),  void *,  const struct timeval *);
+
+该函数的参数与event_new一样，不同的是它不支持EV_SIGNAL或EV_PERSIST标志。
+得到的内部event会以默认的优先级添加到event_base中并运行。当它的回调函数执行完成之后，Libevent将会释放该内部event。该函数成功时返回0，失败是返回-1.
+
+通过event_base_once插入的event不能被删除或者手动激活。如果希望可以取消一个event，则需要通过常规的event_new或event_assign接口创建event。
+
+
+
+手动激活event：
+某些极少的情况下，你可能希望在条件未被触发的情况下就激活event；
+void event_active(struct event *ev, int what, short ncalls);
+该接口使得event变为“激活”状态，激活标志在what中传入（EV_READ, EV_WRITE和EV_TIMEOUT的组合）。该event之前的状态不一定非得要是“挂起”状态，而且将其激活不会使其状态变为“挂起”状态。
+
+
+struct event *ev;
+struct timeval tv;
+
+static void  cb(int  sock,short  which,  void *arg) {
+   if (!evtimer_pending(ev, NULL)) {
+       event_del(ev);
+       evtimer_add(ev, &tv);
+   }
+}
+
+int  main(int  argc,  char**argv) {
+   struct  event_base  *base = event_base_new();
+   tv.tv_sec = 0;
+   tv.tv_usec = 0;
+
+   ev = evtimer_new(base,  cb,  NULL);
+   evtimer_add(ev, &tv);
+   event_base_loop(base, 0);
+   return 0;
+}
+
+==================================================通用函数
+头文件<event2/util.h> 定义了许多能够帮助我们利用libevent 实现可移植应用程序的函数。libevent会在库内部使用这些函数。
+
+基础类型：
+evutil_socket_t
+在除Windows之外的大多数地方，套接字是个整数，操作系统按照数值次序进行处理。然而，使用Windows套接字API时，socket具有类型SOCKET，它实际上是个类似指针的句柄，收到这个句柄的次序是未定义的。在Windows中，libevent定义evutil_socket_t类型为整型指针，可以处理socket()或者accept()的输出，而没有指针截断的风险。
+#ifdef WIN32
+#define evutil_socket_t intptr_t
+#else
+#define evutil_socket_t int
+#endif
+
+标准整数类型:
+libevent定义了来自于stdint.h的、位宽度确定（bit-width-specific）的整数类型
+
+在有ssize_t（有符号的size_t）类型的平台上，ev_ssize_t定义为ssize_t；而在没有的平台上，则定义为某合理的默认类型。ev_ssize_t类型的最大可能值是EV_SSIZE_MAX；最小可能值是EV_SSIZE_MIN。（在平台没有定义SIZE_MAX的时候，size_t类型的最大可能值是EV_SIZE_MAX）
+
+
+==================================================Bufferevents
+大多数时候，应用程序除了响应请求外，还需要处理数据（及其缓存）。当我们想要写数据是，通常会有以下步骤
+
+决定要向连接中写入什么数据， 把这些数据放入缓存
+等待连接可写
+写入尽可能多的数据
+记住写入了多少数据，如果还有数据没写完。等待连接再次变为可写状态。
+这样的I/O缓冲方式很常见，因而libevent为此提供了一种通用机制。
+“bufferevent”由一个底层传输系统（比如socket），一个读缓冲区和一个写缓冲区组成。
+对于普通的events， 当底层传输系统可读或者可写时，调用回调方式； 而bufferevent提供了一种替代方式：它在已经写入、或者读出数据的时候才调用回调函数。
+
+基于socket的bufferevent：
+在底层流式socket上发送和接收数据，使用event_*接口作为其后端。
+异步IO的bufferevent：
+过滤型的bufferevent：
+成对的bufferevent：
+
+bufferevent目前仅能工作在流式协议上，比如TCP。
