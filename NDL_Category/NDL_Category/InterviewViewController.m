@@ -5870,7 +5870,7 @@ TCP(传输控制协议) 建立连接，形成传输数据的通道 在连接中�
  0.0.0.0为广播地址
  */
 
-// MARK: ---LG_性能优化
+// MARK: ===LG_性能优化===
 /**
  MARK: ---内存管理
  内存布局:
@@ -5930,7 +5930,7 @@ TCP(传输控制协议) 建立连接，形成传输数据的通道 在连接中�
  [p release];// release()->rootRelease()，1.extra_rc - 1 2.如果下溢出  如果散列表存在newisa.has_sidetable_rc就去散列表借来的RC_HALF - 1存到extra_rc 3.如果release借了散列表的引用计数还是下溢出就调用dealloc
  [p retainCount];// 1
  
- MARK:dealloc底层实现:
+ MARK: ---dealloc底层实现:
  dealloc
  ->
  _objc_rootDealloc(self)
@@ -6039,7 +6039,7 @@ TCP(传输控制协议) 建立连接，形成传输数据的通道 在连接中�
  
  
  
- MARK: weak底层原理：
+ MARK: ---weak底层原理：
  objc_initWeak->
  storeWeak
  ->
@@ -6116,7 +6116,7 @@ inline_referrers[0] = newReferrer;
  referent: 指示物
  referrer: 推荐人,引荐人 这边指弱引用指针,obj1
  
- MARK: strong
+ MARK: ---strong
  void objc_storeStrong(id *location, id obj){
  id prev = *location
  if(obj == prev){
@@ -6146,7 +6146,7 @@ inline_referrers[0] = newReferrer;
  return data()->ro->flags & RO_IS_ARC;
  }
  
- MARK: autoreleasepool
+ MARK: ---autoreleasepool
  自动释放池：双向链表,用来容纳变量
  AutoreleasePoolPage
  page: 属性 56字节
@@ -6219,7 +6219,43 @@ inline_referrers[0] = newReferrer;
  }
  return page->add(obj);
  }
- */
+ 
+ MARK: ---循环引用
+ 解决方式
+ 1.
+ __weak typeof(self) weakSelf = self;
+ self.block = ^{
+     __strong typeof(self) strongSelf = weakSelf;
+     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+         NSLog(@"%@",strongSelf.name); // self - nil name - nil
+     });
+ };
+ self.block();
+ 
+ 2.
+ __block LGViewController *vc = self; // vc 结构体
+ self.block = ^{
+     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+         NSLog(@"%@",vc.name); // self - nil name - nil
+         vc = nil;
+     });
+ };
+ self.block();
+ 
+ 3.
+ self.blockVc = ^(LGViewController *vc){
+     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+         NSLog(@"%@",vc.name); // self - nil name - nil
+     });
+ };
+ self.blockVc(self);
+ 
+ MARK: ---强引用
+ NSTiner解决方式
+ 1.中间层（Wrapper）
+ 2.NSProxy
+ 
+ */8:30
 
 
 // MARK: ---LG_flutter
