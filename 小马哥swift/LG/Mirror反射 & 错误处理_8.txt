@@ -1,0 +1,498 @@
+==========Mirror反射
+Mirror(反射)：可以动态获取类型、成员信息，在运⾏时可以调⽤⽅法、属性等⾏为的特性。
+对于⼀个纯Swift类来说，并不⽀持直接像OC那样使用Runtime操作。但Swift标准库依然提供了反射机制，用来访问成员信息。
+
+访问成员信息:
+class LGTeacher {
+    var age: Int = 18
+    var name: String = "Zang"
+}
+
+var t = LGTeacher()
+
+let mirror = Mirror(reflecting: t)
+
+for pro in mirror.children{
+    print("\(pro.label):\(pro.value)")
+}
+
+//输出以下内容：
+//Optional("age"):18
+//Optional("name"):Zang
+
+Mirror反射的是实例对象的成员信息，传入的参数必须是实例对象
+传入一个类对象Mirror(reflecting: LGTeacher)，编译报错
+传入一个类的类型Mirror(reflecting: LGTeacher.self)，获取不到任何成员信息
+
+查看Mirror定义:
+Mirror是一个结构体
+Mirror的init方法，接收一个Any类型参数
+Children是一个AnyCollection，接收一个泛型Mirror.Child
+Mirror.Child是一个元组类型
+
+JSON解析:
+class LGTeacher {
+    var age: Int = 18
+    var name: String = "Zang"
+}
+
+func test(_ obj : Any) -> Any {
+    
+    let mirror = Mirror(reflecting: obj)
+    
+    guard !mirror.children.isEmpty else {
+        return obj
+    }
+    
+    var keyValue: [String: Any] = [:]
+    
+    for children in mirror.children {
+        
+        if let keyName = children.label {
+            keyValue[keyName] = test(children.value)
+        }
+        else {
+            print("children.label 为空")
+        }
+    }
+    
+    return keyValue
+}
+
+var t = LGTeacher()
+print(test(t))
+
+//输出以下内容：
+//["name": "Zang", "age": 18]
+
+成功的将实例对象t转为字典并输出，但在实际开发中，这样的代码写的相对丑陋，下面就来对它做一个简单的封装
+抽取协议:
+我们预期在每一个属性下都能调用JSON解析的方法，所以可以将它抽取成一个协议，然后提供一个默认实现，让类遵守协议
+
+protocol CustomJSONMap {
+    func jsonMap() -> Any
+}
+
+extension CustomJSONMap{
+    func jsonMap() -> Any{
+
+        let mirror = Mirror(reflecting: self)
+    
+        guard !mirror.children.isEmpty else {
+            return self
+        }
+    
+        var keyValue: [String: Any] = [:]
+    
+        for children in mirror.children {
+    
+            if let value = children.value as? CustomJSONMap {
+                
+                if let keyName = children.label {
+                    keyValue[keyName] = value.jsonMap()
+                }
+                else {
+                    print("key是nil")
+                }
+            }
+            else {
+                print("当前-\(children.value)-没有遵守协议")
+            }
+        }
+    
+        return keyValue
+    }
+}
+
+class LGTeacher : CustomJSONMap {
+    var age: Int = 18
+    var name: String = "Zang"
+}
+
+var t = LGTeacher()
+print(t.jsonMap())
+
+//输出以下内容：
+//当前-18-没有遵守协议
+//当前-Zang-没有遵守协议
+//[:]
+
+上述代码中，因为age和name分别为Int和String类型，这些类并没有遵守CustomJSONMap协议，所以无法输出正确结果
+
+extension Int: CustomJSONMap{}
+extension String: CustomJSONMap{}
+
+class LGTeacher: CustomJSONMap {
+    var age: Int = 18
+    var name: String = "Zang"
+}
+
+var t = LGTeacher()
+print(t.jsonMap())
+
+//输出以下内容：
+//["age": 18, "name": "Zang"]
+
+==========错误处理
+Error协议
+Swift提供Error协议来标识当前应⽤程序发⽣错误的情况，不管是struct、Class、enum都可以通过遵循这个协议来表示⼀个错误。Error的定义如下:
+
+上述JSON解析案例中，有两个print分别打印未遵守协议和key是nil，下面演示如何通过Error协议处理这两种异常情况
+上述代码中，将JSONMapError.emptyKey和JSONMapError.notConformProtocol进行return
+以此代替之前两个print。但对于jsonMap方法来说，由于返回值是Any类型，故此我们无法区分返回结果是解析成功的字典，还是错误的枚举
+
+对于异常情况，可以使用throw关键字将错误抛出，将代码中的return改为throw
+使用throw编译报错，因为方法还没有声明成throws。需要在方法返回值前面增加throws关键字，告诉方法有错误抛出
+
+方法使用throws关键字修饰，调用该方法的代码编译报错。对于有错误抛出的方法，需要在调用方法前使用try关键字
+enum JSONMapError: Error{
+    case emptyKey
+    case notConformProtocol
+}
+
+protocol CustomJSONMap {
+    func jsonMap() throws-> Any
+}
+
+extension CustomJSONMap{
+    func jsonMap() throws-> Any{
+
+        let mirror = Mirror(reflecting: self)
+    
+        guard !mirror.children.isEmpty else {
+            return self
+        }
+    
+        var keyValue: [String: Any] = [:]
+    
+        for children in mirror.children {
+    
+            if let value = children.value as? CustomJSONMap {
+                
+                if let keyName = children.label {
+                    keyValue[keyName] = try value.jsonMap()
+                }
+                else {
+                    throw JSONMapError.emptyKey
+                }
+            }
+            else {
+                throw JSONMapError.notConformProtocol
+            }
+        }
+    
+        return keyValue
+    }
+}
+
+extension Int : CustomJSONMap{}
+extension String : CustomJSONMap{}
+
+class LGTeacher : CustomJSONMap {
+    var age: Int = 18
+    var name: String = "Zang"
+}
+
+var t = LGTeacher()
+print(try t.jsonMap())
+到这⾥一个完整的Swift错误表达⽅式就完成了
+
+
+try关键字
+使⽤try关键字是Swift中错误处理最简便的方式，相当于帅锅。将异常向上抛出，抛给上层函数。使⽤try关键字有两个注意点：
+
+try?：返回⼀个可选类型，这⾥的结果要么是成功，返回具体结果。要么是错误，返回nil。这种方式我们不关心具体是哪⼀类错误，统⼀返回nil
+try!：表示你对这段代码有绝对的⾃信，这⾏代码绝对不会发⽣错误
+
+使用try t.jsonMap()，将异常抛给上层函数，如果全程没有函数处理异常，最终抛给main函数也没办法处理，程序直接闪退
+
+
+do...catch
+Swift中do...catch是错误处理的另一种方式
+//extension Int : CustomJSONMap{}
+//extension String : CustomJSONMap{}
+
+class LGTeacher : CustomJSONMap {
+    var age: Int = 18
+    var name: String = "Zang"
+}
+
+var t = LGTeacher()
+
+do{
+    try t.jsonMap()
+}catch{
+    print(error)
+}
+
+//输出以下内容：
+//notConformProtocol
+
+通过do作用域捕获异常，通过catch作用域处理异常，最终打印出错误类型notConformProtocol
+
+==========LocalError协议
+如果使⽤Error协议不能详尽表达错误信息，可以使⽤LocalError协议，定义如下：
+
+public protocol LocalizedError : Error {
+
+    //错误的描述
+    /// A localized message describing what error occurred.
+    var errorDescription: String? { get }
+
+    //失败的原因
+    /// A localized message describing the reason for the failure.
+    var failureReason: String? { get }
+
+    //恢复的建议
+    /// A localized message describing how one might recover from the failure.
+    var recoverySuggestion: String? { get }
+
+    //给开发者的帮助
+    /// A localized message providing "help" text if the user requests help.
+    var helpAnchor: String? { get }
+}
+
+修改JSON解析案例，使用LocalizedError协议，打印具体的错误描述
+
+enum JSONMapError: Error{
+    case emptyKey
+    case notConformProtocol
+}
+
+extension JSONMapError: LocalizedError{
+    var errorDescription: String?{
+        switch self {
+            case .emptyKey:
+                return "key为空"
+            case .notConformProtocol:
+                return "没有遵守协议"
+        }
+    }
+}
+
+//extension Int : CustomJSONMap{}
+//extension String : CustomJSONMap{}
+
+class LGTeacher : CustomJSONMap {
+    var age: Int = 18
+    var name: String = "Zang"
+}
+
+var t = LGTeacher()
+
+do{
+    try t.jsonMap()
+}catch{
+    print(error.localizedDescription)
+}
+
+//输出以下内容：
+//没有遵守协议
+为JSONMapError增加extension扩展，并遵守LocalizedError协议，在catch作用域中打印error.localizedDescription，最终输出错误描述：没有遵守协议
+
+
+==========CustomError协议
+CustomNSError相当于OC中的NSError，有三个默认属性：
+
+public protocol CustomNSError : Error {
+
+    /// The domain of the error.
+    static var errorDomain: String { get }
+
+    /// The error code within the given domain.
+    var errorCode: Int { get }
+
+    /// The user-info dictionary.
+    var errorUserInfo: [String : Any] { get }
+}
+
+修改JSON解析案例，使用CustomNSError协议，打印错误码
+enum JSONMapError: Error{
+    case emptyKey
+    case notConformProtocol
+}
+
+extension JSONMapError: CustomNSError{
+    var errorCode: Int{
+        switch self {
+        case .emptyKey:
+            return -1
+        case .notConformProtocol:
+            return -2
+        }
+    }
+}
+
+//extension Int : CustomJSONMap{}
+//extension String : CustomJSONMap{}
+
+class LGTeacher : CustomJSONMap {
+    var age: Int = 18
+    var name: String = "Zang"
+}
+
+var t = LGTeacher()
+
+do{
+    try t.jsonMap()
+}catch{
+    print("\(String(describing: (error as? CustomNSError)?.errorCode))")
+}
+
+//输出以下内容：
+//Optional(-2)
+
+为JSONMapError增加extension扩展，并遵守CustomNSError协议，在catch作用域中使用as?关键字将error强转为CustomNSError类型，并打印errorCode，最终输出错误码：Optional(-2)
+
+==========Mirror源码解析
+@_silgen_name关键字
+@_silgen_name关键字用来改变当前方法的调用方式
+
+在swift项目中，创建test.c，里面声明lg_add函数，传入两个参数，返回参数相加的结果
+
+在main.swift中，定义swift_lg_add方法，参数、返回值和test.c的lg_add一致，并加入@_silgen_name("lg_add")关键字声明，尝试调用swift_lg_add方法，发现最终会调用lg_add
+
+源码解析：
+打开Mirror.swift，可以看到Mirror是一个结构体类型
+
+原理解析：
+struct LGTeacher{
+    var age = 18
+    var name = "Zang"
+}
+
+定义StructMetadata结构体，相当于TargetStructMetadata
+struct StructMetadata{
+    var kind: Int
+    var typeDescriptor: UnsafeMutablePointer<StructDescriptor>
+}
+
+定义StructDescriptor结构体，相当于TargetValueTypeDescription
+struct StructDescriptor {
+    let flags: Int32
+    let parent: Int32
+    var name: RelativePointer<CChar>
+    var AccessFunctionPtr: RelativePointer<UnsafeRawPointer>
+    var Fields: RelativePointer<FieldDescriptor>
+    var NumFields: Int32
+    var FieldOffsetVectorOffset: Int32
+}
+
+定义FieldDescriptor结构体，相当于FieldDescriptor
+struct FieldDescriptor {
+    var MangledTypeName: RelativePointer<CChar>
+    var Superclass: RelativePointer<CChar>
+    var kind: UInt16
+    var fieldRecordSize: Int16
+    var numFields: Int32
+    //连续的存储空间
+    var fields: FieldRecordT<FieldRecord>
+}
+
+定义FieldRecord结构体，相当于FieldRecord
+struct FieldRecord {
+    var Flags: Int32
+    var MangledTypeName: RelativePointer<CChar>
+    var FieldName: RelativePointer<CChar>
+}
+
+定义RelativePointer结构体，仿照RelativeDirectPointerImpl的get方法，实现当前指针的偏移
+struct RelativePointer<T> {
+    var offset: Int32
+
+    mutating func get() -> UnsafeMutablePointer<T>{
+        let offset = self.offset
+
+        return withUnsafePointer(to: &self) { p in
+            return UnsafeMutablePointer(mutating: UnsafeRawPointer(p).advanced(by: numericCast(offset)).assumingMemoryBound(to: T.self))
+        }
+    }
+}
+offset：偏移地址
+UnsafeMutablePointer：转换为UnsafeMutablePointer类型指针
+UnsafeRawPointer(p)：当前this
+advanced：移动步长
+numericCast：位的强转
+assumingMemoryBound：假定内存绑定为T的类型
+
+定义FieldRecordT结构体，实现类似getFiledAt方法，在连续内存空间中，移动步长，拿到每一个FieldRecord
+struct FieldRecordT<Element> {
+    var element: Element
+    mutating func element(at i: Int) -> UnsafeMutablePointer<Element> {
+        return withUnsafePointer(to: &self) { p in
+            return UnsafeMutablePointer(mutating:  UnsafeRawPointer(p).assumingMemoryBound(to: Element.self).advanced(by: i))
+        }
+    }
+}
+
+
+
+
+使用unsafeBitCast内存按位转换，将LGTeacher的类型绑定到StructMetadata
+let ptr = unsafeBitCast(LGTeacher.self as Any.Type, to: UnsafeMutablePointer<StructMetadata>.self)
+
+获取类型：
+let namePtr = ptr.pointee.typeDescriptor.pointee.name.get()
+print("类型：\(String(cString: namePtr))")
+
+//输出以下结果：
+//类型：LGTeacher
+
+获取属性大小：
+let fieldDescriptorPtr = ptr.pointee.typeDescriptor.pointee.Fields.get()
+print("属性大小：\(ptr.pointee.typeDescriptor.pointee.NumFields)")
+
+//输出以下结果：
+//属性大小：2
+
+遍历出所有属性名称：
+for index in 0..<ptr.pointee.typeDescriptor.pointee.NumFields {
+    
+    let recordPtr = fieldDescriptorPtr.pointee.fields.element(at: Int(index))
+    let valOffset=recordPtr.pointee.FieldName.get().pointee
+
+    print("属性\(index)：\(String(cString: recordPtr.pointee.FieldName.get()))")
+}
+
+//输出以下结果：
+//属性0：age
+//属性1：name
+
+unsafeBitCast是忽略数据类型的强制转换，不会因为数据类型的变化而改变原来的内存数据
+
+==========numericCast
+public func numericCast<T : BinaryInteger, U : BinaryInteger>(_ x: T) -> U {
+  return U(x)
+}
+当你将一个整数值转换为另一个类型时，另一个类型有可能无法表示这个值。
+这会发生在你尝试将一个有符号整数转换成一个无符号整数时（比如将 -42 转换为 UInt）或者数值超过了目标类型所能表示的范围时（比如 UInt8 只能表示 0 到 255 之间的数字）。
+
+
+BinaryInteger 为整数类型转换定义了四种策略，每一种在处理超出范围的值时都有不同行为：
+范围检查转换（init(_:)）： 遇到超出范围的值时触发运行时错误
+准确转换（init?(exactly:)）： 遇到超出范围的值时返回 nil
+钳制转换（init(clamping:)）： 遇到超出范围的值时使用最近可表示的值
+位模式转换（init(truncatingIfNeeded:)）： 截断至目标整数类型宽度
+
+
+有符号整型数组和无符号整型数组使用同样的字面量初始化：
+let arrayOfInt: [Int] = [1, 2, 3]
+let arrayOfUInt: [UInt] = [1, 2, 3]
+
+尽管它们好像是相等的，但我们不能做下面例子中的事情：
+arrayOfInt as [UInt] // Error: Cannot convert value of type '[Int]' to type '[UInt]' in coercion
+
+解决这个问题的一种方式是，将 numericCast 函数作为参数传入 map(_:)：
+arrayOfInt.map(numericCast) as [UInt]
+这样等同于直接传入 UInt 范围检查构造器：
+arrayOfInt.map(UInt.init)
+
+let arrayOfNegativeInt: [Int] = [-1, -2, -3]
+arrayOfNegativeInt.map(numericCast) as [UInt] // 🧞‍ Fatal error: Negative value is not representable
+numericCast(_:) 更像是 as! 而不是 as 或 as?。
+
+将这个和传入精确转换构造器 init?(exactly:) 的结果相比：
+let arrayOfNegativeInt: [Int] = [-1, -2, -3]
+arrayOfNegativeInt.map(UInt.init(exactly:)) // [nil, nil, nil]
+
+

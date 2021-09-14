@@ -300,6 +300,39 @@ for (UIView *view in _searchBar.subviews.lastObject.subviews) {
 ==========UINavigationBar
 从 iOS 11 开始，UINavigationBar 使用了自动布局，左右两边的按钮到屏幕之间会有 16 或 20 的边距。
 
+为了避免点击到间距的空白处没有响应，通常做法是：定义一个 UINavigationBar 子类，重写 layoutSubviews 方法，在此方法里遍历 subviews 获取 _UINavigationBarContentView，并将其 layoutMargins 设置为 UIEdgeInsetsZero。
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    
+    for (UIView *subview in self.subviews) {
+        if ([NSStringFromClass([subview class]) containsString:@"_UINavigationBarContentView"]) {
+            subview.layoutMargins = UIEdgeInsetsZero;
+            break;
+        }
+    }
+}
+然而，这种做法在 iOS 13 中会导致崩溃:
+*** Terminating app due to uncaught exception 'NSInternalInconsistencyException', reason: 'Client error attempting to change layout margins of a private view'
+
+解决方案:
+使用设置 frame 的方式，让 _UINavigationBarContentView 向两边伸展，从而抵消两边的边距。
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    
+    for (UIView *subview in self.subviews) {
+        if ([NSStringFromClass([subview class]) containsString:@"_UINavigationBarContentView"]) {
+            if ([UIDevice currentDevice].systemVersion.floatValue >= 13.0) {
+                UIEdgeInsets margins = subview.layoutMargins;
+                subview.frame = CGRectMake(-margins.left, -margins.top, margins.left + margins.right + subview.frame.size.width, margins.top + margins.bottom + subview.frame.size.height);
+            } else {
+                subview.layoutMargins = UIEdgeInsetsZero;
+            }
+            break;
+        }
+    }
+}
+
 ==========UISearchDisplayController
 在 iOS 8 之前，我们在 UITableView 上添加搜索框需要使用 UISearchBar + UISearchDisplayController 的组合方式，
 而在 iOS 8 之后，苹果就已经推出了 UISearchController 来代替这个组合方式
@@ -309,6 +342,12 @@ for (UIView *view in _searchBar.subviews.lastObject.subviews) {
 _searchBar.searchTextField.text = @“search";
 
 ==========CNCopyCurrentNetworkInfo
+从 iOS 12 开始，CNCopyCurrentNetworkInfo 函数需要开启 Access WiFi Information 的功能后才会返回正确的值。
+在 iOS 13 中，这个函数的使用要求变得更严格，根据 CNCopyCurrentNetworkInfo 文档说明，应用还需要符合下列三项条件中的至少一项才能得到正确的值：
+使用 Core Location 的应用， 并获得定位服务权限。
+使用 NEHotspotConfiguration 来配置 WiFi 网络的应用。
+目前正处于启用状态的 VPN 应用。
+
 iOS13 以后只有开启了 Access WiFi Information capability，才能获取到 SSID 和 BSSID wi-fi or wlan 相关使用变更
 可以先获取用户位置权限才能返回SSID。
 
@@ -316,6 +355,14 @@ iOS13 以后只有开启了 Access WiFi Information capability，才能获取到
 iOS13以前，使用蓝牙时可以直接用，不会出现权限提示，iOS13后，再使用就会提示了。 在info.plist里增加
 <key>NSBluetoothAlwaysUsageDescription</key> 
 <string>我们要一直使用您的蓝牙</string>
+
+在 iOS 13 中，苹果将原来蓝牙申请权限用的 NSBluetoothPeripheralUsageDescription 字段，替换为 NSBluetoothAlwaysUsageDescription 字段。
+
+根据 MAC 地址容易推算出用户当前所处的地理位置。
+
+解决方案：
+官网文档也有说明，就是在 Info.plist 中把两个字段都加上。
+For deployment targets earlier than iOS 13, add both NSBluetoothAlwaysUsageDescription and NSBluetoothPeripheralUsageDescription to your app’s Information Property List file.
 
 ==========AppDelegate和SceneDelegate
 这是为了 iPadOS 的多进程准备的
@@ -333,47 +380,43 @@ Info.plist文件中提供了”Application Scene Manifest“配置项，用于�
 iOS12及之前生命周期的各方法：
 application:(UIApplication *)application didFinishLaunchingWithOptions
 // 初始化
-
 application:(UIApplication *)applicationDidBecomeActive
 // 已经被激活
-
 application:(UIApplication *)applicationWillResignActive
 // 即将被挂起
-
 application:(UIApplication *)applicationDidEnterBackground
 // 已经进入后台
-
 application:(UIApplication *)applicationWillEnterForeground
 // 即将回到前台
-
 application:(UIApplication *)applicationWillTerminate
 // 即将被杀死
-
 
 iOS13之后生命周期的各方法：
 scene:(UIScene *)scene willConnectToSession
 // 初始化
-
 sceneDidBecomeActive:(UIScene *)scene
 // 已经被激活
-
 sceneWillResignActive:(UIScene *)scene
 // 即将被挂起
-
 sceneDidEnterBackground:(UIScene *)scene
 // 已经进入后台
-
 sceneWillEnterForeground:(UIScene *)scene
 // 即将回到前台
-
 sceneDidDisconnect:(UIScene *)scene
 // 即将被杀死
 
-
 Windows在ios13之前就已经出现了，它们代表应用程序运行的视口（viewport）。UISceneSession控制用户看到的可见窗口，你创建的UIWindow是你的应用的容器视图(container view)。
-
-
 
 iOS13之前，appDelegate的职责全权处理App生命周期和UI生命周期
 iOS13之后，appDelegate的职责是处理App生命周期和新的SceneSession生命周期。
 所有UI生命周期交给SceneDelegate处理，appDelegate不在负责UI生命周期。
+
+Scene Sessions:
+在iOS13中AppDelegate中有两个管理Senen Session的代理函数。在您的应用创建scene（场景）后，“scene session”对象将跟踪与该场景相关的所有信息。
+这两个函数是:
+application(_:configurationForConnecting:options:), 会返回一个创建场景时需要的UISceneConfiguration对象
+application(_:didDiscardSceneSessions:), 当用户通过“应用切换器”关闭一个或多个场景时会被调用
+
+application(_:didDiscardSceneSessions:)很简单。 当用户通过“应用程序切换器”关闭一个或多个场景时，即会调用该方法。 您可以在该函数中销毁场景所使用的资源，因为不会再需要它们。
+了解application(_:didDiscardSceneSessions:)与sceneDidDisconnect（_ :)的区别很重要，
+后者仅在场景断开连接时调用，不会被丢弃，它可能会重新连接。而application（_：didDiscardSceneSessions：）发生在使用【应用程序切换器】退出场景时。

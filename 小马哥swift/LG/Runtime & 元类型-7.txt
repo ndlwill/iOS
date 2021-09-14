@@ -1,0 +1,285 @@
+Runtime探索:
+==========案例1
+class LGTeacher {
+    var age: Int = 18
+    func teach(){
+        print("teach")
+    }
+}
+
+let t = LGTeacher()
+
+func test(){
+    
+    var methodCount: UInt32 = 0
+    let methodList = class_copyMethodList(LGTeacher.self, &methodCount)
+    
+    for i in 0..<numericCast(methodCount) {
+        if let method = methodList?[i]{
+            let methodName = method_getName(method)
+            print("方法列表：\(methodName)")
+        }else{
+            print("not found method")
+        }
+    }
+    
+    var count: UInt32 = 0
+    let proList = class_copyPropertyList(LGTeacher.self, &count)
+    
+    for i in 0..<numericCast(count) {
+        if let property = proList?[i]{
+            let propertyName = property_getName(property)
+            print("成员属性：\(property)")
+        }else{
+            print("not found property")
+        }
+    }
+    
+    print("test run")
+}
+
+test()
+
+//输出以下内容：
+//test run
+从运行结果来看并没有达到预期，⽅法列表和成员属性都没有打印出来
+
+==========案例2
+修改案例1，给方法和属性添加@objc修饰，能否打印出结果？
+
+class LGTeacher {
+    @objc var age: Int = 18
+    @objc func teach(){
+        print("teach")
+    }
+}
+
+//输出以下内容：
+//方法列表：teach
+//方法列表：age
+//方法列表：setAge:
+//成员属性:0x0000000100008510
+//test run
+
+从运行结果来看，⽅法列表及成员属性全部被打印出来，但Class没有继承NSObject，所以并不能暴漏给OC使用
+
+==========案例3
+修改案例2，将Class继承于NSObject，去掉@objc修饰，能否打印出结果？
+
+class LGTeacher : NSObject {
+    var age: Int = 18
+    func teach(){
+        print("teach")
+    }
+}
+
+//输出以下内容：
+//方法列表：init
+//test run
+
+从运行结果来看，只有init方法被打印出来。因为继承NSObject后，swift.h中默认只有init方法暴露
+
+==========案例4
+修改案例3，Class继承于NSObject，同时给方法和属性添加@objc修饰，能否打印出结果？
+
+class LGTeacher : NSObject {
+    @objc var age: Int = 18
+    @objc func teach(){
+        print("teach")
+    }
+}
+
+//输出以下内容：
+//方法列表：teach
+//方法列表：init
+//方法列表：age
+//方法列表：setAge:
+//成员属性:0x0000000100008518
+
+从运行结果来看，⽅法列表及成员属性全部被打印出来，同时可供OC使用，但对于teach()方法，依然是V_table函数表调度，无法使用Runtime的方法交换，因为方法此时还不具备动态特性
+
+==========案例5
+修改案例4，Class继承于NSObject，将@objc修饰改为dynamic修饰，能否打印出结果？
+
+class LGTeacher : NSObject {
+    dynamic var age: Int = 18
+    dynamic func teach(){
+        print("teach")
+    }
+}
+
+//输出以下内容：
+//方法列表：init
+//test run
+
+从运行结果来看，还是只有init方法被打印出来。因为dynamic修饰只给方法和属性增加了动态特性，它们依然不能被OC使用
+
+通过上述案例，得出以下结论：
+Swift是静态语言，所以没有动态特性。⽅法和属性不加任何修饰符的情况下，不具备所谓的Runtime特性，它的方法调度方式使用V_table函数表调度
+对于纯Swift类，给⽅法和属性添加@objc修饰后，可以通过Runtime API获取到⽅法和属性列表，但是在OC中无法进⾏调度，例如Runtime的方法交换
+继承⾃NSObject的类，如果想要动态获取当前⽅法和属性，必须在其声明前添加@objc关键字。如果想通过Runtime API使用它们，例如Runtime的方法交换，需要添加dynamic关键字，让它们具备动态特性
+
+==========objc源码分析
+进入class_copyMethodList定义，先获取当前的data，而data的作用就是存储类的信息
+
+进入data定义，在objc_class里打印superclass，输出的是Swift中有默认基类_SwiftObject
+
+在Swift源码中找到_SwiftObject，发现它实现了NSObject协议。本质上Swift为了和OC进行交互，它保留了OC的数据结构
+
+回到objc源码，打印methods，输出一个存放method的二维数组。使用@objc修饰的方法就能被获取到，因为Swift在底层数据结构和OC保持部分一致
+
+在objc源码中找到swift_class_t，继承自objc_class，保留了父类isa、superclass、cacheData、data四个属性，其次才是自己的属性
+
+必须继承NSObject的原因：Swift在底层数据结构和OC只保持了部分一致，通过NSObject的声明，标记了当前类是一个和OC交互的类。可以帮助编译器判断这个类在编译过程中，到底应该走哪些方法的分支。因为上层API的调用者暴露不同，所以选择不同，在编译器里优化的调用方式也就不同。
+
+元类型:
+==========AnyObject
+代表任意类的instance，类的类型，仅类遵守的协议
+
+class LGTeacher {
+    var age: Int = 18
+}
+
+var t = LGTeacher()
+
+//此时代表的就是当前 LGTeacher 的实例对象
+var t1: AnyObject = t
+
+//此时代表的就是 LGTeacher 这个类的类型
+var t2: AnyObject = LGTeacher.self
+
+//仅类遵守的协议
+protocol JSONMap: AnyObject {}
+
+//class可遵守此协议
+class LGJSONMap: JSONMap {}
+
+上述代码中，t1代表LGTeacher的实例对象，t2代表LGTeacher类的类型，JSONMap是仅类遵守的协议，因为LGJSONMap是Class类型，所以可以遵守JSONMap协议
+
+JSONMap是仅类遵守的协议，结构体无法使用，编译报错
+
+==========Any
+代表任意类型，包括funcation类型或者Optional类型
+
+var array: [Any] = [1, "Teacher", true]
+
+Any包含的类型比AnyObject更为广泛，可以理解为AnyObject是Any的子集。
+
+==========AnyClass
+代表任意实例的类型：AnyObject.Type
+
+public typealias AnyClass = AnyObject.Type
+
+==========T.self
+T是实例对象，返回的就是它本身
+T是类，那么返回的是Metadata
+
+class LGTeacher {
+    var age: Int = 18
+}
+
+var t = LGTeacher()
+//返回实例对象本身
+var t1 = t.self
+//返回LGTeacher这个类的类型，metadata元类型
+var t2 = LGTeacher.self
+
+上述代码中， t1返回的是实例对象本身， t2返回的是LGTeacher.Type，也就是LGTeacher这个类的类型
+
+==========T.Type
+⼀种类型，T.self的类型是T.Type
+
+==========type(of:)
+⽤来获取⼀个值的动态类型
+
+var age: Int = 18
+
+func test(_ value : Any) {
+    print(type(of: value))
+}
+
+test(age)
+
+//输出以下内容：
+//Int
+
+上述代码中，value的静态类型(static type)是Any，是编译期确定好的。而type(of:)方法⽤来获取⼀个值的动态类型(dynamic type)，所以输出的是Int
+
+==========案例1
+class LGTeacher {
+    func teahc() {
+        print("LGTeacher teahc")
+    }
+}
+
+class LGChild : LGTeacher {
+    override func teahc() {
+        print("LGChild teahc")
+    }
+}
+
+func test(_ value : LGTeacher) {
+    value.teahc();
+}
+
+var t = LGChild()
+test(t)
+
+//输出以下内容：
+//LGChild teahc
+上述代码中，value编译期类型是LGTeacher，运行时的实际类型是LGChild，所以打印结果是LGChild teahc
+
+==========案例2
+protocol TestProtocol {}
+
+class LGTeacher : TestProtocol {}
+
+func test(_ value : TestProtocol) {
+    print(type(of: value))
+}
+
+var t1 = LGTeacher()
+var t2: TestProtocol = LGTeacher()
+
+test(t1)
+test(t2)
+
+//输出以下内容：
+//LGTeacher
+//LGTeacher
+
+上述代码中，分别传入的t1和t2，运行时的实际类型都是LGTeacher，所以打印的type(of:)都是LGTeacher
+
+==========案例3
+protocol TestProtocol {}
+
+class LGTeacher: TestProtocol {}
+
+func test<T>(_ value : T) {
+    print(type(of: value))
+}
+
+var t1 = LGTeacher()
+var t2: TestProtocol = LGTeacher()
+
+test(t1)
+test(t2)
+
+//输出以下内容：
+//LGTeacher
+//TestProtocol
+
+上述代码中，test方法的参数改为泛型，两次打印type(of:)的结果不一样了，t1输出LGTeacher，t2输出TestProtocol。因为当泛型和协议同时参与，编译器无法推导出准确类型，需要在调用type(of:)时将value转换为Any
+
+func test<T>(_ value : T) {
+    print(type(of: value as Any))
+}
+
+//输出以下内容：
+//LGTeacher
+//LGTeacher
+
+==========案例4
+class_getClassMethod方法cls参数要求传入AnyClass类型，如果传入t.self，可以获取方法列表吗？
+
+因为t是实例对象，t.self返回的就是它本身，是LGTeacher类型。而参数cls要求传入AnyClass类型，也就是需要LGTeacher.Type类型，所以类型不符，编译报错

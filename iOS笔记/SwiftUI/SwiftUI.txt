@@ -1,0 +1,859 @@
+// https://swiftui.jokerhub.cn/tutorials/
+// https://developer.apple.com/tutorials/swiftui
+
+// https://juejin.cn/user/2928754707933677/posts
+==================================================SwiftUI 和 Swift 5.1 新特性(1) some + 协议名称作为返回类型
+Swift 5.1 在 协议上的改进：Opaque Result Type 不透明结果类型。
+
+// 'some' return types are only available in iOS 13.0.0 or newer
+
+先来看一段代码，它展现了原来协议能力上的缺陷：
+protocol Shape {}
+
+struct Rectangle: Shape {}
+
+struct Union<A: Shape, B: Shape>: Shape {
+    var a: Shape
+    var b: Shape
+}
+
+struct Transformed<S: Shape>: Shape {
+    var shape: S
+}
+
+protocol GameObject {
+    associatedtype ShapeType: Shape
+    var shape: ShapeType { get }
+}
+
+struct EightPointedStar: GameObject {
+    var shape: Union<Rectangle, Transformed<Rectangle>> {
+        return Union(a:Rectangle(), b:Transformed(shape: Rectangle()))
+    }
+}
+
+上述代码是可以编译通过的，但是 EightPointedStar 的 Shape 返回类型又臭又长，被暴露了出去；如果换成 Shape 则编译不通过，原因是 associatedtype ShapeType 要求必须指定具体的类型，而 Shape 不实现 Shape 本身。
+假如 Shape 协议中含有 Self 或者 associatedtype，无法作为函数的返回参数。这是 Swift 泛型系统长久以来的一个问题。
+
+Swift 5.1 Opaque Result Type 特性，解决了上述问题，它为协议作为返回类型提供以下能力：
+语法上隐藏具体类型，所以叫做不透明结果类型
+强类型：类型参数不丢失
+允许带有 Self 或者 associatedtype 的协议作为返回类型
+
+在 Swift 5.1 中，将返回类型改成 some + 协议名称的形式：
+struct EightPointedStar: GameObject {
+    var shape: some Shape {
+        return Union(a:Rectangle(), b:Transformed(shape: Rectangle()))
+    }
+}
+这类的泛型特性也被称作“反向泛型”，因为具体的类型参数是由“实现部分”指定并隐藏起来的，而一般的泛型是由“调用者”所指定的。
+
+上面这个例子中：语法上隐藏具体类型很明显，再举一个例子说明其它 2 个特性：
+// 这个例子在Xcode 11 beta 2 之后能 work
+func foo<T: Equatable>(_ x: T, _ y: T) -> some Equatable {
+    let condition = x == y
+    return condition ? 42 : 11
+}
+
+func test() {
+  let x = foo("apples", "bananas")
+  let y = foo("apples", "oranges")
+  print(x == y) // 这里可以被调用是因为泛型系统保留了强类型
+}
+这个例子显示了不透明结果类型的三个特性：既对外隐藏了具体的 Equatable 类型；又保留了强类型（使得 x == y）可以比较；还支持了 Equatable 这个带 Self 的泛型约束。
+不透明结果类型对于函数实现有一个增强的要求：函数实现必须返回同一个具体类型，以上述代码为例：不能返回 Equatable 或者是 不同类型的 Equatable 的实现。
+这里还有一个小问题：既然 x 和 y 可以直接比较，那么它们可否直接赋值给 var i: Int 呢？答案是对于静态类型系统是不可以的，它保留了 some Equatable 的具体类型隐藏功能，但是如果使用动态类型判断 as? Int，则可以转换成 Int。
+
+
+在SwiftUI 上的应用:
+SwiftUI 中的视图类型的基本定义是一个协议 View
+public protocol View : _View {
+    // body 属性的类型
+    associatedtype Body : View
+
+    // 唯一属性 body 的类型是另一个具体类型 View
+    var body: Self.Body { get }
+}
+
+SwiftUI 最大特点的是声明式以及高度可组合，View 的唯一属性 body 是另一个满足 View 约束的具体 View 类型，我们在这里看到了组合以及递归两个特性。下面来看一个具体的 View 类型 ContentView：
+struct ContentView : View {
+    var body: some View {
+      VStack {
+        Text("Hello World")
+        Text("Love & Peace")
+      }
+    }
+}
+ContentView 使用了不透明结果类型的特性，对外隐藏了具体类型 VStack。
+此外，ContentView 的具体类型都是通过它的 body 属性递归定义的（取决于它所包含的具体 View）：
+
+
+// associatedtype定义关联类型，相当于类型的占位符，让实现协议的类型来指定具体的类型
+protocol Food {
+    
+}
+
+protocol Animal {
+    associatedtype F: Food
+    func eat(_ food: F)
+}
+
+struct Meat: Food {
+    
+}
+
+struct Grass: Food {
+    
+}
+
+struct Tiger: Animal {
+    func eat(_ food: Meat) {
+        print("eat \(food)")
+    }
+}
+
+
+#####
+some关键字在Swift 5.1版本中被引入，定义为一个不透明类型。不透明类型是一种而无需提供具体类型的返回类型。
+限制调用者需要了解的有关返回类型的信息，仅仅公开有关其协议遵从性的信息。
+
+使用不透明类型是一种让编译器根据返回值来决定函数返回的具体类型发方法。
+
+在SwiftUI中，some View意味着body始终实现View协议，但调用者无需知道具体的实现类型。
+
+An opaque type lets the function implementation pick the type for the value it returns in a way that’s abstracted away from the code that calls the function.
+调用泛型函数时，您会将泛型类型限制为传递给该函数的类型。 您可以将不透明类型视为一种泛型函数，其中，占位符类型由实现返回类型填充。
+
+struct ContentView: View {
+    var x: Bool = false
+    
+    var body: some View {
+        if x {
+            return Text("This is true")
+        } else {
+            return VStack { Text("This is false") }
+        }
+    }
+}
+
+返回类型在编译时并不能被知道，所以是一个非法的不透明类型。
+#####
+
+
+==================================================SwiftUI 和 Swift 5.1 新特性(2) 属性代理Property Delegates
+Swift UI 中 @State 和 @Binding
+这种标记的本质是属性代理（Property Delegates），也叫属性包装器（Property Wrappers）。
+struct OrderForm : View {
+  @State private var order: Order
+  
+  var body: some View {
+    Stepper(value: $order.quantity, in: 1...10) {
+      Text("Quantity: \(order.quantity)")
+    }
+  }
+}
+这个语言特性非常通用，任何对于属性的存取有“套路”的访问，都可以用它来包装这种“套路”。
+我们先来学习一下几个套路。
+
+1. 包装懒初始化逻辑
+为了实现属性 text 为懒初始化的属性，我们可以写成如下代码：
+public struct MyType {
+  var textStorage: String? = nil
+  
+  public var text: String {
+    get {
+      guard let value = textStorage else {
+        fatalError("text has not yet been set!")
+      }
+      return value
+    }
+    
+    set {
+      textStorage = newValue
+    }
+  }
+}
+
+然而如果有很多属性都是这样的逻辑，这样的写法是很冗余的。所以属性代理就是解决这个问题的：
+@propertyDelegate
+public struct LateInitialized<Value> {
+  private var storage: Value?
+  
+  public init() {
+    storage = nil
+  }
+  
+  public var value: Value {
+    get{
+      guard let value = storage else {
+        fatalError("value has not yet been set!")
+      }
+      return value
+    }
+    set {
+      storage = newValue
+    }
+  }
+}
+
+// 应用属性代理 LateInitialized
+public struct MyType {
+  @LateInitialized public var text: String?
+}
+
+属性代理 LateInitialized 是一个泛型类型，它本身用 @propertyDelegate 修饰，它必须有一个叫 value 的属性类型为 Value，
+有了这些约定后，编译器可以为 MyType 的 text 生成以下代码：
+public struct MyType {
+  var $text: LateInitialized<String> = LateInitialized<String>()
+
+  public var text: String {
+      get { $text.value }
+      set { $text.value = newValue}
+  }
+}
+
+经过属性代理包装过后的 text，编译器帮助生成了一个存储属性为 $text，类型就是这个属性代理，
+而 text本身变成了一个计算属性。大家可能觉得 $text属性是编译器生成的，所以不可以访问，事实恰恰相反，text 和 $text 都可以用。
+
+2. 包装防御性拷贝
+它基于 NSCopying
+@propertyDelegate
+public struct DefensiveCopying<Value: NSCopying> {
+  private var storage: Value
+  
+  public init(initialValue value: Value) {
+    storage = value.copy() as! Value
+  }
+  
+  public var value: Value {
+    get { storage }
+    set {
+      storage = newValue.copy() as! Value
+    }
+  }
+}
+
+// 应用属性代理 DefensiveCopying
+public struct MyType {
+  @DefensiveCopying public var path: UIBezierPath = UIBezierPath()
+}
+
+属性代理 DefensiveCopying 的不同点在于它的初始化函数 init(initialValue:)，
+这个函数由于编译器的约定，所以一定得叫这个名字。与上个例子一样，编译器会生成存储属性 $path，并用初始值初始化。
+
+UIBezierPath 被强制拷贝了一次，所以我们再提供一个属性代理的初始化函数，并应用它：
+// DefensiveCopying 中增加
+  public init(withoutCopying value: Value) {
+    storage = value
+  }
+  
+// 应用不拷贝的初始化函数
+public struct MyType {
+  @DefensiveCopying public var path: UIBezierPath
+  
+  init() {
+    $path = DefensiveCopying(withoutCopying: UIBezierPath())
+  }
+}
+
+在应用的部分我们看到可以像初始化一个一般变量一样初始化$path，这也印证了我们之前说的$path和path的本质。
+但是这样的语法毕竟有点难看，在不需要$path 出现的时候应该尽可能隐藏它：
+public struct MyType {
+  @DefensiveCopying(withoutCopying: UIBezierPath())
+  public var path: UIBezierPath
+}
+
+3. 包装 UserDefaults 的存取
+我们经常需要将属性写成针对UserDefaults存取的计算属性，而这个通用访问策略也能用属性代理实现：
+
+@propertyDelegate
+struct UserDefault<T> {
+  let key: String
+  let defaultValue: T
+  
+  var value: T {
+    get {
+      return UserDefaults.standard.object(forKey: key) as? T ?? defaultValue
+    }
+    set {
+      UserDefaults.standard.set(newValue, forKey: key)
+    }
+  }
+}
+
+// 应用属性代理 UserDefault
+enum GlobalSettings {
+  @UserDefault(key: "FOO_FEATURE_ENABLED", defaultValue: false)
+  static var isFooFeatureEnabled: Bool
+  
+  @UserDefault(key: "BAR_FEATURE_ENABLED", defaultValue: false)
+  static var isBarFeatureEnabled: Bool
+}
+
+所有对于属性访问策略的抽象，都可以使用属性代理来实现
+SwiftUI 的 @State 和 @Binding 也是属性代理
+
+==================================================SwiftUI 和 Swift 5.1 新特性(3) Key Path Member Lookup
+Swift UI 中修饰 View 状态的属性的 @Binding 和 @State 的本质是属性代理。
+@Binding 和 @State 类型背后包含的另一个特性：Key Path Member Lookup
+
+1. KeyPath 而不是 #keyPath
+Swift 中两个叫做 "Key Path" 的特性，一个是 #keyPath(Person.name)，它返回的是String类型，通常用在传统 KVO 的调用中，addObserver:forKeyPath: 中，如果该类型中不存在这个属性，则会在编译的时候提示你。
+我们今天着重聊的是另一个 Swift Smart Key Path KeyPath<Root,Value>，这是个泛型类型，用来表示从 Root 类型到 某个 Value 属性的访问路径，我们来看一个例子（1）
+struct Person {
+  let name: String
+  let age: Int
+}
+
+let keyPath = \Person.name
+let p = Person(name: "Leon", age: 32)
+print(p[keyPath: keyPath]) // 打印出 Leon
+
+我们看到获取 KeyPath 的实例需要用到一个特殊的语法 \Person.name，它的类型是 KeyPath<Person, String>
+在使用 KeyPath 的地方，可以使用下标操作符来使用这个 keyPath
+上面是个简单的例子，而它的实际用途需要跟泛型结合起来：
+
+// Before
+print(people.map{ $0.name })
+
+// 给 Sequence 添加 KeyPath 版本的方法
+extension Sequence {
+  func map<Value>(keyPath: KeyPath<Element,Value>) -> [Value] {
+    return self.map{ $0[keyPath: keyPath]}
+  }
+}
+
+// After
+print(people.map(keyPath:\.name))
+
+在没有添加新的map方法的时候，获取[Person]中所有 name 的方式是提供一个闭包，在这个闭包中我们需要详细写出如何获取的访问方式。
+而在提供了 KeyPath 版本的实现后，只需要提供个强类型的 KeyPath 实例即可，如何获取这件事情已经包含在了这个 KeyPath 实例中了。
+
+同一类型的 KeyPath<Root,Value> 可以代表多种获取路径。例如：KeyPath<Person, Int> 既可以表示 \Person.age 也可以表示 \Person.name.count。
+
+两个 KeyPath 可以拼接成一个新的 KeyPath：
+let keyPath = \Person.name
+let keyPath2 = keyPath.appending(path: \String.count)
+keyPath 的类型是 KeyPath<Person,String>，\String.count 的类型是 KeyPath<String,Int>，调用 appending 函数，变成一个 KeyPath<Person, Int> 的类型。
+
+我们再来看一下继承关系：KeyPath 是 WriteableKeyPath 的父类，WriteableKeyPath 是 ReferenceWritableKeyPath 的父类。
+从继承关系我们可以推断出，要满足 is a 的原则，KeyPath 的能力是最弱的，只能以只读的方式访问属性
+WriteableKeyPath 可以对可变的值类型的可变属性进行写入：将例子（1）中的 let 都改成 var，那么 Person.name 的类型就变成了 WriteableKeyPath，那么可以写 p[keyPath: keyPath] = "Bill" 了；
+ReferenceWritableKeyPath 可以对引用类型的可变属性进行写入：将例子（1）中中的 struct 改成 class则 Person.name 的类型变成了 ReferenceWritableKeyPath
+
+此外，还有两种不常用的 KeyPath：PartialKeyPath<Root> 是 KeyPath 的父类，它擦除了 Value 的类型，
+以及PartialKeyPath<Root>的父类 AnyKeyPath 则将所有的类型都擦除了。这五种 KeyPath 类型使用了 OOP 保持了继承的关系，因此可以使用 as? 进行父类到子类的动态转换。
+
+KeyPath 机制常被用来对属性做类型安全访问的地方：在增删改查的 ORM 框架里很常见，另一个例子就是SwiftUI了。
+
+2. 动态成员查找 Dynamic Member Lookup
+Dynamic Member Lookup 是 Swift 4.2 中引入的特性，目的是使用静态的语法做动态的查找
+
+@dynamicMemberLookup
+struct Person {
+  subscript(dynamicMember member: String) -> String {
+    let properties = ["name": "Leon", "city": "Shanghai"]
+    return properties[member, default: "null"]
+  }
+
+  subscript(dynamicMember member: String) -> Int {
+    return 32
+  }
+}
+
+let p = Person()
+let age: Int = p.hello // 32
+let name: String = p.name // Leon
+
+支持 Dynamic Member Lookup 的类型首先需要用 @dynamicMemberLookup 来修饰，
+动态查找方法需要命名为 subscript(dynamicMember member: String)，可以根据不同的返回类型重载。
+
+可以直接使用.propertyname的语法来貌似静态实则动态地访问属性，实际上调用的是上面的方法。如果如上例有重载，为了消除二义性，得通过返回值类型，明确调用方法。
+
+3. Key Path Member Lookup 成员查找
+Swift 5.1 中引入的 Key Path Member Lookup
+struct Lens<T> {
+  let getter: () -> T
+  let setter: (T) -> Void
+  
+  var value: T {
+    get {
+      return getter()
+    }
+    nonmutating set {
+      setter(newValue)
+    }
+  }
+}
+
+我们希望结合之前复习的 KeyPath 提供一个方法：将对这个值的存取，结合入参 KeyPath，转换成对于 KeyPath 指定的属性类型的存取。
+
+extension Lens {
+  func project<U>(_ keyPath: WritableKeyPath<T, U>) -> Lens<U> {
+    return Lens<U>(
+      getter: { self.value[keyPath: keyPath] },
+      setter: { self.value[keyPath: keyPath] = $0 })
+  }
+}
+
+// 使用 project 方法
+func projections(lens: Lens<Person>) {
+  let lens = lens.project(\.name)   // Lens<String>
+}
+
+这时候框架和语言作者又想到了 Dynamic Member Lookup 了，由于 4.2 中只支持 String 作为参数的调用，调用.property 的语法。
+如果把它扩展到 支持 KeyPath 为入参，调用的时候再施加编译器的魔法，变成lens.name岂不美哉？
+
+@dynamicMemberLookup
+struct Lens<T> {
+  let getter: () -> T
+  let setter: (T) -> Void
+
+  var value: T {
+    get {
+      return getter()
+    }
+    nonmutating set {
+      setter(newValue)
+    }
+  }
+
+  subscript<U>(dynamicMember keyPath: WritableKeyPath<T, U>) -> Lens<U> {
+    return Lens<U>(
+        getter: { self.value[keyPath: keyPath] },
+        setter: { self.value[keyPath: keyPath] = $0 })
+  }
+}
+
+上面是应用 Swift 5.1 Key Path Member Lookup 后的最终版本。我们可以用 .property 的语法得到了一个新的可以对值存取的实例。
+lens.name 这时候等价于 lens[dynamicMember:\.name]，我们可以用更精简的语法完成转换。
+
+4. @Binding 如同 Lens
+State 和 Binding 类型定义处有 @propertyDelegate 的修饰
+Binding还有 @dynamicMemberLookup的修饰，证据是有这个方法：subscript<Subject>(dynamicMember: WritableKeyPath<Value, Subject>) -> Binding<Subject>
+为的是对于值的存取可以优雅地结合 KeyPath 进行转换
+
+struct SlideViewer: View {
+  @State private var isEditing = false
+  @Binding var slide: Slide
+
+  var body: some View {
+    VStack {
+      Text("Slide #\(slide.number)")
+      if isEditing {
+        TextFiled($slide.title)
+      }
+    }
+  }
+}
+
+当此处的 isEditing 或者 Slide 发生修改的时候，SwiftUI 会重新生成这个 View 的 body。
+
+有关 slide 属性的绑定我们看到了两个用法：在读取的时候直接用 propertyWrapper 给到你的 slide.number 就可以了，
+而当这个绑定需要向下传给另一个子控件的时候，则使用上次和今天介绍的两个特性：先使用 $slide 获取到 slide 被代理到的 Binding 实例，
+然后使用 .title的语法获取到新的 Binding<String>，TextFiled 的初始化函数的第一个参数，正是Binding<String>。
+
+Binding<T> 设计非常重要，它贯穿了 SwiftUI 的控件设计，我们可以想像如果设计一个 ToggleButton，
+则初始化函数一定有一个 Binding<Bool>。
+###从抽象层面上来说，Binding 它抽象了对某个值的存取，但并不需要知道这个值究竟是如何存取的，十分巧妙。###
+
+State 与 Binding稍有不同，它首先代表了一个实实在在的 View 的内部状态（由SwiftUI 管理）苹果称之为 Source of Truth 的一种，
+而 Binding 明显表达了一种引用的关系，多用于作为控件API的初始化参数。当然 State 也能使用投影属性的方式（例如$isEditing），变成 Binding。
+
+
+==================================================SwiftUI 和 Swift 5.1 新特性(4) Function Builder
+@_functionBuilder 用来修饰 ViewBuilder
+// 定义
+struct VStack<Content> where Content : View {
+  init(alignment: HorizontalAlignment = .center, spacing: Length? = nil,
+  @ViewBuilder content: () -> Content)
+	
+}
+
+// 使用
+struct ContentView : View {
+  var body: some View {
+    VStack(alignment: .leading) {
+      Text("Hello, World")
+      Text("Leon Lu")
+    }
+  }
+}
+
+ViewBuilder 中的关键方法：
+static func buildBlock() -> EmptyView
+static func buildBlock<Content>(Content) -> Content
+static func buildBlock<C0, C1>(C0, C1) -> TupleView<(C0, C1)>
+static func buildBlock<C0, C1, C2>(C0, C1, C2) -> TupleView<(C0, C1, C2)>
+static func buildBlock<C0, C1, C2, C3>(C0, C1, C2, C3) -> TupleView<(C0, C1, C2, C3)>
+static func buildBlock<C0, C1, C2, C3, C4>(C0, C1, C2, C3, C4) -> TupleView<(C0, C1, C2, C3, C4)>
+
+
+我们的两个 Text 的例子中，编译器自动（根据名称的约定）使用了 static func buildBlock<C0, C1>(C0, C1) -> TupleView<(C0, C1)> 方法，
+这时候VStack的类型就成为了 VStack<TupleView<(Text,Text)>> 了。经过 ViewBuilder 转换后的代码：
+
+struct ContentView : View {
+  var body: some View {
+    VStack(alignment: .leading) {
+      ViewBuilder.buildBlock(Text("Hello, World"), Text("Leon Lu"))
+    }
+  }
+}
+
+由于 buildBlock 的 overload 版本最多泛型参数是 10 个。
+所以当超过 10 个的时候可以使用 Group包一下； 如果有循环可以展开，则可以使用 ForEach。
+
+ViewBuilder 中还有两个函数被用来构建含分支条件时候的类型
+static func buildEither<TrueContent, FalseContent>(first: TrueContent) ->
+ ConditionalContent<TrueContent, FalseContent>
+
+static func buildEither<TrueContent, FalseContent>(second: FalseContent) -> 
+ ConditionalContent<TrueContent, FalseContent>
+
+如果根据不同条件返回不同的视图，那么生成的类型中包含两个类型。
+struct SlideViewer: View {
+  @State private var isEditing = false
+  @Binding var slide: Slide
+
+  var body: some View {
+    VStack {
+      Text("Slide #\(slide.number)")
+      if isEditing {
+        TextFiled($slide.title)
+      } else {
+        Text(slide.title)
+      }
+    }
+  }
+}
+此时，VStack的类型变成了 VStack<TupleView<(Text, ConditionalContent<TextField,Text>)>>
+
+假如只有 if 没有 else，那么变成一个可空的类型，例如VStack<TupleView<(Text, TextField?)>>，这是有以下这个函数提供的功能。
+static func buildIf<Content>(Content?) -> Content?
+
+
+==================================================Swift 5 新特性：结果类型 Result<Success,Failure:Error> 以及搞特殊化的 Error
+从 Swift 2 开始，同步抛出错误的标准做法是使用 throws/throw，处理是用 do/try/catch；
+异步错误使用的是 completion: @escaping (ResultType?, ErrorType?) -> Void 的形式进行回调。
+
+然而一些第三方库已经发现了缺乏一个泛型 Result<Success,Failure> 类型的不方便，纷纷实现了自己的 Result 类型以及相关的 Monad 和 Functor 特性。
+Swift 5 已经伴随 Xcode 10.2 正式发布，我们看到 Result<Success, Failure: Error> 类型已经被加入到标准库中去
+
+1. Result 类型定义和设计
+public enum Result<Success, Failure: Swift.Error> {
+  case success(Success)  
+  case failure(Failure)
+}
+
+以上是该类型的定义，首先它是个枚举类型，有两种值分别代表成功和失败；其次它有两个泛型类型参数，分别代表成功的值的类型以及错误类型；错误类型有一个类型约束，它必须实现 Swift.Error 协议。
+
+public enum Result<Success, Failure> {
+    case success(Success)
+    case failure(Failure)
+}
+上面这个设计取消了错误类型的约束，它有可能变相鼓励用一个非 Swift.Error 的类型代表错误，比如 String 类型，这与 Swift 的现有设计背道而驰。
+
+public enum Result<Success> {
+    case success(Success)
+    case failure(Swift.Error)
+}
+第三种设计其实在很多第三方库中出现，对于 failure 的情况仅用了 Swift.Error 类型进行约束。它的缺点是在实例化 Result 类型时候若用的是强类型的类型，会丢掉那个具体的强类型信息。
+
+2. Result 类型在异步回调函数中的应用
+比如以下这个URLSession的 dataTask 方法
+func dataTask(with url: URL, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void) 
+-> URLSessionDataTask
+
+在 Swift 5 中可以考虑被设计成：
+func dataTask(with url: URL, completionHandler: @escaping (Result<Data, Error>, URLResponse?) -> Void) 
+-> URLSessionDataTask
+
+URLSession.shared.dataTask(with: url) { (result, _ in
+  switch(result) {
+    case .success(let data):
+        handleResponse(data)
+    case .failure(let error):
+        handleError(error)
+    }
+  }
+}
+
+相比较原来的设计强调了：
+Data 和 Error 有且仅有一个为空，另一个有值
+任何情况下 URLResponse 都可能存在或为空
+
+3. Result 类型与同步 throws 函数
+在很多时候，我们并不喜欢在调用 throws 函数的时候直接处理 try catch，而是不打断控制流地将结果默默记录下来，在这里类型 Result 也能派上用处。
+它提供了如下这个初始化函数，来捕捉错误。
+extension Result where Failure == Swift.Error {
+  public init(catching body: () throws -> Success) {
+    do {
+      self = .success(try body())
+    } catch {
+      self = .failure(error)
+    }
+  }
+}
+
+我们可以这样使用：
+let config = Result {try String(contentsOfFile: configuration) }
+
+在设计方法的时候直接返回 Result，而不使用 throws 可不可以？
+简单来说，不推荐。这是个设计问题，用Result的形式也会有不方便的情况。
+
+第一个代价是：try catch 控制流不能直接使用了
+第二个代价是：这跟 rethrows 函数设计也不默认匹配
+
+throws 代表的是控制流语法糖，而 Result 代表的是结果。
+这两者是可以转换的，上面介绍了 throws 如何转成 Result；下面我们看一下 Result 如何转成 throws，利用 Result 的 get 方法：
+public func get() throws -> Success {
+    switch self {
+    case let .success(success):
+      return success
+    case let .failure(failure):
+      throw failure
+    }
+  }
+
+throws 或者是 返回 Result 这两种方式都是可行的，所以标准库可能才犹犹豫豫那么久才决定加进去，因为带来的可能是设计风格的不一致的问题。
+
+一般情况下：推荐设计同步 API 的时候仍旧使用 throws，在使用需要的时候转成状态 Result。
+
+4. Functor (map) 和 Monad (flatMap)
+Functor 和 Monad 都是函数式编程的概念。简单来说，Functor 意味着实现了 map 方法，而 Monad 意味着实现了flatMap。
+
+因此,Result 与 Optional 类型和 Array 类型一样，都既是 Functor 又是 Monad，它们都是一种复合类型，或者叫 Wrapper 类型。
+map 方法：传入的 transform 函数的 入参是 Wrapped 类型，返回的是 Wrapped 类型
+flatMap 方法：传入的 transform 函数的 入参是 Wrapped 类型，返回的是 Wrapper 类型
+
+Result作为 Functor 和 Monad 类型有 map, mapError, flatMap, flatMapError 四个方法，实现如下：
+public func map<NewSuccess>(
+    _ transform: (Success) -> NewSuccess
+  ) -> Result<NewSuccess, Failure> {
+    switch self {
+    case let .success(success):
+      return .success(transform(success))
+    case let .failure(failure):
+      return .failure(failure)
+    }
+  }
+  
+  public func mapError<NewFailure>(
+    _ transform: (Failure) -> NewFailure
+  ) -> Result<Success, NewFailure> {
+    switch self {
+    case let .success(success):
+      return .success(success)
+    case let .failure(failure):
+      return .failure(transform(failure))
+    }
+  }
+  
+
+  public func flatMap<NewSuccess>(
+    _ transform: (Success) -> Result<NewSuccess, Failure>
+  ) -> Result<NewSuccess, Failure> {
+    switch self {
+    case let .success(success):
+      return transform(success)
+    case let .failure(failure):
+      return .failure(failure)
+    }
+  }
+  
+  public func flatMapError<NewFailure>(
+    _ transform: (Failure) -> Result<Success, NewFailure>
+  ) -> Result<Success, NewFailure> {
+    switch self {
+    case let .success(success):
+      return .success(success)
+    case let .failure(failure):
+      return transform(failure)
+    }
+  }
+
+5. do/try/catch 是个语法糖
+假设我们有多个同步返回 Result 的函数进行连续调用，如果每个结果都直接用 pattern matching 来解，那么很容易形成 pattern matching 的多层嵌套。 
+我们来看一下 Result.flatMap 是如何帮助解决这个问题的：
+
+func fetchImageData(from url: URL) -> Result<Data, Error> {
+  return Result(catching: {try Data(contentsOf: url)})
+}
+
+func process(image: Data) -> Result<UIImage, Error> {
+  if let image = UIImage(data: image) {
+    return .success(image)
+  } else {
+    return .failure(ImageProcessingError.corruptedData)
+  }
+}
+
+func persist(image: UIImage) -> Result<Void, Error> {
+  return .success(())
+}
+
+let result = fetchImageData(from: url)
+  .flatMap(process)
+  .flatMap(persist)
+switch result {
+case .success:
+  // do something
+  break
+case .failure(ImageProcessingError.corruptedData):
+  // do something
+  break
+case .failure(CocoaError.fileNoSuchFile):
+  // do something
+  break
+default:
+  // do something
+  break
+}
+在这个例子中，我们看到了flatMap 帮助串起了流程，将一种 Success，通过执行函数转换成 NewSuccess，而 Error 是按原样进行传递。
+如果发生了 Error，那么最终得到的 Error 就是第一个 Error，整个流程终止。
+
+上述代码从功能上，是否跟 do/try/catch 所能做到的很像，几乎一模一样？形式上是否也跟 do/try/catch 十分相似呢？ 我们来比照一下：
+func fetchImageData(from url: URL) throws -> Data {
+    return try Data(contentsOf: url)
+  }
+  
+  func process(image: Data) throws -> UIImage {
+    if let image = UIImage(data: image) {
+      return image
+    } else {
+      throw ImageProcessingError.corruptedData
+    }
+  }
+  
+  func persist(image: UIImage) throws{
+    
+  }
+  
+  do {
+    let data = try fetchImageData(from: url)
+    let image = try process(image: data)
+    try persist(image: image)
+  } catch ImageProcessingError.corruptedData{
+  
+  } catch CocoaError.fileNoSuchFile {
+  
+  } catch {
+  
+  }  
+
+这样的相似性证实了两点：
+do/try/catch 的实质是类似于 Result.flatMap 的语法糖
+使用 do/try/catch 处理起来更简练和灵活，因此一般情况下的同步函数错误抛出 API 仍旧推荐使用 throw/throws 的形式
+
+6. 搞特殊化：Error 实现了 Error？
+我们在上面的代码中看到了返回类型Result<Data, Error> ，但是如果按照 Result 的定义 Result<Success, Failure: Swift.Error> 来看，这不能是个合法的类型，因为 Swift 规定协议本身并没有实现协议。
+
+struct A<T: K> {}
+
+protocol K {
+  func doIt()
+}
+
+// 编译错误 Protocol type 'K' cannot conform to 'K' because only concrete types can conform to protocols
+let a = A<K>()
+
+struct B<T: Error> {}
+// 编译通过
+let b = B<Error>()
+
+这里的编译错误是：K 协议本身没有实现 K 协议，仅有实际类型能实现接口。但 K 如果改成 Error 的话，则可以编译过。
+这证明了 Error 的特殊性，它被认为实现了协议本身。
+
+结语:
+Result 类型在异步返回的情况中，提高了结果描述的准确性
+同步使用中： Result 类型和 do/try/catch 可以互相转换
+Result 类型如同 Optional 类型有其 map 和 flatmap 函数
+do/try/catch 本质上是语法糖，背后类似于 Result.flatMap
+Result<Data,Error> 类型之所以是合法的，是因为 Error 被认为实现了 Error，这在 Swift 里是特殊的。
+
+
+==================================================绑定状态到 UI 控件
+https://www.zhihu.com/column/c_1175164920580198400
+
+https://www.hackingwithswift.com/
+
+SwiftUI的 @State 属性包装器让我们可以自由地修改视图结构体，这意味着当程序状态改变时，我们可以更新属性值来匹配状态。
+struct ContentView: View {
+    @State private var name = ""
+
+    var body: some View {
+        Form {
+            TextField("Enter your name", text: $name)
+            Text("Your name is \(name)")
+        }
+    }
+}
+
+@State 专门为简单属性而设计，并且只服务于单个视图。 因此，Apple 建议我们在这些属性前面添加 private 访问控制，就像这样：@State private var tapCount = 0。
+
+==================================================@State 只能在结构体中工作
+https://www.zhihu.com/column/c_1175164920580198400
+
+struct User {
+    var firstName = "Bilbo"
+    var lastName = "Baggins"
+}
+
+我们可以在 SwiftUI 视图中创建一个 @State 的 User 属性，然后把 $user.firstName 和 $user.lastName 同一些视图绑定
+
+struct ContentView: View {
+    @State private var user = User()
+
+    var body: some View {
+        VStack {
+            Text("Your name is \(user.firstName) \(user.lastName).")
+
+            TextField("First name", text: $user.firstName)
+            TextField("Last name", text: $user.lastName)
+        }
+    }
+}
+
+上面的代码可以完美工作：SwiftUI 很聪明，知道整个 User 对象包含了我们的全部的数据，并且会在 User 内部的值发生变化时更新 UI 。
+在幕后实际发生的事情是：每当我们的结构体中的某个值改变时，整个结构体随之改变 —— 就如同我们重新输入姓和名构建了一个新的 User 那样。
+
+对于 SwiftUI 开发者，这意味着如果我们想在多个视图之间共享数据，或者说让两个或者更多视图引用相同的数据，以便一个改变，全部跟随改变 —— 这种情况下我们需要用类而不是结构体。
+
+用 @ObservedObject 共享 SwiftUI 状态:
+当我们用类承载 SwiftUI 的数据时，需要跨越多个视图共享这些数据时是怎么实现的呢？—— 对此 SwiftUI 给了我们两个有用的属性包装器： @ObservedObject 和 @EnvironmentObject。
+
+User 类有两个属性：firstName 和 lastName。无论什么时候，这两个属性中的任何一个变化，我们都希望通知监视这个类的视图有变化发生以便它们重新加载。
+所以我们可以对这两个属性使用 @Published 属性观察者，就像这样：
+class User {
+    @Published var firstName = "Bilbo"
+    @Published var lastName = "Baggins"
+}
+
+@Published 起的作用类似于一半的 @State：它也可以在属性值发生变化的时候发表“声明”。
+那么声明给谁听？这就要用到另一个属性包装器@ObservedObject，相当于另一半的 @State —— 它告诉 SwiftUI 要监视变化的目标对象。
+
+struct ContentView: View {
+    @ObservedObject var user = User()
+
+    var body: some View {
+        VStack {
+            Text("Your name is \(user.firstName) \(user.lastName).")
+
+            TextField("First name", text: $user.firstName)
+            TextField("Last name", text: $user.lastName)
+        }
+    }
+}
+
+@ObservedObject 属性包装器只能用在遵循了 ObservableObject 协议的类型上。
+class User: ObservableObject {
+    @Published var firstName = "Bilbo"
+    @Published var lastName = "Baggins"
+}
+
+相比用 @State声明本地状态，要实现共享状态我们需要三个步骤：
+创建一个遵循 ObservableObject 协议的类
+标记类里的某些属性为 @Published 以便使用这个类的视图能够根据这些属性的变化来更新
+用 @ObservedObject 属性包装器来创建类的实例
+
+这三个步骤的成果是，我们可以把状态存储在外部对象中，甚至可以在多个视图中使用这个对象，让所有视图都指向相同的数据。

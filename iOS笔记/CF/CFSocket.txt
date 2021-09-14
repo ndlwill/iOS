@@ -1,0 +1,290 @@
+https://developer.apple.com/documentation/technologies
+https://tools.ietf.org/html/rfc1928
+
+CFNetwork Programming Guide：
+https://developer.apple.com/library/archive/documentation/Networking/Conceptual/CFNetwork/Introduction/Introduction.html#//apple_ref/doc/uid/TP30001132
+
+###CFNetwork Concepts：###
+CFNetwork is based, both physically and theoretically, on BSD sockets.
+Just as CFNetwork relies on BSD sockets, there are a number of Cocoa classes that rely on CFNetwork (NSURL, for example). 
+
+CFNetwork has a number of advantages over BSD sockets. It provides run-loop integration, so if your application is run loop based you can use network protocols without implementing threads.
+CFNetwork relies on two APIs that are part of the Core Foundation framework, CFSocket and CFStream.
+CFSocket API:
+https://developer.apple.com/documentation/corefoundation/cfsocket-rg7
+It allows you to connect to another socket (either locally or over a network) and send data to that socket.
+CFSocket is not limited to stream-based sockets (for example, TCP), it can handle any type of socket.
+You could create a CFSocket object from scratch using the CFSocketCreate function, or from a BSD socket using the CFSocketCreateWithNative function. Then, you could create a run-loop source using the function CFSocketCreateRunLoopSource and add it to a run loop with the function CFRunLoopAddSource. 
+This would allow your CFSocket callback function to be run whenever the CFSocket object receives a message
+
+CFStream API:
+Streams are one-way paths, so to communicate bidirectionally an input (read) stream and output (write) stream are necessary.
+Except for file-based streams, you cannot seek within a stream; once stream data has been provided or consumed, it cannot be retrieved again from the stream.
+
+CFStream functions that read or write a stream will suspend, or block, the current process until at least one byte of the data can be read or written. 
+To avoid trying to read from or write to a stream when the stream would block, use the asynchronous version of the functions and schedule the stream on a run loop. 
+Your callback function is called when it is possible to read and write without blocking.
+
+###Working with Streams:###
+Working with Read Streams:
+Core Foundation streams can be used for reading or writing files or working with network sockets.
+
+Creating a read stream from a file:
+CFReadStreamRef myReadStream = CFReadStreamCreateWithFile(kCFAllocatorDefault, fileURL);
+
+Opening a read stream:
+if (!CFReadStreamOpen(myReadStream)) {
+    CFStreamError myErr = CFReadStreamGetError(myReadStream);
+    // An error has occurred.
+        if (myErr.domain == kCFStreamErrorDomainPOSIX) {
+        // Interpret myErr.error as a UNIX errno.
+        } else if (myErr.domain == kCFStreamErrorDomainMacOSStatus) {
+        // Interpret myErr.error as a MacOS error code.
+            OSStatus macError = (OSStatus)myErr.error;
+        // Check other error domains.
+    }
+}
+The CFReadStreamOpen function returns TRUE to indicate success and FALSE if the open fails for any reason.
+If CFReadStreamOpen returns FALSE, the example calls the CFReadStreamGetError function, which returns a structure of type CFStreamError consisting of two values: a domain code and an error code.
+The domain code indicates how the error code should be interpreted. For example, if the domain code is kCFStreamErrorDomainPOSIX, the error code is a UNIX errno value. The other error domains are kCFStreamErrorDomainMacOSStatus, which indicates that the error code is an OSStatus value defined in MacErrors.h, and kCFStreamErrorDomainHTTP, which indicates that the error code is the one of the values defined by the CFStreamErrorHTTP enumeration.
+Opening a stream can be a lengthy process, so the CFReadStreamOpen and CFWriteStreamOpen functions avoid blocking by returning TRUE to indicate that the process of opening the stream has begun. To check the status of the open, call the functions CFReadStreamGetStatus and CFWriteStreamGetStatus, which return kCFStreamStatusOpening if the open is still in progress, kCFStreamStatusOpen if the open is complete, or kCFStreamStatusErrorOccurred if the open has completed but failed. In most cases, it doesn’t matter whether the open is complete because the CFStream functions that read and write will block until the stream is open.
+
+Reading from a Read Stream:
+To read from a read stream, call the function CFReadStreamRead, which is similar to the UNIX read() system call. Both take buffer and buffer length parameters. Both return the number of bytes read, 0 if at the end of stream or file, or -1 if an error occurred. Both block until at least one byte can be read, and both continue reading as long as they can do so without blocking. 
+
+Reading from a read stream (blocking):
+CFIndex numBytesRead;
+do {
+    UInt8 buf[myReadBufferSize]; // define myReadBufferSize as desired
+    numBytesRead = CFReadStreamRead(myReadStream, buf, sizeof(buf));
+    if( numBytesRead > 0 ) {
+        handleBytes(buf, numBytesRead);
+    } else if( numBytesRead < 0 ) {
+        CFStreamError error = CFReadStreamGetError(myReadStream);
+        reportError(error);
+    }
+} while( numBytesRead > 0 );
+
+Tearing Down a Read Stream:
+When all data has been read, you should call the CFReadStreamClose function to close the stream, thereby releasing system resources associated with it. Then release the stream reference by calling the function CFRelease. You may also want to invalidate the reference by setting it to NULL.
+Releasing a read stream:
+CFReadStreamClose(myReadStream);
+CFRelease(myReadStream);
+myReadStream = NULL;
+
+Working with Write Streams:
+Working with write streams is similar to working with read streams. One major difference is that the function CFWriteStreamWrite does not guarantee to accept all of the bytes that you pass it.
+Instead, CFWriteStreamWrite returns the number of bytes that it accepted. You'll notice in the sample code shown in Listing 2-5 that if the number of bytes written is not the same as the total number of bytes to be written, the buffer is adjusted to accommodate this.
+
+Creating, opening, writing to, and releasing a write stream:
+CFWriteStreamRef myWriteStream =
+        CFWriteStreamCreateWithFile(kCFAllocatorDefault, fileURL);
+if (!CFWriteStreamOpen(myWriteStream)) {
+    CFStreamError myErr = CFWriteStreamGetError(myWriteStream);
+    // An error has occurred.
+    if (myErr.domain == kCFStreamErrorDomainPOSIX) {
+    // Interpret myErr.error as a UNIX errno.
+    } else if (myErr.domain == kCFStreamErrorDomainMacOSStatus) {
+        // Interpret myErr.error as a MacOS error code.
+        OSStatus macError = (OSStatus)myErr.error;
+        // Check other error domains.
+    }
+}
+UInt8 buf[] = “Hello, world”;
+CFIndex bufLen = (CFIndex)strlen(buf);
+ 
+while (!done) {
+    CFIndex bytesWritten = CFWriteStreamWrite(myWriteStream, buf, (CFIndex)bufLen);
+    if (bytesWritten < 0) {
+        CFStreamError error = CFWriteStreamGetError(myWriteStream);
+        reportError(error);
+    } else if (bytesWritten == 0) {
+        if (CFWriteStreamGetStatus(myWriteStream) == kCFStreamStatusAtEnd) {
+            done = TRUE;
+        }
+    } else if (bytesWritten != bufLen) {
+        // Determine how much has been written and adjust the buffer
+        bufLen = bufLen - bytesWritten;
+        memmove(buf, buf + bytesWritten, bufLen);
+ 
+        // Figure out what went wrong with the write stream
+        CFStreamError error = CFWriteStreamGetError(myWriteStream);
+        reportError(error);
+ 
+    }
+}
+CFWriteStreamClose(myWriteStream);
+CFRelease(myWriteStream);
+myWriteStream = NULL;
+
+Preventing Blocking When Working with Streams:
+When using streams to communicate, there is always a chance, especially with socket-based streams, that a data transfer could take a long time. If you are implementing your streams synchronously your entire application will be forced to wait on the data transfer. Therefore, it is highly recommended that your code use alternate methods to prevent blocking.
+There are two ways to prevent blocking when reading from or writing to a CFStream object:
+Using a run loop — Register to receive stream-related events and schedule the stream on a run loop. When a stream-related event occurs, your callback function (specified by the registration call) is called.
+Polling — For read streams, find out if there are bytes to read before reading from the stream. For write streams, find out whether the stream can be written to without blocking before writing to the stream.
+
+Using a Run Loop to Prevent Blocking:
+The preferred way to use streams is with a run loop. A run loop executes on your main program thread. It waits for events to occur, then calls whatever function is associated with a given event.
+In the case of network transfers, your callback functions are executed by the run loop when the event you registered for occurs. This allows you to not have to poll your socket stream, which would slow down the thread.
+
+This example begins by creating a socket read stream:
+CFStreamCreatePairWithSocketToCFHost(kCFAllocatorDefault, host, port,
+                                   &myReadStream, NULL);
+where the CFHost object reference, host, specifies the remote host with which the read stream is to be made and the port parameter specifies the port number that the host uses.
+The CFStreamCreatePairWithSocketToCFHost function returns the new read stream reference in myReadStream. The last parameter, NULL, indicates that the caller does not want to create a write stream. If you wanted to create a write steam, the last parameter would be, for example, &myWriteStream.
+Before opening the socket read stream, create a context that will be used when you register to receive stream-related events:
+CFStreamClientContext myContext = {0, myPtr, myRetain, myRelease, myCopyDesc};
+The first parameter is 0 to specify the version number.
+The info parameter, myPtr, is a pointer to data you want to be passed to your callback function. 
+Usually, myPtr is a pointer to a structure you’ve defined that contains information relating to the stream.
+The retain parameter is a pointer to a function to retain the info parameter. So if you set it to your function myRetain, as in the code above, CFStream will call myRetain(myPtr) to retain the info pointer.
+Similarly, the release parameter, myRelease, is a pointer to a function to release the info parameter. When the stream is disassociated from the context, CFStream would call myRelease(myPtr). 
+Finally, copyDescription is a parameter to a function to provide a description of the stream. For example, if you were to call CFCopyDesc(myReadStream) with the stream client context shown above, CFStream would call myCopyDesc(myPtr).
+
+The client context also allows you the option of setting the retain, release, and copyDescription parameters to NULL. If you set the retain and release parameters to NULL, then the system will expect you to keep the memory pointed to by the info pointer alive until the stream itself is destroyed. If you set the copyDescription parameter to NULL, then the system will provide, if requested, a rudimentary description of what is in the memory pointed to by the info pointer.
+With the client context set up, call the function CFReadStreamSetClient to register to receive stream-related events. CFReadStreamSetClient requires that you specify the callback function and the events you want to receive. The following example in Listing 2-6 specifies that the callback function wants to receive the kCFStreamEventHasBytesAvailable, kCFStreamEventErrorOccurred, and kCFStreamEventEndEncountered events. Then schedule the stream on a run loop with the CFReadStreamScheduleWithRunLoop function. 
+
+Scheduling a stream on a run loop:
+CFOptionFlags registeredEvents = kCFStreamEventHasBytesAvailable |
+        kCFStreamEventErrorOccurred | kCFStreamEventEndEncountered;
+if (CFReadStreamSetClient(myReadStream, registeredEvents, myCallBack, &myContext))
+{
+    CFReadStreamScheduleWithRunLoop(myReadStream, CFRunLoopGetCurrent(),
+                                    kCFRunLoopCommonModes);
+}
+
+Opening a nonblocking read stream：
+if (!CFReadStreamOpen(myReadStream)) {
+    CFStreamError myErr = CFReadStreamGetError(myReadStream);
+    if (myErr.error != 0) {
+    // An error has occurred.
+        if (myErr.domain == kCFStreamErrorDomainPOSIX) {
+        // Interpret myErr.error as a UNIX errno.
+            strerror(myErr.error);
+        } else if (myErr.domain == kCFStreamErrorDomainMacOSStatus) {
+            OSStatus macError = (OSStatus)myErr.error;
+            }
+        // Check other domains.
+    } else
+        // start the run loop
+        CFRunLoopRun();
+}
+
+Network events callback function：
+void myCallBack (CFReadStreamRef stream, CFStreamEventType event, void *myPtr) {
+    switch(event) {
+        case kCFStreamEventHasBytesAvailable:
+            // It is safe to call CFReadStreamRead; it won’t block because bytes
+            // are available.
+            UInt8 buf[BUFSIZE];
+            CFIndex bytesRead = CFReadStreamRead(stream, buf, BUFSIZE);
+            if (bytesRead > 0) {
+                handleBytes(buf, bytesRead);
+            }
+            // It is safe to ignore a value of bytesRead that is less than or
+            // equal to zero because these cases will generate other events.
+            break;
+        case kCFStreamEventErrorOccurred:
+            CFStreamError error = CFReadStreamGetError(stream);
+            reportError(error);
+            CFReadStreamUnscheduleFromRunLoop(stream, CFRunLoopGetCurrent(),
+                                              kCFRunLoopCommonModes);
+            CFReadStreamClose(stream);
+            CFRelease(stream);
+            break;
+        case kCFStreamEventEndEncountered:
+            reportCompletion();
+            CFReadStreamUnscheduleFromRunLoop(stream, CFRunLoopGetCurrent(),
+                                              kCFRunLoopCommonModes);
+            CFReadStreamClose(stream);
+            CFRelease(stream);
+            break;
+    }
+}
+
+When the callback function receives the kCFStreamEventHasBytesAvailable event code, it calls CFReadStreamRead to read the data.
+When the callback function receives the kCFStreamEventErrorOccurred event code, it calls CFReadStreamGetError to get the error and its own error function (reportError) to handle the error.
+When the callback function receives the kCFStreamEventEndEncountered event code, it calls its own function (reportCompletion) for handling the end of data and then calls the CFReadStreamUnscheduleFromRunLoop function to remove the stream from the specified run loop. Then the CFReadStreamClose function is run to close the stream and CFRelease to release the stream reference.
+
+Polling a Network Stream:
+In general, polling a network stream is inadvisable. However, in certain rare circumstances, it can be useful to do so. To poll a stream, you first check to see if the streams are ready for reading or writing, then perform a read or write operation on the stream.
+When writing to a write stream, you can determine if the stream is ready to accept data by calling CFWriteStreamCanAcceptBytes. If it returns TRUE, then you can be assured that a subsequent call to the CFWriteStreamWrite function will send data immediately without blocking.
+Similarly, for a read stream, before calling CFReadStreamRead, call the function CFReadStreamHasBytesAvailable.
+
+Polling a read stream:
+while (!done) {
+    if (CFReadStreamHasBytesAvailable(myReadStream)) {
+        UInt8 buf[BUFSIZE];
+        CFIndex bytesRead = CFReadStreamRead(myReadStream, buf, BUFSIZE);
+        if (bytesRead < 0) {
+            CFStreamError error = CFReadStreamGetError(myReadStream);
+            reportError(error);
+        } else if (bytesRead == 0) {
+            if (CFReadStreamGetStatus(myReadStream) == kCFStreamStatusAtEnd) {
+                done = TRUE;
+            }
+        } else {
+            handleBytes(buf, bytesRead);
+        }
+    } else {
+        // ...do something else while you wait...
+    }
+}
+
+Polling a write stream:
+UInt8 buf[] = “Hello, world”;
+UInt32 bufLen = strlen(buf);
+ 
+while (!done) {
+    if (CFWriteStreamCanAcceptBytes(myWriteStream)) {
+        int bytesWritten = CFWriteStreamWrite(myWriteStream, buf, strlen(buf));
+        if (bytesWritten < 0) {
+            CFStreamError error = CFWriteStreamGetError(myWriteStream);
+            reportError(error);
+        } else if (bytesWritten == 0) {
+            if (CFWriteStreamGetStatus(myWriteStream) == kCFStreamStatusAtEnd)
+            {
+                done = TRUE;
+            }
+        } else if (bytesWritten != strlen(buf)) {
+            // Determine how much has been written and adjust the buffer
+            bufLen = bufLen - bytesWritten;
+            memmove(buf, buf + bytesWritten, bufLen);
+ 
+            // Figure out what went wrong with the write stream
+            CFStreamError error = CFWriteStreamGetError(myWriteStream);
+            reportError(error);
+        }
+    } else {
+        // ...do something else while you wait...
+    }
+}
+
+
+######
+If your application is using a CFStream object, then create a network diagnostic reference (CFNetDiagnosticRef) by calling the function CFNetDiagnosticCreateWithStreams. CFNetDiagnosticCreateWithStreams takes an allocator, a read stream, and a write stream as arguments. If your application uses only a read stream or a write stream, the unused argument should be set to NULL.
+You can also create a network diagnostic reference straight from a URL if no stream exists. To do this, call the CFNetDiagnosticCreateWithURL function and pass it an allocator, and the URL as a CFURLRef. It will return a network diagnostic reference for you to use.
+To diagnose the problem through the Network Diagnostic Assistant, call the CFNetDiagnosticDiagnoseProblemInteractively function and pass the network diagnostic reference. 
+
+Using the CFNetDiagnostics API when a stream error occurs：
+case kCFStreamEventErrorOccurred:
+    CFNetDiagnosticRef diagRef =
+        CFNetDiagnosticCreateWithStreams(NULL, stream, NULL);
+    (void)CFNetDiagnosticDiagnoseProblemInteractively(diagRef);
+    CFStreamError error = CFReadStreamGetError(stream);
+    reportError(error);
+    CFReadStreamClose(stream);
+    CFRelease(stream);
+    break;
+
+
+Threading Programming Guide:
+https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Multithreading/Introduction/Introduction.html#//apple_ref/doc/uid/10000057i-CH1-SW1
+
+
+Socket的类型:
+流套接字（SOCK_STREAM）：流套接字用于提供面向连接、可靠的数据传输服务。该服务将保证数据能够实现无差错、无重复发送，并按顺序接收。流套接字之所以能够实现可靠的数据服务，原因在于其使用了传输控制协议，即TCP（The Transmission Control Protocol）协议。
+
+数据报套接字（SOCK_DGRAM）：数据报套接字提供了一种无连接的服务。该服务并不能保证数据传输的可靠性，数据有可能在传输过程中丢失或出现数据重复，且无法保证顺序地接收到数据。数据报套接字使用UDP（User Datagram Protocol）协议进行数据的传输。由于数据包套接字不能保证数据传输的可靠性，对于有可能出现的数据丢失情况，需要在程序中做相应的处理。
+
+原始套接字(SOCK_RAW)：原始套接字与标准套接字（标准套接字指的是前面介绍的流套接字和数据报套接字）的区别在于：原始套接字可以读写内核没有处理的IP数据包，而流套接字只能读取TCP协议的数据，数据报套接字只能读取UDP协议的数据。因此，如果要访问其他协议发送数据必须使用原始套接字。

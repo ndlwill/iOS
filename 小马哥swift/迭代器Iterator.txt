@@ -1,0 +1,283 @@
+public protocol IteratorProtocol {
+	///迭代器产生的值的类型
+	///如 subViews的迭代原生类型就是View 可以不用写，编译器根据next()的返回值自动判断。
+	associatedtype Element
+
+	///你只需要在每次调用的时候返回下一个值，结束时返回nil
+	public mutating func next() -> Self.Element?
+}
+
+用迭代器写一个斐波那契数列(0,1,1,2,3,5,8,13.....)。
+
+struct FibsNumIterator:IteratorProtocol {
+    var startNum = (0, 1)
+    mutating func next() -> Int? {
+        let nextNum = startNum.0
+        startNum = (startNum.1, startNum.0 + startNum.1)
+        return nextNum
+    }
+}
+
+==================================================打印一个字符串所有前缀
+想要创建一个自定义的序列 只要遵循sequence协议。并实现makeIterator方法。
+makeIterator方法的返回值是遵循IteratorProtocol的迭代器
+
+第一步: 创建一个迭代器(Iterator)
+struct PrefixStrIterator:IteratorProtocol {
+    var string: String
+    var offset: String.Index
+    init(string:String) {
+        self.string = string
+        offset = string.startIndex
+    }
+    ///写协议方法
+    mutating func next() -> String? {
+        guard offset < string.endIndex else { return nil}
+        offset = string.index(after: offset)
+        return String(string[string.startIndex..<offset])
+    }
+}
+
+第二步: 创建一个使用这个迭代器的序列(sequence)
+///step2.创建一个属于你的集合
+struct PrefixSequence: Sequence {
+    var string: String
+    
+    ///协议方法：返回一个迭代器
+    func makeIterator() -> PrefixStrIterator {
+        return PrefixStrIterator(string: string)
+    }
+}
+
+第三步: run~
+        ///myfirstSquence 我的第一个集合
+        for prefixStr in PrefixSequence(string: "Hi~LiaoWorking!") {
+            print(prefixStr)
+//            H
+//            Hi
+//            Hi~
+//            Hi~L
+//            Hi~Li
+//            Hi~Lia
+//            Hi~Liao
+//            Hi~LiaoW
+//            Hi~LiaoWo
+//            Hi~LiaoWor
+//            Hi~LiaoWork
+//            Hi~LiaoWorki
+//            Hi~LiaoWorkin
+//            Hi~LiaoWorking
+//            Hi~LiaoWorking!
+        }
+
+AnyIterator这个是引用对象
+
+/// 通过引用语义的特性写斐波那契
+func fibsIterator() -> AnyIterator<Any> {
+    var startNum = (0, 1)
+    return AnyIterator{
+        let nextNum = startNum.0
+            startNum = (startNum.1 , startNum.0 + startNum.1)
+        return nextNum
+    }
+}
+
+
+Sequence还有一个关联类型 SubSequence
+在返回原序列Sequence的切片slice操作中，SubSequence会被当做返回值的子类。
+SubSequence 有一些常用方法
+
+prefix 
+suffix
+dropFirst
+dropLast
+split
+在项目中其实经常会遇到SubSequence，如string的SubSequence等等
+
+序列: sequence
+
+序列可以是无限的，而集合是有限的。
+
+集合类型:Collection
+Collection遵循了Sequence协议
+String，Data，IndexSet也遵循了Collection协议
+
+==================================================切片:Slice
+所有的集合类型都有切片操作的默认实现。
+///下面的操作实际等于 [1,2,3,4,5].dropFirst()
+let list = [1,2,3,4,5]
+let onePastStart = list.index(after: list.startIndex)
+let firstDropped = list[onePastStart..<list.endIndex]
+Array(firstDropped) //[2,3,4,5]
+
+其中firstDrop的类型是ArraySlice<Int>，并不是集合类型。
+
+slice除了保存对原有集合的引用，还存储了切片边界的开始索引和终止索引
+
+列表本身是由几个索引组成的。其切片大小是原列表的几倍
+MemoryLayout.size(ofValue: [1,2,3,4,5]) //8
+MemoryLayout.size(ofValue: [1,2,3,4,5].dropFirst()) //32
+
+数组是在连续的内存中持有元素，移除非末尾元素时，后面的元素都会移动填补空白，复杂度为O(n)。
+当你移除数组非末尾元素的时候需要从性能方面去考虑一下。
+
+自定义切片:
+可以通过自定义切片达到尺寸优化的功能。
+切片与原集合共享存储区域，这样会带来一个问题: 如果我们将一个2GB的数据读入数组中，只取一个很小的切片，
+那么这整个2GB的缓冲区一直存在于内存中。直到集合和切片都销毁时才销毁。 
+在苹果文档中特别警告：只应该把切片用作临时计算的目的 不应该长时间存在。
+
+
+切片与原集合共享索引:
+slice的角标不一定是以0开始的。如下例：
+
+    let cities = ["shangHai",
+    "Beijing",
+    "NewYork",
+    "Chicago",
+    "Tokyo",
+    "Hongkong"]
+    
+    let slice = cities[2...4]
+    cities.startIndex   //0
+    cities.endIndex     //6
+    slice.startIndex    //2
+    slice.endIndex      //5
+这个时候我们访问 slice[0]就直接崩溃了。 这也就是在swift中遍历常使用 for obj in Array 而不是 for idx in Array
+
+==================================================索引:Index
+存储描述元素位置的值
+
+表示集合中的位置，都会有startIndex和endIndex
+
+我们不可以把字典的key和索引一概而论。字典的索引是DictionaryIndex
+
+索引失效：
+当集合改变时，索引可能会失效-->失效可能有下面两种情况 
+.索引本身有效，但指向了另外的元素 2.索引本身已经无效。 此时通过索引访问就会崩溃
+
+==================================================队列
+为队列设计协议：Iterator
+/// 自己写一个最简单的将元素入队和出队的类型
+protocol Queue{
+    // self中所持有的元素类型
+    associatedtype Element
+    // 把newElement 加入队列
+    mutating func enqueue(_ newElement: Element)
+    // 从self出队一个元素
+    // 返回值是可选值? 队列为空时这样的做法是安全的
+    mutating func dequeue() -> Element?
+}
+
+队列的实现
+下面我们将准守上面的Queue协议，写一个FIFO( First Input First Output)队列
+
+/// FIFO( First Input First Output)
+struct FIFOQueue:Queue {
+    
+    fileprivate var left: [Int] = []
+    fileprivate var right: [Int] = []
+    
+    // 入队添加到"右"
+    ///把元素添加到队尾
+    /// 复杂度O(1)
+    mutating func enqueue(_ newElement: Int) {
+        right.append(newElement)
+    }
+    
+    
+    /// 从队列首部移除一个元素
+    /// 队列为nil时候返回空
+    /// - 复杂度： 平摊 O(1)
+    mutating func dequeue() -> Int? {
+        if left.isEmpty {
+            left = right.reversed()
+            right.removeAll()
+        }
+        return left.popLast()
+    }
+}
+
+我们已经有一个FIFO队列了，下面可以为它添加Collection协议
+https://developer.apple.com/documentation/swift/collection
+
+extension FIFOQueue:Collection {
+
+    public var startIndex: Int { return 0 }
+    public var endIndex: Int { return left.count + right.count}
+    
+    public func index(after i: Int) -> Int {
+        precondition( i < endIndex)
+        return i + 1
+    }
+    
+    public subscript(position: Int) -> Int {
+        precondition((0..<endIndex).contains(position),"Index out of bounds")
+        if position < left.endIndex{
+            return left[left.count - position - 1]
+        }else{
+            return right[position - left.count]
+        }
+    }
+}
+
+遵守 ExpressibleByArrayLiteral协议
+ExpressibleByArrayLiteral的主要作用是可以让对象支持字面量初始化
+字面量其实就是让你的集合可以用类似[value1, value2, etc]的方式去创建。
+
+extension FIFOQueue:ExpressibleByArrayLiteral{
+    ///ExpressibleByArrayLiteral 的init方法去实现一下就ok~ 
+    init(arrayLiteral elements: Int...) {
+        self.init(left: elements.reversed(), right: [])
+    }
+}
+
+
+precondition 和 assert 的格式类似，也是动态的，precondition 会造成程序的提前终止并抛出错误信息.
+Precondition在一般的代码中并不多见，因为它是动态的，只会在程序运行时进行检查，适用于哪些无法在编译期间确定的风险情况。
+precondition(condition: Bool, message: String)
+如果条件判断为True ,代码运行会继续进行。
+如果条件判断为false,程序将终止。
+
+#####
+集合类型主要是由 Sequence 和 Collection 协议构成
+#####
+
+==================================================专门的集合类型:Special Collection
+在标准库中有四个针对于collection 补充的协议
+
+//一个既可以前向又可以后向遍历的集合
+BidirectionalCollection
+//一个可以高效随机存取索引遍历的集合
+RandomAccessCollection
+//一个可以下标赋值的集合
+MutableCollection
+//一个可以将任意子范围的元素用别的集合中的元素进行替换的集合
+RangeReplaceableCollection
+
+BidirectionalCollection:
+它提供了sufix()， removeLast() 和 reversed() 几个我们看起来很眼熟的函数很熟悉
+
+RandomAccessCollection
+和BidirectionalCollection index(_:offsetBy:)```` 去通过渐进的方式去遍历, 相比 RandomAccessCollection 可以 直接在两个索引之间``来移动。 
+例如计算 startIndex 和 endIndex 的间距。 RandomAccessCollection可以在常数时间内计算出count,相对高效，而其他就会慢很多。
+
+MutableCollection
+它支持原地的元素更改。 一般的集合只能改变集合的元素值，无法改变集合的长度或元素的顺序。 MutableCollection 只多了一个必须要实现的方法subscript ，而且必须要实现其内部的set方法
+///协议方法 public subscript(position: Self.Index) -> Self.Element { get set }
+
+public subscript(position: Element) -> Element {
+ get {
+return Element 
+} 
+set {
+//必须要提供
+}
+}
+
+RangeReplaceableCollection
+需要添加或者移除元素可以用这个协议 有两个要求： 
+1.一个空的初始化方法(在泛型函数中很好用，因为泛型允许一个函数创建相同类型的 新的空集合) 
+2.replaceSubrange(_:with:)方法 参数为范围和要替换的集合。
+
+我们可以将上面这些特殊的集合协议组合起来，来达到我们想要的效果。

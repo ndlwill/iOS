@@ -1,0 +1,676 @@
+==================================================Symbol Table
+###
+符号表也是通过读取Load Command找到符号表的具体位置
+
+通过两个Load Commands，描述Symbol Table的大小和位置，以及其他元数据
+LC_SYMTAB：当前Mach-O中的符号表信息
+LC_DYSYMTAB：描述动态链接器使用其他的Symbol Table信息
+###
+
+LC_SYMTAB:
+用来描述该文件的符号表。不论是静态链接器还是动态链接器在链接此文件时，都要使用该load command。调试器也可以使用该load command找到调试信息。
+
+symtab_command:
+定义LC_SYMTAB加载命令具体属性。在/usr/include/mach-o/loader.h中定义:
+struct symtab_command {
+    // 共有属性。指明当前描述的加载命令，当前被设置为LC_SYMTAB
+    uint32_t cmd ;
+    // 共有属性。指明加载命令的大小，当前被设置为sizeof(symtab_command)
+    uint32_t cmdsize;
+    // 表示从文件开始到symbol table所在位置的偏移量。symbol table用[nlist]来表示
+    uint32_t symoff;
+    // 符号表内符号的数量
+    uint32_t nsyms;
+    // 表示从文件开始到string table所在位置的偏移量。
+    uint32_t stroff;
+    // 表示string table大小(以byteカ单位)
+    uint32_t strsize;
+};
+
+nlist
+定义符号的具体表示含义:
+struct nlist {
+    // 表示垓符号在string table的索引
+    union {
+        //在Mach-0中不使用此字段
+        char *n_name;
+        // 索引
+        long n_strx;
+    } n_un;
+    unsigned char n_type;  /* type flag, see below */
+    unsigned char n_sect;  /* section number or NO_ SECT */
+    short          n_desc; /* see <mach-o/stab.h> */
+    unsigned long n_value; /* value of this symbol (or stab offset) */
+};
+
+n_type:
+1字节，通过四位掩码保存数据:
+N_STAB(0xe0)：如果当前的n_type包含这3位中的任何一位，则该符号为调试符号表(stab)。在这种情况下，整个n_type字段将被解释为stab value。请参阅/usr/include/mach-o/stab.h以获取有效的stab value。
+N_PEXT(0x10)：如果当前的n_type包含此位。则将此符号标记为私有外部符号__private_extern__(visibility=hidden)， 只在程序内可引用和访问。当文件通过静态链接器链接的时候，不要将其转换成静态符号(可以通过ld的(-keep_private_externs 关闭静态链接器的这种行为)。
+N_TYPE(0x0e)：如果当前的n_type包含此位。则使用预先定义的符号类型。
+N_EXT(0x01)：如果当前的n_type包含此位。则此符号为外部符号。该符号在该文件外部定义或在该文件中定义，但可在其他文件中使用。
+
+
+N_TYPE:
+N_TYPE字段的值包括:
+N_UNDF(0x0)：该符号未定义。未定义符号是在当前模块中引用，但是被定义在其他模块中的符号。n_sect字段设置为NO_SECT。
+N_ABS(0x2)：该符号是绝对符号。链接器不会更改绝对符号的值。n_sect字段设置为NO_SECT。
+N_SECT(0xe)：该符号在n_sect中指定的段号中定义。
+N_PBUD(0xc)：该符号未定义，镜像使用该符号的预绑定值。
+n_sect字段设置为NO_SECT。
+N_INDR(0xa)：该符号定义为与另一个符号相同。 n_value字段是string table中的索引，用于指定另一个符号的名称。链接该符号时，此符号和另一个符号都具有相同的定义类型和值。
+
+
+stab value包括:
+#define N_GSYM    0x20 /* 全局符号: name, ,N0_ SECT,type,0 */
+#define N_FNAME   0x22 /* procedure name (f77 kludge): name,,N0_ SECT,0,0 */
+#define N_FUN     0x24 /* 方法/函数: name,,n_ sect,linenumber , address */
+#define N_STSYM   0x26 /* 静态符号: name,,n sect, type , address */
+#define N_LCSYM   0x28 /* .lcomm 符号: name,,n sect , type , address */
+#define N_BNSYM   0x2e /* nsect符号开始: 0,,n sect,0, address */
+#define N_OPT     0x3c /* emitted with gccZ_ compiled and in gcc source */
+#define N_RSYM    0x40 /* 寄存器符号: name,NO_ _SECT, type,register */
+#define N_SLINE   0x44 /* 代码行数: 0,,n ,sect,linenumber , address */
+#define N_ENSYM   0x4e /* nsect符号结束: ø,,n sect,ø, address */
+#define N_SSYM    0x60 /* 结构体符号: name,, NO SECT, type,struct_ offset */
+#define N_SO      0x64 /* 源码名称: name,,n sect, 0, address */
+#define N_OSO     0x66 /* 目标代码名称: name, ,0,0,st_ mtime */
+#define N_LSYM    0x80 /* 本地符号: name, ,N0_ SECT,type ,offset */
+#define N_BINCL   0x82 /* include file 开始: name,,NO_ SECT,0,sum */
+#define N_SOL     0x84 /* #included file 名称: name,,n sect ,0, address */
+#define N_PARAMS  0x86 /* 编译器参数: name,,NO_ SECT,0,0 */
+#define N_VERSION 0x88 /* 编译器版本: name,,N0_ SECT,0,0 */
+#define N_OLEVEL  0x8A /* 编译器-O级别: name,NO_ _SECT,0,0 */
+#define N_PSYM    0xa0 /* 参数: name,,No_ _SECT, type,offset */
+#define N_EINCL   0xa2 /* include file 结束: name,,NO_ SECT,0,0 */
+#define N_ENTRY   0xa4 /* alternate entry: name, ,n. sect,linenumber , address */
+#define N_LBRAC   0xc0 /* 左括号: 0,,N0_ SECT,nesting level,address */
+#define N_EXCL    0xc2 /* deleted include file: name, ,NO_ SECT,0,sum */
+#define N_RBRAC   0xe0 /* 右括号: 0,,N0. _SECT ,nesting level , address */
+#define N_BCOMM   0xe2 /* 通用符号开始: name,,NO. SECT,0,0 */
+#define N_ECOMM   0xe4 /* 通用符号结束: name,n. sect,0,0 */
+#define N_ECOML   0xe8 /* end common (local name): 0,,n_ sect , 0, address */
+#define N_LENG    0xfe /* second stab entry with length information */
+
+/*
+ * for the berkeley pascal compiler, pC(1):
+ */
+#define N_ _PC    0x30 /* global pascal symbol: name, ,NO_ SECT, subtype,line */
+
+
+n_ sect:
+整数，用来在指定编号的section中找到此符号；如果在该image的任何部分都找不到该符号，则为NO_SECT。根据section在LC_SEGMENT加载命令中出现的顺序，这些section从1开始连续编号。
+
+
+n_desc:
+16-bit值，用来描述非调试符号。低三位使用REFERENCE_TYPE:
+
+REFERENCE_FLAG_UNDEFINED_NON_LAZY(0x0)：该符号是外部非延迟(数据)符号的引用。
+REFERENCE_FLAG_UNDEFINED_LAZY(0x1)：该符号是外部延迟性符号(即对函数调用)的引用。
+REFERENCE_FLAG_DEFINED(0x2)： 该符号在该模块中定义。
+`REFERENCE_ FLAG_ PRIVATE_ DEFINED(0x3) ：该符号在该模块中定义，但是仅对该共享库中的模块可见。
+REFERENCE_FLAG_PRIVATE_UNDEFINED_NON_LAZY(0x4)：该符号在该文件的另一个模块中定义，是非延迟加载(数据)符号，并且仅对该共享库中的模块可见。
+REFERENCE_FLAG_PRIVATE_LUNDEFINED_LAZY(0x5) ：该符号在该文件的另一个模块中定义，是延迟加载(函数)符号，仅对该共享库中的模块可见。
+另外还可以设置如下标识位:
+
+REFERENCED_DYNAMICALLY(0x10)：定义的符号必须是使用在动态加载器中(例如dlsym和NSLookupSymbolInImage) 。而不是普通的未定义符号引用。strip使用该位来避免删除那些必须存在的符号(如果符号设置了该位，则strip不会剥离它)。
+N_DESC_DISCARDED(0x20)：在完全链接的image在运行时动态链接器有可能会使用此符号。不要在完全链接的image中设置此位。
+N_NO_DEAD_STRIP(0x20) ： 定义在可重定位目标文件(类型为MH_0BJECT)中的符号设置时，指示静态链接器不对该符号进行( dead-strip。 (请注意，与N_DESC_DISCARDED(0x20) 用于两个不同的目的。)
+N_WEAK_REF(0x40)：表示此未定义符号是弱引用。如果动态链接器找不到该符号的定义，则将其符号地址设置为0。静态链接器会将此符号设置弱链接标志。
+N_WEAK_DEF(0x80)：表示此符号为弱定义符号。如果静态链接器或动态链接器为此符号找到另一个(非弱)定义，则弱定义将被忽略。只能将合并部分中的符号标记为弱定义。
+如果该文件是两级命名two-level namespace image(即如果mach_header 中设置了MH_TWOLEVEL标志)，则( n_desc的高8位表示定义此未定义符号的库的编号。使用宏GET_LIBRARY_ORDINAL来获取此值，或者使用宏SET_LIBRARY_0RDINAL来设置此值。0指定当前image。1到253根据文件中LC_LOAD_DYLIB命令的顺序表明库号。254用于需要动态查找的未定义符号(仅在OS X v10.3和更高版本中受支持) 。对于从可执行程序加载符号的插件。255用来指定可执行image)。 对于flat namespace images，高8位必须为0。
+
+
+n_ value:
+符号值。对于symbol table中的每一项， 该值的表达的意思都不同(具体由n_type字段说明)。对于N_SECT符号类型，(n_value是符号的地址。有关其他可能值的信息，请参见n_type字段的描述。
+
+Common symbols必须为N_UNDF类型，并且必须设置N_EXT)位。Common symbols的n_value是符号表示的数据的大小(以字节为单位)。在C语言中，Common symbol是在该文件中声明但未初始化的变量。Common symbols只能出现在MH_OBJECT) 类型的Mach-0文件中。
+
+
+section名称与作用
+名称	作用
+TEXT.text	可执行的机器码
+TEXT.cstring	去重后的C字符串
+TEXT.const	初始化过的常量
+TEXT.stubs	符号桩。lazybinding的表对 应项指针指向的地址的代码。
+TEXT.stub_ helper	辅助函数。当在lazybinding的表中没有找到对应项的指针表示的真正的符号地址的时候，指向这。
+TEXT.unwind_info	存储处理异常情况信息
+TEXT.eh_frame	调试辅助信息
+DATA.data	初始化过的可变的数据
+DATA.nI_symbol_ptr	非lazy-binding的指针表，每个表中的指针指向一个在装载过程中，被动态链接器搜索完成的符号
+DATA.Ia_symbol_ptr	lazy-binding的指针表，每个表中的指针一开始指向stub_helper
+DATA.const	没有初始化过的常量
+DATA.mod_init_func	初始化函数，在main之前调用
+DATA.mod_term_func	终止函数，在main返回之后调用
+DATA.bss	没有初始化的静态变量
+DATA.common	没有初始化过的符号声明(for example, int I;)
+
+nm命令：
+打印nlist结构的符号表symbol table
+nm -pa a.o
+-a: 显示符号表的所有内容
+-g: 显示全局符号
+-p: 不排序。显示符号表本来的顺序
+-r: 逆转顺序
+-u: 显示未定义符号:
+-m: 显示N_SECT类型的符号(Mach-0符号)显示。
+
+====================================================================================================
+案例1：
+使用nm -pa ${MACH_PATH}命令查看符号表
+0000000100008008 d __dyld_private
+0000000100008014 d _static_init_value
+0000000100008018 b _static_uninit_value
+0000000100008028 s _default_x
+0000000000000000 - 00 0000    SO /Users/zang/Zang/Spark/MachOAndSymbol/
+0000000000000000 - 00 0000    SO main.m
+0000000060335e1d - 03 0001   OSO /Users/zang/Library/Developer/Xcode/DerivedData/MachOAndSymbol-bdzlylfoorwnhggerxdmwocpeyad/Build/Intermediates.noindex/MachOAndSymbol.build/Debug/MachOAndSymbol.build/Objects-normal/x86_64/main.o
+0000000100003f50 - 01 0000 BNSYM
+0000000100003f50 - 01 0000   FUN _main
+000000000000003f - 00 0000   FUN
+000000000000003f - 01 0000 ENSYM
+0000000000000000 - 00 0000  GSYM _global_init_value
+0000000100008014 - 0a 0000 STSYM _static_init_value
+0000000100008018 - 0b 0000 STSYM _static_uninit_value
+0000000000000000 - 00 0000  GSYM _global_uninit_value
+0000000000000000 - 00 0000  GSYM _default_x
+0000000000000000 - 01 0000    SO
+0000000100000000 T __mh_execute_header
+0000000100008010 D _global_init_value
+0000000100008020 S _global_uninit_value
+0000000100003f50 T _main
+                 U _NSLog
+                 U ___CFConstantStringClassReference
+                 U dyld_stub_binder
+
+第二列：按照符号种类划分的标识，参见以下列表
+Type	说明
+U	undefined（未定义）
+A	absolute（绝对符号）
+T①	text section symbol（__TEXT.__text）
+D①	data section symbol（__DATA.__data）
+B①	bss section symbol（__DATA.__bss）
+C	common symbol（只能出现在MH_OBJECT类型的Mach-O⽂件中）
+-	debugger symbol table
+S①	除了上⾯所述的，存放在其他section的内容，例如未初始化的全局变量存放在（__DATA,__common）中
+I	indirect symbol（符号信息相同，代表同⼀符号）
+u	动态共享库中的⼩写u表示⼀个未定义引⽤对同⼀库中另⼀个模块中私有外部符号
+注：标记①的Type，⼩写代表本地符号（local symbol）
+
+案例2：
+使用objdump --macho --syms ${MACH_PATH}命令查看符号表
+
+SYMBOL TABLE:
+0000000100008008 l     O __DATA,__data __dyld_private
+0000000100008014 l     O __DATA,__data _static_init_value
+0000000100008018 l     O __DATA,__bss _static_uninit_value
+0000000100008028 l     O __DATA,__common _default_x
+0000000000000000 l    d  *UND* /Users/zang/Zang/Spark/study/iOS高级强化/20210118-iOS强化第二节课：符号与链接（下）/上课代码/MachOAndSymbol/
+0000000000000000 l    d  *UND* main.m
+0000000060335b53 l    d  *UND* /Users/zang/Library/Developer/Xcode/DerivedData/MachOAndSymbol-bdzlylfoorwnhggerxdmwocpeyad/Build/Intermediates.noindex/MachOAndSymbol.build/Debug/MachOAndSymbol.build/Objects-normal/x86_64/main.o
+0000000100003f50 l    d  *UND*
+0000000100003f50 l    d  *UND* _main
+000000000000003f l    d  *UND*
+000000000000003f l    d  *UND*
+0000000000000000 l    d  *UND* _global_init_value
+0000000100008014 l    d  *UND* _static_init_value
+0000000100008018 l    d  *UND* _static_uninit_value
+0000000000000000 l    d  *UND* _global_uninit_value
+0000000000000000 l    d  *UND* _default_x
+0000000000000000 l    d  *UND*
+0000000100000000 g     F __TEXT,__text __mh_execute_header
+0000000100008010 g     O __DATA,__data _global_init_value
+0000000100008020 g     O __DATA,__common _global_uninit_value
+0000000100003f50 g     F __TEXT,__text _main
+0000000000000000         *UND* _NSLog
+0000000000000000         *UND* ___CFConstantStringClassReference
+0000000000000000         *UND* dyld_stub_binder
+
+第二列：l代表本地符号（local），g代表全局符号（global）
+第三列：按照功能划分的标识，参见以下列表
+Type	说明
+f	File
+F	Function
+O	Data
+d	Debug
+ABS	Absolute
+COM	Common
+UND	未定义
+
+剥离调试符号：
+调试符号：当文件编译成.o文件时，它会生成DWARF格式的调试信息，放在__DWARF段。链接时，将__DWARF段变成符号放到符号表中。
+方式一：
+使用Build Settings里Strip配置项
+Deployment Postprocessing在Debug和Release下均默认为NO，它相当于是Deployment的总开关。将其改为YES
+Strip Style在Debug和Release下均默认All Symbols，剥离除间接符号表以外的全部符号。将其改为Debugging Symbols，剥离调试符号
+当Deployment Postprocessing为NO，Strip Style的配置是无法生效的
+编译项目，Strip操作已经执行。但它是在脚本执行后才触发.
+
+方式二：
+在xcconfig中使用链接器配置
+链接器的作用就是将多个目标文件合并到一起，此时可以对符号进行指定处理
+使用man ld命令查看链接器参数
+使用/-S向下查找-S关键字
+-S：不要将调试信息放置到输出文件中，本质上和Strip的Debugging Symbols配置项是一样的效果
+打开xcconfig文件，添加OTHER_LDFLAGS配置项
+OTHER_LDFLAGS = -Xlinker -S
+Xcode使用Target编译时，执行的是clang命令。但此时-S需要传递给ld链接器，所以前面要加上-Xlinker关键字
+Build Settings中的Other Linker Flags配置已生效
+再编译项目。此时打印出除调试符号以外的所有符号
+
+#import <Foundation/Foundation.h>
+
+int global_uninit_value;
+
+int global_init_value = 10;
+double default_x __attribute__((visibility("hidden")));
+
+static int static_init_value = 9;
+static int static_uninit_value;
+
+int main(int argc, char *argv[]) {
+    static_uninit_value = 10;
+    NSLog(@"%d", static_init_value);
+    return 0;
+}
+
+SYMBOL TABLE:
+0000000100008008 l     O __DATA,__data __dyld_private
+0000000100008014 l     O __DATA,__data _static_init_value
+0000000100008018 l     O __DATA,__bss _static_uninit_value
+0000000100008028 l     O __DATA,__common _default_x
+0000000100000000 g     F __TEXT,__text __mh_execute_header
+0000000100008010 g     O __DATA,__data _global_init_value
+0000000100008020 g     O __DATA,__common _global_uninit_value
+0000000100003f50 g     F __TEXT,__text _main
+0000000000000000         *UND* _NSLog
+0000000000000000         *UND* ___CFConstantStringClassReference
+0000000000000000         *UND* dyld_stub_binder
+
+global_uninit_value和global_init_value为全局符号
+static_init_value和static_uninit_value为本地符号
+default_x并没有使用static关键字修饰，本应是全局符号，但使用了__attribute__((visibility("hidden")))，变为本地符号
+
+__attribute__()的作用：将编译器支持的参数传递给编译器。例如：对default_x全局变量进行visibility("hidden")设置，就是隐藏其可见性
+
+符号可见性:
+全局符号和本地符号，它们本质上的区别就是可见性
+
+一个符号的可见性有两种：
+default：默认值，定义的符号类型是全局即为全局，是本地即为本地
+hidden：将全局符号隐藏，变为本地符号
+
+故此隐藏全局符号的方式有两种：
+使用static关键字修饰
+使用__attribute__((visibility("hidden")))
+
+理解符号的可见性：
+全局符号对整个项目可见
+本地符号仅对当前文件可见
+
+在LGApp和LGOneFramework两个Project中，都定义了global_object函数，对于global_object函数来说，它们其实存储在两个Mach-O中。
+由于编译器有⼆级命名空间的概念，所以两个global_object函数的符号其实是不一样的
+two_levelnamespace & flat_namespace：
+⼆级命名空间与⼀级命名空间。链接器默认采⽤⼆级命名空间，也就是除了会记录符号名称，还会记录符号属于哪个Mach-O的，⽐如会记录下来_NSLog来⾃Foundation
+
+同一个Project中，实现两个global_object函数。此时编译报错，提示出现重复符号
+
+导入符号和导出符号:
+export symbol：导出符号意味着，告诉别的模块，我有⼀个这样的符号，你可以将其导⼊（Import）。
+
+NSLog存储在Foundation库中:
+对于Foundation库来说，NSLog属于供外部使用的导出符号
+对于当前程序来说，NSLog属于从Foundation库中导入的符号
+
+导出符号就是全局符号
+项目中定义的全局变量生成为全局符号，默认就会被导出，这些符号可以被外界查看并使用
+使用objdump --macho --exports-trie ${MACH_PATH}命令查看导出符号
+Exports trie:
+0x100000000  __mh_execute_header
+0x100003F50  _main
+0x100008010  _global_init_value
+0x100008020  _global_uninit_value
+
+动态库在运行时才会加载，在编译链接阶段只提供符号即可。Mach-O中使用的动态库符号保存在间接符号表里
+使用objdump --macho --indirect-symbols ${MACH_PATH}命令查看间接符号表
+Indirect symbols for (__TEXT,__stubs) 1 entries
+address            index name
+0x0000000100003f90     8 _NSLog
+Indirect symbols for (__DATA_CONST,__got) 1 entries
+address            index name
+0x0000000100004000    10 dyld_stub_binder
+Indirect symbols for (__DATA,__la_symbol_ptr) 1 entries
+address            index name
+0x0000000100008000     8 _NSLog
+
+符号在Mach-O中占有一定体积，剥离符号时，间接符号表是不能被删除的
+Mach-O所使用的动态库的全局符号都不能被删除
+动态库剥离符号，只能剥离非全局符号的所有符号
+
+==================================================
+#import "LGOneObject.h"
+
+@interface LGOneObject : NSObject
+
+- (void)testOneObject;
+
+@end
+
+@implementation LGOneObject
+
+- (void)testOneObject {
+    NSLog(@"testOneObject");
+}
+
+@end
+
+查看OC中的符号
+使用objdump --macho --exports-trie ${MACH_PATH}命令查看导出符号
+Exports trie:
+0x100000000  __mh_execute_header
+0x100003F20  _main
+0x1000080B8  _OBJC_METACLASS_$_LGOneObject
+0x1000080E0  _OBJC_CLASS_$_LGOneObject
+0x100008110  _global_init_value
+0x100008120  _global_uninit_value
+
+OC默认都是全局符号，同时也是导出符号。它们可以被外界查看并使用，会增加Mach-O的体积
+
+开发OC动态库时，想要减小Mach-O的体积，就要将外部无需使用的符号剥离。此时可以借助链接器，将不想暴露的符号声明为不导出符号
+
+打开xcconfig文件，添加OTHER_LDFLAGS配置项
+OTHER_LDFLAGS=$(inherited) -Xlinker -unexported_symbol -Xlinker _OBJC_CLASS_$_LGOneObject
+OTHER_LDFLAGS=$(inherited) -Xlinker -unexported_symbol -Xlinker _OBJC_METACLASS_$_LGOneObject
+将_OBJC_CLASS_$_LGOneObject声明为不导出符号
+将_OBJC_METACLASS_$_LGOneObject声明为不导出符号
+
+编译项目，此时OC的两个导出符号已经被隐藏
+Exports trie:
+0x100000000  __mh_execute_header
+0x100003F20  _main
+0x100008110  _global_init_value
+0x100008120  _global_uninit_value
+
+隐藏OC不想暴露的符号，需要借助链接器，将符号声明为不导出符号
+由于OC是运行时语言，不能直接使用visibility("hidden")
+不导出符号，将全局符号变为本地符号，这些符号可以被剥离，从而减小Mach-O的体积
+隐藏不需要暴露的符号，从而避免被外界查看并使用，解决安全隐患
+
+链接器提供的另一种方式：指定一个文件，将文件内的符号全部声明为不导出符号
+创建symbol.txt文件，放到工程目录中，里面定义不想暴露的符号
+_OBJC_CLASS_$_LGOneObject
+_OBJC_METACLASS_$_LGOneObject
+_global_init_value
+_global_uninit_value
+打开xcconfig文件，添加OTHER_LDFLAGS配置项
+OTHER_LDFLAGS=$(inherited) -Xlinker -unexported_symbols_list >$(PROJECT_DIR)/symbol.txt
+
+编译项目，此时symbol.txt文件中定义的四个符号已经被隐藏
+
+Weak Symbol:
+弱定义符号
+Weak Defintion Symbol：表示此符号为弱定义符号。如果静态链接器或动态链接器为此符号找到另⼀个（⾮弱）定义，则弱定义将被忽略。只能将合并部分中的符号标记为弱定义
+
+#import "WeakSymbol.h"
+#import <Foundation/Foundation.h>
+
+void weak_function(void) {
+   NSLog(@"weak_function");
+}
+此时weak_function是一个全局符号，同样也是导出符号
+打开WeakSymbol.h文件，写入以下代码：
+void weak_function(void)  __attribute__((weak));
+
+使用__attribute__((weak))将weak_function声明为弱定义符号
+使用objdump --macho --exports-trie ${MACH_PATH}命令查看导出符号
+Exports trie:
+0x100000000  __mh_execute_header
+0x100003EF0  _weak_function [weak_def]
+0x100003F30  _main
+0x100008010  _global_init_value
+0x100008020  _global_uninit_value
+
+weak_function还是导出符号，这也证明它依然是全局符号，其后增加了[weak_def]的标记
+
+弱定义符号的作用
+在WeakSymbol.m和main.m中，都实现一个weak_function函数
+void weak_function(void) {
+   NSLog(@"weak_function");
+}
+
+同一个Project中，出现两个相同的全局符号，此时编译报错，提示出现重复符号
+将其中一个weak_function函数声明为弱定义符号，此时编译成功
+
+弱定义符号的作用：可以解决同名符号的冲突；链接器按照符号上下顺序，找到一处符号的实现后，其他地方的同名符号将被忽略
+
+如果同时使用weak和visibility("hidden")，符号会变成一个弱定义的本地符号
+void weak_hidden_function(void) {
+   NSLog(@"weak_hidden_function");
+}
+打开WeakSymbol.h文件，将weak_hidden_function函数同时使用weak和visibility("hidden")修饰
+void weak_hidden_function(void) __attribute__((weak, visibility("hidden")));
+
+使用objdump --macho --syms ${MACH_PATH}命令查看符号表
+此时_weak_hidden_function被标记为lw，变为弱定义本地符号
+
+弱引用符号:
+Weak Reference Symbol：表示此未定义符号是弱引⽤。如果动态链接器找不到该符号的定义，则将其设置为0。链接器会将此符号设置弱链接标志
+
+打开WeakImportSymbol.h文件，写入以下代码：
+void weak_import_function(void) __attribute__((weak_import));
+使用__attribute__((weak_import))将weak_import_function声明为若引用符号
+此时项目中没有weak_import_function函数的实现
+
+#import <Foundation/Foundation.h>
+#import "WeakImportSymbol.h"
+
+int main(int argc, char *argv[]) {
+   if (weak_import_function) {
+       weak_import_function();
+   }
+   return 0;
+}
+
+由于weak_import_function函数没有实现，但在main.m中被使用，此时编译报错，提示未定义符号
+当导入.h头文件并使用符号时，类似于API的使用，只要找到符号的声明即可。
+即使函数没有被实现，也可以生成目标文件。但链接生成可执行文件时，需要知道符号的具体位置，如果函数没有被实现，
+会出现错误提示：未定义符号
+
+解决弱引用符号的使用问题，可以通过链接器，将符号声明为动态链接
+使用man ld命令查看链接器参数：
+-U：指明该符号未定义，需要运行时动态查找
+打开xcconfig文件，添加OTHER_LDFLAGS配置项
+OTHER_LDFLAGS=$(inherited) -Xlinker -U -Xlinker _weak_import_function
+
+此时项目可以正常编译成功
+通过-U参数，告诉链接器此符号是动态链接的，所以在链接阶段，即使它是未定义符号，忽略，不用管它。
+因为在运行时，动态链接器会自动找到它
+
+运行项目，虽然weak_import_function函数没有被实现，但运行并不会报错
+因为main函数中调用weak_import_function函数之前有if (weak_import_function)的判断
+当动态链接器找不到该符号的定义，则将其设置为0。所以weak_import_function函数并不会被调用
+
+弱引用符号的作用:
+将一个符号声明为弱引用符号，可以避免编译链接时报错。在调用之前增加条件判断，运行时也不会报错
+使用动态库的时候，可以将整个动态库声明为弱引用，此时动态库即使没有被导入，也不会出现未找到动态库的错误
+
+
+Common Symbol:
+在定义时，未初始化的全局符号
+例如：main.m文件中，未初始化的global_uninit_value全局变量，它就属于Common Symbol
+
+打开main.m文件，定义两个同名的全局变量，一个初始化，另一个不进行初始化，这种操作并不会报错
+int global_init_value = 10;
+int global_init_value;
+
+Common Symbol的作用：
+在编译和链接的过程中，如果找到定义的符号，会自动将未定义符号删掉
+在链接过程中，链接器默认会把未定义符号变成强制定义的符号
+
+链接器设置：
+-d：强制定义Common Symbol
+-commons：指定对待Common Symbol如何响应
+
+=====重新导出符号
+以NSLog为例：
+对于当前程序来说，NSLog属于存储在间接符号表中的未定义符号
+NSLog可以在当前程序使用，如果想让使用此程序的其他程序也能使用，就要将此符号重新导出。重新导出之后的符号会放在导出符号表中，此时才能被外界查看并使用
+
+-alias：只能给间接符号表中的符号创建别名，别名符号具有全局可见性
+打开xcconfig文件，添加OTHER_LDFLAGS配置项
+OTHER_LDFLAGS=$(inherited) -Xlinker -alias -Xlinker _NSLog -Xlinker Cat_NSLog
+给_NSLog符号创建Cat_NSLog别名
+使用nm -m ${MACH_PATH} | grep "Cat_NSLog"命令查看符号表，指定"Cat_NSLog"关键字
+(indirect) external Cat_NSLog (for _NSLog)
+此时Cat_NSLog是一个间接外部符号，是_NSLog符号的别名
+使用objdump --macho --exports-trie ${MACH_PATH}命令查看导出符号
+Exports trie:
+0x100000000  __mh_execute_header
+0x100003F20  _main
+0x100008018  _global_init_value
+0x100008028  _global_uninit_value
+[re-export] Cat_NSLog (_NSLog from Foundation)
+Cat_NSLog为导出符号，并且标记为[re-export]，代表重新导出符号
+
+重新导出符号的作用：
+将一个间接符号表中的符号声明为重新导出符号，可以让使用此程序的其他程序也能使用
+当程序链接A动态库，而A动态库又链接B动态库时，B动态库对于程序来说是不可见的。此时可以使用重新导出的方式，让B动态库对程序可见
+
+
+查看项目使用的三方库和符号等信息：
+通过链接器，可以查看当前项目中使用的三方库和符号等信息
+-map：将所有符号详细信息导出到指定文件
+打开xcconfig文件，添加OTHER_LDFLAGS配置项
+OTHER_LDFLAGS=$(inherited) -Xlinker -map -Xlinker $(PROJECT_DIR)/export.txt
+
+# Path: /Users/zang/Library/Developer/Xcode/DerivedData/MachOAndSymbol-bdzlylfoorwnhggerxdmwocpeyad/Build/Products/Debug/MachOAndSymbol
+# Arch: x86_64
+# Object files:
+[  0] linker synthesized
+[  1] /Users/zang/Library/Developer/Xcode/DerivedData/MachOAndSymbol-bdzlylfoorwnhggerxdmwocpeyad/Build/Intermediates.noindex/MachOAndSymbol.build/Debug/MachOAndSymbol.build/Objects-normal/x86_64/LGOneObject.o
+[  2] /Users/zang/Library/Developer/Xcode/DerivedData/MachOAndSymbol-bdzlylfoorwnhggerxdmwocpeyad/Build/Intermediates.noindex/MachOAndSymbol.build/Debug/MachOAndSymbol.build/Objects-normal/x86_64/main.o
+[  3] /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk/System/Library/Frameworks//Foundation.framework/Foundation.tbd
+# Sections:
+# Address   Size        Segment Section
+0x100003EF0 0x0000006F  __TEXT  __text
+0x100003F60 0x00000006  __TEXT  __stubs
+0x100003F68 0x0000001A  __TEXT  __stub_helper
+0x100003F82 0x00000011  __TEXT  __cstring
+0x100003F93 0x0000000C  __TEXT  __objc_classname
+0x100003F9F 0x0000000E  __TEXT  __objc_methname
+0x100003FAD 0x00000008  __TEXT  __objc_methtype
+0x100003FB8 0x00000048  __TEXT  __unwind_info
+0x100004000 0x00000008  __DATA_CONST    __got
+0x100004008 0x00000040  __DATA_CONST    __cfstring
+0x100004048 0x00000008  __DATA_CONST    __objc_classlist
+0x100004050 0x00000008  __DATA_CONST    __objc_imageinfo
+0x100008000 0x00000008  __DATA  __la_symbol_ptr
+0x100008008 0x000000B0  __DATA  __objc_const
+0x1000080B8 0x00000050  __DATA  __objc_data
+0x100008108 0x00000010  __DATA  __data
+0x100008118 0x00000004  __DATA  __bss
+0x100008120 0x00000010  __DATA  __common
+# Symbols:
+# Address   Size        File  Name
+0x100003EF0 0x00000027  [  1] -[LGOneObject testOneObject]
+0x100003F20 0x0000003F  [  2] _main
+0x100003F60 0x00000006  [  3] _NSLog
+0x100003F68 0x00000010  [  0] helper helper
+0x100003F78 0x0000000A  [  3] _NSLog
+0x100003F82 0x0000000E  [  1] literal string: testOneObject
+0x100003F90 0x00000003  [  2] literal string: %d
+0x100003F93 0x0000000C  [  1] literal string: LGOneObject
+0x100003F9F 0x0000000E  [  1] literal string: testOneObject
+0x100003FAD 0x00000008  [  1] literal string: v16@0:8
+0x100003FB8 0x00000048  [  0] compact unwind info
+0x100004000 0x00000008  [  0] non-lazy-pointer-to-local: dyld_stub_binder
+0x100004008 0x00000020  [  1] CFString
+0x100004028 0x00000020  [  2] CFString
+0x100004048 0x00000008  [  1] objc-cat-list
+0x100004050 0x00000008  [  0] objc image info
+0x100008000 0x00000008  [  3] _NSLog
+0x100008008 0x00000048  [  1] __OBJC_METACLASS_RO_$_LGOneObject
+0x100008050 0x00000020  [  1] __OBJC_$_INSTANCE_METHODS_LGOneObject
+0x100008070 0x00000048  [  1] __OBJC_CLASS_RO_$_LGOneObject
+0x1000080B8 0x00000028  [  1] _OBJC_METACLASS_$_LGOneObject
+0x1000080E0 0x00000028  [  1] _OBJC_CLASS_$_LGOneObject
+0x100008108 0x00000008  [  0] __dyld_private
+0x100008110 0x00000004  [  2] _global_init_value
+0x100008114 0x00000004  [  2] _static_init_value
+0x100008118 0x00000004  [  2] _static_uninit_value
+0x100008120 0x00000008  [  2] _global_uninit_value
+0x100008128 0x00000008  [  2] _default_x
+
+文件内包含了编译链接时生成的目标文件，项目中使用的三方库，还包含项目中的Sections和Symbols等信息
+
+
+Section的名称与作用
+名称	作用
+TEXT.text	可执行的机器码
+TEXT.cstring	去重后的C字符串
+TEXT.const	初始化过的常量
+TEXT.stubs	符号桩。lazybinding的表对 应项指针指向的地址的代码
+TEXT.stub_ helper	辅助函数。当在lazybinding的表中没有找到对应项的指针表示的真正的符号地址的时候，指向这
+TEXT.unwind_info	存储处理异常情况信息
+TEXT.eh_frame	调试辅助信息
+DATA.data	初始化过的可变的数据
+DATA.nI_symbol_ptr	非lazy-binding的指针表，每个表中的指针指向一个在装载过程中，被动态链接器搜索完成的符号
+DATA.Ia_symbol_ptr	lazy-binding的指针表，每个表中的指针一开始指向stub_helper
+DATA.const	没有初始化过的常量
+DATA.mod_init_func	初始化函数，在main之前调用
+DATA.mod_term_func	终止函数，在main返回之后调用
+DATA.bss	没有初始化的静态变量
+DATA.common	没有初始化过的符号声明（for example, int I;）
+
+====================================================================================================Swift符号表
+打开SwiftSymbol.swift文件，写入以下代码
+public class LGSwiftClassSymbol {
+   func testSwiftSymbol() {
+   }
+}
+
+使用objdump --macho --syms ${MACH_PATH} | grep "Swift"命令查看符号表
+0000000100003f8a lw    O __TEXT,__swift5_typeref _symbolic _____ 14MachOAndSymbol012LGSwiftClassC0C
+0000000100003f90 l     O __TEXT,__swift5_fieldmd _$s14MachOAndSymbol012LGSwiftClassC0CMF
+0000000100008020 l     O __DATA,__objc_const __METACLASS_DATA__TtC14MachOAndSymbol18LGSwiftClassSymbol
+0000000100008068 l     O __DATA,__objc_const __DATA__TtC14MachOAndSymbol18LGSwiftClassSymbol
+00000001000080e8 l     O __DATA,__data _$s14MachOAndSymbol012LGSwiftClassC0CMf
+0000000100003d90 g     F __TEXT,__text _$s14MachOAndSymbol012LGSwiftClassC0C09testSwiftC0yyF
+0000000100003f78 g     O __TEXT,__const _$s14MachOAndSymbol012LGSwiftClassC0C09testSwiftC0yyFTq
+0000000100003e10 g     F __TEXT,__text _$s14MachOAndSymbol012LGSwiftClassC0CACycfC
+0000000100003f80 g     O __TEXT,__const _$s14MachOAndSymbol012LGSwiftClassC0CACycfCTq
+0000000100003e40 g     F __TEXT,__text _$s14MachOAndSymbol012LGSwiftClassC0CACycfc
+0000000100003e60 g     F __TEXT,__text _$s14MachOAndSymbol012LGSwiftClassC0CMa
+00000001000080c0 g     O __DATA,__data _$s14MachOAndSymbol012LGSwiftClassC0CMm
+0000000100003f44 g     O __TEXT,__const _$s14MachOAndSymbol012LGSwiftClassC0CMn
+00000001000080f8 g     O __DATA,__data _$s14MachOAndSymbol012LGSwiftClassC0CN
+0000000100003dd0 g     F __TEXT,__text _$s14MachOAndSymbol012LGSwiftClassC0CfD
+0000000100003db0 g     F __TEXT,__text _$s14MachOAndSymbol012LGSwiftClassC0Cfd
+0000000000000000         *UND* _OBJC_CLASS_$__TtCs12_SwiftObject
+0000000000000000         *UND* _OBJC_METACLASS_$__TtCs12_SwiftObject
+
+打开SwiftSymbol.swift文件，修改LGSwiftClassSymbol类的访问控制，改为private修饰
+private class LGSwiftClassSymbol {
+   func testSwiftSymbol() {
+   }
+}
+
+0000000100003d10 l     F __TEXT,__text _$s14MachOAndSymbol012LGSwiftClassC033_66093EBE10D00815F1A5CBD65FFF4661LLC09testSwiftC0yyF
+0000000100003d30 l     F __TEXT,__text _$s14MachOAndSymbol012LGSwiftClassC033_66093EBE10D00815F1A5CBD65FFF4661LLCfd
+0000000100003d50 l     F __TEXT,__text _$s14MachOAndSymbol012LGSwiftClassC033_66093EBE10D00815F1A5CBD65FFF4661LLCfD
+0000000100003d90 l     F __TEXT,__text _$s14MachOAndSymbol012LGSwiftClassC033_66093EBE10D00815F1A5CBD65FFF4661LLCMa
+0000000100003db0 l     F __TEXT,__text _$s14MachOAndSymbol012LGSwiftClassC033_66093EBE10D00815F1A5CBD65FFF4661LLCADycfC
+0000000100003de0 l     F __TEXT,__text _$s14MachOAndSymbol012LGSwiftClassC033_66093EBE10D00815F1A5CBD65FFF4661LLCADycfc
+0000000100003f1c lw    O __TEXT,__const _$s14MachOAndSymbol012LGSwiftClassC033_66093EBE10D00815F1A5CBD65FFF4661LLCMXX
+0000000100003f44 l     O __TEXT,__const _$s14MachOAndSymbol012LGSwiftClassC033_66093EBE10D00815F1A5CBD65FFF4661LLCMn
+0000000100003f78 l     O __TEXT,__const _$s14MachOAndSymbol012LGSwiftClassC033_66093EBE10D00815F1A5CBD65FFF4661LLC09testSwiftC0yyFTq
+0000000100003f80 l     O __TEXT,__const _$s14MachOAndSymbol012LGSwiftClassC033_66093EBE10D00815F1A5CBD65FFF4661LLCADycfCTq
+0000000100003f8a lw    O __TEXT,__swift5_typeref _symbolic _____ 14MachOAndSymbol012LGSwiftClassC033_66093EBE10D00815F1A5CBD65FFF4661LLC
+0000000100003f90 l     O __TEXT,__swift5_fieldmd _$s14MachOAndSymbol012LGSwiftClassC033_66093EBE10D00815F1A5CBD65FFF4661LLCMF
+0000000100008020 l     O __DATA,__objc_const __METACLASS_DATA__TtC14MachOAndSymbolP33_66093EBE10D00815F1A5CBD65FFF466118LGSwiftClassSymbol
+0000000100008068 l     O __DATA,__objc_const __DATA__TtC14MachOAndSymbolP33_66093EBE10D00815F1A5CBD65FFF466118LGSwiftClassSymbol
+00000001000080c0 l     O __DATA,__data _$s14MachOAndSymbol012LGSwiftClassC033_66093EBE10D00815F1A5CBD65FFF4661LLCMm
+00000001000080e8 l     O __DATA,__data _$s14MachOAndSymbol012LGSwiftClassC033_66093EBE10D00815F1A5CBD65FFF4661LLCMf
+00000001000080f8 l     O __DATA,__data _$s14MachOAndSymbol012LGSwiftClassC033_66093EBE10D00815F1A5CBD65FFF4661LLCN
+0000000000000000         *UND* _OBJC_CLASS_$__TtCs12_SwiftObject
+0000000000000000         *UND* _OBJC_METACLASS_$__TtCs12_SwiftObject

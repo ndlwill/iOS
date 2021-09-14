@@ -1,0 +1,92 @@
+dyld：动态链接器，加载所有的库和可执行文件
+
+==========加载App时的函数调用栈
+搭建空项目dyldDemo，在main函数上设置断点
+真机运行项目，只有start和main两个函数调用栈，显然是不合理的
+
+想查看完整的函数调用栈，需要在main函数调用前，在load函数上设置断点
+打开ViewController，写入load函数，设置断点
+真机运行项目，使用bt命令，查看完整的函数调用栈
+
+dyldDemo`+[ViewController load](self=ViewController, _cmd="load") at ViewController.m:23:1
+libobjc.A.dylib`load_images + 944
+dyld`dyld::notifySingle(dyld_image_states, ImageLoader const*, ImageLoader::InitializerTimingList*) + 464
+dyld`ImageLoader::recursiveInitialization(ImageLoader::LinkContext const&, unsigned int, char const*, ImageLoader::InitializerTimingList&, ImageLoader::UninitedUpwards&) + 512
+dyld`ImageLoader::processInitializers(ImageLoader::LinkContext const&, unsigned int, ImageLoader::InitializerTimingList&, ImageLoader::UninitedUpwards&) + 184
+dyld`ImageLoader::runInitializers(ImageLoader::LinkContext const&, ImageLoader::InitializerTimingList&) + 92
+dyld`dyld::initializeMainExecutable() + 216
+dyld`dyld::_main(macho_header const*, unsigned long, int, char const**, char const**, char const**, unsigned long*) + 5216
+dyld`dyldbootstrap::start(dyld3::MachOLoaded const*, int, char const**, >dyld3::MachOLoaded const*, unsigned long*) + 396
+dyld`_dyld_start + 56
+一切的开端，由dyldbootstrap命名空间下的start函数开始
+
+==========start函数
+打开dyld源码，搜索dyldbootstrap，找到dyldInitialization.cpp文件
+打开dyldInitialization.cpp文件，找到start函数
+
+1：重定位dyld，进程启动，它的虚拟内存地址就要进行重定位
+2：对于栈溢出的保护
+3：初始化dyld
+4：调用dyld的_main函数
+在start函数中，最为重要的就是最后一步，调用dyld的_main函数
+
+打开dyld2.cpp文件，找到_main函数
+内核检查代码
+1：主程序可执行文件
+2：设置HostCPU等信息
+3：设置可执行文件的Header，设置ASLR
+
+image list
+后面的4140000是ASLR随机地址，每次加载MachO都不一样
+
+setContext：设置上下文
+全部存储在gLinkContext对象中
+
+1：配置进程是否受限，苹果进程受AFMI保护（Apple Mobile File Integrity苹果移动文件保护）
+2：判断是否强制使用dyld3
+3：判断环境变量，如果发生改变，再次调用setContext设置上下文。否则检测环境变量，设置默认值
+在项目中配置DYLD_PRINT_OPTS、DYLD_PRINT_ENV环境变量，可以进行打印
+
+1：加载共享缓存，UIKit、Foundation等系统动态库，都存储在共享缓存中。在iOS中，必须有共享缓存
+2：调用mapSharedCache函数，传递ASLR
+
+==========加载共享缓存
+进入mapSharedCache函数
+调用loadDyldCache函数
+
+进入loadDyldCache函数
+1：满足条件，依赖库只加载到当前进程
+2：如果已经加载共享缓存，不做任何处理
+3：首次加载，调用mapCacheSystemWide函数
+
+加载App之前，首先加载的就是共享缓存。每个App都需要UIKit、Foundation等系统动态库，但程序之前的进程不互通，所以系统动态库存放在共享缓存中
+加载逻辑，根据上述三种情况进行判断
+自己写的动态库和其他三方库，不会存储在共享缓存中
+
+==========dyld3闭包模式
+在iOS11后，引入dyld3的闭包模式，以回调的方式加载，加载更快，效率更高
+在iOS13后，动态库和三方库，也使用闭包模式加载
+回到_main函数
+1：判断sClosureMode，如果是闭包模式，执行else代码分支
+2：配置如何加载MachO
+3：闭包也是实例对象，优先从共享缓存中获取实例对象
+
+1：如果对象不为空，但对象已失效，重新将对象设置为nullptr
+2：再次判断对象是否为空，如果为空，在缓存中获取对象
+3：如果缓存中未找到对象，调用buildLaunchClosure函数创建
+
+1：判断对象不为空，调用launchWithClosure函数启动，传入闭包对象，返回是否成功的结果
+2：如果启动失败并且过期，再创建一次
+3：判断再次创建的对象不为空，再次启动
+4：如果启动成功，拿到主程序main的函数，直接返回结果
+
+==========dyld2流程
+如果不是dyld3的闭包模式，进入dyld2流程
+1：不使用dyld3的闭包模式，将变量设置为0，表示使用旧模式加载
+2：把两个回调地址放到stateToHandlers数组中
+3：分配初始化空间，尽量分配足够大的空间，以供后续使用
+4：把dyld加入到UUID的列表中
+
+==========实例化主程序
+
+==========

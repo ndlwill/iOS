@@ -1,0 +1,119 @@
+NSURL *fileURL = [NSURL URLWithString:@"SomeURL"];
+SystemSoundID theSoundID;
+//OSStatus AudioServicesCreateSystemSoundID(CFURLRef inFileURL,
+//                             SystemSoundID *outSystemSoundID);
+OSStatus error = AudioServicesCreateSystemSoundID(
+        (__bridge CFURLRef)fileURL,
+        &theSoundID);
+而在 Swift 中，这样的转换可以直接省掉了，上面的代码可以写为下面的形式，简单了许多：
+import AudioToolbox
+let fileURL = NSURL(string: "SomeURL")
+var theSoundID: SystemSoundID = 0
+
+//AudioServicesCreateSystemSoundID(inFileURL: CFURL,
+//        _ outSystemSoundID: UnsafeMutablePointer<SystemSoundID>) -> OSStatus
+AudioServicesCreateSystemSoundID(fileURL!, &theSoundID)
+
+==========Unmanaged
+
+// CFGetSomething() -> Unmanaged<Something>
+// CFCreateSomething() -> Unmanaged<Something>
+// 两者都没有进行标注，Create 中进行了创建
+
+let unmanaged = CFGetSomething()
+let something = unmanaged.takeUnretainedValue()
+// something 的类型是 Something，直接使用就可以了
+
+let unmanaged = CFCreateSomething()
+let something = unmanaged.takeRetainedValue()
+
+// 使用 something
+
+//  因为在取值时 retain 了，使用完成后进行 release
+unmanaged.release()
+
+
+
+
+public struct Unmanaged<Instance> where Instance : AnyObject {
+    public struct Unmanaged<Instance> where Instance : AnyObject {
+    // 将实例对象作为属性，之后操作的其实都是这个属性
+    internal unowned(unsafe) var _value: Instance
+    // 从实例对象初始化一个Unmanaged对象，说白了就是对实例对象的一层封装
+    internal init(_private: Instance) { _value = _private }
+    // 从一个指针中还原Unmanaged对象
+    public static func fromOpaque(_ value: UnsafeRawPointer) -> Unmanaged<Instance>
+    // 将一个Unmanaged对象转换为指针
+    public func toOpaque() -> UnsafeMutableRawPointer
+    // 将实例对象包装为Unmanaged对象，并且引用计数 +1
+    public static func passRetained(_ value: Instance) -> Unmanaged<Instance>
+    // 将实例对象包装为Unmanaged对象
+    public static func passUnretained(_ value: Instance) -> Unmanaged<Instance>
+    // 从Unmanaged对象中还原实例对象
+    public func takeUnretainedValue() -> Instance
+    // 从Unmanaged对象中还原实例对象，并且引用计数 -1
+    public func takeRetainedValue() -> Instance
+    // 引用计数 +1
+    public func retain() -> Unmanaged<Instance>
+    // 引用计数 -1
+    public func release()
+    // 自动释放
+    public func autorelease() -> Unmanaged<Instance>
+}
+
+Unmanaged其实就是实例对象和指针之间的媒介，负责相互之间的转换，需要注意的是平时使用的时候passRetained和takeRetainedValue是一对，
+passUnretained和takeUnretainedValue是一对。
+前者在使用的时候进行了引用计数的增减，后者并没有，如果传递的对象中途有被销毁的风险，就要用前者。引用计数，有增就有减。
+
+// test.h
+int add(int a, int b) ;
+
+// test.c
+int add(int a, int b) {
+    return a + b;
+}
+在.h文件中有一个add函数的声明，在.c文件中有add函数的实现，这种非常简单的C语言函数，在Swift中的调用也非常简单，直接使用即可
+let x = add(20, 30)
+print(x)
+
+如果是C语言的指针:
+// test.h
+int callback(void (* execute)(void *), void * obj) ;
+
+// test.c
+int callback(void (* execute)(void *), void * obj) {
+    execute(obj);
+    return 0;
+}
+声明一个返回值为int的函数，函数名称为callback，里面接收2个参数。
+第一个参数 void (* execute)(void *) 是一个名称为execute的函数指针，它的返回值是void，参数是一个void *指针
+第二个参数是void *指针
+这个函数的作用就是接收一个指针，并将这个指针作为参数传递给函数指针。
+
+
+let user = User()
+let userPtr = Unmanaged<User>.passRetained(user).toOpaque()
+
+class User {
+    func eat() {
+        print(#file, #line, "eat now")
+    }
+    
+    deinit {
+        print("User instance deinit")
+    }
+}
+首先定义一个User类，生成实例对象，接下来操控的都是user实例的指针，如果想取得的它的指针，就需要使用Unmanaged，如上，就取到了userPtr指针
+
+var closureTest: @convention(c) (UnsafeMutableRawPointer?) -> Void = { userPtr in
+    guard let userPtr = userPtr else { return }
+    let user = Unmanaged<User>.fromOpaque(userPtr).takeRetainedValue()
+    user.eat()
+}
+
+然后，定义一个符合void (* execute)(void *)类型的闭包closureTest，在swift符合类型的闭包写法就是这样的，
+必须要加上@convention(c)表明这是一个针对C语言的类型，UnsafeMutableRawPointer?就是Swift中指针的表示方式，
+使用之所以加问号，使用可选类型，是因为在C语言中它可以是空指针，可以为nil。使用Unmanaged将指针还原为user实例对象，调用eat方法，证明这个还原成功。
+
+不要忘记在桥接文件中导入C语言的.h文件
+callback(closureTest, userPtr)

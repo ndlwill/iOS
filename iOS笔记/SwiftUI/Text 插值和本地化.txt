@@ -1,0 +1,320 @@
+https://onevcat.com/2021/03/swiftui-text-1/
+https://onevcat.com/2021/03/swiftui-text-2/
+
+
+LocalizedStringKey:
+SwiftUI 把多语言本地化的支持放到了首位，在直接使用字符串字面量去初始化一个 Text 的时候，所调用到的方法其实是 init(_:tableName:bundle:comment:)：
+
+extension Text {
+    init(
+        _ key: LocalizedStringKey, 
+        tableName: String? = nil, 
+        bundle: Bundle? = nil, 
+        comment: StaticString? = nil
+    )
+}
+Text 使用输入的 key 去 bundle 中寻找本地化的字符串文件，并且把满足设备语言的结果渲染出来。
+
+因为 LocalizedStringKey 满足 ExpressibleByStringInterpolation (以及其父协议 ExpressibleByStringLiteral)，它可以直接由字符串的字面量转换而来。
+
+对于字符串字面量来说，Text 会使用上面这个 LocalizedStringKey 重载。
+如果先把字符串存储在一个 String 里，比如 let s = "hello"，那么 Text(s) 将会选取另一个，接受 StringProtocol 的初始化方法：init<S>(_ content: S) where S : StringProtocol。
+Text 的另一个重要的初始化方法是 init(verbatim:)。如果你完全不需要本地化对应，那么使用这个方法将让你直接使用输入的字符串，从而完全跳过 LocalizedStringKey。
+
+实际上，在 Text 初始化方法里，这类插值使用的是 LocalizedStringKey 的相关插值方法。这也是在 Swift 5 中新加入的特性，
+它可以让我们进行对任意类型的输入进行插值 (比如 Image)，甚至在插值时设定一些参数 (比如 Date 以及它的 .date style 参数)。
+
+
+StringInterpolation:
+普通的字符串插值是 Swift 刚出现时就拥有的特性了。可以使用 \(variable) 的方式，将一个可以表示为 String 的值加到字符串字面量里：
+
+print("3 == 3 is \(true)")
+// 3 == 3 is true
+
+let luckyNumber = 7
+print("My lucky number is \(luckNumber).")
+// My lucky number is 7.
+
+let name = "onevcat"
+print("I am \(name).")
+// I am onevcat.
+
+在 Swift 5 中，字面量插值得到了强化。我们可以通过让一个类型遵守 ExpressibleByStringInterpolation 来自定义插值行为。
+
+
+Swift 标准库中的 String 是满足该协议的，想要扩展 String 所支持的插值的类型，我们可以扩展 String.StringInterpolation 类型的实现，为它添加所需要的适当类型。
+用上面出现过的 Person 作为例子。不加修改的话，print 会按照 Swift struct 的默认格式打印 Person 值：
+
+struct Person {
+    let name: String
+    let place: String
+}
+
+print("Hi, \(Person(name: "Geralt", place: "Rivia"))")
+// Hi, Person(name: "Geralt", place: "Rivia")
+
+可以考虑扩展 String.StringInterpolation，添加一个 appendInterpolation(_ person: Person) 方法，来自定义字符串字面量接收到 Person 时的行为：
+extension String.StringInterpolation {
+    mutating func appendInterpolation(_ person: Person) {
+        // 调用的 `appendLiteral(_ literal: String)` 接受 `String` 参数
+        appendLiteral("\(person.name) of \(person.place)")
+    }
+}
+
+现在，String 中 Person 插值的情况会有所变化：
+print("Hi, \(Person(name: "Geralt", place: "Rivia"))")
+// Hi, Geralt of Rivia
+
+
+对于多个参数的情况，我们可以在 String.StringInterpolation 添加新的参数，并在插值时用类似“方法调用”写法，将参数传递进去：
+struct Person {
+    let name: String
+    let place: String
+    
+    // 好朋友的话一般叫昵称就行了
+    var nickName: String?
+}
+
+extension Person {
+    var formalTitle: String { "\(name) of \(place)" }
+    
+    // 根据朋友关系，返回称呼
+    func title(isFriend: Bool) -> String {
+        isFriend ? (nickName ?? formalTitle) : formalTitle
+    }
+}
+
+extension String.StringInterpolation {
+    mutating func appendInterpolation(_ person: Person, isFriend: Bool) {
+        appendLiteral(person.title(isFriend: isFriend))
+    }
+}
+
+调用时，加上 isFriend：
+
+let person = Person(
+    name: "Geralt", place: "Rivia", nickName: "White Wolf"
+)
+print("Hi, \(person, isFriend: true)")
+// Hi, White Wolf
+
+
+LocalizedStringKey 的字符串插值
+Image 和 Date
+了解了 StringInterpolation 后，我们可以来看看在 Text 语境下的 LocalizedStringKey 是如何处理插值的了。和普通的 String 类似，LocalizedStringKey 也遵守了 ExpressibleByStringInterpolation，而且 SwiftUI 中已经为它的 StringInterpolation 提供了一些常用的扩展实现。在当前 (iOS 14) 的 SwiftUI 实现中，它们包含了：
+
+extension LocalizedStringKey.StringInterpolation {
+    mutating func appendInterpolation(_ string: String)
+    mutating func appendInterpolation<Subject>(_ subject: Subject, formatter: Formatter? = nil) where Subject : ReferenceConvertible
+    mutating func appendInterpolation<Subject>(_ subject: Subject, formatter: Formatter? = nil) where Subject : NSObject
+    mutating func appendInterpolation<T>(_ value: T) where T : _FormatSpecifiable
+    mutating func appendInterpolation<T>(_ value: T, specifier: String) where T : _FormatSpecifiable
+    mutating func appendInterpolation(_ text: Text)
+    mutating func appendInterpolation(_ image: Image)
+    mutating func appendInterpolation(_ date: Date, style: Text.DateStyle)
+    mutating func appendInterpolation(_ dates: ClosedRange<Date>)
+    mutating func appendInterpolation(_ interval: DateInterval)
+}
+所涉及到的 Image 和 Date style 的插值，使用的正是上面所声明了的方法。
+
+我们很容易可以写出例子中的两个 appendInterpolation 的具体实现：
+mutating func appendInterpolation(_ image: Image) {
+    appendInterpolation(Text(image))
+}
+
+mutating func appendInterpolation(_ date: Date, style: Text.DateStyle) {
+    appendInterpolation(Text(date, style: style))
+}
+
+们就很容易理解为什么在最上面的例子中，Bool 和 Person 不能直接用在 Text 里的原因了。
+LocalizedStringKey 没有针对 Bool 扩展 appendInterpolation 方法，于是没有办法使用插值的方式生成 LocalizedStringKey 实例。
+
+对照 SwiftUI 中已有的 appendInterpolation 实现，不难发现，其实它使用的是 ：
+mutating func appendInterpolation<T>(_ value: T) where T : _FormatSpecifiable
+
+
+为 LocalizedStringKey 自定义插值:
+如果我们只是想让 Text 可以直接接受 true 或者 false，我们可以简单地为加上 appendInterpolation 的 Bool 重载。
+
+extension LocalizedStringKey.StringInterpolation {
+    mutating func appendInterpolation(_ value: Bool) {
+        appendLiteral(value.description)
+    }
+}
+
+对于 Person，我们可以同样地添加 appendInterpolation，来直接为 LocalizedStringKey 增加 Person 版本的插值方法：
+
+extension LocalizedStringKey.StringInterpolation {
+    mutating func appendInterpolation(_ person: Person, isFriend: Bool) {
+        appendLiteral(person.title(isFriend: isFriend))
+    }
+}
+
+但是这样的做法其实破坏了本地化的支持。谨慎使用
+
+"Hello World"="你好，世界";
+
+Text("Hello World")
+Text("Hello World")
+    .environment(\.locale, Locale(identifier: "zh-Hans"))
+
+
+let name = "onevcat"
+let key2: LocalizedStringKey = "I am \(name)"
+print(key2)
+
+// LocalizedStringKey(
+//     key: "I am %@", 
+//     hasFormatting: true, 
+//     arguments: [
+//         SwiftUI.LocalizedStringKey.FormatArgument(
+//             ...storage: Storage.value("onevcat", nil)
+//         )
+//     ]
+// )
+
+String Format Specifiers:
+https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Strings/Articles/formatSpecifiers.html
+
+key 并不是固定的 “I am onevcat”，而是一个 String formatter：”I am %@”。熟悉 String format 的读者肯定对此不会陌生：name 被作为变量，会被传递到 String format 中，并替换掉 %@ 这个表示对象的占位符。所以，在本地化这个字符串的时候，我们需要指定的 key 是 “I am %@”。当然，这个 LocalizedStringKey 也可以对应其他任意的输入：
+
+// XXX.strings
+"I am %@"="我是%@";
+
+// ContentView.swift
+Text("I am \("onevcat")")
+// 我是onevcat
+
+Text("I am \("张三")")
+// 我是张三
+
+对于 Image 插值来说，情况很相似：Image 插值的部分会被转换为 %@，以满足本地化 key 的需求：
+let key3: LocalizedStringKey = "Hello \(Image(systemName: "globe"))"
+
+print(key3)
+// LocalizedStringKey(
+//     key: "Hello %@", 
+//     ...
+// )
+
+// XXX.strings
+// "Hello %@"="你好，%@";
+
+Text("Hello \(Image(systemName: "globe"))")
+Text("Hello \(Image(systemName: "globe"))")
+    .environment(\.locale, Locale(identifier: "zh-Hans"))
+
+
+除了 %@ 外，LocalizedStringKey 还支持其他类型的格式化，比如在插值 Int 时，会把 key 中的参数转换为 %lld；对 Double 则转换为 %lf 等：
+
+let key4: LocalizedStringKey = "Hello \(1))"
+// LocalizedStringKey(key: "Hello %lld)
+
+let key5: LocalizedStringKey = "Hello \(1.0))"
+// LocalizedStringKey(key: "Hello %lf)
+
+更合理的 appendInterpolation 实现:
+
+mutating func appendInterpolation(_ value: Bool) {
+    appendLiteral(value.description)
+}
+
+mutating func appendInterpolation(_ person: Person, isFriend: Bool) {
+    appendLiteral(person.title(isFriend: isFriend))
+}
+在两个方法中，我们都使用了 appendLiteral 来将 String 直接添加到 key 里，这样做我们得到的会是一个完整的，不含参数的 LocalizedStringKey，在大多数情况下，这不会是我们想要的结果：
+
+let key6: LocalizedStringKey = "3 == 3 is \(true)"
+// LocalizedStringKey(key: "3 == 3 is true", ...)
+
+let person = Person(name: "Geralt", place: "Rivia", nickName: "White Wolf")
+let key7: LocalizedStringKey = "Hi, \(person, isFriend: false)"
+// LocalizedStringKey(key: "Hi, Geralt of Rivia", ...)
+
+在实现新的 appendInterpolation 时，尊重插入的参数，将实际的插入动作转发给已有的 appendInterpolation 实现，让 LocalizedStringKey 类型去处理 key 的合成及格式化字符，应该是更合理和具有一般性的做法：
+
+mutating func appendInterpolation(_ value: Bool) {
+    appendInterpolation(value.description)
+}
+
+mutating func appendInterpolation(_ person: Person, isFriend: Bool) {
+    appendInterpolation(person.title(isFriend: isFriend))
+}
+
+let key6: LocalizedStringKey = "3 == 3 is \(true)"
+// LocalizedStringKey(key: "3 == 3 is %@", ...)
+
+let key7: LocalizedStringKey = "Hi, \(person, isFriend: false)"
+// LocalizedStringKey(key: "Hi, %@", ...)
+
+
+为 Text 添加样式
+结合利用 LocalizedStringKey 参数插值和已有的 appendInterpolation，可以写出一些简便方法。比如可以添加一组字符串格式化的方法，来让 Text 的样式设置更简单一些：
+
+extension LocalizedStringKey.StringInterpolation {
+    mutating func appendInterpolation(bold value: LocalizedStringKey){
+        appendInterpolation(Text(value).bold())
+    }
+
+    mutating func appendInterpolation(underline value: LocalizedStringKey){
+        appendInterpolation(Text(value).underline())
+    }
+
+    mutating func appendInterpolation(italic value: LocalizedStringKey) {
+        appendInterpolation(Text(value).italic())
+    }
+    
+    mutating func appendInterpolation(_ value: LocalizedStringKey, color: Color?) {
+        appendInterpolation(Text(value).foregroundColor(color))
+    }
+}
+
+Text("A \(bold: "wonderful") serenity \(italic: "has taken") \("possession", color: .red) of my \(underline: "entire soul").")
+
+对应的 key 是 “A %@ serenity %@ %@ of my %@.”。插值的地方都会被认为是需要参数的占位符。
+
+
+_FormatSpecifiable:
+在内建的 LocalizedStringKey.StringInterpolation 有两个方法涉及到了 _FormatSpecifiable：
+mutating func appendInterpolation<T>(_ value: T) where T : _FormatSpecifiable
+mutating func appendInterpolation<T>(_ value: T, specifier: String) where T : _FormatSpecifiable
+
+指定占位格式
+Swift 中的部分基本类型，是满足 _FormatSpecifiable 这个私有协议的。
+该协议帮助 LocalizedStringKey 在拼接 key 时选取合适的占位符表示，比如对 Int 选取 %lld，对 Double 选取 %lf 等。
+当我们使用 Int 或 Double 做插值时，上面的重载方法将被使用：
+
+Text("1.5 + 1.5 = \(1.5 + 1.5)")
+
+// let key: LocalizedStringKey = "1.5 + 1.5 = \(1.5 + 1.5)"
+// print(key)
+// 1.5 + 1.5 = %lf
+
+如果只想要保留到小数点后一位，可以直接用带有 specifier 参数的版本。在生成 key 时，会用传入的 specifier 取代原本应该使用的格式：
+Text("1.5 + 1.5 = \(1.5 + 1.5, specifier: "%.1lf")")
+
+// key: 1.5 + 1.5 = %.1lf
+
+为自定义类型实现 _FormatSpecifiable
+虽然是私有协议，但是 _FormatSpecifiable 相对还是比较简单的：
+
+protocol _FormatSpecifiable: Equatable {
+    associatedtype _Arg
+    var _arg: _Arg { get }
+    var _specifier: String { get }
+}
+
+让 _arg 返回需要被插值的实际值，让 _specifier 返回占位符的格式，就可以了。比如可以猜测 Int: _FormatSpecifiable 的实现是：
+
+extension Int: _FormatSpecifiable {
+    var _arg: Int { self }
+    var _specifier: String { "%lld" }
+}
+
+对于我们在例子中多次用到的 Person，也可以用类似地手法让它满足 _FormatSpecifiable：
+
+extension Person: _FormatSpecifiable {
+    var _arg: String { "\(name) of \(place)" }
+    var _specifier: String { "%@" }
+}
+这样一来，即使我们不去为 LocalizedStringKey 添加 Person 插值的方法，编译器也会为我们选择 _FormatSpecifiable 的插值方式，将 Person 的描述添加到最终的 key 中了。

@@ -1,0 +1,90 @@
+地址和偏移量
+
+app名字     stack address       load address
+DSYMTest    0x0000000106cacb8a  0x106bd7000
+
+Binary Images:
+load address        CPU架构     UUID
+0x106bd7000         x86_64      <74....ad>
+
+使用MachOView查看VM Address （__Text）
+
+APP 名字： DSYMTest
+UUID：74d0c44de9023a51b4122f76ea810aad。文件的唯一标识符
+Load Address： 0x106bd7000。 当前app 主框架的 加载地址
+CPU 架构。这里的CPU架构是x86_64（Mac 现在都是x86_64架构，如果是iOS的话为armv7或者arm64架构）
+stack address： 0x0000000106cacb8a 。这个是未偏移前的 堆栈地址。 后面计算真实的符号地址会结合 load address 和 stack address 来进行计算
+VM Address： 0x100000000。段加载的虚拟地址, 查看的路径是Load Commands -> LC_SEGMENT_64_TEXT -> VM Address
+Slide 偏移量，由于 ALSR ，导致每次编译都会生成不同的偏移量，计算公式为： slide = load address - vm address 这里套用公式得到 slide = 0x106bd7000 - 0x100000000 = 0x6bd7000
+Symbol Address 符号地址，去除了偏移量的地址，计算公式为：symbol address = stack address - slide 这里套用公式得到 symbol address = 0x0000000106cacb8a - 0x6bd7000 = 0x1000D5B8A
+
+
+符号化的准备–UUID:
+首先判断DSYM文件和app和crash文件(如果存在)的UUID相同，确保是同一次编译的产物，因为每次编译由于ALSR（地址空间随机化）会生成不同的偏移量，
+如果三者的UUID不同，那么偏移量也会不同，导致符号化的地址不一样，会定位到错误的方法名上面去，下面就是查看UUID的方法。
+
+dSYM文件的uuid
+在DSYM文件目录内运行
+xcrun dwarfdump --uuid *.dSYM
+
+app的uuid
+ios
+xcrun dwarfdump --uuid .app/
+Mac
+xcrun dwarfdump --uuid DSYMTest.app/Contents/MacOS/DSYMTest
+
+crash文件的UUID
+
+符号化的几种方法:
+1.symbolicatecrash
+适用于有整个crash或者dmp文件的符号化。
+首先通过下面的命令找到 symbolicatecrash 可执行文件的路径 （由于不同版本的Xcode的路径不一样，所以用下面的命令统一查找）
+find /Applications/Xcode.app -name symbolicatecrash -type f
+
+将输出的路径的 symbolicatecrash 拷贝出来放在 一个新建的文件夹里面，然后将 crash 文件和 DSYM 文件一并拷贝过去
+
+首先需要配置下 开发路径，在终端运行以下命令
+export DEVELOPER_DIR="/Applications/XCode.app/Contents/Developer"
+然后在这个文件夹下面 运行
+./symbolicatecrash ./symbol.crash ./DSYMtest.dSYM > output.crash
+
+如果在符号化失败 可以检查一下 是否符号化 以前的crash 堆栈中是否是 以下形式的，
+8 DSYMTest 0x0000000106cacb8a DSYMTest + 875402
+8 DSYMTest 0x0000000106cacb8a _mh_execute_header + 875402
+如果是的话需要将上面的 DSYMTest 或者 _mh_execute_header 或者其他的文字用 当前image 的first load address 替换，first load address 就是当前 image 的经过偏移后的加载地址
+0x106bd7000，然后替换后重新运行上面的命令即可
+
+2.atos
+适用于符号化 单个 地址
+用法为
+atos [-p pid] [-o executable] [-f file] [-s slide | -l loadAddress] [-arch architecture] [-printHeader] [-fullPath] [address ...]
+
+xcrun atos -o DSYMTest.dSYM/Contents/Resources/DWARF/DSYMTest -arch x86_64 -l 0x106bd7000 0x0000000106cacb8a
+会输出
+-[LCMainViewController AboutButtonClicked:] (in DSYMTest) (LCMainViewController.m:1388)
+
+关键字段说明：
+architecture 为cpu 架构，Mac 为x86_64， iOS为 armv7或者arm64
+executable 的路径为 DSYMTest.dSYM/Contents/Resources/DWARF/DSYMTest，具体的可执行文件在DSYM文件夹的哪个位置需要具体查找
+0x106bd7000 为 当前DSYMTest image 的 load address
+0x0000000106cacb8a stack address
+
+
+3.dwarfdump
+适用于符号化 单个 地址，但相比上面两个方法可以得到更多的信息
+dwarfdump --arch x86_64 DSYMTest.dSYM/Contents/Resources/DWARF/DSYMTest --lookup 0x1000D5B8A
+
+0x0020dd1e:   DW_TAG_subprogram
+                DW_AT_low_pc	(0x00000001000d5ac5)
+                DW_AT_high_pc	(0x00000001000d5bcc)
+                DW_AT_frame_base	(DW_OP_reg6 RBP)
+                DW_AT_object_pointer	(0x0020dd39)
+                DW_AT_call_all_calls	(true)
+                DW_AT_name	("-[LCMainViewController AboutButtonClicked:]")
+                DW_AT_decl_file	("/Users/qa/Desktop/LivecastCI/workspace/Livecast_MacOS_Real_PackageBuilding/src/apps/macos/LiveCast/LiveCast/Main/LCMainViewController.m")
+                DW_AT_decl_line	(1380)
+                DW_AT_APPLE_optimized	(true)
+
+大部分命令和atos 差不多，唯一不同的是符号地址不一样。
+关键字段说明：
+–lookup 0x1000D5B8A 这里0x1000D5B8A 是symbol address 计算方法在 符号化的准备–地址和偏移量

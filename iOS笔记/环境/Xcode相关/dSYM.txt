@@ -1,0 +1,258 @@
+// 把test.m编译成可执行文件
+$ clang test.m -o test
+// 查看test可执行文件代码段，可以看到代码段中有 机器码 汇编指令
+$ objdump --macho -d test
+// 查看test文件所有二进制内容
+$ objdump -macho -s test
+// 把test.m编译成.o文件
+$ clang -c test.m -o test.o
+// 查看test.o文件代码段
+$ objdump --macho -d test.o
+// 查看test.o重定位符号表
+$ objdump --macho --reloc test.o
+
+e8 后面 00 00 00 00 表示近地址相对位移指令，这个地址加上下面 48:偏移量就是 _test地址，
+这个时候_test地址是个虚拟地址，所以00 00 00 00要把真实偏移量填进去，就要把_test放入重定位符号表里
+告诉链接器00 00 00 00地址需要重定位
+
+// 查看e指令作用
+(lldb) help e
+// 查看b8 二进制形式 -f 表示format b表示二进制 x表示16进制 d表示十进制
+(lldb) e -f b -- 0xb8
+(int) $0 = 0b00000000000000000000000010111000
+
+dSYM文件就是按DWARF格式保存调试信息的文件
+DWARF是一种被众多编译器和调试器使用的用于支持源代码级别 调试的调试文件格式
+
+调试信息生成dSYM文件过程:
+读取debug map
+从.o文件中加载__DWARF
+重新定位所有地址
+最后将全部的DWARF打包成dSYM Bundle
+
+
+// 把test.m编译成.o文件，并且生成调试信息  -g生成调试信息
+$ clang -g -c test.m -o test.o
+// 查看.o文件 mach header，其中__DWARF下就是调试信息
+$ objdump --macho --private-headers test.o
+Section
+  sectname __debug_str
+   segname __DWARF
+      addr 0x0000000000000064
+      size 0x0000000000000118
+    offset 1372
+     align 2^0 (1)
+    reloff 0
+    nreloc 0
+      type S_REGULAR
+attributes DEBUG
+// 把test.m文件生成可执行文件，并且生成调试信息
+$ clang -g test.m -o test
+// 查看可执行文件 mach header，发现找不到__DWARF内容，因为 调试信息已经放入了符号表
+$ objdump --macho --private-headers test
+// 查看符号表，下面列出来的就是调试符号
+$ nm -pa test
+0000000000000000 - 00 0000    SO /Users/wangning/Documents/资料/2:24/第十节、MachO与lldb/上课代码/1-mach-o分析/
+0000000000000000 - 00 0000    SO test.m
+00000000603b3ffe - 03 0001   OSO /var/folders/d7/5qn4fnqn0p197t4lkw1bw1p40000gn/T/test-6777ea.o
+0000000100003f60 - 01 0000 BNSYM
+0000000100003f60 - 01 0000   FUN _test
+0000000000000010 - 00 0000   FUN
+0000000000000010 - 01 0000 ENSYM
+0000000100003f70 - 01 0000 BNSYM
+0000000100003f70 - 01 0000   FUN _test_1
+0000000000000010 - 00 0000   FUN
+0000000000000010 - 01 0000 ENSYM
+0000000100003f80 - 01 0000 BNSYM
+0000000100003f80 - 01 0000   FUN _main
+0000000000000035 - 00 0000   FUN
+0000000000000035 - 01 0000 ENSYM
+0000000000000000 - 00 0000  GSYM _global
+0000000000000000 - 01 0000    SO
+// 把test.m文件生成可执行文件，并且生成test.dSYM文件
+$ clang -g1 test.m -o test
+// 查看dSYM文件内容
+$ dwarfdump test.dSYM
+
+
+ViewController.m文件内容如下
+
+#import "ViewController.h"
+
+@interface ViewController ()
+@end
+
+@implementation ViewController
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self test_dwarf];
+    });
+}
+
+- (void)test_dwarf {
+    NSArray *array = @[];
+    array[1];
+}
+@end
+
+运行崩溃，数组越界2021-02-28 15:44:53.003369+0800 TestInject[3353:197728] *** Terminating app due to uncaught exception 'NSRangeException', reason: '*** -[__NSArray0 objectAtIndex:]: index 1 beyond bounds for empty NSArray'
+
+Cmd + 空格键 ，输入 控制台 ，打开控制台 可以看到崩溃信息:
+
+Build Settings 中将Deployment Postprocessing 设置为Yes，就可以将符号剥离，此时再 Cmd + 空格键 ，输入 控制台 ，打开控制台 可以看到崩溃信息变成了地址
+
+为了方便我们查看错误信息，现在该怎么把地址还原成符号？
+此时需要借助dSYM文件，上面显示的地址是偏移后的地址，现在需要解决的是把偏移后的地址改为偏移前的地址
+
+// 查看控制台崩溃日志0x107cc0000就是偏移量
+Binary Images:
+       0x107cc0000 
+// 这里的偏移后的地址
+3   TestInject                          0x0000000107cc1e70 TestInject + 7792
+// 计算偏移前地址   偏移前地址 = 偏移后地址 - 偏移量
+(lldb)  e -f x -- 0x0000000107cc1e70 - 0x107cc0000
+(long) $0 = 0x0000000000001e70
+// 进入运行生成的工程目录Debug-iphonesimulator，就可以看到崩溃符号信息
+$ dwarfdump --lookup 0x0000000000001e70 TestInject.app.dSYM
+
+小结：
+dSYM文件内保存的是真实的虚拟内存地址
+我们在运行时调试到的地址实际上是 调试地址 = 虚拟地址 + ASLR
+.crash文件可以通过.dSYM文件进行崩溃信息还原，正是通过计算得到真实虚拟内存地址，然后在dSYM文件中找到恢复符号的信息
+
+==========根据真正的内存地址排查崩溃符号
+#import "ViewController.h"
+#import <mach-o/dyld.h>
+#import <mach-o/getsect.h>
+#import <objc/runtime.h>
+
+@interface ViewController ()
+@end
+
+@implementation ViewController
+// 获取ASLR
+uintptr_t get_slide_address(void) {
+    uintptr_t vmaddr_slide = 0;
+    // 使用的所有的二进制文件 = ipa + 动态库
+    // ASLR 根据Macho二进制文件或者image 做偏移
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+        // 遍历的是那个image名称
+        const char *image_name = (char *)_dyld_get_image_name(i);
+        const struct mach_header *header = _dyld_get_image_header(i);
+        if (header->filetype == MH_EXECUTE) {
+            vmaddr_slide = _dyld_get_image_vmaddr_slide(i);
+        }
+        NSString *str = [NSString stringWithUTF8String:image_name];
+       
+        if ([str containsString:@"TestInject"]) {
+                   
+              NSLog(@"Image name %s at address 0x%llx and ASLR slide 0x%lx.\n", image_name, (mach_vm_address_t)header, vmaddr_slide);
+                   break;
+          }
+    }
+    
+    // ASLR返回出去
+    return (uintptr_t)vmaddr_slide;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    [self getMethodVMA];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self test_dwarf];
+    });
+    NSLog(@"123");
+}
+
+- (void)test_dwarf {
+    NSArray *array = @[];
+    array[1];
+}
+
+- (void)getMethodVMA {
+    // 运行中的地址（偏移）
+    IMP imp = (IMP)class_getMethodImplementation(self.class, @selector(test_dwarf));
+    unsigned long imppos = (unsigned long)imp;
+    unsigned long slide =  get_slide_address();
+    // 运行中的地址（偏移） - ASLR = 真正的虚拟内存地址
+    unsigned long addr = imppos - slide;
+}
+@end
+
+Build Settings 中将Debug Information Format 设置为 DWARF with dSYM File
+
+$ dwarfdump --lookup 0x0000000100001d10 TestInject.app.dSYM/
+TestInject.app.dSYM/Contents/Resources/DWARF/TestInject:    file format Mach-O 64-bit x86-64
+0x0004a51c: Compile Unit: length = 0x0000037d version = 0x0004 abbr_offset = 0x0000 addr_size = 0x08 (next unit at 0x0004a89d)
+
+0x0004a527: DW_TAG_compile_unit
+              DW_AT_producer    ("Apple clang version 12.0.0 (clang-1200.0.32.28)")
+              DW_AT_language    (DW_LANG_ObjC)
+              DW_AT_name    ("/Users/wangning/Documents/\350\265\204\346\226\231/2:24/\347\254\254\345\215\201\350\212\202\343\200\201MachO\344\270\216lldb/\344\270\212\350\257\276\344\273\243\347\240\201/3-ASLR\344\270\216dSYM/TestInject/TestInject/ViewController.m")
+              DW_AT_LLVM_sysroot    ("/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator14.3.sdk")
+              DW_AT_APPLE_sdk   ("iPhoneSimulator14.3.sdk")
+              DW_AT_stmt_list   (0x0000b267)
+              DW_AT_comp_dir    ("/Users/wangning/Documents/\350\265\204\346\226\231/2:24/\347\254\254\345\215\201\350\212\202\343\200\201MachO\344\270\216lldb/\344\270\212\350\257\276\344\273\243\347\240\201/3-ASLR\344\270\216dSYM/TestInject")
+              DW_AT_APPLE_major_runtime_vers    (0x02)
+              DW_AT_low_pc  (0x0000000100001a30)
+              DW_AT_high_pc (0x0000000100001dd2)
+
+0x0004a6f7:   DW_TAG_subprogram
+                DW_AT_low_pc    (0x0000000100001d10)
+                DW_AT_high_pc   (0x0000000100001d77)
+                DW_AT_frame_base    (DW_OP_reg6 RBP)
+                DW_AT_object_pointer    (0x0004a711)
+                DW_AT_name  ("-[ViewController test_dwarf]")
+                DW_AT_decl_file ("/Users/wangning/Documents/资料/2:24/第十节、MachO与lldb/上课代码/3-ASLR与dSYM/TestInject/TestInject/ViewController.m")
+                DW_AT_decl_line (55)
+                DW_AT_prototyped    (true)
+Line info: file 'ViewController.m', line 55, column 0, start line 55
+// 可以看到具体崩溃文件，以及方法名
+
+==========引入framework库打断点跳入库源码
+创建TestLibrary工程，使用cocoapods引用TestFramework库
+
+// TestFramework库中只有一个类TestExample
+// TestExample.h内容
+#import <Foundation/Foundation.h>
+NS_ASSUME_NONNULL_BEGIN
+@interface TestExample : NSObject
+- (void)lg_test:(_Nullable id)e;
+@end
+NS_ASSUME_NONNULL_END
+
+//// TestExample.m内容
+#import "TestExample.h"
+#import <UIKit/UIKit.h>
+@interface TestExample()
+@end
+@implementation TestExample
+// lldb 使用
+// flutter 引擎调试
+- (void)lg_test:(id)e {
+    NSLog(@"lg_test--");
+}
+@end
+
+// podspec文件内容做了以下判断
+if ENV['Source'] {
+  // 引用TestFramework库源码
+} else {
+ // 引用TestFramework库
+}
+
+// 终端执行命令
+$ pod install  //引入TestFramework库
+$ Env=Source pod install //引入TestFramework库源码
+$ Source=1 pod install //引入TestFramework库源码
+
+// 理论上TestFramework库保存完整的调试信息，添加断点是可以进入lg_test方法内
+// 接下来验证的是给引用的库添加断点，看能否跳入源码
+ TestLibrary工程中viewController.m中引用类TestExample，引用地方打断点，看能不能跳到方法lg_test源码中？
+(lldb) br set -r lg_test(.*)  //断点打在TestFramework库方法lg_test中
+
+提供sdk库的时候，保存完整的调试信息，这样就可以不用提供源码，也能进行调试
+
+
+br set -n dyldbootstrap::start -s dyld // -s 指定在哪个二进制文件中设置断点

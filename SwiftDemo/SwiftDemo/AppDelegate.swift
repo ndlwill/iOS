@@ -5,12 +5,74 @@
 //
 //  Created by dzcx on 2019/7/17.
 //  Copyright © 2019 dzcx. All rights reserved.
-//
 
-// MARK: 面试
+// 16进制 两位算一个字节（0x00）
+// 0xff(16进制) == 11111111（2进制） == 255(10进制)
+// 0xf == 1111 // 1个16进制位等于4个2进制位
+/**
+ // 0x00 00 00 00 00 00 00 0A （8个字节的内存存储）
+ var age = 10
+ */
+
+/**
+ NSObject *obj = [[NSObject alloc] init];
+ NSLog(@"%p %p", &obj, obj);// &obj: 局部变量（指针变量）obj的地址，obj：局部变量（指针变量）obj所指向的堆空间地址
+ 
+ 0x7ffee6152088 0x60000232c530
+ (lldb)x/g 0x7ffee6152088
+ 0x7ffee6152088: 0x000060000232c530// 局部变量（指针变量）obj的地址中存的值即为指向的堆空间地址
+ */
+
+// UI即User Interface(用户界面)的简称
+// raw pointer: 原始指针
+
+/**
+ // wide (utf16) string
+ typedef std::basic_string<WCHAR> string;
+ // ascii or utf8 string
+ typedef std::basic_string<char>  astring;
+ */
+
+// MARK: VPN
+// https://github.com/yichengchen/clashX/releases/download/1.50.0/ClashX.dmg
+
+// MARK: leetcode
+// https://books.halfrost.com/leetcode/
+
+// MARK: Core Animation: Advanced Techniques中文译本
+// https://zsisme.gitbooks.io/ios-/content/
+
+// MARK: NetEase
+// https://juejin.cn/user/3438928103236920/posts
+
+// MARK: ali_p blog
+// https://github.com/wsl2ls // iOS_Tip
+
+// MARK: ###CA && WK### viper
+// https://juejin.cn/user/588993965333309/posts
+
+// MARK: - 网络
+// https://juejin.cn/post/6885167775409504269 // https://github.com/ifgyong/iOSDataFactory
+// https://www.zhihu.com/people/jie-jie-33-9/posts?page=1 // tcpip
+// https://www.zhihu.com/people/ning-meng-meng-meng-47-83/posts // linux
+// 网络诊断
+// https://juejin.cn/post/6844903789720240136
+
+// MARK: swift源码分析
+// https://www.cnblogs.com/huahuahu/
+
+// MARK: RFC规范
+// https://www.ietf.org/rfc/
+
+// MARK: ##MJ##
+// https://www.jianshu.com/nb/45474325
+
+// MARK: ==========面试==========
 // https://github.com/DevDragonLi/iOSInterviewsAndDevNotes // 必须看
+// https://github.com/SunshineBrother/JHBlog
 // https://juejin.cn/user/2348212570038446/posts
 // https://juejin.cn/user/2242659450368119/posts
+// https://github.com/liberalisman/iOS-InterviewQuestion-collection
 
 // MARK: apple document
 // https://developer.apple.com/library/archive/navigation/
@@ -21,9 +83,16 @@
 
 // MARK: AVFoundation相关
 // https://juejin.cn/user/1714893870076253/posts
+// https://www.jianshu.com/p/11bb9f2a9233
+// https://www.jianshu.com/u/08ef8e6eb2f6
+
+// MARK: 金山视频云
+// https://www.jianshu.com/u/b2227c3472fd
 
 // MARK: 字节跳动/bytedance
 // https://juejin.cn/user/2788017221155176/posts
+// https://juejin.cn/user/3421335918753102/posts
+// https://juejin.cn/user/4142615543154669/posts
 
 // MARK: M3U
 // https://zh.wikipedia.org/wiki/M3U
@@ -32,8 +101,50 @@
 // MARK: ipv6
 // https://github.com/WeMobileDev/article/blob/master/IPv6%20socket%E7%BC%96%E7%A8%8B.md#%E9%97%AE%E9%A2%98%E5%A4%8D%E6%9D%82%E6%80%A7
 
+// MARK: - 美团
+// https://tech.meituan.com/2016/09/02/ios-uitest-kif.html
+
+// MARK: - 网易
+// https://juejin.cn/team/6932010947578069006/posts
+// https://www.jianshu.com/u/fd21f41fb522
+
+// MARK: 组件化相关
+// https://juejin.cn/user/2717648476705773/posts
+
+// MARK: - MachO学习 1-6
+// https://www.jianshu.com/u/7eb3d0acf070
+// https://www.jianshu.com/p/fa5666308724
+
+// MARK: - MachO LG最新
+// https://juejin.cn/user/2867942500608493/posts // LG提高
+
+// MARK: - LG 算法
+// https://www.jianshu.com/u/219061ce49b9
+
+// MARK: - 电子书
+//https://blog.csdn.net/fksec/article/details/7888251
+
+// MARK: - objc源码
+// https://opensource.apple.com/tarballs/objc4/
+
 // MARK: LG
-// https://www.jianshu.com/u/1e8432e01e5a
+// https://www.jianshu.com/u/7a85a6956d1d // ######
+// https://www.jianshu.com/p/412b20d9a0f6 // 底层
+// https://www.jianshu.com/p/5fbedf309237 // swift
+// https://www.jianshu.com/p/5445fb11e06b // opengl
+// https://www.jianshu.com/u/1e8432e01e5a // swift+逆向+opengl+oc底层
+// https://www.jianshu.com/u/f4cc4a629941 // swift底层，逆向, 静态动态库 ##推荐
+// https://www.jianshu.com/u/f2349bd49c87 // macho 底层 库
+// https://www.jianshu.com/u/abc807e72f0e // lldb 汇编
+// https://www.jianshu.com/p/9c98d5271e25
+// https://www.jianshu.com/u/67af4fcb405b // AV，底层，opengl
+// https://www.jianshu.com/u/e28ac341c88f //
+// https://www.jianshu.com/u/fc862e5d5651 // opengl
+// https://www.jianshu.com/u/db4c495158ca // swift,库，底层
+
+// https://www.jianshu.com/u/13176a9bb9ff // 新
+
+// https://www.jianshu.com/u/c1d3d2681143
 
 // MARK: ping
 // https://developer.apple.com/library/archive/samplecode/SimplePing/Introduction/Intro.html
@@ -51,8 +162,15 @@
 // MARK: Runloop
 // https://juejin.im/user/78820566645534/posts
 
+// MARK: iOS14 - Widget
+// https://www.jianshu.com/u/dc87a43e2c18
+
+// MARK: - 图片选择器
+// HXPhotoPicker
+
 // MARK: 图片裁剪功能
 // https://juejin.im/post/6844904006649987085
+// TOCropViewController
 
 // MARK: Swift Package Manager(SPM) 
 
@@ -93,6 +211,12 @@ directory that contains your module map.
 
 // MARK: github tools
 // https://github.com/filsv/iPhoneOSDeviceSupport
+
+// MARK: objccn
+// https://onevcat.com/
+
+// MARK: objc.io
+// https://www.objc.io/issues/13-architecture/viper/
 
 // MARK: swift开源框架
 // https://www.jianshu.com/p/0797ca000ee1
@@ -920,6 +1044,8 @@ directory that contains your module map.
 // MARK: 直播 && 音视频
 // https://www.jianshu.com/p/7d1f6c20799d
 // https://juejin.im/user/58ec343861ff4b00691b4f26/posts
+// https://juejin.cn/user/1556564196984760/posts
+// https://www.jianshu.com/c/639cef195201
 
 // MARK: interview
 // https://www.jianshu.com/u/b0a8b4cbff94
@@ -928,6 +1054,9 @@ directory that contains your module map.
 // https://www.jianshu.com/u/8367278ff6cf
 // https://www.jianshu.com/p/2b1d9e9eb10d
 // https://www.jianshu.com/u/57da48d44319
+// https://juejin.cn/user/1151943916921885/posts
+// https://juejin.cn/user/2735240659351112/posts // Tencent
+// https://blog.csdn.net/ByteDanceTech?type=blog // dytedance
 
 // MARK: Swift 语法规范 && SwiftLint
 // https://github.com/github/swift-style-guide
@@ -1019,20 +1148,33 @@ directory that contains your module map.
 // https://www.jianshu.com/p/c3f2b8ef9c4b
 // XLPagerTabStrip
 // https://github.com/xmartlabs/XLPagerTabStrip
+// FluentDarkModeKit (dark mode)
+// https://github.com/microsoft/FluentDarkModeKit
+// JXPagingView
+// https://github.com/pujiaxin33/JXPagingView
+// ZJScrollPageView
+// https://github.com/jasnig/ZJScrollPageView
+// https://www.jianshu.com/u/fb31a3d1ec30
 
 // 唱吧
 // https://github.com/ChangbaDevs
 
+// 播放器
 // ZFPlayer
 // https://github.com/renzifeng/ZFPlayer
+// SJVideoPlayer
 
 // https://github.com/JoanKing/JKSwiftExtension // Extension
 // https://github.com/HeathWang/HWPanModal
-// https://github.com/indulgeIn/YBImageBrowser 
+// https://github.com/indulgeIn/YBImageBrowser  
 
 // MARK: URLSession-tutorial
 // https://www.raywenderlich.com/3244963-urlsession-tutorial-getting-started
 
+// MARK: Error
+/**
+ SKError
+ */
 
 // MARK: 工具
 // Zeplin Lookin3
@@ -1083,7 +1225,7 @@ directory that contains your module map.
  print(address: array2) //0x6000000aa100
  */
 
-// MARK: ==Error==
+// MARK: - Error Tips
 /**
  public protocol Error {
  }
@@ -2075,8 +2217,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // MARK: dispatch_once && method swizzling
         OnceClass.takeOnceTimeFunc()
         OnceClass.takeOnceTimeFunc()
-        
-        
+
+        #warning("TODO")
         // MARK: UserDefaults
         /**
          ["INNextHearbeatDate": 615967481.533718, "INNextFreshmintRefreshDateKey": 615536873.3292, "AppleKeyboards": <__NSCFArray 0x281d04a80>(
@@ -3253,4 +3395,65 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
  指令:
  callq 表示函数调用
  addq 加法
+ */
+
+// MARK: - 算法
+/**
+ 反转链表
+ class ListNode {
+     var val: Int
+     var next: ListNode?
+     
+     init(val: Int) {
+         self.val = val
+     }
+ }
+
+ class Solution {
+     class func Reverselist(head: ListNode?) -> ListNode? {
+         var cur = head
+         var pre: ListNode?
+         var next: ListNode?
+         
+         while cur != nil {
+             next = cur?.next
+             cur?.next = pre
+             pre = cur
+             cur = next
+         }
+         return pre
+     }
+     
+     class func printCurrent(head: ListNode?) {
+         var cur = head
+         if cur == nil {
+             print("空链表")
+         }
+         var string = ""
+         while cur != nil {
+             string = string + "\(cur!.val)"  + " -> "
+             cur = cur?.next
+         }
+         print(string + "Null")
+     }
+ }
+
+ 
+var head: ListNode?
+var pre: ListNode?
+for i in 1...5 {
+ let cur = ListNode(val: i)
+ if pre == nil {
+     head = cur
+     pre = head
+ } else {
+     pre?.next = cur
+     pre = cur
+ }
+}
+
+Solution.printCurrent(head: head)
+
+let reserver = Solution.Reverselist(head: head)
+Solution.printCurrent(head: reserver)
  */

@@ -1,0 +1,123 @@
+Core Audio提供了数字音频服务为iOS与OS X, 它提供了一系列框架去处理音频.
+Core Audio中包含我们最常用的Audio Toolbox与Audio Unit框架.
+
+1. Digital Audio与Linear PCM
+PCM是最常用的无损压缩数字音频格式数据,根据采样率以规则间隔测量模拟(真实世界)数字音频信号并将每个采集到的样本转换为数值来创建PCM数据.
+如标准光盘（CD）音频使用44.1 kHz的采样率，16位整数描述每个样本 - 构成分辨率或位深度。
+
+sample:一个采样点是对单声道采集到声音的数值
+frame:一帧数据是一组时间一致的samples,如双声道声音文件中一帧有两个samples,一个左声道,一个右声道.
+packet:一个或多个连续帧的集合.在线性PCM中,一个packet总是单帧.在其他压缩格式中,一个packet定义给定音频数据格式的最小有意义的帧组。
+
+iOS也提供了来自Audio Converter Services的Converter audio unit服务.
+
+3.HAL(Hardware Abstraction Layer)
+大多情况下,我们无法直接与HAL进行交互,Apple提供了一个特别的audio unit,即OS X中的AUHAL, iOS中的AURemoteIO, 我们可以通过它们让音频与硬件交互.
+
+4.Properties, Scopes, and Elements
+Core Audio接口中使用property管理对象的行为与状态.
+属性通常用易记忆的关键字格式,如kAudioFilePropertyFileFormat or kAudioQueueDeviceProperty_NumberChannels.
+属性值适用于特定的数据类型,如void*, Float64, AudioChannelLayout...
+Core Audio对象有一个内部结构,其中每一部分都有属于自己的属性,如一个audio unit对象都有一个input scope, output scope, global scope. 每个scope由一个或多个elements(类似于音频总线)组成.
+
+
+struct AudioStreamBasicDescription {
+    Float64 mSampleRate;
+    UInt32  mFormatID;
+    UInt32  mFormatFlags;
+    UInt32  mBytesPerPacket;
+    UInt32  mFramesPerPacket;
+    UInt32  mBytesPerFrame;
+    UInt32  mChannelsPerFrame;
+    UInt32  mBitsPerChannel;
+    UInt32  mReserved;
+};
+typedef struct AudioStreamBasicDescription  AudioStreamBasicDescription;
+
+struct  AudioStreamPacketDescription {
+    SInt64  mStartOffset;
+    UInt32  mVariableFramesInPacket;
+    UInt32  mDataByteSize;
+};
+typedef struct AudioStreamPacketDescription AudioStreamPacketDescription;
+
+注意，上面结构体中mReserved是Apple的保留参数，必须为0. 其他一些参数在特定情况下也需为0，
+如：压缩音频格式每个sample使用不同数量的bits。对于这些格式，mBitsPerChannel成员的值为0。
+
+为AudioStreamBasicDescription赋值
+你可以手动为ASBD的成员赋值，如果有些值是你不知道的，可以赋0，Core Audio将自动选择适当的值。
+
+标准的音频数据格式:
+iOS: 线性PCM 16bit integer, Noninterleaved linear PCM 8.24bit 定点samples
+struct AudioStreamBasicDescription {
+    mSampleRate       = 44100.0;
+    mFormatID         = kAudioFormatLinearPCM;
+    mFormatFlags      = kAudioFormatFlagsAudioUnitCanonical;
+    mBitsPerChannel   = 8 * sizeof (AudioUnitSampleType);                    // 32 bits
+    mChannelsPerFrame = 2;
+    mBytesPerFrame    = mChannelsPerFrame * sizeof (AudioUnitSampleType);    // 8 bytes
+    mFramesPerPacket  = 1;
+    mBytesPerPacket   = mFramesPerPacket * mBytesPerFrame;     // 8 bytes
+    mReserved         = 0;
+};
+
+Magic Cookie:
+在Core Audio中，magic cookie表示被附加到压缩音频数据(文件或流)中的元数据(metadata)。
+元数据为解码器提供了正确解码文件或流所需要的详细信息。Core Audio可以复制，读取，使用元数据包含的信息。
+
+- (void) copyMagicCookieToQueue: (AudioQueueRef) queue fromFile: (AudioFileID) file {
+ 
+    UInt32 propertySize = sizeof (UInt32);
+ 
+    OSStatus result = AudioFileGetPropertyInfo (
+                            file,
+                            kAudioFilePropertyMagicCookieData,
+                            &propertySize,
+                            NULL
+                        );
+ 
+    if (!result && propertySize) {
+ 
+        char *cookie = (char *) malloc (propertySize);
+ 
+        AudioFileGetProperty (
+            file,
+            kAudioFilePropertyMagicCookieData,
+            &propertySize,
+            cookie
+        );
+ 
+        AudioQueueSetProperty (
+            queue,
+            kAudioQueueProperty_MagicCookie,
+            cookie,
+            propertySize
+        );
+ 
+        free (cookie);
+    }
+}
+
+8.Audio Data Packets
+音频数据包(packet)是一个或多个帧的集合，对于特定音频格式，它是有意义的最小帧集合，因此它是最佳表示一段时间音频数据的单位。
+
+CBR(固定的比特率):PCM,IMA,ADPCM,所有packet具有相同size.
+VBR(可变的比特率):AAC,MP3,Apple Lossless,所有packet都具有相同的帧数，但是每一帧中的位数不同。
+VFR(可变的帧率): 每个包中具有不同的帧数，没有这种类型常用的格式。
+
+在CBR，VBR的格式中，对于给定的音频文件或流，每秒钟的包数是固定的
+
+9.数据格式转换
+使用audio converter可以改变音频采样率，交错或不交错，以及压缩与未压缩数据格式相互转换。
+
+将压缩数据格式(如AAC)转成线性PCM格式
+将线性PCM格式转成其他格式
+在16位signed integer线性PCM与8.24定点PCM间相互转换。
+
+10.音频文件
+Core Audio中使用Audio File Service为创建与访问音频文件及包含在其中元数据提供了一个强大的抽象。
+我们不仅可以使用文件的ID,type,数据格式，还可以添加标记，循环，回放等等功能。
+
+
+19.Audio Processing Graphs
+AUGraph:定义了一组复杂的音频执行任务.

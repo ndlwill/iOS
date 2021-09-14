@@ -1,0 +1,198 @@
+为什么要使用NSOperation？
+NSOperation提供任务的封装，NSOperationQueue顾名思义，提供执行队列，可以自动实现多核并行计算，自动管理线程的生命周期，如果是并发的情况，其底层也使用线程池模型来管理，基本上可以说这两个类提供的功能覆盖了GCD，并且提供了更多可定制的开发方式，开发者可以按需选择。
+NSOperation把封装好的任务交给不同的NSOperationQueue即可进行串行或并发队列的执行。
+通常情况下，任务会交给NSOperation类的一个方法，main或者start方法，所以我们要自定义继承NSOperation类的话，需要重写相关方法。
+
+NSOperation 常用属性和方法:
+重写的方法
+// 对于并发的Operation需要重写改方法
+- (void)start;
+// 非并发的Operation需要重写该方法
+- (void)main;
+
+相关属性:
+// 任务是否取消（只读） 自定义子类，需重写该属性
+@property (readonly, getter=isCancelled) BOOL cancelled;
+
+// 可取消操作，实质是标记 isCancelled 状态，自定义子类，需利用该方法标记取消状态
+- (void)cancel;
+
+// 任务是否正在执行（只读），自定义子类，需重写该属性
+@property (readonly, getter=isExecuting) BOOL executing;
+
+// 任务是否结束（只读），自定义子类，需重写该属性
+// 如果为YES，则队列会将任务移除队列
+@property (readonly, getter=isFinished) BOOL finished;
+
+// 判断任务是否为并发（只读），默认返回NO
+// 自定义子类，需重写getter方法，并返回YES
+@property (readonly, getter=isAsynchronous) BOOL asynchronous;
+
+// 任务是否准备就绪（只读）
+// 对于加入队列的任务来说，ready为YES，则表示该任务即将开始执行
+// 如果存在依赖关系的任务没有执行完，则ready为NO
+@property (readonly, getter=isReady) BOOL ready;
+
+操作同步:
+// 添加任务依赖
+- (void)addDependency:(NSOperation *)op;
+
+// 删除任务依赖
+- (void)removeDependency:(NSOperation *)op;
+
+typedef NS_ENUM(NSInteger, NSOperationQueuePriority) {
+	NSOperationQueuePriorityVeryLow = -8L,
+	NSOperationQueuePriorityLow = -4L,
+	NSOperationQueuePriorityNormal = 0,
+	NSOperationQueuePriorityHigh = 4,
+	NSOperationQueuePriorityVeryHigh = 8
+};
+// 任务在队列里的优先级
+@property NSOperationQueuePriority queuePriority;
+
+// 会在当前操作执行完毕时调用completionBlock
+@property (nullable, copy) void (^completionBlock)(void);
+
+// 阻塞当前线程，直到该操作结束，可用于线程执行顺序的同步
+- (void)waitUntilFinished;
+
+
+==========NSOperationQueue 常用属性和方法
+添加任务
+// 向队列中添加一个任务
+- (void)addOperation:(NSOperation *)op;
+
+// 向队列中添加操作数组，wait 标志是否阻塞当前线程直到所有操作结束
+- (void)addOperations:(NSArray<NSOperation *> *)ops waitUntilFinished:(BOOL)wait;
+
+//  向队列中添加一个 block 类型操作对象。
+- (void)addOperationWithBlock:(void (^)(void))block;
+
+相关属性:
+// 获取队列中所有任务（只读）
+@property (readonly, copy) NSArray<__kindof NSOperation *> *operations;
+
+// 获取队列中任务数量（只读）
+@property (readonly) NSUInteger operationCount;
+
+// 队列支持的最大任务并发数
+@property NSInteger maxConcurrentOperationCount;
+
+// 队列是否挂起
+@property (getter=isSuspended) BOOL suspended;
+
+// 队列名字
+@property (nullable, copy) NSString *name
+
+相关方法:
+// 取消队列中所有的任务
+- (void)cancelAllOperations;
+
+// 阻塞当前线程，直到所有任务完成
+- (void)waitUntilAllOperationsAreFinished;
+
+// 类属性，获取当前队列
+@property (class, readonly, strong, nullable) NSOperationQueue *currentQueue;
+
+// 类属性，获取主队列（并发数为1）
+@property (class, readonly, strong) NSOperationQueue *mainQueue;
+
+
+自定义NSOperation子类:
+在官方文档中支出，自定义NSOperation子类有两种方式，并发和非并发。 非并发只需要继承NSOperation后，实现main方法即可。而并发的操作相对较多一点
+
+非并发的NSOperation子类:
+官方文档描述：
+Methods to Override
+For non-concurrent operations, you typically override only one method:   main
+Into this method, you place the code needed to perform the given task.
+
+在官方文档中指出，非并发任务，直接将需要执行的任务放在main方法中，然后直接调用即可。
+这样直接调用main方法会存在一个问题，由于没有实现finished属性，所以获取finished属性时，只会返回NO，而且任务加入到队列后，不会被删除，另外任务执行完后，回调也不会被执行，所以最好不要只实现一个main方法来使用。
+而且，其实也没有必要使用这种非并发的NSOperation子类，实在想不出有什么场景需要来用它
+
+
+#####并发的NSOperation子类#####
+官方文档描述：
+Methods to Override
+If you are creating a concurrent operation, you need to override the following methods and properties at a minimum:
+start
+asynchronous
+executing
+finished
+
+通过官方文档可以知道，实现并发的自定义子类，需要重写下面几个方法或属性：
+start：把需要执行的任务放在start方法里，任务加到队列后，队列会管理任务并在线程被调度后，调用start方法，不需要调用父类的方法
+asynchronous：表示是否并发执行
+executing：表示任务是否正在执行，需要手动调用KVO方法来进行通知，方便其他类监听了任务的该属性
+finished：表示任务是否结束，需要手动调用KVO方法来进行通知，队列也需要监听改属性的值，用于判断任务是否结束
+
+
+@interface ZBOperation : NSOperation
+
+@property (nonatomic, readwrite, getter=isExecuting) BOOL executing;
+@property (nonatomic, readwrite, getter=isFinished) BOOL finished;
+
+@end
+
+@implementation ZBOperation
+// 因为父类的属性是Readonly的，重载时如果需要setter的话则需要手动合成。
+@synthesize executing = _executing;
+@synthesize finished = _finished;
+
+- (void)start {
+    @autoreleasepool{
+    self.executing = YES;
+        if (self.cancelled) {
+            [self done];
+            return;
+        }
+        // 任务。。。
+    }
+    // 任务执行完成，手动设置状态
+    [self done];
+}
+
+- (void)done {
+    self.finished = YES;
+    self.executing = NO;
+}
+
+#pragma mark - setter -- getter
+- (void)setExecuting:(BOOL)executing {
+    //调用KVO通知
+    [self willChangeValueForKey:@"isExecuting"];
+    _executing = executing;
+    //调用KVO通知
+    [self didChangeValueForKey:@"isExecuting"];
+}
+
+- (BOOL)isExecuting {
+    return _executing;
+}
+
+- (void)setFinished:(BOOL)finished {
+    if (_finished != finished) {
+        [self willChangeValueForKey:@"isFinished"];
+        _finished = finished;
+        [self didChangeValueForKey:@"isFinished"];
+    }
+}
+
+- (BOOL)isFinished {
+    return _finished;
+}
+
+// 返回YES 标识为并发Operation
+- (BOOL)isAsynchronous {
+    return YES;
+}
+
+// 调用类
+- (void)congfigOperation {
+    self.queue = [[NSOperationQueue alloc] init];
+    [self.queue setMaxConcurrentOperationCount:2];
+    
+    self.zbOperation = [[ZBOperation alloc] init];
+    [self.queue addOperation:self.zbOperation];
+}

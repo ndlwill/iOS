@@ -1,0 +1,118 @@
+Combine 的结构跟其他响应式框架类似:
+
+Publisher（发布者）
+值类型，描述了 值 和 错误 是如何产生的,遵循 Publisher 协议，协议中声明了值类型与错误类型（Output 与 Failure），声明 Publisher 时需要指定这两者。
+
+// Publisher 协议主体
+@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
+public protocol Publisher {
+    associatedtype Output
+    associatedtype Failure : Error
+    func receive<S>(subscriber: S) where S : Subscriber, Self.Failure == S.Failure, Self.Output == S.Input
+}
+
+Subscriber（订阅者）
+引用类型，遵循 Subscriber 协议，根据其订阅的 Publisher 配置有多种接收方法。
+// Subscriber 协议主体
+@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
+public protocol Subscriber : CustomCombineIdentifierConvertible {
+    associatedtype Input
+    associatedtype Failure : Error
+    func receive(subscription: Subscription)
+    func receive(_ input: Self.Input) -> Subscribers.Demand
+    func receive(completion: Subscribers.Completion<Self.Failure>)
+}
+
+订阅者订阅发布者后会返回一个遵循Cancellable协议的 AnyCancellable，作用上类似于其他响应式框架中的 dispose。
+其控制着订阅者的释放，在开发中，可将其作为属性持有，当页面销毁时，系统释放 AnyCancellable 时，其会自动调用其内部的 cancel() 方法进行资源释放。
+
+Operator（操作符）
+值类型。其本质上也是 Publisher，因此可被 Subscriber 订阅，其自身也能订阅其他的 Publisher。
+Combine 中有不少操作符，常见于对发布者的数据进行过滤修改等操作时使用。
+将其看做是个“中间人”，使用多个 Operator 都是可以的。
+
+一个双向绑定的简单例子:
+struct LoginModel {
+    var account:String = ""
+}
+
+class LoginVM {
+    // 登录状态
+    enum LoginState {
+        case none
+        case success
+        case error
+    }
+
+    // model
+    var model = LoginModel()
+    // 登录
+    func login(psw:String = ""){}
+}
+
+将账号输入与模型绑定
+// 获取发布者
+let publisher = accountTF.publisher(for: \.text, options: NSKeyValueObservingOptions.new)
+// 订阅发布者
+accountCancel = publisher.sink { [weak self](text) in
+    if let self = self {
+        // 将如数的账号赋值给我们的 model
+        self.viewModel.model.account = text ?? ""
+    }
+}
+
+其中的 \.text 是 Swift5.0之后加入的特性,相比 OC 中 KVC 使用字符串来指定关键字更加安全，避免了输入错误引发问题。
+
+注意 accountCancel，其为 AnyCancelable 类型，主要实现了 Cancellable 协议，协议里只有一个 cancel 方法。
+只需要知道它由订阅者实现，在其自身被释放时调用 cancel 来释放资源,这么一看跟 RxSwift 中的 DisposeBag 类似。
+其与订阅者生命周期相关，持有它，订阅就会一直生效。
+
+
+将请求结果跟视图绑定:
+上边我们用了系统生成的 publisher,那关于 model 层有没有啥系统提供的东西呢？
+@Published var loginState:LoginState = .none
+@Published 是系统提供给我们用来修饰属性的，其只能在 Class 中使用。它其实是一个属性包装器(PropertyWrapper)：
+
+@available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+@propertyWrapper public struct Published<Value> {
+    public init(wrappedValue: Value)
+    public init(initialValue: Value)
+
+    // 发布者定义
+    public struct Publisher : Publisher {
+        public typealias Output = Value
+        public typealias Failure = Never
+
+        public func receive<S>(subscriber: S) where Value == S.Input, S : Subscriber, S.Failure == Published<Value>.Publisher.Failure
+    }
+
+    // 发布者实例
+    public var projectedValue: Published<Value>.Publisher { mutating get set }
+}
+
+@Published 的属性包装器里让属性持有了个自己声明的发布者。
+这样就可以让被@Published标记的属性自动生成发布者。
+
+订阅也很简单：
+loginStateCancel = viewModel.$loginState.sink { (state) in
+
+}
+
+viewModel.$loginState 实际上返回的是:Published<LoginVM.LoginState>.Publisher
+
+通过$ 符号访问属性是获取属性包装器中的自定义属性 projectedValue 的值，
+在 @Published 中，这个自定义属性就是系统生成的发布者。
+
+每个需要绑定/观察的键都被 @Published 标记，然后又订阅，可当面对的是一个复杂的模型时就会产生大量重复操作。
+使用 ObservableObject协议：
+class LoginVM: ObservableObject {...}
+
+ObservableObject 协议中定义了一个发布器,并在协议的扩展中实现了默认的发布器，这样就让遵循协议的类默认拥有了一个发布器，获取回调发布器的属性为objectWillChange。
+Tips：被 @Published 标记的属性更新前会回调，未被标记的属性则不会。
+就可以通过 viewModel 的objectWillChange 获取到发布者并订阅来监听所有被@Published 标记的属性更改的回调
+
+loginStateCancel = viewModel.objectWillChange.sink{ [weak self]() in
+    print("登录状态即将发生改变:\(self?.viewModel.loginState)")
+}
+
+objectWillChange 返回的发布者，会在操作前回调，此时去获取属性还是旧值

@@ -1,0 +1,196 @@
+组件与模块的区别:
+“组件”强调的是复用，它被各个模块或组件直接依赖，是基础设施，它一般不包含业务或者包含弱业务，属于纵向分层（比如网络请求组件、图片下载组件）。
+“模块”强调的是封装，它更多的是指功能独立的业务模块，属于横向分层（比如购物车模块、个人中心模块）。
+
+“iOS 组件化”更多的是做业务模块之间的解耦就行了。
+
+路由的意义:
+路由并非只是指的界面跳转，还包括数据获取等几乎所有业务。
+(一) 简单的路由
+=====内部调用的方式:
+效仿 web 路由，最初的 iOS 原生路由看起来是这样的：
+[Mediator gotoURI:@"protocol://detail?name=xx"];
+缺点很明显：字符串 URI 并不能表征 iOS 系统原生类型，要阅读对应模块的使用文档，大量的硬编码。
+
+代码实现:
++ (void)gotoURI:(NSString *)URI {
+    解析 URI 得到目标和参数
+    NSString *aim = ...;
+    NSDictionary *parmas = ...;
+    
+    if ([aim isEqualToString:@"Detail"]) {
+        DetailController *vc = [DetailController new];
+        vc.name = parmas[@"name"];
+        [... pushViewController:vc animated:YES];
+    } else if ([aim isEqualToString:@"list"]) {
+        ...
+    }
+}
+拿到 URI 过后，始终有转换为目标和参数 (aim/params) 的逻辑，然后再真正的调用原生模块。显而易见，对于内部调用来说，解析 URI 这一步就是画蛇添足
+路由方法简化如下：
++ (void)gotoDetailWithName:(NSString *)name {
+    DetailController *vc = [DetailController new];
+    vc.name = name;
+    [... pushViewController:vc animated:YES];
+}
+使用起来就很简单了：
+[Mediator gotoDetailWithName:@"xx"];
+如此，方法的参数列表便能替代额外的文档，并且经过编译器检查。
+
+=====如何支持外部 URI 方式调用:
+那么对于外部调用，只需要为它们添加 URI 解析的适配器就能解决问题
+
+
+统一路由调用类便于管理和使用，所以通常需要定义一个Mediator类。又考虑到不同模块的维护者都需要修改Mediator来添加路由方法，可能存在工作流冲突。所以利用装饰模式，为每一个模块添加一个分类是不错的实践：
+@interface Mediator (Detail)
++ (void)gotoDetailWithName:(NSString *)name;
+@end
+然后对应模块的路由方法就写到对应的分类中。
+
+简单路由的作用：
+这里的封装，解除了业务模块之间的直接耦合，然而它们还是间接耦合了（因为路由类需要导入具体业务）
+
+一个简单的路由不需关心耦合问题，就算是这样一个简单的处理也有如下好处：
+清晰的参数列表，方便调用者使用。
+解开业务模块之间的耦合，业务更改时或许接口不需变动，外部调用就不用更改代码。
+就算是业务更改，路由方法必须得变动，得益于编译器的检查，也能直接定位调用位置进行更改。
+
+(二) 支持动态调用的路由
+动态调用，顾名思义就是调用路径在不更新 App 的情况下发生变化。比如点击 A 触发跳转到 B 界面，某一时刻又需要点击 A 跳转到 C 界面。
+
+要保证最小粒度的动态调用，就需要目标业务的完整信息，比如上面说的aim和params，即目标和参数。
+
+然后需要一套规则，这个规则有两个来源：
+来自服务器的配置。
+本地的一些判断逻辑。
+
+=====预知的动态调用
++ (void)gotoDetailWithName:(NSString *)name {
+    if (本地防护逻辑判断 DetailController 出现异常) {
+        跳转到 DetailOldController
+        return;
+    }
+    DetailController *vc = [DetailController new];
+    vc.name = name;
+    [... pushViewController:vc animated:YES];
+}
+开发者需要明确的知道“某个业务”支持动态调用并且动态调用的目标是“某个业务”。也就是说，这是一种“伪”动态调用，代码逻辑是写死的，只是触发点是动态的而已。
+
+=====自动化的动态调用
+自动化的动态调用是指，某个路由跳转到哪个页面是可自动变化的，比如+gotoDetail方法可能跳转到其它任意页面。而这个决议操作可以通过服务端来控制，比如下发路由决议表、动态请求接口决议。
+
+要实现真正的“自动化”，必须要满足一个条件：需要所有路由方法的一个切面。
+
+这个切面的目的就是拦截路由目标和参数，然后做动态调度。一提到 AOP 大家可能会想到 Hook 技术，但是对于下面两个路由方法：
++ (void)gotoDetailWithName:(NSString *)name;
++ (void)pushOldDetail;
+你无法找到它们之间的相同点，难以命中。
+所以，拿到一个切面的方法能想到的只有一个：统一路由方法入口。
+
+定义这样一个方法：
+- (void)gotoAim:(NSString *)aim params:(NSDictionary *)params {// 外部调用
+    1、动态调用逻辑（通过服务器下发配置判断） 
+    2、通过 aim 和 params 动态调用具体业务
+}
+
+然后，路由方法里面就这么写了：
++ (void)gotoDetailWithName:(NSString *)name {// 内部调用
+    [self gotoAim:@"detail" params:@{@"name":name}];
+}
+注意@"detail"是约定好的 Aim，内部可以动态定位到具体业务。
+
+统一路由方法入口必然需要硬编码，对于此方案来说自动化的动态调用必然需要硬编码。
+那么，这里使用一个分类方法+ (void)gotoDetailWithName:(NSString *)name;将硬编码包装起来是个不错的选择，把这些 hard code 交给对应业务的工程师去维护吧。
+CTMediator 分类就是如此做的，而这也正是蘑菇街组件化方案可以优化的地方。
+
+=====组件化的意义=====
+对路由的分析提到了使用目标和参数 (aim/params) 动态定位到具体业务的技术点。实际上在 iOS Objective-C 中大概有反射和依赖注入两种思路：
+将aim转化为具体的Class和SEL，利用 runtime 运行时调用到具体业务。
+对于代码来说，进程空间是共享的，所以维护一个全局的映射表，提前将aim映射到一段代码，调用时执行具体业务。
+这两种方式都已经让Mediator免去了对业务模块的依赖
+
+组件化主要目的是为了让各个业务模块独立运行，互不干扰，那么业务模块之间的完全解耦是必然的，同时对于业务模块的拆分也非常考究，更应该追求功能独立而不是最小粒度。
+
+(一) Runtime 解耦
+为 Mediator 定义了一个统一入口方法：
+- (id)performTarget:(NSString *)target action:(NSString *)action params:(NSDictionary *)params {}
+
+对于内部调用，为每一个模块写一个分类：
+@implementation BMediator (BAim)
+- (void)gotoBAimControllerWithName:(NSString *)name callBack:(void (^)(void))callBack {
+    [self performTarget:@"BTarget" action:@"gotoBAimController:" params:@{@"name":name, @"callBack":callBack}];
+}
+@end
+
+可以看到这里是给BTarget发送消息：
+@interface BTarget : NSObject
+- (void)gotoBAimController:(NSDictionary *)params; 
+@end
+@implementation BTarget
+- (void)gotoBAimController:(NSDictionary *)params {
+    BAimController *vc = [BAimController new];
+    vc.name = params[@"name"];
+    vc.callBack = params[@"callBack"];
+    [UIViewController.yb_top.navigationController pushViewController:vc animated:YES];
+}
+@end
+
+为什么要定义分类:
+定义分类的目的前面也说了，相当于一个语法糖，让调用者轻松使用，让 hard code 交给对应的业务工程师。
+
+为什么要定义 Target:
+避免同一模块路由逻辑散落各地，便于管理。
+路由并非只有控制器跳转，某些业务可能无法放代码（比如网络请求就需要额外创建类来接受路由调用）。
+便于方案的接入和摒弃（灵活性）。
+
+
+==========CTMediator==========
+本地调用入口:
+本地组件调用：本地组件A在一处调用[[CTMediator sharedInstance] performTarget:targetName action:actionName params:@{...}]向CTMediator发起了跨组件调用,CTMediator根据发送过来的target和action,然后经过OC的runtime机制转为target实例以及action,最后调用到目标业务提供的逻辑,完成要求.
+
+远程调用入口:
+远程应用的调取：远程应用是通过openURL的方式,由iOS 系统根据info.plist里的scheme配置用来可以找到响应的URL的应用,应用直接通过AppDelegate接收到URL之后,调用了CTMediator的OpenURL方法将接收到的信息传入进去.当然,CTMediator也可以用CTMediator的openURL:options:方式顺便将option也接收,这取决于是否包含了option数据,传入URL之后,CTMediator进行解析URL,将请求的路由到相对应的target-action中,随后的过程就变成了上面的本地应用调用过程了,最终完成了响应.
+
+/*
+ scheme://[target]/[action]?[params]
+
+ url sample:
+ aaa://targetA/actionB?id=1234&title=title
+
+ [url query]:  id=1234&title=title
+ [url path]:  /actionB
+ [url host]:  targetA
+ */
+
+- (id)performActionWithUrl:(NSURL *)url completion:(void (^)(NSDictionary *))completion
+{
+    //url参数的处理
+    NSMutableDictionary *params = [[NSMutableDictionary alloc] init];
+    //
+    NSString *urlString = [url query];
+    for (NSString *param in [urlString componentsSeparatedByString:@"&"]) {
+        NSArray *elts = [param componentsSeparatedByString:@"="];
+        if([elts count] < 2) continue;
+        [params setObject:[elts lastObject] forKey:[elts firstObject]];
+    }
+
+    // 这里这么写主要是出于安全考虑，防止黑客通过远程方式调用本地模块。这里的做法足以应对绝大多数场景，如果要求更加严苛，也可以做更加复杂的安全逻辑。
+    NSString *actionName = [url.path stringByReplacingOccurrencesOfString:@"/" withString:@""];
+    if ([actionName hasPrefix:@"native"]) {
+        return @(NO);
+    }
+
+    // 这个demo针对URL的路由处理非常简单，就只是取对应的target名字和method名字，但这已经足以应对绝大部份需求。如果需要拓展，可以在这个方法调用之前加入完整的路由逻辑
+    id result = [self performTarget:url.host action:actionName params:params shouldCacheTarget:NO];
+    if (completion) {
+        if (result) {
+            completion(@{@"result":result});
+        } else {
+            completion(nil);
+        }
+    }
+    return result;
+}
+
+NSClassFromString 通过字符串的名称来获取一个类，可以根据Target来进行获取
+NSSelectorFromString 通过字符串(已存在的方法名称)获取一个SEL

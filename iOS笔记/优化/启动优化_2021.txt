@@ -1,0 +1,339 @@
+Mach-O常见格式如下：
+1.目标文件 .o
+2.库文件
+.a
+.dylib
+.framework
+3.可执行文件
+4.dyld
+5..dsym
+
+通过file文件路径查看文件类型
+
+
+通用二进制文件:
+file MachO
+上面该MachO文件包含了3个架构分别是arm v7，arm v7s 以及arm 64 。
+针对该MachO文件我们做几个操作，利用lipo命令拆分合并架构
+
+利用lipo-info查看MachO文件架构
+
+瘦身MachO文件，拆分
+lipo MachO -thin armv7 -output MachO_armv7
+file MachO_armv7 // arm_v7
+
+增加架构，合并
+利用lipo -create 合并多种架构
+lipo -create MachO_armv7 MachO_arm64 -output Demo 
+file Demo// arm_v7 arm64
+
+MachO文件的组成结构如上，看包括了三个部分
+
+Header包含了该二进制文件的一般信息，信息如下：
+字节顺序、加载指令的数量以及架构类型
+快速的确定一些信息，比如当前文件是32位或者64位，对应的文件类型和处理器是什么
+
+Load commands 包含很多内容的表
+包括区域的位置、动态符号表以及符号表等
+
+Data一般是对象文件的最大部分
+一般包含Segement具体数据
+
+struct mach_header {
+	uint32_t	magic;		/* mach magic number identifier */
+	cpu_type_t	cputype;	/* cpu specifier */
+	cpu_subtype_t	cpusubtype;	/* machine specifier */
+	uint32_t	filetype;	/* type of file */
+	uint32_t	ncmds;		/* number of load commands */
+	uint32_t	sizeofcmds;	/* the size of all the load commands */
+	uint32_t	flags;		/* flags */
+};
+
+Data包含Segement，存储具体数据
+
+dyld（the dynamic link editor）是苹果动态链接器:
+系统会先读取App的可执行性文件（MachO）从里面获取dyld的路径，然后加载dyld，dyld去初始化运行环境，开启缓存策略，加载程序相关的依赖库【包括可执行文件】，
+并对这些库进行链接，最后调用每个依赖库的初始化方法，在这一步，runtime被初始化。当所有依赖库的初始化后，轮到最后一位【程序的可执行性文件】进行初始化，
+在这时runtime会对项目中所有类进行类结构初始化，然后调用所有的load方法。最后dyld返回函数地址，main函数被调用，便来到了熟悉的程序入口。
+
+因为dyld也是一个可执行文件，也是具有main函数的
+//
+// Entry point for dyld.  The kernel loads dyld and jumps to __dyld_start which
+// sets up some registers and call this function.
+//
+// Returns address of main() in target program which __dyld_start jumps to
+//
+uintptr_t
+_main(const macho_header* mainExecutableMH, uintptr_t mainExecutableSlide, 
+        int argc, const char* argv[], const char* envp[], const char* apple[], 
+        uintptr_t* startGlue)
+{
+    // Grab the cdHash of the main executable from the environment
+    // 第一步，设置运行环境
+    uint8_t mainExecutableCDHashBuffer[20];
+    const uint8_t* mainExecutableCDHash = nullptr;
+    if ( hexToBytes(_simple_getenv(apple, "executable_cdhash"), 40, mainExecutableCDHashBuffer) )
+        // 获取主程序的hash
+        mainExecutableCDHash = mainExecutableCDHashBuffer;
+
+    // Trace dyld's load
+    notifyKernelAboutImage((macho_header*)&__dso_handle, _simple_getenv(apple, "dyld_file"));
+#if !TARGET_IPHONE_SIMULATOR
+    // Trace the main executable's load
+    notifyKernelAboutImage(mainExecutableMH, _simple_getenv(apple, "executable_file"));
+#endif
+
+    uintptr_t result = 0;
+    // 获取主程序的macho_header结构
+    sMainExecutableMachHeader = mainExecutableMH;
+    // 获取主程序的slide值
+    sMainExecutableSlide = mainExecutableSlide;
+
+    CRSetCrashLogMessage("dyld: launch started");
+    // 设置上下文信息
+    setContext(mainExecutableMH, argc, argv, envp, apple);
+
+    // Pickup the pointer to the exec path.
+    // 获取主程序路径
+    sExecPath = _simple_getenv(apple, "executable_path");
+
+    // <rdar://problem/13868260> Remove interim apple[0] transition code from dyld
+    if (!sExecPath) sExecPath = apple[0];
+
+    if ( sExecPath[0] != '/' ) {
+        // have relative path, use cwd to make absolute
+        char cwdbuff[MAXPATHLEN];
+        if ( getcwd(cwdbuff, MAXPATHLEN) != NULL ) {
+            // maybe use static buffer to avoid calling malloc so early...
+            char* s = new char[strlen(cwdbuff) + strlen(sExecPath) + 2];
+            strcpy(s, cwdbuff);
+            strcat(s, "/");
+            strcat(s, sExecPath);
+            sExecPath = s;
+        }
+    }
+
+    // Remember short name of process for later logging
+    // 获取进程名称
+    sExecShortName = ::strrchr(sExecPath, '/');
+    if ( sExecShortName != NULL )
+        ++sExecShortName;
+    else
+        sExecShortName = sExecPath;
+    
+    // 配置进程受限模式
+    configureProcessRestrictions(mainExecutableMH);
+
+
+    // 检测环境变量
+    checkEnvironmentVariables(envp);
+    defaultUninitializedFallbackPaths(envp);
+
+    // 如果设置了DYLD_PRINT_OPTS则调用printOptions()打印参数
+    if ( sEnv.DYLD_PRINT_OPTS )
+        printOptions(argv);
+    // 如果设置了DYLD_PRINT_ENV则调用printEnvironmentVariables()打印环境变量
+    if ( sEnv.DYLD_PRINT_ENV ) 
+        printEnvironmentVariables(envp);
+    // 获取当前程序架构
+    getHostInfo(mainExecutableMH, mainExecutableSlide);
+    //-------------第一步结束-------------
+    
+    // load shared cache
+    // 第二步，加载共享缓存
+    // 检查共享缓存是否开启，iOS必须开启
+    checkSharedRegionDisable((mach_header*)mainExecutableMH);
+    if ( gLinkContext.sharedRegionMode != ImageLoader::kDontUseSharedRegion ) {
+        mapSharedCache();
+    }
+    ...
+
+    try {
+        // add dyld itself to UUID list
+        addDyldImageToUUIDList();
+
+        // instantiate ImageLoader for main executable
+        // 第三步 实例化主程序
+        sMainExecutable = instantiateFromLoadedImage(mainExecutableMH, mainExecutableSlide, sExecPath);
+        gLinkContext.mainExecutable = sMainExecutable;
+        gLinkContext.mainExecutableCodeSigned = hasCodeSignatureLoadCommand(mainExecutableMH);
+
+        // Now that shared cache is loaded, setup an versioned dylib overrides
+    #if SUPPORT_VERSIONED_PATHS
+        checkVersionedPaths();
+    #endif
+
+
+        // dyld_all_image_infos image list does not contain dyld
+        // add it as dyldPath field in dyld_all_image_infos
+        // for simulator, dyld_sim is in image list, need host dyld added
+#if TARGET_IPHONE_SIMULATOR
+        // get path of host dyld from table of syscall vectors in host dyld
+        void* addressInDyld = gSyscallHelpers;
+#else
+        // get path of dyld itself
+        void*  addressInDyld = (void*)&__dso_handle;
+#endif
+        char dyldPathBuffer[MAXPATHLEN+1];
+        int len = proc_regionfilename(getpid(), (uint64_t)(long)addressInDyld, dyldPathBuffer, MAXPATHLEN);
+        if ( len > 0 ) {
+            dyldPathBuffer[len] = '\0'; // proc_regionfilename() does not zero terminate returned string
+            if ( strcmp(dyldPathBuffer, gProcessInfo->dyldPath) != 0 )
+                gProcessInfo->dyldPath = strdup(dyldPathBuffer);
+        }
+
+        // load any inserted libraries
+        // 第四步 加载插入的动态库
+        if  ( sEnv.DYLD_INSERT_LIBRARIES != NULL ) {
+            for (const char* const* lib = sEnv.DYLD_INSERT_LIBRARIES; *lib != NULL; ++lib)
+                loadInsertedDylib(*lib);
+        }
+        // record count of inserted libraries so that a flat search will look at 
+        // inserted libraries, then main, then others.
+        // 记录插入的动态库数量
+        sInsertedDylibCount = sAllImages.size()-1;
+
+        // link main executable
+        // 第五步 链接主程序
+        gLinkContext.linkingMainExecutable = true;
+#if SUPPORT_ACCELERATE_TABLES
+        if ( mainExcutableAlreadyRebased ) {
+            // previous link() on main executable has already adjusted its internal pointers for ASLR
+            // work around that by rebasing by inverse amount
+            sMainExecutable->rebase(gLinkContext, -mainExecutableSlide);
+        }
+#endif
+        link(sMainExecutable, sEnv.DYLD_BIND_AT_LAUNCH, true, ImageLoader::RPathChain(NULL, NULL), -1);
+        sMainExecutable->setNeverUnloadRecursive();
+        if ( sMainExecutable->forceFlat() ) {
+            gLinkContext.bindFlat = true;
+            gLinkContext.prebindUsage = ImageLoader::kUseNoPrebinding;
+        }
+
+        // link any inserted libraries
+        // do this after linking main executable so that any dylibs pulled in by inserted 
+        // dylibs (e.g. libSystem) will not be in front of dylibs the program uses
+        // 第六步 链接插入的动态库
+        if ( sInsertedDylibCount > 0 ) {
+            for(unsigned int i=0; i < sInsertedDylibCount; ++i) {
+                ImageLoader* image = sAllImages[i+1];
+                link(image, sEnv.DYLD_BIND_AT_LAUNCH, true, ImageLoader::RPathChain(NULL, NULL), -1);
+                image->setNeverUnloadRecursive();
+            }
+            // only INSERTED libraries can interpose
+            // register interposing info after all inserted libraries are bound so chaining works
+            for(unsigned int i=0; i < sInsertedDylibCount; ++i) {
+                ImageLoader* image = sAllImages[i+1];
+                image->registerInterposing();
+            }
+        }
+
+        // <rdar://problem/19315404> dyld should support interposition even without DYLD_INSERT_LIBRARIES
+        for (long i=sInsertedDylibCount+1; i < sAllImages.size(); ++i) {
+            ImageLoader* image = sAllImages[i];
+            if ( image->inSharedCache() )
+                continue;
+            image->registerInterposing();
+        }
+        ...
+
+        // apply interposing to initial set of images
+        for(int i=0; i < sImageRoots.size(); ++i) {
+            sImageRoots[i]->applyInterposing(gLinkContext);
+        }
+        gLinkContext.linkingMainExecutable = false;
+        
+        // <rdar://problem/12186933> do weak binding only after all inserted images linked
+        // 第七步 执行弱符号绑定
+        sMainExecutable->weakBind(gLinkContext);
+
+        // If cache has branch island dylibs, tell debugger about them
+        if ( (sSharedCacheLoadInfo.loadAddress != NULL) && (sSharedCacheLoadInfo.loadAddress->header.mappingOffset >= 0x78) && (sSharedCacheLoadInfo.loadAddress->header.branchPoolsOffset != 0) ) {
+            uint32_t count = sSharedCacheLoadInfo.loadAddress->header.branchPoolsCount;
+            dyld_image_info info[count];
+            const uint64_t* poolAddress = (uint64_t*)((char*)sSharedCacheLoadInfo.loadAddress + sSharedCacheLoadInfo.loadAddress->header.branchPoolsOffset);
+            // <rdar://problem/20799203> empty branch pools can be in development cache
+            if ( ((mach_header*)poolAddress)->magic == sMainExecutableMachHeader->magic ) {
+                for (int poolIndex=0; poolIndex < count; ++poolIndex) {
+                    uint64_t poolAddr = poolAddress[poolIndex] + sSharedCacheLoadInfo.slide;
+                    info[poolIndex].imageLoadAddress = (mach_header*)(long)poolAddr;
+                    info[poolIndex].imageFilePath = "dyld_shared_cache_branch_islands";
+                    info[poolIndex].imageFileModDate = 0;
+                }
+                // add to all_images list
+                addImagesToAllImages(count, info);
+                // tell gdb about new branch island images
+                gProcessInfo->notification(dyld_image_adding, count, info);
+            }
+        }
+
+        CRSetCrashLogMessage("dyld: launch, running initializers");
+        ...
+        // run all initializers
+        // 第八步 执行初始化方法
+        initializeMainExecutable(); 
+
+        // notify any montoring proccesses that this process is about to enter main()
+        dyld3::kdebug_trace_dyld_signpost(DBG_DYLD_SIGNPOST_START_MAIN_DYLD2, 0, 0);
+        notifyMonitoringDyldMain();
+
+        // find entry point for main executable
+        // 第九步 查找入口点并返回
+        result = (uintptr_t)sMainExecutable->getThreadPC();
+        if ( result != 0 ) {
+            // main executable uses LC_MAIN, needs to return to glue in libdyld.dylib
+            if ( (gLibSystemHelpers != NULL) && (gLibSystemHelpers->version >= 9) )
+                *startGlue = (uintptr_t)gLibSystemHelpers->startGlueToCallExit;
+            else
+                halt("libdyld.dylib support not present for LC_MAIN");
+        }
+        else {
+            // main executable uses LC_UNIXTHREAD, dyld needs to let "start" in program set up for main()
+            result = (uintptr_t)sMainExecutable->getMain();
+            *startGlue = 0;
+        }
+    }
+    catch(const char* message) {
+        syncAllImages();
+        halt(message);
+    }
+    catch(...) {
+        dyld::log("dyld: launch failed\n");
+    }
+    ...
+    
+    return result;
+}
+
+App总启动时间 = pre-main耗时 + main耗时
+iOS程序的启动可分为pre-main()阶段和main()阶段。
+
+pre-main阶段
+通过递归调用加载所有依赖的Mach-O文件
+加载动态链接库dyld
+加载类扩展方法【Category】
+调用objc的load函数，c++静态对象加载
+执行声明attribute(constructor)函数
+
+pre-main阶段优化:
+删除无用的代码
++load方法优化,+load方法做的事情延迟到+initialize中，或者在+load方法中不要做耗时的操作，删除不必要的load方法
+减少不必要的framework【优化存在的framework】
+二进制重排
+
+https://mp.weixin.qq.com/s/Drmmx5JtjG3UtTFksL6Q8Q
+https://juejin.cn/post/6844904130406793224
+
+main阶段优化
+这一阶段主要是main函数开始到第一个界面渲染完成这段时间，优化出发点就是减少main函数开始到第一个界面出现的时间。
+didFinishLaunchingWithOptions:
+配置App需要的环境
+第三方SDK的集成【推送，卖点、支付等】
+日志等
+
+有时候可以采用懒加载操作，以及采取异步的方式加载方法，防止串行操作耗时。
+可以通过Instruments的TimeProfile来统计启动的耗时的操作 ，Call Tree->Hide System Libraries过滤掉系统库可以查看主线程下方法的耗时。
+
+很多App启动并不是一下子并不是直接进入首页，而是需要向用户展示一小段的闪屏页。因为当一个App比较复杂的时候，启动时首次构建App的UI就是一个比较耗时的过程，
+假定这个时间是0.3秒，如果我们是先构建首页UI，然后再在Window上加上这个闪屏页，那么冷启动时，App就会实实在在地卡住0.2秒，但是如果我们是先把闪屏页作为App的RootViewController，
+那么这个构建过程就会很快。因为闪屏页只有一个简单的ImageView，而这个ImageView则会向用户展示一小段时间，这时我们就可以利用这一段时间来构建首页UI了，一举两得。

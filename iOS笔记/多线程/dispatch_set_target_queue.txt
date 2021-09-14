@@ -1,0 +1,162 @@
+https://developer.apple.com/documentation/dispatch/1452989-dispatch_set_target_queue?language=occ
+
+void dispatch_set_target_queue(dispatch_object_t object, dispatch_queue_t queue);
+Parameters
+object
+The object to modify. This parameter cannot be NULL.
+
+queue
+The new target queue for the object. The new queue is retained, and the previous target queue (if any) is released. 
+Specify NULL if you want the system to provide a queue that is appropriate for the current object.
+
+
+一：变更队列的执行优先级
+dispatch_queue_t q1 = dispatch_queue_create("q1", DISPATCH_QUEUE_SERIAL);
+dispatch_queue_t q2 = dispatch_queue_create("q2", DISPATCH_QUEUE_SERIAL);
+dispatch_queue_t q3 = dispatch_queue_create("q3", DISPATCH_QUEUE_SERIAL);
+
+dispatch_async(q1, ^{
+    NSLog(@"1");
+});
+
+dispatch_async(q2, ^{
+    NSLog(@"2");
+});
+
+dispatch_async(q3, ^{
+    NSLog(@"3");
+});
+这时代码运行输出是 1 2 3无序输出的
+
+Target[95936:2409849] 3
+Target[95936:2409841] 1
+Target[95936:2409843] 2
+----------------------------------------------------------------
+Target[95970:2411026] 2
+Target[95970:2411023] 1
+Target[95970:2411025] 3
+
+
+
+我们给其中q1加一个后台targetqueue:
+dispatch_queue_t q1 = dispatch_queue_create("q1", DISPATCH_QUEUE_SERIAL);
+dispatch_queue_t q2 = dispatch_queue_create("q2", DISPATCH_QUEUE_SERIAL);
+dispatch_queue_t q3 = dispatch_queue_create("q3", DISPATCH_QUEUE_SERIAL);
+
+dispatch_queue_t globalQueue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0);
+dispatch_set_target_queue(q1, globalQueue);
+
+dispatch_async(q1, ^{
+    NSLog(@"1");
+});
+
+dispatch_async(q2, ^{
+    NSLog(@"2");
+});
+
+dispatch_async(q3, ^{
+    NSLog(@"3");
+});
+
+这是输出结果(注：GCD并不能完全保证优先级高的任务一定先执行):
+
+Target[96036:2412962] 3
+Target[96036:2412960] 2
+Target[96036:2412963] 1
+---------------------------------------------------------------
+Target[96061:2413923] 2
+Target[96061:2413921] 3
+Target[96061:2413922] 1
+从结果可以看出，q1的目标队列是优先级低的后台队列，所以最终q1的执行在最后，也验证了dispatch_set_target_queue可以修改队列的执行优先级。
+
+二：目标队列可以成为原队列的执行阶层。
+
+dispatch_queue_t q1 = dispatch_queue_create("q1", DISPATCH_QUEUE_SERIAL);
+dispatch_queue_t q2 = dispatch_queue_create("q2", DISPATCH_QUEUE_SERIAL);
+dispatch_queue_t q3 = dispatch_queue_create("q3", DISPATCH_QUEUE_SERIAL);
+dispatch_queue_t q4 = dispatch_queue_create("q3", DISPATCH_QUEUE_SERIAL);
+dispatch_queue_t q5 = dispatch_queue_create("q3", DISPATCH_QUEUE_SERIAL);
+
+dispatch_async(q1, ^{
+    NSLog(@"1");
+});
+
+dispatch_async(q2, ^{
+    NSLog(@"2");
+});
+
+dispatch_async(q3, ^{
+    NSLog(@"3");
+});
+
+dispatch_async(q4, ^{
+    NSLog(@"4");
+});
+
+dispatch_async(q5, ^{
+    NSLog(@"5");
+});
+我们创建5个串行队列，并在这些串行队列中异步执行，输出一个数，这个时候输出结果是这样的:
+
+Target[95606:2398987] 1
+Target[95606:2398986] 5
+Target[95606:2398988] 3
+Target[95606:2398989] 2
+Target[95606:2398995] 4
+也就是乱序，并发执行的。
+
+
+我们在其中加入一个串行的目标队列如下:
+dispatch_queue_t q1 = dispatch_queue_create("q1", DISPATCH_QUEUE_SERIAL);
+dispatch_queue_t q2 = dispatch_queue_create("q2", DISPATCH_QUEUE_SERIAL);
+dispatch_queue_t q3 = dispatch_queue_create("q3", DISPATCH_QUEUE_SERIAL);
+dispatch_queue_t q4 = dispatch_queue_create("q4", DISPATCH_QUEUE_SERIAL);
+dispatch_queue_t q5 = dispatch_queue_create("q5", DISPATCH_QUEUE_SERIAL);
+
+dispatch_queue_t targetQueue = dispatch_queue_create("serial", DISPATCH_QUEUE_SERIAL);
+
+dispatch_set_target_queue(q1, targetQueue);
+dispatch_set_target_queue(q2, targetQueue);
+dispatch_set_target_queue(q3, targetQueue);
+dispatch_set_target_queue(q4, targetQueue);
+dispatch_set_target_queue(q5, targetQueue);
+
+
+dispatch_async(q1, ^{
+    NSLog(@"1");
+});
+
+dispatch_async(q2, ^{
+    NSLog(@"2");
+});
+
+dispatch_async(q3, ^{
+    NSLog(@"3");
+});
+
+dispatch_async(q4, ^{
+    NSLog(@"4");
+});
+
+dispatch_async(q5, ^{
+    NSLog(@"5");
+});
+
+输出结果如下:
+Target[96144:2416455] 1
+Target[96144:2416455] 2
+Target[96144:2416455] 3
+Target[96144:2416455] 4
+Target[96144:2416455] 5
+
+这样就变得有序了，从这里可以看出，串行目标队列成为了那5个队列的执行阶层。
+(其实第一第二个例子都是能够证明一和二的)，并使队列里的任务变得有序，即串行执行。我们在实际开发中可以使用这种技术避免并发执行。
+
+注：若将目标队列targetQueue修改为并发队列，则不会有什么实际的效果，还是并发执行
+dispatch_queue_t targetQueue = dispatch_queue_create("serial", DISPATCH_QUEUE_CONCURRENT);
+
+Target[96247:2419291] 1
+Target[96247:2419290] 3
+Target[96247:2419289] 4
+Target[96247:2419292] 2
+Target[96247:2419290] 5

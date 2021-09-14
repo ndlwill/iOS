@@ -1,0 +1,61 @@
+在 C++ 中可以通过 typedef 重定义一个类型：
+typedef unsigned int uint_t;
+
+被重定义的类型并不是一个新的类型，仅仅只是原有的类型取了一个新的名字。因此，下面这样将不是合法的函数重载：
+void func(unsigned int);
+void func(uint_t);  // error: redefinition
+
+使用 typedef 重定义类型是很方便的，但它也有一些限制，比如，无法重定义一个模板。
+
+想象下面这个场景：
+typedef std::map<std::string, int> map_int_t;
+// ...
+typedef std::map<std::string, std::string> map_str_t;
+// ...
+我们需要的其实是一个固定以 std::string 为 key 的 map，它可以映射到 int 或另一个 std::string。然而这个简单的需求仅通过 typedef 却很难办到。
+
+在 C++98/03 中往往不得不这样写：
+template <typename Val>
+struct str_map
+{
+    typedef std::map<std::string, Val> type;
+};
+// ...
+str_map<int>::type map1;
+
+
+现在，在 C++11 中终于出现了可以重定义一个模板的语法。请看下面的示例：
+template <typename Val>
+using str_map_t = std::map<std::string, Val>;
+// ...
+str_map_t<int> map1;
+这里使用新的 using 别名语法定义了 std::map 的模板别名 str_map_t。比起前面使用外敷模板加 typedef 构建的 str_map，它完全就像是一个新的 map 类模板，因此，简洁了很多。
+
+实际上，using 的别名语法覆盖了 typedef 的全部功能。
+// 重定义unsigned int
+typedef unsigned int uint_t;
+using uint_t = unsigned int;
+// 重定义std::map
+typedef std::map<std::string, int> map_int_t;
+using map_int_t = std::map<std::string, int>;
+
+比如重定义一个函数指针时：
+typedef void (*func_t)(int, int);
+与之相比，using 后面总是立即跟随新标识符（Identifier），之后使用类似赋值的语法，把现有的类型（type-id）赋给新类型：
+using func_t = void (*)(int, int);
+
+/* C++98/03 */
+template <typename T>
+struct func_t
+{
+    typedef void (*type)(T, T);
+};
+// 使用 func_t 模板
+func_t<int>::type xx_1;
+/* C++11 */
+template <typename T>
+using func_t = void (*)(T, T);
+// 使用 func_t 模板
+func_t<int> xx_2;
+
+using 重定义的 func_t 是一个模板，但它既不是类模板也不是函数模板（函数模板实例化后是一个函数），而是一种新的模板形式：模板别名（alias template）。

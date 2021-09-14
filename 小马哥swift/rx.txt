@@ -1,0 +1,84 @@
+///这个就是 kf 和 rx 的定义
+///
+public struct AriSwift<Base> {
+    public let base: Base
+    public init(_ base: Base) {self.base = base}
+}
+public protocol AriSwiftCompatible {
+    associatedtype CompatibleType
+    static var `as`: AriSwift<CompatibleType>.Type { get set }
+    var `as`: AriSwift<CompatibleType> { get set }
+}
+
+public extension AriSwiftCompatible {
+    static var `as`: AriSwift<Self>.Type {
+        get {return AriSwift<Self>.self}
+        set {}
+    }
+    var `as`: AriSwift<Self> {
+        get {return AriSwift(self)}
+        set {}
+    }
+}
+///为所有继承 NSObject的类添加 as 的实例对象和类对象
+extension NSObject: AriSwiftCompatible {}
+
+///给AriSwift 添加Base是 UIScreen 的拓展
+public extension AriSwift where Base: UIScreen {
+    public static var width: CGFloat {return UIScreen.main.bounds.width}
+    public static var height: CGFloat {return UIScreen.main.bounds.height}
+}
+
+///调用 
+UIScreen.as.width /// 414.0
+
+在 Swift 中如果经常会用到结构体,为结构体Base 为结构体的对象添加分类时就不能使用 Base: XX 这种形式了,以 String 为例,代码如下:
+///记得 String 要遵守下这个协议
+extension String: AriSwiftCompatible {}
+extension AriSwift where Base == String {
+    ///传入时间(秒)返回字符串格式
+    ///```
+    ///e.g.  180 -> "03:00"
+    ///```
+    static func formatTime(with seconds: Int) -> String {
+        let hour = seconds / 3600
+        let minut = (seconds % 3600)/60
+        let second = seconds % 60
+        if hour == 0 {
+            return String(format: "%02zd:%02zd", minut,second)
+        }else{
+            return String(format: "%zd:%02zd:%02zd",hour,minut,second)
+        }
+    }
+}
+
+还可以使用这个方法在我们的项目中封装 Objc 的第三方框架,比如 MJRefresh,MBProgressHUD:
+import AriSwift
+import MJRefresh
+extension AriSwift where Base: UIScrollView {
+    func addHeader(with target: Any, action: Selector){
+        base.mj_header = MJRefreshNormalHeader(refreshingTarget: target, refreshingAction: action)
+    }
+    func addHeader(with action: @escaping (()->()) ) {
+        base.mj_header = MJRefreshNormalHeader(refreshingBlock: {
+            action()
+        })
+    }
+    func addFooter(with target: Any, action: Selector){
+        base.mj_footer = MJRefreshBackStateFooter(refreshingTarget: target, refreshingAction: action)
+    }
+    func addFooter(with action: @escaping (()->()) ){
+        base.mj_footer = MJRefreshBackStateFooter(refreshingBlock: {
+            action()
+        })
+    }
+    func headerEndRefreshing(){
+        base.mj_header.endRefreshing()
+    }
+    func footerEndRefreshing(){
+        base.mj_footer.endRefreshing()
+    }
+    func footerEndRefreshingWithNoMoreData(){
+        base.mj_footer.endRefreshingWithNoMoreData()
+    }
+}

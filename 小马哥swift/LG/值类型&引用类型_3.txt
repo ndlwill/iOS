@@ -1,0 +1,146 @@
+Swift编译器在AST和LLVM IR之间有一个中间表示形式，称为SIL
+
+==========值类型
+struct LGTeacher{
+    var age: Int
+    var name: String = "Zang"
+}
+
+var t = LGTeacher(age:18)
+
+结构体中的属性，即使没有默认值，编译器也不会报错
+当开发者没有手动实现init方法时，编译器会自动生成对应初始化方法
+通过SIL进行验证：
+struct LGTeacher {
+  @_hasStorage var age: Int { get set }
+  @_hasStorage @_hasInitialValue var name: String { get set }
+//编译器自动生成的初始化方法
+  init(age: Int, name: String = "Zang")
+}
+上述代码中的init(age: Int, name: String = "Zang")是编译器自动生成的初始化方法
+
+结构体是值类型
+struct LGTeacher{
+    var age1: Int = 18
+    var age2: Int = 20
+}
+
+var t = LGTeacher()
+使用po、x/8g，查看输出
+
+po t，可以看到直接输出了t的值，没有地址。说明在内存中，结构体直接存储值
+po withUnsafePointer(to: &t){print($0)}，输出t的指针地址
+x/8g 0x0000000100008908，通过指针地址直接输出值
+所以说结构体是值类型，结构体的地址就是第一个成员的内存地址
+
+结构体是分配在栈区
+
+t1和t2之间是值传递，将t1的值拷贝到t2中，相当于拷贝副本，也就是深拷贝。
+t1和t2是不同的内存空间，两个空间不共享状态。
+
+==========引用类型
+class LGTeacher{
+    var age1: Int = 18
+    var age2: Int = 20
+}
+
+var t1 = LGTeacher()
+
+类的属性如果不是可选项，也没有初始默认值，编译报错：“Class LGTeacher has no initializers”
+类的init方法必须由开发者自己实现
+
+po t，直接输出的是t的地址
+po withUnsafePointer(to: &t){print($0)}，输出t的指针地址，是一个全局区地址
+x/8g 0x0000000100008a88，查看全局区地址，里面存储了对象的堆地址
+x/8g 0x00000001006526d0，通过堆地址输出值
+所以说类是引用类型，地址内存储对象堆地址，堆地址内存储值
+
+t1和t2之间是地址传递，t1和t2的地址内存储了相同的堆地址，一方修改都会修改，也就是浅拷贝。
+t1和t2是相同内存空间，两个空间共享状态。
+
+==========结构体中包含类对象（值类型包含引用类型）
+struct LGTeacher{
+    var age1: Int = 18
+    var age2: Int = 20
+    var teacher: LGTeacher1 = LGTeacher1()
+}
+
+class LGTeacher1{
+    var age1: Int = 18
+    var age2: Int = 20
+}
+
+var t1 = LGTeacher()
+var t2=t1
+
+t1.teacher.age1=30;
+
+很明显t2.teacher.age1跟着一起发生了改变。
+t1和t2虽然是结构体，但teacher是引用类型，所以传递的依然是地址
+使用CFGetRetainCount(t1.teacher)可以看到t1.teacher引用计数为3
+LGTeacher.teacher.getter内执行strong_retain，引用计数+1
+LGTeacher.teacher.setter内执行strong_retain，引用计数+1
+CFGetRetainCount(t1.teacher)方法的调用，引用计数+1
+在开发中，应避免值类型包含引用类型
+
+==========mutating
+值类型本身创建之后是不允许修改的，如果要修改，需要使⽤mutating关键字
+
+定义LGStack结构体，通过push方法向items里添加item，这时候必须在func前面添加mutating关键字，否则编译报错
+
+先去掉items.append(item)，改为print(item)，保证编译通过
+struct LGStack{
+    var items = [Int]()
+    
+    func push(_ item : Int) {
+        print(item)
+    }
+}
+将上述代码生成SIL文件：
+很明显，push方法除了item，还有一个默认self参数，而self被let修饰，故此不能修改
+
+还原items.append(item)代码，在func之前增加mutating关键字
+struct LGStack{
+    var items = [Int]()
+    
+    mutating func push(_ item : Int) {
+        items.append(item);
+    }
+}
+
+var t=LGStack()
+t.push(1)
+
+将上述代码生成SIL文件：
+代码发生了变化
+
+传递的self被添加了inout输入输出参数
+self的修饰变成了var
+debug_value变成了debug_value_addr，值传递变为地址传递
+mutating用于修饰方法，不能修饰参数。本质就是为self增加inout关键字
+mutating只用于值类型，引用类型没有这种困惑
+
+==========inout
+在函数声明中，默认参数是不可变的。如果需要修改，必须在参数上增加inout关键字
+声明swap函数，有a、b两个参数，在函数内部交互两个参数的值，这时候必须在参数上增加inout关键字，否则编译报错
+
+func swap(a: inout Int, b: inout Int) {
+    let tmp=a;
+    a=b;
+    b=tmp;
+}
+
+var a = 10
+var b = 20
+swap(&a,&b)
+
+print("a：\(a)")
+print("b：\(b)")
+
+//输出以下内容：
+//a：20
+//b：10
+
+inout关键字，将参数从取值变为取地址
+调用函数传参时，必须传递地址。参数前加&符，例如：swap(&a,&b)
+inout关键字是输入输出参数，仅用于修饰参数

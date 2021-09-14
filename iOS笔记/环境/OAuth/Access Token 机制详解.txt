@@ -1,0 +1,24 @@
+我们在访问很多大公司的开放 api 的时候，都会发现这些 api 要求传递一个 access token 参数。这个参数是什么呢？需要去哪里获取这个 access token 呢？
+access token 是在 Oauth2.0 协议中，客户端访问资源服务器时需要带上的令牌（其实就是一段全局唯一的随机字符串）。
+拥有这个令牌代表着得到用户的授权。令牌里面包含哪些信息呢？答案是：
+哪个用户  在什么时候  授权给哪个app  去做什么事情
+
+当然这些信息是不能直接从 access token 看出来的，而是存在平台方的数据库中，平台可以用 access token 作为 key 去查询出这些信息，然后验证调用方是否有权限。 
+
+所以，在调用这些 api 之前，需要先获取到 access token。获取的方法分为三步：
+第一步，实现一个 api：
+GET /recieve_code?code=
+这个 api 接收一个 code 参数。至于接收到 code 之后做什么，在第三步介绍。在这一步，只需提供这个 api 的 url，并且可以在公网访问，里面逻辑可以先不实现。
+
+第二步，当需要调用平台 api 的时候，在你的 app 中打开平台提供的一个授权界面（平台方的 sdk 通常会提供这一步的接口），并且，把第一步中提供的 url 传给这个界面。
+如果用户同意执行此操作，就会输入账号密码进行授权。授权通过后，平台就会自动调用第一步中提供的 url，并传过来一个 code。
+
+
+第三步，使用 code 去兑换 access token。
+平台必定有一个 api，接收 code 为参数，返回一个 access token 和一个 refresh token。在第一步的 api 中去调用这个平台 api。
+并且将获得的 access token 和 refresh token 保存在服务器上。到这里，就获取到可用的 access token 了。
+
+
+然而事情到这里还没完，是不是每一次需要调用平台的开放 api 的时候，都要重新获取一次 access token 呢？答案是否定的。
+在第三步中获取到的 access token 有一定的有效期，在过期之前可以一直重复使用。那么，access token 过期了之后怎么办呢？
+首先，我们怎么知道 access token 已经过期？答案是在使用 access token 去访问平台的开放 api 的时候，如果 access token 已过期，api 会报错，返回一个 token 无效的错误。此时，我们应该用 refresh token 去刷新 access token。具体的做法是查找平台的文档，找到刷新 access token 的 api，这个 api 必定需要 refresh token 作为参数。按照文档去调用就可以了。

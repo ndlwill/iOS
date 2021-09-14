@@ -1,0 +1,186 @@
+//TestDyLib.h代码
+
+#import <Foundation/Foundation.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+@interface TestDyLib : NSObject
+-(void)TestDyLib;
+
+@end
+
+//TestDyLib.m代码
+
+#import "TestDyLib.h"
+
+@implementation TestDyLib
+-(void)TestDyLib
+{
+    NSLog(@"---TestDyLib---");
+}
+@end
+
+
+#import <Foundation/Foundation.h>
+#import "TestDyLib.h"
+int main() {
+    TestDyLib *lib = [TestDyLib new];
+    NSLog(@"test---%@",lib);
+    return 0;
+}
+
+
+
+cd到TestDyLib.m文件所在目录，将TestDyLib.m编译成目标文件：
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-c TestDyLib.m -o TestDyLib.o
+
+使用libtool将TestDyLib.o编译成静态库
+libtool -static -arch_only x86_64 TestDyLib.o -o libTestDyLib.a
+
+使用ld链接器将libTestDyLib.a链接成动态库
+ld -dylib -arch x86_64 \
+-macosx_version_min 11.1 \
+-syslibroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-lsystem -framework Foundation \
+libTestDyLib.a -o libTestDyLib.dylib
+
+-lsystem：依赖系统框架
+
+cd到main.m所在目录，编译成目标文件
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-I./dylib \
+-c main.m -o main.o
+
+
+链接生成可执行文件
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-L./dylib \
+-lTestDyLib \
+main.o -o main
+
+###
+我们将一个.a 通过链接器ld 生成一个动态库，符合我们上篇文章讲解的-noall_load ，它默认是-noall_load 
+此时 libA_Manager.dylib 动态库在链接 libA_Manager.a 并没有使用libA_Manager.a 中的代码，
+所以要给它拼接一个 -all_load 或者-Objc 都可以
+###
+
+发现报错，找不到这个符号。回到dylib目录下，修改链接器参数，再执行
+ld -dylib -arch x86_64 \
+-macosx_version_min 11.1 \
+-syslibroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-lsystem -framework Foundation \
+-all_load
+libTestDyLib.a -o libTestDyLib.dylib
+
+-all_load：告诉编译器，不管符号有没有被用到，全部都载入
+
+修改库文件中的LC_ID_DYLIB
+修改主工程文件添加LC_LOAD_DYLIB
+
+能够看到，能够将静态库链接成动态库。
+结论：动态库是.o文件链接过后的产物，是链接的最终产物，它比静态库要多走一次链接的过程。
+
+###
+静态库是.o 文件的合集
+动态库是.o文件链接过后的产物 （所以就是说为啥我们可以将一个.a链接生成一个dylib）
+动态库是 最终链接产物 并不能进行合并
+动态库要比静态库多走一次链接的过程。它是和我们的exec 是同一级别的。
+###
+
+
+使用脚本文件编译链接
+pushd ./dylib
+echo "======TestDyLib编译成目标文件======start"
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-c TestDyLib.m -o TestDyLib.o
+echo "======TestDyLib编译成目标文件======end"
+
+
+echo "======将TestDyLib.o编译成静态库======start"
+# Xcode->静态库
+libtool -static -arch_only x86_64 TestDyLib.o -o libTestDyLib.a
+echo "======将TestDyLib.o编译成静态库======end"
+
+echo "======将TestDyLib.a链接成动态库======start"
+ld -dylib -arch x86_64 \
+-macosx_version_min 11.1 \
+-syslibroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-lsystem -framework Foundation \
+-all_load \
+libTestDyLib.a -o libTestDyLib.dylib
+echo "======将TestDyLib.a链接成动态库======end"
+install_name_tool -id @rpath/dylib/libTestDyLib.dylib libTestDyLib.dylib
+popd
+
+echo "======main编译成目标文件======start"
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-I./dylib \
+-c main.m -o main.o
+echo "======main编译成目标文件======end"
+
+echo "======链接lTestDyLib.dylib======start"
+clang -target x86_64-apple-macos11.1 \
+-fobjc-arc \
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX11.1.sdk \
+-L./dylib \
+-lTestDyLib \
+main.o -o main
+echo "======链接lTestDyLib.dylib======end"
+install_name_tool -add_rpath @executable_path main
+
+
+
+
+==================================================解决 image not found：
+这个问题，这就要从我们的dyld去加载动态来说起
+
+当dyld 去加载Mach-O的时候，通过它里面的一个Load command LC_LOAD_DYLIB 去查找它所使用的动态库。
+也就是LC_LOAD_DYLIB 保存着 上面我们的test可执行文件的用到的动态库的路径
+因为动态库是运行时的时候加载的
+
+看一下test的Load command 可以用otool 也可用 objdump
+
+可以清晰的看到我们自己的动态库并没有将路径写入
+
+通过 install_name_tool -id 将它的路径写入
+###
+动态库保存自己的位置路径，存在mach-O的 LC_ID_DYLIB 段
+谁在链接我的时候我把路径告诉你，并存放在谁的Mach-O的LC_LOAD_DYLIB段
+当程序启动时候，dyld会通过 解析可执行文件的Mach-O 的 LC_LOAD_DYLIB 来找到所用到的动态库，进行加载,运行
+###
+我们这是通过修改install_name 那能不能在创建的时候直接给它附上？当然可以 查看ld的接口
+
+我们是不是需要双方约定一个规则：动态库说，你给我提供一个变量，我基于你这个变量做一个相对路径，比如说你test可执行文件所在的路径。我只给你提供一个相对于你的路径 。
+@rpath ：谁链接，谁来提供（test链接，test来提供）
+给test 添加一个rpath 供动态库使用
+install_name_tool -add_rpath /XXX test
+
+查看test的Mach-O
+发现此时多了一个Load command cmd为：LC_RPATH
+
+总结：
+项目报了image not found 就证明在启动的时候，dyld解析自身Mach-O LC_LOAD_DYLIB 段 来找到动态库真实所在的路径，并未找到，
+首先排查第三库的路径是否引入正确，也就是在第三方动态库的 Mach-O LC_ID_DYLIB 段 存有自描述路径 @rpath。 
+还要排查自身是否有提供LC_RPATH
+
+系统提供了两个其他变量：
+@executable_path
+表示可执行程序所在的目录，解析为可执行文件的绝对路径。
+
+@loader_path
+表示被加载的‘Mach-O’所在的目录，每次加载时，都可能被设置为不同的路径，由上层决定
+
+
+对于test来说 @executable_path 就是它所在的路径。
+对于libA_Manager.dylib 来说@loader_path 也是 test 所在的路径。因为是test来链接的。

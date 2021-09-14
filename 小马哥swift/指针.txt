@@ -1,0 +1,224 @@
+https://juejin.cn/post/6913193576717352973#heading-25
+
+###raw pointer的使用###
+开辟空间来存储4个Int类型的值:
+//开辟32字节空间，以8字节对齐
+let p = UnsafeMutableRawPointer.allocate(byteCount: 32, alignment: 8)
+//advanced表示指针前进的步长，这里我们取字节对齐的整数倍 MemoryLayout.stride
+//storeBytes表示数据存储，需要知道类型
+for i in 0..<4{
+    p.advanced(by: i*8).storeBytes(of: i+1, as: Int.self)
+}
+//load用来读取数据，fromByteOffset相对首地址的指针偏移
+for i in 0..<4{
+    let a = p.load(fromByteOffset: i*8, as: Int.self)
+    print(a)
+}
+//释放
+p.deallocate()
+
+
+###Type pointer的使用###
+var age = 10;
+print(age)
+age = withUnsafePointer(to: &age){prt in
+    print(prt)
+    return prt.pointee + 12
+}
+print(age)
+withUnsafePointer(to: &age){prt in
+        print(prt)
+}
+可以看到withUnsafePointer指针指向的内存的值可以修改
+
+但是不能通过withUnsafePointer指针直接修改
+var age = 10;
+withUnsafePointer(to: &age){
+    $0.pointee+=12// 这时会报错,pointee是一个只读属性
+}
+
+withUnsafeMutablePointer指向的值可以改变，也可以通过withUnsafeMutablePointer指针直接修改值
+var age = 10
+print(age)
+age = withUnsafeMutablePointer(to: &age){
+    print($0)
+    return $0.pointee + 12
+}
+print(age)
+withUnsafeMutablePointer(to: &age){
+    print($0)
+    $0.pointee += 12
+}
+print(age)
+
+
+###另一种开辟空间的方法###
+//另一种开辟空间的做法
+var age = 10
+let p = UnsafeMutablePointer<Int>.allocate(capacity: 4)
+
+//通过advanced移动指针赋值和访问
+for i in 0..<4{
+    p.advanced(by: i).initialize(to: i+1)
+}
+
+for i in 0..<4{
+    let value = p.advanced(by: i).pointee
+    print(value)
+}
+
+//通过successor+predecessor赋值和访问
+//successor表示后一个 predecessor表示前一个
+var p1 = p;
+for i in 0..<4{
+    p1.initialize(to: i+1)
+    p1 = p1.successor()
+}
+
+var p2 = p;
+for i in 0..<4{
+    let value = p2.pointee
+    p2 = p2.successor()
+    print(value)
+}
+
+
+//还可以这样赋值和访问
+for i in 0..<4{
+    (p+i).initialize(to: i+1)
+}
+
+for i in 0..<4{
+    let value = (p+i).pointee
+    print(value)
+}
+
+
+//也可以通过这种方式访问
+for i in 0..<4{
+    p[i] = i+1
+}
+
+for i in 0..<4{
+    let value = p[i]
+    print(value)
+}
+
+//注意使用完之后一定要释放
+p.deinitialize(count: 4)
+p.deallocate()
+
+###以上是值类型，如果是引用类型###
+class JClass {
+    var age:Int = 18
+    var name:String = "SC"
+}
+
+var p = UnsafeMutablePointer<JClass>.allocate(capacity: 2)
+var j = JClass()
+var j1 = JClass()
+p.initialize(to: j)
+p.advanced(by: 1).initialize(to: j1)
+
+
+withUnsafePointer(to: &j){$0.pointee.age = 20}
+在withUnsafePointer的$0.pointee中存储的是实例对象地址，只要地址不改变就可以，是可以通过地址来修改属性的，但是如果想要替换$0.pointee的值就报错了
+
+class JClass {
+    var age:Int = 18
+    var name:String = "SC"
+}
+
+var p = UnsafeMutablePointer<JClass>.allocate(capacity: 2)
+var j = JClass()
+var j1 = JClass()
+p.initialize(to: j)
+p.advanced(by: 1).initialize(to: j1)
+
+withUnsafePointer(to: &j){$0.pointee = j1}// 报错
+
+使用withUnsafeMutablePointer可以实现:
+class JClass {
+    var age:Int = 18
+    var name:String = "SC"
+}
+
+var p = UnsafeMutablePointer<JClass>.allocate(capacity: 2)
+var j = JClass()
+var j1 = JClass()
+p.initialize(to: j)
+p.advanced(by: 1).initialize(to: j1)
+withUnsafeMutablePointer(to: &j){$0.pointee = j1}
+
+###
+raw pointer和type pointer使用过程中注意步长advanced的区别，原生指针中步长以字节为单位，type pointer是以具体类型占用内存长度为单位
+###
+
+Unmanaged（非托管）:
+class JClass {
+    var age:Int = 18
+    var name:String = "SC"
+}
+var t = JClass()
+var p = withUnsafePointer(to: &t){ $0 }
+print(p.pointee)// 不符合预期，直接打印了类名称
+
+那么这个时候我们就需要借助Unmanaged来获取类的实例对象指针
+class JClass {
+    var age:Int = 18
+    var name:String = "SC"
+}
+
+var t = JClass()
+var p = withUnsafePointer(to: &t){ $0 }
+
+var p1 = Unmanaged.passUnretained(t as AnyObject).toOpaque()
+print(p1)// x/8g 地址
+print("end")
+
+###bindMemory内存绑定###
+struct HeapObject {
+    var kind:UnsafePointer<Int>
+    var strongref: UInt32
+    var unownedref: UInt32
+}
+
+class JClass {
+    var age:Int = 18
+    var name:String = "SC"
+}
+
+var t = JClass()
+let p1 = Unmanaged.passUnretained(t as AnyObject).toOpaque()
+let p2 = p1.bindMemory(to: HeapObject.self, capacity: 1)
+print(p2.pointee)
+
+这时原本指向JClass实例对象的地址就指向了HeapObject的类型对象，之所以可以这样绑定是因为内存结构是一样的，
+class的第一个字段是metadata8字节，第二个字段是countRef8字节
+
+如果内存结构对应不上这时就报错了 eg:
+struct HeapObject {
+    var kind:String
+    var strongref: UInt32
+    var unownedref: UInt32
+}
+
+###assumingMemoryBound假定内存绑定###
+var a = (4,8)
+func f(c:UnsafePointer<Int>){
+    
+}
+withUnsafePointer(to: &a) { (ptr:UnsafePointer<(Int,Int)>) in
+    f(c: ptr)
+}
+函数f接收的是一个UnsafePointer<Int>类型的指针，但是传过去的是一个UnsafePointer<(Int,Int)>，类型不匹配报错
+但是我们知道元组类型的指针其实就是指向第一个元素的指针，也就是UnsafePointer<Int>类型的，那么我们可以使用假定内存绑定指针assumingMemoryBound(to: )来告诉编译器我就是UnsafePointer<Int>类型的，你不需要来检查我了
+
+var a = (4,8)
+func f(c:UnsafePointer<Int>){
+    
+}
+withUnsafePointer(to: &a) { (ptr:UnsafePointer<(Int,Int)>) in
+    f(c: UnsafeRawPointer(ptr).assumingMemoryBound(to: Int.self))
+}
+这个时候是可以编译通过的

@@ -1,0 +1,82 @@
+Symbol Table
+Symbol Table:就是用来保存符号。
+String Table:就是用来保存符号的名称。
+Indirect Symbol Table:间接符号表。保存使用的外部符号。更准确一点就是使用的外部动态库的符号。
+
+==================================================全局符号和本地符号
+//全局符号
+int global_uninit_value;
+int global_init_value = 10;
+复制代码
+// visibility属性，控制文件导出符号，限制符号可见性
+/**
+    visibility：clang参数
+    default：用它定义的符号将被导出。
+    hidden：用它定义的符号将不被导出。
+ */
+//本地符号
+int hidden_y __attribute__((visibility("hidden"))) = 99;
+static int static_init_value = 9;
+static int static_uninit_value;
+复制代码
+将全局符号变成本地符号有两种方式：
+1.使用static关键字
+2.使用__attribute__((visibility("hidden")))修饰
+全局符号对整个项目可见，本地符号只对当前文件可见
+
+==================================================导入导出符号
+当我们使用NSLog的时候，当前可执行文件就导入了NSLog符号，Foundation就导出了NSLog符号。
+
+// 查看符号表
+// CMD = objdump --macho --syms ${MACH_PATH}
+// 查看导出符号
+//CMD = objdump --macho --exports-trie ${MACH_PATH}
+// 查看间接符号表
+//CMD = objdump --macho --indirect-symbols ${MACH_PATH}
+
+能够看出导出符号和全局符号相对应:
+全局符号可以变成导出符号供外界使用
+动态库在运行过程中加载，在编译连接阶段只需要提供符号
+strip动态库只能删除不是全局符号的符号
+
+main方法中就使用了NSLog来自Foundation由此可见间接符号表保存这当前可执行文件使用的其它动态库的符号
+
+添加OC类(TestOC)后,查看导出符号表：
+为了减小包的体积需要进行符号剥离，可使用连接器 使用命令：
+//不导出调试符号
+OTHER_LDFLAGS = $(inherited) -Xlinker -S
+//不导出符号unexported_symbol
+OTHER_LDFLAGS = $(inherited) -Xlinker -unexported_symbol -Xlinker _OBJC_METACLASS_$_TestOC
+OTHER_LDFLAGS = $(inherited) -Xlinker -unexported_symbol -Xlinker _OBJC_CLASS_$_TestOC
+在看导出符号已经没刚才的OC符号了
+
+==================================================Weak Symbol
+Weak Reference Symbol: 表示此未定义符号是弱引用。如果动态链接器找不到该符号的定义，则将其设置为0。链接器会将此符号设置弱链接标志。
+Weak defintion Symbol: 表示此符号为弱定义符号。如果静态链接器或动态链接器为此符号找到另一个(非弱)定义，则弱定义将被忽略。只能将合并部分中的符号标记为弱定义。
+
+// 弱引用
+void weak_import_function(void) __attribute__((weak_import));
+
+//将符号声明成弱定义（全局）
+void weak_function(void)  __attribute__((weak));
+//将符号声明成弱定义（本地）
+void weak_hidden_function(void) __attribute__((weak, visibility("hidden")));
+
+当我只声明了符号，并没有去实现的时候，会报错
+
+可使用如下命令，将其改成动态查找
+//-U动态查找 
+OTHER_LDFLAGS = $(inherited) -Xlinker -U -Xlinker _weak_import_function
+
+如果想让动态库符号不仅能在当前可执行文件使用，也能在其他可执行文件使用时，可给该符号起别名
+//给NSLog起别名New_NSLog
+OTHER_LDFLAGS = $(inherited) -Xlinker -alias -Xlinker _NSLog -Xlinker New_NSLog
+
+
+==================================================strip
+strip：移除或者修改符号表中的符号
+
+strip Style
+Debugging Symbols：调试符号(.o静态库/可执行文件 动态库)
+All Symbols：所有符号
+Non-Global Symbols：非全局符号

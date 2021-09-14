@@ -1,0 +1,505 @@
+Mach Header的最开始是 Magic Number，表示这是一个 Mach-O 文件，除此之外还包含一些Flags，这些flags 会影响 Mach-O 的解析。
+
+Mach-O中的Load Command __TEXT 中记录了代码的大小、第一行代码的起始位置，dyld根据这些信息就能读取到__TEXT代码段中的代码。由于Mach-O中都是二进制数据，因此dyld根据结构体内存对齐规则逐个读取到Load Command。
+
+Load Command LC_MAIN 中保存了入口函数，默认为main，也可以修改入口函数。
+
+Load Command LC_LOAD_DYLIB中保存了加载的动态库
+
+Load Command LC_SYMTAB中保存符号表的位置和信息
+
+//解释 Header
+struct mach_header_64 { 
+    uint32_t magic;           /* mach magic number identifier */
+    cpu_type_t cputype;       /* cpu specifier */
+    cpu_subtype_t cpusubtype; /* machine specifier */
+    uint32_t filetype;        /* type of file */
+    uint32_t ncmds;           /* number of load commands */
+    uint32_t sizeofcmds;      /* the size of all the load commands */
+    uint32_t flags;           /* flags */
+    uint32_t reserved;        /* reserved */
+};
+
+//解释 segment
+struct segment_command_64 { /* for 64-bit architectures */
+    uint32_t   cmd;         /* LC_SEGMENT_64 */
+    uint32_t   cmdsize;     /* includes sizeof section_64 structs */
+    char       segname[16]; /* segment name */
+    uint64_t   vmaddr;      /* memory address of this segment */
+    uint64_t   vmsize;      /* memory size of this segment */
+    uint64_t   fileoff;     /* file offset of this segment */
+    uint64_t   filesize;    /* amount to map from the file */
+    vm_prot_t  maxprot;     /* maximum VM protection */
+    vm_prot_t  initprot;    /* initial VM protection */
+    uint32_t   nsects;      /* number of sections in segment */
+    uint32_t   flags;       /* flags */
+};
+
+//解释 section
+struct section_64 { /* for 64-bit architectures */
+    char      sectname[16];    /* name of this section */
+    char      segname[16];     /* segment this section goes in */
+    uint64_t  addr;            /* memory address of this section */
+    uint64_t  size;            /* size in bytes of this section */
+    uint32_t  offset;          /* file offset of this section */
+    uint32_t  align;           /* section alignment (power of 2) */
+    uint32_t  reloff;          /* file offset of relocation entries */
+    uint32_t  nreloc;          /* number of relocation entries */
+    uint32_t  flags;           /* flags (section type and attributes)*/
+    uint32_t  reserved1;       /* reserved (for offset or index) */
+    uint32_t  reserved2;       /* reserved (for count or sizeof) */
+    uint32_t  reserved3;       /* reserved */
+};
+
+Header 的结构:
+Header的结构是固定的，size固定为32 bytes(64位架构)
+
+filetype，描述了二进制文件的类型，包括了十来个有效值，常打交道的包括：
+#define MH_OBJECT      0x1    // 中间目标文件，例如.o文件
+#define MH_EXECUTE     0x2    // 可执行文件
+#define MH_DYLIB       0x6    // 动态链接库
+#define MH_DYLINKER    0x7    // 动态链接器
+
+flags 是杂项，通常它包含的信息用于为动态链接器服务，告诉后者如何工作。
+
+Load Commands 的结构:
+Load Commands 可以被看作是一个 command 列表，紧贴着 Header，所以它的 file offset 是固定的：0x20（上面说的header的size为32 bytes，即0x20）。
+Load commands 由内核定义，不同版本的 command 数量不同
+它们的 type 是以LC_为前缀常量，譬如 LC_SEGMENT、LC_SYMTAB 等。
+
+每个 command 都有独立的结构，但所有 command 结构的前两个字段是固定的：
+struct load_command {
+    uint32_t cmd;      /* type of load command */
+    uint32_t cmdsize;  /* total size of command in bytes */
+};
+第一个字段指定了类型，第二个字段指定了大小，确保它能被正确解析。
+这里只讲其中的一个 load command ，LC_SEGMENT_64，因为它和 segment、section 有关；命令格式如下：
+struct segment_command_64 { /* for 64-bit architectures */
+    uint32_t   cmd;         /* LC_SEGMENT_64 */
+    uint32_t   cmdsize;     /* includes sizeof section_64 structs */
+    char       segname[16]; /* segment name */
+    uint64_t   vmaddr;      /* memory address of this segment */
+    uint64_t   vmsize;      /* memory size of this segment */
+    uint64_t   fileoff;     /* file offset of this segment */
+    uint64_t   filesize;    /* amount to map from the file */
+    vm_prot_t  maxprot;     /* maximum VM protection */
+    vm_prot_t  initprot;    /* initial VM protection */
+    uint32_t   nsects;      /* number of sections in segment */
+    uint32_t   flags;       /* flags */
+};
+
+它描述了文件映射的两大问题：从哪里来（fileoff、filesize）、到哪里去（vmaddr、vmsize）；它还告诉了内核该区域的名字（segname，即 segment name），以及该区域包含了几个 section（nsects），以及该区域的保护级别（initprot、maxprot）。
+
+每一个 segment 的 VP (Virtual Page) 都根据 initprot 进行初始化，initprot 指定了如何通过 读/写/可执行 初始化页面的保护级别；segment 的保护设置可以动态改变，但是不能超过 maxprot 中指定的值（在 iOS 中，+x(可执行) 和+w(可写) 是互斥的）；initprot、maxprot 的值均用八进制表示（1=r，2=w，4=x）
+flags 是杂项标志位
+vmsize 并不等于 filesize，对于 4KB 大小的 VP，vmsize 是 4K 的倍数；换句话说，vmsize 一般大于 segment 的实际大小
+
+对于 segment 而言，有了这些信息，其结构其实就足够清晰了，但是如何知道其中各个 sections 的具体位置和 size 呢？
+对于 LC_SEGMENT_64 而言，如果其nsects字段大于 0，其命令后面还会紧接着挂载nsects个描述 section 的信息，这些信息是结构体section_64的列表，section_64结构体定义如下：
+struct section_64 { /* for 64-bit architectures */
+    char      sectname[16];    /* name of this section */
+    char      segname[16];     /* segment this section goes in */
+    uint64_t  addr;            /* memory address of this section */
+    uint64_t  size;            /* size in bytes of this section */
+    uint32_t  offset;          /* file offset of this section */
+    uint32_t  align;           /* section alignment (power of 2) */
+    uint32_t  reloff;          /* file offset of relocation entries */
+    uint32_t  nreloc;          /* number of relocation entries */
+    uint32_t  flags;           /* flags (section type and attributes)*/
+    uint32_t  reserved1;       /* reserved (for offset or index) */
+    uint32_t  reserved2;       /* reserved (for count or sizeof) */
+    uint32_t  reserved3;       /* reserved */
+};
+结构体section_64可以看做 section header，它描述了对应 section 的具体位置，以及要被映射的目标虚拟地址。
+回头再看segment_command_64的cmdsize字段，它的数值是segment_command_64的 size 大小，加上紧接在 command 后面的所有section_64结构体的大小。
+
+举个例子，如果 segment 含有 2 个 section，那么对应的 segment_command_64 的 cmdsize 值为：
+72（segment_command_64本身大小） + 2 * 80（section_64的大小） = 232 bytes
+
+这里应该明白 segment 和 section ：Mach-O 本没有 segment，有了 LC_SEGMENT_64，于是有了 segment。
+
+Data的结构:
+和 Header、Load Commands 不同，Mach-O 对 Data 区域没有任何公共的结构上的定义。
+它里面盛装的字节本来没有意义，有了 LC_SEGMENT_64 以及其他的 load commands，一切才开始有了意义。
+
+一共包括三个 segment：__TEXT、__DATA、__LINKEDIT
+segment 的内容范围并非一定在 Data 区内（譬如 __TEXT segment）
+并非每一个 segment 都由 section 组成（譬如 __LINKEDIT segment）
+
+==================================================静态链接
+所谓静态链接，其本质是把程序各个模块的中间文件粘在一起，拼装成一个整体；换句话说，以模块的中间文件为输入，产生一个新的 Mach-O 文件（往往是可执行文件）。
+静态链接主要过程包括：
+地址和空间分配（Address and Storage Allocation）
+符号决议（Symbol Resolution）
+重定位（Relocation）
+
+其中最核心是「重定位」过程。静态链接的重定位是围绕符号进行的
+
+#####中间文件的符号分析#####
+Mach-O 的文件类型有很多种（以MH_为前缀的 type 宏），常见的有：
+MH_OBJECT: 中间文件
+MH_EXECUTE: 可执行文件
+
+提到「中间文件」，它其实就是一种MH_OBJECT类型的 Mach-O 文件，还常被称作「中间目标文件」「可重定位文件」，通常以.o为后缀
+
+/* a.c */
+extern int shared;
+void swap(int *a, int *b);
+int main() {
+    int a = 100;
+    swap(&a, &shared);
+    return 0;
+}
+
+/* b.c */
+int shared = 42;
+void swap(int *a, int *b) {
+    int temp = &a;
+    &a = &b;
+    &b = temp;
+}
+
+从代码中可以看到，b.c 总共定义了两个全局符号，一个是变量shared，另外一个是函数swap；a.c 里面定义了一个全局符号main；后者引用了前者的俩符号。
+
+使用 gcc 将这俩文件分别编译成目标文件 a.o 和 b.o :
+$ gcc -c a.c b.c
+# 生成 a.o 和 b.o
+
+使用 MachOView 工具查看 a.o 的 __TEXT __text 的反汇编内容
+
+a.o 中的两处符号引用，分别对应 movq 操作和 callq 操作：
+48 8B35 00000000: 其中48是 movq 的操作码，00000000描述_shared的符号值（地址值）
+E8 00000000: 其中E8是 callq 的的操作码，00000000描述_swap的符号值（地址值）
+
+gcc编译器中的符号名，通常都含有_前缀。
+
+可以看到，在 a.o 的代码段，该符号对应的地址值都被置为0。问题来了，编译器对中间文件进行链接时，如何知道该对哪些指令进行地址调整呢？这些指令的哪些部分要被调整呢？又该如何调整呢？
+Relocation Symbol Table 正是解决这个问题的。
+
+Relocation Symbol Table
+在每个可重定位的 Mach-O 文件中，有一个叫重定位（Relocation）的区域，专门用来保存这些和重定位相关的信息。
+
+某个 section 如果内含需要被重定位的字节，就会有一个 relocation table 与此对应：
+
+section 的结构（section_64），其中有两个字段描述了其对应的relocation table：
+reloff: relocation table 的 file offset
+nreloc: relocation table 的 entry 数量
+
+Relocation table可以看作是一个 relocation entry 的数组，每个 relocation entry 占 8 个字节：
+对应结构体是relocation_info:
+struct relocation_info {
+    int32_t   r_address;      /* offset in the section to what is being relocated */
+    uint32_t  r_symbolnum:24, /* symbol index if r_extern == 1 or section ordinal if r_extern == 0 */
+              r_pcrel:1,      /* was relocated pc relative already */
+              r_length:2,     /* 0=1 byte, 1=2 bytes, 2=4 bytes, 3=8 bytes */
+              r_extern:1,     /* does not include value of sym referenced */
+              r_type:4;       /* if not 0, machine specific relocation type */
+};
+
+https://developer.apple.com/documentation/kernel/relocation_info?language=occ
+
+r_address表示相对于 section 的偏移量
+r_length表示需要被 relocation 的字节范围， 0=1 byte, 1=2 bytes, 2=4 bytes, 3=8 bytes
+r_pcrel表示地址值是否是 PC 相对地址值
+r_extern标记该符号是否是外部符号
+r_symbolnum，index 值，对于外部符号，它描述了符号在 symbol table 中的索引（从0开始）；如果是内部符号，它描述了符号所在的 section 的索引（按照LC_SEGMENT load commands加载顺序排序，范围是1~255）。
+r_type，符号类型
+
+这里解析第一个元素，可以看到 Data 值为 22 00 00 00 02 00 00 2D (小端模式)，
+转换为阅读习惯(大端模式)为 2D 00 00 02 00 00 00 22
+ 
+00 00 00 22   低4字节，对应r_address，表示在对应section偏移为 0x22
+2D 00 00 02   高4字节，先看低位的24位(r_symbolnum:24)，值为 00 00 02，即 2
+2D 转为 2进制  0010 1101  
+第25位(r_pcrel:1)，值为 1，表示该地址是相对于PC的相对地址 
+26~27位(r_length:2)，值为 0b10，即2，也就是4 bytes
+28位(r_extern:1)，值为 1，表示该符号是外部符号
+29~32位(r_type:4)，值为 0b0010。
+
+这里因为r_extern 值为1，表示是外部符号，所以这里的r_symbolnum表示在symbol表中的索引（从0开始）。
+根据后面的Symbol Table可以找到索引为1的符号，也就是_swap
+
+Symbol Table
+从上文的r_symbolnum可以看出，relocation_info并未完整描述符号信息，它只是告诉链接器哪些指令需要调整地址。符号的具体信息（包括符号名等）在 symbol table 中：
+
+链接器是通过 LC_SYMTAB 这个 load command 找到 symbol table 的
+LC_SYMTAB 对应的 command 结构体如下：
+struct symtab_command {
+    uint32_t cmd;     /* LC_SYMTAB */
+    uint32_t cmdsize; /* sizeof(struct symtab_command) */
+    uint32_t symoff;  /* symbol table offset */
+    uint32_t nsyms;   /* number of symbol table entries */
+    uint32_t stroff;  /* string table offset */
+    uint32_t strsize; /* string table size in bytes */
+};
+
+这个命令告诉了链接器 symbol table 和 string table 的相关信息；symtab_command这个结构体比较简单，symoff和nsyms指示了符号表的位置和条目，stroff和strsize指示了字符串表（String Table）的位置和长度。
+
+每个 symbol entry 长度是固定的，其结构由内核定义，详见nlist.h：
+struct nlist_64 {
+    union {
+        uint32_t n_strx;   /* index into the string table */
+    } n_un;
+    uint8_t  n_type;       /* type flag, see below */
+    uint8_t  n_sect;       /* section number or NO_SECT */
+    uint16_t n_desc;       /* see <mach-o/stab.h> */
+    uint64_t n_value;      /* value of this symbol (or stab offset) */
+};
+
+结构体nlist_64（或nlist）描述了符号的基本信息，其中n_un、n_sect、n_value比较容易理解：
+n_un，符号的名字（在一个 Mach-O 文件里，具有唯一性），其值位在 String Table 中的索引值，String Table 实际是一个 char 类型的数组，即一个大字符串。根据n_un的值在 String Table中开始，到遇到 00 字节结束。
+n_sect，符号所在的 section index（有效值从 1 开始，最大为 255，同上文）
+n_value，符号的地址值（在链接过程中，会随着其 section 发生变化）
+
+n_type和n_desc表达的意思稍微复杂点；都是多功能组合字段
+n_type是一个 8 bit的复合字段，由4种mask组成
+
+N_STAB (0xe0，即0b 1110 0000)，即最高三位，如果不为 0，表示这是一个与调试有关的符号，值意义类型详见参考。
+N_PEXT (0x10，即0b 0001 0000)，即第4位，若为 1，则表示该符号是有限全局范围(__private_extern__)，当静态链接时会清除N_EXT位的设置。
+N_TYPE (0x0e，即0b 0000 1110)，5~7位，定义了符号的类型（详细定义见参考）。
+N_EXT (0x01，即0b 0000 0001)，第8位，若为1，表示符号为外部符号，即该符号要么定义在外部，要么定义在本地但是可以被外部使用。
+
+n_desc可参考：
+https://developer.apple.com/documentation/kernel/nlist_64/
+
+解释一下n_un怎么找到符号名，_shared符号为例：
+可以看到n_un的值为 0xD，即13（索引从0开始，13为5F）。去 String Table 表中去查询：
+可以看到，查询到的结果为：_（0x5F）s（0x73）h（0x68）a（0x61）r（0x72）e（0x65）d（0x64）。从ASCII码查表即可得到结果，即我们这里的符号名_shared。
+有了 relocation table 和 symbol table，链接器就与足够的信息进行链接处理了。
+
+#####可执行文件的符号分析#####
+先使用ld工具（静态链接器）对如上 a.o、b.o 进行链接，生成可执行文件：
+ld a.o b.o -macosx_version_min 10.14 -o ab.out -lSystem
+# 生成可执行文件 ab.out
+使用 MachOView 工具查看可执行文件 ab.out
+
+我们可以知道 __Text segment 的虚拟基地址为 4294967296，即 0x 100000000。相对于文件的偏移量为 0 。
+
+代码段 __TEXT __text 的反汇编内容
+链接前，a.o 中此两处的地址值均为0；在 ab.out 中，链接器根据 a.o 的 relocation table 的信息，对此两处地址进行了调整，将它们修改为有效地址。
+
+我们分析修正后_shared和_swap所对应的文件偏移地址。
+先看_shared，其所在指令的下一条指令相对于文件的偏移地址是 0x00000F5F，计算其虚拟内存地址 0x100000F5F。
+
+虚拟内存地址 = 文件偏移量 - 所在segment的文件偏移量 + 所在segment的虚拟基地址
+文件偏移量为 0x00000F5F， __Text segment 文件偏移量为0， 虚拟基地址 0x100000000。
+可以算得 虚拟地址为 0x100000F5F。
+
+指令相对偏移是 0x A1 00 00 00（小端），即 0x000000A1，相加计算得到的_shared符号的虚拟地址值等于 0x100001000
+
+根据 Load Commonds 可以看到，0x100001000 落在 __DATA segment 中
+虚拟内存地址 = 文件偏移量 - 所在segment的文件偏移量 + 所在segment的虚拟基地址 
+推导可得
+文件偏移量 = 虚拟内存地址 - 所在segment的虚拟基地址 + 所在segment的文件偏移量
+即         0x100001000 -  0x100001000(__DATA segment) + 0x1000(__DATA segment)
+可以算得 文件偏移地址为 0x1000。
+根据文件偏移地址 0x1000 对应的是 ab.out 中的 __DATA __data :
+该地址所存储的值 0x0000002A 恰好等于 42（b.c中赋值的42）。
+
+另外一个需要注意到的事实是：ab.out 中再也没有 relocation table 了，这不难理解，ab.out 中的符号都得到了重定位，relocation table 已经没有存在的必要了。
+
+现在的问题是：ab.out 中_main、_shared、_swap这几个 symbol entry 存在的意义是啥？
+我的理解是：如果从程序正常运行的角度来看，这几个符号没啥用。事实上，使用 strip 工具可以将这几个 symbol entry 从 symbol table 中抹掉。
+
+总结:
+1.section 的结构（section_64），其中有两个字段描述了其对应的relocation table：
+reloff: relocation table 的 file offset
+nreloc: relocation table 的 entry 数量
+2、 relocation table可以看作是一个 relocation entry 的数组，每个 relocation entry 占 8 个字节。某个 section 如果内含需要被重定位的字节，就会有一个 relocation table 与此对应
+
+3、 symbol table ，链接器是通过 LC_SYMTAB 这个 load command 找到 symbol table 的
+struct symtab_command {
+    uint32_t cmd;     /* LC_SYMTAB */
+    uint32_t cmdsize; /* sizeof(struct symtab_command) */
+    uint32_t symoff;  /* symbol table offset */
+    uint32_t nsyms;   /* number of symbol table entries */
+    uint32_t stroff;  /* string table offset */
+    uint32_t strsize; /* string table size in bytes */
+};
+这个命令告诉了链接器 symbol table 和 string table 的相关信息。symbol table 是一个 symbol entry 的数组。每个 symbol entry 长度是固定的，其结构由内核定义，详见nlist.h：
+struct nlist_64 {
+    union {
+        uint32_t n_strx;   /* index into the string table */
+    } n_un;
+    uint8_t  n_type;       /* type flag, see below */
+    uint8_t  n_sect;       /* section number or NO_SECT */
+    uint16_t n_desc;       /* see <mach-o/stab.h> */
+    uint64_t n_value;      /* value of this symbol (or stab offset) */
+};
+通过上述步骤，（静态）链接器即可找到需要重定位的符号。
+
+==================================================
+1、使用脚本命令查看Mach Header
+MACHO_PATH = ${BUILD_DIR}/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/$(FULL_PRODUCT_NAME)/$(PRODUCT_NAME)
+// otool -h ${MACHO_PATH} 也能查看Mach Header
+CMD = objdump --macho -private-header ${MACHO_PATH}
+TTY = /dev/ttys001
+
+2、使用脚本命令查看__TEXT代码段
+MACHO_PATH = ${BUILD_DIR}/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/$(FULL_PRODUCT_NAME)/$(PRODUCT_NAME)
+CMD = objdump --macho -d ${MACHO_PATH}
+TTY = /dev/ttys001
+
+注释main函数中的代码并设置只编译main.m文件
+通过上面的操作我们可以发现Mach-O是可读的二进制数据，同时Mach-O也是可写的，签名之前之后都可以修改Mach-O，就像很多破解软件，修改签名后的Mach-O再次签名就可以了。
+
+
+编译器编译过程中主要做了一些工作：
+把能变成汇编的代码尽量变成汇编代码
+把各种符号进行归类，外部导入符号(NSLog...)放到重定位符号表
+.o文件链接-->多个目标文件的合并、符号表合并成一张表-->生成可执行文件exec
+
+因此链接的过程就是处理目标文件符号的过程
+链接的本质就是把多个目标文件组合成一个文件
+
+三、C语言符号
+#import <UIKit/UIKit.h>
+
+int global_uninit_value;//全局变量
+
+int global_init_value = 10;
+double default_x __attribute__((visibility("hidden"))) ;
+
+static int static_init_value = 9;// 静态变量
+static int static_uninit_value;
+
+int main(int argc, char * argv[]) {
+    static_uninit_value = 10;
+    NSLog(@"%d", static_init_value);
+}
+
+全局变量和静态变量的主要区别：全局性，全局变量加上static后就变成了本地变量
+查看当前main.m文件中的符号情况：
+MACHO_PATH = ${BUILD_DIR}/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/$(FULL_PRODUCT_NAME)/$(PRODUCT_NAME)
+CMD = objdump --macho -syms ${MACHO_PATH}
+TTY = /dev/ttys001
+
+l：本地符号，g：全局符号
+其中符号按照功能可做如下区分：
+
+Type	说明
+f	File
+F	Function
+O	Data
+d	Debug
+*ABS*	Absolute
+*COM*	Common
+*UND*	未定义
+
+xcconfig文件中添加如下参数脱去调试符号：
+OTHER_LDFLAGS = $(inherited) -Xlinker -S
+
+四、导入符号与导出符号
+在main.m函数中使用了NSLog函数，那么NSLog就是导入符号，Foundation框架中导出了NSLog符号。
+
+1、查看导出符号的命令如下：
+objdump --macho -exports-trie ${MACHO_PATH}
+
+可以看到导出符号就是上面对应的全局符号，但是导出符号不一定都是全局符号，可以通过链接器来控制。
+由于NSLog函数是在动态库中，因此也存在于间接符号表中。
+
+2、查看间接符号表的命令如下：
+objdump --macho -indirect-symbols ${MACHO_PATH}
+
+总结：
+全局符号可以变成导出符号给外界使用
+由于动态库的符号存在间接符号表中，因此strip不能剥离全局符号
+
+3、OC的类不管有没有在头文件中暴露默认都是导出符号
+Build Phases-->Compile Source中添加ViewController.m文件参与编译
+
+如果是OC定义的动态库需要减少体积就需要把尽可能多的符号变成不导出符号
+OTHER_LDFLAGS = $(inherited) -Xlinker -unexported_symbol -Xlinker _OBJC_CLASS_$_ViewController
+OTHER_LDFLAGS = $(inherited) -Xlinker -unexported_symbol -Xlinker _OBJC_METACLASS_$_ViewController
+
+五、弱引用和弱定义符号
+
+Weak Symbol:
+Weak Reference Symbol: 表示此未定义符号是弱引用。如果动态链接器找不到该符号的定义，则将其设置为0。链接器会将此符号设置弱链接标志。
+
+Weak def int ion Symbol: 表示此符号为弱定义符号。如果静态链接器或动态链接器为此符号找到另一个(非弱)定义符号，则弱定义将被忽略。只能将合并部分中的符号标记为弱定义。
+
+1、弱引用代码
+// 弱引用
+void weak_import_function(void) __attribute__((weak_import));
+
+//void weak_import_function(void) {
+//    NSLog(@"weak_import_function");
+//}
+
+int main(int argc, char * argv[]) {
+    if (weak_import_function) {
+        weak_import_function();
+    }
+}
+
+编译会报如下错误：
+Undefined symbols for architecture arm64:
+  "_weak_import_function", referenced from:
+      _main in main.o
+ld: symbol(s) not found for architecture arm64
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+
+xcconfig文件中添加如下参数就可以告诉编译器不检查弱引用符号，dyld运行起来的时候会自动寻找相应的符号：
+OTHER_LDFLAGS = $(inherited) -Xlinker -U -Xlinker _weak_import_function
+
+2、弱定义代码
+// 弱定义：（全局导出符号）同一作用域还可以申明同名的函数
+void weak_function(void)  __attribute__((weak));
+// 弱定义符号标记为隐藏：则变成本地符号
+void weak_hidden_function(void) __attribute__((weak, visibility("hidden")));
+
+void weak_function(void) {
+    NSLog(@"weak_function");
+}
+void weak_hidden_function(void) {
+    NSLog(@"weak_hidden_function");
+}
+
+六、llvm-strip详解
+对于动态库，我们可以剥离除间接符号表中符号之外的所有符号
+对于静态库，静态库是众多.o文件的合集，存在重定位符号表，只能剥离调试符号
+
+strip剥离.o/静态库的调试符号（调试符号放到__DWARF段中）
+
+
+==========在LLVM项目中调试strip命令:
+从LLVM项目中可以看到llvm-strip Target没有源文件，只是执行了shell脚本。要想调试llvm-strip源码还需要做以下操作:
+build llvm-strip Target
+1、复制llvm-objcopy并重命名为strip，并重命名Scheme为strip
+2、进入llvm-strip Target执行的shell脚本中llvm-strip命令的链接地址
+/Users/ztkj/Projects/LLVM_Projects/llvm-project/build_xcode/Debug/bin/llvm-strip
+复制llvm-strip并重命名为strip
+3、进入源码，并在main函数中打下断点
+4、选中strip，添加参数调试strip命令（将可执行文件的路径添加到启动参数中）
+5、运行项目后在控制台加载文件中的断点开始调试
+
+控制台依次执行下面的命令：
+// 从文件中读取断点
+br read -f /Users/ztkj/Desktop/strip_lldb.m
+// 将读取的断点加入到strip组中
+br list strip
+// 启用加载的断点
+br enable strip
+
+strip_lldb.m文件中的断点如下：
+[
+    {"Breakpoint":{"BKPTOptions":{"AutoContinue":false,"ConditionText":"","EnabledState":false,"IgnoreCount":0,"OneShotState":false},"BKPTResolver":{"Options":{"NameMask":[56],"Offset":0,"SkipPrologue":true,"SymbolNames":["removeSections"]},"Type":"SymbolName"},"Hardware":false,"Names":["strip"],"SearchFilter":{"Options":{"CUList":["MachOObjcopy.cpp"]},"Type":"ModulesAndCU"}}},
+    {"Breakpoint":{"BKPTOptions":{"AutoContinue":false,"ConditionText":"","EnabledState":false,"IgnoreCount":0,"OneShotState":false},"BKPTResolver":{"Options":{"NameMask":[56],"Offset":0,"SkipPrologue":true,"SymbolNames":["handleArgs"]},"Type":"SymbolName"},"Hardware":false,"Names":["strip"],"SearchFilter":{"Options":{"CUList":["MachOObjcopy.cpp"]},"Type":"ModulesAndCU"}}},
+    {"Breakpoint":{"BKPTOptions":{"AutoContinue":false,"ConditionText":"","EnabledState":false,"IgnoreCount":0,"OneShotState":false},"BKPTResolver":{"Options":{"NameMask":[56],"Offset":0,"SkipPrologue":true,"SymbolNames":["executeObjcopyOnBinary"]},"Type":"SymbolName"},"Hardware":false,"Names":["strip"],"SearchFilter":{"Options":{"CUList":["MachOObjcopy.cpp"]},"Type":"ModulesAndCU"}}},
+    {"Breakpoint":{"BKPTOptions":{"AutoContinue":false,"ConditionText":"","EnabledState":false,"IgnoreCount":0,"OneShotState":false},"BKPTResolver":{"Options":{"NameMask":[56],"Offset":0,"SkipPrologue":true,"SymbolNames":["markSymbols"]},"Type":"SymbolName"},"Hardware":false,"Names":["strip"],"SearchFilter":{"Options":{"CUList":["MachOObjcopy.cpp"]},"Type":"ModulesAndCU"}}},
+    {"Breakpoint":{"BKPTOptions":{"AutoContinue":false,"ConditionText":"","EnabledState":false,"IgnoreCount":0,"OneShotState":false},"BKPTResolver":{"Options":{"NameMask":[56],"Offset":0,"SkipPrologue":true,"SymbolNames":["main"]},"Type":"SymbolName"},"Hardware":false,"Names":["strip"],"SearchFilter":{"Options":{"CUList":["llvm-objcopy.cpp"]},"Type":"ModulesAndCU"}}},
+    {"Breakpoint":{"BKPTOptions":{"AutoContinue":false,"ConditionText":"","EnabledState":false,"IgnoreCount":0,"OneShotState":false},"BKPTResolver":{"Options":{"NameMask":[56],"Offset":0,"SkipPrologue":true,"SymbolNames":["getDriverConfig"]},"Type":"SymbolName"},"Hardware":false,"Names":["strip"],"SearchFilter":{"Options":{"CUList":["llvm-objcopy.cpp"]},"Type":"ModulesAndCU"}}},
+    {"Breakpoint":{"BKPTOptions":{"AutoContinue":false,"ConditionText":"","EnabledState":false,"IgnoreCount":0,"OneShotState":false},"BKPTResolver":{"Options":{"NameMask":[56],"Offset":0,"SkipPrologue":true,"SymbolNames":["executeObjcopy"]},"Type":"SymbolName"},"Hardware":false,"Names":["strip"],"SearchFilter":{"Options":{"CUList":["llvm-objcopy.cpp"]},"Type":"ModulesAndCU"}}},
+    {"Breakpoint":{"BKPTOptions":{"AutoContinue":false,"ConditionText":"","EnabledState":false,"IgnoreCount":0,"OneShotState":false},"BKPTResolver":{"Options":{"NameMask":[56],"Offset":0,"SkipPrologue":true,"SymbolNames":["parseStripOptions"]},"Type":"SymbolName"},"Hardware":false,"Names":["strip"],"SearchFilter":{"Options":{"CUList":["llvm-objcopy.cpp"]},"Type":"ModulesAndCU"}}},
+    {"Breakpoint":{"BKPTOptions":{"AutoContinue":false,"ConditionText":"","EnabledState":false,"IgnoreCount":0,"OneShotState":false},"BKPTResolver":{"Options":{"NameMask":[56],"Offset":0,"SkipPrologue":true,"SymbolNames":["MachOWriter::write"]},"Type":"SymbolName"},"Hardware":false,"Names":["strip"],"SearchFilter":{"Options":{"CUList":["MachOWriter.cpp"]},"Type":"ModulesAndCU"}}}
+]
+
+控制台断点相关的命令：
+br read -f 断点文件路径 读取
+br write -f 断点文件路径 写入
+br list strip 断点加入到strip分组
+br enable strip 开启strip分组的断点
+
+APP使用动态库还是静态库体积更小？
+静态库，静态库中的符号会合并到APP的符号表中，在strip时会剥离静态库不放到间接符号表中的符号

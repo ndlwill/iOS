@@ -1,0 +1,143 @@
+Swift 引用类型对应用的大小及启动速度有影响
+
+Dyld 的任务之一是重定位二进制元数据中的指针，这些元数据描述了源代码中的类型。
+动态运行时功能需要这些元数据，但这些元数据也会导致二进制文件膨胀。
+以下是某个已编译的应用二进制文件中包含的 Obj-C 类的布局：
+struct ObjcClass {
+  let isa: UInt64
+  let superclass: UInt64
+  let cache: UInt64
+  let mask: UInt32
+  let occupied: UInt32
+  let taggedData: UInt64
+}
+每个 UInt64 都是一段元数据的地址。由于它包含在应用二进制文件中，因此任何人从商店下载到的数据都是完全相同的。
+然而，由于地址空间布局随机化（Address Space Layout Randomization，简称 ASLR），因此每次启动应用时，这些数据在内存中的位置都会不同（并非总是从 0 开始）。
+这是一项安全功能，目的是为了防止他人猜测某个特定功能在内存中的位置。
+
+ASLR 的问题在于，它会导致应用的二进制文件中硬编码的地址出错，实际的起始地址有随机的偏移量。
+Dyld 的任务就是重定位所有指针，纠正起始位置。
+可执行文件中的每个指针，以及所有依赖框架（包括递归依赖），都要经过这样的处理。
+所有这些指针的设置都会导致应用的启动时间增加，因此减少指针设置可以缩减应用二进制文件的大小，加快启动速度。
+
+重定位的时间是由应用的 Obj-C 元数据引起的，但为什么 Swift 应用中会包含这些元数据呢？Swift 具有 @objc 属性，
+它可以让 Objective-C 代码看到 Swift 中的声明，但是即使 Obj-C 代码看不到 Swift 类型，也会生成元数据。
+这是因为所有 Swift 类型都包含苹果平台的 Objective-C 元数据。我们来看一看下面这个声明：
+final class TestClass { }
+这是纯 Swift 代码，并没有继承 NSObject，也没有使用 @objc。但是，它仍然会在二进制文件中生成一个 Obj-C 类元数据，而且还会产生 9 个需要重定位的指针
+使用 Hopper 工具检查二进制文件，并查看“纯 Swift”类的 objc_class 条目
+
+将环境变量 DYLD_PRINT_STATISTICS_DETAILS 设置成 1，就可以看到启动应用时需要重定位的指针数量。
+
+并非所有 Swift 类型都会添加相同数量的重定位。如果通过重载超类或遵循 Obj-C 协议的方式，将方法公开给 Obj-C，则添加的重定位更多。
+另外，Swift 类上的每个属性都将在 Objective-C 元数据中生成一个 ivar。
+
+iOS 的启动大致可分为：热启动和冷启动。热启动指的是，系统已经启动过了应用，并缓存了一些 Dyld 设置信息。
+
+重定位操作的发生次数：
+xcrun dyldinfo -rebase TikTok.app/TikTok | wc -l
+
+尽管每个类都会增加重定位操作，但我并没有建议将每个 Swift 类都换成 struct。
+大型 struct 也会增加二进制文件的大小，而且在某些情况下，你需要的只是引用而已。与其他提升性能的手段一样，你应该避免过早优化，而且首先应该从测量开始。
+在发现问题之后，你可以寻找应用中需要改进的地方。以下是一些常见的情况：
+
+组合与继承：
+class Section: Decodable {
+  let name: String
+  let id: Int
+}
+
+final class TextRow: Section {
+  let title: String
+  let subtitle: String
+
+  private enum CodingKeys: CodingKey {
+    case title
+    case subtitle
+  }
+
+  required init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    title = try container.decode(String.self, forKey: .title)
+    subtitle = try container.decode(String.self, forKey: .subtitle)
+    try super.init(from: decoder)
+  }
+}
+
+final class ImageRow: Section {
+  let imageURL: URL
+  let accessibilityLabel: String
+
+  private enum CodingKeys: CodingKey {
+    case imageURL
+    case accessibilityLabel
+  }
+
+  required init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    imageURL = try container.decode(URL.self, forKey: .imageURL)
+    accessibilityLabel = try container.decode(String.self, forKey: .accessibilityLabel)
+    try super.init(from: decoder)
+  }
+}
+
+这段代码会产生大量元数据，但是同样的功能可以通过值类型实现（更适合在数据层中使用），并最终减少 22% 的重定位。
+你需要用组合替换掉对象继承，例如具有关联值的枚举，或泛型等。
+struct Section<SectionType: Decodable>: Decodable {
+  let name: String
+  let id: Int
+  let type: SectionType
+}
+
+struct TextRow: Decodable {
+  let title: String
+  let subtitle: String
+}
+
+struct ImageRow: Decodable {
+  let imageURL: URL
+  let accessibilityLabel: String
+}
+
+Swift 中的类别：
+即使 Swift 没有使用类别，而是使用了扩展，但你仍然可以通过声明使用了 Objective-C 函数的扩展来生成类别二进制元数据。声明方式如下：
+
+extension TestClass {
+  @objc
+  func foo() { }
+
+  override func bar() { }
+}
+
+这两个函数都包含在二进制元数据中，但是由于它们是在扩展中声明的，因此可以通过 TestClass 的合成类别引用。
+将这些函数移到原始类声明中，可以避免二进制文件包含额外的类别元数据。
+
+此外，你还可以使用基于闭包的回调（例如 iOS 14 引入的回调）完全避免 @objc。
+
+许多属性：
+Swift 类中的每个属性都会添加 3～6 个重定位，具体取决于该类是否为 final 类。
+如果有很多拥有 20 多个属性的大型类，那么这个数字就非常惊人了。例如：
+final class TestClass {
+  var property1: Int = 0
+  var property2: Int = 0
+  ...
+  var property20: Int = 0
+}
+
+将其转换为 struct，可以减少 60% 的 rebase！
+
+final class TestClass {
+  struct Content {
+    var property1: Int = 0
+    var property2: Int = 0
+    ...
+    var property20: Int = 0
+  }
+
+  var content: Content = .init()
+}
+
+代码生成：
+回报率最高的提升方法之一就是改进代码生成。代码生成的一种流行的用法是在多个代码库中建立共享的数据模型。
+如果你在多种类型上进行此操作，则需注意它们会增加多少 Obj-C 元数据。然而，即便是值类型，也会增加代码量以及重定位的开销。
+最佳解决方案是尽可能减少生成的类型数量，或者用生成的函数替换自定义类型。

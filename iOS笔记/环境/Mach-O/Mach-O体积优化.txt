@@ -1,0 +1,368 @@
+==========Bitcode
+Bitcode is an intermediate representation of a compiled program. apps you upload to App Store Connect that contain bitcode will be compiled and linked on the App Store. Including bitcode will allow Apple to re-optimize your app binary in the future without the need to submit a new version of your app to the App Store.
+For iOS apps, bitcode is the default, but optional. For watchOS and tvOS apps, bitcode is required. If you provide bitcode, all apps and frameworks in the app bundle (all targets in the project) need to include bitcode.
+
+Bitcode是编译后生成汇编之前的中间表现
+
+在Xcode中，默认开启Bitcode。如果你的App支持Bitcode，App使用到的其他二进制形式也要支持Bitcode，否则就会报错。
+解决错误的两种方案：
+方案一：将不支持Bitcode的SDK移除掉，等待第三方更新。
+方案二：将使用Bitcode的选项设置为NO：
+
+==========链接时间优化（LTO）
+Link Time Optimization (LTO) 链接时间优化是指：
+链接阶段执行模块间优化。
+
+LLVM的LTO机制是通过把LLVM IR传递给链接器，从而可以在链接期间执行整个程序分析和优化。
+所以，LTO的工作方式是编译器输出的目标文件不是常规目标文件：它们是LLVM IR文件，仅通过目标文件的文件扩展名伪装为目标文件。
+
+LTO有两种模式：
+Full LTO是将每个单独的目标文件中的所有LLVM IR代码组合到一个大的module中，然后对其进行优化并像往常一样生成机器代码。
+Thin LTO是将模块分开，但是根据需要可以从其他模块导入相关功能，并行进行优化和机器代码生成。
+
+对于完整的LTO(-flto=full)，仅并行执行语义分析，而优化和机器代码生成则在单个线程中完成。
+对于ThinLTO(-flto=thin)，除全局分析步骤外，所有步骤均并行执行。因此，ThinLTO比FullLTO或一次编译快得多。
+
+clang：
+-flto=<value> 设置LTO的模式：full或者thin，默认full。
+-lto_library <path> 指定执行LTO方式的库所在位置。当执行链接时间优化（LTO）时，链接器将自动去链接libLTO.dylib，或者从指定路径链接。
+
+按照LTO优化方式：
+链接器首先按照顺序读取所有目标文件（此时，是bitcode文件，仅伪装成目标文件）并收集符号信息。
+接下来，链接器使用全局符号表解析符号。找到未定义的符号，替换weak符号等等。
+按照解析的结果，告诉执行LTO的库文件（默认是libLTO.dylib）那些符号是需要的。紧接着，链接器调用优化器和代码生成器，返回通过合并bitcode文件并应用各种优化过程而创建的目标文件。然后，更新内部全局符号表。
+链接器继续运行，直到生成可执行文件。
+
+--- a.h ---
+extern int  foo1(void);
+extern void foo2(void);
+extern void foo4(void);
+
+--- a.c ---
+#include "a.h"
+
+static signed int i = 0;
+
+void foo2(void) {
+  i = -1;
+}
+
+static int foo3() {
+  foo4();
+  return 10;
+}
+
+int foo1(void) {
+  int data = 0;
+
+  if (i < 0)
+    data = foo3();
+
+  data = data + 42;
+  return data;
+}
+
+--- main.c ---
+#include <stdio.h>
+#include "a.h"
+
+void foo4(void) {
+  printf("Hi\n");
+}
+
+int main() {
+  return foo1();
+}
+
+将a.c编译生成bitcode格式文件
+clang -flto -c a.c -o a.o
+将main.c正常编译成目标文件
+clang -c main.c -o main.o
+通过LTO将a.c和main.c通过LTO方式链接到一起
+clang -flto a.o main.o -o main
+
+我们的实例中，LTO整个的优化顺序为：
+首先读取a.o（bitcode文件）收集符号信息。链接器将foo1()、foo2()、foo4()识别为全局符号。
+读取main.o（真正的目标文件），找到目标文件中使用的符号信息。此时，main.o使用了foo1()，定义了foo4().
+链接器完成了符号解析过程后，发现foo2()未在任何地方使用它将其传递给LTO。foo2()一旦可以删除，意味着发现foo1()里面调用foo3()的判断始终为假，也就是foo3()也没有使用，也可以删除。
+符号处理完毕后，将处理结果传递给优化器和代码生成器，同时，将a.o合并到main.o中。
+修改main.o的符号表信息。继续链接，生成可执行文件。
+
+可以看到，链接完成之后，我们自己声明的函数只剩下：main、foo1和foo4。
+这个地方有个问题，foo4函数并没有在任何地方使用，为什么没有把它干掉？
+因为LTO优化以入口文件需要的符号为准，来向外进行解析优化。所以，要优化掉foo4，那么就需要使用一个新的功能dead strip。
+
+==========dead strip
+链接器的-dead_strip参数的作用是：
+Remove functions and data that are unreachable by the entry point or exported symbols.
+
+就是移除入口函数或者没有被导出符号使用到的函数或者代码。
+现在foo4正是符合这种情况，所以，可以通过-dead_strip来删除掉无用代码。
+
+放大到动态库，在创建动态库时可以使用-mark_dead_strippable_dylib：
+指明，如果并没有使用到该动态库的符号信息，那么链接器将会自动优化该动态库。
+同时，你也可以在App中使用-dead_strip_dylibs获得相同的功能。
+
+设置Dead Code Stripping，它会在链接过程中进行优化
+
+==========Code Generation Options
+None[-O0]不优化：
+在这种设置下， 编译器的目标是降低编译消耗，保证调试时输出期望的结果。程序的语句之间是独立的：如果在程序的停在某一行的断点出，我们可以给任何变量赋新值抑或是将程序计数器指向方法中的任何一个语句，并且能得到一个和源码完全一致的运行结果。
+
+Fast[-O1]大函数所需的编译时间和内存消耗都会稍微增加：
+在这种设置下，编译器会尝试减小代码文件的大小，减少执行时间，但并不执行需要大量编译时间的优化。在苹果的编译器中，在优化过程中，严格别名，块重排和块间的调度都会被默认禁止掉。此优化级别提供了良好的调试体验，堆栈使用率也提高，并且代码质量优于None[-O0]。
+
+Faster[-O2]编译器执行所有不涉及时间空间交换的所有的支持的优化选项：
+是更高的性能优化Fast[-O1]。
+在这种设置下，编译器不会进行循环展开、函数内联或寄存器重命名。和Fast[-O1]项相比，此设置会增加编译时间，降低调试体验，并可能导致代码大小增加，但是会提高生成代码的性能。
+
+Fastest[-O3]在开启Fast[-O1]项支持的所有优化项的同时，开启函数内联和寄存器重命名选项：
+是更高的性能优化Faster[-O2]，指示编译器优化所生成代码的性能，而忽略所生成代码的大小，有可能会导致二进制文件变大。还会降低调试体验。
+
+Fastest, Smallest[-Os]在不显着增加代码大小的情况下尽量提供高性能：
+这个设置开启了Fast[-O1]项中的所有不增加代码大小的优化选项，并会进一步的执行可以减小代码大小的优化。增加的代码大小小于Fastest[-O3]。与Fast[-O1]相比，它还会降低调试体验。
+
+Fastest, Aggressive, Optimizations[-Ofast]与Fastest, Smallest[-Os]相比该级别还执行其他更激进的优化：
+这个设置开启了Fastest[-O3]中的所有优化选项，同时也开启了可能会打破严格编译标准的积极优化，但并不会影响运行良好的代码。该级别会降低调试体验，并可能导致代码大小增加。
+
+Smallest, Aggressive Size Optimizations [-Oz]不使用LTO的情况下减小代码大小：
+与-Os相似，指示编译器仅针对代码大小进行优化，而忽略性能优化，这可能会导致代码变慢。
+
+==========strip
+strip：移除指定符号。在Xcode中默认strip是在Archive的时候才会生效，移除对应符号。
+
+strip -x：除了全局符号都可以移除 （动态库使用）
+strip -S：移除调试符号（静态库使用） 
+strip：除了间接符号表中使用的符号，其他符号都移除（上架App使用）
+
+Deployment Postprocessing的英文原意是：
+If enabled, indicates that binaries should be stripped and file mode, owner, and group information should be set to standard values.
+也就是打开后，在编译阶段就会运行strip。
+
+Strip Debug Symbols During Copy的英文原意是：
+Specifies whether binary files that are copied during the build, such as in a Copy Bundle Resources or Copy Files build phase, should be stripped of debugging symbols. It does not cause the linked product of a target to be stripped。
+就是当你的应用在编译阶段copy了某些二进制文件时，打开该选项会脱掉该二进制的调试符号。但是不会脱去链接的最终产物（可执行文件\动态库）的符号信息。要脱去链接的产物（App的可执行文件）的符号信息。
+
+Strip Linked Product的英文原意是：
+If enabled, the linked product of the build will be stripped of symbols when performing deployment postprocessing.
+如果没有打开Deployment Postprocessing，则会在Archive处理链接的最终产物（可执行文件）的符号信息。否则，在链接完成之后就会处理符号信息。
+
+设置Strip Style（符号剥离级别），它会在生成可执行文件后进行优化，相当于对Mach-O文件进行修改
+All Symbols：除了间接符号表中使用的符号，其他符号都移除（上架App使用）
+Non-Global Symbols：除了全局符号都可以移除 （动态库使用）
+Debugging Symbols：移除调试符号（静态库使用）
+
+Strip Style原理
+App：可以剥离除间接符号表以外的所有符号
+动态库：可以剥离除全局符号以外的所有符号
+静态库：静态库是.o文件的合集，符号都存储在重定位符号表中。静态库只能剥离调试符号
+
+==========查看App Size报告
+方式一： 通过App Store Connect提供准确的App大小；
+方式二：通过脚本的方式指定输出App Size报告：
+xcodebuild -exportArchive -archivePath iOSApp.xcarchive -exportPath Release/MyApp -exportOptionsPlist OptionsPlist.plist
+
+==========BreakPoint
+Sets a breakpoint or set of breakpoints in the executable.
+
+Syntax: breakpoint set <cmd-options>
+
+Command Options Usage:
+  breakpoint set [-DHd] -l <linenum> [-i <count>] [-o <boolean>] [-x <thread-index>] [-t <thread-id>] [-T <thread-name>] [-q <queue-name>] [-c <expr>] [-G <boolean>] [-C <command>] [-s <shlib-name>] [-f <filename>] [-K <boolean>] [-N <breakpoint-name>] [-R <address>] [-m <boolean>]
+
+  breakpoint set [-DHd] -a <address-expression> [-i <count>] [-o <boolean>] [-x <thread-index>] [-t <thread-id>] [-T <thread-name>] [-q <queue-name>] [-c <expr>] [-G <boolean>] [-C <command>] [-s <shlib-name>] [-N <breakpoint-name>]
+
+  breakpoint set [-DHd] -n <function-name> [-i <count>] [-o <boolean>] [-x <thread-index>] [-t <thread-id>] [-T <thread-name>] [-q <queue-name>] [-c <expr>] [-G <boolean>] [-C <command>] [-s <shlib-name>] [-f <filename>] [-L <source-language>] [-K <boolean>] [-N <breakpoint-name>] [-R <address>]
+
+  breakpoint set [-DHd] -F <fullname> [-i <count>] [-o <boolean>] [-x <thread-index>] [-t <thread-id>] [-T <thread-name>] [-q <queue-name>] [-c <expr>] [-G <boolean>] [-C <command>] [-s <shlib-name>] [-f <filename>] [-L <source-language>] [-K <boolean>] [-N <breakpoint-name>] [-R <address>]
+
+  breakpoint set [-DHd] -S <selector> [-i <count>] [-o <boolean>] [-x <thread-index>] [-t <thread-id>] [-T <thread-name>] [-q <queue-name>] [-c <expr>] [-G <boolean>] [-C <command>] [-s <shlib-name>] [-f <filename>] [-L <source-language>] [-K <boolean>] [-N <breakpoint-name>] [-R <address>]
+
+  breakpoint set [-DHd] -M <method> [-i <count>] [-o <boolean>] [-x <thread-index>] [-t <thread-id>] [-T <thread-name>] [-q <queue-name>] [-c <expr>] [-G <boolean>] [-C <command>] [-s <shlib-name>] [-f <filename>] [-L <source-language>] [-K <boolean>] [-N <breakpoint-name>] [-R <address>]
+
+  breakpoint set [-DHd] -r <regular-expression> [-i <count>] [-o <boolean>] [-x <thread-index>] [-t <thread-id>] [-T <thread-name>] [-q <queue-name>] [-c <expr>] [-G <boolean>] [-C <command>] [-s <shlib-name>] [-f <filename>] [-L <source-language>] [-K <boolean>] [-N <breakpoint-name>] [-R <address>]
+
+  breakpoint set [-DHd] -b <function-name> [-i <count>] [-o <boolean>] [-x <thread-index>] [-t <thread-id>] [-T <thread-name>] [-q <queue-name>] [-c <expr>] [-G <boolean>] [-C <command>] [-s <shlib-name>] [-f <filename>] [-L <source-language>] [-K <boolean>] [-N <breakpoint-name>] [-R <address>]
+
+  breakpoint set [-ADHd] -p <regular-expression> [-i <count>] [-o <boolean>] [-x <thread-index>] [-t <thread-id>] [-T <thread-name>] [-q <queue-name>] [-c <expr>] [-G <boolean>] [-C <command>] [-s <shlib-name>] [-f <filename>] [-X <function-name>] [-N <breakpoint-name>] [-m <boolean>]
+
+  breakpoint set [-DHd] -E <source-language> [-i <count>] [-o <boolean>] [-x <thread-index>] [-t <thread-id>] [-T <thread-name>] [-q <queue-name>] [-c <expr>] [-G <boolean>] [-C <command>] [-w <boolean>] [-h <boolean>] [-O <type-name>] [-N <breakpoint-name>]
+
+       -A ( --all-files )
+            All files are searched for source pattern matches.
+
+       -C <command> ( --command <command> )
+            A command to run when the breakpoint is hit, can be provided more
+            than once, the commands will get run in order left to right.
+
+       -D ( --dummy-breakpoints )
+            Act on Dummy breakpoints - i.e. breakpoints set before a file is
+            provided, which prime new targets.
+
+       -E <source-language> ( --language-exception <source-language> )
+            Set the breakpoint on exceptions thrown by the specified language
+            (without options, on throw but not catch.)
+
+       -F <fullname> ( --fullname <fullname> )
+            Set the breakpoint by fully qualified function names. For C++ this
+            means namespaces and all arguments, and for Objective C this means
+            a full function prototype with class and selector.  Can be repeated
+            multiple times to make one breakpoint for multiple names.
+
+       -G <boolean> ( --auto-continue <boolean> )
+            The breakpoint will auto-continue after running its commands.
+
+       -H ( --hardware )
+            Require the breakpoint to use hardware breakpoints.
+
+       -K <boolean> ( --skip-prologue <boolean> )
+            sKip the prologue if the breakpoint is at the beginning of a
+            function.  If not set the target.skip-prologue setting is used.
+
+       -L <source-language> ( --language <source-language> )
+            Specifies the Language to use when interpreting the breakpoint's
+            expression (note: currently only implemented for setting
+            breakpoints on identifiers).  If not set the target.language
+            setting is used.
+
+       -M <method> ( --method <method> )
+            Set the breakpoint by C++ method names.  Can be repeated multiple
+            times to make one breakpoint for multiple methods.
+
+       -N <breakpoint-name> ( --breakpoint-name <breakpoint-name> )
+            Adds this to the list of names for this breakpoint.
+
+       -O <type-name> ( --exception-typename <type-name> )
+            The breakpoint will only stop if an exception Object of this type
+            is thrown.  Can be repeated multiple times to stop for multiple
+            object types.  If you just specify the type's base name it will
+            match against that type in all modules, or you can specify the full
+            type name including modules.  Other submatches are not supported at
+            present.Only supported for Swift at present.
+
+       -R <address> ( --address-slide <address> )
+            Add the specified offset to whatever address(es) the breakpoint
+            resolves to.  At present this applies the offset directly as given,
+            and doesn't try to align it to instruction boundaries.
+
+       -S <selector> ( --selector <selector> )
+            Set the breakpoint by ObjC selector name. Can be repeated multiple
+            times to make one breakpoint for multiple Selectors.
+
+       -T <thread-name> ( --thread-name <thread-name> )
+            The breakpoint stops only for the thread whose thread name matches
+            this argument.
+
+       -X <function-name> ( --source-regexp-function <function-name> )
+            When used with '-p' limits the source regex to source contained in
+            the named functions.  Can be repeated multiple times.
+
+       -a <address-expression> ( --address <address-expression> )
+            Set the breakpoint at the specified address.  If the address maps
+            uniquely to a particular binary, then the address will be converted
+            to a "file" address, so that the breakpoint will track that
+            binary+offset no matter where the binary eventually loads. 
+            Alternately, if you also specify the module - with the -s option -
+            then the address will be treated as a file address in that module,
+            and resolved accordingly.  Again, this will allow lldb to track
+            that offset on subsequent reloads.  The module need not have been
+            loaded at the time you specify this breakpoint, and will get
+            resolved when the module is loaded.
+
+       -b <function-name> ( --basename <function-name> )
+            Set the breakpoint by function basename (C++ namespaces and
+            arguments will be ignored).  Can be repeated multiple times to make
+            one breakpoint for multiple symbols.
+
+       -c <expr> ( --condition <expr> )
+            The breakpoint stops only if this condition expression evaluates to
+            true.
+
+       -d ( --disable )
+            Disable the breakpoint.
+
+       -f <filename> ( --file <filename> )
+            Specifies the source file in which to set this breakpoint.  Note,
+            by default lldb only looks for files that are #included if they use
+            the standard include file extensions.  To set breakpoints on
+            .c/.cpp/.m/.mm files that are #included, set
+            target.inline-breakpoint-strategy to "always".
+
+       -h <boolean> ( --on-catch <boolean> )
+            Set the breakpoint on exception catcH.
+
+       -i <count> ( --ignore-count <count> )
+            Set the number of times this breakpoint is skipped before stopping.
+
+       -l <linenum> ( --line <linenum> )
+            Specifies the line number on which to set this breakpoint.
+
+       -m <boolean> ( --move-to-nearest-code <boolean> )
+            Move breakpoints to nearest code. If not set the
+            target.move-to-nearest-code setting is used.
+
+       -n <function-name> ( --name <function-name> )
+            Set the breakpoint by function name.  Can be repeated multiple
+            times to make one breakpoint for multiple names
+
+       -o <boolean> ( --one-shot <boolean> )
+            The breakpoint is deleted the first time it stop causes a stop.
+
+       -p <regular-expression> ( --source-pattern-regexp <regular-expression> )
+            Set the breakpoint by specifying a regular expression which is
+            matched against the source text in a source file or files specified
+            with the -f option.  The -f option can be specified more than once.
+            If no source files are specified, uses the current "default source
+            file".  If you want to match against all source files, pass the
+            "--all-files" option.
+
+       -q <queue-name> ( --queue-name <queue-name> )
+            The breakpoint stops only for threads in the queue whose name is
+            given by this argument.
+
+       -r <regular-expression> ( --func-regex <regular-expression> )
+            Set the breakpoint by function name, evaluating a
+            regular-expression to find the function name(s).
+
+       -s <shlib-name> ( --shlib <shlib-name> )
+            Set the breakpoint only in this shared library.  Can repeat this
+            option multiple times to specify multiple shared libraries.
+
+       -t <thread-id> ( --thread-id <thread-id> )
+            The breakpoint stops only for the thread whose TID matches this
+            argument.
+
+       -w <boolean> ( --on-throw <boolean> )
+            Set the breakpoint on exception throW.
+
+       -x <thread-index> ( --thread-index <thread-index> )
+            The breakpoint stops only for the thread whose index matches this
+            argument.
+
+从文件中导入断点
+br read -f 【文件路径】
+将断点导出到文件
+br write -f 【文件路径】
+查看组内的断点列表
+br list 【组名称】
+启用组中的断点
+br enable 【组名称】
+禁用组中的断点
+br disable 【组名称】
+删除组中的断点
+br delete 【组名称】
+通过文件和行号设置断点
+br set -f 【文件名】 -l 【行号】
+通过函数名称设置断点，也能为class的selector设置断点
+br set -n 【函数名称】
+br set -n -[NSString stringWithFormat:]
+为C++函数设置断点
+br set -M 【函数名称】
+为OC的selector设置断点
+br set -S 【selector】
+为指定文件里的selector设置断点
+br set -f 【文件名】 -S 【selector】
+为某个image设置断点
+br set -s 【image名称】 -n 【函数名称】
+为项目中包含关键字的方法设置断点
+br set -r 【关键字】

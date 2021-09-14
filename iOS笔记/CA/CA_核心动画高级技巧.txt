@@ -1,0 +1,1011 @@
+https://www.kancloud.cn/manual/ios/97759
+==========
+
+Core Animation其实是一个令人误解的命名,所以做动画这只是Core Animation特性的冰山一角。 
+
+Core Animation是一个复合引擎，它的职责就是尽可能快地组合屏幕上不同的可 视内容，这个内容是被分解成独立的图层，存储在一个叫做图层树的体系之中。
+于 是这个树形成了UIKit以及在iOS应用程序当中你所能在屏幕上看见的一切的基础。
+
+==========图层树
+2.1 图层与视图
+一个视图就是在屏幕上显示的一个矩形块（比如图片，文字或者视频），它 能够拦截类似于鼠标点击或者触摸手势等用户输入。视图在层级关系中可以互相嵌 套，一个视图可以管理它的所有子视图的位置。
+在iOS当中，所有的视图都从一个叫做 UIVIew 的基类派生而来， UIView 可以处理触摸事件，可以支持基于Core Graphics绘图，可以做仿射变换（例如旋转或者缩放），或者简单的类似于滑动或者渐变的动画。
+
+2.2 CALayer
+CALayer 类在概念上和 UIView 类似，同样也是一些被层级关系树管理的矩形 块，同样也可以包含一些内容（像图片，文本或者背景色），管理子图层的位置。 它们有一些方法和属性用来做动画和变换。
+###和 UIView 最大的不同是 CALayer 不 处理用户的交互。###
+CALayer 并不清楚具体的响应链（iOS通过视图层级关系用来传送触摸事件的机制），于是它并不能够响应事件，即使它提供了一些方法来判断是否一个触点在图层的范围之内
+
+2.3 平行的层级关系
+每一个 UIview 都有一个 CALayer 实例的图层属性，也就是所谓的backing layer，视图的职责就是创建并管理这个图层，以确保当子视图在层级关系中添加或者被移除的时候，他们关联的图层也同样对应在层级关系树当中有相同的操作。
+###实际上这些背后关联的图层才是真正用来在屏幕上显示和做动画， ###UIView 仅仅 是对它的一个封装，提供了一些iOS类似于处理触摸的具体功能，以及Core Animation底层方法的高级接口
+
+但是为什么iOS要基于 UIView 和 CALayer 提供两个平行的层级关系呢？为什 么不用一个简单的层级来处理所有事情呢？
+答：原因在于要做职责分离，这样也能避免很多重复代码。在iOS和Mac OS两个平台上，事件和用户交互有很多地方的不同， 基于多点触控的用户界面和基于鼠标键盘有着本质的区别，这就是为什么iOS有 UIKit和 UIView ，但是Mac OS有AppKit和 NSView 的原因。他们功能上很相似， 但是在实现上有着显著的区别。
+
+2.4 图层的能力
+对一些简单的需求来说，确实没必要处理 CALayer ，因为苹果已经通过 UIView 的高级API间接地使得动画变得很简单。
+但是这种简单会不可避免地带来一些灵活上的缺陷。如果你略微想在底层做一些改变，或者使用一些苹果没有在 UIView 上实现的接口功能，这时除了介入Core Animation底层之外别无选择。
+
+那么它能做哪些视图不能做的呢？这里有一些 UIView 没有暴露出来的CALayer的功能：
+阴影，圆角，带颜色的边框 
+3D变换 
+非矩形范围 
+透明遮罩 
+多级非线性动画
+
+==========寄宿图
+寄宿图（即图层中包含的图）
+3.1 contents属性
+CALayer 有一个属性叫做 contents ，这个属性的类型被定义为id，意味着它可以是任何类型的对象。
+在这种情况下，可以给 contents 属性赋任何值，app 仍然能够编译通过。但是，在实践中，如果给 contents 赋的不是CGImage， 那么得到的图层将是空白的。
+contents 这个奇怪的表现是由Mac OS的历史原因造成的。它之所以被定义为id 类型，是因为在Mac OS系统上，这个属性对CGImage和NSImage类型的值都起作 用。如果你试图在iOS平台上将UIImage的值赋给它，只能得到一个空白的图层。
+
+事实上，真正要赋值的类型应该是CGImageRef，它是一个指向CGImage结构的指针。UIImage有一个CGImage属 性，它返回一个"CGImageRef",如果想把这个值直接赋值给CALayer 的 contents ，那将会得到一个编译错误。因为CGImageRef并不是一个真正的 Cocoa对象，而是一个Core Foundation类型。
+
+尽管Core Foundation类型跟Cocoa对象在运行时貌似很像（被称作toll-free bridging），他们并不是类型兼容的，不过你可以通过bridged关键字转换。
+如果要 给图层的寄宿图赋值，你可以按照以下这个方法：
+layer.contents = (__bridge id)image.CGImage; 
+
+3.2 contentGravity属性
+在使用UIImageView 的时候遇到过同样的问题，解决方法就是把 contentMode 属性设置成更合适的 值
+CALayer与 contentMode 对应的属性叫做 contentsGravity
+
+3.3 Custom Drawing
+给 contents 赋CGImage的值不是唯一的设置寄宿图的方法。也可以直接 用Core Graphics直接绘制寄宿图。能够通过继承UIView并实现 -drawRect: 方法 来自定义绘制。
+
+-drawRect: 方法没有默认的实现，因为对UIView来说，寄宿图并不是必须 的，它不在意那到底是单调的颜色还是有一个图片的实例。
+如果UIView检测到 - drawRect: 方法被调用了，它就会为视图分配一个寄宿图，这个寄宿图的像素尺 寸等于视图大小乘以 contentsScale 的值。
+
+如果不需要寄宿图，那就不要创建这个方法了，这会造成CPU资源和内存的浪费，
+###这也是为什么苹果建议：如果没有自定义绘制的任务就不要在子类中写一个空的-drawRect:方法。###
+
+当视图在屏幕上出现的时候 -drawRect: 方法就会被自动调用。 
+- drawRect: 方法里面的代码利用Core Graphics去绘制一个寄宿图，然后内容就会被缓存起来直到它需要被更新（通常是因为开发者调用了 -setNeedsDisplay 方 法，尽管影响到表现效果的属性值被更改时，一些视图类型会被自动重绘， 
+如 bounds 属性）。虽然 -drawRect: 方法是一个UIView方法，事实上都是底层 的CALayer安排了重绘工作和保存了因此产生的图片。
+
+CALayer有一个可选的 delegate 属性，实现了 CALayerDelegate 协议，当 CALayer需要一个内容特定的信息时，就会从协议中请求。
+CALayerDelegate是一 个非正式协议，其实就是说没有CALayerDelegate @protocol可以让你在类里面引用啦。你只需要调用你想调用的方法，CALayer会帮你做剩下的。
+
+当需要被重绘时，CALayer会请求它的代理给他一个寄宿图来显示。它通过调用 下面这个方法做到的:
+(void)displayLayer:(CALayerCALayer *)layer;
+如果代理不实现 -displayLayer: 方法， CALayer就会转而尝试调用下面这个方法：
+- (void)drawLayer:(CALayer *)layer inContext:(CGContextRef)ctx;
+
+在调用这个方法之前，CALayer创建了一个合适尺寸的空寄宿图（尺寸 由 bounds 和 contentsScale 决定）和一个Core Graphics的绘制上下文环境， 为绘制寄宿图做准备，他作为ctx参数传入。代码如下：
+import UIKit
+
+class ViewController: UIViewController {
+    lazy var v: UIView = {
+        let v = UIView()
+        v.backgroundColor = .white
+        v.frame = CGRect.init(x: UIScreen.main.bounds.size.width / 2 - 100 , y: UIScreen.main.bounds.size.height / 2 - 100, width: 200, height: 200)
+        return v
+    }()
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        self.view.addSubview(self.v)
+        
+        let blueLayer = CALayer()
+        blueLayer.frame = CGRect.init(x: 50, y: 50, width: 100, height: 100)
+        blueLayer.backgroundColor = UIColor.blue.cgColor
+        blueLayer.delegate = self
+        self.v.layer.addSublayer(blueLayer)
+        
+        // force layer to redraw
+        blueLayer.display()
+        
+    }
+    
+
+}
+
+extension ViewController: CALayerDelegate {
+    func draw(_ layer: CALayer, in ctx: CGContext) {
+        ctx.setLineWidth(10)
+        ctx.setStrokeColor(UIColor.red.cgColor)
+        ctx.strokeEllipse(in: layer.bounds)
+        
+    }
+}
+
+当使用寄宿了视图的图层的时候，你也不必实现 -displayLayer: 和 - drawLayer:inContext: 方法来绘制你的寄宿图。
+通常做法是实现UIView的 - drawRect: 方法，UIView就会帮你做完剩下的工作，包括在需要重绘的时候调 用 -display 方法。
+
+==========图层几何学
+4.1 布局
+UIView 有三个比较重要的布局属 性： frame ， bounds 和 center ， CALayer 对应地叫 做 frame ， bounds 和 position 。为了能清楚区分，图层用了“position”，视图用了“center”，但是都代表同样的值。
+
+frame 代表了图层的外部坐标（也就是在父图层上占据的空间）， bounds 是 内部坐标（{0, 0}通常是图层的左上角）， center 和 position 都代表了相对于 父图层 anchorPoint 所在的位置。
+对于视图或者图层来说， frame 并不是一个非常清晰的属性，它其实是一个虚拟属性，是根据 bounds ， position 和 transform 计算而来，所以当其中任何一个值发生改变，frame都会变化。相反，改变frame的值同样会影响到当中的值。
+
+记住当对图层做变换的时候，比如旋转或者缩放， frame 实际上代表了覆盖在 图层旋转之后的整个轴对齐的矩形区域，也就是说 frame 的宽高可能 和 bounds 的宽高不再一致了
+
+4.2 锚点
+默认来说， anchorPoint 位于图层的中点，所以图层的将会以这个点为中心放置。 anchorPoint 属性并没有被 UIView 接口暴露出来，这也是视图的position 属性被叫做“center”的原因。
+但是图层的 anchorPoint 可以被移动，比如可以把 它置于图层 frame 的左上角，于是图层的内容将会向右下角的 position 方向移动，而不是居中了。
+当改变了 anchorPoint ， position 属性保持固定的值并没 有发生改变，但是 frame 却移动了。
+
+4.3 坐标系
+和视图一样，图层在图层树当中也是相对于父图层按层级关系放置，一个图层 的 position 依赖于它父图层的 bounds ，如果父图层发生了移动，它的所有子 图层也会跟着移动。 
+这样对于放置图层会更加方便，因为你可以通过移动根图层来将它的子图层作为一个整体来移动，但是有时候需要知道一个图层的绝对位置，或者是相对于另一个图层的位置，而不是它当前父图层的位置。 
+
+CALayer 给不同坐标系之间的图层转换提供了一些工具类方法：
+- (CGPoint)convertPoint:(CGPoint)point fromLayer:(CALayer *)layer;
+- (CGPoint)convertPoint:(CGPoint)point toLayer:(CALayer *)layer; 
+- (CGRect)convertRect:(CGRect)rect fromLayer:(CALayer *)layer; 
+- (CGRect)convertRect:(CGRect)rect toLayer:(CALayer *)layer;
+
+这些方法可以把定义在一个图层坐标系下的点或者矩形转换成另一个图层坐标系下 的点或者矩形。
+
+Z坐标轴:
+和 UIView 严格的二维坐标系不同， CALayer 存在于一个三维空间当中。
+除了已经讨论过的 position 和 anchorPoint 属性之外， CALayer 还有另外两个属性， zPosition 和 anchorPointZ ，二者都是在Z轴上描述图层位置的浮点 
+
+### zPosition 最实用的功能就是改变图层的显示顺序了。###
+
+4.4 Hit Testing
+CALayer 并不关心任何响应链事件，所以不能直接处理触摸事件或者手势。但是它有一系列的方法处理事件： -containsPoint:  和 -hitTest:
+-containsPoint: 接受一个在本图层坐标系下的 CGPoint ，如果这个点在图层 frame 范围内就返回 YES 。也就是使用 -containsPoint: 方法来判断到底是红色还是蓝色的图层被触摸了
+这需要把触摸坐标转换成每个图层坐标系下的坐标
+4.4.1 使用containsPoint判断被点击的图层
+class ViewController: UIViewController {
+    
+    lazy var blueLayer = CALayer()
+    lazy var v: UIView = {
+        let v = UIView()
+        v.backgroundColor = .red
+        v.frame = CGRect.init(x: UIScreen.main.bounds.size.width / 2 - 100 , y: UIScreen.main.bounds.size.height / 2 - 100, width: 200, height: 200)
+        return v
+    }()
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        self.view.addSubview(self.v)
+        
+        let blueLayer = CALayer()
+        blueLayer.frame = CGRect.init(x: 50, y: 50, width: 100, height: 100)
+        blueLayer.backgroundColor = UIColor.blue.cgColor
+        blueLayer.delegate = self
+        self.blueLayer = blueLayer
+        self.v.layer.addSublayer(blueLayer)
+
+    }
+    
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        //得到在主view中的position
+        guard var point = touches.first?.location(in: self.view) else { return }
+        //转换到v.layer的位置
+        point = self.v.layer.convert(point, from: self.view.layer)
+        if self.v.layer.contains(point) {
+            point = self.blueLayer.convert(point, from: self.v.layer)
+            if self.blueLayer.contains(point) {
+                print("点击了蓝色")
+            } else {
+                print("点击了红色")
+            }
+        }
+    }
+}
+
+4.4.2 使用hitTest方法
+**
+-hitTest: 方法同样接受一个 CGPoint 类型参数，而不是 BOOL 类型，它返回图层本身，或者包含这个坐标点的叶子节点图层。
+这意味着不再需要像使用 - containsPoint: 那样，人工地在每个子图层变换或者测试点击的坐标。如果这个点在最外面图层的范围之外，则返回nil。
+**
+
+==========视觉效果
+组透明:
+UIView有一个叫做 alpha 的属性来确定视图的透明度。CALayer有一个等同的属性叫做 opacity ，这两个属性都是影响子层级的。也就是说，如果给一个图层设置了opacity 属性，那它的子图层都会受此影响。
+
+这是由透明度的混合叠加造成的，当显示一个50%透明度的图层时，图层的每个像素都会一半显示自己的颜色，另一半显示图层下面的颜色。
+这是正常的透明度的表现。但是如果图层包含一个同样显示50%透明的子图层时，所看到的视图， 50%来自子视图，25%来了图层本身的颜色，另外的25%则来自背景色。
+
+可以设置CALayer的一个叫做 shouldRasterize 属性来实现组透明的效果，如果它被设置为YES，在应用透明度之前，图层及 其子图层都会被整合成一个整体的图片，这样就没有透明度混合的问题了
+button2.layer.shouldRasterize = YES; 
+
+==========变换
+将要研究可以用来对图层旋转，摆放或者扭曲的CGAffineTransform ，以及可以将扁平物体转换成三维空间对象 的 CATransform3D。
+
+6.1 仿射变换
+创建一个CGAffineTransform
+Core Graphics提供了一系 列函数，对完全没有数学基础的开发者也能够简单地做一些变换。如下几个函数都创建了一个 CGAffineTransform 实例：
+CGAffineTransformMakeRotation(CGFloat angle) 
+CGAffineTransformMakeScale(CGFloat sx, CGFloat sy) 
+CGAffineTransformMakeTranslation(CGFloat tx, CGFloat ty)
+
+旋转和缩放变换都可以很好解释--分别旋转或者缩放一个向量的值。平移变换是指每个点都移动了向量指定的x或者y值--所以如果向量代表了一个点，那它就平移了这个点的距离。
+
+需求：将原始视图旋转45角度
+UIView 可以通过设置 transform 属性做变换，但实际上它只是封装了内部图层 的变换。 
+CALayer 同样也有一个 transform 属性，但它的类型是 CATransform3D ，而不是 CGAffineTransform ， CALayer 对应 于 UIView 的 transform 属性叫做 affineTransform 
+
+CGAffineTransform transform = CGAffineTransformMakeRotation(M_PI_4); 
+self.layerView.layer.affineTransform = transform;
+
+注意我们使用的旋转常量是 M_PI_4 ，而不是你想象的45，因为iOS的变换函数使 用弧度而不是角度作为单位。弧度用数学常量pi的倍数表示，一个pi代表180度，所 以四分之一的pi就是45度。
+C的数学函数库（iOS会自动引入）提供了pi的一些简便的换算， M_PI_4 于是就 是pi的四分之一，如果对换算不太清楚的话，可以用如下的宏做换算：
+#define RADIANS_TO_DEGREES(x) ((x)/M_PI*180.0)
+
+6.2 混合变换
+Core Graphics提供了一系列的函数可以在一个变换的基础上做更深层次的变换，
+如果做一个既要缩放又要旋转的变换，这就会非常有用了。
+
+CGAffineTransformRotate(CGAffineTransform t, CGFloat angle) 
+CGAffineTransformScale(CGAffineTransform t, CGFloat sx, CGFloat sy) 
+CGAffineTransformTranslate(CGAffineTransform t, CGFloat tx, CGFloat ty)
+
+当操纵一个变换的时候，初始生成一个什么都不做的变换很重要--也就是创建一 个 CGAffineTransform 类型的空值，矩阵论中称作单位矩阵，
+###Core Graphics同样也提供了一个方便的常量：CGAffineTransformIdentity###
+
+最后，如果需要混合两个已经存在的变换矩阵，就可以使用如下方法，在两个变换的基础上创建一个新的变换：
+CGAffineTransformConcat(CGAffineTransform t1, CGAffineTransform t2);
+
+使用若干方法创建一个复合变换:
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    UIView *v = [[UIView alloc]init];
+    [self.view addSubview: v];
+    v.backgroundColor = UIColor.redColor;
+    v.frame = CGRectMake(150, 150, 100, 100);
+    
+    CGAffineTransform transform = CGAffineTransformIdentity;
+    //scale by 50%
+    transform = CGAffineTransformScale(transform, 0.5, 0.5);
+    //rotate by 30 degrees
+    transform = CGAffineTransformRotate(transform, M_PI / 180.0 * 30.0);
+    //translate by 200 points
+    transform = CGAffineTransformTranslate(transform, 200, 0);
+    //apply transform to layer
+    v.layer.affineTransform = transform;    
+}
+
+6.3 3D变换
+CG的前缀告诉我们， CGAffineTransform 类型属于Core Graphics框架，Core Graphics实际上是一个严格意义上的2D绘图API，并且 CGAffineTransform 仅仅对2D变换有效。
+
+和 CGAffineTransform 类似， CATransform3D 也是一个矩阵，但是和2x3的矩 阵不同， CATransform3D 是一个可以在3维空间内做变换的4x4的矩阵。
+
+和 CGAffineTransform 矩阵类似，Core Animation提供了一系列的方法用来创建和组合 CATransform3D 类型的矩阵，和Core Graphics的函数类似，
+但是3D的平移和旋转多处了一个 z 参数，并且旋转函数除了 angle 之外多出 了 x , y , z 三个参数，分别决定了每个坐标轴方向上的旋转：
+
+CATransform3DMakeRotation(CGFloat angle, CGFloat x, CGFloat y, CGFloat z) 
+CATransform3DMakeScale(CGFloat sx, CGFloat sy, CGFloat sz) 
+CATransform3DMakeTranslation(Gloat tx, CGFloat ty, CGFloat tz)
+
+Z轴和这两个轴分别垂直，指向视角外为正方向。
+
+对视图内的图层绕Y轴做45度角的旋转
+CATransform3D transform = CATransform3DMakeRotation(M_PI_4, 0, 1, 0);
+v.layer.transform = transform;
+
+透视投影:
+CATransform3D 的透视效果通过一个矩阵中一个很简单的元素来控 制： m34 。 m34用于按比例缩放X和Y的值来计算到底要离视角多远。
+
+m34 的默认值是0，可以通过设置 m34 为-1.0 / d 来应用透视效果， d 代表了想象中视角相机和屏幕之间的距离，以像素为单位，那应该如何计算这个距离呢？
+实际上并不需要，大概估算一个就好了**【通常500-1000就已经很好了】**
+
+对图片做透视效果:
+override func viewDidLoad() {
+    super.viewDidLoad()
+    self.view.addSubview(imgView)
+    
+    //create a new transform
+    var transform: CATransform3D = CATransform3DIdentity
+    
+    // 透视效果
+    transform.m34 = -1.0 / 500
+    
+    //rotate by 45 degrees along the Y axis
+    transform = CATransform3DRotate(transform, .pi / 4, 0, 1, 0)
+    
+    //apply to layer
+    self.imgView.layer.transform = transform
+    
+}
+
+6.4 固体对象
+用六个独立的视图来构建一个立方体的各个面。
+
+做一个正方体:
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    self.faces = @[_view0,_view1,_view2,_view3,_view4,_view5];
+    
+    //父View的layer图层
+    CATransform3D perspective = CATransform3DIdentity;
+    perspective.m34 = -1.0 / 500.0;
+    perspective = CATransform3DRotate(perspective, -M_PI_4, 1, 0, 0);
+    perspective = CATransform3DRotate(perspective, -M_PI_4, 0, 1, 0);
+    self.containerView.layer.sublayerTransform = perspective;
+    
+    CATransform3D transform = CATransform3DMakeTranslation(0, 0, 100);
+    [self addFace:0 withTransform:transform];
+    
+    //add cube face 2
+    transform = CATransform3DMakeTranslation(100, 0, 0);
+    transform = CATransform3DRotate(transform, M_PI_2, 0, 1, 0);
+    [self addFace:1 withTransform:transform];
+
+    //add cube face 3
+    transform = CATransform3DMakeTranslation(0, -100, 0);
+    transform = CATransform3DRotate(transform, M_PI_2, 1, 0, 0);
+    [self addFace:2 withTransform:transform];
+
+    //add cube face 4
+    transform = CATransform3DMakeTranslation(0, 100, 0);
+    transform = CATransform3DRotate(transform, -M_PI_2, 1, 0, 0);
+    [self addFace:3 withTransform:transform];
+    
+    //add cube face 5
+    transform = CATransform3DMakeTranslation(-100, 0, 0);
+    transform = CATransform3DRotate(transform, -M_PI_2, 0, 1, 0);
+    [self addFace:4 withTransform:transform];
+    
+    //add cube face 6
+    transform = CATransform3DMakeTranslation(0, 0, -100);
+    transform = CATransform3DRotate(transform, M_PI, 0, 1, 0);
+    [self addFace:5 withTransform:transform];
+    
+}
+- (void)addFace:(NSInteger)index withTransform:(CATransform3D)transform{
+    //获取face视图并将其添加到容器中
+    UIView *face = self.faces[index];
+    [self.containerView addSubview:face];
+    
+    //将face视图放在容器的中心
+    CGSize containerSize = self.containerView.bounds.size;
+    face.center = CGPointMake(containerSize.width / 2.0, containerSize.height / 2.0);
+    
+    //添加transform
+    face.layer.transform = transform;
+    
+}
+
+==========专用图层
+7.1 CAShapeLayer
+CAShapeLayer 是一个通过矢量图形而不是bitmap来绘制的图层子类。你指定诸如颜色和线宽等属性，用 CGPath 来定义想要绘制的图形，最 后CAShapeLayer 就自动渲染出来了。
+当然也可以用Core Graphics直接向原 始的 CALyer 的内容中绘制一个路径，相比直下，使用 CAShapeLayer 有以下一些优点：
+渲染快速。 CAShapeLayer 使用了硬件加速，绘制同一图形会比用Core Graphics快很多。 
+**高效使用内存。**一个 CAShapeLayer 不需要像普通 CALayer 一样创建一个寄宿图形，所以无论有多大，都不会占用太多的内存。 
+**不会被图层边界剪裁掉。**一个 CAShapeLayer 可以在边界之外绘制。你的图层路径不会像在使用Core Graphics的普通 CALayer 一样被剪裁掉。 
+**不会出现像素化。**当你给 CAShapeLayer 做3D变换时，它不像一个有寄宿图 的普通图层一样变得像素化。
+
+创建一个CGPath
+CAShapeLayer 可以用来绘制所有能够通过 CGPath 来表示的形状。
+这个形状不一定要闭合，图层路径也不一定要不可破，事实上你可以在一个图层上绘制好几个 不同的形状。
+你可以控制一些属性比如 lineWith（线宽，用点表示单 位），lineCap （线条结尾的样子），和 lineJoin （线条之间的结合点的样 子）；但是在图层层面你只有一次机会设置这些属性。
+如果你想用不同颜色或风格来绘制多个形状，就不得不为每个形状准备一个图层了。
+
+用CAShapeLayer绘制一个火柴人:
+class ViewController: UIViewController {
+
+    lazy var containV: UIView = {
+        let v = UIView()
+        v.backgroundColor = .white
+        v.frame = CGRect(x: 50, y: 150, width: 300, height: 300)
+        return v
+    }()
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        self.view.addSubview(containV)
+        
+        let path = UIBezierPath()
+        path.move(to: CGPoint(x: 175, y: 100))
+        
+        path.addArc(withCenter: CGPoint(x: 150, y: 100), radius: 25, startAngle: 0, endAngle: 2 * .pi, clockwise: true)
+        path.move(to: CGPoint(x: 150, y: 125))
+        path.addLine(to: CGPoint(x: 150, y: 175))
+        path.addLine(to: CGPoint(x: 125, y: 225))
+        path.move(to: CGPoint(x: 150, y: 175))
+        path.addLine(to: CGPoint(x: 175, y: 225))
+        path.move(to: CGPoint(x: 100, y: 150))
+        path.addLine(to: CGPoint(x: 200, y: 150))
+        
+        let shapeLayer = CAShapeLayer()
+        shapeLayer.strokeColor = UIColor.red.cgColor
+        shapeLayer.fillColor = UIColor.clear.cgColor
+        shapeLayer.lineWidth = 5
+        shapeLayer.lineJoin = .round
+        shapeLayer.lineCap = .round
+        shapeLayer.path = path.cgPath
+
+        self.containV.layer.addSublayer(shapeLayer)
+    }
+}
+
+用UIBezierPath绘制圆角:
+/// 设置圆角
+///
+/// - Parameters:
+///   - borderColor: 边框颜色
+///   - borderWidth: 边框宽
+///   - raddi: 弧度
+///   - corners: 圆角位置
+///   - isDotted: 是否虚线边框
+func setRoundingCorners(borderColor: UIColor,
+                        borderWidth: CGFloat = 1.0,
+                        raddi: CGFloat = 4.0,
+                        corners: UIRectCorner = [.topLeft, .bottomRight],
+                        isDotted: Bool = false) {
+    
+    let path = UIBezierPath(roundedRect: self.bounds, byRoundingCorners: corners, cornerRadii: CGSize(width: raddi, height: raddi))
+    // 圆角
+    let maskLayer = CAShapeLayer()
+    maskLayer.frame = bounds
+    maskLayer.path = path.cgPath
+    layer.mask = maskLayer
+    
+    // 边框
+    let borderLayer = CAShapeLayer()
+    borderLayer.frame = bounds
+    borderLayer.path = path.cgPath
+    borderLayer.lineWidth = borderWidth
+    borderLayer.fillColor = UIColor.clear.cgColor
+    borderLayer.strokeColor = borderColor.cgColor
+    if isDotted {
+        borderLayer.lineDashPattern = [NSNumber(value: 4), NSNumber(value: 2)]
+    }
+    layer.addSublayer(borderLayer)
+}
+
+如果想对上面的绘制【火柴】加一个动画，可使用动画:
+func addAnimation(layer: CALayer, duration: TimeInterval) {
+    let animation = CABasicAnimation(keyPath: "strokeEnd")
+    animation.fromValue = 0
+    animation.toValue = 1
+    animation.duration = duration
+    layer.add(animation, forKey: "")
+}
+
+7.2 CATextLayer
+Core Animation提供了一个 CALayer 的子类 CATextLayer ，它以图层的形式包含了 UILabel 几乎所有的绘制特性，并且额外提供了一些新的特性。
+CATextLayer 也要比 UILabel 渲染得快得多。很少有人知道在iOS 6及之前的版本， UILabel 其实是通过WebKit来实现绘制的，这样就造成了当有很多文字的时候就会有极大的性能压力。
+而 CATextLayer 使用了Core text，并且渲染得 非常快。
+
+用CATextLayer来实现一个UILabel:
+class ViewController: UIViewController {
+    
+    lazy var containV: UIView = {
+        let v = UIView()
+        v.frame = CGRect(x: 20, y: 150, width: 300, height: 500)
+        return v
+    }()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        self.view.addSubview(containV)
+        
+        let textLayer = CATextLayer()
+        textLayer.frame = self.containV.bounds
+        self.containV.layer.addSublayer(textLayer)
+        
+        //字体颜色
+        textLayer.foregroundColor = UIColor.black.cgColor
+        //字符串对齐方式
+        textLayer.alignmentMode = .justified
+        //自动换行
+        textLayer.isWrapped = true
+        textLayer.font = UIFont.systemFont(ofSize: 15)
+        
+        let str = "文章1984年出生于陕西省西安市。上高三的时候，文章被保送到四川师范大学艺术学院学习影视表演，但是他并未进入这个学校，而是决心去北京学习。在填写大学志愿之前，文章专门去北京考察了中国两大艺术院校—北京电影学院和中央戏剧学院。回到西安之后，文章不顾父母阻拦，将大学志愿从一本到专科总共八个志愿全部填成中央戏剧学院。2002年文章被中央戏剧学院表演系录取。"
+        textLayer.string = str
+        
+    }
+}
+
+7.3 CATransformLayer
+当在构造复杂的3D事物的时候，如果能够组织独立元素就太方便了。CATransformLayer 解决了这个问题， CATransformLayer不同于普通 的 CALayer ，
+因为它不能显示它自己的内容。只有当存在了一个能作用域子图层 的变换它才真正存在。 CATransformLayer 并不平面化它的子图层，所以它能够用于构造一个层级的3D结构。
+
+用CATransformLayer装配一个3D图层体系:
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    self.view.backgroundColor = [UIColor blackColor];
+    
+    //set up the perspective transform(设置投影矩阵)
+    CATransform3D pt = CATransform3DIdentity;
+    pt.m34 = -1.0 / 500.0;
+    self.containerView.layer.sublayerTransform = pt;
+    
+    //set up the transform for cube 1 and add it
+    CATransform3D c1t = CATransform3DIdentity;
+    c1t = CATransform3DTranslate(c1t, -100, 0, 0);
+    CALayer *cube1 = [self cubeWithTransform:c1t];
+    [self.containerView.layer addSublayer:cube1];
+    
+    //set up the transform for cube 2 and add it
+    CATransform3D c2t = CATransform3DIdentity;
+    c2t = CATransform3DTranslate(c2t, 100, 0, 0);
+    c2t = CATransform3DRotate(c2t, -M_PI_4, 1, 0, 0);
+    c2t = CATransform3DRotate(c2t, -M_PI_4, 0, 1, 0);
+    CALayer *cube2 = [self cubeWithTransform:c2t];
+    [self.containerView.layer addSublayer:cube2];
+    
+}
+
+- (CALayer *)faceWithTransform:(CATransform3D)transform {
+    //create cube face layer
+    CALayer *face = [CALayer layer];
+    face.frame = CGRectMake(-50, -50, 100, 100);
+    
+    //apply a random color
+    CGFloat red = (rand() / (double)INT_MAX);
+    CGFloat green = (rand() / (double)INT_MAX);
+    CGFloat blue = (rand() / (double)INT_MAX);
+    face.backgroundColor = [UIColor colorWithRed:red green:green blue:blue alpha:1.0].CGColor;
+    face.transform = transform;
+    return face;
+}
+
+- (CALayer *)cubeWithTransform:(CATransform3D)transform {
+    //create cube layer
+    CATransformLayer *cube = [CATransformLayer layer];
+    
+    //add cube face 1
+    CATransform3D ct = CATransform3DMakeTranslation(0, 0, 50);
+    [cube addSublayer:[self faceWithTransform:ct]];
+    
+    //add cube face 2
+    ct = CATransform3DMakeTranslation(50, 0, 0);
+    ct = CATransform3DRotate(ct, M_PI_2, 0, 1, 0);
+    [cube addSublayer:[self faceWithTransform:ct]];
+    
+    //add cube face 3
+    ct = CATransform3DMakeTranslation(0, -50, 0);
+    ct = CATransform3DRotate(ct, M_PI_2, 1, 0, 0);
+    [cube addSublayer:[self faceWithTransform:ct]];
+    
+    //add cube face 4
+    ct = CATransform3DMakeTranslation(0, 50, 0);
+    ct = CATransform3DRotate(ct, -M_PI_2, 1, 0, 0);
+    [cube addSublayer:[self faceWithTransform:ct]];
+    
+    //add cube face 5
+    ct = CATransform3DMakeTranslation(-50, 0, 0);
+    ct = CATransform3DRotate(ct, -M_PI_2, 0, 1, 0);
+    [cube addSublayer:[self faceWithTransform:ct]];
+    
+    //add cube face 6
+    ct = CATransform3DMakeTranslation(0, 0, -50);
+    ct = CATransform3DRotate(ct, M_PI, 0, 1, 0);
+    [cube addSublayer:[self faceWithTransform:ct]];
+    
+    //center the cube layer within the container(将立方体层至于容器中心)
+    CGSize containerSize = self.containerView.bounds.size;
+    cube.position = CGPointMake(containerSize.width / 2.0, containerSize.height / 2.0);
+    
+    //apply the transform and return
+    cube.transform = transform;
+    
+    return cube;
+}
+
+7.4 CAGradientLayer
+CAGradientLayer 是用来生成两种或更多颜色平滑渐变的。
+用Core Graphics复制一个 CAGradientLayer 并将内容绘制到一个普通图层的寄宿图也是有可能的， 
+但是 CAGradientLayer 的真正好处在于绘制使用了硬件加速
+
+7.4.1 基础渐变
+CAGradientLayer 也有 startPoint 和 endPoint 属性，他们决定了渐变的方向。这两个参数是以单位坐标系进行的定义，所以左上角坐标是{0, 0}，右下角坐标 是{1, 1}
+
+简单的两种颜色的对角线渐变:
+class ViewController: UIViewController {
+    lazy var containV: UIView = {
+        let v = UIView()
+        v.frame = CGRect(x: 80, y: 150, width: 200, height: 200)
+        return v
+    }()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        self.view.addSubview(containV)
+        
+        let gradientLayer: CAGradientLayer = CAGradientLayer()
+        gradientLayer.frame = self.self.containV.bounds
+        self.containV.layer.addSublayer(gradientLayer)
+        
+        let startColor = UIColor.red.cgColor
+        let endColor = UIColor.blue.cgColor
+        gradientLayer.colors = [startColor,endColor]
+        
+        gradientLayer.startPoint = CGPoint(x: 0, y: 0)
+        gradientLayer.endPoint = CGPoint(x: 1, y: 1)
+        
+    }
+}
+
+7.4.2 多重渐变
+如果愿意， colors 属性可以包含很多颜色，所以创建一个彩虹一样的多重渐变也是很简单的。
+默认情况下，这些颜色在空间上均匀地被渲染，但是我们可以用 locations 属性来调整空间。 
+locations 属性是一个浮点数值的数组 （以 NSNumber 包装）。这些浮点数定义了 colors 属性中每个不同颜色的位 置，同样的，也是以单位坐标系进行标定。
+0.0代表着渐变的开始，1.0代表着结 束。
+
+locations 数组并不是强制要求的，但是如果你给它赋值了就一定要确保 locations 的数组大小和 colors 数组大小一定要相同，否则你将会得到一个空白的渐变。
+现在变成了从红到黄最 后到绿色的渐变。 locations 数组指定了0.0，0.25和0.5三个数值，这样这三个渐变就有点像挤在了左上角。
+
+class ViewController: UIViewController {
+    lazy var containV: UIView = {
+        let v = UIView()
+        v.frame = CGRect(x: 80, y: 150, width: 200, height: 200)
+        return v
+    }()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        self.view.addSubview(containV)
+        
+        let gradientLayer: CAGradientLayer = CAGradientLayer()
+        gradientLayer.frame = self.self.containV.bounds
+        self.containV.layer.addSublayer(gradientLayer)
+        
+        let startColor = UIColor.red.cgColor
+        let minddleColor = UIColor.yellow.cgColor
+        let endColor = UIColor.green.cgColor
+        
+        gradientLayer.colors = [startColor, minddleColor, endColor]
+        
+        gradientLayer.locations = [0.0, 0.25, 0.5]
+        
+        gradientLayer.startPoint = CGPoint(x: 0, y: 0)
+        gradientLayer.endPoint = CGPoint(x: 1, y: 1)
+        
+    }
+    
+}
+
+7.5 CAReplicatorLayer
+CAReplicatorLayer 的目的是为了高效生成许多相似的图层。它会绘制一个或多个图层的子图层，并在每个复制体上应用不同的变换。
+
+7.5.1 重复图层【Repeating layers】
+在屏幕的中间创建了一个小白色方块图层，然后用 CAReplicatorLayer 生成十个图层组成一个圆圈。 instanceCount 属性指定 了图层需要重复多少次。 
+instanceTransform 指定了一个 CATransform3D 3D 变换（这种情况下，下一图层的位移和旋转将会移动到圆圈的下一个点）。
+
+用CAReplicatorLayer重复图层:
+override func viewDidLoad() {
+    super.viewDidLoad()
+    self.view.addSubview(containV)
+    
+    let replicator = CAReplicatorLayer()
+    replicator.frame = self.containV.bounds
+    self.containV.layer.addSublayer(replicator)
+    
+    replicator.instanceCount = 10
+    
+    var transform: CATransform3D = CATransform3DIdentity
+    transform = CATransform3DTranslate(transform, 0, 200, 0)
+    transform = CATransform3DRotate(transform, .pi/5, 0, 0, 1)
+    transform = CATransform3DTranslate(transform, 0, -200, 0)
+    
+    replicator.instanceBlueOffset = -0.1
+    replicator.instanceGreenOffset = -0.1
+    
+    let layer = CALayer()
+    layer.frame = CGRect(x: 0, y: 0, width: 100, height: 100)
+    layer.backgroundColor = UIColor.white.cgColor
+    replicator.addSublayer(layer)
+    
+}
+
+7.5.2 反射
+使用 CAReplicatorLayer 并应用一个负比例变换于一个复制图层，就可以创建指定视图（或整个视图层次）内容的镜像图片
+
+用CAReplicatorLayer自动绘制反射:
+-(void)setUp {
+    CAReplicatorLayer *layer = (CAReplicatorLayer *)self.layer;
+    layer.instanceCount = 2;
+    
+    CATransform3D transform = CATransform3DIdentity;
+    //间隔
+    CGFloat veticalOffset = self.bounds.size.height + 2;
+    transform = CATransform3DTranslate(transform, 0, veticalOffset, 0);
+    transform = CATransform3DScale(transform, -1, -1, 0);
+    layer.instanceTransform = transform;
+    
+    //K-0.7= 0.3
+    layer.instanceAlphaOffset = -0.7;
+    
+}
+
+7.6 CAEmitterLayer
+在iOS 5中，苹果引入了一个新的 CALayer子类叫 做 CAEmitterLayer 。 CAEmitterLayer 是一个高性能的粒子引擎，被用来创建 实时例子动画如：烟雾，火，雨等等这些效果。
+
+==========隐式动画
+在做动画时，会发现动画会被平滑的完成，而不是跳变，其实这就是隐式动画。是因为并没有指定任何动画的类型。我们仅仅改变了一个属性，然后Core Animation来决定如何并且何时去做动画。
+
+8.1 事务
+但当你改变一个属性，Core Animation是如何判断动画类型和持续时间的呢？实际 上动画执行的时间取决于当前事务的设置，动画类型取决于图层行为。
+
+事务实际上是Core Animation用来包含一系列属性动画集合的机制，任何用指定事务去改变可以做动画的图层属性都不会立刻发生变化，而是当事务一旦提交的时候开始用一个动画过渡到新值。
+
+###事务是通过 CATransaction 类来做管理###
+不像你从它的命名预期的那样去管理一个简单的事务，而是管理了一叠你不能访问的事 务。 CATransaction 没有属性或者实例方法，并且也不能用 +alloc 和 - init 方法创建它。但是可以用 +begin 和 +commit 分别来入栈或者出栈。
+
+**
+任何可以做动画的图层属性都会被添加到栈顶的事务，你可以通 过 +setAnimationDuration: 方法设置当前事务的动画时间，或者通 过 +animationDuration 方法来获取值（默认0.25秒）
+**
+
+Core Animation在每个run loop周期中自动开始一次新的事务（run loop是iOS负责 收集用户输入，处理定时器或者网络事件并且重新绘制屏幕的东西），
+即使你不显 式的用 [CATransaction begin] 开始一次事务，任何在一次run loop循环中属性 的改变都会被集中起来，然后做一次0.25秒的动画。
+
+明白这些之后，就可以轻松修改变色动画的时间了。我们当然可以用当前事务 的 +setAnimationDuration: 方法来修改动画时间，但在这里首先起一个新 的事务，
+于是修改时间就不会有别的副作用。因为修改当前事务的时间可能会导致同一时刻别的动画（如屏幕旋转），所以最好还是在调整动画之前压入一个新的事务。
+
+如果用过 UIView 的动画方法做过一些动画效果，那么应该对这个模式不陌生。 UIView 有两个方法， +beginAnimations:context: 和 +commitAnimations ， 
+和 CATransaction 的 +begin 和 +commit 方法类似。实际上 在 +beginAnimations:context: 和 +commitAnimations 之间所有视图或者图 层属性的改变而做的动画都是由于设置了 CATransaction 的原因。
+
+8.2 图层行为
+隐式动画好像被 UIView 关联图层给禁用了。那么隐式动画是如何被UIKit禁用掉呢？
+
+我们知道Core Animation通常对 CALayer 的所有属性（可动画的属性）做动画， 但是 UIView 把它关联的图层的这个特性关闭了。为了更好说明这一点，我们需要知道隐式动画是如何实现的。 
+
+我们把改变属性时 CALayer 自动应用的动画称作行为，当 CALayer 的属性被修改时候，它会调用 -actionForKey: 方法，传递属性的名称。剩下的步骤如下：
+图层首先检测它是否有委托，并且是否实现 CALayerDelegate 协议指定的 - actionForLayer:forKey 方法。
+如果有，直接调用并返回结果。 如果没有委托，或者委托没有实现 -actionForLayer:forKey 方法，图层接 着检查包含属性名称对应行为映射的 actions 字典。 
+如果 actions字典 没有包含对应的属性，那么图层接着在它的 style 字典接 着搜索属性名。
+最后，如果在 style 里面也找不到对应的行为，那么图层将会直接调用定义 了每个属性的标准行为的 -defaultActionForKey: 方法。
+
+所以一轮完整的搜索结束之后， -actionForKey: 要么返回空（这种情况下将不会有动画发生），要么是 CAAction 协议对应的对象，最后 CALayer 拿这个结果去对先前和当前的值做动画。
+
+于是这就解释了UIKit是如何禁用隐式动画的：每个 UIView 对它关联的图层都扮演了一个委托，并且提供了 -actionForLayer:forKey 的实现方法。
+当不在一个动画块的实现中， UIView 对所有图层行为返回 nil ，但是在动画block范围之 内，它就返回了一个非空值。
+
+8.3 呈现于模型
+CALayer 的属性行为其实很不正常，因为改变一个图层的属性并没有立刻生效，而是通过一段时间渐变更新。这是怎么做到的呢？
+
+当你改变一个图层的属性，属性值的确是立刻更新的（如果你读取它的数据，你会发现它的值在你设置它的那一刻就已经生效了），
+但是屏幕上并没有马上发生改 变。这是因为你设置的属性并没有直接调整图层的外观，相反，他只是定义了图层动画结束之后将要变化的外观。
+
+当设置 CALayer 的属性，实际上是在定义当前事务结束之后图层如何显示的模 型。Core Animation扮演了一个控制器的角色，并且负责根据图层行为和事务设置去不断更新视图的这些属性在屏幕上的状态。
+
+每个图层属性的显示值都被存储在一个叫做呈现图层的独立图层当中，他可以通 过 -presentationLayer 方法来访问。
+这个呈现图层实际上是模型图层的复制， 但是它的属性值代表了在任何指定时刻当前外观效果。在呈现图层上调用 – modelLayer 将会返回它正在呈现所依赖的 CALayer 。
+
+一个移动的图层是如何通过数据模型呈现的？
+大多数情况下，不需要直接访问呈现图层，可以通过和模型图层的交互，来让 Core Animation更新显示。两种情况下呈现图层会变得很有用，一个是同步动画，一个是处理用户交互。
+如果你想让你做动画的图层响应用户输入，可以使用 -hitTest: 方法来判断指定图层是否被触摸，这时候对呈现图层而不是模型图层调用 -hitTest: 会显得更有意义，
+因为呈现图层代表了用户当前看到的图层位置presentationLayer，而不是当前动画结束之后的位置。
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    //create a red layer
+    self.colorLayer = [CALayer layer];
+    self.colorLayer.frame = CGRectMake(0, 0, 100, 100);
+    self.colorLayer.position = CGPointMake(self.view.bounds.size.width / 2, self.view.bounds.size.height / 2);
+    self.colorLayer.backgroundColor = [UIColor redColor].CGColor;
+    [self.view.layer addSublayer:self.colorLayer];
+    
+}
+- (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event {
+    //get the touch point
+    CGPoint point = [[touches anyObject] locationInView:self.view];
+    //check if we've tapped the moving layer
+    if ([self.colorLayer.presentationLayer hitTest:point]) {
+        //randomize the layer background color
+        CGFloat red = arc4random() / (CGFloat)INT_MAX;
+        CGFloat green = arc4random() / (CGFloat)INT_MAX;
+        CGFloat blue = arc4random() / (CGFloat)INT_MAX;
+        self.colorLayer.backgroundColor = [UIColor colorWithRed:red green:green blue:blue alpha:1.0].CGColor;
+        
+    } else {
+        //otherwise (slowly) move the layer to new position
+        [CATransaction begin];
+        [CATransaction setAnimationDuration:4.0];
+        self.colorLayer.position = point; [CATransaction commit];
+        
+    }
+    
+}
+
+==========显式动画
+显式动画，它能够对一些属性做指定的自定义动画，或者创建非线性动画，比如沿着任意一条曲线移动。
+
+9.1 属性动画
+9.1.1 CABaseAnimation
+使用CABaseAnimation可以实现视图的移动、旋转动画、缩小动画等
+
+/// 旋转
+///
+/// - Parameters:
+///   - angle: 旋转角度
+///   - duration: 动画时长
+func rotation(angle: CGFloat, duration: TimeInterval = 1.0) {
+    let rotationAnimation = CABasicAnimation(keyPath: "transform.rotation.z")
+    rotationAnimation.toValue = angle
+    rotationAnimation.duration = duration
+    rotationAnimation.isCumulative = true
+    rotationAnimation.repeatCount = 1
+    self.layer.add(rotationAnimation, forKey: "rotationAnimation")
+    DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + duration) {
+        self.layer.removeAllAnimations()
+    }
+}
+
+9.1.2 关键帧动画CAKeyframeAnimation
+CAKeyframeAnimation 是另一种UIKit没有暴露出来但功能强大的类。 
+和 CABasicAnimation 类似， CAKeyframeAnimation 同样 是 CAPropertyAnimation 的一个子类，它依然作用于单一的一个属性，但是 和 CABasicAnimation不一样的是，
+它不限制于设置一个起始和结束的值，而是可以根据一连串随意的值来做动画。
+
+9.2 动画组CAAnimationGroup
+CABasicAnimation 和 CAKeyframeAnimation 仅仅作用于单独的属性， 而 CAAnimationGroup 可以把这些动画组合在一起。 
+CAAnimationGroup 是另一个继承于CAAnimation 的子类，它添加了一个 animations 数组的属性，用来组合别的动画。
+
+9.3 过渡动画
+为了创建一个过渡动画，我们将使用 CATransition ，同样是另一 个CAAnimation 的子类，和别的子类不同， CATransition有一 个type 和 subtype 来标识变换效果。
+
+type 属性是一个 NSString 类型，可以被设置成如下类型：
+kCATransitionFade kCATransitionMoveIn kCATransitionPush kCATransitionReveal
+默认的过渡类型是 kCATransitionFade ，当你在改变图层属性之后，就创建了一个平滑的淡入淡出效果。
+
+9.4 在动画过程中取消动画
+可以用 -addAnimation:forKey: 方法中的 key 参数来在添加动 画之后检索一个动画，使用如下方法：
+- (CAAnimation *)animationForKey:(NSString *)key; 
+但并不支持在动画运行过程中修改动画，所以这个方法主要用来检测动画的属性， 或者判断它是否被添加到当前图层中。
+为了终止一个指定的动画，你可以用如下方法把它从图层移除掉：  
+    - (void)removeAnimationForKey:(NSString *)key; 
+或者移除所有动画：
+    - (void)removeAllAnimations;
+
+==========https://www.meiwen.com.cn/subject/vvlthhtx.html
+图层的2个属性指定了变换矩阵：transform 和 sublayerTransform。
+transform ： 是结合 anchorPoint（锚点）的位置来对图层和图层上的子图层进行变化。
+sublayerTransform：是结合anchorPoint（锚点）的位置来对图层的子图层进行变化，不包括本身。
+
+==========
+二维变换:
+二维变换，也即仿射变换，CGAffineTransform结构体类型中有6个参数：
+
+public struct CGAffineTransform {
+    public var a: CGFloat
+    public var b: CGFloat
+    public var c: CGFloat
+    public var d: CGFloat
+    public var tx: CGFloat
+    public var ty: CGFloat
+
+    public init()
+    public init(a: CGFloat, b: CGFloat, c: CGFloat, d: CGFloat, tx: CGFloat, ty: CGFloat)
+}
+
+三维变换CATransform3D
+public struct CATransform3D {
+
+    public var m11: CGFloat
+    public var m12: CGFloat
+    public var m13: CGFloat
+    public var m14: CGFloat
+    public var m21: CGFloat
+    public var m22: CGFloat
+    public var m23: CGFloat
+    public var m24: CGFloat
+    public var m31: CGFloat
+    public var m32: CGFloat
+    public var m33: CGFloat
+    public var m34: CGFloat
+    public var m41: CGFloat
+    public var m42: CGFloat
+    public var m43: CGFloat
+    public var m44: CGFloat
+
+    public init()
+
+    public init(m11: CGFloat, m12: CGFloat, m13: CGFloat, m14: CGFloat, m21: CGFloat, m22: CGFloat, m23: CGFloat, m24: CGFloat, m31: CGFloat, m32: CGFloat, m33: CGFloat, m34: CGFloat, m41: CGFloat, m42: CGFloat, m43: CGFloat, m44: CGFloat)
+}
+
+{m11, m12 , m13, m14
+m21, m22, m23, m24
+m31, m32, m33, m34
+m41, m42, m43, m44 }
+
+x' = m11x + m21y + m31z + m41
+y' = m12x + m22y + m32z + m42
+z' = m13x + m23y + m33z + m43
+(m14、m24和m34为各轴透视变换参数，一般单独设置，他们对m44的值产生影响，而m44对投影的图形在对应轴*方向产生线性影响，其初始值为1)
+
+从m11到m44定义的含义如下：
+m11：x轴方向进行缩放
+m12：和m21一起决定z轴的旋转
+m13:和m31一起决定y轴的旋转
+m14:
+m21:和m12一起决定z轴的旋转
+m22:y轴方向进行缩放
+m23:和m32一起决定x轴的旋转
+m24:
+m31:和m13一起决定y轴的旋转
+m32:和m23一起决定x轴的旋转
+m33:z轴方向进行缩放
+m34:透视效果m34= -1/D，D越小，透视效果越明显，必须在有旋转效果的前提下，才会看到透视效果
+m41:x轴方向进行平移
+m42:y轴方向进行平移
+m43:z轴方向进行平移
+m44:初始为1
+
+原始矩阵为：
+{1,  0 ,  0,  0
+  0,  1,  0,  0
+  0,  0,  1,  0
+  0,  0,  0,  1 }
+
+2.1 旋转 rotate
+绕Z轴
+{ cos(θ)  ，-sin(θ)   ， 0   ，0
+   sin(θ) ， cos(θ)   ， 0   ，0
+     0    ，   0      ， 1   ，0
+     0    ，   0      ， 0   ，1}
+
+绕Y轴
+{ cos(θ) ，0 ，sin(θ) ，0
+     0   ，1 ，  0    ，0
+ -sin(θ） ，0 ，cos(θ) ，0
+    0    ，0  ，   0  ，1}
+
+绕X轴
+{1  ，  0     ，  0      ，0
+ 0  ，cos(θ)  ，-sin(θ)  ，0
+ 0  ，sin(θ)  ，cos(θ)   ，0
+ 0  ，  0     ，  0      ，1}
+
+2.2 切变 shear
+沿X轴
+{ 1  ，k  ，0  ，0
+  0  ，1  ，0  ，0
+  0  ，0  ，1  ，0
+  0  ，0  ，0  ，1}
+沿Y轴
+{ 1  ，0  ，0  ，0
+  k  ，1  ，0  ，0
+  0  ，0  ，1  ，0
+  0  ，0  ，0  ，1}
+
+2.3 镜像
+基于Y-X平面
+{ 1 ，0  ，0  ，0
+ 0  ，1  ，0  ，0
+ 0  ，0  ，-1 ，0 
+ 0  ，0  ，0  ，1}
+基于X-Z平面
+{1  ，0  ，0   ，0 
+ 0  ，-1  ，0  ，0
+ 0  ，0  ，1   ，0
+ 0  ，0  ，0   ，1}
+基于Z-Y平面
+{ -1  ，0  ，0  ，0
+   0  ，1   ，0  ，0
+   0  ，0   ，1  ，0
+   0  ，0   ，0  ，1}
+2.4 针对z轴的透视投影
+m34 = -1/d
+
+d值决定了观察点的位置，d为正无穷大的时候，观察点在无穷远处，此时投影线垂直于投影平面，CATransform3D中m34的默认值为0，即观察点在无穷远处。m14,m24同理。
+
+当d为正的时候，投影是人眼观察现实世界的效果，即在投影平面上表现出近大远小的效果，z越靠近原点则这种效果越明显，越远离原点则越来越不明显，
+当z为正无穷大的时候，则失去了近大远小的效果，此时投影线垂直于投影平面，也就是视点在无穷远处，CATransform3D中m34的默认值为0，即视点在无穷远处.
+
+var transform3D: CATransform3D = CATransform3DIdentity
+    transform3D.m34 = -1.0 / 1000.0
+    transform = CATransform3DTranslate(transform, 0, 0, -10)
+计算出来的矩阵为
+
+{ 1,    0,    0,     0
+  0,    1,    0,     0
+  0,    0,    1,     -0.001
+  0,    0,  -10,    1.01}   
+
+其实上面的变换矩阵本质上是两个矩阵相乘得到的 变换矩阵 * 投影矩阵 变换矩阵为
+
+{1,    0,    0,    0
+ 0,    1,    0,    0
+ 0,    0,    1,    0
+ 0,    0,   -10,  1}     
+投影矩阵为
+
+{1,    0,    0,    0
+ 0,    1,    0,    0
+ 0,    0,    1,   -0.001
+ 0,    0,    0,    1}
+
+ 上面的两个矩阵相乘则会得到最终的变换矩阵(如果忘记矩阵乘法的可以去看下线性代数复习下)，所以一个矩阵就可以完成变换和投影。

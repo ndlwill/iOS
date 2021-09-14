@@ -1,0 +1,256 @@
+可以通过 连接器的参数再链接的时候 不把调试符号放入我们可执行文件
+OTHER_LDFLAGS=$(inherited) -Xlinker -S 
+
+__attribute__ ：可以把编译器支持的一些参数传递给编译器
+
+导入和导出符号：
+objdump --macho --exports-trie XXX
+你调用了NSLog 那相对于Foundation库来说就是 导出，相对于你来说就是导入。
+当我们使用全局变量全局符号的 时候 它默认会为导出符号，对外界暴露的，也就意味着 其他空间 可以使用这个符号。
+
+动态库 是在运行的时候加载,那就意味这它在编译连接阶段的时候提供符号就可以了。
+间接符号表，保存着当前使用的其他动态库的符号
+查看间接符号表
+objdump --macho --indirect-symbols
+NSlog 它是Fundation 给我们提供的导出符号
+1、全局符号可以变成导出符号 ，那么变成导出符号之后 可以给外面使用
+2、
+符号存在我们Mach-o中是占用一定体积的 。
+项目mach-o来说 间接符号表 里保存着当前使用着的动态库的符号，而动态库是运行的时候去加载。
+3、当我们站在动态库的角度去看，全局符号 可以变成导出符号，供外界使用，那我要去脱符号也就意味着，只能去脱不是全局符号的符号。
+
+-Xlinker -unexported_symbol -Xlinker -unexported_symbol  
+把不需要对外暴露的导出符号 变成一个不导出也就是local符号。尽可能的来减小体积。
+
+多个符号不想导出
+-unexported_symbols_list file
+
+Weak defintion Symbol :弱定义符号
+相同的作用域空间，重复的全局符号， 是会报符号冲突的，但是弱定义修饰之后，可以编译成功。
+Weak Reference Symbol:弱引用
+void weak_import_function(void) __attribute__((weak_import))
+如果动态链接器找不到该符号的定义，则将其符号为0.
+静态链接器会将此符号设置弱链接标志。
+
+我们可以通过告诉连接器 这个符号你别管，它是动态链接的.没有这个符号也能编译成功，不会报未定义的符号
+-U symbol_name
+Xlinker -U Xlinker _weak_import_function
+
+重新导出符号：
+符号表
+objdump --macho --syms
+NSLog 对于我们当前的可执行文件来说，
+它的符号表它是一个*UND*
+假如说别的 库也想使用我的这个可执行文件中的NSLog
+就需要重新导出一下
+-alias symbol_name alternate_symbol_name
+1.可以通过其别名的形式让它进行一个全局可见性。
+2.注意只能给间接符号 表里的符号 起一个别名。
+-Xlinker -alias -Xlinker _NSLog -Xlinker LG_NSLog
+
+OC 的符号 默认都是导出符号，因为它是动态型语言
+
+
+
+##已验证##
+
+生成Mach-O可执行文件，中间会经过目标文件，即.o文件
+1.⽣成.o目标文件的过程
+将代码汇编化
+将符号进行归类；此时地址还没有虚拟化（没有生成虚拟内存地址）。对于外部导入符号，它的调用地址无法得知，需要将其放到重定位符号表中
+生成一个或多个.o目标文件
+此时链接器（llvm-ld）并没有被执⾏
+
+外部导入符号存储的是.m/.o文件中用到的API。例如：NSLog
+
+2.⽣成Mach-O可执行文件的过程：
+多个目标文件合并
+符号表（包括重定位符号表）合并成一张表
+生成一个Mach-O可执行文件
+
+静态链接：
+代码经过编译链接最后分配虚拟内存地址生成可执行文件或动态库
+
+动态链接：
+在运行时，由dyld动态加载
+
+编译本质：将代码汇编化，并将符号进行归类。外部导入符号，放到重定位符号表。生成一个或多个.o目标文件
+链接本质：多个目标文件合并，符号表（包括重定位符号表）合并成一张表，生成一个Mach-O可执行文件
+
+==================================================符号的种类与作用 Symbol Table
+Symbol Table：就是用来保存符号。
+String Table：就是用来保存符号的名称。
+Indirect Symbol Table：间接符号表。保存使用的外部符号，也就是使用的外部动态库的符号(比如NSLog)。是Symbol Table的子集。
+
+符号表也是通过读取Load Command找到符号表的具体位置
+
+可以看到mach-O中的符号信息
+objdump --macho --syms xxx
+通过连接器的参数，在连接的时候，不把调试符号放入可执行文件
+OTHER_LDFLAGS=$(inherited) -Xlinker -S
+
+查看mach-O的导出符号
+objdump --macho --exports-trie xxx
+那导出符号一定是全局符号吗？按道理是的. 我们可以通过连接器控制它
+
+动态库 是在运行的时候加载,那就意味这它在编译连接阶段的时候提供符号就可以
+间接符号表，保存着当前使用的其他动态库的符号
+查看间接符号表
+objdump --macho --indirect-symbols xxx
+
+链接器给我们提供的一个参数不导出符号
+-Xlinker -unexported_symbol -Xlinker _OBJC_CLASS_$_LGOneObjc
+有多个符号不想导出
+-unexported_symbols_list file
+将当前可执行文件 用到了哪些库 所有符号输出出来
+-map map_file_path
+man ld
+
+Weak defintion Symbol
+如果静态链接器或动态链接器为此符号找到另一个非弱定义,则若定义将被忽略。
+
+Weak Reference Symbol
+如果动态链接器找不到该符号的定义，则将其符号为0
+静态链接器会将此符号设置弱链接标志。
+Compile Sources把函数的.m文件实现去掉。报错，因为在ld连接的过程中 找不到当前符号的地址
+我们可以通过告诉连接器 这个符号你别管。它是动态链接的，通过如下命令
+-U symbol_name
+-Xlinker -U -Xlinker _weak_import_function
+
+重新导出符号
+-alias symbol_name alternate_symbol_name
+这也就意味这我们可以通过其别名的形式让它进行一个全局可见性。
+注意只能给间接符号 表里的符号 起一个别名。
+
+nm -m
+objdump -macho --exports-trie
+
+OC 的符号 默认都是导出符号，因为它是动态型语言
+swift是编译型语言，所以很多符号在编译期就知道是什么类型,可通过public private open 等控制。
+
+Common Symbol
+在定义时，未初始化的全局符号
+未定义符号作用：
+1、当它找到定义之后，在编译连接的时候会把未定义的删掉。
+2、 如果是未定义的符号 链接器会把它强制已经定义的 ，比如直接赋值为 0；
+
+============================================================
+确认当前终端, 在终端输入tty:
+/dev/ttys002
+首先通过重定向在Xcode中让当前终端显示特定内容, Xcode添加Run Script:
+echo "test" > /dev/ttys002
+Xcode让终端显示xcconfig文件中的变量.
+
+
+xcode_run_cmd.sh
+
+#!/bin/sh
+
+RunCommand() {
+  #判断全局字符串VERBOSE_SCRIPT_LOGGING是否为空。-n string判断字符串是否非空
+  #[[是 bash 程序语言的关键字。用于判断
+  if [[ -n "$VERBOSE_SCRIPT_LOGGING" ]]; then
+    #作为一个字符串输出所有参数。使用时加引号"$*" 会将所有的参数作为一个整体，以"$1 $2 … $n"的形式输出所有参数
+      if [[ -n "$TTY" ]]; then
+          echo "♦ $@" 1>$TTY
+      else
+          echo "♦ $*"
+      fi
+      echo "------------------------------------------------------------------------------" 1>$TTY
+  fi
+  #与$*相同。但是使用时加引号，并在引号中返回每个参数。"$@" 会将各个参数分开，以"$1" "$2" … "$n" 的形式输出所有参数
+  if [[ -n "$TTY" ]]; then
+      echo `$@ &>$TTY`
+  else
+      "$@"
+  fi
+  #显示最后命令的退出状态。0表示没有错误，其他任何值表明有错误。
+  return $?
+}
+
+EchoError() {
+    #在shell脚本中，默认情况下，总是有三个文件处于打开状态，标准输入(键盘输入)、标准输出（输出到屏幕）、标准错误（也是输出到屏幕），它们分别对应的文件描述符是0，1，2
+    # >  默认为标准输出重定向，与 1> 相同
+    # 2>&1  意思是把 标准错误输出 重定向到 标准输出.
+    # &>file  意思是把标准输出 和 标准错误输出 都重定向到文件file中
+    # 1>&2 将标准输出重定向到标准错误输出。实际上就是打印所有参数已标准错误格式
+    if [[ -n "$TTY" ]]; then
+        echo "$@" 1>&2>$TTY
+    else
+        echo "$@" 1>&2
+    fi
+    
+}
+
+RunCMDToTTY() {
+    if [[ ! -e "$TTY" ]]; then
+        EchoError "=========================================="
+        EchoError "ERROR: Not Config tty to output."
+        exit -1
+    fi
+    # CMD：终端需要运行的命令
+    # CMD_FLAG：运行的命令的参数
+    # TTY：终端标志
+    if [[ -n "$CMD" ]]; then
+        RunCommand "$CMD" ${CMD_FLAG}
+    else
+        EchoError "=========================================="
+        EchoError "ERROR:Failed to run CMD. THE CMD must not null"
+    fi
+}
+
+RunCMDToTTY
+
+
+该xcode_run_cmd.sh脚本需需要三个参数CMD 、CMD_FLAG 、TTY，这三个参数在xcconfig文件中定义就能获取到
+// -p：不排序
+// -a: 显示除了调试符号的其他所有符号
+MACHO_PATH = ${BUILD_DIR}/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)/$(FULL_PRODUCT_NAME)/$(PRODUCT_NAME)
+CMD = nm
+CMD_FLAG = -pa ${MACHO_PATH}
+TTY = /dev/ttys002
+
+添加shell脚本执行命令/bin/sh "$SRCROOT/xcode_run_cmd.sh"并编译即可在终端看到nm命令执行的结果
+
+在Xcode编译日志中可以看到项目编译后-签名前执行的shell脚本，因此执行shell脚本时Mach-O文件已经生成了
+
+三、strip命令
+strip命令可以用来剥离Mach-O文件中的符号，比如调试符号等。strip命令修改的是Symbol Table符号表、不能修改Indirect Symbol Table间接符号表。
+Xcode默认会在Release编译情况下剥离所有符号，但是Debug编译情况下不会剥离符号。
+
+从编译日志中也可以看到，Xcode的strip命令是在shell脚本之后执行的
+在实际开发项目中测试Xcode的strip，没有剥离符号的Mach-O大小为34M，剥离符号后大小为20.8M，可见剥离符号对于瘦包还是非常有用的
+
+现在不使用Xcode的strip命令，改在shell脚本中执行strip命令：
+因为Xcode的strip使用的是clang的命令，shell脚本使用的是ld链接器的命令，所以可以在终端查看ld链接器的参数，终端输入命令man ld回车后输入/-S进行搜索：
+
+xcconfig文件添加ld的参数:
+OTHER_LDFLAGS = -Xlinker -S
+在Xcode的Build Sttings中可以看到添加成功了
+
+编译后可发现终端输出中少了很多调试符号:
+strip 参数如下：
+-x: Non-Global
+无参数: All Symbol
+-S: 调试符号
+
+通过对符号的strip不仅可以减少ipa包体积还可以减少动态库、静态库的体积
+对ipa包瘦身主要有以下操作：
+编译时期：-O0、-Os生成目标文件
+链接时期：dead code strip死代码剥离(也是剥离符号)
+生成Mach-O后：strip剥离符号，对Mach-O文件进行修改
+
+Command + K清空终端显示内容
+
+四、在LLVM项目中调试nm命令
+1.LLVM项目下载配置
+2.填入启动参数
+选中llvm-nm Scheme然后Edit Scheme，添加Arguments
+-pa
+macho path
+3.运行LLVM项目（也就是运行LLVM项目中llvm-nm Scheme 的 llvm-nm Target）
+可以看到和shell中使用nm命令输出到终端的信息相同
+此外在llvm-nm.cpp源码的main函数中添加断点后运行项目即可断点调试llvm-nm命令的源码，从llvm-nm的源码中我们就能看到nm命令是如何读取Mach-O文件的。
+
+
+

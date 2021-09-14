@@ -1,0 +1,198 @@
+最小堆：是一种经过排序的完全二叉树，其中任一非终端节点的数据值均不大于其左子节点和右子节点的值。
+
+/*
+ * Copyright (c) 2006 Maxim Yegorushkin <maxim.yegorushkin@gmail.com>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. The name of the author may not be used to endorse or promote products
+ *    derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+#ifndef _MIN_HEAP_H_
+#define _MIN_HEAP_H_
+
+#include "event.h"
+#include "evutil.h"
+
+//最小堆，是一种经过排序的完全二叉树，其中任一非终端节点的数据值均不大于其左子节点和右子节点的值。
+typedef struct min_heap
+{
+    //动态分配内存用来保存指向*event的指针
+    struct event** p;
+    //n为元素个数,a为个数容量
+    unsigned n, a;
+} min_heap_t;
+
+static inline void           min_heap_ctor(min_heap_t* s);
+static inline void           min_heap_dtor(min_heap_t* s);
+static inline void           min_heap_elem_init(struct event* e);
+static inline int            min_heap_elem_greater(struct event *a, struct event *b);
+static inline int            min_heap_empty(min_heap_t* s);
+static inline unsigned       min_heap_size(min_heap_t* s);
+static inline struct event*  min_heap_top(min_heap_t* s);
+static inline int            min_heap_reserve(min_heap_t* s, unsigned n);
+static inline int            min_heap_push(min_heap_t* s, struct event* e);
+static inline struct event*  min_heap_pop(min_heap_t* s);
+static inline int            min_heap_erase(min_heap_t* s, struct event* e);
+static inline void           min_heap_shift_up_(min_heap_t* s, unsigned hole_index, struct event* e);
+static inline void           min_heap_shift_down_(min_heap_t* s, unsigned hole_index, struct event* e);
+
+int min_heap_elem_greater(struct event *a, struct event *b)
+{
+    return evutil_timercmp(&a->ev_timeout, &b->ev_timeout, >);
+}
+
+void min_heap_ctor(min_heap_t* s) { s->p = 0; s->n = 0; s->a = 0; }
+void min_heap_dtor(min_heap_t* s) { if(s->p) free(s->p); }
+void min_heap_elem_init(struct event* e) { e->min_heap_idx = -1; }
+int min_heap_empty(min_heap_t* s) { return 0u == s->n; }
+unsigned min_heap_size(min_heap_t* s) { return s->n; }
+struct event* min_heap_top(min_heap_t* s) { return s->n ? *s->p : 0; }
+
+//插入元素
+int min_heap_push(min_heap_t* s, struct event* e)
+{
+    //检查内存
+    if(min_heap_reserve(s, s->n + 1))
+        return -1;
+
+    //插入元素向上调整
+    min_heap_shift_up_(s, s->n++, e);
+    return 0;
+}
+
+//pop头元素
+struct event* min_heap_pop(min_heap_t* s)
+{
+    if(s->n)
+    {
+        //->优先级比*高
+        //e指向头元素的指针
+        struct event* e = *s->p;
+        //元素向下调整，0U代表头节点索引，s->p[--s->n]：最下层最右边元素，用于插入后填充空出的位置
+        min_heap_shift_down_(s, 0u, s->p[--s->n]);
+
+        //头元素在堆中索引赋值为-1，出堆
+        e->min_heap_idx = -1;
+        return e;
+    }
+    return 0;
+}
+
+//删除堆中等于e的元素
+int min_heap_erase(min_heap_t* s, struct event* e)
+{
+    if(((unsigned int)-1) != e->min_heap_idx)
+    {
+        struct event *last = s->p[--s->n];
+        //父节点索引
+        unsigned parent = (e->min_heap_idx - 1) / 2;
+    /* we replace e with the last element in the heap.  We might need to
+       shift it upward if it is less than its parent, or downward if it is
+       greater than one or both its children. Since the children are known
+       to be less than the parent, it can't need to shift both up and
+       down. */
+        //如果e不是根元素，当前e的父节点值大于last，需要进行向上调整
+        if (e->min_heap_idx > 0 && min_heap_elem_greater(s->p[parent], last))
+             min_heap_shift_up_(s, e->min_heap_idx, last);
+        else
+        //如果e是根元素或者e的父节点元素值不大于last，元素向下调整，e->min_heap_idx为头节点索引，last：最下层最右边元素
+        //，用于插入后填充空出的位置
+             min_heap_shift_down_(s, e->min_heap_idx, last);
+        //将e元素出堆
+        e->min_heap_idx = -1;
+        return 0;
+    }
+    return -1;
+}
+
+//调整分配内存
+int min_heap_reserve(min_heap_t* s, unsigned n)
+{
+    //如果元素的容量小于元素个数，需要重新分配内存
+    if(s->a < n)
+    {
+        struct event** p;
+        //a原来默认为0就分配为8，如果以前有值（不是第一次调整），就扩大两倍
+        unsigned a = s->a ? s->a * 2 : 8;
+        //如果a还不够，直接让a等于n，元素个数和容量相同
+        if(a < n)
+            a = n;
+        //重新调整内存，连续分配
+        if(!(p = (struct event**)realloc(s->p, a * sizeof *p)))
+            return -1;
+        //首地址
+        s->p = p;
+        //容量
+        s->a = a;
+    }
+    return 0;
+}
+
+//插入元素后向上调整
+void min_heap_shift_up_(min_heap_t* s, unsigned hole_index, struct event* e)
+{
+    //父节点的索引
+    unsigned parent = (hole_index - 1) / 2;
+    //如果hole_index不等于0且父节点元素大于所给的元素，继续比较，直到到达hole_index为根元素，
+    //或者现在的父元素大于了e，找到插入的位置
+    while(hole_index && min_heap_elem_greater(s->p[parent], e))
+    {
+        //父节点元素值大，将父节点放到现在的hole_index上的位置
+        (s->p[hole_index] = s->p[parent])->min_heap_idx = hole_index;
+
+        //hole_index赋值为父节点的索引
+        hole_index = parent;
+
+        //找到现在的hole_index的父节点索引
+        parent = (hole_index - 1) / 2;
+    }
+
+    //跳出循环找到了要插入的位置，位置的索引就是现在的hole_index
+    (s->p[hole_index] = e)->min_heap_idx = hole_index;
+}
+
+//元素向下调整（删除元素）
+void min_heap_shift_down_(min_heap_t* s, unsigned hole_index, struct event* e)
+{
+    //右孩子索引
+    unsigned min_child = 2 * (hole_index + 1);
+    //存在右孩子，如果不存在右子树，直接向下调整，因为最多存在左子树，且值肯定不小于父节点，可以直接向下调整
+    while(min_child <= s->n)
+    {
+        //选择左右孩子值最小的孩子的索引，根据优先级可以加()进行更好的查看
+        min_child -= ((min_child == s->n) || min_heap_elem_greater(s->p[min_child], s->p[min_child - 1]));
+        //如果e元素不大于最小的孩子元素，没有必要再继续，hole_index就是他的位置
+        if(!(min_heap_elem_greater(e, s->p[min_child])))
+            break;
+        //将小的孩子元素放到hole_index位置上
+        (s->p[hole_index] = s->p[min_child])->min_heap_idx = hole_index;
+        //hole_index保存当前小的孩子索引
+        hole_index = min_child;
+        //当前小的孩子位置空出，继续下一次循环，比较当前小的孩子的左右孩子
+        min_child = 2 * (hole_index + 1);
+    }
+    //将e元素放到hole_index,然后向上调整。一般e元素是取最下层最右节点。不排除有可能比现在的位置上的父节点下
+    //所以需要向上调整
+    min_heap_shift_up_(s, hole_index,  e);
+}
+
+#endif /* _MIN_HEAP_H_ */

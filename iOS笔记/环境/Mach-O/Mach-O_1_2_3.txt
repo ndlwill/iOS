@@ -1,0 +1,679 @@
+https://www.jianshu.com/p/fa5666308724
+
+==================================================1
+Mach-O 文件分为三个部分：Header、Load Commands、Data。
+
+Header 的结构:
+struct mach_header_64 {
+    uint32_t magic;           /* mach magic number identifier */
+    cpu_type_t cputype;       /* cpu specifier */
+    cpu_subtype_t cpusubtype; /* machine specifier */
+    uint32_t filetype;        /* type of file */
+    uint32_t ncmds;           /* number of load commands */
+    uint32_t sizeofcmds;      /* the size of all the load commands */
+    uint32_t flags;           /* flags */
+    uint32_t reserved;        /* reserved */
+};
+Header的结构是固定的，size固定为32 bytes(64位架构)
+
+Load Commands 的结构:
+Load Commands 可以被看作是一个 command 列表，紧贴着 Header，所以它的 file offset 是固定的：0x20（上面说的header的size为32 bytes，即0x20）
+它们的 type 是以LC_为前缀常量，譬如 LC_SEGMENT、LC_SYMTAB 等。
+
+每个 command 都有独立的结构，但所有 command 结构的前两个字段是固定的：
+struct load_command {
+    uint32_t cmd;      /* type of load command */
+    uint32_t cmdsize;  /* total size of command in bytes */
+};
+第一个字段指定了类型，第二个字段指定了大小
+
+LC_SEGMENT_64 命令格式如下：
+struct segment_command_64 { /* for 64-bit architectures */
+    uint32_t   cmd;         /* LC_SEGMENT_64 */
+    uint32_t   cmdsize;     /* includes sizeof section_64 structs */
+    char       segname[16]; /* segment name */
+    uint64_t   vmaddr;      /* memory address of this segment */
+    uint64_t   vmsize;      /* memory size of this segment */
+    uint64_t   fileoff;     /* file offset of this segment */
+    uint64_t   filesize;    /* amount to map from the file */
+    vm_prot_t  maxprot;     /* maximum VM protection */
+    vm_prot_t  initprot;    /* initial VM protection */
+    uint32_t   nsects;      /* number of sections in segment */
+    uint32_t   flags;       /* flags */
+};
+
+#####
+它描述了文件映射的两大问题：从哪里来（fileoff、filesize）、到哪里去（vmaddr、vmsize）；
+它还告诉了内核该区域的名字（segname，即 segment name），以及该区域包含了几个 section（nsects），
+以及该区域的保护级别（initprot、maxprot）。
+#####
+
+#####
+每一个 segment 的 VP (Virtual Page) 都根据 initprot 进行初始化，initprot 指定了如何通过 读/写/可执行 初始化页面的保护级别；
+segment 的保护设置可以动态改变，但是不能超过 maxprot 中指定的值（在 iOS 中，+x(可执行) 和+w(可写) 是互斥的）；initprot、maxprot 的值均用八进制表示（1=r，2=w，4=x）
+vmsize 并不等于 filesize，对于 4KB 大小的 VP，vmsize 是 4K 的倍数；换句话说，vmsize 一般大于 segment 的实际大小
+#####
+
+对于 LC_SEGMENT_64 而言,如果其nsects字段大于 0，其命令后面还会紧接着挂载nsects个描述 section 的信息，这些信息是结构体section_64的列表，section_64结构体定义如下：
+struct section_64 { /* for 64-bit architectures */
+    char      sectname[16];    /* name of this section */
+    char      segname[16];     /* segment this section goes in */
+    uint64_t  addr;            /* memory address of this section */
+    uint64_t  size;            /* size in bytes of this section */
+    uint32_t  offset;          /* file offset of this section */
+    uint32_t  align;           /* section alignment (power of 2) */
+    uint32_t  reloff;          /* file offset of relocation entries */
+    uint32_t  nreloc;          /* number of relocation entries */
+    uint32_t  flags;           /* flags (section type and attributes)*/
+    uint32_t  reserved1;       /* reserved (for offset or index) */
+    uint32_t  reserved2;       /* reserved (for count or sizeof) */
+    uint32_t  reserved3;       /* reserved */
+};
+#####
+结构体section_64可以看做 section header，它描述了对应 section 的具体位置，以及要被映射的目标虚拟地址。
+#####
+
+segment_command_64的cmdsize字段，它的数值是segment_command_64的 size 大小，加上紧接在 command 后面的所有section_64结构体的大小。
+如果 segment 含有 2 个 section，那么对应的 segment_command_64 的 cmdsize 值为：
+72（segment_command_64本身大小） + 2 * 80（section_64的大小） = 232 bytes
+
+Data的结构:
+和 Header、Load Commands 不同，Mach-O 对 Data 区域没有任何公共的结构上的定义。
+
+Mach-O 的结构：
+一共包括三个 segment：__TEXT、__DATA、__LINKEDIT
+segment 的内容范围并非一定在 Data 区内（譬如 __TEXT segment）
+并非每一个 segment 都由 section 组成（譬如 __LINKEDIT segment）
+
+为啥 __TEXT 的地址范围从 0 开始而非从 _text 这个 section 开始呢？
+
+《OS X ABI Mach-O File Format Reference》
+The header and load commands are considered part of the first segment of the file for paging purposes. 
+In an executable file, this generally means that the headers and load commands live at the start of the __TEXT segment because that is the first segment that contains data.
+
+
+==================================================2 静态链接
+符号 & 模块:
+
+对于 Objective-C 项目，每个.m或者.mm文件构成一个模块。
+
+对于静态语言 C/C++ 而言，模块间的通信方式有两种：一种是模块间的函数调用，另外一种是模块间的变量访问；
+
+函数访问需知道目标函数的地址，变量访问也须知道目标变量的地址，所以这两种方式都可以归结为一种方式：模块间符号的引用。
+
+静态链接:
+把程序各个模块的中间文件粘在一起，拼装成一个整体
+以模块的中间文件为输入，产生一个新的 Mach-O 文件（往往是可执行文件）。
+
+静态链接主要过程包括：
+地址和空间分配（Address and Storage Allocation）
+符号决议（Symbol Resolution）
+重定位（Relocation）
+其中最核心是「重定位」过程。静态链接的重定位是围绕符号进行的
+
+MH_OBJECT: 中间文件
+MH_EXECUTE: 可执行文件
+「中间文件」，它其实就是一种MH_OBJECT类型的 Mach-O 文件，还常被称作「中间目标文件」「可重定位文件」，通常以.o为后缀
+
+
+/* a.c */
+extern int shared;
+void swap(int *a, int *b);
+int main() {
+    int a = 100;
+    swap(&a, &shared);
+    return 0;
+}
+
+/* b.c */
+int shared = 42;
+void swap(int *a, int *b) {
+    int temp = *a;
+    *a = *b;
+    *b = temp;
+}
+b.c 总共定义了两个全局符号，一个是变量shared，另外一个是函数swap；a.c 里面定义了一个全局符号main；后者引用了前者的俩符号。
+
+使用 gcc 将这俩文件分别编译成目标文件 a.o 和 b.o :
+gcc -c a.c b.c
+
+使用 MachOView 工具查看 a.o 的 __TEXT __text 的反汇编内容:
+48 8B35 00000000: 其中48是 movq 的操作码，00000000描述_shared的符号值（地址值）
+E8 00000000: 其中E8是 callq 的的操作码，00000000描述_swap的符号值（地址值）
+gcc编译器中的符号名，通常都含有_前缀
+可以看到，在 a.o 的代码段，该符号对应的地址值都被置为0。
+
+问题来了，编译器对中间文件进行链接时，如何知道该对哪些指令进行地址调整呢？这些指令的哪些部分要被调整呢？又该如何调整呢？
+Relocation Symbol Table 正是解决这个问题的。
+
+
+Relocation Symbol Table:
+在每个可重定位的 Mach-O 文件中，有一个叫重定位（Relocation）的区域，专门用来保存这些和重定位相关的信息。
+某个 section 如果内含需要被重定位的字节，就会有一个 relocation table 与此对应：
+
+
+section 的结构，其中有两个字段描述了其对应的relocation table：
+reloff: relocation table 的 file offset
+nreloc: relocation table 的 entry 数量
+Relocation table可以看作是一个 relocation entry 的数组，每个 relocation entry 占 8 个字节：
+
+
+对应结构体是relocation_info:
+struct relocation_info {
+    int32_t   r_address;      /* offset in the section to what is being relocated */
+    uint32_t  r_symbolnum:24, /* symbol index if r_extern == 1 or section ordinal if r_extern == 0 */
+              r_pcrel:1,      /* was relocated pc relative already */
+              r_length:2,     /* 0=1 byte, 1=2 bytes, 2=4 bytes, 3=8 bytes */
+              r_extern:1,     /* does not include value of sym referenced */
+              r_type:4;       /* if not 0, machine specific relocation type */
+};
+https://developer.apple.com/documentation/kernel/relocation_info?language=occ
+
+r_address表示相对于 section 的偏移量
+r_length表示需要被 relocation 的字节范围， 0=1 byte, 1=2 bytes, 2=4 bytes, 3=8 bytes
+r_pcrel表示地址值是否是 PC 相对地址值
+r_extern标记该符号是否是外部符号
+r_symbolnum，index 值，对于外部符号，它描述了符号在 symbol table 中的索引（从0开始）；如果是内部符号，它描述了符号所在的 section 的索引（按照LC_SEGMENT load commands加载顺序排序，范围是1~255）。
+r_type，符号类型
+
+Data LO                 Data HI
+22 00 00 00 02 00 00 2D 0B 00 00 00 01 00 00 3D
+
+Data 值分别为 22 00 00 00 和 02 00 00 2D (小端模式)，小端模式即低地址为在前，高地址为在后
+转换为阅读习惯(大端模式)为 00 00 00 22 和 2D 00 00 02 ,这里是MachOView自动做了处理
+
+00 00 00 22   低4字节，对应r_address，表示在对应section偏移为 0x22，也就是说在__Text,__text section中偏移为0x22的位置。
+2D 00 00 02   高4字节，先看低位的24位(r_symbolnum:24)，值为 00 00 02，即 2
+2D 转为 2进制  0010 1101 
+第25位(r_pcrel:1)，值为 1，表示该地址是相对于PC的相对地址 
+26~27位(r_length:2)，值为 0b10，即2，也就是4 bytes
+28位(r_extern:1)，值为 1，表示该符号是外部符号
+29~32位(r_type:4)，值为 0b0010。
+
+这里因为r_extern 值为1，表示是外部符号，所以这里的r_symbolnum表示在symbol表中的索引（从0开始）。
+根据后面的Symbol Table可以找到索引为2的符号，也就是_swap。
+综上所述，也就是会在__Text,__text section中偏移为0x22的位置起始，替换4字节。替换为外部符号_swap
+
+
+Symbol Table:
+从r_symbolnum可以看出，relocation_info并未完整描述符号信息，它只是告诉链接器###哪些指令需要调整地址###。
+符号的具体信息（包括符号名等）在 symbol table 中
+
+链接器是通过 LC_SYMTAB 这个 load command 找到 symbol table 的
+LC_SYMTAB 对应的 command 结构体如下：
+
+struct symtab_command {
+    uint32_t cmd;     /* LC_SYMTAB */
+    uint32_t cmdsize; /* sizeof(struct symtab_command) */
+    uint32_t symoff;  /* symbol table offset */
+    uint32_t nsyms;   /* number of symbol table entries */
+    uint32_t stroff;  /* string table offset */
+    uint32_t strsize; /* string table size in bytes */
+};
+这个命令告诉了链接器 symbol table 和 string table 的相关信息
+symtab_command这个结构体比较简单，symoff和nsyms指示了符号表的位置和条目，stroff和strsize指示了字符串表（String Table）的位置和长度。
+
+
+每个 symbol entry 长度是固定的，其结构由内核定义，详见nlist.h：
+struct nlist_64 {
+    union {
+        uint32_t n_strx;   /* index into the string table */
+    } n_un;
+    uint8_t  n_type;       /* type flag, see below */
+    uint8_t  n_sect;       /* section number or NO_SECT */
+    uint16_t n_desc;       /* see <mach-o/stab.h> */
+    uint64_t n_value;      /* value of this symbol (or stab offset) */
+};
+结构体nlist_64（或nlist）描述了符号的基本信息，其中n_un、n_sect、n_value比较容易理解：
+
+n_un，符号的名字（在一个 Mach-O 文件里，具有唯一性），其值位在 String Table 中的索引值，
+String Table 实际是一个 char 类型的数组，即一个大字符串。根据n_un的值在 String Table中开始，到遇到 00 字节结束。
+n_sect，符号所在的 section index（有效值从 1 开始，最大为 255）
+n_value，符号的地址值（在链接过程中，会随着其 section 发生变化）
+
+
+https://developer.apple.com/documentation/kernel/nlist_64/
+n_type和n_desc表达的意思稍微复杂点；都是多功能组合字段，主要参考kernel/nlist_64。
+
+n_type是一个 8 bit的复合字段，由4种mask组成
+N_STAB (0xe0，即0b 1110 0000)，即最高三位，如果不为 0，表示这是一个与调试有关的符号，值意义类型详见参考。
+N_PEXT (0x10，即0b 0001 0000)，即第4位，若为 1，则表示该符号是有限全局范围(__private_extern__)，当静态链接时会清除N_EXT位的设置。
+N_TYPE (0x0e，即0b 0000 1110)，5~7位，定义了符号的类型（详细定义见参考）。
+N_EXT (0x01，即0b 0000 0001)，第8位，若为1，表示符号为外部符号，即该符号要么定义在外部，要么定义在本地但是可以被外部使用。
+
+n_desc可自行参考kernel/nlist_64。
+
+举个例子解释一下n_un怎么找到符号名，_shared符号为例：
+0000000D
+可以看到n_un的值为 0xD，即13。去 String Table 表中去查询：
+索引从0开始
+查询到的结果为：_（0x57）s（0x73）h（0x68）a（0x61）r（0x72）e（0x65）d（0x64）。从ASCII码查表即可得到结果，即我们这里的符号名_shared。
+有了 relocation table 和 symbol table，链接器就与足够的信息进行链接处理了。
+
+
+可执行文件的符号分析:
+先使用ld工具（静态链接器）对如上 a.o、b.o 进行链接，生成可执行文件：
+ld a.o b.o -macosx_version_min 10.14 -o ab.out -lSystem
+# 生成可执行文件 ab.out
+
+使用 MachOView 工具查看可执行文件 ab.out 。
+我们可以知道 __Text segment 的虚拟基地址为 4294967296，即 0x 100000000。相对于文件的偏移量为 0 。
+
+代码段 __TEXT __text 的反汇编内容，如下：
+分别是符号_shared和_swap对应的地址，链接前，a.o 中此两处的地址值均为0；
+在 ab.out 中，链接器根据 a.o 的 relocation table 的信息，对此两处地址进行了调整，将它们修改为有效地址。
+
+我们分析修正后_shared和_swap所对应的文件偏移地址:
+先看_shared，其所在指令的下一条指令相对于文件的偏移地址是 0x00000F5F，计算其虚拟内存地址 0x100000F5F。
+
+虚拟内存地址 = 文件偏移量 - 所在segment的文件偏移量 + 所在segment的虚拟基地址
+文件偏移量为 0x00000F5F， __Text segment 文件偏移量为0， 虚拟基地址 0x100000000。
+可以算得 虚拟地址为 0x100000F5F。
+
+指令相对偏移(__TEXT Assembly中Data的后8位)是 0x A1 00 00 00（小端），即 0x000000A1
+0x100000F5F + 0x000000A1 = 0x100001000
+相加计算得到的_shared符号的虚拟地址值等于 0x100001000
+
+根据 Load Commonds 可以看到，0x100001000 落在 __DATA segment 中。同上面的计算方法，计算出在文件中的偏移量为 0x00001000。
+
+虚拟内存地址 = 文件偏移量 - 所在segment的文件偏移量 + 所在segment的虚拟基地址 
+推导可得
+文件偏移量 = 虚拟内存地址 - 所在segment的虚拟基地址 + 所在segment的文件偏移量
+即         0x100001000 -  0x100001000(__DATA segment) + 0x1000(__DATA segment)
+可以算得 文件偏移地址为 0x1000。
+
+根据文件偏移地址 0x1000 对应的是 ab.out 中的 __DATA __data :
+Section64(__DATA,__data) 该地址所存储的值 0x0000002A 恰好等于 42（b.c中赋值的42）
+
+对于_swap符号也是类似，其所在指令的下一条指令相对于文件的偏移地址是 0x00000F76，计算得虚拟地址 0x100000F76，相对偏移是 0x0000000A，计算得到目标虚拟地址等于 0x100000F80，恰好是_swap函数的起始地址。
+
+另外一个需要注意到的事实是：ab.out 中再也没有 relocation table 了，这不难理解，ab.out 中的符号都得到了重定位，relocation table 已经没有存在的必要了。
+
+
+现在的问题是：ab.out 中_main、_shared、_swap这几个 symbol entry 存在的意义是啥？
+我的理解是：如果从程序正常运行的角度来看，这几个符号没啥用。事实上，使用 strip 工具可以将这几个 symbol entry 从 symbol table 中抹掉。
+
+==================================================3 动态链接
+RIP-relative 寻址:
+RIP 的全拼是：Relative Instruction Pointer
+基于 RIP 计算目标地址时，目标地址等于当前指令的下一条指令所在地址加上偏移量。
+
+二进制的反汇编内容：
+0000000000001fcd  jmpq  0x2d(%rip)
+0000000000001fd3  nop
+则第一行代码 jmpq 的跳转目标地址是：0x1fd3 + 0x2d = 0x2000。
+
+间接寻址:
+间接寻址是相对于直接寻址而言的，即目标地址并不是计算得到的地址值，而是该地址值存储的数据。
+如果看到如下二进制的反汇编内容：
+
+0000000000001fcd  jmpq  *0x2d(%rip)
+0000000000001fd3  nop
+对于间接寻址，反汇编代码中，地址值前有一个*
+则第一行代码 jmpq 的跳转目标地址是 0x2000 (0x1fd3 + 0x2d) 里存储的地址，并非 0x2000 本身。
+
+镜像：xnu、dyld 都将 Mach-O 文件看作镜像（image），本文所指的镜像即 Mach-O 文件
+目标文件：即只编译未链接的可重定位文件
+dylib：动态链接库，在 ELF 生态中，常被称作「共享对象」，或者「共享文件」，本文称作 dylib，或者 dylibs
+dyld：dyld 是 Apple 生态操作系统（macOS、iOS）的动态链接器，本文直接使用 dyld 指代 Mach-O 的动态链接器
+
+静态链接比较简单，原理上也容易理解，典型问题有两点：
+极大浪费磁盘和内存空间
+给程序的更新、部署和发布带来很多麻烦
+
+稍微描述一下第二点。比如程序 Program1 所使用的 Lib.o 是由一个第三方厂商提供的，
+当该厂商更新了 Lib.o 的时候，那么 Program1 的开发者就要拿到最新版的 Lib.o，
+然后将其与 Program1.o 链接后，将新的 Program1 整个发布给用户。
+即一旦程序有任何模块的更新，整个程序就得重新链接、发布给用户。
+
+###
+动态链接
+###
+动态链接是对这两个问题的解决方案。
+所谓动态链接，简单地讲，就是不对那些组成程序的目标文件进行链接，等到程序要运行时才进行链接。
+也就是说，把链接这个过程推迟到运行时再进行，这就是动态链接（Dynamic Linking）的基本思想。
+
+有一个文件 say.c：
+#include <stdio.h>
+
+char *kHelloPrefix = "Hello";
+
+void say(char *prefix, char *name)
+{
+    printf("%s, %s\n", prefix, name);
+}
+
+该模块很简单，定义了两个符号：常量字符串kHelloPrefix，以及函数say。使用 gcc 把 say.c 编译成 dylib：
+$ gcc -fPIC -shared say.c -o libsay.dylib
+
+LC_ID_DYLIB 字段：
+Any clients that link against the dylib record the path specified in the LC_ID_DYLIB load command as the path at which to find the dylib at runtime.
+This is useful as the path where the dylib lives at build time is often not where it will be found at runtime.
+
+
+再定义一个使用 say 模块的 main.c：
+void say(char *prefix, char *name);
+extern char *kHelloPrefix;
+
+int main(void)
+{
+    say(kHelloPrefix, "Jack");
+    return 0;
+}
+把 main.c 编译成可重定位中间文件（只编译不链接）：
+
+$ gcc -c main.c -o main.o
+# 生成可重定位中间文件：main.o
+
+此时的 main.o 是不可执行的，需要使用链接器 ld 将 sayHello 链接进来：
+$ ld main.o -macosx_version_min 10.14 -o main.out -lSystem -L. -lsay
+# -macosx_version_min 用于指定最小系统版本，这是必须的
+# -lSystem 用于链接 libSystem.dylib
+# -lsay 用于链接 libsay.dylib
+# -L. 用于新增动态链接库搜索目录
+# 生成可执行文件：main.out
+
+或者
+链接动态库生成最终可执行文件
+gcc main.c libsay.dylib -o main
+
+The LC_LOAD_DYLIB header in a Mach-O binary tells macOS and OS X which dynamic libraries (dylibs) to load during execution time.
+
+这样就生成了可执行文件 main.out，执行该文件，打印「Hello, Jack」。此时若使用xcrun dyldinfo -dylibs查看 main.out 的依赖库，会发现有两个依赖库：
+$ xcrun dyldinfo -dylibs main.out
+attributes     dependent dylibs
+                /usr/lib/libSystem.B.dylib
+                libsay.dylib
+
+这两个动态库的依赖在 Mach-O 文件中对应两条 type 为LC_LOAD_DYLIB的 load commands
+
+LC_LOAD_DYLIB命令的顺序和 ld 的链接顺序一致。
+
+LC_LOAD_DYLIB命令参数描述了 dylib 的基本信息，结构比较简单：
+struct dylib {
+    union lc_str  name;             // dylib 的 path
+    uint32_t timestamp;             // dylib 构建的时间戳
+    uint32_t current_version;       // dylib 的版本
+    uint32_t compatibility_version; // dylib 的兼容版本
+};
+无论是静态链接，还是动态链接，符号都是最重要的分析对象；来看看 main 的符号表（symbol table）
+
+可以看到，symbol table 中有三个未绑定的外部符号：_kHelloPrefix、_say、dyld_stub_binder
+
+先将 Mach-O 中与动态链接相关的结构给罗列出来：
+
+Section
+__TEXT __stubs
+__TEXT __stub_helper
+__DATA __nl_symbol_ptr
+__DATA __got
+__DATA __la_symbol_ptr
+Load Command
+LC_LOAD_DYLIB
+LC_SYMTAB
+LC_DYSYMTAB
+Symbol Table
+Dynamic Symbol Table
+Dynamic Loader Info
+Binding Info
+Lazy Binding Info
+
+涉及若干个 sections、load commands，以及 indirect symbol table、dynamic loader info 等。
+其中LC_LOAD_DYLIB这个命令它描述了镜像依赖的 dylibs。
+LC_SYMTAB定义的符号表（symbol table）是镜像所用到的符号（包括内部符号和外部符号）的集合
+
+Dynamic Symbol Table:
+每一个可执行的镜像文件，都有一个 symbol table，由LC_SYMTAB命令定义，包含了镜像所用到的所有符号信息。
+
+那么 indirect symbol table 是一个什么东西呢？
+本质上，indirect symbol table 是 index 数组，即每个条目的内容是一个 index 值，该 index 值（从 0 开始）指向到 symbol table 中的条目。
+
+
+https://opensource.apple.com/source/xnu/xnu-4903.221.2/EXTERNAL_HEADERS/mach-o/loader.h.auto.html
+Indirect symbol table 由LC_DYSYMTAB定义（Load Command），后者的结构是一个dysymtab_command结构体
+该结构体内容非常丰富，目前我们只需要关注indirectsymoff和nindirectsyms这两个字段：
+struct dysymtab_command {
+    uint32_t cmd;           /* LC_DYSYMTAB */
+    uint32_t cmdsize;       /* sizeof(struct dysymtab_command) */
+
+    // ...
+
+    uint32_t indirectsymoff; /* file offset to the indirect symbol table */
+    uint32_t nindirectsyms;  /* number of indirect symbol table entries */
+
+    // ...
+};
+
+indirectsymoff和nindirectsyms这两个字段定义了 indirect symbol table 的位置信息，每一个条目是一个 4 bytes 的 index 值。
+它是为__stubs、__got等 section 服务的
+
+
+__text 里的外部符号:
+_kHelloPrefix和_say符号
+这两个符号未绑定，如果是静态链接，这俩处的地址值是指向符号
+但此处是动态链接，符号目标地址值分别指向的是偏移 0x99 和 0x09
+
+所在环境，采用的 PC 近址寻址，所以_kHelloPrefix和_say的目标地址分别是：
+_kHelloPrefix 的目标虚拟地址 = 0x100000F6F（下一行指令的虚拟地址） + 0x00000099 = 0x100001008
+_say 的目标虚拟地址 = 0x100000F85 + 0x00000009 = 0x100000F8E
+
+0x100001008和0x100000F8E分别对应 main.out 中的哪个结构呢？
+答案是 section(__DATA __got) 和 section(__TEXT __stubs)，查看这两个 section 的地址和内容：
+
+Mach-O 的代码段对 dylib 外部符号的引用地址，要么指向到__got，要么指向到__stubs。什么时候指向到前者，什么时候指向到后者呢？
+站在逻辑的角度，符号有两种：数据型和函数型；前者的值指向到全局变量/常量，后者的值指向到函数。在动态链接的概念里，对这两种符号的绑定称为：non-lazy binding、lazy binding。
+对于non-lazy binding，在程序运行前（链接加载时）就会被绑定；对于lazy binding（函数型符号），在符号被第一次使用时（运行时）绑定，类似于懒加载。
+
+section(__DATA __got):
+对于程序段__text里的代码，对数据型符号的引用，指向到了__got
+可以把__got看作是一个表，每个条目是一个地址值。这里以64位举例，每个条目是一个64位的地址，即每个条目8字节。
+
+在符号绑定（binding）前，__got里所有条目的内容都是 0，
+当镜像被加载时，dyld 会对__got每个条目所对应的符号进行重定位，将其真正的地址填入，作为条目的内容。
+换句话说，__got各个条目的具体值，在加载期会被 dyld 重写，这也是为啥这个 section 被分配在 __DATA segment 的原因。
+
+问题来了，dyld 是如何知道__got中各个条目对应的符号信息（譬如符号名字、目标库等）呢？
+每个 segment 由LC_SEGMENT命令定义，该命令后的参数描述了 segment 包含的 section 信息，是谓 section header，对应结构体（x86_64架构）是section_64：
+struct section_64 { /* for 64-bit architectures */
+    char      sectname[16];    /* name of this section */
+    char      segname[16];     /* segment this section goes in */
+    // ...
+    uint32_t  reserved1;       /* reserved (for offset or index) */
+    uint32_t  reserved2;       /* reserved (for count or sizeof) */
+    uint32_t  reserved3;       /* reserved */
+};
+
+对于__got、__stubs、__nl_symbol_ptr、__la_symbol_ptr这几个 section，
+其reserved1(Indirect Sym Index)描述了该 list 中条目在 indirect symbol table 中的偏移量。
+
+因为每个条目有8字节，size位16，即可算出，__got它有2个条目。
+第一条条目对应的符号 index 是 indirect symbol table 中的第 2 个（下标从0开始）的值。
+再对应symbol table 中的 index 的符号
+__got[0]->symbol = symbolTable[indirectSymbolTable[__got.sectionHeader.reserved1]]
+// -> __got.sectionHeader.reserved1 == 2
+// -> indirectSymbolTable[2] == 2
+// -> symbolTable[2] = Symbol(_kHelloPrefix)
+// -> __got[0]->symbol = Symbol(_kHelloPrefix)
+
+同理
+__got[1]->symbol = symbolTable[indirectSymbolTable[__got.sectionHeader.reserved1 + 1]]
+// -> __got.sectionHeader.reserved1 + 1 == 3
+// -> indirectSymbolTable[3] == 4
+// -> symbolTable[4] = Symbol(dyld_stub_binder)
+// -> __got[1]->symbol = Symbol(dyld_stub_binder)
+
+总之一句话，__got为 dyld 服务，用来存放 non-lazy 符号的最终地址值。
+
+###
+section(__TEXT __stubs):
+###
+对于程序段__text里的代码，对函数型符号的引用，指向到了__stubs。
+和__got一样，__stubs也是一个表，每个表项是一小段jmp代码，称为「符号桩」。
+和__got不同的是，__stubs存在于 __TEXT segment 中，所以其中的条目内容是不可更改的。
+
+查看__stubs里的反汇编内容Section64(__TEXT, __stubs)：
+pFile       DataLO
+00000F8E    FF 25 84 00 00 00
+
+
+$ otool -v main.out -s __TEXT __stubs
+main.out:
+Contents of (__TEXT,__stubs) section
+0000000100000f8e    jmpq    *0x84(%rip)
+
+来看看jmp指令跳到哪里去，这里使用的间接寻址，所以下一条指令的地址为真正的地址值储存在 0x100001018 中。
+
+这条指令的机器码为 0xFF2584000000 ，占6 bytes 。 这条指令的地址为 0x100000f8e
+所以下条指令的地址为 0x100000f8e + 6 = 0x100000f94
+0x100001018 = 0x100000f94 + 0x84(偏移)
+0x100001018是哪个部分？答案是 section(__DATA __la_symbol_ptr)。
+
+###
+section(__DATA __la_symbol_ptr):
+###
+查看__la_symbol_ptr的内容
+Offset      Data
+00001018    0000000100000FA4
+
+所以__stubs第一个 stub 的 jump 目标地址是 0x100000FA4。该地址坐落于 section(__TEXT __stub_helper)。
+
+###
+section(__TEXT __stub_helper):
+###
+看看__stub_helper里的内容
+__stubs第一个 stub 的 jump 目标地址在第 6 行；这几条汇编代码比较简单，可以看出，代码最终会跳到第 3 行；之后该何去何从？
+
+不难计算，第 3 行跳转目标地址是 0x100001010 (0x100000FA3 + 0x6D)存储的内容
+0x100001010 在哪里呢？0x100001010 坐落于 section(__DATA __got)，可知指向了dyld_stub_binder。
+
+dyld_stub_binder是一个函数，为啥它被当做一个 non-lazy symbol 处理，这是因为它是所有 lazy binding 的基础，所以有些特殊。
+
+https://opensource.apple.com/source/dyld/dyld-635.2/src/dyld_stub_binder.s.auto.html
+dyld_stub_binder也是一个函数，定义于dyld_stub_binder.S，由 dyld 提供。
+
+Lazy binding symbol 的绑定工作正是由 dyld_stub_binder 触发，通过调用 dyld::fastBindLazySymbol 来完成。
+
+再看一下第 1 行，第一行加载的内存地址是 0x100001000 (0x100000F9B + 0x65)，0x100001000 在 section(__DATA __nl_symbol_ptr)。
+
+
+###
+section(__DATA __nl_symbol_ptr):
+###
+查看__nl_symbol_ptr里的内容
+Offset      Data
+00001000    0000000000000000
+
+啥是__nl_symbol_ptr？和__got类似，__nl_symbol_ptr也是用来存储 non-lazy symbol 绑定后的地址。
+只是__got是为__text代码段中的符号服务的，而__nl_symbol_ptr不是。
+
+
+###
+Lazy Binding 分析:
+###
+对于__text代码段里需要被 lazy binding 的符号引用（如上文 main.out 里的_say）
+访问它时总会跳转到 stub 中，该 stub 的本质是一个 jmp 指令，该 stub 的跳转目标地址坐落于__la_symbol_ptr。
+
+首次访问_say时：
+_say对应的__la_symbol_ptr条目内容指向到__stub_helper
+__stub_helper里的代码逻辑，通过各种辗转最终调用dyld_stub_binder函数
+dyld_stub_binder函数通过调用 dyld 内部的函数找到_say符号的真实地址
+dyld_stub_binder将地址写入__la_symbol_ptr条目
+dyld_stub_binder跳转到_say符号的真实地址
+之后再次访问_say时，stub 里的 jmp 指令直接跳转符号的真实地址，因为该地址已经被写到__la_symbol_ptr条目中。
+
+
+iOS Lazy Bind:
+http://www.zyiz.net/tech/detail-99942.html
+
+==================================================6
+###
+APP的启动流程
+###
+1.
+iOS系统首先会加载解析该APP的Info.plist文件，因为Info.plist文件中包含了支持APP加载运行所需要的众多Key，value配置信息，
+例如APP的运行条件(Required device capabilities)，是否全屏，APP启动图信息等。
+
+2.
+创建沙盒(iOS8后，每次启动APP都会生成一个新的沙盒路径)
+
+3.
+根据Info.plist的配置检查相应权限状态
+
+4.
+加载Mach-O文件读取dyld路径并运行dyld动态连接器(内核加载了主程序，dyld只会负责动态库的加载)
+
+4.1 首先dyld会寻找合适的CPU运行环境
+4.2 然后加载程序运行所需的依赖库和我们自己写的.h.m文件编译成的.o可执行文件，并对这些库进行链接。
+4.3 加载所有方法(runtime就是在这个时候被初始化并完成OC的内存布局)
+4.4 加载C函数
+4.5 加载category的扩展(此时runtime会对所有类结构进行初始化)
+4.6 加载C++静态函数，加载OC+load
+4.7 最后dyld返回main函数地址，main函数被调用
+
+安全:
+ASLR（Address Space Layout Randomization）：地址空间布局随机化，镜像会在随机的地址上加载。
+
+代码签名：
+为了在运行时验证 Mach-O 文件的签名，并不是每次重复的去读入整个文件，而是把文件每页内容都生成一个单独的加密散列值，并把值存储在 __LINKEDIT 中。
+这使得文件每页的内容都能及时被校验确并保不被篡改。而不是每个文件都做hash加密并做数字签名。
+
+###
+加载Mach-O文件
+###
+dyld:
+https://github.com/opensource-apple/dyld
+dyld叫做动态链接器，主要的职责是完成各种库的连接。dyld是苹果用C++写的一个开源库，可以在苹果的git上直接查看源代码。
+
+有了动态链接库后，一个用于加载链接库的帮助程序被创建。在苹果的平台里是 dyld，其他 Unix 系统也有 ld.so。
+当内核完成映射进程的工作后会将名字为 dyld 的Mach-O 文件映射到进程中的随机地址，它将 PC 寄存器设为 dyld 的地址并运行。
+dyld 在应用进程中运行的工作是加载应用依赖的所有动态链接库，准备好运行所需的一切，它拥有的权限跟应用一样。
+
+下面的步骤构成了 dyld 的时间线：
+Load dylibs -> Rebase -> Bind -> ObjC -> Initializers
+
+加载 Dylib:
+从主执行文件的 header 获取到需要加载的所依赖动态库列表，而 header 早就被内核映射过。然后它需要找到每个 dylib，
+然后打开文件读取文件起始位置，确保它是 Mach-O 文件。接着会找到代码签名并将其注册到内核。然后在 dylib 文件的每个 segment 上调用 mmap()。
+应用所依赖的 dylib 文件可能会再依赖其他 dylib，所以 dyld 所需要加载的是动态库列表一个递归依赖的集合。一般应用会加载 100 到 400 个 dylib 文件，
+但大部分都是系统 dylib，它们会被预先计算和缓存起来，加载速度很快。
+
+
+Rebasing:
+Mach-O文件中，对于镜像内部的一些指针指向，都是按照虚拟内存地址没有偏移计算的。
+如今用了 ASLR 后会将 dylib 加载到新的随机地址(actual_address)，这个随机的地址跟代码和数据指向的旧地址(preferred_address)会有偏差，
+dyld 需要修正这个偏差(slide)，做法就是将 dylib 内部的指针地址都加上这个偏移量，偏移量的计算方法如下：
+
+Slide = actual_address - preferred_address
+
+然后就是重复不断地对 __DATA 段中需要 rebase 的指针加上这个偏移量。这就又涉及到 page fault 和 COW（copy-on-write）。
+这可能会产生 I/O 瓶颈，但因为 rebase 的顺序是按地址排列的，所以从内核的角度来看这是个有次序的任务，它会预先读入数据，减少 I/O 消耗。
+
+Binding:
+Binding 是处理那些指向 dylib 外部的指针，它们实际上被符号（symbol）名称绑定，也就是个字符串。
+在这步时，链接器会需要找到 symbol 对应的实现，这需要很多计算，去符号表里查找。
+找到后会将内容存储到 __DATA 段中的那个指针中。Binding 看起来计算量比 Rebasing 更大，但其实需要的 I/O 操作很少，因为之前 Rebasing 已经替 Binding 做过了。
+
+这里，Rebasing 和 Binding 都可以被统称为 Fix-ups 。即修正（fix-up）指针和数据。
+###
+Rebasing：在镜像内部调整指针的指向
+Binding：将指针指向镜像外部的内容
+###
+Objective-C 中有很多数据结构都是靠 Rebasing 和 Binding 来修正（fix-up）的，比如 Class 中指向超类的指针和指向方法的指针。
+
+ObjC 是个动态语言，可以用类的名字来实例化一个类的对象。
+这意味着 ObjC Runtime 需要维护一张映射类名与类的全局表。当加载一个 dylib 时，其定义的所有的类都需要被注册到这个全局表中。
+
+在 ObjC 中可以通过定义类别（Category）的方式改变一个类的方法。
+有时你想要添加方法的类在另一个 dylib 中，而不在你的镜像中（也就是对系统或别人的类动刀），这时也需要做些 fix-up。
+
+
+Fix-up之后，就是创建OC的内存布局，runtime等等
+
+想要加快App的启动速度：
+加载Dylib阶段，之前提到过加载系统的 dylib 很快，因为有优化。但加载内嵌（embedded）的 dylib 文件很占时间，所以尽可能把多个内嵌 dylib 合并成一个来加载，或者使用 static archive。
+
+Rebase/Binding 阶段，查看 __DATA 段中需要修正（fix-up）的指针，减少指针数量才会减少这部分工作的耗时。对于 ObjC 来说就是减少 Class,selector 和 category 这些元数据的数量。
+从编码原则和设计模式之类的理论都会鼓励大家多写精致短小的类和方法，并将每部分方法独立出一个类别，其实这会增加启动时间。
+对于 C++ 来说需要减少虚方法，因为虚方法会创建 vtable，这也会在 __DATA 段中创建结构。虽然 C++ 虚方法对启动耗时的增加要比 ObjC 元数据要少，但依然不可忽视。
+最后推荐使用 Swift 结构体，它需要 fix-up 的内容较少。
+

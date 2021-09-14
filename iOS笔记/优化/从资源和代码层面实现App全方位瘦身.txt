@@ -1,0 +1,88 @@
+https://help.apple.com/app-store-connect/#/dev300c2c5bf
+
+官方App Thinning:
+指的是App store 和操作系统在安装iOS或者watchOS的 app 的时候通过一些列的优化，尽可能减少安装包的大小，使得 app 以最小的合适的大小被安装到你的设备上。
+官方App Thinning包括了三个过程：slicing，bitcode，和 on-demand resources
+
+3.1 Slicing
+只有使用asset catalog才能正确使用Slicing作用于资源文件
+App Thinning 会专门针对不同的设备来选择只适用于当前设备的内容以供下载。比如，iPhone 6 只会下载 2x 分辨率的图片资源，iPhone 6plus 则只会下载 3x 分辨率的图片资源。
+App store将会为上传的app归档创建不同的“简化版app”
+3.2 bitcode
+3.3 On-Demand Resources
+
+删除无用图片：
+FengNiao–一个删除Xcode工程中无用图片资源的神器！FengNiao一个命令行工具，由iOS界的大神onevcat喵神使用swift开发并开源。
+推荐：LSUnusedResources
+
+图片视频等压缩：
+对于 App 来说，图片资源总会在安装包里占个大头儿。对它们最好的处理，就是在不损失图片质量的前提下尽可能地做压缩。
+1.WebP
+WebP 压缩率高，而且肉眼看不出差异，同时支持有损和无损两种压缩模式。比如，将 Gif 图转为 Animated WebP ，有损压缩模式下可减少 64% 大小，无损压缩模式下可减少 19% 大小。
+https://developers.google.com/speed/webp/docs/precompiled
+提供了一个图片压缩工具 cwebp来将其他图片转成 WebP。只要根据图片情况设置好参数就行
+cwebp [options] input_file -o output_file.webp
+比如，你要选择无损压缩模式的话，可以使用如下所示的命令：
+cwebp -lossless original.png -o new.webp
+其中，-lossless 表示的是，要对输入的 png 图像进行无损编码，转成 WebP 图片。不使用 -lossless ，则表示有损压缩。
+
+2.腾讯开发的iSpart
+可以实现 PNG 格式转 WebP
+
+不过，WebP 在 CPU 消耗和解码时间上会比 PNG 高两倍。所以，我们有时候还需要在性能和体积上做取舍。
+
+如果图片大小超过了 100KB，你可以考虑使用 WebP；
+而小于 100KB 时，你可以使用网页工具 TinyPng或者 GUI 工具ImageOptim进行图片压缩。
+这两个工具的压缩率没有 WebP 那么高，不会改变图片压缩方式，所以解析时对性能损耗也不会增加。
+
+代码瘦身：
+通过Appcode找出无用代码。直接在 AppCode 里选择 Code->Inspect Code 就可以进行静态分析。
+
+AppCode 静态检查的问题：
+JSONModel 里定义了未使用的协议会被判定为无用协议；
+如果子类使用了父类的方法，父类的这个方法不会被认为使用了；
+通过点的方式使用属性，该属性会被认为没有使用；
+使用 performSelector 方式调用的方法也检查不出来，比如 self performSelector:@selector(arrivalRefreshTime)；
+运行时声明类的情况检查不出来。比如通过 NSClassFromString 方式调用的类会被查出为没有使用的类，比如 layerClass = NSClassFromString(@“SMFloatLayer”)。还有以[[self class] accessToken] 这样不指定类名的方式使用的类，会被认为该类没有被使用。像 UITableView 的自定义的 Cell 使用 registerClass，这样的情况也会认为这个 Cell 没有被使用。
+
+LinkMap结合Mach-O找出无用代码
+Link Map File配置:
+点击工程，选择 Build Setting 选项，搜索 map ，可以看到如下界面。将 Write Link Map File 设置为 Yes 后，Build结束后，会在默认路径下生成一个 Link Map File 文件，该文件是 txt 格式的。点击 Path to Link Map File ，可以设置 Debug 或 Release 模式下的生成路径。
+查到Path to Map File路径
+打开txt文件
+
+LinkMap 文件分为三部分：Object File、Section 和 Symbols
+
+Object File 包含了代码工程的所有文件；
+Section 描述了代码段在生成的 Mach-O 里的偏移位置和大小；
+Symbols 会列出每个方法、类、block，以及它们的大小。
+
+得到了代码的全集信息以后，我们还需要找到已使用的方法和类，这样才能获取到差集，找出无用代码。所以接下来，说说怎么通过 Mach-O 取到使用过的方法和类。
+
+__objc_selrefs 里的方法一定是被调用了的。
+__objc_classrefs 里是被调用过的类，__objc_superrefs 是调用过 super 的类。
+通过 __objc_classrefs 和 __objc_superrefs，我们就可以找出使用过的类和子类。
+
+但是，这种查看方法并不是完美的，还会有些问题。原因在于， Objective-C 是门动态语言，方法调用可以写成在运行时动态调用，这样就无法收集全所有调用的方法和类。所以，通过这种方法找出的无用方法和类就只能作为参考，还需要二次确认。
+
+其他瘦身:
+1.Clang/LLVM 编译器优化选项
+Xcode 是使用 Clang 来编译 Objective-C 语言的，Clang 的优化选项在其文档 clang - Code Generation Options 中可以查阅得到。DE-Xcode 只提供给我们 6 个等级的编译选项，在 Xcode -> Build Setting -> Apple LLVM 9.0 - Code Generation -> Optimization Level 中进行设置 
+
+None[-O0]: 编译器不会优化代码，意味着更快的编译速度和更多的调试信息，默认在 Debug 模式下开启。
+Fast[-O,O1]: 编译器会优化代码性能并且最小限度影响编译时间，此选项在编译时会占用更多的内存。
+Faster[-O2]：编译器会开启不依赖空间/时间折衷所有优化选项。在此，编译器不会展开循环或者函数内联。此选项会增加编译时间并且提高代码执行效率。
+Fastest[-O3]：编译器会开启所有的优化选项来提升代码执行效率。此模式编译器会执行函数内联使得生成的可执行文件会变得更大。一般不推荐使用此模式。
+Fastest Smallest[-Os]：编译器会开启除了会明显增加包大小以外的所有优化选项。默认在 Release 模式下开启。
+Fastest, Aggressive Optimization[-Ofast]：启动 -O3 中的所有优化，可能会开启一些违反语言标准的一些优化选项。一般不推荐使用此模式。 
+
+Fastest Smallest[-Os] 极小限度会影响到包大小，而且也保证了代码的执行效率，是最佳的发布选项，一般 Xcode 会在 Release 下默认选择 Fastest Smallest[-Os] 选项，较老的项目可能没有自动勾选。
+
+2.Swift Complier/LLVM 编译优化选项
+Swift 语言的编译器是 swiftlang，同时也是基于 LLVM 后端的。Xcode 9.3 版本之后 Swift 编译器会提供新的选项来帮助减少 Swift 可执行文件的大小
+
+不要随便依赖第三方类库，可能仅仅用到1个库中的几个方法，就引入巨形库，删除不使用的三方库。
+少用多行宏，多用函数封装
+代码复用，禁止拷贝代码，共用代码下沉为底层组件
+尽量将图片资源放入 Images.xcassets 中
+对于一些非必要的大资源文件，例如字体库、换肤资源，可以在 App 启动后通过异步下载到本地，而不用直接放在 ipa 包内。

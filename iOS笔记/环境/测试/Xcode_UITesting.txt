@@ -1,0 +1,139 @@
+1、物理按键
+XCUIDevice *device = [XCUIDevice sharedDevice];
+    
+//Home键
+[device pressButton:XCUIDeviceButtonHome];
+
+//音量键
+[device pressButton:XCUIDeviceButtonVolumeUp];
+[device pressButton:XCUIDeviceButtonVolumeDown];
+
+UIDeviceOrientation orientation = device.orientation;
+
+//将画面转成直向 Portrait
+device.orientation = UIDeviceOrientationPortrait;
+
+//将画面转成直向 Portrait Upside Down
+device.orientation = UIDeviceOrientationPortraitUpsideDown;
+
+//将画面转成横向 Landscape Left
+device.orientation = UIDeviceOrientationLandscapeLeft;
+
+//将画面转成横 Landscape Right
+device.orientation = UIDeviceOrientationLandscapeRight;
+
+2、判断是否可点击
+XCUIElement *tabLiveButton =  tabBarsQuery.buttons[@"tab live"];
+//是否存在
+BOOL exists = tabLiveButton.exists；
+//是否可见
+BOOL hittable = tabLiveButton.hittable；
+
+3、CollectionView滑动操作
+XCUIApplication *application = [[XCUIApplication alloc] init];
+
+// 找到当前界面上所有的collectionView   
+XCUIElementQuery *collectionViewsQuery = application.collectionViews;
+NSInteger queryCount = collectionViewsQuery.count;
+
+//给出一个frame，用来匹配想要操作的collectionView
+CGRect colletionFrame = CGRectMake(0, 64, 375.0, 667.0 - 64);
+
+for (int i = 0; i < queryCount; i++) {
+XCUIElement *collection = collectionViewsQuery.allElementsBoundByIndex[i];
+
+CGRect tempFrame = collection.frame;
+
+if (CGRectContainsRect(colletionFrame, tempFrame) && [collection canOperateElement]) {
+    self.collectionView = collection;            
+}
+}
+//滑动操作
+[self.collectionView swipeUp];
+[self.collectionView swipeDown];
+
+4、cell查找并点击
+//当前找到的collectionView中的cell
+self.cells = [self.collectionView descendantsMatchingType:XCUIElementTypeCell];
+NSInteger cellCount = self.cells.count;
+if (cellCount > 0) {        
+    XCUIElement *lastCell = self.cells.allElementsBoundByIndex[cellCount -1];
+    //滑动到最后
+    if ([self.collectionView canOperateElement]) {
+    XCUIElement *lastCell = self.cells.allElementsBoundByIndex[cellCount -1];
+    //这里应该还有个滑动查找的过程，后续讲解
+    if ([lastCell canOperateElement]) {
+        //进行点击操作
+        [lastCell tap];
+    }
+}
+
+5、UITesting框架中提供的wait方法：
+- (void)waitForExpectationsWithTimeout:(NSTimeInterval)timeout handler:(nullable XCWaitCompletionHandler)handler;
+默认是在一定时间内查找控件失败后，即结束整个测试；这里提供另一种手动运行循环方式
+
+XCUIApplication *app = [[XCUIApplication alloc] init];
+    XCUIElement *splash = app.otherElements[@"splash viewcontroller"];
+    
+    NSTimeInterval startTime = [NSDate timeIntervalSinceReferenceDate];
+    NSInteger loopDuration = [NSDate timeIntervalSinceReferenceDate] - startTime;
+   
+    while (!splash.exists || loopDuration < 2.0) {
+        splash = app.otherElements[@"splash viewcontroller"];
+        loopDuration = [NSDate timeIntervalSinceReferenceDate] - startTime;
+	CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.5, NO);
+    }
+
+每0.5判断一次是否存在splash viewcontroller；若超过2s仍未找到该页面，则停止循环查找
+
+// test
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+    
+    NSTimeInterval startTime = [NSDate timeIntervalSinceReferenceDate];
+    NSInteger loopDuration = [NSDate timeIntervalSinceReferenceDate] - startTime;
+   
+    while (loopDuration < 10.0) {
+        NSLog(@"=====");
+        loopDuration = [NSDate timeIntervalSinceReferenceDate] - startTime;
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 5, NO);
+        NSLog(@"#####");
+    }
+}
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
+{
+    NSLog(@"1111");
+}
+
+
+CFRunLoopRunResult CFRunLoopRunInMode(CFRunLoopMode mode, CFTimeInterval seconds, Boolean returnAfterSourceHandled);
+
+Run loops can be run recursively. 
+You can call CFRunLoopRunInMode from within any run loop callout and create nested run loop activations on the current thread’s call stack. 
+You are not restricted in which modes you can run from within a callout. 
+You can create another run loop activation running in any available run loop mode, including any modes already running higher in the call stack.
+
+The run loop exits with the following return values under the indicated conditions:
+kCFRunLoopRunFinished. The run loop mode mode has no sources or timers.
+kCFRunLoopRunStopped. The run loop was stopped with CFRunLoopStop.
+kCFRunLoopRunTimedOut. The time interval seconds passed.
+kCFRunLoopRunHandledSource. A source was processed. This exit condition only applies when returnAfterSourceHandled is true.
+
+You must not specify the kCFRunLoopCommonModes constant for the mode parameter.
+Run loops always run in a specific mode.
+You specify the common modes only when configuring a run-loop observer and only in situations where you want that observer to run in more than one mode.
+
+mode	
+The run loop mode to run. mode can be any arbitrary CFString. You do not need to explicitly create a run loop mode, although a run loop mode needs to contain at least one source or timer to run.
+
+seconds	
+The length of time to run the run loop. If 0, only one pass is made through the run loop before returning; if multiple sources or timers are ready to fire immediately, only one (possibly two if one is a version 0 source) will be fired, regardless of the value of returnAfterSourceHandled.
+
+returnAfterSourceHandled	
+A flag indicating whether the run loop should exit after processing one source. If false, the run loop continues processing events until seconds has passed.
+Returns
+
+Returns
+A value indicating the reason the run loop exited.

@@ -1,0 +1,52 @@
+https://www.zhihu.com/people/ning-meng-meng-meng-47-83/posts
+
+struct bufferevent这个结构体
+
+struct bufferevent {
+struct event_base *ev_base;
+const struct bufferevent_ops *be_ops;
+struct event ev_read;
+struct event ev_write;
+struct evbuffer *input;
+struct evbuffer *output;
+……
+bufferevent_data_cb readcb;
+bufferevent_data_cb writecb;
+bufferevent_event_cb errorcb;
+……
+}
+可以看出struct bufferevent内置了两个event（读/写）和对应的缓冲区。当有数据被读入(input)的时候，readcb被调用，当output被输出完成的时候，writecb被调用，当网络I/O出现错误，如链接中断，超时或其他错误时，errorcb被调用。
+
+使用bufferevent的过程：
+
+1. 设置sock为非阻塞的
+
+eg:  evutil_make_socket_nonblocking(fd);
+2. 使用bufferevent_socket_new创建一个structbufferevent *bev，关联该sockfd，托管给event_base
+
+函数原型为：
+
+struct bufferevent * bufferevent_socket_new(struct event_base *base, evutil_socket_t fd,  int options)
+eg:  struct bufferevent *bev;
+bev = bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
+3. 设置读写对应的回调函数
+
+函数原型为：
+
+void bufferevent_setcb(struct bufferevent *bufev,
+    bufferevent_data_cb readcb, bufferevent_data_cb writecb,
+    bufferevent_event_cb eventcb, void *cbarg)
+eg.  bufferevent_setcb(bev, readcb, NULL, errorcb, NULL);
+4. 启用读写事件,其实是调用了event_add将相应读写事件加入事件监听队列poll。正如文档所说，如果相应事件不置为true，bufferevent是不会读写数据的
+
+函数原型：
+
+int bufferevent_enable(struct bufferevent *bufev, short event)
+eg.  bufferevent_enable(bev, EV_READ|EV_WRITE);
+5. 进入bufferevent_setcb回调函数：
+
+在readcb里面从input中读取数据，处理完毕后填充到output中；
+
+writecb对于服务端程序，只需要readcb就可以了，可以置为NULL；
+
+errorcb用于处理一些错误信息。

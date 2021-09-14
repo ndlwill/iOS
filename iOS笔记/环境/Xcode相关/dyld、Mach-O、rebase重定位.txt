@@ -1,0 +1,111 @@
+==========1.DYLD
+全名为dynamic loader，动态加载器，是苹果负责加载应用的程序。
+它的运行过程与你编写的代码相同，会在启动的时候加载所有依赖框架，包括系统框架。
+作用：加载mach-O可执行文件(其中包含rebase文件路径)、加载dylib动态库、链接库、链接主程序、寻找主程序入口(其中会调用所有类的load)
+
+1.0 共享缓存技术 
+在程序启动运行时会依赖很多系统动态库，系统动态库会通过dyld(动态加载器)（默认是/usr/lib/dyld）加载到内存中，
+系统内核读取程序可执行文件信息做一些准备工作，接着会将工作交给dyld。
+由于很多程序需要使用系统动态库，不可能在每个程序加载时都去加载所有的系统动态库，为了优化程序启动速度和利用动态库缓存，
+iOS系统采用了共享缓存技术，将所有系统库（私有与公有）编译成一个大的缓存文件，这就是dyld_shared_cache,
+该缓存文件存在iOS系统下的 /System/Library/Caches/com.apple.dyld/目录下。）
+
+https://iphonedev.wiki/index.php/Dyld_shared_cache
+
+
+1.1 dyld之Rebase重定位
+首先app其实是一个二进制ipa文件，里面全是二进制元数据指针， 任何人下载下来ipa数据结构都是相同的，所以为了防止他人猜测某个特定功能在内存中的位置，
+苹果会运用地址空间布局随机化技术ASLR(Address Space Layout Radomization )来给指针的起始地址一个随机的偏移量,
+而dyld任务之一就是重定位二进制ipa文件中的元数据指针指向，纠正起始量。所以减少生成Objc元数据，是一项有效的减少启动时间的方式。
+具体做法：1.适当用struct替换class声明 2.减少分类拓展的使用
+3.swift减少@objc关键词使用 
+4.final修饰的包含很多属性的大类  可以用struct来代替 可减少60%多重定位时间 
+5.改进的代码生成比如用生成函数 替换自定义类型
+
+
+
+==========从启动到Main函数都干了什么
+一：读取加载dyld 
+应用启动，系统首先读取Mach-O文件 获取dyld路径 并且加载dyld 
+
+二:用dyld 来加载mach-o文件 、加载库、找到一个入口
+1.首先开启上下文信息， 得到可执行文件的纠正偏移量的路径 、处理环境变量、得到主机信息
+
+2.开启共享缓存映射至共享区域
+
+3.开始加载 
+--添加可执行文件
+具体做法：调用instantiateFromLoadedImage函数 生成imageloader对象 ，且判断是否是mach-o格式 若是 则添加至sAllimages数组 若不是则抛出 格式异常
+--加载dylib 
+遍历 DYLD_INSERT_LIBRARIES 环境变量，调用 loadInsertedDylib 加载。
+
+4.开始链接
+--链接主程序 link mainexcute
+--链接之前插入的库image(imageloader加载的)，并且给每个库注册插入符号 用：registerIterposing
+
+5.开始执行初始化函数
+--initializeMainExecutable 初始化  其中 +load 和 constructor 方法就是在这里执行
+--内部先初始化动态库 
+--再初始化主程序 调用一系列函数直到调用notifySingle函数 里面的dyld_objc_notify_register()函数,
+而在objc_init里面会有call_class_loads 对所有的类 调用一次load方法
+
+6.反馈一个入口 
+-- 先调用getEntryFromLC_MAIN 得到lc_main，则反馈main函数地址
+--若没有lc_main则调用 getEntryFromLC_UNIXTHREAD 读取主线程  则反馈主线程地址
+
+三：拿到入口地址 则dyld流程结束  程序就走到了入口 。
+
+----------dyld加载流程
+dyld全名为dynamic loader
+
+查看_dyld_start，我们看到调用的是dyldbootstrap这个类的start函数
+从_dyld_start函数开始设置相关信息，并在最后调用了_mian()函数。
+进入_main()函数，我们可以看到dyld加载的主要流程。
+1.设置上下文信息，配置进程是否受限
+首先，调用setContext，设置上下文信息，包括后面需要调用的函数及传入参数。然后，调用configureProcessRestrictions，设置进程是否受限。
+2.配置环境变量，获取当前运行架构
+调用checkEnvironmentVariables，如果allowEnvVarsPath与allowEnvVarsPrint为空，直接跳过，否则调用processDyldEnvironmentVariable处理并设置环境变量。
+3.检查共享缓存是否映射到了共享区域
+首先，调用 checkSharedRegionDisable 检查是否开启共享缓存，在iOS中是必须开启的，接着调用 mapSharedCache函数，将共享缓存映射到共享区域。
+4.加载可执行文件，生成一个ImageLoader 实例对象
+调用 instantiateFromLoadedImage 函数实例化一个 ImageLoader 对象。
+该函数先调用 isCompatibleMachO 来判断文件的架构是否和当前的架构兼容，然后调用 ImageLoderMachO::instantiateMainExecutable 来加载文件生成实例，
+并将 image 添加到全局 sAllImages 中。
+5.加载所有插入的库
+遍历 DYLD_INSERT_LIBRARIES 环境变量，调用 loadInsertedDylib 加载。
+6.链接主程序
+调用 link 链接主程序。内核调用的是ImageLoader::link 函数。
+7.链接所有插入的库，执行符号替换
+对 sAllimages （除了主程序的Image外）中的库调用link进行链接，然后调用 registerInterposing 注册符号插入。
+8.执行初始化方法
+initializeMainExecutable 执行初始化方法，其中 +load 和 constructor 方法就是在这里执行。 
+initializeMainExecutable 内部先调用了动态库的初始化方法，后调用主程序的初始化方法。
+该函数依次调用了 runInitializers、processInitializers、recursiveInitialization、notifySingle。也就是我们在函数调用栈里看到的顺序
+
+在notifySingle函数里我们找不到 load_images 的调用，###但有一个函数指针sNotifyObjCInit###
+sNotifyObjCInit 有被赋值
+当我们继续寻找谁调用了_dyld_objc_notify_register()函数时，发现在dyld源码里找不到。
+从函数的定义来看，该接口是供 objc runtime 调用的，我们可以在新工程里为 _dyld_objc_notify_register 下符号断点查看。
+这时，打开objc 源码 查看_objc_init()函数。
+
+看到_dyld_objc_notify_register()函数的第二个参数时，我们找到了 load_images ，
+查看load_images()函数发现一个回调 call_load_methods()，继续查看call_load_methods()函数，
+发现里面循环调用 call_class_loads()，这也就说明为什么load函数比main函数先调用。到这里，我们找到函数调用栈的所有函数，接下来返回dyld。
+
+9.寻找主程序入口
+调用 getEntryFromLC_MAIN，从 Load Command 读取LC_MAIN入口，
+如果没有LC_MAIN入口，就读取LC_UNIXTHREAD，然后跳到入口处执行，这样就来到了我们熟悉的main函数处。
+
+比较核心的第8步：
+内部会初始化libSystem,然后初始化libdispatch,然后进入libObjc,并执行_objc_init(void),在这个函数内部有一个核心的回调注册：
+
+libObjc内部：
+_objc_init(){
+  ........
+   _dyld_objc_notify_register(&map_images,&load_images,&unmap_images);
+  ........
+}
+map_images是对OC类的加载，load_Images是对OC中所有load方法的调用。该回调会在libDyld内部调用notifySingle()后触发。
+
+之后会执行doModInitFunctions()，内部会调用项目内所有的全局C++对象的构造函数（带__attribute__((constructor))的函数）。
+这里同时也说明了为什么APP启动之后是load()->C++->main()的执行顺序了。

@@ -1,0 +1,33 @@
+我们开发的时候，都会使用最新的SDK，但是为了让老的设备可以下载并运行我们的应用，就要将Deployment Target设置成之前系统的版本号。
+例如我们应用使用iOS 8.1的SDK，Deployment Target设置成iOS 5.1.1，虽然我们开发的时候使用的是8.1的SDK，但是程序运行在的设备中却可能是6.0 or 7.0的SDK上，
+按照苹果的说法，如果我们应用使用了最新SDK引入的特性，比如符号、函数等，那么在版本较旧的设备上就运行不了。下面是苹果官方文档的一段话：
+Normally, if an application uses a new feature in a framework, it is unable to run on earlier versions of the framework that do not support that feature. 
+Such applications would either fail to launch or crash when an attempt to use the feature was made.
+
+那么为什么我们使用最新的SDK开发的应用却可以运行在旧的系统中呢？答案是使用了弱引用。
+资料里面说过，我们自己创建的framework，如果需要做版本兼容，那么就要对今后加入的符号等使用弱引用，使用了弱引用之后，即使在版本较旧的环境下跑，也可以运行，只是相应的符号是NULL
+
+如果一个framework没有为新加入的符号加入弱引用，那也不必担心，我们只要在链接时弱引用整个framework就好，方法就是链接的时候使用 -weak_framework frameworkName
+
+// weak link the function
+extern int MyFunction() __attribute__((weak_import));
+// weak link the variable
+extern int MyVariable __attribute__((weak_import));
+
+
+对于UIKit等framework，每个版本都有新的符号、函数等，而在头文件里我没有这些符号看到相关弱引用的声明(即__attribute__((weak_import)))
+但是我测试下来发现即使我没有使整个framework weakly linked，我的应用也可以在较旧的系统上运行
+weak link framework可以在Targets->Build Phases->Link Binary With Libraries中，将选定的framework的Status由Required变成Optional
+Why？
+注意到了类似这些的宏 NS_AVAILABLE_IOS(8_0); ，他们是告诉编译器这个符号在系统的哪一个版本引入、哪一个版本depreciated，哪一个版本废除，
+展开后__attribute__((availability(ios,__NSi_##_ios))) 是这样
+
+Attributes in Clang:
+https://clang.llvm.org/docs/AttributeReference.html
+里面对availability这个属性有这样一段解释：
+A declaration can be used even when deploying back to a platform version prior to when the declaration was introduced. 
+When this happens, the declaration is weakly linked, as if the weak_import attribute were added to the declaration. 
+A weakly-linked declaration may or may not be present a run-time, 
+and a program can determine whether the declaration is present by checking whether the address of that declaration is non-NULL.
+
+也就是说availability这个属性在部署的版本低于此符号被引入时的版本时，会使用weak_import，所以就解开了为什么我没有 使苹果的framework weakly linked也可以运行的原因了。
