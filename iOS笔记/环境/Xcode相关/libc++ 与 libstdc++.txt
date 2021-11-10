@@ -1,0 +1,111 @@
+libc++ 与 libstdc++ 是两套c++标准库，使用取决于编译器优先集成哪个
+
+苹果在 XCode10 和 iOS12 中移除了 libstdc++ 这个库，由 libc++ 这个库取而代之，
+苹果的解释是 libstdc++ 已经标记为废弃有5年了，建议大家使用经过了 llvm 优化过并且全面支持C++11的 libc++ 库。
+
+Xcode默认:
+CLANG_CXX_LANGUAGE_STANDARD = "gnu++11";
+CLANG_CXX_LIBRARY = "libc++";
+
+
+xcode工程配置：
+Targets--->Build Settings--->Apple Clang - Language - C++ --->C++ Standard Library，修改为libc++
+
+
+C++11之前被称为C++0x
+所以之前一些编译器使用C++11的编译参数是：-std=c++0x，后面使用：-std=c++11
+
+区别在于是否启用违反C++标准的GNU扩展
+-std=c++11，支持C++11标准；
+-std=gnu++11，支持C++11标准和GNU扩展特性；
+
+https://gcc.gnu.org/onlinedocs/gcc/index.html#Top
+GNU Compiler Collection (GCC)
+
+gcc 和 GCC 是两个不同的东西
+GCC:GNU Compiler Collection(GUN 编译器集合)，它可以编译C、C++、JAV、Fortran、Pascal、Object-C、Ada等语言。
+gcc是GCC中的GUN C Compiler（C 编译器）
+g++是GCC中的GUN C++ Compiler（C++编译器）
+
+gcc和g++的主要区别
+1. 对于 *.c和*.cpp文件，gcc分别当做c和cpp文件编译（c和cpp的语法强度是不一样的）
+2. 对于 *.c和*.cpp文件，g++则统一当做cpp文件编译
+虽然c++是c的超集，但是两者对语法的要求是有区别的
+
+
+无论是gcc还是g++，用extern "c"时，都是以C的命名方式来为symbol命名
+me.h：
+extern "C" void CppPrintf(void);
+ 
+me.cpp:
+#include <iostream>
+#include "me.h"
+using namespace std;
+void CppPrintf(void)
+{
+     cout << "Hello\n";
+}
+
+test.cpp:
+#include <stdlib.h>
+#include <stdio.h>
+#include "me.h"        
+int main(void)
+{
+    CppPrintf();
+    return 0;
+}
+
+在用gcc编译c++文件时，为了能够使用STL，需要加参数 –lstdc++ ，但这并不代表 gcc –lstdc++ 和 g++等价
+
+
+
+==================================================
+测试文件使用的是C++语言，而库的组件使用的是C语言
+
+main.cpp:
+#include "test.h"
+
+int main()
+{
+    test(1);
+    return 0;
+}
+
+test.h:
+#ifndef _TEST_H_
+#define _TEST_H_
+
+void test(int a);
+
+#endif
+
+test.c:
+#include "test.h"
+
+void test(int a)
+{
+
+}
+
+编译test.c生成的符号是_test
+将test.c改为test.cpp 生成的符号是 void __cdecl test(int)
+对于C语言生成的符号表和C++语言生成的符号表差距很大
+
+对于C语言编写的程序来说，未来可能被C语言或者C++语言的用户所使用，大部分解决的方法是：
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// ...
+
+#ifdef __cplusplus
+}
+#endif
+
+###
+直接在C语言中使用extern "C"会报语法错误，因为该语法是C++语法，
+对于C语言来说，声明该接口是C语言编写的显然没有任何意义,它的目标是使用C++语言的用户；
+而对于C++用户，该声明却是必须的，因为C和C++语言编写的函数的符号表生成结果是不一致的，
+除非你在编译C文件的时候明确用C++编译器，那就没什么问题了。
+###

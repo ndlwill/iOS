@@ -1,0 +1,56 @@
+estimatedRowHeight是一个预估高度，iOS11之前是为0，在iOS11下，这个值默认为44。
+The default value is automaticDimension, which means that the table view selects an estimated height to use on your behalf. 
+Setting the value to 0 disables estimated heights, which causes the table view to request the actual height for each cell.
+
+我们知道tableView是继承于ScrollView的，一个scrollView能滑动，需要设置contentSize，那么tableView的contentSize怎么来呢？
+iOS11之前，会调用tableView每一个cell的heightForRowAtIndexPath来算出整个高度，从而相加得出contentSize来，这一个步骤挺耗性能！
+
+所以iOS11，默认打开了estimatedRowHeight估算高度功能，当tableView创建完成后，
+contentSize为estimatedRowHeight（默认值为44）*cell的数量，不需要遍历每一个cell的heightForRowAtIndexPath来计算了。
+但是这样子真实的contentSize又怎么得出来呢？
+也就是说在滑动的时候，来计算这个值。
+
+例子一: 实际高度大于预估高度的时候，会按照预估高度下的cell的数量来计算contentSize
+创建一个TableView，在iPhone7（iOS11）下，origin = (x = 0, y = 20)，size = (width = 375, height = 657)，此时方法返回的cell高度为50
+-(NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section{
+      return 100;
+}
+
+ -(CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath{
+      return 50;
+}
+
+-(void)scrollViewDidScroll:(UIScrollView *)scrollView {
+      NSLog(@"table ContentSize %@",  NSStringFromCGSize(scrollView.contentSize));
+}
+
+初始高度为100 * 44=4400
+table ContentSize {375, 4400}
+当我往下拉（往下不是往上），不会出现新的cell，仅仅是为了触发scrollViewDidScroll这个方法来打印出下面语句来
+table ContentSize {375, 4490}
+这个值怎么出来的呢？按照计算的话，也应该是4400+(50-44)*13=4478 （这里50-44是每一行的实际高度和预估的高度的差值；13是界面显示出0～12，总共13行）。
+
+后面经过调试你会发现，实际上会调用15次heightForRow的方法，这15次，是预估高度为44，在657高度的屏幕上，会显示出657/44=15个cell出来，
+所以它的实际计算会根据这个值来进行，那么此时我们就能得出正确的结论来了4400+15*（50-44）=4490。
+后面当你每次显示出新的cell出来的时候，再进行调整，增加50-44=6的高度。
+
+例子二: 当实际高度小于预估高度的时候，会按照实际高度下的cell的数量来计算contentSize
+cell高度返回为30，也就是小于预估高度44
+
+ -(CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath{
+        return 30;
+}
+
+初始高度为100 * 44=4400
+table ContentSize {375, 4400}
+当我往下拉（往下不是往上），不会出现新的cell，仅仅是为了触发scrollViewDidScroll这个方法来打印出下面语句来
+table ContentSize {375, 4092}
+
+我们计算下：4400 -（44-30）* 15= 4190
+它又是怎么来的呢？经过调试，我们发现它调用了heightForRow这个方法22次，也就是目前显示在屏幕上的可见cell数量
+按照这个，确实符合：4400 -（44-30）22= 4092
+同样的，当你往上滑动，出现新的cell的时候，contentSize的高度会减去（44-30）
+
+
+
+如果我们要回到iOS11之前的效果，我们可以让estimatedRowHeight=0，关闭这个预估高度的效果。

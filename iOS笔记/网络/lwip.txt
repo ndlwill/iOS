@@ -1,0 +1,362 @@
+https://www.kancloud.cn/jiejietop/tcpip/988475
+
+http://www.nongnu.org/lwip/2_1_x/index.html
+http://download.savannah.nongnu.org/releases/lwip/
+
+
+###网络相关
+https://blog.csdn.net/zhangyanfei01/article/details/117341965
+https://github.com/yanfeizhang/coder-kung-fu
+###
+
+==================================================LwIP结构体netif:
+网络接口（如以太网接口）是硬件接口，网络接口又可以称之为网卡 ， LwIP 是软件，那么怎么让硬件与软件无缝连接起来呢？
+而且， 网卡又有多种多样，怎么能让 LwIP 使用同样的软件能兼容不同的硬件呢？
+
+LwIP 使用一个数据结构——netif 来描述一个网卡， 但是由于网卡是直接与硬件打交道的，硬件不同则处理基本是不同的， 所以必须由用户提供最底层接口函数， 
+LwIP 提供统一的接口，但是底层的实现需要用户自己去完成，比如网卡的初始化， 网卡的收发数据，当 LwIP 底层得到了网络的数据之后，才会传入内核中去处理；
+同理， LwIP 内核需要发送一个数据包的时候，也需要调用网卡的发送函数，这样子才能把数据从硬件接口到软件内核无缝连接起来。
+
+ethernetif.c 文件中的函数通常为与硬件打交道的底层函数，当有数据需要通过网卡接收或者发送数据的时候就会被调用，经过 LwIP 协议栈内部进行处理后，从应用层就能得到数据或者可以发送数据。
+
+netif_add():
+首先我们需要根据我们的网卡定义一个 netif 结构体变量 struct netif gnetif， 我们首先要把网卡挂载到 netif_list 链表上才能使用，
+因为 LwIP 是通过链表来管理所有的网卡，所有第一步是通过 netif_add()函数将我们的网卡挂载到 netif_list 链表上
+在使用之前需要进行初始化主机 IP 地址、子网掩码、网关等，并且在调用 netif_add()函数之后会触发 netif_init_fn 的回调函数。
+在开始使用 LwIP 协议栈的时候，我们就需要将网卡底层移植完成，才能开始使用，而移植的第一步，就是将网络进行初始化，并且设置该网卡为默认网卡，让LwIP 能通过网卡进行收发数据。
+
+
+==================================================原始套接字（SOCK_RAW）
+https://zhugeyifan.blog.csdn.net/article/details/111824101
+
+（1）怎样发送一个自定义的 IP 包？
+（2）怎样发送一个 ICMP 协议包？
+
+通过原始套接字可以越过传输层，直接在IP层进行数据的发送和接收。
+通过原始套接字，可以构建自定义的IP包。
+
+1.输入*“ping www.baidu.com”*命令后，在ping程序中会解析参数（IP地址、发送次数、发送数据大小、TTL值、timeout值）
+2.创建原始套接字：socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)
+iSock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP); 
+if (iSock < 0) {
+    return  (PX_ERROR);
+}
+
+setsockopt(iSock, SOL_SOCKET, SO_RCVTIMEO, &iTimeout, sizeof(INT));
+setsockopt(iSock, IPPROTO_IP, IP_TTL, &iTTL, sizeof(INT));
+
+connect(iSock, (struct sockaddr *)&sockaddrinTo, 
+        sizeof(struct sockaddr_in));
+
+3.构建ICMP报文，通过原始套接字类型直接发送数据包至IP层
+icmphdrEcho = (struct icmp_echo_hdr *)__SHEAP_ALLOC(stPingSize);
+if (icmphdrEcho == LW_NULL) {
+    return  (PX_ERROR);
+}
+
+__inetPingPrepare(icmphdrEcho, iDataSize, pusSeqRecv);    /* 构造 ping 包 */
+
+sockaddrin.sin_len    = sizeof(struct sockaddr_in);
+sockaddrin.sin_family = AF_INET;
+sockaddrin.sin_port   = 0;
+sockaddrin.sin_addr   = inaddr;
+
+sstError = sendto(iSock, icmphdrEcho, stPingSize, 0, 
+                    (const struct sockaddr *)&sockaddrin, 
+                    sizeof(struct sockaddr_in));
+                        
+__SHEAP_FREE(icmphdrEcho);
+
+==================================================AF_PACKET
+可以构建自定义以太网包–AF_PACKET套接字
+
+使用socket(AF_PACKET, SOCK_RAW, ETHTYPE_*)创建的套接字可以接收链路层报文。
+
+1.首先在socket函数中，对不同的协议域设置了不同入口
+/* 选择协议域 */
+switch (domain) {
+case AF_UNIX:     /*  UNIX 域协议                 */
+    pafunix = unix_socket(domain, type, protocol);
+    ...
+case AF_PACKET:   /*  PACKET                      */
+    pafpacket = packet_socket(domain, type, protocol);
+    ...
+case AF_INET:
+case AF_INET6:    /*  IPv4 / v6                   */
+    iLwipFd = lwip_socket(domain, type, protocol);
+    ...
+default:
+}
+
+2.通过recvfrom函数接收数据
+ssize_t  recvfrom (int s, void *mem, size_t len, int flags,
+                   struct sockaddr *from, socklen_t *fromlen)
+{
+	...
+    switch (psock->SOCK_iFamily) {
+    case AF_UNIX:   /*  UNIX 域协议                 */
+        sstRet = (ssize_t)unix_recvfrom(psock->SOCK_pafunix, mem, len, flags, from, fromlen);
+        break;
+    case AF_PACKET: /*  PACKET                      */
+        sstRet = (ssize_t)packet_recvfrom(psock->SOCK_pafpacket, mem, len, flags, from, fromlen);
+        break;
+    default:
+        sstRet = (ssize_t)lwip_recvfrom(psock->SOCK_iLwipFd, mem, len, flags, from, fromlen);
+        break;
+    }
+    ...
+}
+
+3.获取到数据的源头在tcpip.c文件中，tcpip_input函数是LWIP协议栈的入口，在tcpip_input函数中添加了一个回调函数，用于AF_PACKET获取链路层报文。
+tcpip_input(struct pbuf *p, struct netif *inp)
+{
+#if defined(SYLIXOS) && defined(LWIP_HOOK_LINK_INPUT)
+  /* SylixOS 添加的回调函数（AF_PACKET获取链路层报文） */
+  if (LWIP_HOOK_LINK_INPUT(p, inp)) {
+    pbuf_free(p);
+    return ERR_OK;
+  }
+...
+}
+
+4.通过sendto函数发送数据
+在packet_sendto->__packetEthRawSendto函数中，组装一个以太网报文，并通过netif->linkoutput函数将数据通过网卡驱动发送出去。
+errno_t  __packetEthRawSendto (CPVOID                pvPacket, 
+                               size_t                stBytes, 
+                               struct sockaddr_ll   *psockaddrll)
+{
+...
+    /* 获取网络接口 */
+    pnetif = (struct netif *)netif_get_by_index((UINT)psockaddrll->sll_ifindex);
+...
+    /* 分配带有 PAD 的以太网报头 pbuf */
+    pbuf_hdr = pbuf_alloc(PBUF_RAW, ETH_HLEN + ETH_PAD_SIZE, PBUF_RAM); 
+...
+    /* 拷贝数据至pbuf */
+    lib_memcpy(((u8_t *)pbuf_hdr->payload) + ETH_PAD_SIZE, pvPacket, ETH_HLEN);
+...
+    /* 通过网卡驱动发送函数，将数据发送出去 */
+    err = pnetif->linkoutput(pnetif, pbuf_hdr);
+...
+}
+
+
+==================================================AF_UNIX socket套接字分析
+UNIX 域套接字是一种高级的 IPC 机制，这种形式的 IPC 可以在同一计算机系统上运行的两个进程之间进行通信。
+虽然因特网域套接字可用于同一目的，但 UNIX 域套接字的效率更高。
+UNIX 域套接字仅仅复制数据，并不执行协议处理，因此，无需添加或者删除网络报头，无需计算校验和，无需产生序列号，无需发送确认报文等。
+
+UNIX 域套接字提供流（ SOCK_STREAM）、数据报（ SOCK_DGRAM）和连续数据报（ SOCK_SEQPACKET）三种接口。
+
+UNIX 域数据报服务是可靠的，既不会丢失报文也不会传递出错。 
+UNIX 域套接字就像是套接字和管道的混合，可以使用它们面向网络的域套接字接口或者使用 socketpair 函数来创建一对无命名的、相互连接的UNIX 域套接字。
+
+UNIX 域套接字的源码
+1.首先分析socket函数:
+socket函数中首先会对参数进行分析，UNIX套接字指支持AF_UNIX、SOCK_STREAM、SOCK_DGRAM、SOCK_SEQPACKET等参数。
+AF_UNIX_T  *unix_socket (INT  iDomain, INT  iType, INT  iProtocol)
+{
+    if (iDomain != AF_UNIX) {
+        return  (LW_NULL);
+    }
+    
+    if ((iType != SOCK_STREAM) && 
+        (iType != SOCK_DGRAM)  &&
+        (iType != SOCK_SEQPACKET)) {
+        return  (LW_NULL);
+    }
+    
+    pafunix = __unixCreate(iType);
+    if (pafunix == LW_NULL) {
+        _ErrorHandle(ENOMEM);
+    }
+...
+}
+
+确认传入的参数无误后，创建af_unix控制块（其中创建了各自的二进制信号量），最后将af_unix控制块加入全局_G_plineAfUnix链表。（所有创建的UNIX 域套接字控制块都在该链表中）
+static AF_UNIX_T  *__unixCreate (INT  iType)
+{
+	...
+    pafunix = (AF_UNIX_T *)__SHEAP_ALLOC(sizeof(AF_UNIX_T));
+	...
+    pafunix->UNIX_hCanRead = API_SemaphoreBCreate("unix_rlock", LW_FALSE, 
+                                                  LW_OPTION_OBJECT_GLOBAL, LW_NULL);
+	...
+    _List_Line_Add_Ahead(&pafunix->UNIX_lineManage, &_G_plineAfUnix);
+	...
+}
+
+2.接着分析一下bind函数。因为应用于IPC，所以UNIX 域套接字不需要IP和端口，取而代之的是文件路径来表示“网络地址”。
+在bind函数中会检索各个节点的文件路径，若文件路径已存在，bind失败。
+INT  unix_bind (AF_UNIX_T  *pafunix, const struct sockaddr *name, socklen_t namelen)
+{
+	...
+    lib_strncpy(cPath, paddrun->sun_path, iPathLen);
+	...
+	/*  创建 socket 文件            */
+    iFd = open(cPath, O_CREAT | O_RDWR, __AF_UNIX_DEF_FLAG | S_IFSOCK); 
+	....
+	/*  获得完整路径                 */
+    API_IosFdGetName(iFd, cPath, MAX_FILENAME_LENGTH);                  
+    ...
+    /*  查询各节点是否存在该路径       */
+    pafunixFind = __unixFind(cPath, iSockType, 
+                             (iSockType == SOCK_DGRAM) ?
+                             LW_FALSE : LW_TRUE);
+	...
+	/*  若路径不存在，添加             */
+    lib_strcpy(pafunix->UNIX_cFile, cPath);
+	...
+    close(iFd);
+}
+
+3.UNIX 域套接字发送函数
+通过__AF_UNIX_WWRITE宏，阻塞等待二进制信号量，直到读端执行__unixUpdateWriter函数
+static ssize_t  unix_sendto2 (AF_UNIX_T  *pafunix, const void *data, size_t size, 
+                              const void *data_ex, socklen_t size_ex, int flags,
+                              const struct sockaddr *to, socklen_t tolen)
+{
+	...
+    INT         i       = 0;                               /*  总发送次数              */
+    UINT        uiTimes = size >> __AF_UNIX_PIPE_BUF_SHIFT;/*  循环次数                */
+    UINT        uiLeft  = size & (__AF_UNIX_PIPE_BUF - 1); /*  最后一次数量             */
+	...
+    do {  
+		...
+__try_send:
+        if (__unixCanWrite(pafunixRecver)) {                /*  可以发送               */
+            if (i < uiTimes) {
+	            /*  可以发送               */
+                sstWriteNum = __unixSendtoMsg(pafunix, pafunixRecver, 
+                                              pcSendMem, __AF_UNIX_PIPE_BUF, 
+                                              data_ex, size_ex, flags);
+				...
+                i++;                                        /*  发送次数++            */
+                bNeedUpdateReader = LW_TRUE;                /*  需要通知读端           */
+                goto    __try_send;                         /*  重新尝试发送数据        */
+            } else {
+                /*  最后一次发送                */
+                sstWriteNum = __unixSendtoMsg(pafunix, pafunixRecver, 
+                                              pcSendMem, uiLeft, 
+	                                              data_ex, size_ex, flags); 
+				...
+                break;                                      /*  发送完毕             */
+            }
+        }
+        
+        if (bNeedUpdateReader) {
+            bNeedUpdateReader = LW_FALSE;
+            __unixUpdateReader(pafunixRecver, ERROR_NONE);  /*  update remote reader */
+        }
+		...
+	        ulError = __AF_UNIX_WWRITE(pafunixRecver);      /*  等待可写              */
+		...
+    } while (1);
+    
+    if (bNeedUpdateReader) {
+        __unixUpdateReader(pafunixRecver, ERROR_NONE);      /*  update remote reader */
+    }
+	...
+}
+
+4.UNIX 域套接字接收函数
+通过__AF_UNIX_WREAD宏，阻塞等待二进制信号量，直到写端执行__unixUpdateReader函数。
+static ssize_t  unix_recvfrom2 (AF_UNIX_T  *pafunix, 
+                                void *mem, size_t len, 
+                                void *mem_ex, socklen_t *plen_ex, int flags,
+                                struct sockaddr *from, socklen_t *fromlen)
+{
+	...
+    do {
+		...
+        if (__unixCanRead(pafunix, flags, len)) {            /*  可以接收             */     
+__recv_more:
+            /*  从缓冲区取一个消息          */
+            sstReadNum = __unixRecvfromMsg(pafunix,
+                                           (PVOID)pcRecvMem, 
+                                           (size_t)(len - sstTotal), 
+                                           mem_ex, plen_ex, flags, 
+                                           (struct sockaddr_un *)from, 
+                                           fromlen);                    
+            pcRecvMem += sstReadNum;
+            sstTotal  += sstReadNum;
+			...
+            break;                                           /*  跳出接收循环         */
+        } else if ((__AF_UNIX_TYPE(pafunix) == SOCK_STREAM) ||
+                   (__AF_UNIX_TYPE(pafunix) == SOCK_SEQPACKET)) {
+            return  (PX_ERROR);
+        }
+        ...
+        ulError = __AF_UNIX_WREAD(pafunix);                   /*  等待数据           */
+    } while (1);
+	...
+        __unixUpdateWriter(pafunix, ERROR_NONE);              /*  update writer     */
+	...
+}
+
+
+==================================================LWIP动态内存管理
+LWIP中的动态内存管理有三种方式:
+运行时C库自带的内存分配方式、LWIP中自带的内存堆（HEAP）分配方式、内存池（POOL）分配方式。
+
+内存堆的特点是对一块事先分配好的内存块进行合理有效的组织和管理，主要用于任意大小的内存分配。缺点是容易产生内存碎片。
+内存池的特点是预先开辟许多固定大小的内存块组织成链表，实现快速分配/回收，且不会产生内存碎片，但大小固定会带来一定内存浪费。
+
+==================================================pbuf数据包管理
+LWIP中常用的内存分配策略有两种，一种是内存堆分配，一种是内存池分配。
+内存堆能分配合理的任意大小的内存块，缺点是当经过多次的分配释放后，内存堆中间会出现很多碎片，使得需要分配较大内存块时分配失败；
+内存池分配速度快，通过简单的链表操作（各种类型的 POOL 已经分配内存，大小固定），但是采用 POOL 会浪费掉一定的内存空间。
+在 LWIP 数据包管理中，将这两种分配策略混合使用，达到了很好的内存使用效率。
+
+struct pbuf {
+    struct pbuf *next;  /*指向下一个buf                */
+    void *payload;     /*指向pbuf数据中的起始位置        */
+    u16_t tot_len;     /*该pbuf和后续pbuf中数据长度的总和   */
+    u16_t len;       /*该pbuf中数据的长度            */
+    u8_t type;       /*pbuf的类型，pbuf_type          */
+    u8_t flags;      /*misc flag                  */
+    u16_t ref;       /*该pbuf引用计数（仅当ref=1时，该pbuf才允许删除）*/
+};
+
+typedef enum {
+    PBUF_RAM,     /* pbuf data is stored in RAM       */
+    PBUF_ROM,     /* pbuf data is stored in ROM       */
+    PBUF_POOL,    /* pbuf comes from the pbuf pool     */
+    PBUF_REF     /* pbuf payload refers to RAM       */
+} pbuf_type;
+
+PBUF_RAM 类型的 pbuf 主要通过内存堆分配得到的。这种类型的 pbuf 在协议栈中是用得最多的。协议栈要发送的数据和应用程序要传递的数据一般都采用这个形式。       
+PBUF_POOL 类型和 PBUF_RAM 类型的 pbuf 有很大的相似之处，但它主要通过内存池分配得到的。这种类型的 pbuf 可以在极短的时间内得到分配。在接受数据包时， LWIP 一般采用这种方式包装数据。
+PBUF_ROM 和 PBUF_REF 类型的 pbuf 基本相同，它们的申请都是在内存堆中分配一个相应的 pbuf 结构头，而不申请数据区的空间。这就是它们与 PBUF_RAM 和 PBUF_POOL的最大区别。                                                         
+PBUF_ROM 和 PBUF_REF 类型的区别在于前者指向 ROM 空间内的某段数据，而后者指向 RAM 空间内的某段数据。
+
+类别
+分配方式
+特点
+使用场合
+
+PBUF_RAM
+内存堆，包括pbuf和数据区
+长度不定，分配耗时
+应用程序和协议栈
+
+PBUF_POOL
+内存池，包括pbuf和数据区
+长度固定，分配快
+中断服务程序
+
+PBUF_ROM
+内存池，仅包括pbuf
+所指数据位于ROM中
+应用程序引用内存区
+
+PBUF_REF
+内存池，仅包括pbuf
+所指数据位于RAM中
+应用程序引用内存区
+
+每一种pbuf分配内存的方式都不一样，只有选择合适的pbuf类型才能发挥LWIP的最大性能
+
+==================================================以太网网卡接口部分初始化
+
+==================================================

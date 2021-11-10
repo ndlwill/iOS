@@ -1552,7 +1552,7 @@ int  main(int  argc,  char**argv) {
 ==================================================通用函数
 头文件<event2/util.h> 定义了许多能够帮助我们利用libevent 实现可移植应用程序的函数。libevent会在库内部使用这些函数。
 
-基础类型：
+----------基础类型：
 evutil_socket_t
 在除Windows之外的大多数地方，套接字是个整数，操作系统按照数值次序进行处理。然而，使用Windows套接字API时，socket具有类型SOCKET，它实际上是个类似指针的句柄，收到这个句柄的次序是未定义的。在Windows中，libevent定义evutil_socket_t类型为整型指针，可以处理socket()或者accept()的输出，而没有指针截断的风险。
 #ifdef WIN32
@@ -1562,12 +1562,253 @@ evutil_socket_t
 #endif
 
 标准整数类型:
-libevent定义了来自于stdint.h的、位宽度确定（bit-width-specific）的整数类型
+libevent定义了来自于stdint.h的、位宽度确定（bit-width-specific）的整数类型:
+ev_XintX_t
 
-在有ssize_t（有符号的size_t）类型的平台上，ev_ssize_t定义为ssize_t；而在没有的平台上，则定义为某合理的默认类型。ev_ssize_t类型的最大可能值是EV_SSIZE_MAX；最小可能值是EV_SSIZE_MIN。（在平台没有定义SIZE_MAX的时候，size_t类型的最大可能值是EV_SIZE_MAX）
+各种兼容性类型:
+在有ssize_t（有符号的size_t）类型的平台上，ev_ssize_t定义为ssize_t；
+而在没有的平台上，则定义为某合理的默认类型。ev_ssize_t类型的最大可能值是EV_SSIZE_MAX；最小可能值是EV_SSIZE_MIN。（在平台没有定义SIZE_MAX的时候，size_t类型的最大可能值是EV_SIZE_MAX）
 
+ev_off_t用于代表文件或者内存块中的偏移量。在有合理off_t类型定义的平台，它被定义为off_t；在Windows上则定义为ev_int64_t。
+
+某些套接字API定义了socklen_t长度类型，有些则没有定义。在有这个类型定义的平台中，ev_socklen_t定义为socklen_t，在没有的平台上则定义为合理的默认类型。
+
+ev_intptr_t是一个有符号整数类型，足够容纳指针类型而不会产生截断；而ev_uintptr_t则是相应的无符号类型。
+
+----------可移植的定时器函数:
+不是每个平台都定义了标准timeval操作函数，所以libevent也提供了自己的实现。
+#define evutil_timeradd(tvp, uvp, vvp) /*  */
+#define evutil_timersub(tvp, uvp, vvp) /*  */
+这些宏分别对前两个参数进行加或者减运算，将结果存放到第三个参数中。
+
+
+#define evutil_timerclear(tvp) /*  */
+#define evutil_timerisset(tvp) /*  */
+清除timeval会将其值设置为0。evutil_timerisset宏检查timeval是否已经设置，如果已经设置为非零值，返回ture，否则返回false。
+
+
+#define evutil_timercmp(tvp, uvp, cmp)
+evutil_timercmp宏比较两个timeval，如果其关系满足cmp关系运算符，返回true。
+比如说，evutil_timercmp(t1,t2,<=)的意思是“是否t1<=t2？”。注意：与某些操作系统版本不同的是，libevent的时间比较支持所有C关系运算符（也就是<、>、==、!=、<=和>=）
+
+
+int evutil_gettimeofday(struct timeval *tv, struct timezone *tz);
+evutil_gettimeofday()函数设置tv为当前时间，tz参数未使用。
+
+struct timeval tv1, tv2, tv3;
+
+/* Set tv1 = 5.5 seconds */
+tv1.tv_sec = 5; tv1.tv_usec = 500*1000;
+
+/* Set tv2 = now */
+evutil_gettimeofday(&tv2, NULL);
+
+/* Set tv3 = 5.5 seconds in the future */
+evutil_timeradd(&tv1, &tv2, &tv3);
+
+/* all 3 should print true */
+if (evutil_timercmp(&tv1, &tv1, ==))  /* == "If tv1 == tv1" */
+   puts("5.5 sec == 5.5 sec");
+if (evutil_timercmp(&tv3, &tv2, >=))  /* == "If tv3 >= tv2" */
+   puts("The future is after the present.");
+if (evutil_timercmp(&tv1, &tv2, <))   /* == "If tv1 < tv2" */
+   puts("It is no longer the past.");
+
+----------套接字API兼容性:
+由于历史原因而存在：Windows从来没有以良好兼容的方式实现Berkeley(伯克利)套接字API。 下面是一些用户使其兼容的函数接口
+
+int evutil_closesocket(evutil_socket_t s);
+#define EVUTIL_CLOSESOCKET(s) evutil_closesocket(s)
+
+这个接口用于关闭socket套接字。在Unix中，它是close()的别名；在Windows中，它调用closesocket()。（在Windows中不能将close()用于套接字，也没有其他系统定义了closesocket()）
+
+#define EVUTIL_SOCKET_ERROR()
+#define EVUTIL_SET_SOCKET_ERROR(errcode)
+#define evutil_socket_geterror(sock)
+#define evutil_socket_error_to_string(errcode)
+
+这些宏用于访问和操作套接字错误代码。
+EVUTIL_SOCKET_ERROR()返回本线程最后一次套接字操作的全局错误号，evutil_socket_geterror()则返回某特定套接字的错误号。
+（在类Unix系统中都是errno）EVUTIL_SET_SOCKET_ERROR()修改当前套接字错误号（与设置Unix中的errno类似），evutil_socket_error_to_string()返回代表某给定套接字错误号的字符串（与Unix中的strerror()类似）。
+（因为对于来自套接字函数的错误，Windows不使用errno，而是使用WSAGetLastError()，所以需要这些函数。）
+
+
+int evutil_make_socket_nonblocking(evutil_socket_t sock);
+
+
+这个函数确保关闭监听套接字后，它使用的地址可以立即被另一个套接字使用。（在Unix中它设置SO_REUSEADDR标志，在Windows中则不做任何操作。不能在Windows中使用SO_REUSEADDR标志：它有另外不同的含义（译者注：多个套接字绑定到相同地址））
+
+
+int evutil_make_socket_closeonexec(evutil_socket_t sock);
+这个函数告诉操作系统，如果调用了exec()，应该关闭指定的套接字。在Unix中函数设置FD_CLOEXEC标志，在Windows上则没有操作。
+
+
+int evutil_socketpair(int family, int type, int protocol, evutil_socket_t sv[2]);
+这个函数的行为跟Unix的socketpair()调用相同：创建两个相互连接起来的套接字，可对其使用普通套接字IO调用。函数将两个套接字存储在sv[0]和sv[1]中，成功时返回0，失败时返回-1。
+在Windows中，这个函数仅能支持AF_INET协议族、SOCK_STREAM类型和0协议的套接字。注意：在防火墙软件明确阻止127.0.0.1，禁止主机与自身通话的情况下，函数可能失败。
+
+
+----------可移植的字符串函数:
+ev_int64_t evutil_strtoll(const char *s, char **endptr, int base);
+这个函数与strtol行为相同，只是用于64位整数。在某些平台上，仅支持十进制。
+
+
+int evutil_snprintf(char *buf, size_t buflen, const char *format, );
+int evutil_vsnprintf(char *buf, size_t buflen, const char *format, va_list ap);
+这些snprintf替代函数的行为与标准snprintf和vsnprintf接口相同。
+函数返回在缓冲区足够长的情况下将写入的字节数，不包括结尾的NULL字节。（这个行为遵循C99的snprintf()标准，但与Windows的_snprintf()相反：如果字符串无法放入缓冲区，_snprintf()会返回负数）
+
+----------IPv6辅助和兼容性函数:
+/*
+1.把ip地址转化为用于网络传输的二进制数值
+int inet_aton(const char *cp, struct in_addr *inp);
+inet_aton() 转换网络主机地址ip(如192.168.1.10)为二进制数值，并存储在struct in_addr结构中，即第二个参数*inp,函数返回非0表示cp主机有地有效，返回0表示主机地址无效。（这个转换完后不能用于网络传输，还需要调用htons或htonl函数才能将主机字节顺序转化为网络字节顺序）
+
+in_addr_t inet_addr(const char *cp);
+inet_addr函数转换网络主机地址（如192.168.1.10)为网络字节序二进制值，如果参数char *cp无效，函数返回-1(INADDR_NONE),这个函数在处理地址为255.255.255.255时也返回－1,255.255.255.255是一个有效的地址，不过inet_addr无法处理
+
+2.将网络传输的二进制数值转化为成点分十进制的ip地址
+
+char *inet_ntoa(struct in_addr in);
+inet_ntoa 函数转换网络字节排序的地址为标准的ASCII以点分开的地址,该函数返回指向点分开的字符串地址（如192.168.1.10)的指针，该字符串的空间为静态分配的，这意味着在第二次调用该函数时，上一次调用将会被重写（复盖），所以如果需要保存该串最后复制出来自己管理
+
+
+输出一个点分十进制的IP?
+#include <stdio.h>   
+#include <sys/socket.h>   
+#include <netinet/in.h>   
+#include <arpa/inet.h>   
+#include <string.h>   
+int main()   
+{   
+	struct in_addr addr1,addr2;   
+	ulong l1,l2;   
+	l1= inet_addr("192.168.0.74");   
+	l2 = inet_addr("211.100.21.179");   
+	memcpy(&addr1, &l1, 4);   
+	memcpy(&addr2, &l2, 4);   
+	printf("%s : %s\n", inet_ntoa(addr1), inet_ntoa(addr2)); //注意这一句的运行结果   
+	printf("%s\n", inet_ntoa(addr1));   
+	printf("%s\n", inet_ntoa(addr2));  
+	return 0;   
+}   
+实际运行结果如下：　
+192.168.0.74 : 192.168.0.74          //从这里可以看出,printf里的inet_ntoa只运行了一次。　　
+
+192.168.0.74　　
+
+211.100.21.179　　
+
+inet_ntoa返回一个char *,而这个char *的空间是在inet_ntoa里面静态分配的，所以inet_ntoa后面的调用会覆盖上一次的调用。第一句printf的结果只能说明在printf里面的可变参数的求值是从右到左的
+
+
+3.新型网路地址转化函数inet_pton和inet_ntop
+这两个函数是随IPv6出现的函数，对于IPv4地址和IPv6地址都适用，函数中p和n分别代表表达（presentation)和数值（numeric)。地址的表达格式通常是ASCII字符串，数值格式则是存放到套接字地址结构的二进制值。
+
+#include <arpe/inet.h>
+int inet_pton(int family, const char *strptr, void *addrptr);     //将点分十进制的ip地址转化为用于网络传输的数值格式
+        返回值：若成功则为1，若输入不是有效的表达式则为0，若出错则为-1
+ 
+const char * inet_ntop(int family, const void *addrptr, char *strptr, size_t len);     //将数值格式转化为点分十进制的ip地址格式
+        返回值：若成功则为指向结构的指针，若出错则为NULL
+
+（1）这两个函数的family参数既可以是AF_INET（ipv4）也可以是AF_INET6（ipv6）。如果，以不被支持的地址族作为family参数，这两个函数都返回一个错误，并将errno置为EAFNOSUPPORT.
+（2）第一个函数尝试转换由strptr指针所指向的字符串，并通过addrptr指针存放二进制结果，若成功则返回值为1，否则如果所指定的family而言输入字符串不是有效的表达式格式，那么返回值为0.
+（3）inet_ntop进行相反的转换，从数值格式（addrptr）转换到表达式（strptr)。inet_ntop函数的strptr参数不可以是一个空指针。调用者必须为目标存储单元分配内存并指定其大小，调用成功时，这个指针就是该函数的返回值。len参数是目标存储单元的大小，以免该函数溢出其调用者的缓冲区。如果len太小，不足以容纳表达式结果，那么返回一个空指针，并置为errno为ENOSPC。
+
+inet_pton(AF_INET, ip, &foo.sin_addr);   //  代替 foo.sin_addr.addr=inet_addr(ip);
+ 
+char str[INET_ADDRSTRLEN];
+char *ptr = inet_ntop(AF_INET,&foo.sin_addr, str, sizeof(str));      // 代替 ptr = inet_ntoa(foo.sin_addr)
+
+*/
+
+const char *evutil_inet_ntop(int af, const void *src, char *dst, size_t len);
+int evutil_inet_pton(int af, const char *src, void *dst);
+
+这些函数根据RFC 3493的规定解析和格式化IPv4与IPv6地址，与标准inet_ntop()和inet_pton()函数行为相同。
+要格式化IPv4地址，调用evutil_inet_ntop()，设置af为AF_INET，src指向in_addr结构体，dst指向大小为len的字符缓冲区。
+对于IPv6地址，af应该是AF_INET6，src则指向in6_addr结构体。
+
+要解析IP地址，调用evutil_inet_pton()，设置af为AF_INET或者AF_INET6，src指向要解析的字符串，dst指向一个in_addr或者in_addr6结构体。
+失败时evutil_inet_ntop()返回NULL，成功时返回到dst的指针。成功时evutil_inet_pton()返回0，失败时返回-1。
+
+int evutil_parse_sockaddr_port(const char *str, struct sockaddr *out, int *outlen);
+这个接口解析来自str的地址，将结果写入到out中。outlen参数应该指向一个表示out中可用字节数的整数；函数返回时这个整数将表示实际使用了的字节数。成功时函数返回0，失败时返回-1
+函数识别下列地址格式：
++ [ipv6]:端口号（如[ffff::]:80）
++ ipv6（如ffff::）
++ [ipv6]（如[ffff::]）
++ ipv4:端口号（如1.2.3.4:80）
++ ipv4（如1.2.3.4）
+如果没有给出端口号，结果中的端口号将被设置为0。
+
+int evutil_sockaddr_cmp(const struct sockaddr *sa1, const struct sockaddr *sa2, int include_port);
+evutil_sockaddr_cmp()函数比较两个地址，如果sa1在sa2前面，返回负数；如果二者相等，则返回0；如果sa2在sa1前面，则返回正数。
+函数可用于AF_INET和AF_INET6地址
+如果两个地址只有端口号不同，只有在include_port参数为false，它们被认为是相等的。
+否则，具有不同端口号的地址被认为是不等的。
+
+----------结构体可移植性函数:
+#define evutil_offsetof(type, field) /*  */
+跟标准offsetof宏一样，这个宏返回从type类型开始处到field字段的字节数。
+
+----------安全随机数生成器:
+void evutil_secure_rng_get_bytes(void *buf, size_t n);
+这个函数用随机数据填充buf处的n个字节。
+如果所在平台提供了arc4random()，libevent会使用这个函数。否则，libevent会使用自己的arc4random()实现，种子则来自操作系统的熵池（entropy pool）（Windows中的CryptGenRandom，其他平台中的/dev/urandom）
+
+int evutil_secure_rng_init(void);
+void evutil_secure_rng_add_bytes(const char *dat, size_t datlen);
+不需要手动初始化安全随机数发生器，但是如果要确认已经成功初始化，可以调用evutil_secure_rng_init()。
+函数会播种RNG（如果没有播种过），并在成功时返回0。函数返回-1则表示libevent无法在操作系统中找到合适的熵源（source of entropy），如果不自己初始化RNG，就无法安全使用RNG了。
 
 ==================================================Bufferevents
+struct bufferevent {
+	/** Event base for which this bufferevent was created. */
+	struct event_base *ev_base;
+	/** Pointer to a table of function pointers to set up how this
+	    bufferevent behaves. */
+	const struct bufferevent_ops *be_ops;
+
+	/** A read event that triggers when a timeout has happened or a socket
+	    is ready to read data.  Only used by some subtypes of
+	    bufferevent. */
+	struct event ev_read;
+	/** A write event that triggers when a timeout has happened or a socket
+	    is ready to write data.  Only used by some subtypes of
+	    bufferevent. */
+	struct event ev_write;
+
+	/** An input buffer. Only the bufferevent is allowed to add data to
+	    this buffer, though the user is allowed to drain it. */
+        // 输入缓冲区。只允许bufferevent向该缓冲区添加数据，但允许用户将数据耗尽
+	struct evbuffer *input;
+
+	/** An input buffer. Only the bufferevent is allowed to drain data
+	    from this buffer, though the user is allowed to add it. */
+        // 输入缓冲区。虽然允许用户添加数据，但仅允许bufferevent从该缓冲区中排出数据。
+	struct evbuffer *output;
+
+	struct event_watermark wm_read;
+	struct event_watermark wm_write;
+
+	bufferevent_data_cb readcb;
+	bufferevent_data_cb writecb;
+	/* This should be called 'eventcb', but renaming it would break
+	 * backward compatibility */
+	bufferevent_event_cb errorcb;
+	void *cbarg;
+
+	struct timeval timeout_read;
+	struct timeval timeout_write;
+
+	/** Events that are currently enabled: currently EV_READ and EV_WRITE
+	    are supported. */
+	short enabled;
+};
+
+
 大多数时候，应用程序除了响应请求外，还需要处理数据（及其缓存）。当我们想要写数据是，通常会有以下步骤
 
 决定要向连接中写入什么数据， 把这些数据放入缓存
@@ -1585,3 +1826,1171 @@ libevent定义了来自于stdint.h的、位宽度确定（bit-width-specific）�
 成对的bufferevent：
 
 bufferevent目前仅能工作在流式协议上，比如TCP。
+
+
+bufferevent和evbuffers:
+###
+每一个bufferevent 都有一个输入缓冲区和输出缓冲区， 这些缓冲区（buffer）都是struct evbuffer 类型。 
+当你有数据要写入bufferevent， 你要先把数据填入output buffer，； 当bufferevent上有数据需要读取时，则可以从input buffer中抽取出来。
+###
+
+回调函数和水位数:
+每一个bufferevent都有两个数据相关的回到函数， 一个 读回调和一个写回调。 默认情况下，当有数据从底层传输读取时，读回调函数就会被调用； 当ouput buffer想底层传输写入足够多的数据时， 写回调函数就会被调用。
+通过调整bufferevent的读取和写入“水位线”（watermarks），可以改变这些函数的默认行为。
+每个bufferevent都有4个水位线：
+读 低水位：
+当bufferevent的输入缓冲区的数据量到达该水位线或者更高时，bufferevent的读回调函数就会被调用。该水位线默认为0，所以每一次读取操作都会导致读回调函数被调用。
+读 高水位：
+如果bufferevent的输入缓冲区的数据量到达该水位线时，那么bufferevent就会停止读取，直到输入缓冲区中足够多的数据被抽走，从而数据量再次低于该水位线。默认情况下该水位线是无限制的，所以从来不会因为输入缓冲区的大小而停止读取操作。
+写 低水位：
+当写操作使得输出缓冲区的数据量达到或者低于该水位线时，才调用写回调函数。默认情况下，该值为0，所以输出缓冲区被清空时才调用写回调函数。
+写 高水位：
+并非由bufferevent直接使用，对于bufferevent作为其他bufferevent底层传输系统的时候，该水位线才有特殊意义。
+
+bufferevent还提供了error 或者event 的回调函数，用来通知应用程序关于非数据相关的事件。比如：关闭连接或者发生错误。 为此，定义了以下 event标志：
+BEV_EVENT_READING：读操作期间发生了事件。
+BEV_EVENT_WRITING：写操作期间发生了事件。
+BEV_EVENT_ERROR：在bufferevent操作期间发生了错误，可以调用EVUTIL_SOCKET_ERROR函数来得到更多的错误信息。
+BEV_EVENT_TIMEOUT： bufferevent上发生了超时
+BEV_EVENT_EOF： bufferevent上遇到了EOF标志
+BEV_EVENT_CONNECTED：在bufferevent上请求的连接已经完成
+
+
+延期回调:
+默认情况下， bufferevent的回调函数在响应的条件满足时会立即执行（evbuffer 回调函数也是如此)
+当依赖关系比较复杂时， 这种立即执行 的机制会导致一些问题。比如说， 假设 有一个回调函数 是用于在evbuffer A为空时向其填入数据， 而另一个回调函数则在evbuffer A为满时 从中取出数据进行处理。如果所有这些调用都发生在栈上的话，在依赖关系足够复杂的时候，有栈溢出的风险。
+
+为了解决这个问题，你可以告诉bufferevent（或evbuffer）它的回调函数应该被延迟执行。
+当延迟回调函数 的对应条件满足时， 延迟回调函数不会立即执行，而是加入到event_loop()调用队列中。然后在常规的event回调之后执行。 
+
+
+bufferevent 的选项标志:
+BEV_OPT_CLOSE_ON_FREE： 当释放bufferevent时，关闭底层的传输系统。 这将关闭底层套接字，释放底层bufferevent等。
+BEV_OPT_THREADSAFE： 自动为bufferevent分配锁， 从而在多线程中可以安全使用。
+BEV_OPT_DEFER_CALLBACKS： bufferevent会将其所有回调函数进行延迟调用设置。
+BEV_OPT_UNLOCK_CALLBACKS： 默认情况下， 当设置bufferevent为线程安全的时候，任何用户提供的回调函数调用时都会锁住bufferevent的锁， 设置改标志可以在提供的回调函数被调用时不锁住bufferevent的锁。
+
+
+基于socket 的bufferevent:
+基于socket的bufferevent使用Libevent底层event机制探测底层网络socket何时准备好读和写，而且使用底层网络调用（比如readv，writev，WSASend或WSARecv）进行传送和接受数据。
+
+
+创建 基于socket 的bufferevent:
+使用bufferevent_socket_new() 可以创建一个基于socket的bufferevent。
+struct bufferevent *bufferevent_socket_new(struct event_base *base, evutil_socket_t fd, enum bufferevent_options options);
+
+base:表示event_base
+options:是bufferevent选项的位掩（BEV_OPT_CLOSE_ON_FREE等）。
+fd:参数是一个可选的socket文件描述符。如果希望以后再设置socket文件描述符，可以将fd置为-1。
+
+要确保提供给bufferevent_socket_new的socket是非阻塞模式。Libevent提供了便于使用的evutil_make_socket_nonblocking来设置非阻塞模式。
+bufferevent_socket_new成功时返回一个bufferevent，失败时返回NULL。
+
+
+在基于socket的bufferevent上发送连接:
+如果bufferevent上的socket还没有建立连接， 我们可以发送一个新的连接
+int bufferevent_socket_connect(struct bufferevent *bev, struct sockaddr *address, int addrlen);
+address和addrlen参数类似于标准的connect函数。如果该bufferevent尚未设置socket，则调用该函数为该bufferevent会分配一个新的流类型的socket，并且置其为非阻塞的。
+如果bufferevent已经设置了一个socket，则调用数bufferevent_socket_connect会告知Libevent该socket尚未建立连接，在建立连接成功之前，不应该在其上进行读写操作。
+在建立连接成功之前，向输出缓冲区添加数据是可以的。
+该函数如果在建链成功时，返回0，如果发生错误，则返回-1.
+#include <event2/event.h>
+#include <event2/bufferevent.h>
+#include <sys/socket.h>
+#include <string.h>
+
+void eventcb(struct bufferevent *bev, short events, void *ptr)
+{
+    if (events & BEV_EVENT_CONNECTED) {
+         /* We're connected to 127.0.0.1:8080.   Ordinarily we'd do
+            something here, like start reading or writing. */
+    } else if (events & BEV_EVENT_ERROR) {
+         /* An error occured while connecting. */
+    }
+}
+
+int main_loop(void)
+{
+    struct event_base *base;
+    struct bufferevent *bev;
+    struct sockaddr_in sin;
+
+    base = event_base_new();
+
+    memset(&sin, 0, sizeof(sin));
+    sin.sin_family = AF_INET;
+    sin.sin_addr.s_addr = htonl(0x7f000001); /* 127.0.0.1 */
+    sin.sin_port = htons(8080); /* Port 8080 */
+
+    bev = bufferevent_socket_new(base, -1, BEV_OPT_CLOSE_ON_FREE);
+
+    bufferevent_setcb(bev, NULL, NULL, eventcb, NULL);
+
+    if (bufferevent_socket_connect(bev,
+        (struct sockaddr *)&sin, sizeof(sin)) < 0) {
+        /* Error starting connection */
+        bufferevent_free(bev);
+        return -1;
+    }
+
+    event_base_dispatch(base);
+    return 0;
+}
+
+注意：如果使用bufferevent_socket_connect进行连接的话，会得到BEV_EVENT_CONNECTED事件。如果自己手动调用connect()，则会得到write事件。
+如果在手动调用connect()的情况下，仍然想在连接成功的时候得到BEV_EVENT_CONNECTED事件，可以在connect()返回-1，并且errno为EAGAIN或EINPROGRESS之后，调用bufferevent_socket_connect(bev, NULL, 0)函数。
+
+
+通过hostname发射连接:
+你可能希望将解析主机名和建立连接操作合成一个单独的操作，这时可以使用下面的接口
+int bufferevent_socket_connect_hostname(struct bufferevent *bev, struct evdns_base *dns_base, int family, const char *hostname, int port);
+int bufferevent_socket_get_dns_error(struct bufferevent *bev);
+该函数解析DNS名字hostname，查找family类型的地址（family的类型可以是AF_INET, AF_INET6和AF_UNSPEC）。如果解析主机名失败，会以error event调用回调函数。如果成功了，则会像 bufferevent_connect一样，接着进行建立连接。
+dns_base参数是可选的。如果该参数为空，则Libevent会一直阻塞，等待主机名解析完成，一般情况下不会这么做。如果提供了该参数，则Libevent使用它进行异步的主机名解析。参考:
+Libevent和DNS解析:
+https://blog.csdn.net/windeal3203/article/details/52868911
+类似于bufferevent_socket_connect，该函数会告知Libevent，bufferevent上已存在的socket尚未建立连接，在解析完成，并且连接建立成功之前，不应该在其上进行读写操作。
+如果发生了错误，有可能是DNS解析错误。可以通过调用函数bufferevent_socket_get_dns_error函数得到最近发生的错误信息。如果该函数返回的错误码为0，则表明没有检查到任何DNS错误。
+/* Don't actually copy this code: it is a poor way to implement an
+   HTTP client.  Have a look at evhttp instead.
+*/
+#include <event2/dns.h>
+#include <event2/bufferevent.h>
+#include <event2/buffer.h>
+#include <event2/util.h>
+#include <event2/event.h>
+
+#include <stdio.h>
+
+void readcb(struct bufferevent *bev, void *ptr)
+{
+    char buf[1024];
+    int n;
+    struct evbuffer *input = bufferevent_get_input(bev);
+    while ((n = evbuffer_remove(input, buf, sizeof(buf))) > 0) {
+        fwrite(buf, 1, n, stdout);
+    }
+}
+
+void eventcb(struct bufferevent *bev, short events, void *ptr)
+{
+    if (events & BEV_EVENT_CONNECTED) {
+         printf("Connect okay.\n");
+    } else if (events & (BEV_EVENT_ERROR|BEV_EVENT_EOF)) {
+         struct event_base *base = ptr;
+         if (events & BEV_EVENT_ERROR) {
+                 int err = bufferevent_socket_get_dns_error(bev);
+                 if (err)
+                         printf("DNS error: %s\n", evutil_gai_strerror(err));
+         }
+         printf("Closing\n");
+         bufferevent_free(bev);
+         event_base_loopexit(base, NULL);
+    }
+}
+
+int main(int argc, char **argv)
+{
+    struct event_base *base;
+    struct evdns_base *dns_base;
+    struct bufferevent *bev;
+
+    if (argc != 3) {
+        printf("Trivial HTTP 0.x client\n"
+               "Syntax: %s [hostname] [resource]\n"
+               "Example: %s www.google.com /\n",argv[0],argv[0]);
+        return 1;
+    }
+
+    base = event_base_new();
+    dns_base = evdns_base_new(base, 1);
+
+    bev = bufferevent_socket_new(base, -1, BEV_OPT_CLOSE_ON_FREE);
+    bufferevent_setcb(bev, readcb, NULL, eventcb, base);
+    bufferevent_enable(bev, EV_READ|EV_WRITE);
+    evbuffer_add_printf(bufferevent_get_output(bev), "GET %s\r\n", argv[2]);
+    bufferevent_socket_connect_hostname(
+        bev, dns_base, AF_UNSPEC, argv[1], 80);
+    event_base_dispatch(base);
+    return 0;
+}
+
+
+通用的bufferevent操作:
+释放bufferevent:
+void  bufferevent_free(struct  bufferevent *bev);
+该函数释放bufferevent。bufferevent在内部具有引用计数，所以即使当释放bufferevent时，如果bufferevent还有未决的延迟回调，那该bufferevent在该回调完成之前也不会删除
+bufferevent_free函数会尽快释放bufferevent。然而，如果bufferevent的输出缓冲区中尚有残留数据要写，该函数也不会在释放bufferevent之前对缓冲区进行flush。
+如果设置了BEV_OPT_CLOSE_ON_FREE标志，并且该bufferevent有socket或者使用了其他底层bufferevent作为其传输系统，则在释放该bufferevent时，会关闭对应的传输系统。
+
+
+回调函数、水位线、使能操作:
+typedef void (*bufferevent_data_cb)(struct bufferevent *bev, void *ctx);
+typedef void (*bufferevent_event_cb)(struct bufferevent *bev,
+    short events, void *ctx);
+
+void bufferevent_setcb(struct bufferevent *bufev,
+    bufferevent_data_cb readcb, bufferevent_data_cb writecb,
+    bufferevent_event_cb eventcb, void *cbarg);
+
+void bufferevent_getcb(struct bufferevent *bufev,
+    bufferevent_data_cb *readcb_ptr,
+    bufferevent_data_cb *writecb_ptr,
+    bufferevent_event_cb *eventcb_ptr,
+    void **cbarg_ptr);
+函数bufferevent_setcb() 可以改变bufferevent的回调函数。readcb、writecb和eventcb函数 分别在 有足够数据可读、有足够数据可写、有event时间发生时被调用。
+这些回调函数的第一个参数就是发生了events的bufferevent； 而最后一个参数则是由用户提供的bufferevent_setcb的cbarg参数；用户可以通过event回调函数的events参数是event标志的位掩码：
+我们可以通过向bufferevent_setcb() 传递NULL参数来禁用一些回调函数。需要注意的是，cbarg 参数是针对所有回调函数的。
+我们可以通过向bufferevent_getcb 传递指针来获取当前的回调函数。该函数会将*readcb_ptr设置为当前的读回调函数，*writecb_ptr设置为写回调函数，*eventcb_ptr设置为当前的event回调函数，并且*cbarg_ptr设置为当前回调函数的参数。对于被设置为NULL 的指针，则会忽略它。
+
+void bufferevent_enable(struct bufferevent *bufev, short events);
+void bufferevent_disable(struct bufferevent *bufev, short events);
+short bufferevent_get_enabled(struct bufferevent *bufev);
+我们可以在bufferevent上enable或者disable事件 EV_READ, EV_WRITE, or EV_READ|EV_WRITE 。 当disable了读写操作，则bufferevent不会读取或写入数据
+当output buffer 为空时，没必要disable写动作，bufferevent会自动禁止掉写动作。
+类似的，当输入缓冲区达到它的高水位线的时候，没必要禁止读操作：bufferevent会自动停止读操作，而且在有空间读取的时候，又重新开启读操作。
+默认情况下，新创建的bufferevent会enable写操作，而禁止读操作。
+可以通过bufferevent_get_enabled() 来获取当前bufferevent中有那些events被enable了。
+
+
+void bufferevent_setwatermark(struct bufferevent *bufev, short events, size_t lowmark, size_t highmark);
+bufferevent_setwatermark调整一个bufferevent的读水位线，或写水位线，或两者一起调整。如果在events参数中设置了EV_READ参数，则会调整读水位线，如果设置了EV_WRITE标志，则会调整写水位线。将高水位线标志置为0，表示“无限制”。
+#include <event2/event.h>
+#include <event2/bufferevent.h>
+#include <event2/buffer.h>
+#include <event2/util.h>
+
+#include <stdlib.h>
+#include <errno.h>
+#include <string.h>
+
+struct info {
+    const char *name;
+    size_t total_drained;
+};
+
+void read_callback(struct bufferevent *bev, void *ctx)
+{
+    struct info *inf = ctx;
+    struct evbuffer *input = bufferevent_get_input(bev);
+    size_t len = evbuffer_get_length(input);
+    if (len) {
+        inf->total_drained += len;
+        evbuffer_drain(input, len);
+        printf("Drained %lu bytes from %s\n",
+             (unsigned long) len, inf->name);
+    }
+}
+
+void event_callback(struct bufferevent *bev, short events, void *ctx)
+{
+    struct info *inf = ctx;
+    struct evbuffer *input = bufferevent_get_input(bev);
+    int finished = 0;
+
+    if (events & BEV_EVENT_EOF) {
+        size_t len = evbuffer_get_length(input);
+        printf("Got a close from %s.  We drained %lu bytes from it, "
+            "and have %lu left.\n", inf->name,
+            (unsigned long)inf->total_drained, (unsigned long)len);
+        finished = 1;
+    }
+    if (events & BEV_EVENT_ERROR) {
+        printf("Got an error from %s: %s\n",
+            inf->name, evutil_socket_error_to_string(EVUTIL_SOCKET_ERROR()));
+        finished = 1;
+    }
+    if (finished) {
+        free(ctx);
+        bufferevent_free(bev);
+    }
+}
+
+struct bufferevent *setup_bufferevent(void)
+{
+    struct bufferevent *b1 = NULL;
+    struct info *info1;
+
+    info1 = malloc(sizeof(struct info));
+    info1->name = "buffer 1";
+    info1->total_drained = 0;
+
+    /* ... Here we should set up the bufferevent and make sure it gets
+       connected... */
+
+    /* Trigger the read callback only whenever there is at least 128 bytes
+       of data in the buffer. */
+    bufferevent_setwatermark(b1, EV_READ, 128, 0);
+
+    bufferevent_setcb(b1, read_callback, NULL, event_callback, info1);
+
+    bufferevent_enable(b1, EV_READ); /* Start reading. */
+    return b1;
+}
+
+
+bufferevent中的数据操作:
+如果不能操作读写的数据，则从网络中读写数据没有任何意义。bufferevent提供函数可以操作读写的数据。
+struct evbuffer *bufferevent_get_input(struct bufferevent *bufev);
+struct evbuffer *bufferevent_get_output(struct bufferevent *bufev);
+这两个函数功能非常强大，它们分别返回bufferevent的input buffer 和 output buffer. 在evbuffer类型上所能进行的所有操作
+注意，应用程序只能从input buffer中移走（而不是添加）数据，而且只能向output buffer添加（而不是移走）数据。
+如果bufferevent上的写操作因为数据太少而停滞（或者读操作因为数据太多而停滞），则向output buffer中添加数据（或者从input buffer中移走数据）可以自动重启写（读）操作。
+int  bufferevent_write(struct  bufferevent *bufev,  const  void*data,  size_t  size);
+int  bufferevent_write_buffer(struct  bufferevent *bufev,  struct  evbuffer*buf);
+这些函数向bufferevent的output buffer中添加数据。调用bufferevent_write函数添加data中的size个字节的数据到输出缓冲区的末尾。调用 bufferevent_write_buffer函数则将buf中所有数据都移动到output buffer的末尾。这些函数返回0表示成功，返回-1表示发生了错误。
+size_t bufferevent_read(struct bufferevent *bufev, void *data, size_t size);
+int bufferevent_read_buffer(struct bufferevent *bufev, struct evbuffer *buf);
+这两个函数从bufferevent的input buffer中移走数据。bufferevent_read函数从input buffer中移动size个字节到data中。它返回实际移动的字节数。bufferevent_read_buffer函数则移动输入缓冲区中的所有数据到buf中，该函数返回0表示成功，返回-1表示失败。
+注意bufferevent_read函数中，data缓冲区必须有足够的空间保存size个字节。
+#include <event2/bufferevent.h>
+#include <event2/buffer.h>
+
+#include <ctype.h>
+
+void
+read_callback_uppercase(struct bufferevent *bev, void *ctx)
+{
+        /* This callback removes the data from bev's input buffer 128
+           bytes at a time, uppercases it, and starts sending it
+           back.
+
+           (Watch out!  In practice, you shouldn't use toupper to implement
+           a network protocol, unless you know for a fact that the current
+           locale is the one you want to be using.)
+         */
+
+        char tmp[128];
+        size_t n;
+        int i;
+        while (1) {
+                n = bufferevent_read(bev, tmp, sizeof(tmp));
+                if (n <= 0)
+                        break; /* No more data. */
+                for (i=0; i<n; ++i)
+                        tmp[i] = toupper(tmp[i]);
+                bufferevent_write(bev, tmp, n);
+        }
+}
+
+struct proxy_info {
+        struct bufferevent *other_bev;
+};
+void
+read_callback_proxy(struct bufferevent *bev, void *ctx)
+{
+        /* You might use a function like this if you're implementing
+           a simple proxy: it will take data from one connection (on
+           bev), and write it to another, copying as little as
+           possible. */
+        struct proxy_info *inf = ctx;
+
+        bufferevent_read_buffer(bev,
+            bufferevent_get_output(inf->other_bev));
+}
+
+struct count {
+        unsigned long last_fib[2];
+};
+
+void
+write_callback_fibonacci(struct bufferevent *bev, void *ctx)
+{
+        /* Here's a callback that adds some Fibonacci numbers to the
+           output buffer of bev.  It stops once we have added 1k of
+           data; once this data is drained, we'll add more. */
+        struct count *c = ctx;
+
+        struct evbuffer *tmp = evbuffer_new();
+        while (evbuffer_get_length(tmp) < 1024) {
+                 unsigned long next = c->last_fib[0] + c->last_fib[1];
+                 c->last_fib[0] = c->last_fib[1];
+                 c->last_fib[1] = next;
+
+                 evbuffer_add_printf(tmp, "%lu", next);
+        }
+
+        /* Now we add the whole contents of tmp to bev. */
+        bufferevent_write_buffer(bev, tmp);
+
+        /* We don't need tmp any longer. */
+        evbuffer_free(tmp);
+}
+
+读写 超时:
+同其他events一样，可以设置timeout时间，当bufferevent在timeout时间消逝后还没有成功的读或写任何数据，则可以触发某个超时事件。
+void bufferevent_set_timeouts(struct bufferevent *bufev, const struct timeval *timeout_read, const struct timeval *timeout_write);
+将timeout设置为NULL，意味着移除超时时间
+当bufferevent试图读取数据时，等待了timeout_read秒还没有数据，则读超时事件就会触发。当bufferevent试图写数据时，至少等待了timeout_write秒，则写超时事件就会触发。
+注意，只有在bufferevent读或写的时候，才会对超时时间进行计时。换句话说，如果bufferevent上禁止了读操作，或者当输入缓冲区满（达到高水位线）时，则读超时时间不会使能。类似的，如果写操作未被使能，或者没有数据可写，则写超时时间也会被禁止。
+当读或写超时发生的时候，则bufferevent上相应的读写操作就会被禁止。相应的event回调函数就会以BEV_EVENT_TIMEOUT|BEV_EVENT_READING或BEV_EVENT_TIMEOUT|BEV_EVENT_WRITING进行调用。
+
+
+在bufferevent上进行flush:
+int bufferevent_flush(struct bufferevent *bufev, short iotype, enum bufferevent_flush_mode state);
+对一个bufferevent进行flush，可以强制bufferevent尽可能多的从底层传输系统上读取或者写入数据，而忽略其他可能阻止写入的限制条件。该函数的细节依赖于不同类型的bufferevent。
+参数iotype 可以是EV_READ, EV_WRITE, EV_READ|EV_WRITE指明处理读操作、写操作，还是两者都处理. 参数state可以是BEV_NORMAL, BEV_FLUSH,BEV_FINISHED 之一. BEV_FINISHED 指明应该告诉另一端已经没有数据可以发送了;BEV_NORMAL 和 BEV_FLUSH 取决于bufferevent的类型。
+bufferevent_flush函数返回-1表示失败，返回0表示没有任何数据被flush，返回1表示由数据被flush。
+
+
+特定类型的bufferevent函数:
+这些函数并非在所有bufferevent类型上都能使用
+int  bufferevent_priority_set(struct  bufferevent *bufev,  int  pri);
+int  bufferevent_get_priority(struct  bufferevent *bufev);
+该函数将实现bufev的events的优先级调整为pri
+返回0表示成功，返回-1表示失败，该函数只能工作在基于socket的bufferevent上。
+int bufferevent_setfd(struct bufferevent *bufev, evutil_socket_t fd);
+evutil_socket_t bufferevent_getfd(struct bufferevent *bufev);
+该函数设置或者返回一个基于fd的event的文件描述符。只有基于socket的bufferevent支持setfd操作。这些函数返回-1表示失败，setfd返回0表示成功。
+struct event_base *bufferevent_get_base(struct bufferevent *bev);
+该函数返回bufferevent的event_base
+struct bufferevent *bufferevent_get_underlying(struct bufferevent *bufev);
+如果bufferevent作为其他bufferevent的底层传输系统的话，则该函数返回该底层bufferevent。参考过滤型bufferevent
+
+
+对bufferevent手动加锁或者解锁:
+类似于evbuffers，有时希望保证在bufferevent上的一系列操作是原子性的。Libevent提供了可以手动加锁和解锁bufferevent的函数。
+void bufferevent_lock(struct bufferevent *bufev);
+void bufferevent_unlock(struct bufferevent *bufev);
+注意，如果一个bufferevent在创建时没有指定BEV_OPT_THREADSAFE 标志，或者Libevent的线程支持功能没有激活，则加锁一个bufferevent没有作用。
+通过该函数对bufferevent进行加锁的同时，也会加锁evbuffers。这些函数都是递归的：对一个已经加锁的bufferevent再次加锁是安全的。当然，对于每次锁定都必须进行一次解锁。
+
+
+Bufferevent 和 SSL:
+bufferevent可以使用OpenSSL库实现SSL/TLS安全传输层。因为很多应用不需要或者不想链接OpenSSL，这部分功能在单独的libevent_openssl库中实现。
+
+==================================================evbuffer结构体
+https://blog.csdn.net/u010710458/article/details/80055667
+
+对于任何网络库(模块)而言，一个缓冲模块都是必不可少的。缓冲模块主要用于缓冲从网络接收到的数据，以及用户提交的数据(用于发送)。
+很多时候，我们还需要将网络模块层(非TCP层)的这些缓冲数据拷贝到用户层，而这些内存拷贝都会消耗时间。
+为此Libevent提供了evbuffer用于处理缓冲网络IO的缓冲部分，为后续bufferevent的工作做准备。
+
+缓冲区由evbuffer和evbuffer_chain组成，其中evbuffer_chain是真正存储数据的一块内存，通过链表将一个一个的evbuffer_chain连接在一起，组成内存池。而通过evbuffer结构体就可以管理这个内存池链表了。
+
+//evbuffer-internal.h文件  
+struct evbuffer_chain;  
+struct evbuffer {  
+    struct evbuffer_chain *first;  
+    struct evbuffer_chain *last;  
+    //这是一个二级指针。使用*last_with_datap时，指向的是链表中最后一个有数据的evbuffer_chain。  
+    //所以last_with_datap存储的是倒数第二个evbuffer_chain的next成员地址。  
+    //一开始buffer->last_with_datap = &buffer->first;此时first为NULL。所以当链表没有节点时  
+    //*last_with_datap为NULL。当只有一个节点时*last_with_datap就是first。      
+    struct evbuffer_chain **last_with_datap;  
+
+    size_t total_len;//链表中所有chain的总字节数  
+
+    ...  
+};  
+struct evbuffer_chain {  
+    struct evbuffer_chain *next;  
+    size_t buffer_len;//buffer的大小  
+
+    //错开不使用的空间。该成员的值一般等于0  
+    ev_off_t misalign;  
+
+    //evbuffer_chain已存数据的字节数  
+    //所以要从buffer + misalign + off的位置开始写入数据  
+    size_t off;  
+
+    ...  
+
+    unsigned char *buffer;  
+};  
+
+Libevent有一个很独特的地方，就是那个evbuffer_chain结构体。
+1、该结构体有misalign成员。该成员表示错开不用的buffer空间。也就是说buffer中真正的数据是从buffer + misalign开始。
+2、evbuffer_chain结构体buffer是一个指针，按道理来说，应该单独调用malloc分配一个堆内存并让buffer指向之。但实际上buffer指向的内存和evbuffer_chain结构体本身的存储内存是一起分配的。
+
+==================================================evbuffer：缓冲IO的实用功能
+libevent的｀evbuffer｀实现了为向后面添加数据和从前面移除数据而优化的字节队列。
+｀evbuffer｀用于处理缓冲网络IO的“缓冲”部分。它不提供调度IO或者当IO就绪时触发IO的功能：这是bufferevent的工作。
+
+
+创建和释放evbuffer:
+struct evbuffer *evbuffer_new(void);
+void evbuffer_free(struct evbuffer *buf);
+这两个函数的功能很简明：evbuffer_new()分配和返回一个新的空evbuffer；而evbuffer_free()释放evbuffer和其内容。
+
+
+Evbuffers 和 线程安全:
+int evbuffer_enable_locking(struct evbuffer *buf, void *lock);
+void evbuffer_lock(struct evbuffer *buf);
+void evbuffer_unlock(struct evbuffer *buf);
+默认情况下，在多个线程中同时访问evbuffer是不安全的。如果需要这样的访问，可以在evbuffer 上调用evbuffer_enable_locking()。如果lock参数为NULL，libevent会使用evthread_set_lock_creation_callback提供的锁创建函数创建一个锁。否则，libevent将lock参数用作锁。
+evbuffer_lock()和evbuffer_unlock()函数分别请求和释放evbuffer上的锁。可以使用这两个函数让一系列操作是原子的。如果evbuffer没有启用锁，这两个函数不做任何操作。
+（注意：对于单个操作，不需要调用evbuffer_lock()和evbuffer_unlock()：如果evbuffer启用了锁，单个操作就已经是原子的。只有在需要多个操作连续执行，不让其他线程介入的时候，才需要手动锁定evbuffer)
+
+检查evbuffer:
+size_t evbuffer_get_length(const struct evbuffer *buf);
+该函数返回在evbuffer中保存的字节数。
+size_t evbuffer_get_contiguous_space(const struct evbuffer *buf);
+这个函数返回连续地存储在evbuffer前面的字节数。evbuffer中的数据可能存储在多个分隔开的内存块中，这个函数返回当前第一个块中的字节数。
+
+
+向evbuffer中添加数据：基础
+int evbuffer_add(struct evbuffer *buf, const void *data, size_t datlen);
+这个函数向buf 的末尾添加 datalen 字节的数据data 。 函数在成功时返回0， 失败时返回-1.
+int evbuffer_add_printf(struct evbuffer *buf, const char *fmt, ...)
+int evbuffer_add_vprintf(struct evbuffer *buf, const char *fmt, va_list ap);
+这些函数添加格式化的数据到buf末尾。格式参数fmt和其他参数的处理分别与C库函数printf和vprintf相同。函数返回添加的字节数。
+int evbuffer_expand(struct evbuffer *buf, size_t datlen);
+这个函数修改缓冲区的最后一块，或者添加一个新的块，使得缓冲区足以容纳datlen字节，而不需要更多的内存分配。
+/* Here are two ways to add "Hello world 2.0.1" to a buffer. */
+/* Directly: */
+evbuffer_add(buf, "Hello world 2.0.1", 17);
+
+/* Via printf: */
+evbuffer_add_printf(buf, "Hello %s %d.%d.%d", "world", 2, 0, 1);
+
+从一个evbuffer 向另一个evbuffer移动数据:
+为提高效率，libevent具有将数据从一个evbuffer移动到另一个的优化函数。
+int evbuffer_add_buffer(struct evbuffer *dst, struct evbuffer *src);
+int evbuffer_remove_buffer(struct evbuffer *src, struct evbuffer *dst, size_t datlen);
+函数evbuffer_add_buffer()将src中的所有数据移动到dst末尾，成功时返回0，失败时返回-1。
+evbuffer_remove_buffer()函数从src中移动datlen字节到dst末尾，尽量少进行复制。如果字节数小于datlen，所有字节被移动。函数返回移动的字节数。
+
+
+添加数据到evbuffer前面:
+int evbuffer_prepend(struct evbuffer *buf, const void *data, size_t size);
+int evbuffer_prepend_buffer(struct evbuffer *dst, struct evbuffer* src);
+除了将数据移动到目标缓冲区前面不同外，这两个函数的行为分别与evbuffer_add()和evbuffer_add_buffer()相同。
+使用这些函数时要当心，永远不要对与bufferevent共享的evbuffer使用。
+
+
+重新排列evbuffer的内部布局:
+有时候需要取出evbuffer前面的N字节，将其看作连续的字节数组。要做到这一点，首先必须确保缓冲区的前面确实是连续的。
+unsigned char *evbuffer_pullup(struct evbuffer *buf, ev_ssize_t size);
+evbuffer_pullup()函数“线性化”buf前面的size字节，必要时将进行复制或者移动，以保证这些字节是连续的，占据相同的内存块。如果size是负的，函数会线性化整个缓冲区。如果size大于缓冲区中的字节数，函数返回NULL。否则，evbuffer_pullup()返回指向buf中首字节的指针。
+调用evbuffer_pullup()时使用较大的size参数可能会非常慢，因为这可能需要复制整个缓冲区的内容。
+#include <event2/buffer.h>
+#include <event2/util.h>
+
+#include <string.h>
+
+int parse_socks4(struct evbuffer *buf, ev_uint16_t *port, ev_uint32_t *addr)
+{
+    /* Let's parse the start of a SOCKS4 request!  The format is easy:
+     * 1 byte of version, 1 byte of command, 2 bytes destport, 4 bytes of
+     * destip. */
+    unsigned char *mem;
+
+    mem = evbuffer_pullup(buf, 8);
+
+    if (mem == NULL) {
+        /* Not enough data in the buffer */
+        return 0;
+    } else if (mem[0] != 4 || mem[1] != 1) {
+        /* Unrecognized protocol or command */
+        return -1;
+    } else {
+        memcpy(port, mem+2, 2);
+        memcpy(addr, mem+4, 4);
+        *port = ntohs(*port);
+        *addr = ntohl(*addr);
+        /* Actually remove the data from the buffer now that we know we
+           like it. */
+        evbuffer_drain(buf, 8);
+        return 1;
+    }
+}
+使用 与 evbuffer_get_contiguous_space() 的返回值相等的大小 来调用evbuffer_pullup()不会导致任何数据复制或者移动。
+
+
+从evbuffer中删除数据:
+int evbuffer_drain(struct evbuffer *buf, size_t len);
+int evbuffer_remove(struct evbuffer *buf, void *data, size_t datlen);
+evbuffer_remove()函数从buf前面复制和移除datlen字节到data内存中。如果可用字节少于datlen，函数复制所有字节。函数失败时返回-1，否则返回复制了的字节数。
+evbuffer_drain()函数的行为与evbuffer_remove()相同，只是它不进行数据复制：而只是将数据从缓冲区前面移除。成功时返回0，失败时返回-1。
+
+
+从evbuffer中拷贝出数据:
+有时候需要获取缓冲区前面数据的副本，而不清除数据。比如说，可能需要查看某特定类型的记录是否已经完整到达，而不清除任何数据（像evbuffer_remove那样），或者在内部重新排列缓冲区（像evbuffer_pullup那样）。
+ev_ssize_t evbuffer_copyout(struct evbuffer *buf, void *data, size_t datlen);
+ev_ssize_t evbuffer_copyout_from(struct evbuffer *buf, const struct evbuffer_ptr *pos, void *data_out, size_t datlen);
+evbuffer_copyout()的行为与evbuffer_remove() 类似，但是它不从缓冲区移除任何数据。也就是说，它从buf前面复制datlen字节到data处的内存中。如果可用字节少于datlen，函数会复制所有字节。失败时返回-1，否则返回复制的字节数。
+evbuffer_copyout_from()的行为与evbuffer_copyout()有些类似， 不同的是evbuffer_copyout_from() 从制定的位置pos 开始复制， 而不是buffer的起始位置。
+如果从缓冲区复制数据太慢，可以使用evbuffer_peek()。
+#include <event2/buffer.h>
+#include <event2/util.h>
+#include <stdlib.h>
+#include <stdlib.h>
+
+int get_record(struct evbuffer *buf, size_t *size_out, char **record_out)
+{
+    /* Let's assume that we're speaking some protocol where records
+       contain a 4-byte size field in network order, followed by that
+       number of bytes.  We will return 1 and set the 'out' fields if we
+       have a whole record, return 0 if the record isn't here yet, and
+       -1 on error.  */
+    size_t buffer_len = evbuffer_get_length(buf);
+    ev_uint32_t record_len;
+    char *record;
+
+    if (buffer_len < 4)
+       return 0; /* The size field hasn't arrived. */
+
+   /* We use evbuffer_copyout here so that the size field will stay on
+       the buffer for now. */
+    evbuffer_copyout(buf, &record_len, 4);
+    /* Convert len_buf into host order. */
+    record_len = ntohl(record_len);
+    if (buffer_len < record_len + 4)
+        return 0; /* The record hasn't arrived */
+
+    /* Okay, _now_ we can remove the record. */
+    record = malloc(record_len);
+    if (record == NULL)
+        return -1;
+
+    evbuffer_drain(buf, 4);
+    evbuffer_remove(buf, record, record_len);
+
+    *record_out = record;
+    *size_out = record_len;
+    return 1;
+}
+
+
+面向行的输入:
+enum evbuffer_eol_style {
+        EVBUFFER_EOL_ANY,
+        EVBUFFER_EOL_CRLF,
+        EVBUFFER_EOL_CRLF_STRICT,
+        EVBUFFER_EOL_LF,
+        EVBUFFER_EOL_NUL
+};
+char *evbuffer_readln(struct evbuffer *buffer, size_t *n_read_out, enum evbuffer_eol_style eol_style);
+很多互联网协议使用基于行的格式。evbuffer_readln()函数从evbuffer前面取出一行，用一个新分配的空字符结束的字符串返回这一行。如果n_read_out不是NULL，则它被设置为返回的字符串的字节数。如果没有整行供读取，函数返回空。返回的字符串不包括行结束符。
+evbuffer_readln()理解4种行结束符号：
+EVBUFFER_EOL_LF：
+行尾是单个换行符（也就是\n，ASCII值是0x0A）
+EVBUFFER_EOL_CRLF_STRICT：
+行尾是一个回车符，后随一个换行符（也就是\r\n，ASCII值是0x0D 0x0A）
+EVBUFFER_EOL_CRLF：
+行尾是一个可选的回车，后随一个换行符（也就是说，可以是\r\n或者\n）。这种格式对于解析基于文本的互联网协议很有用，因为标准通常要求\r\n的行结束符，而不遵循标准的客户端有时候只使用\n。
+EVBUFFER_EOL_ANY：
+行尾是任意数量、任意次序的回车和换行符。这种格式不是特别有用。它的存在主要是为了向后兼容。
+（注意，如果使用event_se_mem_functions()覆盖默认的malloc，则evbuffer_readln返回的字符串将由你指定的malloc替代函数分配）
+
+char *request_line;
+size_t len;
+
+request_line = evbuffer_readln(buf, &len, EVBUFFER_EOL_CRLF);
+if (!request_line) {
+    /* The first line has not arrived yet. */
+} else {
+    if (!strncmp(request_line, "HTTP/1.0 ", 9)) {
+        /* HTTP 1.0 detected ... */
+    }
+    free(request_line);
+}
+
+
+在evbuffer中搜索:
+evbuffer_ptr结构体指示evbuffer中的一个位置，包含可用于在evbuffer中迭代的数据。
+struct evbuffer_ptr {
+        ev_ssize_t pos;
+        struct {
+                /* internal fields */
+        } _internal;
+};
+pos是唯一的公有字段，用户代码不应该访问其他字段。pos指示evbuffer中的一个位置，以到开始处的偏移量表示。
+struct evbuffer_ptr evbuffer_search(struct evbuffer *buffer,
+    const char *what, size_t len, const struct evbuffer_ptr *start);
+struct evbuffer_ptr evbuffer_search_range(struct evbuffer *buffer,
+    const char *what, size_t len, const struct evbuffer_ptr *start,
+    const struct evbuffer_ptr *end);
+struct evbuffer_ptr evbuffer_search_eol(struct evbuffer *buffer,
+    struct evbuffer_ptr *start, size_t *eol_len_out,
+    enum evbuffer_eol_style eol_style);
+
+evbuffer_search()函数在缓冲区中查找含有len个字符的字符串what。函数返回包含字符串位置的evbuffer_ptr结构体，或者在没有找到字符串时返回-1。如果提供了start参数，则从指定的位置开始搜索；否则，从开始处进行搜索。
+evbuffer_search_range()函数和evbuffer_search行为类似，只是它只考虑在end之前出现的what
+evbuffer_search_eol()函数像evbuffer_readln()一样检测行结束，但是不复制行，而是返回指向行结束符的evbuffer_ptr。如果eol_len_out非空，则它被设置为EOL字符串长度。
+
+enum evbuffer_ptr_how {
+        EVBUFFER_PTR_SET,
+        EVBUFFER_PTR_ADD
+};
+int evbuffer_ptr_set(struct evbuffer *buffer, struct evbuffer_ptr *pos,
+    size_t position, enum evbuffer_ptr_how how);
+evbuffer_ptr_set()函数操作buffer中的位置pos。如果how等于EVBUFFER_PTR_SET,指针被移动到缓冲区中的绝对位置position；如果等于EVBUFFER_PTR_ADD，则向前移动position字节。函数成功时返回0，失败时返回-1。
+#include <event2/buffer.h>
+#include <string.h>
+
+/* Count the total occurrences of 'str' in 'buf'. */
+int count_instances(struct evbuffer *buf, const char *str)
+{
+    size_t len = strlen(str);
+    int total = 0;
+    struct evbuffer_ptr p;
+
+    if (!len)
+        /* Don't try to count the occurrences of a 0-length string. */
+        return -1;
+
+    evbuffer_ptr_set(buf, &p, 0, EVBUFFER_PTR_SET);
+
+    while (1) {
+         p = evbuffer_search(buf, str, len, &p);
+         if (p.pos < 0)
+             break;
+         total++;
+         evbuffer_ptr_set(buf, &p, 1, EVBUFFER_PTR_ADD);
+    }
+
+    return total;
+}
+任何修改evbuffer或者其布局的调用都会使得evbuffer_ptr失效，不能再安全地使用。
+
+
+检测数据而不复制:
+有时候需要读取evbuffer中的数据而不进行（像evbuffer_copyout()那样的）复制，也不重新排列内部内存布局（像evbuffer_pullup()那样）。有时候可能需要查看evbuffer中间的数据。
+struct evbuffer_iovec {
+        void *iov_base;
+        size_t iov_len;
+};
+
+int evbuffer_peek(struct evbuffer *buffer, ev_ssize_t len, struct evbuffer_ptr *start_at, struct evbuffer_iovec *vec_out, int n_vec);
+调用evbuffer_peek()的时候，通过vec_out给定一个evbuffer_iovec数组，数组的长度是n_vec。函数会让每个结构体包含指向evbuffer内部内存块的指针（iov_base)和块中数据长度。
+如果len小于0，evbuffer_peek()会试图填充所有evbuffer_iovec结构体。否则，函数会进行填充，直到使用了所有结构体，或者见到len字节为止。如果函数可以给出所有请求的数据，则返回实际使用的结构体个数；否则，函数返回给出所有请求数据所需的结构体个数。
+如果ptr为NULL，函数从缓冲区开始处进行搜索。否则，从ptr处开始搜索。
+{
+    /* Let's look at the first two chunks of buf, and write them to stderr. */
+    int n, i;
+    struct evbuffer_iovec v[2];
+    n = evbuffer_peek(buf, -1, NULL, v, 2);
+    for (i=0; i<n; ++i) { /* There might be less than two chunks available. */
+        fwrite(v[i].iov_base, 1, v[i].iov_len, stderr);
+    }
+}
+
+{
+    /* Let's send the first 4906 bytes to stdout via write. */
+    int n, i, r;
+    struct evbuffer_iovec *v;
+    size_t written = 0;
+
+    /* determine how many chunks we need. */
+    n = evbuffer_peek(buf, 4096, NULL, NULL, 0);
+    /* Allocate space for the chunks.  This would be a good time to use
+       alloca() if you have it. */
+    v = malloc(sizeof(struct evbuffer_iovec)*n);
+    /* Actually fill up v. */
+    n = evbuffer_peek(buf, 4096, NULL, v, n);
+    for (i=0; i<n; ++i) {
+        size_t len = v[i].iov_len;
+        if (written + len > 4096)
+            len = 4096 - written;
+        r = write(1 /* stdout */, v[i].iov_base, len);
+        if (r<=0)
+            break;
+        /* We keep track of the bytes written separately; if we don't,
+           we may write more than 4096 bytes if the last chunk puts
+           us over the limit. */
+        written += len;
+    }
+    free(v);
+}
+
+{
+    /* Let's get the first 16K of data after the first occurrence of the
+       string "start\n", and pass it to a consume() function. */
+    struct evbuffer_ptr ptr;
+    struct evbuffer_iovec v[1];
+    const char s[] = "start\n";
+    int n_written;
+
+    ptr = evbuffer_search(buf, s, strlen(s), NULL);
+    if (ptr.pos == -1)
+        return; /* no start string found. */
+
+    /* Advance the pointer past the start string. */
+    if (evbuffer_ptr_set(buf, &ptr, strlen(s), EVBUFFER_PTR_ADD) < 0)
+        return; /* off the end of the string. */
+
+    while (n_written < 16*1024) {
+        /* Peek at a single chunk. */
+        if (evbuffer_peek(buf, -1, &ptr, v, 1) < 1)
+            break;
+        /* Pass the data to some user-defined consume function */
+        consume(v[0].iov_base, v[0].iov_len);
+        n_written += v[0].iov_len;
+
+        /* Advance the pointer so we see the next chunk next time. */
+        if (evbuffer_ptr_set(buf, &ptr, v[0].iov_len, EVBUFFER_PTR_ADD)<0)
+            break;
+    }
+}
+
+修改evbuffer_iovec所指的数据会导致不确定的行为
+如果任何函数修改了evbuffer，则evbuffer_peek()返回的指针会失效
+如果在多个线程中使用evbuffer，确保在调用evbuffer_peek()之前使用evbuffer_lock()，在使用完evbuffer_peek()给出的内容之后进行解锁
+
+
+直接向evbuffer添加数据:
+有时候需要能够直接向evbuffer添加数据，而不用先将数据写入到字符数组中，然后再使用evbuffer_add()进行复制。
+有一对高级函数可以完成这种功能：evbuffer_reserve_space()和evbuffer_commit_space()。跟evbuffer_peek()一样，这两个函数使用evbuffer_iovec结构体来提供对evbuffer内部内存的直接访问。
+int evbuffer_reserve_space(struct evbuffer *buf, ev_ssize_t size, struct evbuffer_iovec *vec, int n_vecs);
+int evbuffer_commit_space(struct evbuffer *buf, struct evbuffer_iovec *vec, int n_vecs);
+
+evbuffer_reserve_space()函数给出evbuffer内部空间的指针。
+函数会扩展缓冲区以至少提供size字节的空间。到扩展空间的指针，以及其长度，会存储在通过vec传递的向量数组中，n_vec是数组的长度。
+n_vec的值必须至少是1。如果只提供一个vector，libevent会确保请求的所有连续空间都在单个扩展区中，但是这可能要求重新排列缓冲区，或者浪费内存。为取得更好的性能，应该至少提供2个向量。函数返回提供请求的空间所需的向量数。
+写入到向量中的数据不会是缓冲区的一部分，直到调用evbuffer_commit_space()，使得写入的数据进入缓冲区。如果需要提交少于请求的空间，可以减小任何evbuffer_iovec结构体的iov_len字段，也可以提供较少的向量。函数成功时返回0，失败时返回-1。
+提示和警告:
+调用任何重新排列evbuffer或者向其添加数据的函数都将使之前从evbuffer_reserve_space()获取的指针失效。
+当前实现中，不论用户提供多少个向量，evbuffer_reserve_space()从不使用多于两个。这一点在未来版本可能会有变化。
+如果在多个线程中使用evbuffer，确保在调用evbuffer_reserve_space()之前使用evbuffer_lock()进行锁定，然后在提交后解除锁定。
+/* Suppose we want to fill a buffer with 2048 bytes of output from a
+   generate_data() function, without copying. */
+struct evbuffer_iovec v[2];
+int n, i;
+size_t n_to_add = 2048;
+
+/* Reserve 2048 bytes.*/
+n = evbuffer_reserve_space(buf, n_to_add, v, 2);
+if (n<=0)
+   return; /* Unable to reserve the space for some reason. */
+
+for (i=0; i<n && n_to_add > 0; ++i) {
+   size_t len = v[i].iov_len;
+   if (len > n_to_add) /* Don't write more than n_to_add bytes. */
+      len = n_to_add;
+   if (generate_data(v[i].iov_base, len) < 0) {
+      /* If there was a problem during data generation, we can just stop
+         here; no data will be committed to the buffer. */
+      return;
+   }
+   /* Set iov_len to the number of bytes we actually wrote, so we
+      don't commit too much. */
+   v[i].iov_len = len;
+}
+
+/* We commit the space here.  Note that we give it 'i' (the number of
+   vectors we actually used) rather than 'n' (the number of vectors we
+   had available. */
+if (evbuffer_commit_space(buf, v, i) < 0)
+   return; /* Error committing */
+
+
+
+使用evbuffer的网络IO:
+libevent中evbuffer的最常见使用场合是网络IO。将evbuffer用于网络IO的接口是：
+int evbuffer_write(struct evbuffer *buffer, evutil_socket_t fd);
+int evbuffer_write_atmost(struct evbuffer *buffer, evutil_socket_t fd,
+        ev_ssize_t howmuch);
+int evbuffer_read(struct evbuffer *buffer, evutil_socket_t fd, int howmuch);
+
+evbuffer_read()函数从套接字fd读取至多howmuch字节到buffer末尾。函数成功时返回读取的字节数，0表示EOF，失败时返回-1。
+注意，错误码可能指示非阻塞操作不能立即成功，应该检查错误码EAGAIN（或者Windows中的WSAWOULDBLOCK）。
+如果howmuch为负，evbuffer_read() 会尝试猜测要读取多少数据。
+evbuffer_write_atmost()函数试图将buffer前面至多howmuch字节写入到套接字fd中。成功时函数返回写入的字节数，失败时返回-1。跟evbuffer_read()一样，应该检查错误码，看是真的错误，还是仅仅指示非阻塞IO不能立即完成。如果为howmuch给出负值，函数会试图写入buffer的所有内容。
+调用evbuffer_write()与使用负的howmuch参数调用evbuffer_write_atmost()一样：函数会试图尽量清空buffer的内容。
+在Unix中，这些函数应该可以在任何支持read和write的文件描述符上正确工作。在Windows中，仅仅支持套接字。
+###
+注意，如果使用bufferevent，则不需要调用这些函数，bufferevent的代码已经为你调用了。
+###
+
+
+evbuffer和回调:
+evbuffer的用户常常需要知道什么时候向evbuffer添加了数据，什么时候移除了数据。为支持这个，libevent为evbuffer提高了通用回调机制。
+struct evbuffer_cb_info {
+        size_t orig_size;
+        size_t n_added;
+        size_t n_deleted;
+};
+
+typedef void (*evbuffer_cb_func)(struct evbuffer *buffer, const struct evbuffer_cb_info *info, void *arg);
+回调函数在 有数据被添加到evbuffer中，或者从中移除数据的时候，会被调用。
+函数收到缓冲区指针、一个evbuffer_cb_info结构体指针，和用户提供的参数。evbuffer_cb_info结构体的orig_size字段指示缓冲区改变大小前的字节数，n_added字段指示向缓冲区添加了多少字节；n_deleted字段指示移除了多少字节。
+
+struct evbuffer_cb_entry;
+struct evbuffer_cb_entry *evbuffer_add_cb(struct evbuffer *buffer, evbuffer_cb_func cb, void *cbarg);
+evbuffer_add_cb()函数为evbuffer添加一个回调函数，返回一个不透明的指针，随后可用于代表这个特定的回调实例。
+cb参数是将被调用的函数，cbarg是用户提供的将传给这个函数的指针。
+可以为单个evbuffer设置多个回调，添加新的回调不会移除原来的回调。
+#include <event2/buffer.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+/* Here's a callback that remembers how many bytes we have drained in
+   total from the buffer, and prints a dot every time we hit a
+   megabyte. */
+struct total_processed {
+    size_t n;
+};
+void count_megabytes_cb(struct evbuffer *buffer,
+    const struct evbuffer_cb_info *info, void *arg)
+{
+    struct total_processed *tp = arg;
+    size_t old_n = tp->n;
+    int megabytes, i;
+    tp->n += info->n_deleted;
+    megabytes = ((tp->n) >> 20) - (old_n >> 20);
+    for (i=0; i<megabytes; ++i)
+        putc('.', stdout);
+}
+
+void operation_with_counted_bytes(void)
+{
+    struct total_processed *tp = malloc(sizeof(*tp));
+    struct evbuffer *buf = evbuffer_new();
+    tp->n = 0;
+    evbuffer_add_cb(buf, count_megabytes_cb, tp);
+
+    /* Use the evbuffer for a while.  When we're done: */
+    evbuffer_free(buf);
+    free(tp);
+}
+注意：释放非空evbuffer不会清空其数据，释放evbuffer也不会为回调释放用户提供的数据指针。
+如果不想让缓冲区上的回调永远激活，可以移除或者禁用回调：
+int evbuffer_remove_cb_entry(struct evbuffer *buffer,
+    struct evbuffer_cb_entry *ent);
+int evbuffer_remove_cb(struct evbuffer *buffer, evbuffer_cb_func cb,
+    void *cbarg);
+
+#define EVBUFFER_CB_ENABLED 1
+int evbuffer_cb_set_flags(struct evbuffer *buffer,
+                          struct evbuffer_cb_entry *cb,
+                          ev_uint32_t flags);
+int evbuffer_cb_clear_flags(struct evbuffer *buffer,
+                          struct evbuffer_cb_entry *cb,
+                          ev_uint32_t flags);
+可以通过添加回调时候获取的evbuffer_cb_entry来移除回调，也可以通过回调函数和参数指针来移除。成功时函数返回0，失败时返回-1。
+evbuffer_cb_set_flags()和evbuffer_cb_clear_flags()函数分别为回调函数设置或者清除给定的标志。当前只有一个标志是用户可见的：EVBUFFER_CB_ENABLED。这个标志默认是打开的。如果清除这个标志，对evbuffer的修改不会调用回调函数。
+int evbuffer_defer_callbacks(struct evbuffer *buffer, struct event_base *base);
+跟bufferevent回调一样，可以让evbuffer回调不在evbuffer被修改时立即运行，而是延迟到某event_base的事件循环中执行。
+如果有多个evbuffer，它们的回调潜在地让数据添加到evbuffer中，或者从中移除，又要避免栈崩溃，延迟回调是很有用的。
+如果回调被延迟，则最终执行时，它可能是多个操作结果的总和。
+与bufferevent一样，evbuffer具有内部引用计数的，所以即使还有未执行的延迟回调，释放evbuffer也是安全的。
+
+
+为基于evbuffer的IO避免数据复制:
+真正高速的网络编程通常要求尽量少的数据复制，libevent为此提供了一些机制
+typedef void (*evbuffer_ref_cleanup_cb)(const void *data, size_t datalen, void *extra);
+int evbuffer_add_reference(struct evbuffer *outbuf, const void *data, size_t datlen, evbuffer_ref_cleanup_cb cleanupfn, void *extra);
+这个函数通过引用向evbuffer末尾添加一段数据。不会进行复制：evbuffer只会存储一个到data处的datlen字节的指针。
+因此，在evbuffer使用这个指针期间，必须保持指针是有效的。
+evbuffer会在不再需要这部分数据的时候调用用户提供的cleanupfn函数，带有提供的data指针、datlen值和extra指针参数。函数成功时返回0，失败时返回-1。
+#include <event2/buffer.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* In this example, we have a bunch of evbuffers that we want to use to
+   spool a one-megabyte resource out to the network.  We do this
+   without keeping any more copies of the resource in memory than
+   necessary. */
+
+#define HUGE_RESOURCE_SIZE (1024*1024)
+struct huge_resource {
+    /* We keep a count of the references that exist to this structure,
+       so that we know when we can free it. */
+    int reference_count;
+    char data[HUGE_RESOURCE_SIZE];
+};
+
+struct huge_resource *new_resource(void) {
+    struct huge_resource *hr = malloc(sizeof(struct huge_resource));
+    hr->reference_count = 1;
+    /* Here we should fill hr->data with something.  In real life,
+       we'd probably load something or do a complex calculation.
+       Here, we'll just fill it with EEs. */
+    memset(hr->data, 0xEE, sizeof(hr->data));
+    return hr;
+}
+
+void free_resource(struct huge_resource *hr) {
+    --hr->reference_count;
+    if (hr->reference_count == 0)
+        free(hr);
+}
+
+static void cleanup(const void *data, size_t len, void *arg) {
+    free_resource(arg);
+}
+
+/* This is the function that actually adds the resource to the
+   buffer. */
+void spool_resource_to_evbuffer(struct evbuffer *buf,
+    struct huge_resource *hr)
+{
+    ++hr->reference_count;
+    evbuffer_add_reference(buf, hr->data, HUGE_RESOURCE_SIZE,
+        cleanup, hr);
+}
+
+
+向evbuffer添加文件:
+一些操作系统提供了将文件写入到网络，而不需要将数据复制到用户空间的方法。
+int evbuffer_add_file(struct evbuffer *output, int fd, ev_off_t offset, size_t length);
+evbuffer_add_file()要求一个打开的可读文件描述符fd（注意：不是套接字）。函数将文件中offset处开始的length字节添加到output末尾。成功时函数返回0，失败时返回-1。
+
+
+通过引用将evbuffer添加到另一个evbufer中:
+也可以通过引用将evbuffer添加到另一个evbuffer中：而不是移动一个evbuffer中内容到另一个evbuffer中，当将evbuffer的引用添加到另一个evbuffer中时，它的行为就好像复制了所有字节一样。
+int evbuffer_add_buffer_reference(struct evbuffer *outbuf, struct evbuffer *inbuf);
+evbuffer_add_buffer_reference()函数的行为就好像你已经从 outbuf复制了所有字节到 inbuf, 但实际上并没有进行任何不必要的拷贝。 .函数在成功是返回0， 失败时返回-1.
+注意，inbuf内容后续的变化将不会反馈到outbuf中：该函数是通过引用添加evbuffer当前的内容，而不是evbuffer本身。
+注意，不能嵌套buffer的引用：如果一个evbuffer是evbuffer_add_buffer_reference函数中的outbuf，则其不能作为另一个的inbuf。
+
+
+使一个evbuffer仅能添加或者仅能移除:
+int evbuffer_freeze(struct evbuffer *buf, int at_front);
+int evbuffer_unfreeze(struct evbuffer *buf, int at_front);
+可以使用这些函数暂时性的禁止evbuffer前端或后端的改变。bufferevent会在内部使用这些函数，用来防止输出缓冲区前端，或者输入缓冲区后端的意外改变。
+
+
+==================================================连接监听：接收TCP连接
+libevent 提供了一种用于监听和接受TCP连接的便捷方式——evconnlistener机制
+
+面接口用于创建和释放evconnlistener
+
+struct evconnlistener *evconnlistener_new(struct event_base *base,
+    evconnlistener_cb cb, void *ptr, unsigned flags, int backlog,
+    evutil_socket_t fd);
+struct evconnlistener *evconnlistener_new_bind(struct event_base *base,
+    evconnlistener_cb cb, void *ptr, unsigned flags, int backlog,
+    const struct sockaddr *sa, int socklen);
+void evconnlistener_free(struct evconnlistener *lev);
+
+函数evconnlistener_new和evconnlistener_new_bind都用于分配和返回一个新的用于监听连接的对象。 每个用于监听的对象都使用event_base来维护一个建立的连接。当有新的TCP 连接发生时，回调函数就会调用。
+
+base： event_base对象。
+cb： 回调函数， 当有新的TCP连接发生时，会唤醒回调函数。
+ptr： 传递给回调函数的参数。
+flags： 一些标志
+backlog： 监听队列允许容纳的最大连接数。
+fd： 函数evconnlistener_new假设我们已经绑定了套接字到要监听的端口上，fd参数就是我们已经绑定的socket套接字。
+sa： evconnlistener_new_bind帮助我们绑定监听地址。sa就是传入的监听地址。
+socklen： sa的长度。
+
+如果使用的是evconnlistener_new，需要保证传入的socket套接字处于non-blocking模式，可以通过evutil_make_socket_nonblocking等方法进行设置
+
+常用的flag值：
+LEV_OPT_LEAVE_SOCKETS_BLOCKING：默认情况下listener会把接收到的连接设置为non-blocking模式。 这个flag则是将连接设置为blocking状态（少用）
+LEV_OPT_CLOSE_ON_FREE：释放listener时，先关闭潜在的套接字
+LEV_OPT_REUSEABLE：一些系统平台在默认情况下即使已经关闭了socket，也要等待一段时间才能使用对应的port， 而这个flag则设置成只要已关闭socket就是重新使用对应的port。
+
+
+回调函数原型如下：
+typedef void (*evconnlistener_cb)(struct evconnlistener *listener,
+    evutil_socket_t sock, struct sockaddr *addr, int len, void *ptr);
+
+listener： 即接受连接的lister
+sock： 新连接创建的新套接字
+addr： 连接发起者的地址
+len： 地址长度
+ptr： 从evconnlistener_new和evconnlistener_bind_new传来的参数。
+
+
+listener允许临时关闭和重新开启监听
+int evconnlistener_disable(struct evconnlistener *lev);
+int evconnlistener_enable(struct evconnlistener *lev);
+
+
+#include <event2/listener.h>
+#include <event2/bufferevent.h>
+#include <event2/buffer.h>
+
+#include <arpa/inet.h>
+
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <errno.h>
+
+static void
+echo_read_cb(struct bufferevent *bev, void *ctx)
+{
+        /* This callback is invoked when there is data to read on bev. */
+        struct evbuffer *input = bufferevent_get_input(bev);
+        struct evbuffer *output = bufferevent_get_output(bev);
+
+        /* Copy all the data from the input buffer to the output buffer. */
+        evbuffer_add_buffer(output, input);
+}
+
+static void
+echo_event_cb(struct bufferevent *bev, short events, void *ctx)
+{
+        if (events & BEV_EVENT_ERROR)
+                perror("Error from bufferevent");
+        if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR)) {
+                bufferevent_free(bev);
+        }
+}
+
+static void
+accept_conn_cb(struct evconnlistener *listener,
+    evutil_socket_t fd, struct sockaddr *address, int socklen,
+    void *ctx)
+{
+        /* We got a new connection! Set up a bufferevent for it. */
+        struct event_base *base = evconnlistener_get_base(listener);
+        struct bufferevent *bev = bufferevent_socket_new(
+                base, fd, BEV_OPT_CLOSE_ON_FREE);
+
+        bufferevent_setcb(bev, echo_read_cb, NULL, echo_event_cb, NULL);
+
+        bufferevent_enable(bev, EV_READ|EV_WRITE);
+}
+
+static void
+accept_error_cb(struct evconnlistener *listener, void *ctx)
+{
+        struct event_base *base = evconnlistener_get_base(listener);
+        int err = EVUTIL_SOCKET_ERROR();
+        fprintf(stderr, "Got an error %d (%s) on the listener. "
+                "Shutting down.\n", err, evutil_socket_error_to_string(err));
+
+        event_base_loopexit(base, NULL);
+}
+
+int
+main(int argc, char **argv)
+{
+        struct event_base *base;
+        struct evconnlistener *listener;
+        struct sockaddr_in sin;
+
+        int port = 9876;
+
+        if (argc > 1) {
+                port = atoi(argv[1]);
+        }
+        if (port<=0 || port>65535) {
+                puts("Invalid port");
+                return 1;
+        }
+
+        base = event_base_new();
+        if (!base) {
+                puts("Couldn't open event base");
+                return 1;
+        }
+
+        /* Clear the sockaddr before using it, in case there are extra
+         * platform-specific fields that can mess us up. */
+        memset(&sin, 0, sizeof(sin));
+        /* This is an INET address */
+        sin.sin_family = AF_INET;
+        /* Listen on 0.0.0.0 */
+        sin.sin_addr.s_addr = htonl(0);
+        /* Listen on the given port. */
+        sin.sin_port = htons(port);
+
+        listener = evconnlistener_new_bind(base, accept_conn_cb, NULL,
+            LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, -1,
+            (struct sockaddr*)&sin, sizeof(sin));
+        if (!listener) {
+                perror("Couldn't create listener");
+                return 1;
+        }
+        evconnlistener_set_error_cb(listener, accept_error_cb);
+
+        event_base_dispatch(base);
+        return 0;
+}

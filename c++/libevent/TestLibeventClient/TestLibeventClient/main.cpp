@@ -4,11 +4,15 @@
 //
 //  Created by youdone-ndl on 2021/9/9.
 //
+
+// MARK: - main
+/*
 #include <event2/event.h>
 int main(int argc, char** argv)
 {
     return 0;
 }
+ */
 
 // MARK: - socket: event
 /*
@@ -140,7 +144,6 @@ int main(int argc, char** argv)
 */
 
 // MARK: - socket: bufferevent
-/*
 #include<sys/types.h>
 #include<sys/socket.h>
 #include<netinet/in.h>
@@ -171,7 +174,9 @@ int main(int argc, char** argv)
     }
 
 
-    //两个参数依次是服务器端的IP地址、端口号
+    // 192.168.100.82:5288
+    // 127.0.0.1:1080
+    // 两个参数依次是服务器端的IP地址、端口号
     int sockfd = tcp_connect_server(argv[1], atoi(argv[2]));
     if (sockfd == -1) {
         perror("tcp_connect perror");
@@ -213,13 +218,55 @@ void cmd_msg_cb(int fd, short events, void* arg)
     {
         perror("read perror");
         exit(1);
+    } else {
+        printf("read cmd len = %ld\n", ret);
     }
 
     struct bufferevent* bev = (struct bufferevent *)arg;
-
-    //把终端的消息发送给服务器端
+    // MARK: - bufferevent_write
+    /*
+    // 把终端的消息发送给服务器端
     bufferevent_write(bev, msg, ret);
     printf("cmd_msg_cb write: %s", msg);
+     */
+    
+    
+    // MARK: - evbuffer_add
+    struct evbuffer *outputEB = bufferevent_get_output(bev);
+    /*
+    printf("output evbuffer_get_length before: %ld\n", evbuffer_get_length(outputEB));
+    // c++11 必须用const char * 不能是char * 接受字面量常量
+    const char *data = "1111";
+    
+    char datas[] = "1111";// char datas[4] = "1111";报错
+    printf("sizeof(datas) = %ld\n", sizeof(datas));// 5
+     
+    size_t sizeoflen = sizeof(data);// 8
+    size_t datlen = strlen(data);// 4
+    evbuffer_add(outputEB, data, datlen);
+    printf("output evbuffer_get_length after: %ld\n", evbuffer_get_length(outputEB));// 4
+     */
+
+    int msgRet = evbuffer_add(outputEB, msg, ret);
+    printf("add msg ret = %d\n", msgRet);
+    char tailData[] = "#tail";
+    int tailRet = evbuffer_add(outputEB, tailData, strlen(tailData));
+    printf("add tail ret = %d\n", tailRet);
+    
+    // MARK: - evbuffer_pullup 取出
+    /*
+    unsigned char *pullupData = evbuffer_pullup(outputEB, 3);
+    printf("pullupData = %s\n", pullupData);
+     */
+    
+    // MARK: - evbuffer_drain 不能用于outputEB
+    /*
+    int drainRet = evbuffer_drain(outputEB, 3);
+    printf("drainRet = %d\n", drainRet);
+    printf("error_to_string = %s\n", evutil_socket_error_to_string(evutil_socket_geterror(fd)));// Operation not permitted
+     */
+    
+    evbuffer_write(outputEB, bufferevent_getfd(bev));
 }
 
 
@@ -256,26 +303,49 @@ typedef struct sockaddr SA;
 int tcp_connect_server(const char* server_ip, int port)
 {
     int sockfd, status, save_errno;
-    struct sockaddr_in server_addr;
-
+    struct sockaddr_in server_addr;// 服务器地址
     memset(&server_addr, 0, sizeof(server_addr));
 
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
-    status = inet_aton(server_ip, &server_addr.sin_addr);
-
-    if (status == 0) //the server_ip is not valid value
-    {
-        errno = EINVAL;
-        return -1;
+    // inet_aton
+//    status = inet_aton(server_ip, &server_addr.sin_addr);
+//    if (status == 0) //the server_ip is not valid value
+//    {
+//        errno = EINVAL;
+//        return -1;
+//    }
+    // inet_pton
+    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
+        printf("server address error\n");// the server_ip is not valid value
     }
+
 
     sockfd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == -1) return sockfd;
-
-
+    
     status = ::connect(sockfd, (SA*)&server_addr, sizeof(server_addr));
+    
+    
+    // TCP客户端程序上，可以通过调用getsockname()函数获取由内核赋予该连接的本地IP地址和本地端口号
+    struct sockaddr_in clientAddr;//客户端地址
+    socklen_t clientAddrLen = sizeof(clientAddr);
+    char ipAddress[INET_ADDRSTRLEN];
+    getsockname(sockfd, (struct sockaddr *)&clientAddr, &clientAddrLen);
+    // 192.168.100.82:64973
+    // 127.0.0.1:64982
+    printf("client:client address = %s:%d\n", inet_ntop(AF_INET, &clientAddr.sin_addr, ipAddress, sizeof(ipAddress)), ntohs(clientAddr.sin_port));
 
+    
+    struct sockaddr_in peerAddr;
+    socklen_t peerLen = sizeof(peerAddr);
+    char peerIpAddress[INET_ADDRSTRLEN];
+    getpeername(sockfd, (struct sockaddr *)&peerAddr, &peerLen);
+    // 192.168.100.82:5288
+    // 127.0.0.1:5288
+    printf("peer address = %s:%d\n", inet_ntop(AF_INET, &peerAddr.sin_addr, peerIpAddress, sizeof(peerIpAddress)), ntohs(peerAddr.sin_port));
+    
+    
     if (status == -1) {
         save_errno = errno;
         ::close(sockfd);
@@ -287,4 +357,3 @@ int tcp_connect_server(const char* server_ip, int port)
 
     return sockfd;
 }
-*/
