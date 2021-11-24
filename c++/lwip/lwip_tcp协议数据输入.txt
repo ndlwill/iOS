@@ -1,0 +1,192 @@
+https://blog.csdn.net/weixin_44821644/category_10657640.html
+
+==================================================tcp_input
+tcp的数据输入:
+ip层接收到数据后，经过处理需要将数据传递给tcp层。
+ip层通过tcp_input函数将接收到的数据传递给tcp层，该函数是tcp数据的总入口
+在此函数中，从ip数据包中提取tcp报文，检验报文的正确性，找到对应的tcp控制块，进入tcp状态机，将报文中的有效数据传递给应用层。
+
+ip数据解析:
+ip层递交的数据仍然是以pbuf的形式出现的，其中payload指向的是tcp数据的首部，我们需要将tcp的首部与数据分离，其中tcp首部包括20字节的固定长度和可变长度的选项字段。
+但在此之前，我们还需要先检查tcp报文是否正确
+
+  tcphdr = (struct tcp_hdr *)p->payload;  //从ip数据包中获取tcp首部
+
+  //如果pbuf长度比默认tcp首部还小，这不好，丢弃
+  if (p->len < TCP_HLEN) {
+    /* drop short packets */
+    LWIP_DEBUGF(TCP_INPUT_DEBUG, ("tcp_input: short packet (%"U16_F" bytes) discarded\n", p->tot_len));
+    TCP_STATS_INC(tcp.lenerr);
+    goto dropped;
+  }
+
+  //对输入的广播和多播的报文不做处理，丢弃
+  if (ip_addr_isbroadcast(ip_current_dest_addr(), ip_current_netif()) ||
+      ip_addr_ismulticast(ip_current_dest_addr())) {
+    TCP_STATS_INC(tcp.proterr);
+    goto dropped;
+  }
+
+//检查报文的校验字段
+  IF__NETIF_CHECKSUM_ENABLED(inp, NETIF_CHECKSUM_CHECK_TCP) {
+    //计算校验和
+    u16_t chksum = ip_chksum_pseudo(p, IP_PROTO_TCP, p->tot_len,
+                               ip_current_src_addr(), ip_current_dest_addr());
+    if (chksum != 0) {
+        LWIP_DEBUGF(TCP_INPUT_DEBUG, ("tcp_input: packet discarded due to failing checksum 0x%04"X16_F"\n",
+          chksum));
+      tcp_debug_print(tcphdr);
+      TCP_STATS_INC(tcp.chkerr);
+      goto dropped;
+    }
+  }
+
+  hdrlen_bytes = TCPH_HDRLEN(tcphdr) * 4; //计算tcp 首部字节数，一个长度单位32bit
+
+  //如果首部字节太大或者太小，丢弃报文
+  if ((hdrlen_bytes < TCP_HLEN) || (hdrlen_bytes > p->tot_len)) {
+    LWIP_DEBUGF(TCP_INPUT_DEBUG, ("tcp_input: invalid header length (%"U16_F")\n", (u16_t)hdrlen_bytes));
+    TCP_STATS_INC(tcp.lenerr);
+    goto dropped;
+  }
+
+  tcphdr_optlen = hdrlen_bytes - TCP_HLEN;  //计算选项长度=首部长度-固定20字节
+  tcphdr_opt2 = NULL;
+
+  //第一个pbuf的长度大于首部长度，说明选项字段在此pbuf中
+  if (p->len >= hdrlen_bytes) {
+    //所有选项数据放在第一个pbuf（也就是tcp首部所在的pbuf）
+    tcphdr_opt1len = tcphdr_optlen;
+    //向后移动payload指针，使payload指向tcp数据
+    pbuf_header(p, -(s16_t)hdrlen_bytes); /* cannot fail */
+  } else {  //选项字段可能分为两份，一份在第一个pbuf，一份在下一个pbuf，移动payload跳过选项
+    u16_t opt2len;
+    LWIP_ASSERT("p->next != NULL", p->next != NULL);
+
+    //pbuf的payload移动到固定tcp首部尾，此时的p->len为第一份选项字段的长度
+    pbuf_header(p, -TCP_HLEN);
+
+    tcphdr_opt1len = p->len;
+    opt2len = tcphdr_optlen - tcphdr_opt1len; //计算第二份选项字段的长度
+
+    pbuf_header(p, -(s16_t)tcphdr_opt1len); //移动payload指针跳过第一份选项
+
+    //如果第二份选项超过下一个pbuf大小，不合理，丢弃报文
+    if (opt2len > p->next->len) {
+      LWIP_DEBUGF(TCP_INPUT_DEBUG, ("tcp_input: options overflow second pbuf (%"U16_F" bytes)\n", p->next->len));
+      TCP_STATS_INC(tcp.lenerr);
+      goto dropped;
+    }
+
+    //p->next->payload指向的就是第二份选项字段
+    tcphdr_opt2 = (u8_t*)p->next->payload;
+
+    pbuf_header(p->next, -(s16_t)opt2len);  //移动第一个pbuf的payload跳过第二段选项
+    p->tot_len -= opt2len;  //总长度随着payload后移而减少
+
+    LWIP_ASSERT("p->len == 0", p->len == 0);
+    LWIP_ASSERT("p->tot_len == p->next->tot_len", p->tot_len == p->next->tot_len);
+  }
+
+  //将tcp首部的网络字节的数据转换成主机字节
+  tcphdr->src = lwip_ntohs(tcphdr->src);
+  tcphdr->dest = lwip_ntohs(tcphdr->dest);
+  seqno = tcphdr->seqno = lwip_ntohl(tcphdr->seqno);
+  ackno = tcphdr->ackno = lwip_ntohl(tcphdr->ackno);
+  tcphdr->wnd = lwip_ntohs(tcphdr->wnd);
+
+
+  flags = TCPH_FLAGS(tcphdr); //获取tcp首部的标志位
+  tcplen = p->tot_len + ((flags & (TCP_FIN | TCP_FIN)) ? 1 : 0);  //计算tcp报文长度，报文标志位存在TCP_FIN或TCP_FIN时，长度要加一
+  //到这儿，我们分离了ip数据包中的tcp首部和数据
+
+给谁的报文?:
+tcp报文解析完成后，就需要确定这报文是传递给那个tcp控制块的。这需要根据报文的源地址和目标地址在各控制块链表中查找。
+1. 在active链表？
+  //检查数据是否是给tcp_active_pcbs链表中的tcp
+  for (pcb = tcp_active_pcbs; pcb != NULL; pcb = pcb->next) {
+    LWIP_ASSERT("tcp_input: active pcb->state != CLOSED", pcb->state != CLOSED);
+    LWIP_ASSERT("tcp_input: active pcb->state != TIME-WAIT", pcb->state != TIME_WAIT);
+    LWIP_ASSERT("tcp_input: active pcb->state != LISTEN", pcb->state != LISTEN);
+
+    //找到报文对应的tcp控制块，并将该pcb放到tcp_active_pcbs链表头，以方便随后的读取
+    if (pcb->remote_port == tcphdr->src &&
+        pcb->local_port == tcphdr->dest &&
+        ip_addr_cmp(&pcb->remote_ip, ip_current_src_addr()) &&
+        ip_addr_cmp(&pcb->local_ip, ip_current_dest_addr())) {
+
+      LWIP_ASSERT("tcp_input: pcb->next != pcb (before cache)", pcb->next != pcb);
+      if (prev != NULL) {
+        prev->next = pcb->next;
+        pcb->next = tcp_active_pcbs;
+        tcp_active_pcbs = pcb;
+      } else {
+        TCP_STATS_INC(tcp.cachehit);
+      }
+      LWIP_ASSERT("tcp_input: pcb->next != pcb (after cache)", pcb->next != pcb);
+      break;
+    }
+    prev = pcb; //把对应的pcb放到prev
+  }
+
+2. 在timewait链表？
+if (pcb == NULL) {
+
+//在tcp_tw_pcbs链表找
+for (pcb = tcp_tw_pcbs; pcb != NULL; pcb = pcb->next) {
+    LWIP_ASSERT("tcp_input: TIME-WAIT pcb->state == TIME-WAIT", pcb->state == TIME_WAIT);
+    if (pcb->remote_port == tcphdr->src &&
+        pcb->local_port == tcphdr->dest &&
+        ip_addr_cmp(&pcb->remote_ip, ip_current_src_addr()) &&
+        ip_addr_cmp(&pcb->local_ip, ip_current_dest_addr())) {
+    //对于处于timewait状态的pcb，不需要将它放在链表头部
+    LWIP_DEBUGF(TCP_INPUT_DEBUG, ("tcp_input: packed for TIME_WAITing connection.\n"));
+    tcp_timewait_input(pcb);  //timewait处理数据
+    pbuf_free(p); //释放数据
+    return;
+    }
+}
+
+3. 给listen链表的？
+//在tcp_listen_pcbs链表中找
+for (lpcb = tcp_listen_pcbs.listen_pcbs; lpcb != NULL; lpcb = lpcb->next) {
+    if (lpcb->local_port == tcphdr->dest) { //端口对上了
+    if (IP_IS_ANY_TYPE_VAL(lpcb->local_ip)) { 
+
+        break;
+
+    } else if (IP_ADDR_PCB_VERSION_MATCH_EXACT(lpcb, ip_current_dest_addr())) {
+        if (ip_addr_cmp(&lpcb->local_ip, ip_current_dest_addr())) {
+        
+        break;
+        } else if (ip_addr_isany(&lpcb->local_ip)) {
+        
+        break;
+        }
+    }
+    }
+    prev = (struct tcp_pcb *)lpcb;  //当前的pcb赋值到prev
+}
+
+//如果在listen链表找到对象，则将该对象pcb放到链表头
+if (lpcb != NULL) {
+    if (prev != NULL) {
+    ((struct tcp_pcb_listen *)prev)->next = lpcb->next;
+
+    lpcb->next = tcp_listen_pcbs.listen_pcbs;
+
+    tcp_listen_pcbs.listen_pcbs = lpcb;
+    } else {
+    TCP_STATS_INC(tcp.cachehit);
+    }
+
+    LWIP_DEBUGF(TCP_INPUT_DEBUG, ("tcp_input: packed for LISTENing connection.\n"));
+    tcp_listen_input(lpcb); //listen对象处理数据
+    pbuf_free(p); //释放数据
+    return;
+}
+}
+
+其中tcp_listen_input()会检查报文是否是连接报文，若是则创建新的pcb并加入active队列，发送syn和ack，mss报文。
+
+数据处理后:

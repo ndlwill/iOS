@@ -1,0 +1,343 @@
+NAT（Network Address Translation，网络地址转换），也叫做网络掩蔽或者IP掩蔽。
+NAT是一种网络地址翻译技术，主要是将内部的私有IP地址（private IP）转换成可以在公网使用的公网IP（public IP）。
+
+后来逐渐发现IP地址不够用了，然后就NAT就诞生了！（虽然ipv6也是解决办法，但始终普及不开来，而且未来到底ipv6够不够用仍是未知）。
+因此，NAT技术能够兴起的原因还是因为在我们国家公网IP地址太少了，不够用，所以才会采取这种地址转换的策略。
+NAT的本质就是让一群机器公用同一个IP，这样就暂时解决了IP短缺的问题。
+
+NAT有什么优缺点:
+优势其实上面已经刚刚讨论过了，根据定义，比较容易看出，NAT可以同时让多个计算机同时联网，并隐藏其内网IP，因此也增加了内网的网络安全性；
+此外，NAT对来自外部的数据查看其NAT映射记录，对没有相应记录的数据包进行拒绝，提高了网络安全性。
+
+NAT与此同时也带来一些弊端。首先是，NAT设备会对数据包进行编辑修改，这样就降低了发送数据的效率；
+此外，各种协议的应用各有不同，有的协议是无法通过NAT的（不能通过NAT的协议还是蛮多的），这就需要通过穿透技术来解决。
+
+NAT实现方式:
+1）静态NAT：也就是静态地址转换。是指一个公网IP对应一个私有IP，是一对一的转换，同时注意，这里只进行了IP转换，而没有进行端口的转换
+2）NAPT：端口多路复用技术。与静态NAT的差别是，NAPT不但要转换IP地址，还要进行传输层的端口转换。具体的表现形式就是，对外只有一个公网IP，通过端口来区别不同私有IP主机的数据。
+
+NAT的主要类型:
+对于NAPT我们主要分为两大类：锥型NAT和对称型NAT。其中锥型NAT又分：完全锥型，受限锥型和端口受限锥型。
+对称型NAT是一个请求对应一个端口
+锥型NAT（非对称NAT）是多个请求（外部发向内部）对应一个端口，只要源IP端口不变，无论发往的目的IP是否相同，在NAT上都映射为同一个端口
+
+根据内部终端的地址(LocalIP:LocalPort)到NAT出口的公网地址(PublicIP:PublicPort)的影射方式，把NAT分为四种类型
+1）完全锥型NAT（Full Cone NAT，后面简称FC）
+特点：IP和端口都不受限。
+将来自内部同一个IP地址同一个端口号（IP_IN_A : PORT_IN_A）的主机监听/请求，映射到公网IP某个端口（IP_OUT_B : PORT_OUT_B）的监听。
+任意外部IP地址与端口对其自己公网的IP这个映射后的端口访问（IP_OUT_B : PORT_OUT_B），都将重新定位到内部这个主机（IP_IN_A : PORT_IN_A）。
+###
+再简单一点的说，就是，只要客户端，由内到外建立一个映射（NatIP:NatPort -> A:P1）之后，其他IP的主机B或端口A:P2都可以使用这个洞给客户端发送数据。
+###
+
+2）受限锥型NAT（Restricted Cone NAT）
+特点：IP受限，端口不受限。
+与完全锥形NAT不同的是，在公网映射端口后，并不允许所有IP进行对于该端口的访问，要想通信必需内部主机对某个外部IP主机发起过连接，然后这个外部IP主机就可以与该内部主机通信了，但端口不做限制。
+当客户端由内到外建立映射(NatIP:NatPort –> A:P1)，A机器可以使用他的其他端口（P2）主动连接客户端，但B机器则不被允许。
+因为IP受限啦，但是端口随便。
+
+3）端口受限型NAT（Port Restricted Cone NAT）
+特点：IP和端口都受限。
+该技术与受限锥形NAT相比更为严格。除具有受限锥形NAT特性，对于回复主机的端口也有要求。
+只有当内部主机曾经发送过报文给外部主机（假设其IP地址为A且端口为P1）之后，外部主机才能以公网IP:PORT中的信息作为目标地址和目标端口，向内部主机发送UDP报文，
+同时，其请求报文的IP必须是A，端口必须为P1（使用IP地址为A，端口为P2，或者IP地址为B，端口为P1都将通信失败）。
+
+4）对称型NAT（Symmetric NAT）
+对每个外部主机或端口的会话都会映射为不同的端口（洞）。
+只有来自同一内部IP:PORT、且针对同一目标IP:PORT的请求才被NAT转换至同一个公网（外部）IP:PORT，否则的话，NAT将为之分配一个新的外部（公网）IP:PORT。
+并且，只有曾经收到过内部主机请求的外部主机才能向内部主机发送数据包。
+客户端想和服务器A（IP_A:PORT_A）建立连接，是通过NAT映射为NatIP:NatPortA来进行的。
+而客户端和服务器B（IP_B:PORT_B）建立连接，是通过NAT映射为NatIP:NatPortB来进行的。
+即同一个客户端和不同的目标IP:PORT通信，经过NAT映射后的公网IP:PORT是不同的。
+此时，如果B想要和客户端通信，也只能通过NatIP:NatPortB来进行，而不能通过NatIP:NatPortA
+
+
+
+处于内网的主机之间能够穿越它们之间的NAT建立直接通信，已经提出了许多方法，
+STUN（Session Traversal Utilities for NAT，NAT会话穿越应用程序）技术就是其中比较重要的一种解决方法
+STUN协议:
+STUN是一种网络协议，它允许位于NAT（或多重NAT）后的客户端找出自己的公网地址
+查出自己位于哪种类型的NAT之后以及NAT为某一个本地端口所绑定的Internet端端口。
+这些信息被用来在两个同时处于NAT路由器之后的主机之间建立UDP通信。
+
+STUN由三部分组成：STUN客户端、STUN服务器端、NAT路由器。STUN服务端部署在一台有着两个公网IP的服务器上。
+STUN客户端通过向服务器端发送不同的消息类型，根据服务器端不同的响应来做出相应的判断，一旦客户端得知了Internet端的UDP端口，通信就可以开始了。
+
+
+==================================================udp打洞(nat穿透技术)
+用udp实现一个点对点的不同外网的通信
+A与B可以跨服务器通信。实现p2p
+
+需要的设备：
+一个已知的外网服务器S（ip+port），两个位于不同外网的客户端A， B
+
+udp打洞的流程:
+1.A客户端发消息给S，B客户端发消息给服务器S。
+2.S转发A的ip+port（这里是A的外网ip+port，位于nat转发器上）给客户端B，S转发B的ip+port给客户端A。
+这样A，B都知道了对端的ip+port。
+3.A发消息给B，这里，B会屏蔽掉这条消息，但是在A的nat映射上加上了一条映射，允许A接收来自B的消息。在A上打洞
+B-->A。
+4.B发消息给A，这里，由于流程3,A能接收到这条消息，同时在B的nat映射上加了一条映射，允许B接收来自A的消息。在B上
+打洞，A-->B。
+5.到此，A，B打洞成功
+
+服务器S的代码:
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <sys/types.h>
+#include <string.h>
+#include <arpa/inet.h>
+#include <errno.h>
+#include <error.h>
+//中间枢纽获得A客户端的外网ip和port发送给客户端B，获得客户端B的外网ip和port发送给A
+//B通过A打的洞发数据给A，这时候A拒收B的消息，因为A的nat映射中没有B的信息，但是这次通
+//信却在B的网管中添加了映射可以接受A的
+//消息，同理A通过B打的洞发数据给B，这时候由于B可以接受A的消息，所以数据接收成功且在A
+//的映射中加入了B的信息，从而A与B可以跨服务器通信。实现p2p
+/* 由于已知的外网服务器S可能并没有AB客户端的映射关系，所以要先建立A与S 还有 B与S之间的映射，这样才能进行udp穿透。 */
+ 
+#define ERR_EXIT(m)\
+    do{\
+        perror(m);\
+        exit(1);\
+    }while(0)
+ 
+/* 用来记录客户端发送过来的外网ip+port */
+typedef struct{
+    struct in_addr ip;
+    int port;
+}clientInfo;
+ 
+int main()
+{
+    /* 一个客户端信息结构体数组，分别存放两个客户端的外网ip+port */
+    clientInfo info[2];
+    /* 作为心跳包需要接收的一个字节 */
+    /* char ch; */ 
+    char str[10] = {0};
+ 
+    /* udp socket描述符 */
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if(sockfd == -1)
+        ERR_EXIT("SOCKET");
+ 
+    struct sockaddr_in serveraddr;
+    memset(&serveraddr, 0, sizeof(serveraddr));
+    serveraddr.sin_addr.s_addr = inet_addr("0.0.0.0");
+    serveraddr.sin_port = htons(8888);
+    serveraddr.sin_family = AF_INET;    
+ 
+    int ret = bind(sockfd, (struct sockaddr *)&serveraddr, sizeof(serveraddr));
+    if(ret == -1)
+        ERR_EXIT("BIND");
+ 
+    /* 服务器接收客户端发来的消息并转发 */
+    while(1)
+    {
+        bzero(info, sizeof(clientInfo)*2);
+        /* 接收两个心跳包并记录其与此链接的ip+port */
+        socklen_t addrlen = sizeof(struct sockaddr_in);
+        /* recvfrom(sockfd, &ch, sizeof(ch), 0, (struct sockaddr *)&serveraddr, &addrlen); */
+        recvfrom(sockfd, str, sizeof(str), 0, (struct sockaddr *)&serveraddr, &addrlen);
+        memcpy(&info[0].ip, &serveraddr.sin_addr, sizeof(struct in_addr));
+        info[0].port = serveraddr.sin_port;
+ 
+        printf("A client IP:%s \tPort:%d creat link OK!\n", inet_ntoa(info[0].ip), ntohs(info[0].port));
+ 
+        /* recvfrom(sockfd, &ch, sizeof(ch), 0, (struct sockaddr *)&serveraddr, &addrlen); */
+        recvfrom(sockfd, str, sizeof(str), 0, (struct sockaddr *)&serveraddr, &addrlen);
+        memcpy(&info[1].ip, &serveraddr.sin_addr, sizeof(struct in_addr));
+        info[1].port = serveraddr.sin_port;
+ 
+        printf("B client IP:%s \tPort:%d creat link OK!\n", inet_ntoa(info[1].ip), ntohs(info[1].port));
+ 
+        /* 分别向两个客户端发送对方的外网ip+port */
+        printf("start informations translation...\n");
+        serveraddr.sin_addr = info[0].ip;
+        serveraddr.sin_port = info[0].port;
+        sendto(sockfd, &info[1], sizeof(clientInfo), 0, (struct sockaddr *)&serveraddr, addrlen);
+ 
+        serveraddr.sin_addr = info[1].ip;
+        serveraddr.sin_port = info[1].port;
+        sendto(sockfd, &info[0], sizeof(clientInfo), 0, (struct sockaddr *)&serveraddr, addrlen);
+        printf("send informations successful!\n");
+    }
+    return 0;
+}
+
+客户端A的代码:
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <errno.h>
+ 
+/* 原理见服务器源程序 */
+#define ERR_EXIT(m)\
+    do{\
+        perror(m); \
+        exit(1);\
+    }while(0)
+ 
+typedef struct{
+    struct in_addr ip;
+    int port;
+}clientInfo;
+ 
+/* 用于udp打洞成功后两个客户端跨服务器通信 */
+void echo_ser(int sockfd, struct sockaddr* addr, socklen_t *len)
+{   
+    printf("start recv B data...\n");
+    char buf[1024];
+    while(1)
+    {
+        bzero(buf, sizeof(buf));
+        //接收B发来的数据
+        recvfrom(sockfd, buf, sizeof(buf)-1, 0, addr, len);
+        printf("%s \n", buf);
+        //向B发送数据
+        printf("send data to B ...\n");
+        sendto(sockfd, buf, sizeof(buf)-1, 0, addr, sizeof(struct sockaddr_in));
+        buf[strlen(buf)] = '\0';
+        if(strcmp(buf, "exit") == 0)
+            break;
+    }
+}
+ 
+int main()
+{
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if(sockfd == -1)
+        ERR_EXIT("SOCKET");
+    //向服务器发送心跳包的一个字节的数据
+    char ch = 'a';
+    clientInfo info;
+    socklen_t addrlen = sizeof(struct sockaddr_in);
+    bzero(&info, sizeof(info));
+    struct sockaddr_in clientaddr;
+    memset(&clientaddr, 0, sizeof(clientaddr));
+    //实际情况下这里用一个已知的外网的服务器的端口号
+    clientaddr.sin_port = htons(8888);
+    //实际情况下这里用一个已知的外网的服务器的ip地址，这里保护我的云服务器ip所以没有写出来，自己换一下ip地址。
+    clientaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    clientaddr.sin_family = AF_INET;
+ 
+    /* 向服务器S发送数据包 */
+    sendto(sockfd, &ch, sizeof(ch), 0, (struct sockaddr *)&clientaddr, sizeof(struct sockaddr_in));
+    /* 接收B的ip+port */
+    printf("send success\n");
+    recvfrom(sockfd, &info, sizeof(clientInfo), 0, (struct sockaddr *)&clientaddr, &addrlen);
+    printf("IP: %s\tPort: %d\n", inet_ntoa(info.ip), ntohs(info.port));
+ 
+    clientaddr.sin_addr = info.ip;
+    clientaddr.sin_port = info.port;
+    
+    sendto(sockfd, &ch, sizeof(ch), 0, (struct sockaddr *)&clientaddr, sizeof(struct sockaddr_in));
+    echo_ser(sockfd, (struct sockaddr *)&clientaddr, &addrlen);
+ 
+    close(sockfd);
+    return 0;
+}
+
+客户端B代码:
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <errno.h>
+ 
+/* 原理见服务器源程序 */
+#define ERR_EXIT(m)\
+    do{\
+        perror(m); \
+        exit(1);\
+    }while(0)
+ 
+typedef struct{
+    struct in_addr ip;
+    int port;
+}clientInfo;
+ 
+/* 用于udp打洞成功后两个客户端跨服务器通信 */
+void echo_ser(int sockfd, struct sockaddr* addr, socklen_t *len)
+{   
+    char buf[1024];
+    while(1)
+    {
+        bzero(buf, sizeof(buf));
+        printf(">> ");
+        fflush(stdout);
+        fgets(buf, sizeof(buf)-1, stdin);
+        //向A发送数据
+        sendto(sockfd, buf, strlen(buf), 0, addr, sizeof(struct sockaddr_in));
+ 
+        //接收A发来的数据
+        bzero(buf, sizeof(buf));
+        printf("start recv A data...\n");
+        recvfrom(sockfd, buf, sizeof(buf)-1, 0, addr, len);
+        printf("%s \n", buf);
+        buf[strlen(buf)] = '\0';
+        if(strcmp(buf, "exit") == 0)
+            break;
+    }
+}
+ 
+int main()
+{
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if(sockfd == -1)
+        ERR_EXIT("SOCKET");
+    //向服务器发送心跳包的一个字节的数据
+    char ch = 'a';
+    /* char str[] = "abcdefgh"; */
+    clientInfo info;
+    socklen_t addrlen = sizeof(struct sockaddr_in);
+    bzero(&info, sizeof(info));
+    struct sockaddr_in clientaddr, serveraddr;
+    /* 客户端自身的ip+port */
+    /* memset(&clientaddr, 0, sizeof(clientaddr)); */
+    /* clientaddr.sin_port = htons(8888); */
+    /* clientaddr.sin_addr.s_addr = inet_addr("127.0.0.1"); */   
+    /* clientaddr.sin_family = AF_INET; */
+ 
+    /* 服务器的信息 */
+    memset(&clientaddr, 0, sizeof(clientaddr));
+    //实际情况下为一个已知的外网的服务器port
+    serveraddr.sin_port = htons(4399);
+    //实际情况下为一个已知的外网的服务器ip,这里仅用本地ip填充，下面这行的ip自己换成已知的外网服务器的ip
+    serveraddr.sin_addr.s_addr = inet_addr("127.0.0.1");   
+    /* clientaddr.sin_addr.s_addr = inet_addr("127.0.0.1"); */   
+    serveraddr.sin_family = AF_INET;
+ 
+    /* 向服务器S发送数据包 */
+    sendto(sockfd, &ch, sizeof(ch), 0, (struct sockaddr *)&serveraddr, sizeof(struct sockaddr_in));
+    /* sendto(sockfd, str, sizeof(str), 0, (struct sockaddr *)&serveraddr, sizeof(struct sockaddr_in)); */
+    /* 接收B的ip+port */
+    printf("send success\n");
+    recvfrom(sockfd, &info, sizeof(clientInfo), 0, (struct sockaddr *)&serveraddr, &addrlen);
+    printf("IP: %s\tPort: %d\n", inet_ntoa(info.ip), ntohs(info.port));
+ 
+    serveraddr.sin_addr = info.ip;
+    serveraddr.sin_port = info.port;
+ 
+    sendto(sockfd, &ch, sizeof(ch), 0, (struct sockaddr *)&serveraddr, sizeof(struct sockaddr_in));
+    echo_ser(sockfd, (struct sockaddr *)&serveraddr, &addrlen);
+    close(sockfd);
+    return 0;
+}
+
+实现跨外网通信
