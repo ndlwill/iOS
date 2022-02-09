@@ -1,0 +1,396 @@
+泛型 Generics
+
+重载 Overloading:
+/// 泛型打印view的相关信息
+///
+/// - Parameter view: view
+func log<View: UIView>(_ view: View) {
+    print("It's a \(type(of: view)), frame: \(view.frame)")
+}
+
+///对泛型的重写
+func log(_ view: UILabel) {
+    let text = view.text ?? "(empty)"
+    print("It's a label, text: \(text)")
+}
+
+let label = UILabel(frame: .zero)
+label.text = "liaoworking is handsome~~"
+let button = UIButton(frame: CGRect(x: 0, y: 0, width: 100, height: 101))
+
+log(label) //It's a label, text: liaoworking is handsome~~
+log(button) //It's a UIButton, frame: (0.0, 0.0, 100.0, 101.0)
+
+只要我们重载了一个泛型方法， 在打印对应的类型时就调用这个方法。
+
+
+let views = [label, button] // Type of views is [UIView] for view in views {
+
+for view in views {
+    log(view)
+}
+
+/*
+It's a UILabel, frame: (20.0, 20.0, 200.0, 32.0)
+It's a UIButton, frame: (0.0, 0.0, 100.0, 50.0)
+*/
+为嘛在for循环中就无法去区分方法了? 原因：泛型的重载在编译时期就确定的。
+并不是在runtime时候动态确定。 就会有上面的差异。 
+觉得疑惑的同学可以长按键盘的option，然后用鼠标点一下 views，xcode的类型提示也会给你答案。
+
+
+运算符的重载:
+自己封装一个幂运算的方法
+// precedencegroup 运算符优先级定义关键字
+precedencegroup tt{
+    // 结合方向
+    associativity: left 
+    // 运算优先级：高于乘法类型
+    higherThan: MultiplicationPrecedence 
+}
+// 定义中缀符 **    对于的有前缀prefix，和后缀postfix  OC中的i++就是后缀
+infix operator **: tt
+// 内部实现
+func **(lhs: Double, rhs: Double) -> Double {
+    return pow(lhs, rhs)
+}
+func **(lhs: Float, rhs: Float) -> Float {
+    return powf(lhs, rhs)
+}
+// 2乘以2的三次方。 
+2*2.0**3.0
+
+幂运算的泛型demo
+func **<i: SignedInteger>(lhs: i, rhs: i) -> i {
+    let result = Double(lhs.max) ** Double(rhs.max)
+    return numericCast(IntMax(result))
+}
+2**3 ///Error: Ambiguous use of operator
+可在实际编译过程中却编译不过
+原因： 对于重载运算符，编译器会使用非泛型版本，不考虑泛型版本
+解决： 至少将一个参数显示的声明为Int类型，或者将返回值声明为Int类型即可
+let intResult: Int = 2 ** 3 //8
+
+
+使用泛型约束进行重载:
+extension Sequence where Iterator.Element: Hashable {//泛型版本
+func isSubset<S: Sequence>(of other: S) -> Bool
+    where S.Iterator.Element == Iterator.Element {
+        let otherSet = Set(other)
+        for element in self {
+            guard otherSet.contains(element) else {
+                return false
+            }
+        }
+        return true
+}
+这样我们写的函数就有更多的可能性，可以传入一个数字的countableRange来进行检查
+[5,4,3].isSubSet(of:1...10)//true
+
+
+============================================================使用闭包对行为进行参数化: 这小段的知识点对于函数的封装有很大的启发。
+让isSubset针对于不是Equatable的类型也适用， 我们可以传一个返回值是bool的函数来表明元素是否相等。 swift标准库中的contains方法就是这么做的 其具体使用如下：
+let isEven = {$0 % 2 == 0}
+(0..<5).contains(where:isEven) //true
+[1,3,5,7,9].contains(where:isEven) // false
+
+我们可以类似于contain的使用去写一个更灵活的isSubset
+extension Sequence {
+    func isSubset<S: Sequence>(of other: S, by areEquivalent: (Iterator.Element, S.Iterator.Element) -> Bool) -> Bool {
+            for element in self {
+                guard other.contains(where: {areEquivalent(element, $0)}) else{return false}
+            }
+            return true
+    }
+}
+
+只要你提供闭包能够处理的比较操作，两个序列的元素就算不是同种类型的也可以进行对比。
+
+let ints = [1,2]
+let strings = ["1","2","3"]
+ints.isSubset(of:strings) { String($0) == $1 } //true
+
+
+============================================================对集合采用泛型操作 
+二分法查找 A Binary Search:
+对RandomAccessCollection协议随机存取协议封装一个二分法的extension方法
+
+extension RandomAccessCollection where Index == Int, IndexDistance == Int{ //只满足Int的二分查找
+    public func binarySearch(for value: Iterator.Element,
+                                areInIncreasingOrder: (Iterator.Element, Iterator.Element) -> Bool)
+        -> Index? {
+            var left = 0
+            var right = count - 1
+            
+            while left <= right {
+                let mid = (left + right) / 2
+                let candidate = self[mid]
+                
+                if areInIncreasingOrder(candidate, value) {
+                    left = mid + 1
+                }else if areInIncreasingOrder(value, candidate) {
+                    right = mid - 1
+                }else {只有左右两个相等才会返回中间值
+                    return mid
+                }
+            }
+            return nil
+    }
+}
+let binaryInt = [1,3,2,6,4]
+let bin = binaryInt[1..<3]
+bin.binarySearch(for: 2, areInIncreasingOrder: <)
+print(binaryInt ?? 000)
+
+但会引入一个严重的bug，并不是所有的集合都以整数为索引的，Dictionary、Set、String都有自己的索引类型。
+还有一个是以整数为索引的并不一定都以0开始 例如 Array[3..<5] 的startIndex就是3 ，如果使用就会在运行时崩溃。 为此我们进行二次修改。
+
+泛型二分查找 Generic Binary Search
+extension RandomAccessCollection {
+    public func binarySearch(for value: Iterator.Element,
+                                areInIncreasingOrder: (Iterator.Element, Iterator.Element) -> Bool)
+        -> Index? {
+            guard !isEmpty else {
+                return nil
+            }
+            / left和right不再是整数类型了，而是对于的索引值
+            var left = startIndex
+            var right = index(before: endIndex)
+            while left <= right {
+                let dist = distance(from: left, to: right)  计算left到right的距离
+                let mid = index(left, offsetBy: dist/2)
+                let candidate = self[mid]
+                
+                if areInIncreasingOrder(candidate, value) {
+                    left = index(after: mid)
+                }else if areInIncreasingOrder(value, candidate) {
+                    right = index(before: mid)
+                }else {
+                    return mid
+                }
+            }
+            return nil
+    }
+}
+extension RandomAccessCollection where Iterator.Element: Comparable {
+    func binarySearch(for value: Iterator.Element) -> Index? {
+        return binarySearch(for: value, areInIncreasingOrder: <)
+    }
+}
+
+let a = ["a", "c", "d", "g"]
+let r = a.reversed()
+r.binarySearch(for: "d", areInIncreasingOrder: >) == r.startIndex
+let s = a[1..<3]
+s.startIndex
+s.binarySearch(for: "d")
+
+
+集合随机排列 Shuffing Collections:
+/集合随机排列
+extension Array {
+    mutating func shuffle(){
+        for i in 0..<(count - 1) {
+            let j = Int(arc4random_uniform(UInt32(count - i))) + i
+            guard i != j else {保证不会将一个元素与自己交换
+                continue
+            }
+            
+            self.swapAt(i, j)将两个元素交换
+        }
+    }
+    
+    func shuffled() -> [Element] {不可变版本
+        var clone = self
+        clone.shuffle()
+        return clone
+    }
+}
+
+
+和前面的二分法算法一样，这里还是依赖整数索引才能使用。 我们用泛型进行二次改造
+
+extension MutableCollection where Self: RandomAccessCollection {
+    mutating func shuffle() {
+        var i = startIndex
+        let beforeEndIndex = index(before: endIndex)
+        while i < beforeEndIndex {
+            let dist = distance(from: i, to: endIndex)
+            let randomDistance = IndexDistance.distance(dist)
+            let j = index(i, offsetBy: randomDistance)
+            guard i !=  else {
+                continue
+            }
+            swap(&self[i], &self[j]
+            formIndex(after: &i))
+        }
+    }
+}
+
+///二次封装
+extension Sequence {
+    func shuffled() -> [Iterator.Element] {
+        var clone = Array(self)
+        clone.shuffle()
+        return clone
+    }
+}
+
+
+求子集合的位置。
+extension Collection where Iterator.Element: Equatable {
+    func search<Other: Sequence>(for pattern: Other) -> Index?
+       where Other.Iterator.Element == Iterator.Element {
+        return indices.first(where: { (idx) -> Bool in
+            suffix(from: idx).starts(with: pattern)
+        })
+    }
+}
+let text = "it was the best of times"
+text.search(for: ["w","a","s"])
+注：如果知道被搜索的序列和待搜索的序列都满足随机存取(RandomAccessCollection)的索引,我们可以二次优化。
+
+extension RandomAccessCollection
+    where Iterator.Element: Equatable,
+        Indices.Iterator.Element == Index,
+        SubSequence.Iterator.Element == Iterator.Element,
+        SubSequence.Indices.Iterator.Element == Index {
+    func search<Other: RandomAccessCollection>(for pattern: Other) -> Index?
+    where Other.IndexDistance == IndexDistance,
+        Other.Iterator.Element == Iterator.Element{
+            //如果匹配集合比原集合长 直接退出
+            guard !isEmpty && pattern.count <= count else {
+                return nil
+            }
+            //否则可以取到容纳匹配模式的最后一个索引。
+            let stopSearchIndex = index(endIndex, offsetBy: -pattern.count)
+            //检查从当前位置切片是否可以以匹配模式开头。
+            return prefix(upTo: stopSearchIndex).indices.first(where: { (idx) -> Bool in
+                suffix(from: idx).starts(with: pattern)
+            })
+    }
+}
+let numbers = 1..<100
+numbers.search(for: 80..<90)    
+
+
+============================================================使用泛型进行代码设计
+对网络请求以及数据转模型的实际场景使用了泛型的二次封装
+
+普通的网络请求已经数据转模型的代码
+func loadUsers(callback: ([User]?) -> ()) {
+    ///获取数据
+    let usersURL = webserviceURL.appendingPathComponent("/users") let data = try? Data(contentsOf: usersURL)
+    ///数据转模型
+    let json = data.flatMap {
+    try? JSONSerialization.jsonObject(with: $0, options: []) }
+    let users = (json as? [Any]).flatMap { jsonObject in jsonObject.flatMap(User.init)
+    }
+    ///回调
+    callback(users) 
+}
+
+网络请求可能失败
+JSON解析可能失败
+数据转模型可能失败 这三种情况都可能会返回nil， 可以通过flapMap来排除nil的情况
+
+compactMap的改变是在于将flatMap处理non-optional序列类型，compact处理optional类型。
+
+提取共通功能:
+上面的Demo是对[User]模型的网络请求， 如果我们需要请求订单量[Bill]的网络请求，又需要写一个新的方法重复写很多代码。
+我们可以把函数中的User提取出来， URLString作为参数传入来封装一个泛型方法 loadResource， 声明为A的泛型
+func loadResource<A>(at path: String, parse: (Any) -> A?, callback: (A?) -> ())
+{
+    let resourceURL = webserviceURL.appendingPathComponent(path) let data = try? Data(contentsOf: resourceURL)
+    let json = data.flatMap {
+    try? JSONSerialization.jsonObject(with: $0, options: []) }
+    callback(json.flatMap(parse)) 
+}
+
+封装完毕之后我们对请求[User]的网络请求就可以这样写了
+
+func loadUsers(callback: ([User]?) -> ()) {
+    loadResource(at: "/users", parse: jsonArray(User.init), callback: callback)
+}
+
+上面用了一个辅助函数，jsonArray 主要作用是： 它首先尝试将一个 Any 转换为一个 Any 的数组，接着 对每个元素用提供的解析函数进行解析，如果期间任何一步发生了错误，则返回 nil:
+
+func jsonArray<A>(_ transform: @escaping (Any) -> A?) -> (Any) -> [A]?  
+{
+        return { array in
+        guard let array = array as? [Any] else { return nil
+    }
+    return array.flatMap(transform) }
+}
+
+二次优化--创建泛型数据类型
+上面的loadResource函数中 path 和 parse 耦合非常紧 ， 一旦path改变了 parse也会一起改变。 我们可以封装成一个结构体，来描述要加载的资源
+
+struct Resource<A> { 
+    let path: String
+    let parse: (Any) -> A?
+}
+
+我们可以给 我们已经封装好的结构体 Resource 结构体来定义一个extension 让Resource 直接调用网络请求数据转模型的方法
+
+extension Resource {
+    func loadSynchronously(callback: (A?) -> ()) {
+        let resourceURL = webserviceURL.appendingPathComponent(path)
+        let data = try? Data(contentsOf: resourceURL)
+        let json = data.flatMap {
+        try? JSONSerialization.jsonObject(with: $0, options: []) }
+        callback(json.flatMap(parse)) }
+}
+
+
+///网络请求一个用户模型数组就变的如此方便。
+let usersResource: Resource<[User]> = Resource(path: "/users", parse:jsonArray(User.init))
+userResourse.loadSynchronously = { userModels in  
+    ///我取到了我想要的 userModels 模型数组啦~~
+}
+
+
+============================================================泛型的工作方式
+func min<T: Comparable>(_ x: T, _ y: T) -> T { 
+    return y<x ? y:x
+}
+编译器无法为这个函数直接生产代码，原因如下：
+1.编译器不知道T的变量大小
+2.编译器不知道需要调用的<函数是否有重载，所以也不知道需要调用的函数的地址
+
+swift 为函数引入了一套间接的中间层来解决这个问题，引入了一个容器，编译器会把泛型放到这个容器中 对于泛型的参数，编译器还维护了一个或者多个目击表(witness table)，包括一个值目击表，以及每个协议约束的协议目击表。 这些表将运行时的函数动态派发到正确的实现中。 表里实际上放的都是指针。同时还记录了类型大小和对齐方式。
+
+泛型特化:
+使用泛型特化的原因： 大家先了解一个swift的设计目标： "编译一次，动态派发" swift 泛型API只需要知道泛型函数或者类型的声明，并不关心实现。 
+swift库中有很多泛型的使用，性能开销很容易叠加。
+这里就引入了泛型特化(generic specialization) 来避免这个不必要的开销。 
+泛型特化的本质： 编译器按照具体的参数类型将函数进行复制。
+
+可能针对于Int的参数类型特化出一个方法是这样的
+func min(_ x: Int, _ y: Int) -> Int { 
+    returny<x?y:x
+}
+
+这个时候你就大概知道泛型特化的意思就是将泛型针对于不同的类型的调用而生成具体的方法。
+泛型特化不仅能去掉虚拟派发的开销， 还可以让内联等进一步优化成为可能
+泛型特化的决定在编译时进行。特化的参数类型很可能是你经常使用的具体类型， 如果你经常使用Int 只用过一次float 那么就会特化出上面的函数。
+
+缺点：泛型定义和调用在同一个文件中时，泛型特化才能工作，只能在模块内使用
+(标准库中的泛型方法除外，因为标准库的定义对于所有模块都是可见的)
+
+全模块优化:
+因为泛型特化是一个很严重的限制，所以编译器引入了一个标志来启用全模块优化
+
+可以通过向 swiftc 传递 -whole-module-optimization 来开启全模块优化
+
+一般都是在发布版本中进行这项操作
+优点：大幅度提升性能 缺点：会带来更长的编译时间
+
+@_specialize 关键字
+@_specialize 是一个非官方的标签，计划将来会引入到标准库中。 作用：将你的泛型代码进行指定版本的特化，使其在其他模块中也可用。(你必须要指明想要进行特化的类型列表) 
+
+@_specialize(exported: true, where T == Int)
+@_specialize(exported: true, where T == String) 
+public func min<T: Comparable>(_ x: T, _ y: T) -> T {
+    returny<x?y:x 
+}

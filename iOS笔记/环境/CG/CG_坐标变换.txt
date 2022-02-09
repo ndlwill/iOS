@@ -1,0 +1,163 @@
+Quartz通过使用当前转换矩阵(current transformation matrix， CTM)将一个独立的坐标系统(user space)映射到输出设备的坐标系统(device space)，以此来解决设备依赖问题。
+Quartz中默认的坐标系统是：沿着x轴从左到右坐标值逐渐增大；沿着y轴从下到上坐标值逐渐增大。
+最常见的一种修改的坐标系统是原点位于左上角，而沿着y轴从上到下坐标值逐渐增大。我们可以在如下一些地方见到这种坐标系统：
+在IOS中，由UIView返回的绘图上下文
+在IOS中，通过调用UIGraphicsBeginImageContextWithOptions函数返回的绘图上下文
+
+void CGContextSetTextMatrix(CGContextRef c, CGAffineTransform t);
+c
+A graphics context.
+transform
+The text matrix to set.
+The text matrix specifies the transform from text space to user space. 
+To produce the final text rendering matrix that is used to actually draw the text on the page, 
+Core Graphics concatenates the text matrix with the current transformation matrix and other parameters from the graphics state.
+Note that the text matrix is not a part of the graphics state—saving or restoring the graphics state has no effect on the text matrix. The text matrix is an attribute of the graphics context, not of the current font.
+
+- void CGContextTranslateCTM ( CGContextRef c, CGFloat tx, CGFloat ty )：平移坐标系统。 
+该方法相当于把原来位于 (0, 0) 位置的坐标原点平移到 (tx, ty) 点。在平移后的坐标系统上绘制图形时，所有坐标点的 X 坐标都相当于增加了 tx，所有点的 Y 坐标都相当于增加了 ty。
+
+// sx: -1 水平（根据Y轴）翻转
+- void CGContextScaleCTM ( CGContextRef c, CGFloat sx, CGFloat sy )：缩放坐标系统。
+该方法控制坐标系统水平方向上缩放 sx，垂直方向上缩放 sy。在缩放后的坐标系统上绘制图形时，所有点的 X 坐标都相当于乘以 sx 因子，所有点的 Y 坐标都相当于乘以 sy 因子。
+
+- void CGContextRotateCTM ( CGContextRef c, CGFloat angle )：旋转坐标系统。
+该方法控制坐标系统旋转 angle 弧度。在缩放后的坐标系统上绘制图形时，所有坐标点的 X、Y 坐标都相当于旋转了 angle弧度之后的坐标。
+
+除了以上3个坐标转换方法之外，Quartz 2D提供更通用的坐标转换方法。
+void CGContextConcatCTM ( CGContextRef c, CGAffineTransform transform )：使用 transform 变换矩阵对 CGContextRef 的坐标系统执行变换，通过使用坐标矩阵可以对坐标系统执行任意变换。
+
+创建CGAffineTransform的4种方式：
+
+1. CGAffineTransform CGAffineTransformMakeTranslation ( CGFloat tx, CGFloat ty )：创建进行位移变换的变换矩阵。该函数的两个参数与前面介绍的位移变换的两个参数的作用相同。
+
+2. CGAffineTransform CGAffineTransformMakeScale ( CGFloat sx, CGFloat sy )：创建进行缩放变换的变换矩阵。该函数的两个参数与前面介绍的缩放变换的两个参数的作用相同。
+
+3. CGAffineTransform CGAffineTransformMakeRotation ( CGFloat angle )：创建进行旋转变换的变换矩阵。该函数的参数与前面介绍的旋转变换的参数的作用相同。
+
+4. CGAffineTransform CGAffineTransformMake ( CGFloat a, CGFloat b, CGFloat c, CGFloat d, CGFloat tx, CGFloat ty )：该函数使用自定义变换矩阵执行变换。
+
+其中 ( a, b, c, d )会形成变换矩阵，tx、ty为横向和纵向的位移
+
+========================================CGAffineTransform & CTM
+坐标空间（系）：视图（View）坐标空间与绘制（draw）坐标空间
+CTM：全称current transformation matrix，看名称 “当前变换矩阵” 也就是矩阵。
+相同CGAffineTransform作用于不同的坐标空间，其结果不一样。
+
+移动：
+视图空间 中心为原点，向右为x递增，向下y递增，CGAffineTransformMakeTranslation(-75, 25);  左移75，下移25
+绘制空间 左下点为原点，向右为x递增，向上y递增，CGAffineTransformMakeTranslation(-75, 25);  左移75，上移25
+
+视图空间示例：_demoView.transform = CGAffineTransformMakeTranslation(-75, 25);
+
+绘制空间示例：
+CGContextConcatCTM(ctx, CGAffineTransformMakeTranslation(-75, 25));
+CGContextDrawImage(ctx, CGRectMake(0, 0, imageWidth, imageHeight), self.image.CGImage);
+
+
+旋转：
+视图空间 中心为原点，向右为x递增，向下y递增， transform = CGAffineTransformRotate(transform, -M_PI_2); 围绕中心点，逆时针旋转90度
+绘制空间 左下点为原点，向右为x递增，向上y递增 transform = CGAffineTransformRotate(transform, -M_PI_2); 围绕左下角点，顺时针旋转90度
+
+视图空间示例：_demoView.transform = CGAffineTransformRotate(transform, -M_PI_2);
+
+绘制空间示例：
+CGContextConcatCTM(ctx, CGAffineTransformRotate(transform, -M_PI_2););
+CGContextDrawImage(ctx, CGRectMake(0, 0, imageWidth, imageHeight), self.image.CGImage);
+
+
+缩放：
+视图空间 默认以中心点为原点 transform = CGAffineTransformMakeScale(1, -1); 沿着中心X轴线竖直翻转
+绘制空间 默认以左下角为原点 transform = CGAffineTransformMakeScale(1, -1); 沿着X轴横线竖直翻转
+
+视图空间示例：_demoView.transform = CGAffineTransformMakeScale(1, -1);
+
+绘制空间示例：
+CGContextConcatCTM(ctx, CGAffineTransformMakeScale(1, -1));
+CGContextDrawImage(ctx, CGRectMake(0, 0, imageWidth, imageHeight), self.image.CGImage);
+
+========================================CGContextDrawImage
+使用UIGraphicsGetCurrentContext()获取的上下文，CGContextDrawImage是颠倒的。想要正向的图片需要做CTM变换。
+-(void)drawImage{
+    
+    CGFloat imageWidth = CGImageGetWidth(self.image.CGImage);
+    CGFloat imageHeight = CGImageGetHeight(self.image.CGImage);
+    
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(imageWidth, imageHeight), 0, [UIScreen mainScreen].scale);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+
+//，为了保证正向显示图片，需要先上移图片高度，再沿X轴翻转。
+//    CGContextTranslateCTM(context, 0, imageHeight);
+//    CGContextScaleCTM(context, 1, -1);
+// 使用转换之后的坐标系绘制图片
+    CGContextDrawImage(context, CGRectMake(0, 0, imageWidth, imageHeight), self.image.CGImage);
+    
+    UIImage *newImg = UIGraphicsGetImageFromCurrentImageContext();
+    
+    UIGraphicsEndImageContext();
+    
+    self.imageView.image = newImg;
+}
+
+
+自己创建位图，再调用CGContextDrawImage，并不会出现上下颠倒的问题。
+-(void)drawImage{
+    
+    CGFloat imageWidth = CGImageGetWidth(self.image.CGImage);
+    CGFloat imageHeight = CGImageGetHeight(self.image.CGImage);
+    
+    //创建位图上下文
+    CGContextRef ctx = CGBitmapContextCreate(NULL, imageHeight,imageWidth,
+                                             CGImageGetBitsPerComponent(self.image.CGImage), 0,
+                                             CGImageGetColorSpace(self.image.CGImage),
+                                             CGImageGetBitmapInfo(self.image.CGImage));
+    //这里drawImage是正的。
+    CGContextDrawImage(ctx, CGRectMake(0, 0, imageWidth, imageHeight), self.image.CGImage);
+    CGImageRef cgimg = CGBitmapContextCreateImage(ctx);
+    UIImage *img = [UIImage imageWithCGImage:cgimg];
+    CGContextRelease(ctx);
+    CGImageRelease(cgimg);
+    self.imageView.image = img;
+    return ;
+}
+
+
+CGAffineTransformMake(a,b,c,d,tx,ty) 
+ad缩放 tx,ty位移
+x=ax+cy+tx
+y=bx+dy+ty
+为了把二维图形的变化统一在一个坐标系里，引入了齐次坐标的概念，即把一个图形用一个三维矩阵表示，其中第三列总是(0,0,1)，用来作为坐标系的标准。所以所有的变化都由前两列完成。
+|a    b    0|
+
+|c    d    0|
+
+|tx   ty   1|
+
+运算原理：原坐标设为（X,Y,1）;
+
+                    |a    b    0|
+
+[X，Y,  1]      |c    d    0|     =     [aX + cY + tx   bX + dY + ty  1] ;
+
+                    |tx    ty  1|
+
+第一种：设a=d=1, b=c=0.  
+[aX + cY + tx   bX + dY + ty  1] = [X  + tx  Y + ty  1];
+可见，这个时候，坐标是按照向量（tx，ty）进行平移，其实这也就是函数
+
+第二种：设b=c=tx=ty=0.  
+[aX + cY + tx   bX + dY + ty  1] = [aX    dY   1];
+可见，这个时候，坐标X按照a进行缩放，Y按照d进行缩放，a，d就是X，Y的比例系数
+
+第三种：设tx=ty=0，a=cosɵ，b=sinɵ，c=-sinɵ，d=cosɵ。
+[aX + cY + tx   bX + dY + ty  1] = [Xcosɵ - Ysinɵ    Xsinɵ + Ycosɵ  1] ;
+可见，这个时候，ɵ就是旋转的角度，逆时针为正，顺时针为负。
+
+View的frame原来的{{100，100}，{100，100}}变成了{{140，100}，{20，100}}。
+根据变换的transform我们知道 a = 0.2 , b = 0 , c = 0 , d = 1 , t.x = 0 , t.y = 0;
+x = 100 , y = 100
+x` = ax + cy + t.x = 0.2 * 100 + 0 * 100 + 0 = 20
+y` = bx + dy + t.y = 0 * 100 + 1 * 100 + 0 = 100
+x按照a值进行了比例缩放，y按照d的值进行比列缩放，最重要的是缩放的过程中View的point（中心点）是不会改变的。
+
+x会跟着t.x进行x做表平移，y会跟着t.y进行平移。这里的point（center）是跟着变换的。

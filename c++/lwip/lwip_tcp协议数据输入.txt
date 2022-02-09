@@ -1,12 +1,12 @@
 https://blog.csdn.net/weixin_44821644/category_10657640.html
 
-==================================================tcp_input
-tcp的数据输入:
+==================================================数据输入 （一） ###tcp_input###
+一、tcp的数据输入:
 ip层接收到数据后，经过处理需要将数据传递给tcp层。
 ip层通过tcp_input函数将接收到的数据传递给tcp层，该函数是tcp数据的总入口
 在此函数中，从ip数据包中提取tcp报文，检验报文的正确性，找到对应的tcp控制块，进入tcp状态机，将报文中的有效数据传递给应用层。
 
-ip数据解析:
+二、ip数据解析:
 ip层递交的数据仍然是以pbuf的形式出现的，其中payload指向的是tcp数据的首部，我们需要将tcp的首部与数据分离，其中tcp首部包括20字节的固定长度和可变长度的选项字段。
 但在此之前，我们还需要先检查tcp报文是否正确
 
@@ -100,7 +100,7 @@ ip层递交的数据仍然是以pbuf的形式出现的，其中payload指向的�
   tcplen = p->tot_len + ((flags & (TCP_FIN | TCP_FIN)) ? 1 : 0);  //计算tcp报文长度，报文标志位存在TCP_FIN或TCP_FIN时，长度要加一
   //到这儿，我们分离了ip数据包中的tcp首部和数据
 
-给谁的报文?:
+三、给谁的报文:
 tcp报文解析完成后，就需要确定这报文是传递给那个tcp控制块的。这需要根据报文的源地址和目标地址在各控制块链表中查找。
 1. 在active链表？
   //检查数据是否是给tcp_active_pcbs链表中的tcp
@@ -189,4 +189,922 @@ if (lpcb != NULL) {
 
 其中tcp_listen_input()会检查报文是否是连接报文，若是则创建新的pcb并加入active队列，发送syn和ack，mss报文。
 
-数据处理后:
+四、数据处理后:
+以上三个链表中，只有active链表没有处理报文的代码，由于这部分代码是最复杂的，其实现需要使用TCP状态机来搞定
+
+经过上面确定了报文是给某个tcp后，先检查该tcp连接中，是否有数据仍然未被应用程序读取，若是，必须先让应用程序处理完上次未读取完成的数据后才进入下一步。
+
+//来到这，说明该数据的对象是处于active链表中，就是一个已存在的连接的报文
+  if (pcb != NULL) {
+   //确定了pcb，创建输入报文结构体
+    inseg.next = NULL;
+    inseg.len = p->tot_len;
+    inseg.p = p;
+    inseg.tcphdr = tcphdr;
+
+    //初始化接收的参数
+    recv_data = NULL; //指向最终确认的有序pbuf，被应用程序调用
+    recv_flags = 0; //接收数据的处理结果
+    recv_acked = 0; //接收的数据字节数
+
+    //如果tcp报文首部中有TCP_PSH标志，将pbuf的相应标志置位
+    if (flags & TCP_PSH) {
+      p->flags |= PBUF_FLAG_PUSH;
+    }
+
+    //如果当前的tcp控制块有数据未被上层应用读取
+    if (pcb->refused_data != NULL) {
+      //调用上层应用的数据回调函数来处理未读取的数据，若有未读取的数据，只能将tcp终止
+      if ((tcp_process_refused_data(pcb) == ERR_ABRT) ||
+        ((pcb->refused_data != NULL) && (tcplen > 0))) {
+        //如果对方的窗口通告为0，为防止死锁，启动零窗口探查
+        if (pcb->rcv_ann_wnd == 0) {
+          //发送无数据的ack（探查）
+          tcp_send_empty_ack(pcb);
+        }
+        TCP_STATS_INC(tcp.drop);
+        MIB2_STATS_INC(mib2.tcpinerrs);
+        goto aborted;
+      }
+    }
+
+
+随后进入tcp状态机处理接收报文，tcp_process()将处理结果放在全局变量recv_flag中。接下来根据recv_flag的值，决定pcb的命运。
+
+recv_acked本地发送的数据被对方确认的字节数；
+recv_data指向被正确接收到的字节数据；
+
+tcp_input_pcb = pcb;
+    err = tcp_process(pcb); //进入状态机处理，根据处理结果recv_flag作出以下反应：
+
+    //若返回ERR_ABRT，说明pcb已经被终止
+    if (err != ERR_ABRT) {
+      //若收到复位报文，则tcp连接重置，移除该tcp，并释放内存
+      if (recv_flags & TF_RESET) {
+        //调用错误回调函数
+        TCP_EVENT_ERR(pcb->state, pcb->errf, pcb->callback_arg, ERR_RST);
+        tcp_pcb_remove(&tcp_active_pcbs, pcb);
+        memp_free(MEMP_TCP_PCB, pcb);
+      } else {
+        err = ERR_OK;
+        //如果有数据被确认，调用sent回调（用于向send_buff继续填充要发送数据）
+        if (recv_acked > 0) {
+          
+            acked16 = recv_acked; //表示已经被确认的字节数
+            //调用sent回调函数，通知应用程序可以继续发送数据
+            TCP_EVENT_SENT(pcb, (u16_t)acked16, err);
+            if (err == ERR_ABRT) {
+              goto aborted;
+            }
+          }
+          recv_acked = 0;
+        }
+        //TODO 延时关闭连接？
+        if (tcp_input_delayed_close(pcb)) {
+          goto aborted;
+        }
+        //接收到新数据，回调recv函数通知应用程序
+        if (recv_data != NULL) {  
+
+          LWIP_ASSERT("pcb->refused_data == NULL", pcb->refused_data == NULL);
+
+          //TODO 关闭接收，释放内存，同时通知对方接收数据不完整？
+          if (pcb->flags & TF_RXCLOSED) {
+            pbuf_free(recv_data);
+#if TCP_QUEUE_OOSEQ && LWIP_WND_SCALE
+            if (rest != NULL) {
+              pbuf_free(rest);
+            }
+#endif /* TCP_QUEUE_OOSEQ && LWIP_WND_SCALE */
+            tcp_abort(pcb);	//发送复位报文
+            goto aborted;
+          }
+        
+          TCP_EVENT_RECV(pcb, recv_data, ERR_OK, err);  //回调recv函数通知应用程序
+          if (err == ERR_ABRT) {
+            goto aborted;
+          }
+
+          //如果上层无法接收数据，则先保存在pcb->refused_data
+          if (err != ERR_OK) {
+            pcb->refused_data = recv_data;
+            LWIP_DEBUGF(TCP_INPUT_DEBUG, ("tcp_input: keep incoming packet, because pcb is \"full\"\n"));
+          }
+        }
+
+        //接收到fin
+        if (recv_flags & TF_GOT_FIN) {  
+          if (pcb->refused_data != NULL) {  //仍然有未被应用读取的数据？
+            /* Delay this if we have refused data. */
+            pcb->refused_data->flags |= PBUF_FLAG_TCP_FIN;
+          } else {
+            /* correct rcv_wnd as the application won't call tcp_recved()
+               for the FIN's seqno */
+            if (pcb->rcv_wnd != TCP_WND_MAX(pcb)) {
+              pcb->rcv_wnd++;
+            }
+            //调用recv通知程序对方准备关闭连接
+            TCP_EVENT_CLOSED(pcb, err);
+            if (err == ERR_ABRT) {
+              goto aborted;
+            }
+          }
+        }
+
+        tcp_input_pcb = NULL;
+        if (tcp_input_delayed_close(pcb)) {
+          goto aborted;
+        }
+        /* Try to send something out. */
+        tcp_output(pcb);	//tcp输出
+      }
+    }
+
+
+==================================================数据输入 （二）
+输入的tcp报文在找到了其对应的TCP控制块后，需要根据tcp控制块的不同状态，对报文有不同的处理方式。这将可能导致tcp状态的变化，使用tcp状态机来表示这样状态变化。
+
+tcp状态机:
+(1)首先是处理rst，若输入报文是rst报文，则判断该rst合不合法，合法则复位tcp连接
+/*---------------------------------------优先处理rst报文----------------------------------------*/
+  if (flags & TCP_RST) {  //报文中带rst标志
+   if (pcb->state == SYN_SENT) { //连接建立过程中，判断ackno来识别一个rst是否正确
+      if (ackno == pcb->snd_nxt) {
+        //连接建立过程。应答序号等于下一个要发送的序号，是正确的
+        acceptable = 1;
+      }
+    } else {  //其他状态的tcp需要检查报文的序号以判断rst是否合法
+      
+      //报文序号等于期待接收的序号时，pcb复位
+      if (seqno == pcb->rcv_nxt) {
+        acceptable = 1; 
+      } else  if (TCP_SEQ_BETWEEN(seqno, pcb->rcv_nxt,
+                                  pcb->rcv_nxt + pcb->rcv_wnd)) {
+        //如果序号是在接收窗口内，则发送ack，等待回复重新检查报文序号
+        tcp_ack_now(pcb);
+      }
+    }
+
+    if (acceptable) {
+      LWIP_DEBUGF(TCP_INPUT_DEBUG, ("tcp_process: Connection RESET\n"));
+      LWIP_ASSERT("tcp_input: pcb->state != CLOSED", pcb->state != CLOSED);
+      recv_flags |= TF_RESET; //process处理结果标志为复位
+      pcb->flags &= ~TF_ACK_DELAY;  //清除ack
+      return ERR_RST;
+    } else {  //不需要复位，忽略rst报文
+      LWIP_DEBUGF(TCP_INPUT_DEBUG, ("tcp_process: unacceptable reset seqno %"U32_F" rcv_nxt %"U32_F"\n",
+       seqno, pcb->rcv_nxt));
+      LWIP_DEBUGF(TCP_DEBUG, ("tcp_process: unacceptable reset seqno %"U32_F" rcv_nxt %"U32_F"\n",
+       seqno, pcb->rcv_nxt));
+      return ERR_OK;
+    }
+  }
+  //本地不处于SYN_SENT或SYN_RCVD，却收到了SYN，是异常情况，可能是对方重启了
+  if ((flags & TCP_SYN) && (pcb->state != SYN_SENT && pcb->state != SYN_RCVD)) {
+    /* Cope with new connection attempt after remote end crashed */
+    //应对远程端崩溃后的新连接尝试。
+    tcp_ack_now(pcb);
+    return ERR_OK;
+  }
+
+  //如果本地接收未关闭，就复位保活计时器
+  if ((pcb->flags & TF_RXCLOSED) == 0) {
+    /* Update the PCB (in)activity timer unless rx is closed (see tcp_shutdown) */
+    pcb->tmr = tcp_ticks; 
+  }
+  pcb->keep_cnt_sent = 0; //清除保活计数值
+
+  tcp_parseopt(pcb);  //解析出mss
+
+
+状态机的具体代码:
+switch (pcb->state) {
+  /*--------------------------------客户端发起连接请求等待服务器返回syn和ack----------------------------------------*/
+  case SYN_SENT:  
+    LWIP_DEBUGF(TCP_INPUT_DEBUG, ("SYN-SENT: ackno %"U32_F" pcb->snd_nxt %"U32_F" unacked %"U32_F"\n", ackno,
+     pcb->snd_nxt, lwip_ntohl(pcb->unacked->tcphdr->seqno)));
+
+    //报文是ack和syn，且序号能对的上，则发送ack，并进入连接建立状态
+    if ((flags & TCP_ACK) && (flags & TCP_SYN)
+        && (ackno == pcb->lastack + 1)) {
+      pcb->rcv_nxt = seqno + 1;
+      pcb->rcv_ann_right_edge = pcb->rcv_nxt;//?不晓得
+      pcb->lastack = ackno;
+      pcb->snd_wnd = tcphdr->wnd; //本地发送窗口为对方的通告窗口大小
+      pcb->snd_wnd_max = pcb->snd_wnd;
+      pcb->snd_wl1 = seqno - 1; //上次更新时序号
+      pcb->state = ESTABLISHED;
+
+      //计算ip路径下的mss
+      pcb->mss = tcp_eff_send_mss(pcb->mss, &pcb->local_ip, &pcb->remote_ip);
+
+      pcb->cwnd = LWIP_TCP_CALC_INITIAL_CWND(pcb->mss); //初始化拥塞窗口
+      LWIP_DEBUGF(TCP_CWND_DEBUG, ("tcp_process (SENT): cwnd %"TCPWNDSIZE_F
+                                   " ssthresh %"TCPWNDSIZE_F"\n",
+                                   pcb->cwnd, pcb->ssthresh));
+      LWIP_ASSERT("pcb->snd_queuelen > 0", (pcb->snd_queuelen > 0));
+      --pcb->snd_queuelen;  //发送报文队列减1
+      LWIP_DEBUGF(TCP_QLEN_DEBUG, ("tcp_process: SYN-SENT --queuelen %"TCPWNDSIZE_F"\n", (tcpwnd_size_t)pcb->snd_queuelen));
+      
+      //既然收到了ack，那么就将unack队列的第一个报文删除
+      rseg = pcb->unacked;
+      //lwip将重传定时到的unacked放到了unsent，所以unacked的报文可能被放到了unsent
+      if (rseg == NULL) {
+        rseg = pcb->unsent;
+        LWIP_ASSERT("no segment to free", rseg != NULL);
+        pcb->unsent = rseg->next;
+      } else {
+        pcb->unacked = rseg->next;  //重新组织unacked
+      }
+      tcp_seg_free(rseg); //释放被acked的报文
+
+      //如果接下来没有需要应答的报文，则关闭重传定时器，否则重置它
+      if (pcb->unacked == NULL) {
+        pcb->rtime = -1;
+      } else {
+        pcb->rtime = 0;
+        pcb->nrtx = 0;
+      }
+
+      //回调连接建立函数
+      TCP_EVENT_CONNECTED(pcb, ERR_OK, err);
+      if (err == ERR_ABRT) {
+        return ERR_ABRT;
+      }
+      //最后发送一个ack，三次握手结束
+      tcp_ack_now(pcb);
+    }
+
+    //只收到ack报文，可能是半连接
+    else if (flags & TCP_ACK) {
+    	//发送rst报文重新连接
+      tcp_rst(ackno, seqno + tcplen, ip_current_dest_addr(),
+        ip_current_src_addr(), tcphdr->dest, tcphdr->src);
+
+      //重传次数不超限制则立即重传，包括SYN
+      if (pcb->nrtx < TCP_SYNMAXRTX) {
+        pcb->rtime = 0;
+        tcp_rexmit_rto(pcb);
+      }
+    }
+    break;
+  /*------------------------------服务器收到SYN并发送完syn+ack，等待客户端回答-----------------------------------*/
+  case SYN_RCVD:  
+    if (flags & TCP_ACK) {  //报文是客户端的ack报文
+      if (TCP_SEQ_BETWEEN(ackno, pcb->lastack+1, pcb->snd_nxt)) { //确认序号在发送窗口的正确范围
+        pcb->state = ESTABLISHED; //进入建立状态
+        LWIP_DEBUGF(TCP_DEBUG, ("TCP connection established %"U16_F" -> %"U16_F".\n", inseg.tcphdr->src, inseg.tcphdr->dest));
+#if LWIP_CALLBACK_API || TCP_LISTEN_BACKLOG
+#if LWIP_CALLBACK_API
+        LWIP_ASSERT("pcb->listener->accept != NULL",
+          (pcb->listener == NULL) || (pcb->listener->accept != NULL));
+#endif
+        if (pcb->listener == NULL) {
+     
+          err = ERR_VAL;  //listen pcb可能已经被关闭了
+        } else
+#endif /* LWIP_CALLBACK_API || TCP_LISTEN_BACKLOG */
+        {
+          tcp_backlog_accepted(pcb);  //无操作
+          
+          //回调连接建立函数
+          TCP_EVENT_ACCEPT(pcb->listener, pcb, pcb->callback_arg, ERR_OK, err);
+        }
+        //如果回调函数返回错误，或者listen pcb已经被关闭，则终止tcp
+        if (err != ERR_OK) {
+          if (err != ERR_ABRT) {
+            tcp_abort(pcb);
+          }
+          return ERR_ABRT;
+        }
+        //报文中还有其他的数据，则交给应用层处理
+        tcp_receive(pcb);
+
+        //如果本地发送的数据被报文中的ack确认，则实际acked-1，因为syn占一个字节
+        if (recv_acked != 0) {
+          recv_acked--;
+        }
+
+        pcb->cwnd = LWIP_TCP_CALC_INITIAL_CWND(pcb->mss); //设置阻塞窗口
+        LWIP_DEBUGF(TCP_CWND_DEBUG, ("tcp_process (SYN_RCVD): cwnd %"TCPWNDSIZE_F
+                                     " ssthresh %"TCPWNDSIZE_F"\n",
+                                     pcb->cwnd, pcb->ssthresh));
+        //如果有fin标志，则回答，并进入closewait，等待应用程序
+        if (recv_flags & TF_GOT_FIN) {
+          tcp_ack_now(pcb);
+          pcb->state = CLOSE_WAIT;
+        }
+      } else {  //非法的ack确认序号，发送rst
+        
+        tcp_rst(ackno, seqno + tcplen, ip_current_dest_addr(),
+          ip_current_src_addr(), tcphdr->dest, tcphdr->src);
+      }
+    } else if ((flags & TCP_SYN) && (seqno == pcb->rcv_nxt - 1)) {  
+
+      //收到对方重复的syn，说明服务器发出的syn+ack丢失，重发
+      tcp_rexmit(pcb);
+    }
+    break;
+  case CLOSE_WAIT:  //服务器不会接收数据
+    /* FALLTHROUGH */
+  case ESTABLISHED: //已经建立连接
+    tcp_receive(pcb); //将数据交给上层
+
+    //被动关闭连接
+    if (recv_flags & TF_GOT_FIN) { /* passive close */
+      tcp_ack_now(pcb);
+      pcb->state = CLOSE_WAIT;
+    }
+    break;
+  /*------------------------------------客户端发送断开请求，等待回答-----------------------------------*/
+  case FIN_WAIT_1:  
+    tcp_receive(pcb); //将数据交给上层
+    if (recv_flags & TF_GOT_FIN) {  //收到服务器的断开请求
+      if ((flags & TCP_ACK) && (ackno == pcb->snd_nxt) && //同时收到本地FIN的ack，且本地没有未发送的数据，跳过wait2，进入timewait
+          pcb->unsent == NULL) {
+        LWIP_DEBUGF(TCP_DEBUG,
+          ("TCP connection closed: FIN_WAIT_1 %"U16_F" -> %"U16_F".\n", inseg.tcphdr->src, inseg.tcphdr->dest));
+        tcp_ack_now(pcb); //发送ack
+        tcp_pcb_purge(pcb); //释放pcb
+        TCP_RMV_ACTIVE(pcb);  //移除链表
+        pcb->state = TIME_WAIT;
+        TCP_REG(&tcp_tw_pcbs, pcb); //进入新的链表
+      } else {  //异常情况，可能是双方同时发起断开
+        tcp_ack_now(pcb);
+        pcb->state = CLOSING;
+      }
+    } else if ((flags & TCP_ACK) && (ackno == pcb->snd_nxt) &&
+               pcb->unsent == NULL) {
+      pcb->state = FIN_WAIT_2;  //收到ack，进入FIN_WAIT_2，等待服务器的FIN
+    }
+    break;
+  /*----------------------------------客户端已经发送断开连接，等待服务端应用程序断开----------------------*/
+  case FIN_WAIT_2:
+    tcp_receive(pcb); //将数据交给上层
+    //收到服务器的断开请求，回答
+    if (recv_flags & TF_GOT_FIN) {  
+      LWIP_DEBUGF(TCP_DEBUG, ("TCP connection closed: FIN_WAIT_2 %"U16_F" -> %"U16_F".\n", inseg.tcphdr->src, inseg.tcphdr->dest));
+      tcp_ack_now(pcb);
+      tcp_pcb_purge(pcb);
+      TCP_RMV_ACTIVE(pcb);
+      pcb->state = TIME_WAIT;
+      TCP_REG(&tcp_tw_pcbs, pcb);
+    }
+    break;
+  case CLOSING: //两端同时关闭连接
+    tcp_receive(pcb);
+
+    //收到了对方的ack且没有未发送的数据，进入TIME_WAIT
+    if ((flags & TCP_ACK) && ackno == pcb->snd_nxt && pcb->unsent == NULL) {
+      LWIP_DEBUGF(TCP_DEBUG, ("TCP connection closed: CLOSING %"U16_F" -> %"U16_F".\n", inseg.tcphdr->src, inseg.tcphdr->dest));
+      tcp_pcb_purge(pcb);
+      TCP_RMV_ACTIVE(pcb);
+      pcb->state = TIME_WAIT;
+      TCP_REG(&tcp_tw_pcbs, pcb);
+    }
+    break;
+  case LAST_ACK:  //服务器上层处理完，发送断开请求，等待对方回答
+    tcp_receive(pcb);
+
+    //收到了对方的ack且没有未发送的数据，结束tcp一生
+    if ((flags & TCP_ACK) && ackno == pcb->snd_nxt && pcb->unsent == NULL) {
+      LWIP_DEBUGF(TCP_DEBUG, ("TCP connection closed: LAST_ACK %"U16_F" -> %"U16_F".\n", inseg.tcphdr->src, inseg.tcphdr->dest));
+
+      recv_flags |= TF_CLOSED;  //tcp_input会对tcp进一步释放
+    }
+    break;
+  default:
+    break;
+  }
+  return ERR_OK;
+}
+
+tcp状态机完成的主要还是tcp状态之间的转换的逻辑。而真正的tcp报文里的数据则交给了tcp_receive()，该函数检查tcp报文数据，并将有序的数据传递给应用层。
+
+==================================================数据输入 （三）
+tcp_receive(struct tcp_pcb *pcb)是tcp数据输入的末端。在之前的tcp_process()函数中，对输入tcp报文已经确定了其对应的tcp控制块。
+
+该实现了tcp通信中的滑动窗口，快速重传与恢复，拥塞控制算法，对无序报文的处理等。并将有效数据传递给应用层。
+
+代码流程:
+1.更新发送窗口
+由于接收到对方的报文中会有ackno确认序号，所以根据ackno和通告窗口anno_wnd可更新本地接收窗口的大小。当遇到0窗口通告时，还要开启坚持定时器。
+
+//本地发送窗口的右边界=上次窗口更新时的确认序号+当前发送窗口大小
+    right_wnd_edge = pcb->snd_wnd + pcb->snd_wl2;
+
+    //snd_wl1 = last seqno
+    //snd_wl2 = last ackno
+    //更新窗口三个条件：
+    if (TCP_SEQ_LT(pcb->snd_wl1, seqno) ||  //对方有发送新的数据
+       (pcb->snd_wl1 == seqno && TCP_SEQ_LT(pcb->snd_wl2, ackno)) ||  //对方无发送新的数据但接收到我方发出的数据
+       (pcb->snd_wl2 == ackno && (u32_t)SND_WND_SCALE(pcb, tcphdr->wnd) > pcb->snd_wnd)) {  //无收到我方的新数据且，通告对方接收窗口大于我方发送窗口
+      pcb->snd_wnd = SND_WND_SCALE(pcb, tcphdr->wnd); //根据通告窗口设置发送窗口
+      //限制发送窗口
+      if (pcb->snd_wnd_max < pcb->snd_wnd) {
+        pcb->snd_wnd_max = pcb->snd_wnd;
+      }
+      //更新发送窗口的参数
+      pcb->snd_wl1 = seqno;
+      pcb->snd_wl2 = ackno;
+      //如果发送窗口为0，即通告窗口是0，需要开启坚持定时器
+      if (pcb->snd_wnd == 0) {
+        if (pcb->persist_backoff == 0) {
+          /* start persist timer */
+          pcb->persist_cnt = 0;
+          pcb->persist_backoff = 1;
+        }
+      } else if (pcb->persist_backoff > 0) {  //否则停止坚持定时器
+        
+          pcb->persist_backoff = 0;
+      }
+
+
+2.快速重传与恢复
+通过检查ackno与上一次更新的ackno是否一致等条件，判断是否需要开启快速重传。退出快重传后，进入快恢复，更新重传参数。
+
+//!快速重传实现原理（当重复确认超过三次则认为需要启动快速重传）
+    //ackno<lastack，没有确认新数据
+    if (TCP_SEQ_LEQ(ackno, pcb->lastack)) { //
+      /* Clause 2 */
+      if (tcplen == 0) { 
+        /* Clause 3 */
+        if (pcb->snd_wl2 + pcb->snd_wnd == right_wnd_edge) {  //通告窗口大小没变
+          /* Clause 4 */
+          if (pcb->rtime >= 0) {  //重传定时器开启，有数据等待确认
+            /* Clause 5 */
+            if (pcb->lastack == ackno) {  //确认号等于最高确认号
+              //当这里说明该ack是一个空的ack，在重复的确认某一个序号，而发送方同时有数据未被ack，说明之前报文可能丢失
+              found_dupack = 1; //出现了重复的ack
+              //dupacks变量加1同时防止value overflows
+              if ((u8_t)(pcb->dupacks + 1) > pcb->dupacks) {
+                ++pcb->dupacks;
+              }
+              //如果重复确认超过3次，可能是报文丢失了
+              if (pcb->dupacks > 3) {
+                
+                if ((tcpwnd_size_t)(pcb->cwnd + pcb->mss) > pcb->cwnd) {
+                  pcb->cwnd += pcb->mss;//拥塞窗口增加一个报文段大小
+                }
+              } else if (pcb->dupacks == 3) {
+                //执行快速重传丢失报文，初始化cwnd和ssthresh
+                tcp_rexmit_fast(pcb);
+              }
+            }
+          }
+        }
+      }
+      /*-------------------------------快速重传算法------------------------------------*/
+      //不是重复ack
+      if (!found_dupack) {  
+        pcb->dupacks = 0;
+      }
+    } else if (TCP_SEQ_BETWEEN(ackno, pcb->lastack+1, pcb->snd_nxt)) {  //ackno在last_ack和snd_nxt之间,正确
+      //!若tcp处于快速重传，则退出，设置cwnd为ssthresh，这就是快恢复算法
+      if (pcb->flags & TF_INFR) {
+        pcb->flags &= ~TF_INFR;
+        pcb->cwnd = pcb->ssthresh;
+      }
+
+      //正确的接收到数据，更新重传的参数
+      pcb->nrtx = 0;
+
+      pcb->rto = (pcb->sa >> 3) + pcb->sv;
+      pcb->dupacks = 0;
+      pcb->lastack = ackno;
+
+3.拥塞控制算法
+根据cwnd与ssthresh的大小，调节cwnd的大小。
+/*---------------------------------------- 拥塞控制算法 ------------------------------------------*/
+      if (pcb->state >= ESTABLISHED) {
+        //!慢启动算法cwnd<ssthresh cwnd增加一个报文段大小
+        if (pcb->cwnd < pcb->ssthresh) {
+          if ((tcpwnd_size_t)(pcb->cwnd + pcb->mss) > pcb->cwnd) {
+            pcb->cwnd += pcb->mss;
+          }
+          LWIP_DEBUGF(TCP_CWND_DEBUG, ("tcp_receive: slow start cwnd %"TCPWNDSIZE_F"\n", pcb->cwnd));
+        } else {  //!拥塞避免算法
+          tcpwnd_size_t new_cwnd = (pcb->cwnd + pcb->mss * pcb->mss / pcb->cwnd);
+          if (new_cwnd > pcb->cwnd) {
+            pcb->cwnd = new_cwnd;
+          }
+          LWIP_DEBUGF(TCP_CWND_DEBUG, ("tcp_receive: congestion avoidance cwnd %"TCPWNDSIZE_F"\n", pcb->cwnd));
+        }
+      }
+      LWIP_DEBUGF(TCP_INPUT_DEBUG, ("tcp_receive: ACK for %"U32_F", unacked->seqno %"U32_F":%"U32_F"\n",
+                                    ackno,
+                                    pcb->unacked != NULL?
+                                    lwip_ntohl(pcb->unacked->tcphdr->seqno): 0,
+                                    pcb->unacked != NULL?
+                                    lwip_ntohl(pcb->unacked->tcphdr->seqno) + TCP_TCPLEN(pcb->unacked): 0));
+
+
+4.更新unacked队列
+由于收到了新的acked，unacked队列就要更新，删除掉被ack的报文，检查是否还有未ack的报文，决定是否开启重传定时器。
+
+//将unacked队列中已经确认的报文删除
+      while (pcb->unacked != NULL &&  //有未确认的报文
+             TCP_SEQ_LEQ(lwip_ntohl(pcb->unacked->tcphdr->seqno) +  //unacked报文尾的序号小于输入报文确认序号？
+                         TCP_TCPLEN(pcb->unacked), ackno)) {
+        LWIP_DEBUGF(TCP_INPUT_DEBUG, ("tcp_receive: removing %"U32_F":%"U32_F" from pcb->unacked\n",
+                                      lwip_ntohl(pcb->unacked->tcphdr->seqno),
+                                      lwip_ntohl(pcb->unacked->tcphdr->seqno) +
+                                      TCP_TCPLEN(pcb->unacked)));
+        //找到被确认的报文：
+        next = pcb->unacked;
+        pcb->unacked = pcb->unacked->next;  //下一个检查的unacked报文
+
+        LWIP_DEBUGF(TCP_QLEN_DEBUG, ("tcp_receive: queuelen %"TCPWNDSIZE_F" ... ", (tcpwnd_size_t)pcb->snd_queuelen));
+        LWIP_ASSERT("pcb->snd_queuelen >= pbuf_clen(next->p)", (pcb->snd_queuelen >= pbuf_clen(next->p)));
+
+        pcb->snd_queuelen -= pbuf_clen(next->p);    //因为lwip中未确认队列中的报文被放在了unsent队列中
+      
+        recv_acked += next->len;  //确认数据增加next->len
+        tcp_seg_free(next); //删除该报文
+
+        LWIP_DEBUGF(TCP_QLEN_DEBUG, ("%"TCPWNDSIZE_F" (after freeing unacked)\n", (tcpwnd_size_t)pcb->snd_queuelen));
+        if (pcb->snd_queuelen != 0) {
+          LWIP_ASSERT("tcp_receive: valid queue length", pcb->unacked != NULL ||
+                      pcb->unsent != NULL);
+        }
+      }
+      //若没有等待确认的报文，则关闭重传定时
+      if (pcb->unacked == NULL) {
+        pcb->rtime = -1;
+      } else {
+        pcb->rtime = 0;
+      }
+
+      pcb->polltmr = 0;
+
+5.更新unsent队列
+由于lwip将unacked队列中的部分报文放到unsent队列的首部，所以也要检查unsent对列中被确认的报文。
+//由于lwip将超时且需要重传的报文放到了unsent队列，所以需要在unsent中检查是否有的报文已经被确认，代码与以上相似
+    while (pcb->unsent != NULL &&
+           TCP_SEQ_BETWEEN(ackno, lwip_ntohl(pcb->unsent->tcphdr->seqno) +
+                           TCP_TCPLEN(pcb->unsent), pcb->snd_nxt)) {
+      LWIP_DEBUGF(TCP_INPUT_DEBUG, ("tcp_receive: removing %"U32_F":%"U32_F" from pcb->unsent\n",
+                                    lwip_ntohl(pcb->unsent->tcphdr->seqno), lwip_ntohl(pcb->unsent->tcphdr->seqno) +
+                                    TCP_TCPLEN(pcb->unsent)));
+      //找到已经被确认的报文：
+      next = pcb->unsent;
+      pcb->unsent = pcb->unsent->next;
+      if (pcb->unsent == NULL) {
+        pcb->unsent_oversize = 0;
+      }
+      LWIP_DEBUGF(TCP_QLEN_DEBUG, ("tcp_receive: queuelen %"TCPWNDSIZE_F" ... ", (tcpwnd_size_t)pcb->snd_queuelen));
+      LWIP_ASSERT("pcb->snd_queuelen >= pbuf_clen(next->p)", (pcb->snd_queuelen >= pbuf_clen(next->p)));
+      
+      pcb->snd_queuelen -= pbuf_clen(next->p);
+      recv_acked += next->len;
+      tcp_seg_free(next);
+      LWIP_DEBUGF(TCP_QLEN_DEBUG, ("%"TCPWNDSIZE_F" (after freeing unsent)\n", (tcpwnd_size_t)pcb->snd_queuelen));
+      if (pcb->snd_queuelen != 0) {
+        LWIP_ASSERT("tcp_receive: valid queue length",
+          pcb->unacked != NULL || pcb->unsent != NULL);
+      }
+    }
+
+6.rtt测试
+若接收的ackno大于用于rtt测试的序号，则可进行rto的计算。
+RTO(Retransmission TimeOut)即重传超时时间
+连接的往返时间(RTT)
+
+//TODO pcb的rtt测试开启，且进行rtt测试的序号小于确认序号则可用计算rto，计算rto超时重传时间
+    if (pcb->rttest && TCP_SEQ_LT(pcb->rtseq, ackno)) { 
+      m = (s16_t)(tcp_ticks - pcb->rttest);
+
+      LWIP_DEBUGF(TCP_RTO_DEBUG, ("tcp_receive: experienced rtt %"U16_F" ticks (%"U16_F" msec).\n",
+                                  m, (u16_t)(m * TCP_SLOW_INTERVAL)));
+      m = m - (pcb->sa >> 3);
+      pcb->sa += m;
+      if (m < 0) {
+        m = -m;
+      }
+      m = m - (pcb->sv >> 2);
+      pcb->sv += m;
+      pcb->rto = (pcb->sa >> 3) + pcb->sv;
+
+      LWIP_DEBUGF(TCP_RTO_DEBUG, ("tcp_receive: RTO %"U16_F" (%"U16_F" milliseconds)\n",
+                                  pcb->rto, (u16_t)(pcb->rto * TCP_SLOW_INTERVAL)));
+
+      pcb->rttest = 0;  //关闭rtt测量
+    }
+  }
+
+7.滑动窗口
+根据接收到的数据序号在接收窗口的不同位置，对不同位置的数据有不一样的裁剪
+
+(1)接收的数据一部分已经接受过，另一部分是新数据
+此时要把已经接收的部分丢弃，只保留新数据
+//若期待接收的数据处于接收到的数据的中间\
+    /*------接收到的数据既有已经接受过的数据，也有新的数据，将输入数据从rcv_nxt截断，取rcv_nxt及其之后的新数据-----*/
+    if (TCP_SEQ_BETWEEN(pcb->rcv_nxt, seqno + 1, seqno + tcplen - 1)) {
+
+      struct pbuf *p = inseg.p; //p是输入报文第一个pbuf
+      off = pcb->rcv_nxt - seqno; //p中将要舍弃的数据的偏移 即payload向后移动的距离
+      LWIP_ASSERT("inseg.p != NULL", inseg.p);
+      LWIP_ASSERT("insane offset!", (off < 0x7fff));
+
+      //若输入报文的第一个pbuf里的数据都是应该舍弃的数据
+      if (inseg.p->len < off) {
+        LWIP_ASSERT("pbuf too short!", (((s32_t)inseg.p->tot_len) >= off));
+        new_tot_len = (u16_t)(inseg.p->tot_len - off);  //截取后的pbuf总长度
+        //则找到recv_nxt所在那个pbuf，在这个pbuf之前的buffer都要被释放
+        while (p->len < off) {
+          off -= p->len;
+          //!注意下面的注释，inseg.p->tot_len -= p->len;被注释是因为这些pbuf都将被释放
+          /* KJM following line changed (with addition of new_tot_len var)
+             to fix bug #9076
+             inseg.p->tot_len -= p->len; */
+          p->tot_len = new_tot_len;
+          p->len = 0;
+          p = p->next;
+        }
+        //移动输入报文的pbuf的payload指针到其recv_nxt所在的地址
+        if (pbuf_header(p, (s16_t)-off)) {
+          /* Do we need to cope with this failing?  Assert for now */
+          LWIP_ASSERT("pbuf_header failed", 0);
+        }
+      } else {
+        
+        if (pbuf_header(inseg.p, (s16_t)-off)) {
+          /* Do we need to cope with this failing?  Assert for now */
+          LWIP_ASSERT("pbuf_header failed", 0);
+        }
+      }
+      inseg.len -= (u16_t)(pcb->rcv_nxt - seqno); //报文长度被减少了
+      inseg.tcphdr->seqno = seqno = pcb->rcv_nxt; //tcp报文首部的序号页要改成截断后的序号
+    }
+    /*------接收到的数据既有已经接受过的数据，也有新的数据，将输入数据从rcv_nxt截断，取rcv_nxt及其之后的新数据-----*/
+
+    else {
+      //整个报文都是已接收的数据，回复ack即可
+      if (TCP_SEQ_LT(seqno, pcb->rcv_nxt)) {
+        /* the whole segment is < rcv_nxt */
+        /* must be a duplicate of a packet that has already been correctly handled */
+
+        LWIP_DEBUGF(TCP_INPUT_DEBUG, ("tcp_receive: duplicate seqno %"U32_F"\n", seqno));
+        tcp_ack_now(pcb);
+      }
+    }
+
+(2)数据正好在接收窗口左边界
+当数据长度超过窗口大小，则将超出部分丢弃。将报文插入osseq队列，若报文与osseq队列的内容重复，则将报文重复部分丢弃。将osseq队列的有序数据赋值给recv_data指针，上层应用通告该指针读取接收的数据。
+
+if (TCP_SEQ_BETWEEN(seqno, pcb->rcv_nxt,
+                        pcb->rcv_nxt + pcb->rcv_wnd - 1)) {
+      //第一种情况：接收序号正好是期待接收的，说明数据与上次是连续的
+      if (pcb->rcv_nxt == seqno) {
+        tcplen = TCP_TCPLEN(&inseg);
+        //报文内容大于接收窗口，将超过接收窗口部分的内容截掉
+        if (tcplen > pcb->rcv_wnd) {
+          LWIP_DEBUGF(TCP_INPUT_DEBUG,
+                      ("tcp_receive: other end overran receive window"
+                       "seqno %"U32_F" len %"U16_F" right edge %"U32_F"\n",
+                       seqno, tcplen, pcb->rcv_nxt + pcb->rcv_wnd));
+          //!若输入报文中有fin，必须从报头中删除FIN，因为我们要修剪输入报文的数据
+          if (TCPH_FLAGS(inseg.tcphdr) & TCP_FIN) {
+            /* Must remove the FIN from the header as we're trimming
+             * that byte of sequence-space from the packet */
+            TCPH_FLAGS_SET(inseg.tcphdr, TCPH_FLAGS(inseg.tcphdr) & ~(unsigned int)TCP_FIN);
+          }
+          /* Adjust length of segment to fit in the window. */
+          TCPWND_CHECK16(pcb->rcv_wnd);
+          inseg.len = (u16_t)pcb->rcv_wnd;  //修剪后的报文大小就是窗口大小
+
+          //若有syn标志，则报文长度-1
+          if (TCPH_FLAGS(inseg.tcphdr) & TCP_SYN) {
+            inseg.len -= 1;
+          }
+          pbuf_realloc(inseg.p, inseg.len); //给报文的pbuf重新分配内存
+          tcplen = TCP_TCPLEN(&inseg);  //更新修剪后的报文大小
+          LWIP_ASSERT("tcp_receive: segment not trimmed correctly to rcv_wnd\n",
+                      (seqno + tcplen) == (pcb->rcv_nxt + pcb->rcv_wnd));
+        }
+        /*---------------------------------------根据接收窗口修建接收的报文长度-----------------------------------*/
+
+        //!现在接收的数据是正常排序的，先放到osseq队列首部，具体情况见p397第九点
+        if (pcb->ooseq != NULL) {
+
+          //fin标志说明后续无数据来了，该报文段后的报文都要删除
+          if (TCPH_FLAGS(inseg.tcphdr) & TCP_FIN) {
+            LWIP_DEBUGF(TCP_INPUT_DEBUG,
+                        ("tcp_receive: received in-order FIN, binning ooseq queue\n"));
+            
+            while (pcb->ooseq != NULL) {
+              struct tcp_seg *old_ooseq = pcb->ooseq;
+              pcb->ooseq = pcb->ooseq->next;
+              tcp_seg_free(old_ooseq);
+            }
+          } else {  /*--------------------根据输入报文，修改osseq中的数据，修剪输入数据------------------------*/
+            next = pcb->ooseq;
+            //!因为接收的数据与上一次接收的数据是连续的，以下情况的报文段是要删除
+            while (next &&
+                   TCP_SEQ_GEQ(seqno + tcplen,
+                               next->tcphdr->seqno + next->len)) {
+              /* inseg cannot have FIN here (already processed above) */
+              /* 如果这些即将被删除的报文段带FIN标志且输入报文段不带SYN标志 */
+              if ((TCPH_FLAGS(next->tcphdr) & TCP_FIN) != 0 &&
+                  (TCPH_FLAGS(inseg.tcphdr) & TCP_SYN) == 0) {
+                TCPH_SET_FLAG(inseg.tcphdr, TCP_FIN); //在输入报文段的TCP头中添加FIN标志
+                tcplen = TCP_TCPLEN(&inseg);  
+              }
+              prev = next;
+              next = next->next;
+              tcp_seg_free(prev);
+            }
+
+            //!此时seqno在osseq是最小的序号
+            /* Now trim right side of inseg if it overlaps with the first
+             * segment on ooseq */
+            //如果输入报文段与osseq中出现部分重叠，则删除输入报文段中重叠部分
+            if (next &&
+                TCP_SEQ_GT(seqno + tcplen,
+                           next->tcphdr->seqno)) {
+              /* inseg cannot have FIN here (already processed above) */
+              inseg.len = (u16_t)(next->tcphdr->seqno - seqno); //得到输入报文中不重叠部分的长度
+              if (TCPH_FLAGS(inseg.tcphdr) & TCP_SYN) {
+                inseg.len -= 1;
+              }
+              pbuf_realloc(inseg.p, inseg.len); //给输入报文段调整长度
+              tcplen = TCP_TCPLEN(&inseg);  //再次更新报文长度
+              LWIP_ASSERT("tcp_receive: segment not trimmed correctly to ooseq queue\n",
+                          (seqno + tcplen) == next->tcphdr->seqno);
+            }
+            pcb->ooseq = next;
+          }
+        }
+        /*--------------------根据输入报文，修改osseq中的数据，修剪输入数据------------------------*/
+
+        pcb->rcv_nxt = seqno + tcplen;  //更新下一个期待收到的序号
+
+        /* Update the receiver's (our) window. */
+        LWIP_ASSERT("tcp_receive: tcplen > rcv_wnd\n", pcb->rcv_wnd >= tcplen);
+        pcb->rcv_wnd -= tcplen; //本地接收窗口变小
+
+        tcp_update_rcv_ann_wnd(pcb);  //更新通告窗口
+
+        //将输入报文段的数据上传给应用层
+        if (inseg.p->tot_len > 0) {
+          recv_data = inseg.p;
+          /* Since this pbuf now is the responsibility of the
+             application, we delete our reference to it so that we won't
+             (mistakingly) deallocate it. */
+          inseg.p = NULL;
+        }
+        //如果报文段有fin标志
+        if (TCPH_FLAGS(inseg.tcphdr) & TCP_FIN) {
+          LWIP_DEBUGF(TCP_INPUT_DEBUG, ("tcp_receive: received FIN.\n"));
+          recv_flags |= TF_GOT_FIN; //给接收处理结果置位
+        }
+
+        /*----------------------------------ooseq有序数据发送到应用层------------------------------------*/
+        //(通过比较ooseq队列中报文段的seqno和当前TCP控制块中保存的rcv_nxt来判定该报文段是否有序) 
+        while (pcb->ooseq != NULL &&
+               pcb->ooseq->tcphdr->seqno == pcb->rcv_nxt) {
+
+          cseg = pcb->ooseq;
+          seqno = pcb->ooseq->tcphdr->seqno;
+
+          pcb->rcv_nxt += TCP_TCPLEN(cseg);
+          LWIP_ASSERT("tcp_receive: ooseq tcplen > rcv_wnd\n",
+                      pcb->rcv_wnd >= TCP_TCPLEN(cseg));
+          pcb->rcv_wnd -= TCP_TCPLEN(cseg);
+
+          tcp_update_rcv_ann_wnd(pcb);
+
+          //如果该报文段有数据，则将数据连接到recv_data上，同时将报文的pbuf指针赋值为null
+          if (cseg->p->tot_len > 0) {
+            /* Chain this pbuf onto the pbuf that we will pass to
+               the application. */
+            /* With window scaling, this can overflow recv_data->tot_len, but
+               that's not a problem since we explicitly fix that before passing
+               recv_data to the application. */
+            if (recv_data) {
+              pbuf_cat(recv_data, cseg->p); //将有序的pbuf拼接起来
+            } else {
+              recv_data = cseg->p;
+            }
+            cseg->p = NULL;
+          }
+          //若报文段中有fin标志，则设置处理结果，修改pcb的状态
+          if (TCPH_FLAGS(cseg->tcphdr) & TCP_FIN) {
+            LWIP_DEBUGF(TCP_INPUT_DEBUG, ("tcp_receive: dequeued FIN.\n"));
+            recv_flags |= TF_GOT_FIN;
+            if (pcb->state == ESTABLISHED) { /* force passive close or we can move to active close */
+              pcb->state = CLOSE_WAIT;
+            }
+          }
+
+          pcb->ooseq = cseg->next;  //处理下一个ooseq报文段
+          tcp_seg_free(cseg); //释放被拼接的报文段
+        }
+
+(3)数据不在左边界
+说明接收的数据不是有序到达的。则将该报文插入osseq队列。接下来的代码就是如何将报文正确的插入osseq队列。
+
+//!seqno!=recv->nxt 说明收到无序报文，将报文插入合适的位置
+        tcp_send_empty_ack(pcb);
+
+        if (pcb->ooseq == NULL) {
+          pcb->ooseq = tcp_seg_copy(&inseg);
+        } else {
+          /*-----------------------------------处理osseq无序报文-------------------------------------*/
+
+          prev = NULL;
+          //遍历ooseq队列
+          for (next = pcb->ooseq; next != NULL; next = next->next) {
+            //若输入的报文序号与osseq队列中的某个报文一样
+            if (seqno == next->tcphdr->seqno) {
+              //若输入的报文长度大。则将输入报文插入
+              if (inseg.len > next->len) {
+
+                cseg = tcp_seg_copy(&inseg);
+                if (cseg != NULL) {
+                  if (prev != NULL) {
+                    prev->next = cseg;
+                  } else {
+                    pcb->ooseq = cseg;
+                  }
+                  tcp_oos_insert_segment(cseg, next); //替换next
+                }
+                break;
+              } else {  //输入报文段比原报文小，啥不用干了
+                break;
+              }
+            } else {  //输入报文段的序号在osseq队列中无
+
+              //next是第一个osseq报文段
+              if (prev == NULL) {
+                //输入报文序号小于第一个osseq报文，则将输入报文放到osseq首部
+                if (TCP_SEQ_LT(seqno, next->tcphdr->seqno)) {
+                  cseg = tcp_seg_copy(&inseg);
+                  if (cseg != NULL) {
+                    pcb->ooseq = cseg;
+                    tcp_oos_insert_segment(cseg, next); //替换next的位置
+                  }
+                  break;
+                }
+              } else {
+
+                //若输入序号在前一个报文与后一个报文之间，修剪前一个报文，删除下一个报文中重复的部分
+                if (TCP_SEQ_BETWEEN(seqno, prev->tcphdr->seqno+1, next->tcphdr->seqno-1)) {
+                  cseg = tcp_seg_copy(&inseg);
+                  if (cseg != NULL) {
+                    //前一个报文太长。修剪
+                    if (TCP_SEQ_GT(prev->tcphdr->seqno + prev->len, seqno)) {
+                      /* We need to trim the prev segment. */
+                      prev->len = (u16_t)(seqno - prev->tcphdr->seqno);
+                      pbuf_realloc(prev->p, prev->len);
+                    }
+                    prev->next = cseg;
+                    tcp_oos_insert_segment(cseg, next); //替换next
+                  }
+                  break;
+                }
+              }
+              //若next是最后一个报文，且输入报文的数据在next之后
+              if (next->next == NULL &&
+                  TCP_SEQ_GT(seqno, next->tcphdr->seqno)) {
+                //若next报文有fin，说明其后不应该有数据，直接退出
+                if (TCPH_FLAGS(next->tcphdr) & TCP_FIN) {
+                  /* segment "next" already contains all data */
+                  break;
+                }
+                next->next = tcp_seg_copy(&inseg);  //输入报文插入最后
+                if (next->next != NULL) {
+                  //如果next与输入报文有覆盖，则修改next报文的长度
+                  if (TCP_SEQ_GT(next->tcphdr->seqno + next->len, seqno)) {
+                    /* We need to trim the last segment. */
+            
+                    next->len = (u16_t)(seqno - next->tcphdr->seqno);
+                    pbuf_realloc(next->p, next->len);
+                  }
+                  /* check if the remote side overruns our receive window */
+                  //检查远程是不是超支我们的接收窗口
+                  if (TCP_SEQ_GT((u32_t)tcplen + seqno, pcb->rcv_nxt + (u32_t)pcb->rcv_wnd)) {
+                    LWIP_DEBUGF(TCP_INPUT_DEBUG,
+                                ("tcp_receive: other end overran receive window"
+                                 "seqno %"U32_F" len %"U16_F" right edge %"U32_F"\n",
+                                 seqno, tcplen, pcb->rcv_nxt + pcb->rcv_wnd));
+                    //!若输入报文有fin，则删除，因为我们正修改输入报文的大小来适应接收窗口
+                    if (TCPH_FLAGS(next->next->tcphdr) & TCP_FIN) {
+                      /* Must remove the FIN from the header as we're trimming
+                       * that byte of sequence-space from the packet */
+                      TCPH_FLAGS_SET(next->next->tcphdr, TCPH_FLAGS(next->next->tcphdr) & ~TCP_FIN);
+                    }
+                    /* Adjust length of segment to fit in the window. */
+                    next->next->len = (u16_t)(pcb->rcv_nxt + pcb->rcv_wnd - seqno); //经过接收窗口筛选后的报文大小
+                    pbuf_realloc(next->next->p, next->next->len); //重新分配报文内存
+                    tcplen = TCP_TCPLEN(next->next);
+                    LWIP_ASSERT("tcp_receive: segment not trimmed correctly to rcv_wnd\n",
+                                (seqno + tcplen) == (pcb->rcv_nxt + pcb->rcv_wnd));
+                  }
+                }
+                break;
+              }
+            }
+            prev = next;
+          }
+        }

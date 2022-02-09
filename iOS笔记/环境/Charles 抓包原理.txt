@@ -1,0 +1,100 @@
+绝大多数的抓包软件，背后的原理都是中间人攻击（Man-in-the-middle attack，缩写：MITM）。
+
+中间人攻击在密码学和计算机安全领域中是指攻击者与通讯的两端分别建立独立的联系，并交换其所收到的数据，使通讯的两端认为他们正在通过一个私密的连接与对方直接对话，但事实上整个会话都被攻击者完全控制。
+
+
+在电脑浏览器上访问 cdn.staticfile.org 的一个 HTTP 资源
+HTTP 请求的报文流向:
+1.浏览器（Client）从端口号 56075 发起一个请求，请求发送到本地 Charles 监听的 8888 端口（MITM Server），这个连接直接在本机进行
+
+2.收到浏览器的请求后，Charles 再从端口号 56076 （MITM Client）发起一个新的请求，因为这个网络包要入公网，所以 IP 为 192.168.31.44（我的电脑 IP 地址)
+cdn.staticfile.org （Server）的 IP 为 111.63.183.223，因为是 HTTP 请求，所以端口号为 80
+
+3.111.63.183.223:80 返回一个 HTTP 响应到 Charles 的代理客户端 192.168.31.44:56076
+
+4.Charles 内部做了一些处理（Capture & Analysis），然后把响应报文通过 8888 端口发送到 127.0.0.1:56075，到这里浏览器就收到了响应
+
+在第二步和第三步中，报文经过了 Charles，Charles 这时就可以对报文进行一些加工，例如 Remote 重定向，Rewrite，缓存报文并可视化等操作。
+
+
+网络数据如果想从 A 传输到 B，想确定一个连接就必须确定 5 个关键信息：源 IP 地址，源端口，传输层协议，目的 IP 地址和目的端口。
+如果用 Charles 抓包，我们就要对照分析一下 Client 和 MITM Server 间代理链接的五元组：
+源 IP 地址：被抓包应用的 IP 地址，一般为设备 IP，一般不做修改
+源端口：被抓包应用的端口号，一般为操作系统分配，无法修改
+传输层协议：Charles 目前主要代理的是 HTTP 协议，一般为 TCP
+目的 IP 地址：Charles 的 IP 地址，一般为电脑本机 IP，一般不做修改
+目的端口：Charles 的代理端口，默认为 8888，可以修改
+
+我们先分析一下目的 IP 地址。因为 Charles 安装在电脑上，所以 Charles 的 IP 就是电脑的 IP。如果你是 Mac 电脑，可以按住 option 键再用鼠标点击菜单栏的 Wi-Fi 图标，得到电脑 IP 地址。
+Charles 的代理端口号可以从 Charles -> Proxy -> Proxy Setttings 进行查看和更改。端口默认是 8888，一般不建议修改。
+
+确定好 Charles 的 IP 和端口号后，我们就可以分设备配置 HTTP 代理了。
+1.电脑端 HTTP 代理配置
+无论你使用的是 window 还是 mac，Charles 作为一款在电脑上安装的 APP，代理本机请求时，网络数据都是在本地转发的，所以相对来说电脑端的配置是最简单的。我们只要根据路径 Charles -> Proxy -> macOS Proxy 依次点击开启代理就可。
+因为本机代理默认是关闭的，我们也可以在 Proxy Setttings 中点击 macOS，勾选 Enable macOS proxy on lounch，这样每次打开 Charles 就会默认打开代理了。
+
+2.iOS 代理配置
+想要抓 iOS 的网络包，只需要把 iOS 的网络包转发到代理 IP 和代理端口就行。
+配置前我们要保证手机和电脑在同一个局域网里（一般手机电脑连同一个 Wi-Fi 就行），然后打开 iOS 的 设置 -> 无线局域网，进入已连接的 Wi-Fi 的设置页面，滑动到最底部选择配置代理，然后手动配置代理。
+服务器要输入的就是前面得到的 Charles IP 地址，案例里是 192.168.31.44；端口是前面的 Charles 代理端口，一般为 8888。
+
+
+HTTPS 代理配置:
+HTTPS 本质上就是 HTTP 协议 + TLS 协议，从建立连接的角度看，主要是在 TCP 三次握手之后又加入了四次 TLS 握手
+TLS 握手过程中会校验加密用的公钥证书，所以我们就要手动安装并信任 Charles 的证书，以达到抓取 HTTPS Packets 的目的。
+TLS 的加入，加强了网络的安全性的同时，也增加了抓包的复杂度
+证书安装前要确保 HTTP 代理已经配置完毕
+
+1.电脑端安装证书
+电脑端安装证书是最简单的。首先点击 Charles -> Help -> SSL Proxying -> Install Charles Root Certificate 在电脑端安装证书，然后点击刚刚安装的证书，手动信任全部权限，最后输入密码保存修改就可。
+
+2.iOS 安装证书
+iOS 安装证书相对来说复杂一些。首先点击 Charles -> Help -> SSL Proxying -> Install Charles Root Certificate on a Mobile Derive，这时候会跳出一个弹窗，然后我们根据提示在手机端访问 chls.pro/ssl，下载安装 Charles CA 证书。
+安装好后还要手动开启权限。先要到 通用 -> 描述文件与设备管理 -> 信任 里安装刚刚下载的证书，然后到 通用 -> 关于本机 -> 证书信任设置 -> 针对根证书启用完全信任 里手动信任证书，这两个同意后 iOS 就安装证书成功了。
+
+三、Charles 抓包失败案例分析
+1.关闭代理
+为了顺畅的访问 GitHub 等网站，我们总会用些“辅助工具”。这些工具一般会自动开启 HTTP/HTTPS 代理从而抢占端口，导致 Charles 代理失败。
+解决这个问题也很简单，Charles 抓包前，把电脑和手机的辅助工具都关掉，这样就不会有代理冲突的问题了。我们可以查看电脑的 Wi-Fi 代理界面。开启 Charles 抓包前要保证下面的选项都没被勾选就好了。
+
+2.确定数据走的 HTTP 协议吗？
+Charles is an HTTP proxy / HTTP monitor / Reverse Proxy that enables a developer to view all of the HTTP and SSL / HTTPS traffic between their machine and the Internet.
+Charles 是一款专注于分析 HTTP 报文的网络工具，所以说对于其它协议支持是非常有限的。比如说现在的 IM 或音视频应用，出于性能和安全上的考虑，基本都是自己基于某一传输层协议自己封装的，这些数据 Charles 肯定是抓不到的。
+
+Charles 支持以下协议:
+HTTP/1.1
+HTTPS
+HTTP/2
+ws（WebSocket）
+wss（WebSocket Secure，TLS 加密的 WebSocket）
+SOCKS
+
+上面列出的几个协议，其实已经覆盖日常业务开发 90% 的应用场景了，若想抓取其他协议的报文，还是老老实实用 Wireshark 吧。
+
+3.之前开了黑白名单，再次抓包忘记关了
+Proxy Settings 的 Options 里过滤了一些网址
+SSL Proxying Settings 没有匹配所有网址
+Block List/Allow List 做了黑白名单设置
+DNS Spoofing 做了 HOST 的映射
+Map Remote 重定向了请求
+Rewrite 重写了请求
+
+Charles 有一个很不起眼的功能，那就是它的 UI 界面右下角会展示 Charles 正在开启的功能，如果你怀疑你的 Charles 哪里做了接口限制，你就扫一眼右下角开启的功能，然后依次检查就可。
+
+4.证书固定（Certificate Pinning）
+证书固定（Certificate Pinning） 是指客户端内置了服务端真正的公钥证书。
+在 HTTPS 请求时，服务端发给客户端的公钥证书必须和客户端内置的公钥证书一致才能请求成功。一般对安全比较重视的公司会采取这种操作。
+
+在这种情况下，利用 Charles 抓包时，Charles 的公钥证书和客户端的公钥证书不一样，伪造的请求就会被驳回，我们就抓包失败了。那么这种情况怎么解决？
+路其实还是有两条：
+一条是 Hack 之路，刷机 ROOT，借助工具移除 APP 中固定的公钥证书；
+另一条是正路，你拥有这个 APP 的开发权限，那么一般你也就拥有了公钥证书和随之配套的私钥，我们可以把证书和私钥导入到 Charles 中，解决证书固定引起的困扰。
+
+Charles 导入公钥证书和私钥比较简单，点击 Charles -> Proxy -> SSL Proxying Setting -> Root Certificate，然后导入 .pem 或 p12 文件即可。
+.p12 是一种文件格式，同时包含证书和密钥
+
+5.证书双向验证
+在绝大部分的情况下，TLS 都是客户端认证服务端的真实性的，但是在一些非常注重安全的场景下（例如匿名社交），部分 APP 会开启 TLS 的双向验证，也就是说服务端也要验证客户端的真实性。
+
+在这种情况，客户端必然内置了一套公钥证书和私钥。相对于服务端，APP 有很大的砸壳风险，所以公钥证书和私钥一般都是极其隐蔽的，比如说写到 .so 里，隐藏在一个混淆的妈都不认识的随机数算法函数里，从而增大破译难度。
+

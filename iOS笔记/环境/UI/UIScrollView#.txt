@@ -1,0 +1,307 @@
+UIScrollView 是 UIKit 中为数不多能响应滑动手势的 view
+
+拖动相关的 delegate 方法按调用顺序分别是：
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView
+这个方法在任何方式触发 contentOffset 变化的时候都会被调用（包括用户拖动，减速过程，直接通过代码设置等），
+可以用于监控 contentOffset 的变化，并根据当前的 contentOffset 对其他 view 做出随动调整。
+
+- (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView
+用户开始拖动 scroll view 的时候被调用。
+
+- (void)scrollViewWillEndDragging:(UIScrollView *)scrollView withVelocity:(CGPoint)velocity targetContentOffset:(inout CGPoint *)targetContentOffset
+在 didEndDragging 前被调用，当 willEndDragging 方法中 velocity 为 CGPointZero（结束拖动时两个方向都没有速度）时，
+didEndDragging 中的 decelerate 为 NO，即没有减速过程，willBeginDecelerating 和 didEndDecelerating 也就不会被调用。
+反之，当 velocity 不为 CGPointZero 时，scroll view 会以 velocity 为初速度，减速直到 targetContentOffset。
+值得注意的是，这里的 targetContentOffset 是个指针，没错，你可以改变减速运动的目的地，这在一些效果的实现时十分有用
+
+- (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate
+在用户结束拖动后被调用，decelerate 为 YES 时，结束拖动后会有减速过程。
+注，在 didEndDragging 之后，如果有减速过程，scroll view 的 dragging 并不会立即置为 NO，而是要等到减速结束之后，所以这个 dragging 属性的实际语义更接近 scrolling。
+
+- (void)scrollViewWillBeginDecelerating:(UIScrollView *)scrollView
+减速动画开始前被调用。
+
+- (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView
+减速动画结束时被调用，这里有一种特殊情况：当一次减速动画尚未结束的时候再次 drag scroll view，didEndDecelerating 不会被调用，并且这时 scroll view 的 dragging 和 decelerating 属性都是 YES。
+新的 dragging 如果有加速度，那么 willBeginDecelerating 会再一次被调用，然后才是 didEndDecelerating；
+如果没有加速度，虽然 willBeginDecelerating 不会被调用，但前一次留下的 didEndDecelerating 会被调用，所以连续快速滚动一个 scroll view 时，delegate 方法被调用的顺序（不含 didScroll）可能是这样的：
+
+scrollViewWillBeginDragging:
+scrollViewWillEndDragging: withVelocity: targetContentOffset:
+scrollViewDidEndDragging: willDecelerate:
+scrollViewWillBeginDecelerating:
+scrollViewWillBeginDragging:
+scrollViewWillEndDragging: withVelocity: targetContentOffset:
+scrollViewDidEndDragging: willDecelerate:
+scrollViewWillBeginDecelerating:
+...
+scrollViewWillBeginDragging:
+scrollViewWillEndDragging: withVelocity: targetContentOffset:
+scrollViewDidEndDragging: willDecelerate:
+scrollViewWillBeginDecelerating:
+scrollViewDidEndDecelerating:
+
+虽然很少有因为这个导致的 bug，但是你需要知道这种很常见的用户操作会导致的中间状态。
+例如你尝试在 UITableViewDataSource 的 tableView:cellForRowAtIndexPath: 方法中基于 tableView 的 dragging 和 decelerating 属性判断是在用户拖拽还是减速过程中的话可能会误判
+
+
+1. Table View 中图片加载逻辑的优化
+原文的思路：
+当用户手动 drag table view 的时候，会加载 cell 中的图片；
+在用户快速滑动的减速过程中，不加载过程中 cell 中的图片（但文字信息还是会被加载，只是减少减速过程中的网络开销和图片加载的开销）；
+在减速结束后，加载所有可见 cell 的图片（如果需要的话）；
+
+
+问题 1：
+前面提到，刚开始拖动的时候，dragging 为 YES，decelerating 为 NO；
+decelerate 过程中，dragging 和 decelerating 都为 YES；
+decelerate 未结束时开始下一次拖动，dragging 和 decelerating 依然都为 YES。
+所以无法简单通过 table view 的 dragging 和 decelerating 判断是在用户拖动还是减速过程。
+
+解决这个问题很简单，添加一个变量如 userDragging，在 willBeginDragging 中设为 YES，didEndDragging 中设为 NO。那么 tableView: cellForRowAtIndexPath: 方法中，是否 load 图片的逻辑就是：
+if (!self.userDragging && tableView.decelerating) {
+    cell.imageView.image = nil;
+} else {
+    // code for loading image from network or disk
+}
+
+问题 2：
+这么做的话，decelerate 结束后，屏幕上的 cell 都是不带图片的，解决这个问题也不难，你需要一个形如 loadImageForVisibleCells 的方法，加载可见 cell 的图片：
+- (void)loadImageForVisibleCells
+{
+    NSArray *cells = [self.tableView visibleCells];
+    for (GLImageCell *cell in cells) {
+        NSIndexPath *indexPath = [self.tableView indexPathForCell:cell];
+        [self setupCell:cell withIndexPath:indexPath];
+    }
+}
+
+问题 3：
+这个问题可能不容易被发现，在减速过程中如果用户开始新的拖动，当前屏幕的 cell 并不会被加载
+而且问题 1 的方案并不能解决问题 3，因为这些 cell 已经在屏上，不会再次经过 cellForRowAtIndexPath 方法。虽然不容易发现，
+但解决很简单，只需要在 scrollViewWillBeginDragging: 方法里也调用一次 loadImageForVisibleCells 即可。
+
+再优化
+上述方法在那个年代的确提升了 table view 的 performance，但是你会发现在减速过程最后最慢的那零点几秒时间，其实还是会让人等得有些心急，尤其如果你的 App 只有图片没有文字。
+在 iOS 5 引入了 scrollViewWillEndDragging: withVelocity: targetContentOffset: 方法后，配合 SDWebImage，我尝试再优化了一下这个方法以提升用户体验：
+如果内存中有图片的缓存，减速过程中也会加载该图片
+如果图片属于 targetContentOffset 能看到的 cell，正常加载，这样一来，快速滚动的最后一屏出来的的过程中，用户就能看到目标区域的图片逐渐加载
+你可以尝试用类似 fade in 或者 flip 的效果缓解生硬的突然出现（尤其是像本例这样只有图片的 App）
+
+- (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView
+{
+    self.targetRect = nil;
+    [self loadImageForVisibleCells];
+}
+
+- (void)scrollViewWillEndDragging:(UIScrollView *)scrollView withVelocity:(CGPoint)velocity targetContentOffset:(inout CGPoint *)targetContentOffset
+{
+    CGRect targetRect = CGRectMake(targetContentOffset->x, targetContentOffset->y, scrollView.frame.size.width, scrollView.frame.size.height);
+    self.targetRect = [NSValue valueWithCGRect:targetRect];
+}
+
+- (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView
+{
+    self.targetRect = nil;
+    [self loadImageForVisibleCells];
+}
+
+是否需要加载图片的逻辑：
+
+BOOL shouldLoadImage = YES;
+if (self.targetRect && !CGRectIntersectsRect([self.targetRect CGRectValue], cellFrame)) {
+    SDImageCache *cache = [manager imageCache];
+    NSString *key = [manager cacheKeyForURL:targetURL];
+    if (![cache imageFromMemoryCacheForKey:key]) {
+        shouldLoadImage = NO;
+    }
+}
+if (shouldLoadImage) {
+    // load image
+}
+
+更值得高兴的是，通过判断是否 nil，targetRect 同时起到了原来 userDragging 的作用。
+
+
+
+@interface GLImageCell : UITableViewCell
+@property (weak, nonatomic) IBOutlet UIImageView *photoView;
+@end
+
+@implementation GLImageCell
+@end
+
+@interface ViewController () <UITableViewDelegate, UITableViewDataSource>
+
+@property (weak, nonatomic) IBOutlet UITableView *tableView;
+@property (copy, nonatomic) NSArray *data;
+@property (strong, nonatomic) NSValue *targetRect;
+
+@end
+
+@implementation ViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    // Do any additional setup after loading the view, typically from a nib.
+    [self fetchDataFromServer];
+}
+
+- (void)didReceiveMemoryWarning {
+    [super didReceiveMemoryWarning];
+    // Dispose of any resources that can be recreated.
+}
+
+- (IBAction)didClickRefreshButton:(id)sender {
+    [self fetchDataFromServer];
+}
+
+- (void)fetchDataFromServer
+{
+    static NSString *apiURL = @"http://image.baidu.com/search/acjson?tn=resultjson_com&ipn=rj&ie=utf-8&oe=utf-8&word=cat&queryWord=dog";
+    AFHTTPRequestOperationManager *manager = [AFHTTPRequestOperationManager manager];
+    AFHTTPResponseSerializer *serializer = [AFHTTPResponseSerializer serializer];
+    [serializer.acceptableContentTypes setByAddingObject:@"text/html"];
+    manager.responseSerializer = serializer;
+    [manager GET:apiURL parameters:nil success:^(AFHTTPRequestOperation *operation, id responseObject) {
+        NSLog(@"Request succeeded");
+        NSString *responseString = [operation.responseString stringByReplacingOccurrencesOfString:@"\\'" withString:@"'"];
+        NSLog(@"responseString = %@", responseString);
+        NSData *data = [responseString dataUsingEncoding:NSUTF8StringEncoding];
+        NSError *error;
+        NSDictionary *responseDictionary = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
+        if ([responseDictionary isKindOfClass:[NSDictionary class]]) {
+            NSArray *originalData = [responseDictionary arrayForKey:@"data"];
+            NSMutableArray *data = [NSMutableArray array];
+            for (NSDictionary *item in originalData) {
+                if ([item isKindOfClass:[NSDictionary class]] && [[item stringForKey:@"hoverURL"] length] > 0) {
+                    [data addObject:item];
+                }
+            }
+            self.data = data;
+        } else {
+            self.data = nil;
+        }
+        [self.tableView reloadData];
+    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+        NSLog(@"Request falied");
+    }];
+}
+
+- (NSDictionary *)objectForRow:(NSInteger)row
+{
+    if (row < self.data.count) {
+        return self.data[row];
+    }
+    return nil;
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView
+{
+    return 1;
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
+{
+    return self.data.count;
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    static NSString *cellIdentifier = @"ImageCell";
+    GLImageCell *cell = [tableView dequeueReusableCellWithIdentifier:cellIdentifier forIndexPath:indexPath];
+    [self setupCell:cell withIndexPath:indexPath];
+    
+    return cell;
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    NSDictionary *obj = [self objectForRow:indexPath.row];
+    NSInteger width = [obj integerForKey:@"width"];
+    NSInteger height = [obj integerForKey:@"height"];
+    if (obj && width > 0 && height > 0) {
+        return tableView.frame.size.width / (float)width * (float)height;
+    }
+    return 44.0;
+}
+
+- (void)setupCell:(GLImageCell *)cell withIndexPath:(NSIndexPath *)indexPath
+{
+    static NSString *referer = @"http://image.baidu.com/i?tn=baiduimage&ipn=r&ct=201326592&cl=2&lm=-1&st=-1&fm=index&fr=&sf=1&fmq=&pv=&ic=0&nc=1&z=&se=1&showtab=0&fb=0&width=&height=&face=0&istype=2&ie=utf-8&word=cat&oq=cat&rsp=-1";
+    SDWebImageDownloader *downloader = [[SDWebImageManager sharedManager] imageDownloader];
+    [downloader setValue:referer forHTTPHeaderField:@"Referer"];
+    
+    NSDictionary *obj = [self objectForRow:indexPath.row];
+    NSURL *targetURL = [NSURL URLWithString:[obj stringForKey:@"hoverURL"]];
+//    NSLog(@"%@ %@", self.tableView.dragging ? @"dragging":@"", self.tableView.decelerating ? @"decelerating":@"");
+    if (![[cell.photoView sd_imageURL] isEqual:targetURL]) {
+        cell.photoView.alpha = 0.0;
+        SDWebImageManager *manager = [SDWebImageManager sharedManager];
+        CGRect cellFrame = [self.tableView rectForRowAtIndexPath:indexPath];
+        BOOL shouldLoadImage = YES;
+        if (self.targetRect && !CGRectIntersectsRect([self.targetRect CGRectValue], cellFrame)) {
+            SDImageCache *cache = [manager imageCache];
+            NSString *key = [manager cacheKeyForURL:targetURL];
+            if (![cache imageFromMemoryCacheForKey:key]) {
+                shouldLoadImage = NO;
+            }
+        }
+        if (shouldLoadImage) {
+            [cell.photoView sd_setImageWithURL:targetURL placeholderImage:nil options:SDWebImageHandleCookies completed:^(UIImage *image, NSError *error, SDImageCacheType cacheType, NSURL *imageURL) {
+                if (!error && [imageURL isEqual:targetURL]) {
+                    // fade in animation
+                    [UIView animateWithDuration:0.25 animations:^{
+                        cell.photoView.alpha = 1.0;
+                    }];
+                    // or flip animation
+//                    [UIView transitionWithView:cell duration:0.5 options:UIViewAnimationOptionCurveEaseInOut|UIViewAnimationOptionTransitionFlipFromBottom animations:^{
+//                        cell.photoView.alpha = 1.0;
+//                    } completion:^(BOOL finished) {
+//                    }];
+                }
+            }];
+        }
+    }
+}
+
+- (void)loadImageForVisibleCells
+{
+    NSArray *cells = [self.tableView visibleCells];
+    for (GLImageCell *cell in cells) {
+        NSIndexPath *indexPath = [self.tableView indexPathForCell:cell];
+        [self setupCell:cell withIndexPath:indexPath];
+    }
+}
+
+- (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView
+{
+    self.targetRect = nil;
+    [self loadImageForVisibleCells];
+}
+
+- (void)scrollViewWillEndDragging:(UIScrollView *)scrollView withVelocity:(CGPoint)velocity targetContentOffset:(inout CGPoint *)targetContentOffset
+{
+    CGRect targetRect = CGRectMake(targetContentOffset->x, targetContentOffset->y, scrollView.frame.size.width, scrollView.frame.size.height);
+    self.targetRect = [NSValue valueWithCGRect:targetRect];
+}
+
+- (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate
+{
+}
+
+- (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView
+{
+    self.targetRect = nil;
+    [self loadImageForVisibleCells];
+}
+
+@end
+
+
+==================================================分页的几种实现方式
+
+
+==================================================
+
+==================================================

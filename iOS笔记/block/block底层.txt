@@ -1,0 +1,479 @@
+__weak  typeof(self)weakSelf = self
+self.block = ^(void){
+    NSLog(@"%@", weakSelf.name);
+};
+
+解决打破循环引用:
+1.__weak typeof(self)weakSelf = self
+没有打破循环引用之前是这样的 self ->block -> self(self持有block,block持有self)
+而打破之后 就是这样 self -> block ->weakSelf ->self (self持有block,block持有 weakSelf,weakSelf持有 self)那这样就不会导致循环引用了么？weakSelf也持有者 self呢呀
+因为 weakSelf 是弱引用表中的，和当前的self是同一个指针地址。__weak并不会导致self的引用计数发生变化。
+
+2.通过传参的形式将self 传进block任务中
+
+3.主动打破循环
+__block ViewController *vc = self;
+self.block = ^(void){
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSLog(@"%@",vc.name);
+        vc = nil;
+    });
+};
+self.block();
+
+vc = nil 是为了打破循环引用。
+注意：此时不调用循环引用依旧会存在。
+
+
+__block:
+当block内部需要对外界的变量 修改时，如不用__block修饰，会引起编译器的歧义，导致只能读。
+当捕获的是临时变量，如不用__block修饰，会导致内外数据不同步。
+如捕获的是容器类型，容器内容发生更改不需要进行__block修饰。
+如捕获的是对象，对象的某个属性发生更改，不需要进行__block修饰。
+如捕获的是 statc修饰的（局部 /全局）变量 或 全局变量 不需要__block修饰。
+
+
+==================================================block源码
+NSString * str = [NSString stringWithFormat:@"等风来不如追风去啊"];
+
+void (^block)(void) = ^{
+    NSLog(@"%@,%p",str,str);
+};
+
+str = @"总有一个人,在风景正好的季节等着你";
+NSLog(@"%@,%p",str,str);
+
+
+block();
+
+clang之后的编译期代码:
+
+///字符串指针  str指向内存地址A
+NSString * str = ((NSString * _Nonnull (*)(id, SEL, NSString * _Nonnull __strong, ...))(void *)objc_msgSend)((id)objc_getClass("NSString"), sel_registerName("stringWithFormat:"), (NSString *)&__NSConstantStringImpl__var_folders_hp_8p1s5vl9501d23q4rjltk8j80000gn_T_main_e485f6_mi_0);
+
+/// block
+void (*block)(void) =
+__main_block_impl_0(
+                __main_block_func_0,
+                
+                &__main_block_desc_0_DATA,
+                
+                str,// 结构体__main_block_impl_0中的str指向传进去的str（即这个str），即结构体内部str指向内存地址A
+                
+                570425344
+                );
+
+///重新赋值 改变指针指向  // str指向内存地址B
+str = (NSString *)&__NSConstantStringImpl__var_folders_hp_8p1s5vl9501d23q4rjltk8j80000gn_T_main_e485f6_mi_2;
+
+/// 打印 // 这边打印的也是内存地址B的字符串数据，即总有一个人,在风景正好的季节等着你
+NSLog((NSString *)&__NSConstantStringImpl__var_folders_hp_8p1s5vl9501d23q4rjltk8j80000gn_T_main_e485f6_mi_3,str,str);
+
+///发起调用
+（(__block_impl *)block)->FuncPtr)((__block_impl *)block);
+
+
+static void __main_block_func_0(struct __main_block_impl_0 *__cself) {
+    // __cself->str 是结构体内部str，即指向内存地址A
+    NSString *__strong str = __cself->str; // bound by copy
+
+    // 这边打印的也是内存地址A的字符串数据，即等风来不如追风去啊
+    NSLog((NSString *)&__NSConstantStringImpl__var_folders_hp_8p1s5vl9501d23q4rjltk8j80000gn_T_main_e485f6_mi_1,str,str);
+}
+
+
+打开汇编:
+libobjc: objc_retainBlock// 真正调用的是 libsystem_blocks: _Block_copy
+objc_storeStrong
+_Block_object_dispose
+
+
+// Copy, or bump refcount, of a block.  If really copying, call the copy helper if present.
+void *_Block_copy(const void *arg) {
+    
+    // block都是`Block_layout`类型
+    struct Block_layout *aBlock;
+
+    // 没有内容，直接返回空
+    if (!arg) return NULL;
+    
+    // The following would be better done as a switch statement
+    // 将内容转变为`Block_layout`结构体格式
+    aBlock = (struct Block_layout *)arg;
+    // 检查是否需要释放
+    if (aBlock->flags & BLOCK_NEEDS_FREE) {
+        latching_incr_int(&aBlock->flags);
+        return aBlock;
+    }
+    // 如果是全局Block,直接返回
+    else if (aBlock->flags & BLOCK_IS_GLOBAL) {
+        return aBlock;
+    }
+    //
+    else {
+        // Its a stack block.  Make a copy.
+        // 进入的是栈区block，拷贝一份
+        // 开辟一个大小空间的result对象
+        struct Block_layout *result =
+            (struct Block_layout *)malloc(aBlock->descriptor->size);
+        // 开辟失败，就返回
+        if (!result) return NULL;
+        // 内存拷贝：将aBlock内容拷贝到result中
+        memmove(result, aBlock, aBlock->descriptor->size); // bitcopy first
+#if __has_feature(ptrauth_calls)
+        // Resign the invoke pointer as it uses address authentication.
+        //result的invoke指向aBlock的invoke。
+        result->invoke = aBlock->invoke;
+#endif
+        // reset refcount
+        // BLOCK_REFCOUNT_MASK|BLOCK_DEALLOCATING ：前16位都为1
+        // ~(BLOCK_REFCOUNT_MASK|BLOCK_DEALLOCATING)：前16位都为0
+        // 与操作，结果为前16位都为0 引用计数为0
+        result->flags &= ~(BLOCK_REFCOUNT_MASK|BLOCK_DEALLOCATING);    // XXX not needed
+        // 设置为需要释放，引用计数为1
+        result->flags |= BLOCK_NEEDS_FREE | 2;  // logical refcount 1
+        // 生成desc，并记录了result和aBlock
+        _Block_call_copy_helper(result, aBlock); //
+        // Set isa last so memory analysis tools see a fully-initialized object.
+        // 设置isa为堆区Block
+        result->isa = _NSConcreteMallocBlock;
+        return result;
+    }
+}
+
+block真正的类型 原来它是 Block_layout 类型的结构体
+
+1、如果需要释放的(堆是由程序员管理的) 也就是 堆block的，增加引用计数 返回
+2、如果是全局的，直接返回
+3、如果是栈block.：从栈中 copy到 堆中； 过程： malloc开辟空间 ->memmove内存拷贝 ->invoke 指针拷贝->flag引用计数 设置为1 ->生成desc ->设置isa为堆block ->返回堆block.
+
+
+struct Block_layout {
+    void *isa;
+    volatile int32_t flags; // contains ref count
+    int32_t reserved;
+    BlockInvokeFunction invoke;
+    struct Block_descriptor_1 *descriptor; //
+    // imported variables
+};
+
+isa : 它就是标记为是什么类型的block。
+flags: 标识码（每一位都有特殊含义）
+reserved ： 保留字段
+invoke : block执行函数（存储执行代码块）
+descriptor: Block详细信息
+
+Flags:标识码
+// Values for Block_layout->flags to describe block objects
+enum {
+    BLOCK_DEALLOCATING =      (0x0001),  // runtime
+    BLOCK_REFCOUNT_MASK =     (0xfffe),  // runtime
+    BLOCK_NEEDS_FREE =        (1 << 24), // runtime
+    BLOCK_HAS_COPY_DISPOSE =  (1 << 25), // compiler
+    BLOCK_HAS_CTOR =          (1 << 26), // compiler: helpers have C++ code
+    BLOCK_IS_GC =             (1 << 27), // runtime
+    BLOCK_IS_GLOBAL =         (1 << 28), // compiler
+    BLOCK_USE_STRET =         (1 << 29), // compiler: undefined if !BLOCK_HAS_SIGNATURE
+    BLOCK_HAS_SIGNATURE  =    (1 << 30), // compiler
+    BLOCK_HAS_EXTENDED_LAYOUT=(1 << 31)  // compiler
+};
+flags的赋值。按bit位表示一些block的附加信息，类似 isa中的位域，其中flags的种类有上面几种
+
+struct Block_descriptor_1 {
+    uintptr_t reserved;
+    uintptr_t size;
+};
+
+// 可选
+#define BLOCK_DESCRIPTOR_2 1
+struct Block_descriptor_2 {
+    // requires BLOCK_HAS_COPY_DISPOSE
+    BlockCopyFunction copy;
+    BlockDisposeFunction dispose;
+};
+
+#define BLOCK_DESCRIPTOR_3 1
+struct Block_descriptor_3 {
+    // requires BLOCK_HAS_SIGNATURE
+    const char *signature;
+    const char *layout;     // contents depend on BLOCK_HAS_EXTENDED_LAYOUT
+};
+
+总结:
+block真正的底层结构为block_layout, 它里面包含 isa ，isa为最终确定的类型。
+还有flag ， 类似 isa中的位域 。它里面记录着当前block的状态，如是否需要释放，是否是global ，是否需要签名进行消息发送等。
+运行时会调用block_copy，通过编译期的flag判断当前block的类型，如果是 需要释放的 操作引用计数并返回，如是全局block不做任何操作返回，如果是栈区的block 需要将 栈区的block Copy 到堆上，（申请内存空间 ，将栈区的block拷贝的堆区 ，将 block的执行函数 invoke拷贝，重新设置 flages 类型，生成对应的 desc,设置 isa类型为堆block） 此时block为最真实的状态。
+
+_Block_call_copy_helper:
+static void _Block_call_copy_helper(void *result, struct Block_layout *aBlock)
+{
+    struct Block_descriptor_2 *desc = _Block_descriptor_2(aBlock);
+    if (!desc) return;
+
+    (*desc->copy)(result, aBlock); // do fixup
+}
+
+查看descriptor访问操作:
+#if 0
+static struct Block_descriptor_1 * _Block_descriptor_1(struct Block_layout *aBlock)
+{
+    return aBlock->descriptor;
+}
+#endif
+
+static struct Block_descriptor_2 * _Block_descriptor_2(struct Block_layout *aBlock)
+{
+    if (! (aBlock->flags & BLOCK_HAS_COPY_DISPOSE)) return NULL;
+    uint8_t *desc = (uint8_t *)aBlock->descriptor;
+    desc += sizeof(struct Block_descriptor_1);
+    return (struct Block_descriptor_2 *)desc;
+}
+
+static struct Block_descriptor_3 * _Block_descriptor_3(struct Block_layout *aBlock)
+{
+    if (! (aBlock->flags & BLOCK_HAS_SIGNATURE)) return NULL;
+    uint8_t *desc = (uint8_t *)aBlock->descriptor;
+    desc += sizeof(struct Block_descriptor_1);
+    if (aBlock->flags & BLOCK_HAS_COPY_DISPOSE) {
+        desc += sizeof(struct Block_descriptor_2);
+    }
+    return (struct Block_descriptor_3 *)desc;
+}
+
+这里可以清晰的看到，默认获取 block_layout 里 descriptor信息
+根据 block_layout里的flags& BLOCK_HAS_COPY_DISPOSE 如果为真 证明 有descriptor_2附加信息。 拿到 descripor1的指针 平移自身大小 得到 descriptor_2。
+根据 block_layout里的flags& BLOCK_HAS_SIGNATURE 如果为真 证明 有descriptor_3附加结构体信息。首先拿到 拿到 descripor1的指针 平移其自身大小 ,并查看是否有descriptor_2附加结构体，如果有，那么在平移加上 decriptor2大小 ,最终得到 descriptor_3
+
+
+当底层调用完Block_copy 其真实的block类型就会确定
+
+
+block clang的desc结构体会多出两个函数。
+还记的blockLayout结构体中desc吗？它的desc有可选的拓展结构体，
+是根据 blockLayout里的flags&上 枚举来确定是否拥有，在这里用__block修饰之后，
+它多出的这两个函数正好和descriptor_2一一对应。
+
+他们底层调用的同属 _Block_object_assign 和 _Block_object_dispose函数
+
+_Block_object_assign:
+void _Block_object_assign(void *destArg, const void *object, const int flags) {
+    const void **dest = (const void **)destArg;
+   
+    switch (os_assumes(flags & BLOCK_ALL_COPY_DISPOSE_FLAGS)) {
+     
+        case BLOCK_FIELD_IS_OBJECT:
+        /*******
+        id object = ...;
+        [^{ object; } copy];
+        ********/
+        // objc 指针地址 weakSelf (self)
+            // arc
+        _Block_retain_object(object);
+            // 持有
+        *dest = object;
+        break;
+
+      case BLOCK_FIELD_IS_BLOCK:
+        /*******
+        void (^object)(void) = ...;
+        [^{ object; } copy];
+        ********/
+            
+            // block 被一个 block 捕获
+
+        *dest = _Block_copy(object);
+        break;
+    
+      case BLOCK_FIELD_IS_BYREF | BLOCK_FIELD_IS_WEAK:
+      case BLOCK_FIELD_IS_BYREF:
+        /*******
+         // copy the onstack __block container to the heap
+         // Note this __weak is old GC-weak/MRC-unretained.
+         // ARC-style __weak is handled by the copy helper directly.
+         __block ... x;
+         __weak __block ... x;
+         [^{ x; } copy];
+         ********/
+            
+        *dest = _Block_byref_copy(object);
+        break;
+        
+      case BLOCK_BYREF_CALLER | BLOCK_FIELD_IS_OBJECT:
+      case BLOCK_BYREF_CALLER | BLOCK_FIELD_IS_BLOCK:
+        /*******
+         // copy the actual field held in the __block container
+         // Note this is MRC unretained __block only. 
+         // ARC retained __block is handled by the copy helper directly.
+         __block id object;
+         __block void (^object)(void);
+         [^{ object; } copy];
+         ********/
+
+        *dest = object;
+        break;
+
+      case BLOCK_BYREF_CALLER | BLOCK_FIELD_IS_OBJECT | BLOCK_FIELD_IS_WEAK:
+      case BLOCK_BYREF_CALLER | BLOCK_FIELD_IS_BLOCK  | BLOCK_FIELD_IS_WEAK:
+        /*******
+         // copy the actual field held in the __block container
+         // Note this __weak is old GC-weak/MRC-unretained.
+         // ARC-style __weak is handled by the copy helper directly.
+         __weak __block id object;
+         __weak __block void (^object)(void);
+         [^{ object; } copy];
+         ********/
+
+        *dest = object;
+        break;
+
+      default:
+        break;
+    }
+}
+
+如果是block类型的变量，又会回到_Block_copy操作，将block从栈 拷贝到堆区。
+如果是__block修饰的变量，调用_Block_byref_copy函数，进行内存拷贝及处理。
+
+ 
+// Runtime support functions used by compiler when generating copy/dispose helpers
+
+// Values for _Block_object_assign() and _Block_object_dispose() parameters
+enum {
+    // see function implementation for a more complete description of these fields and combinations
+    //普通对象，即没有其他的引用类型
+    BLOCK_FIELD_IS_OBJECT   =  3,  // id, NSObject, __attribute__((NSObject)), block, ...
+    //block类型作为变量
+    BLOCK_FIELD_IS_BLOCK    =  7,  // a block variable
+    //经过__block修饰的变量
+    BLOCK_FIELD_IS_BYREF    =  8,  // the on stack structure holding the __block variable
+    //weak 弱引用变量
+    BLOCK_FIELD_IS_WEAK     = 16,  // declared __weak, only used in byref copy helpers
+    //返回的调用对象 - 处理block_byref内部对象内存会加的一个额外标记，配合flags一起使用
+    BLOCK_BYREF_CALLER      = 128, // called from __block (byref) copy/dispose support routines.
+};
+
+
+_Block_byref_copy:
+static struct Block_byref *_Block_byref_copy(const void *arg) {
+    
+    //强转为Block_byref结构体类型，保存一份
+    struct Block_byref *src = (struct Block_byref *)arg;
+
+    if ((src->forwarding->flags & BLOCK_REFCOUNT_MASK) == 0) {
+        // src points to stack 申请内存
+        struct Block_byref *copy = (struct Block_byref *)malloc(src->size);
+        copy->isa = NULL;
+        // byref value 4 is logical refcount of 2: one for caller, one for stack
+        copy->flags = src->flags | BLOCK_BYREF_NEEDS_FREE | 4;
+        //block内部持有的Block_byref 和 外界的Block_byref 所持有的对象是同一个，这也是为什么__block修饰的变量具有修改能力
+        //copy 和 scr 的地址指针达到了完美的同一份拷贝，目前只有持有能力
+        copy->forwarding = copy; // patch heap copy to point to itself
+        src->forwarding = copy;  // patch stack to point to heap copy
+        copy->size = src->size;
+        //如果有copy能力
+        if (src->flags & BLOCK_BYREF_HAS_COPY_DISPOSE) {
+            // Trust copy helper to copy everything of interest
+            // If more than one field shows up in a byref block this is wrong XXX
+            //Block_byref_2是结构体，__block修饰的可能是对象，对象通过byref_keep保存，在合适的时机进行调用
+            struct Block_byref_2 *src2 = (struct Block_byref_2 *)(src+1);
+            struct Block_byref_2 *copy2 = (struct Block_byref_2 *)(copy+1);
+            copy2->byref_keep = src2->byref_keep;
+            copy2->byref_destroy = src2->byref_destroy;
+
+            if (src->flags & BLOCK_BYREF_LAYOUT_EXTENDED) {
+                struct Block_byref_3 *src3 = (struct Block_byref_3 *)(src2+1);
+                struct Block_byref_3 *copy3 = (struct Block_byref_3*)(copy2+1);
+                copy3->layout = src3->layout;
+            }
+            // ###等价于 __Block_byref_id_object_copy   相当于 __Block_byref_id_object_copy_131的调用(对于NSString)  而这里的调用又会触发 _Block_object_assign###
+            (*src2->byref_keep)(copy, src);
+        }
+        else {
+            // Bitwise copy.
+            // This copy includes Block_byref_3, if any.
+            memmove(copy+1, src+1, src->size - sizeof(*src));
+        }
+    }
+    // already copied to heap
+    else if ((src->forwarding->flags & BLOCK_BYREF_NEEDS_FREE) == BLOCK_BYREF_NEEDS_FREE) {
+        latching_incr_int(&src->forwarding->flags);
+    }
+    
+    return src->forwarding;
+}
+
+
+可以看到被__block包装的变量，真实的类型为Block_byref结构体。
+将栈上的Block_byref 结构体拷贝到堆上，根据大小申请内存空间--> 设置isa为 Null ->设置flags信息
+-> 设置堆上Block_byref结构体的forwarding指针指向 为 自己->更改栈上Block_byref结构体的forwarding 指针指向为堆上的Block_byref ->设置堆byref的size大小 为 栈上的byref的size大小。
+判断如果有copy dispose,（这里我们在上面说过，__block修饰的指针类型，比基本数据类型在包装的结构体中会多出来两个函数，此时和这里是一一对应的）,通过类似上面获取desc2 和desc3的方式，这里是偏移一个Block_byref 大小 拿到 src2也就是包含copy和dispose成员变量的Block_byref_2结构体,来获取 copy和dispose 函数并将其拷贝到堆中。
+判断如果有 layout成员变量，与获取src2一样的效果，这里是偏移一个Block_byref_2的大小来获取src3 并将layout变量拷贝到堆上，也就是堆上Block_byref_3 的变量layout 指向栈中layout。通过调用 byref_keep来实现响应，它就对应外部的__Block_byref_id_object_copy
+
+
+Block_byref 结构体:
+struct Block_byref {
+    void *isa;
+    struct Block_byref *forwarding;
+    volatile int32_t flags; // contains ref count
+    uint32_t size;
+};
+
+struct Block_byref_2 {
+    // requires BLOCK_BYREF_HAS_COPY_DISPOSE
+    BlockByrefKeepFunction byref_keep; // 结构体 __block  对象
+    BlockByrefDestroyFunction byref_destroy;
+};
+
+struct Block_byref_3 {
+    // requires BLOCK_BYREF_LAYOUT_EXTENDED
+    const char *layout;
+};
+
+byref中的flags的枚举:
+// Values for Block_byref->flags to describe __block variables
+enum {
+    // Byref refcount must use the same bits as Block_layout's refcount.
+    // BLOCK_DEALLOCATING =      (0x0001),  // runtime
+    // BLOCK_REFCOUNT_MASK =     (0xfffe),  // runtime
+
+    BLOCK_BYREF_LAYOUT_MASK =       (0xf << 28), // compiler
+    BLOCK_BYREF_LAYOUT_EXTENDED =   (  1 << 28), // compiler
+    BLOCK_BYREF_LAYOUT_NON_OBJECT = (  2 << 28), // compiler
+    BLOCK_BYREF_LAYOUT_STRONG =     (  3 << 28), // compiler
+    BLOCK_BYREF_LAYOUT_WEAK =       (  4 << 28), // compiler
+    BLOCK_BYREF_LAYOUT_UNRETAINED = (  5 << 28), // compiler
+
+    BLOCK_BYREF_IS_GC =             (  1 << 27), // runtime
+
+    BLOCK_BYREF_HAS_COPY_DISPOSE =  (  1 << 25), // compiler
+    BLOCK_BYREF_NEEDS_FREE =        (  1 << 24), // runtime
+};
+
+在_Block_byref_copy中我们看到src2->byref_keep，其实就是调用外部的__Block_byref_id_object_copy_131
+
+__Block_byref_id_object_copy_131入参里面，有一个内存平移40
+因为 内存偏移 40才能取到 NSstring*__strong str
+
+而131 = 128 +3，其中128表示BLOCK_BYREF_CALLER --> 代表__block变量有copy/dispose的内存管理辅助函数
+我们这里示例的对象类型为NSString,就表示上述枚举中这个 BLOCK_FIELD_IS_OBJECT，也就是继承NSObjcet类型的 id类型的 为3，然后和copy函数拼接起来就是 __Block_byref_id_object_copy_131
+
+
+详细总结:
+Block真正的底层是Block_layout 对象，clang编译器 会根据捕获类型，来动态的改变，及生成对应的数据结构。
+
+如用__block修饰后的对象，clang编译器会将其封装为一个byref的结构体对象，此结构体对象在底层真正的类型为 Block_byref 结构体。
+
+
+在运行时 会调用Block_copy 函数 通过 block_layout对象中的flags标记 判断当前block的类型及状态。
+如果是需要释放的 那么 只操作引用计数并返回，如果是全局block那么直接返回，如果是栈区的block， 开辟内存空间 ，设置属性为堆区的标识及一些设置。
+其中最具代表性的属性为 desc ，在默认情况下block的描述desc只有一个，当被__block修饰之后 ，clang编译器会在desc结构体中多出两个函数copy/dispose 底层会根据 block的flags 标识 来判断是否拥有 desc2 或者 desc3 的block的拓展信息
+如判断拥有 copy/dispose 函数，那么会执行copy函数此时会调用Block_object_assign函数 此函数中同样的会判断当前捕获的是什么类型，进行不同的处理， 此时是__block修饰的变量也就byref结构体 将会掉起 _Block_byref_copy 函数，此函数正是对byref结构体 从栈中copy到堆中的操作， 类似block的copy。
+首先开辟内存，设置 属性为堆区的标识及一些设置，这里重要的操作为，将堆区的forwarding指针 指向 堆区的Block_byref自己.将栈区的forwarding指针指向更改为堆区的Block_byref结构体。并设置 栈区的大小。
+同样根据栈区的byref标识flags判断是否支持 copy/和dispose函数，如果支持，通过指针平移获取栈区堆区的 Block_byref2 拓展结构体, 从栈区的这两个函数指针赋值 堆区的 Block_byref2 中。
+再此判断中还判断了是否支持layout拓展，如支持 同样通过指针平移获取栈区堆区的 Block_byref3拓展结构体，从栈区的这个函数指针赋值 堆区的 Block_byref3 中.
+如支持copy/dispose 函数 那么将再次发起 Block_object_assign函数调用，此时进行的是通过Block_byref结构体偏移获取被修饰的指针变量进行 指针copy 也就是引用计数+1
+
+
+也就是 __block修饰的基本数据类型会进行 二次copy 一个是block的copy 一个是byref结构体的copy 都是从 栈中 copy到堆中。
+
+如果修饰的是指针类型，那么会进行三次 copy，前两次和上面一样，最后一次 会对修饰的原始指针，进行 指针copy引用计数+1.

@@ -1,0 +1,74 @@
+和底层相关的api或者命名中我们可以通过其命名方式就可以知道大概作用。
+· 含有managed的类型: 内存是自动管理的。编译器为你申请，初始化并且释放内存。
+· 含有unsafe的类型: 不提供自动的内存管理(这个managed正好相反)。你需要明确地进行内存申请，初始化，销毁和回收。
+· 含有buffer类型: 表示作用于一连串的多个元素，而非一个单独的元素上，它也提供了 Collection 的接口。
+· 含有raw类型: 包含无类型的原始数据，它和C的void*是等价的。在类型名字中不包含raw 的类型的数据是具有类型的。
+· 含有mutable类型: 允许它指向的内存发生改变。
+
+除了OpaquePointerType之外，swift 中还有另外八种指针类型，都用来映射 C 中不同的指针。
+
+const int* (一个指向不可变数据的可变指针)   等效于swift中的UnsafePointer
+int* const (一个不可变指针，或者 说，你不能改变这个指针指向的位置) 
+两者是不一样的
+
+
+在任意类型正确的可变变量前面加上 & 符号，可以将它们转变 in-out 表达式:
+var x = 5 
+func fetch(p: UnsafePointer<Int>) -> Int {
+    return p.pointee 
+}
+fetch(p: &x) // 5
+
+
+Swift 中申请内存的方式，其实和C中是很像的。 1.先申请内存。 2.初始化。 3.使用。 4.不用就释放。
+// 申请两个 Int 的内存，并初始化它们
+let z = UnsafeMutablePointer<Int>.allocate(capacity: 2) z.initialize(to: 42, count: 2)
+z.pointee // 42
+//指针计算:
+(z+1).pointee = 43
+//下标:
+z[1] // 43
+//销毁内存
+// 如果被指的是一个非平凡值 (⽐如类实例)，那么你需要 // 在调⽤用 deallocate 之前先 deinitialize z.deallocate(capacity: 2)
+// 不不要在 deallocate 之后在访问被指向的值
+在申请内存后，你必须对其进行初始化，之后 才能使用它。一旦你不再需要这个指针，你需要释放内存。
+
+==================================================
+swift 的最大优点就是与C 或者 OC 混编的时候稳的一匹. Demo:
+如何封装C语言中的CommonMark库(和markdown语法规范相关的一个库)，提供更符合swift风格的API.
+https://github.com/chriseidhof/commonmark-swift
+
+SwiftPM 之桥接 C 库
+https://xiaozhuanlan.com/topic/6410729835
+
+==================================================函数指针
+public func qsort(
+_ __base: UnsafeMutableRawPointer!,
+_ __nel: Int,
+_ __width: Int,
+_ __compar: @escaping @convention(c) (UnsafeRawPointer?,
+UnsafeRawPointer?)
+-> Int32)
+
+
+func qsortStrings(array: inout [String]) {
+    qsort(&array, array.count, MemoryLayout<String>.stride) { a, b in
+    let l = a!.assumingMemoryBound(to: String.self).pointee 
+    let r = b!.assumingMemoryBound(to: String.self).pointee 
+    if r > l {
+        return -1
+    }else if r == l {
+        return 0 
+    } else { 
+        return 1 
+    } 
+}
+}
+
+第一个参数 指向数组首个元素的指针。这和使用 Swift 函数的 inout 参数的规则是一样的。
+
+第二个参数 元素的个数。数组的count属性就可以了。
+
+第三个参数 元素的宽度,使用了MemoryLayout.stride获取,而不是用MemoryLayout.size(由于空隙宽度的原因可能会不准确)。
+
+最后一个参数 一个指向C函数的指针，这个C函数用来比较数组中的两个元素。

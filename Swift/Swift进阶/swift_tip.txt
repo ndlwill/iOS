@@ -1,0 +1,533 @@
+https://github.com/Liaoworking/Advanced-Swift
+
+
+代码规范性:
+https://github.com/raywenderlich/swift-style-guide
+https://github.com/github/swift-style-guide
+https://github.com/airbnb/swift
+
+代码格式检查工具:
+https://github.com/realm/SwiftLint
+
+代码格式化:
+https://github.com/nicklockwood/SwiftFormat
+
+Tips:
+1.需要把后台发给我们的不同模块音乐模型(ChildrenSongModel, PodcastModel)转换成统一的音乐模型(GenernalMusicModel)。
+通过给具体的模型创建extension， 在extension中创建generalMusicModel的计算型属性
+
+2.自定义协议如何规范命名？
+1. 以able结尾: Codable 表示当前协议可以添加一个新的功能。
+2. 以Type结尾：CollectionType 表示当前协议可以表示一种类型。
+3. 以Convertable结尾：CustomStringConvertible 表示当前协议可以做类型转换。
+
+3.array.isEmpty 效率比 arrya.count 更高
+isEmpty 方法只有检查arraystartIndex == endIndex
+而count的底层是遍历整个array求集合长度。当数组长度过大时性能低
+
+不仅isEmpty效率高，而且会更安全
+有时候我们判断一个array? 是否为空会写出下面这样代码
+
+var array:[String]?
+/// 一番array 操作后
+if array?.count != 0 {
+    ///当数组长度不为0时
+    doSomething()
+} 
+其实当array为nil时 也会走doSomething() 的逻辑 这个时候可能就会出现逻辑上的bug.
+
+4.
+操作集合我们经常会用到map、filter、reduce等函数，有时候可以使用标准库的其他API使性能提升。
+
+// 取一个集合中第一个大于0的数
+let numberArray = [-4,1,-1,2,3,9]
+let firstPositiveNumber = numberArray.first(where: { $0 > 0 })    ✅
+
+let firstPositiveNumber = numberArray.filter { $0 > 0 }.first    ❌
+// 第一个方法遍历到符合条件的元素后即停止，  第二个方法在所有元素都遍历完一遍后再去找第一个。
+
+// 同上面还有 取出集合中的最大最小元素
+let minNumber = numberArray.min()    ✅
+let maxNumber = numberArray.max()    ✅
+
+let minNumber = numberArray.sorted().first    ❌
+let maxNumber = numberArray.sorted().last     ❌
+
+
+在Swift4.2的时候推出了allSatisfy(_:) 的用法，用于判断是否所有元素满足某一条件。
+某些时候可以替换filter。且对于长集合性能提升很大 具体使用场景如下：
+// 判断是不是所有的元素都是大于0   isAllPositive为Bool
+let isAllPositive = numberArray.allSatisfy { $0 > 0 }    ✅✅✅
+
+let isAllPositive = numberArray { $0 > 0 }.isEmpty   ❌❌❌
+// 第一个方法在遇到第一个元素不不符合条件就遍历结束 直接返回false
+// 第二个方法需要把所有的元素都遍历一遍后再去看是否是isEmpty  长集合会性能低下。
+
+
+判断是否包含一个元素： contains的性能要优于使用filter(_:) 和 first(where:)的用法
+// 判断是否包含 -1 这个元素
+
+let isContiansNagtiveOne = numberArray.contains(-1) ✅
+
+let isContiansNagtiveOne = numberArray.filter { $0 == -1 }.isEmpty == false  ❌
+let isContiansNagtiveOne = numberArray.first(where: { $0 == -1 }) != nil  ❌
+
+5.将你时常需要的常量封装成你需要的属性
+OC中的宏是我们在之前开发中经常用到的一些常用属性的封装。
+在swift中我们可以通过在extension中创建一些类属性
+
+extension UIFont {
+    /// APP中大标题的字体
+    static let appLargeTitle = UIFont.systemFont(ofSize: 24)
+}
+
+extension UIColor {
+    /// APP主题色
+    static let appMain = UIColor.yellow
+}
+
+let titleLabel = UILabel()
+titleLabel.font = .appLargeTitle
+titleLabel.backgroundColor = .appMain
+
+
+6.当你需要的返回值有成功或者失败两种情况，而且成功或者失败的情况有很多种的话。推荐你使用Swift5以后推出的Result类型。
+
+7.同样在Swift5.0中添加了bool值的新方法toggle()， 它的主要作用是让Bool值取反。
+
+8.使用@autoclosure 关键字，让你的没有参数的闭包做函数的参数时，代码阅读性更强
+@autoclosure算是使用机会比较少的一个关键字了，唯一的作用是使代码变的美观一些。使闭包的描述不再使用{}, 而是更参数化用()。
+
+9.switch 语句中尽量少的使用default 分支
+当我们添加新的case时候 有些没有cover到的地方没有编译报错就会产生一些逻辑错误。
+如果觉得编译报错太烦可以使用swift 5 出来的@unknown 关键字修饰default 分支 让新添加的case以编译警告的形式出现。
+
+10.
+打印 枚举的case名，输出并不是枚举的value值而是case的字面名字。
+enum Animal: String {
+    case human = "H"
+    case dog = "D"
+    case cat = "C"
+}
+enum TimeUtile: Int {
+    case second = 1
+    case minute = 60
+    case hour = 3600
+}
+
+var animal: Animal = .human
+var time: TimeUtile = .second
+print(animal) // human
+print(animal.rawValue) // H
+print(time) // second
+print(time.rawValue) // 1
+
+
+11.
+多用 guard let 少用 if let
+// 使用 if let 嵌套太多 不利于维护 ❌
+if let realOptionalA = optionalA {
+    print("had A")
+    if let realOptionalB = optionalB {
+        print("had A and B")
+        if let realOptionalC = optionalC {
+            print("had A、B and C")
+        }
+    }
+}
+
+// 使用 guard let 调理清楚 便于阅读 ✅
+guard let realOptionalA = optionalA else { return }
+print("had A")
+guard let realOptionalB = optionalB else { return }
+print("had A and B")
+guard let realOptionalC = optionalC else { return }
+print("had A、B and C")
+
+12.快速为Class生成带有属性的初始化方法
+在struct中， 编译器会自动生成带有属性的初始化方法。
+
+struct User {
+    let name: String?
+    var age: Int?
+}
+// 可直接调用
+User(name: String?, age: Int?)
+但对于class就没有对于的初始化方法。我们可以使用XCode提供的辅助功能来生成对应的初始化方法。
+
+class Book {
+    let name: String?
+    let pageCount: Int?
+}
+
+13.
+自定义enum中尽量不要使用 case none的枚举项。
+原因Swift 自带 Optional 也有一个 case none的枚举。易混淆。
+
+14.用枚举去定义一些静态的tableView数据源会让代码变的更简洁。
+假设某电商app首页的tableView有4个section
+
+// 电商首页的tableView 分组
+//CaseIterable 用来获取枚举项个数
+enum HomeSectionType: Int, CaseIterable {
+    // banner位
+    case banner = 1
+    // 合辑
+    case menu = 2
+    // 推荐
+    case recommend = 3
+    // 商品
+    case goods = 4
+    
+    // 枚举内部封装组头高度的计算方法
+    var headerHeight: CGFloat {
+    switch self :
+    case banner:
+        return 88.88
+        .....
+    }
+    
+}
+
+// tableView 代理
+func numberOfSections(in tableView: UITableView) -> Int {
+    return HomeSectionType.allCases.count
+ }
+// 获取组头高度
+func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {  
+    guard let sectionType = HomeSectionType(rawValue: section) else { return 0.0 }
+    return sectionType.headerHeight
+}
+
+CaseIterable协议可以让你的枚举具备Array相关的属性，如count 还有一个好处就是当产品某个版本想要调换section的顺序的时候 可以直接 修改枚举项的Int值即可。
+
+15.方便的push或者present控制器
+日常写法是let vc = UIViewController()
+
+navigationController?.pushViewController(vc)
+
+或者 present(vc, animated: true, completion: nil)
+
+可以给UIViewController添加extension方法， 对 push 和 present 的封装
+
+extension UIViewController {
+  func bePushed(by currentVC: UIViewController?) {
+    currentVC?.navigationController?.pushViewController(self, animated: true)
+  }
+
+  func bePresented(by currentVC: UIViewController?) {
+    currentVC?.present(self, animated: true, completion: nil)
+  }
+}
+
+// 在ViewController中使用如下：  个人感觉这样去弹出一个控制器语义上会更连贯便捷。
+UIViewController().bePushed(by: self)
+UIViewController().bePresented(by: self)
+
+
+16.对通知名的封装
+NotificationCenter.default.addObserver(self, selector: #selector(textViewNotifitionAction), name: UITextView.textDidChangeNotification, object: nil)
+
+我们再日常开发中就会在对于监听的类的extension中去定义通知名
+extension MyClass {
+    public class let MyNotification: NSNotification.Name = ....
+}
+如果想全局管理你的通知，而且更方便的使用通知名可以使用下面这种方式
+
+/// 创建一个通知名协议
+public protocol NotificationName {
+    var name: Notification.Name { get }
+}
+
+extension RawRepresentable where RawValue == String, Self: NotificationName {
+    public var name: Notification.Name {
+        get {
+            return Notification.Name(self.rawValue)
+        }
+    }
+}
+
+//最后用一个枚举去管理你所有的通知名
+/// 所有通知名
+public enum Notifications: String, NotificationName {
+    /// 自定义某某通知
+    case myNotification
+}
+
+// 使用
+NotificationCenter.default.addObserver(self, selector: #selector(fromMyNotification(notification:)), name: Notifications.myNotification.name, object: nil)
+
+优点：1.规避了通知名同名的可能性。 2.书写起来更方便。 3.方便查找管理。
+
+17.适当使用别名typealias让你的代码可读性更高
+struct Page { }
+// 章节
+var myChapter: [Page] = []
+// 一本书
+var  myBook: [[Page]] = []
+
+但如果我们用别名去定义章节类型和书类型
+
+// 章节
+typealias Chapter = [Page]
+// 书
+typealias Book = [Chapter]
+
+var myChapter: Chapter = []
+var myBook: Book = []
+这样的好处可以让代码可读性更强,以后在项目中看到Chapter 和 Book 就知道表示的是章节和书了。
+
+18.
+使用自定义运算符让你的连续异步顺序执行的回调更优雅
+现在有一个需求： 在一个引导之后去顺序执行其他的引导， 或者一个网络请求完去顺序执行另外的网络请求。
+func asyncTask1(success: @escaping ()->Void) {
+    // After a while
+    success()
+}
+
+func asyncTask2(success: @escaping ()->Void) {
+    // After a while
+    success()
+}
+
+func asyncTask3(success: @escaping ()->Void) {
+    // After a while
+    success()
+}
+
+// 方法调用 多重闭包嵌套 阅读成本太大  不建议 ❌
+func start() {
+    asyncTask1 {
+        asyncTask2 {
+            asyncTask3 {
+                // finished, do something here
+            }
+        }
+    }
+}
+
+在Swift中我们可以自定义运算符， 可以通过自定义操作符写出下面这样的代码
+
+// >--> 为我们自定义的运算符  >-->左边的方法执行完再去执行右边的方法 
+// 所有的方法都执行完后会调用 finish   方便阅读 ✅
+asyncTask1 >--> asyncTask2 >--> asyncTask3 {
+// finished,do something here
+}
+
+
+typealias MyVoidClosure = ()->Void
+
+/// 定义优先级组
+precedencegroup MyAsyncPrecedencegroup {
+    associativity: left // 从左往右执行
+    assignment: false // 不可以赋值
+}
+
+infix operator >-->: MyAsyncPrecedencegroup  // 遵守 MyAsyncPrecedencegroup 优先级组
+
+/// 这里的逃逸闭包写的有点丑 本来想用alias来简化  发现语法不支持。
+func >-->(lhs:@escaping ((@escaping MyVoidClosure) -> Void),
+          rhs: @escaping ((@escaping MyVoidClosure) -> Void))
+          -> (@escaping MyVoidClosure) -> Void {
+
+  return { complete in
+    lhs {
+      rhs {
+          complete()
+      }
+    }
+  }
+  
+}
+
+
+运算符的定义和使用：
+https://swiftgg.gitbook.io/swift/swift-jiao-cheng/27_advanced_operators#custom-operators
+
+
+19.
+利用compactMap优雅解包。
+为了明确区分flatMap函数的使用场景，在Swift4.1时候推出compactMap函数来加以区分。 一般使用是用来过滤集合中的nil。
+
+var array: [String?]?
+
+我们想要安全的取出array里面的第一个元素
+
+平时的使用：
+
+// 这个时候array1元素的类型是 [String?], 如果需要安全的使用array1 需要二次对array1解包   ❌
+guard let array1 = array, let firstObject1 = array1.first, let realFirstObject = firstObject1 else { return }
+使用 compactMap
+
+// 使用compactMap后 array的类型是[String]   ✅
+guard let array2 = array?.compactMap({$0}), let firstObject2 = array2.first else { return }
+
+
+20.利用Swift的泛型优雅封装圆角带阴影的视图
+https://juejin.cn/user/1785262613725287/posts
+
+/// 阴影圆角的视图
+class CornerShadowView<T: UIView>: UIView {
+    
+    var childView: T = T()
+    
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        configBaseUI()
+    }
+    
+    private func configBaseUI() {
+        childView = T()
+        addSubview(childView)
+        childView.frame = bounds
+    }
+  
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+
+// 设置泛型的具体类为 UIButton
+let cornerShadowView = CornerShadowView<UIButton>(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+// UIButton的基本属性设置
+cornerShadowView.childView.setTitle("Hi", for: .normal)
+
+// UIButton的圆角属性设置 可以进行二次封装，略。
+cornerShadowView.childView.backgroundColor = .red
+cornerShadowView.childView.layer.cornerRadius = 50
+cornerShadowView.childView.layer.masksToBounds = true
+
+// 阴影设置 可以进行二次封装，略。
+cornerShadowView.layer.shadowColor = UIColor.black.cgColor
+cornerShadowView.layer.shadowOffset = .zero
+cornerShadowView.layer.shadowRadius = 20
+cornerShadowView.layer.shadowOpacity = 0.8
+
+21.运用别名使代码可读性更高
+struct Page { }
+// 章节
+var myChapter: [Page] = []
+// 一本书
+var  myBook: [[Page]] = []
+但如果我们用别名去定义章节类型和书类型
+
+// 章节
+typealias Chapter = [Page]
+// 书
+typealias Book = [Chapter]
+
+var myChapter: Chapter = []
+var myBook: Book = []
+
+
+22.把常用的DateFormatter封装到枚举体中使用
+/// 项目中常用的时间格式枚举
+enum DateFormatterType: String {
+  /// yyyy-MM-dd
+  case yyyy_MM_dd = "yyyy-MM-dd"
+  /// yyyy.MM.dd
+  case yyyy_MM_dd_dot = "yyyy.MM.dd"
+  /// yyyy 年 MM 月
+  case yyyy_MM_chinese = "yyyy 年 MM 月"
+  /// yyyy年MM月
+  case yyyyMM_chinese = "yyyy年MM月"
+  /// yyyy/MM/dd
+  case yyyyMMdd_slash = "yyyy/MM/dd"
+  /// yy 年 M 月 d 日 HH:mm
+  case yy_M_d_HH_mm_chinese = "yy 年 M 月 d 日 HH:mm"
+  
+  func makeDateString(of timeStamp: Double, isMileSecond: Bool = true) -> String {
+    //把时间戳转换成指定的格式
+  }
+}
+
+// 具体的调用
+DateFormatterType.yyyy_MM_dd.makeDateString(of: 1626318786)
+
+==================================================Swift编译加速的Tips:
+// 讲编译优化的文档
+https://github.com/fastred/Optimizing-Swift-Build-Times
+
+//:configuration = Debug
+ONLY_ACTIVE_ARCH = YES
+
+//:configuration = Debug
+SWIFT_COMPILATION_MODE = singlefile
+//:configuration = Release
+SWIFT_COMPILATION_MODE = wholemodule
+
+//:configuration = Debug
+SWIFT_OPTIMIZATION_LEVEL = -Onone
+//:configuration = Release
+SWIFT_OPTIMIZATION_LEVEL = -O
+
+Other Swift Flags: Debug
+-Xfrontend -warn-long-function-bodies=100 (100 means 100ms here, you should experiment with this value depending on your computer speed and project)
+-Xfrontend -warn-long-expression-type-checking=100
+
+
+Showing build times in Xcode:
+defaults write com.apple.dt.Xcode ShowBuildOperationDuration -bool YES
+I recommend comparing build times under same conditions each time:
+Quit Xcode.
+Clear Derived Data ($ rm -rf ~/Library/Developer/Xcode/DerivedData).
+Open your project in Xcode.
+Start a build either immediately after Xcode opens or after indexing phase completes. The first approach seems to be more representative because starting with Xcode 9 building also performs indexing.
+
+全量编译和增量编译:
+增量编译–对用户源程序局部修改后进行的重新编译的工作只限于修改的部分及与之相关部分的内容。相关部分的确定由编译系统确定，对用户是透明的。增量编译对软件开发，尤其是在调试期，可以大大缩短编译时间， 提高编译效率，这也是增量编译的优势所在。
+全量编译–对用户源程序局部修改后进行的重新编译的工作涉及全部源代码，并不只限于局部修改及其相关部分。换句话说，无论是否有修改，全量编译都将进行一次全新的完整的编译，并不基于上一次的编译基础。
+一般来说，在软件开发中，全量编译用于版本的构建与发布，比较耗费时间和资源。而处于调试期的程序，一般都采用增量编译，这样对于问题的定位和解决都比省时省力。
+
+Ccache — a fast C/C++ compiler cache
+
+// 优化的神器
+https://github.com/RobertGummesson/BuildTimeAnalyzer-for-Xcode
+
+// Learn about leaking view controllers without opening Instruments.
+https://github.com/fastred/DeallocationChecker
+
+如何找出项目中编译耗时的代码？
+它能帮助我们找到项目中需要编译优化的函数，并量化具体的优化时间。
+在Build Settings ➔ Swift Compiler - Custom Flags ➔ Other Swift Flags 中添加.
+
+///<limit>为warning的编译时间阈值
+-Xfrontend -warn-long-function-bodies=<limit>
+-Xfrontend -warn-long-expression-type-checking=<limit>
+
+1.使用 + 拼接可选字符串会极其耗时
+改写成 "\(string1)\(string2)"的形式
+let finalResult = (dbWordModel?.vocabularyModel?.justSentenceExplain ?? "") + "<br/>" + (dbWordModel?.vocabularyModel?.justSentence ?? "")
+优化后
+let finalResult = "\(dbWordModel?.vocabularyModel?.justSentenceExplain ?? "")<br/>\(dbWordModel?.vocabularyModel?.justSentence ?? "")"
+
+2.可选值使用??赋默认值再嵌套其他运算会极其耗时。
+优化方法： 使用guard let 解包。
+guard let dbSentenceExp = dbWordModel?.vocabularyModel?.justSentenceExplain,
+let dbSentence = dbWordModel?.vocabularyModel?.justSentence else { return }
+let finalResult = "\(dbSentenceExp)<br/>\(dbSentence)"
+
+3.将长计算式代码拆分 最后组合计算。
+let totalTime = (timeArray.first?.float()?.int ?? 0) * 60 + (timeArray.last?.float()?.int ?? 0)
+优化拆分后
+let firstPart: Int = (timeArray.first?.float()?.int ?? 0)
+let lastPart: Int = (timeArray.last?.float()?.int ?? 0)
+let totalTime = firstPart * 60 + lastPart
+
+4.与或非和>=,<=,==逻辑运算嵌套Optional会比较耗时。
+if (homeMainVC?.scrollview.contentOffset.y ?? 0) >= ((homeMainVC?.headHeight ?? 0) - (homeMainVC?.ignoreTopSpeace ?? 0)) {
+
+}
+优化后
+let leftValue: CGFloat =  homeMainVC?.scrollview.contentOffset.y ?? 0
+let rightValue: CGFloat = (homeMainVC?.headHeight ?? 0.0) - (homeMainVC?.ignoreTopSpeace ?? 0.0)
+if leftValue == rightValue {
+}
+
+5.手动增加类型推断会降低编译时间
+let leftValue =  homeMainVC?.scrollview.contentOffset.y ?? 0
+let rightValue = (homeMainVC?.headHeight ?? 0.0) - (homeMainVC?.ignoreTopSpeace ?? 0.0)
+优化后
+let leftValue: CGFloat =  homeMainVC?.scrollview.contentOffset.y ?? 0
+let rightValue: CGFloat = (homeMainVC?.headHeight ?? 0.0) - (homeMainVC?.ignoreTopSpeace ?? 0.0)

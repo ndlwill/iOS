@@ -271,6 +271,15 @@ public extension String {
         return hashString
     }
     
+    // alphanumerics: 字母数字
+    // 先将原来的字符串分割，分割结果不是Character，也不是String，而是String.UnicodeScalarView的切片数组，然后通过map转化成String达到想要的结果。
+    // for test: "Wow! This contains _all_ kinds of things like 123 and \"qoutes\"?"
+    func words(with characterSet: CharacterSet = .alphanumerics) -> [String] {
+        self.unicodeScalars.split {
+            !characterSet.contains($0)
+        }.map(String.init)
+    }
+    
 }
 
 extension Optional where Wrapped == String {

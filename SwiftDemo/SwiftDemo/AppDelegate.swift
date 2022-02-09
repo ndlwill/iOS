@@ -6,12 +6,41 @@
 //  Created by dzcx on 2019/7/17.
 //  Copyright © 2019 dzcx. All rights reserved.
 
+
+
+// MARK: - swift 打印地址
+/**
+ var obj = NSObject()
+ 对象：
+ // obj的指向的内存地址
+ 直接打印obj
+ refrence type引用类型    print(Unmanaged.passUnretained(obj).toOpaque())
+ object instance，metatype    print(ObjectIdentifier(obj))
+ String.init(format: "%p", obj)
+ 
+ UnsafePointer(&obj) 是obj指针局部变量的地址
+ 
+ value type 值类型：
+ print(UnsafePointer(&testType))替换testType 为你的类型
+ */
+
+// MARK: - 进制
 // 16进制 两位算一个字节（0x00）
 // 0xff(16进制) == 11111111（2进制） == 255(10进制)
 // 0xf == 1111 // 1个16进制位等于4个2进制位
 /**
  // 0x00 00 00 00 00 00 00 0A （8个字节的内存存储）
  var age = 10
+ */
+
+// MARK: - data 就是UInt8数组
+/**
+ let str = "110osaskaijiej"
+ let data = str.data(using: .utf8)
+ if let d = data {
+     let bytes = [UInt8](d)
+     print(bytes)
+ }
  */
 
 /**
@@ -169,7 +198,11 @@
 // MARK: iOS14 - Widget
 // https://www.jianshu.com/u/dc87a43e2c18
 
-// MARK: - 图片选择器
+
+// MARK: - 性能监测
+// GDPerformanceView-Swift
+
+// MARK: - 图片选择器###
 // HXPhotoPicker
 
 // MARK: 图片裁剪功能
