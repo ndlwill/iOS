@@ -1,0 +1,682 @@
+TCP 协议（TransmissionControl Protocol，传输控制协议）在LwIP 协议栈中占据了大半的代码，它是最常用传输层协议，也是最稳定传输层协议，很多上层应用都是依赖于TCP 协议进程传输数据，如SMTP、FTP 等等。
+
+1.
+TCP 与UDP 一样，都是传输层的协议，但是提供的服务却大不相同，UDP 为上层应用提供的是一种不可靠的，无连接的服务，而TCP 则提供一种面向连接、可靠的字节流传输服务，TCP 让两个主机建立连接的关系，应用数据以数据流的形式进行传输，这与UDP协议是不一样：
+UDP 运载的数据是以报文的形式，各个报文在网络中互不相干传输，UDP 每收到一个报文就递交给上层应用，因此如果对于大量数据来说，应用层的重装是非常麻烦的，因为UDP 报文在网络中到达目标主机的顺序是不一样的；
+TCP 采用数据流的形式传输，先后发出的数据在网络中虽然也是互不相干的传输，但是这些数据本身携带的信息却是紧密联系的，TCP 协议会给每个传输的字节进行编号，当然啦，两个主机方向上的数据编号是彼此独立的，在传输的过程中，发送方把数据的起始编号与长度放在TCP 报文中，在接收方将所有数据按照编号组装起来，然后返回一个确认，当所有数据接收完成后才将数据递交到应用层中。
+
+
+2.TCP 的特性
+(1)连接机制
+TCP 是一个面向连接的协议，无论哪一方向另一方发送数据之前，都必须先在双方之间建立一个连接，否则将无法发送数据，一个TCP 连接必须有双方IP 地址与端口号。
+
+(2)确认与重传
+一个完整的TCP 传输必须有数据的交互，接收方在接收到数据之后必须正面进行确认，向发送方报告接收的结果，而发送方在发送数据之后必须等待接收方的确认，同时发送的时候会启动一个定时器，在指定超时时间内没收到确认，发送方就会认为发送失败，然后进行重发操作，这就是重传报文。
+TCP 提供可靠的运输层，但它依赖的是IP 层的服务，IP 数据报的传输是无连接、不可靠的，因此它要通过确认来知道接收方确实已经收到数据了。
+但数据和确认都有可能会丢失，因此TCP 通过在发送时设置一个超时机制（定时器）来解决这种问题，如果当超时时间到达的时候还没有收到对方的确认，它就重传该数据。
+
+(3)缓冲机制
+在发送方想要发送数据的时候，由于应用程序的数据大小、类型都是不可预估的，而TCP 协议提供了缓冲机制来处理这些数据，如在数据量很小的时候，TCP 会将数据存储在一个缓冲空间中，等到数据量足够大的时候在进行发送数据，这样子能提供传输的效率并且减少网络中的通信量，而且在数据发送出去的时候并不会立即删除数据，还是让数据保存在缓冲区中，因为发送出去的数据不一定能被接收方正确接收，它需要等待到接收方的确认再将数据删除。
+同样的，在接收方也需要有同样的缓冲机制，因为在网络中传输的数据报到达的时间是不一样的，而且TCP 协议还需要把这些数据报组装成完整的数据，然后再递交到应用层中。
+
+(4)全双工通信
+在TCP 连接建立后，那么两个主机就是对等的，任何一个主机都可以向另一个主机发送数据，数据是双向流通的，所以TCP 协议是一个全双工的协议，这种机制为TCP 协议传输数据带来很大的方便，一般来说，TCP 协议的确认是通过捎带的方式来实现，即接收方把确认信息放到反向传来的是数据报文中，不必单独为确认信息申请一个报文，捎带机制减少了网络中的通信流量。
+由于双方主机是对等的存在，那么任意一方都可以断开连接，此时这个方向上的数据流就断开了，但是另一个 方向上的数据仍是连通的状态，这种情况就称之为半双工。
+
+(5)流量控制
+一条TCP 连接每一侧的主机都设置了缓冲区域。当该接收方收到数据后，它就将数据放入接收缓冲区，当确认这段数据是正常的时候，就会向发送方返回一个确认。
+并且向相关的应用层递交该数据，但不一定是数据刚一到达就立即递交。事实上，接收方应用也许正忙于其他任务，甚至要过很长时间后才会去处理这些数据。
+这样子如果接收方处理这些数据时相对缓慢，而发送方发送得太多、太快，就会很容易地使接收方的接收缓冲区发生溢出。
+
+因此TCP 提供了流量控制服务（flow-control service）以消除发送方使接收方缓冲区溢出的可能性。
+流量控制是一个速度匹配服务，即发送方的发送速率与接收方应用程序的读取速率相匹配，TCP 通过让发送方维护一个称为接收窗口（receive window）的变量来提供流量控制
+是的，你没看错，是接收窗口（rwnd），它用于给发送方一个指示：接收方还能接收多少数据，接收方会将此窗口值放在 TCP 报文的首部中的窗口字段，然后传递给发送方，这个窗口的大小是在发送数据的时候动态调整的。
+
+这个窗口既然是动态调整的，那有没有可能是0，这样子发送方不就是没法继续发送数据到接收方了？
+为了解决这个问题，TCP 协议的规范中有些要求，当接收方主机的接收窗口为0 时，发送方继续发送只有一个字节的报文段，
+这些报文段将被接收方接收，直到缓存清空，并在确认报文中包含一个非0 的接收窗口值。
+
+流量控制是双方通信之间的控制信息，这是很有必要的，比如两个新能不对等的主机，建立了TCP 协议连接，但是其中一个主机一直发送数据，但是接收的主机来不及处理，这样子的处理就不是最佳的，
+因此，TCP 协议中使用滑动窗口（Sliding window）的流量控制方法，它允许接收方根据自身的处理能力来确定能接收数据的多少，因此会告诉发送方可以发送多少数据过来，即窗口的大小，
+而发送方尽可能将数据都多发到对方那里，所以发送方会根据这个窗口的大小发送对应的数据 ，通俗地来说就是接收方告诉发送方“我还有能力处理那么多的数据，你就发那么多数据给我就行了，不要发多了，否则我处理不了”。
+
+(6)差错控制
+除了确认与重传之外，TCP 协议也会采用校验和的方式来检验数据的有效性，主机在接收数据的时候，会将重复的报文丢弃，将乱序的报文重组，发现某段报文丢失了会请求发送方进行重发，因此在TCP 往上层协议递交的数据是顺序的、无差错的完整数据。
+
+(7)拥塞控制
+什么是拥塞？当数据从一个大的管道（如一个快速局域网）向一个较小的管道（如一个较慢的广域网）发送时便会发生拥塞。
+当多个输入流到达一个路由器，而路由器的输出流小于这些输入流的总和时也会发生拥塞，这种是网络状况的原因。
+如果一个主机还是以很大的流量给另一个主机发送数据，但是其中间的路由器通道很小，无法承受这样大的数据流量的时候，就会导致拥塞的发生，这样子就导致了接收方无法在超时时间内完成接收（接收方此时完全有能力处理大量数据），而发送方又进行重传，这样子就导致了链路上的更加拥塞，
+延迟发送方必须实现一直自适应的机制，在网络中拥塞的情况下调整自身的发送速度，这种形式对发送方的控制被称为拥塞控制（congestioncontrol），与前面我们说的流量控制是非常相似的，而且TCP 协议采取的措施也非常相似，均是限制发送方的发送速度。
+
+3.端口号
+TCP 协议的连接是包括上层应用间的连接，简单来说，TCP 连接是两个不同主机的应用连接，而传输层与上层协议是通过端口号进行识别的，如IP 协议中以IP 地址作为识别一样，端口号的取值范围是0~65535，这些端口标识着上层应用的不同线程
+一个主机内可能只有一个IP 地址，但是可能有多个端口号，每个端口号表示不同的应用线程。
+一台拥有IP 地址的主机可以提供许多服务，比如Web 服务、FTP 服务、SMTP 服务等，这些服务完全可以通过1 个IP 地址来实现，主机是怎样区分不同的网络服务呢？
+显然不能只靠IP地址，因为IP 地址只能识别一台主机而非主机提供的服务，这些服务就是主机上的应用线程，因此是通过“IP 地址+端口号”来区分主机不同的线程。
+
+4.TCP 报文段结构
+按照协议栈实现的方式，这TCP 协议也肯定像ARP 协议、IP 协议一样，都是使用报文进行描述，为了使用更加官方的描述，我们将TCP 报文（数据包）称为报文段。
+(1)TCP 报文段的封装
+TCP 报文段依赖IP 协议进行发送，因此TCP 报文段与ICMP 报文一样，都是封装在IP 数据报中，IP 数据报封装在以太网帧中，因此TCP 报文段也是经过了两次的封装，然后发送出去。
+
+(2)TCP 报文段格式
+TCP 报文段如APR 报文、IP 数据报一样，也是由首部+数据区域组成，TCP 报文段的首部我们称之为TCP 首部，其首部内推很丰富，各个字段都有不一样的含义，如果不计算选项字段，一般来说TCP 首部只有20 个字节
+在LwIP 中，报文段首部采用一个名字叫tcp_hdr 的结构体进行描述
+
+PACK_STRUCT_BEGIN
+struct tcp_hdr {
+  PACK_STRUCT_FIELD(u16_t src);
+  PACK_STRUCT_FIELD(u16_t dest);
+  PACK_STRUCT_FIELD(u32_t seqno);
+  PACK_STRUCT_FIELD(u32_t ackno);
+  PACK_STRUCT_FIELD(u16_t _hdrlen_rsvd_flags);
+  PACK_STRUCT_FIELD(u16_t wnd);
+  PACK_STRUCT_FIELD(u16_t chksum);
+  PACK_STRUCT_FIELD(u16_t urgp);
+} PACK_STRUCT_STRUCT;
+PACK_STRUCT_END
+
+每个TCP 报文段都包含源主机和目标主机的端口号，用于寻找发送端和接收端应用线程，这两个值加上I P 首部中的源I P 地址和目标I P 地址就能确定唯一一个TCP 连接。 
+
+序号字段用来标识从TCP 发送端向TCP 接收端发送的数据字节流，它的值表示在这报文段中的第一个数据字节所处位置。
+根据接收到的数据区域长度，就能计算出报文最后一个数据所处的序号，因为TCP 协议会对发送或者接收的数据进行编号（按字节的形式），那么使用序号对每个字节进行计数，就能很轻易管理这些数据。序号是32 bit 的无符号整数。
+
+当建立一个新的连接时，TCP 报文段首部的 SYN 标志变1，序号字段包含由这个主机随机选择的初始序号ISN（Initial Sequence Number）。
+该主机要发送数据的第一个字节序号为 ISN+1，因为SYN 标志会占用一个序号
+
+既然TCP 协议给每个传输的字节都了编号，那么确认序号就包含接收端所期望收到的下一个序号，因此，确认序号应当是上次已成功收到数据的最后一个字节序号加 1。
+当然，只有ACK 标志为 1 时确认序号字段才有效，TCP 为应用层提供全双工服务，这意味数据能在两个方向上独立地进行传输，因此确认序号通常会与反向数据（即接收端传输给发送端的数据）封装在同一个报文中（即捎带），所以连接的每一端都必须保持每个方向上的传输数据序号准确性。
+
+首部长度字段占据4bit 空间，它指出了TCP 报文段首部长度，以字节为单位，最大能记录15*4=60 字节的首部长度
+因此，TCP 报文段首部最大长度为60 字节。在字段后接下来有6bit 空间是保留未用的。
+此外还有6bit 空间，是TCP 报文段首部的标志字段，用于标志一些信息：
+
+URG（urgent）：紧急位，首部中的紧急指针字段标志，如果是1 表示紧急指针字段有效。
+ACK（acknowledgement）：确认位，首部中的确认序号字段标志，如果是1 表示确认序号字段有效。
+PSH（push）：急迫位，该字段置一表示接收方应该尽快将这个报文段交给应用层。
+RST（reset）：重置位，重新建立TCP 连接。
+SYN：同步位，用同步序号发起连接。
+FIN：终止位，中止连接。
+
+TCP 的流量控制由连接的每一端通过声明的窗口大小来提供，窗口大小为字节数，
+起始于确认序号字段指明的值，这个值是接收端正期望接收的数据序号，发送方根据窗口大小调整发送数据，以实现流量控制。
+窗口大小是一个占据16 bit 空间的字段，因而窗口最大为 65535 字节，当接收方告诉发送方一个大小为0 的窗口时，将完全阻止发送方的数据发送。
+
+检验和覆盖了整个的 TCP 报文段：TCP 首部和TCP 数据区域，由发送端计算和填写，并由接收端进行验证。
+
+只有当URG 标志置1 时紧急指针才有效，紧急指针是一个正的偏移量，和序号字段中的值相加表示紧急数据最后一个字节的序号。
+简单来说，本TCP 报文段的紧急数据在报文段数据区域中，从序号字段开始，偏移紧急指针的值结束
+
+5.TCP 连接
+TCP 是一个面向连接的协议，无论哪一方向另一方发送数据之前，都必须先在双方之间建立一条连接，俗称“握手”.
+(1)“三次握手”建立连接
+建立连接的过程是由客户端发起，而服务器无时无刻都在等待着客户端的连接.
+
+TCP建立连接，也就是我们常说的三次握手，它需要三步完成。在TCP的三次握手中，发送第一个SYN的一端执行的是主动打开。而接收这个SYN并发回下一个SYN的另一端执行的是被动打开.
+
+第1步：客户端向服务器发送一个同步数据包请求建立连接，该数据包中，初始序列号（ISN）是客户端随机产生的一个值，确认号是0；
+
+第2步：服务器收到这个同步请求数据包后，会对客户端进行一个同步确认。这个数据包中，序列号（ISN）是服务器随机产生的一个值，确认号是客户端的初始序列号+1；
+
+第3步：客户端收到这个同步确认数据包后，再对服务器进行一个确认。该数据包中，序列号是上一个同步请求数据包中的确认号值，确认号是服务器的初始序列号+1。
+
+注意：因为一个SYN将占用一个序号，所以要加1。
+
+初始序列号（ISN）随时间而变化的，而且不同的操作系统也会有不同的实现方式，所以每个连接的初始序列号是不同的。TCP连接两端会在建立连接时，交互一些信息，如窗口大小、MSS等，以便为接着的数据传输做准备。
+
+###
+科莱网络分析工具（www.csna.cn）
+###
+
+(2)“四次挥手”终止连接
+建立一个连接需要3个步骤，但是关闭一个连接需要经过4个步骤。因为TCP连接是全双工的工作模式，所以每个方向上需要单独关闭。
+在TCP关闭连接时，首先关闭的一方（即发送第一个终止数据包的）将执行主动关闭，而另一方（收到这个终止数据包的）再执行被动关闭。
+
+关闭连接的4个步骤如下：
+
+第1步：服务器完成它的数据发送任务后，会主动向客户端发送一个终止数据包，以关闭在这个方向上的TCP连接。该数据包中，序列号为客户端发送的上一个数据包中的确认号值，而确认号为服务器发送的上一个数据包中的序列号+该数据包所带的数据的大小；
+
+第2步：客户端收到服务器发送的终止数据包后，将对服务器发送确认信息，以关闭该方向上的TCP连接。这时的数据包中，序列号为第1步中的确认号值，而确认号为第1步的数据包中的序列号+1；
+
+第3步：同理，客户端完成它的数据发送任务后，就也会向服务器发送一个终止数据包，以关闭在这个方向上的TCP连接，该数据包中，序列号为服务器发送的上一个数据包中的确认号值，而确认号为客户端发送的上一个数据包中的序列号+该数据包所带数据的大小；
+
+第4步：服务器收到客户端发送的终止数据包后，将对客户端发送确认信息，以关闭该方向上的TCP连接。这时在数据包中，序列号为第3步中的确认号值，而确认号为第3步数据包中的序列号+1；
+
+
+注意：因为FIN和SYN一样，也要占一个序号。理论上服务器在TCP连接关闭时发送的终止数据包中，只有终止位是置1，然后客户端进行确认。
+但是在实际的TCP实现中，在终止数据包中，确认位和终止位是同时置为1的，确认位置为1表示对最后一次传输的数据进行确认，终止位置为1表示关闭该方向的TCP连接。
+
+6.TCP 状态
+(1)LwIP 中定义的TCP 状态
+TCP 协议根据连接时接收到报文的不同类型，采取相应动作也不同，还要处理各个状态的关系，如当收到握手报文时候、超时的时候、用户主动关闭的时候等都需要不一样的状态去采取不一样的处理。在LwIP 中，为了实现TCP 协议的稳定连接，采用数组的形式定义了11 种连接时候的状态.
+
+ESTABLISHED 状态：这个状态是处于稳定连接状态，建立连接的TCP 协议两端的主机都是处于这个状态，它们相互知道彼此的窗口大小、序列号、最大报文段等信息 
+
+FIN_WAIT_1 与FIN_WAIT_2 状态：处于这个状态一般都是单向请求终止连接，然后主机等待对方的回应，而如果对方产生应答，则主机状态转移为FIN_WAIT_2，此时{主机->对方}方向上的TCP 连接就断开，但是{对方->主机}方向上的连接还是存在的。
+此处有一个注意的地方：如果主机处于FIN_WAIT_2状态，说明主机已经发出了FIN 报文段，并且对方也已对它进行确认，除非主机是在实行半关闭状态，否则将等待对方主机的应用层处理关闭连接，因为对方已经意识到它已收到FIN 报文段，它需要主机发一个 FIN 来关闭{对方->主机}方向上的连接。只有当另一端的进程完成这个关闭，主机这端才会从FIN_WAIT_2 状态进入TIME_WAIT 状态。否则这意味着主机这端可能永远保持这个FIN_WAIT_2 状态，另一端的主机也将处于 CLOSE_WAIT 状态，并一直保持这个状态直到应用层决定进行关闭。
+
+TIME_WAIT 状态：TIME_WAIT 状态也称为 2MSL 等待状态。每个具体TCP 连接的实现必须选择一个TCP 报文段最大生存时间MSL（Maximum SegmentLifetime），如IP 数据报中的TTL 字段，表示报文在网络中生存的时间，它是任何报文段被丢弃前在网络内的最长时间，这个时间是有限的，为什么需要等待呢？我们知道IP 数据报是不可靠的，而TCP 报文段是封装在IP 数据报中，TCP 协议必须保证发出的ACK 报文段是正确被对方接收， 因此处于该状态的主机必须在这个状态停留最长时间为2 倍的MSL，以防最后这个ACK 丢失，因为TCP 协议必须保证数据能准确送达目的地。
+
+(2)TCP 状态转移
+
+三次握手过程:
+服务器的应用程序主动使服务器进入监听状态，等待客户端的连接请求
+首先客户端的应用程序会主动发起连接，发送SYN 报文段给服务器，在发送之后就进入SYN_SENT 状态等待服务器的SYN ACK 报文段进行确认，如果在指定超时时间内服务器不进行应答确认，那么客户端将关闭连接。
+处于监听状态的服务器收到客户端的连接请求（SYN 报文段），那么服务器就返回一个SYN ACK 报文段应答客户端的响应，并且服务器进入SYN_RCVD 状态。
+如果客户端收到了服务器的SYN ACK 报文段，那么就进入ESTABLISHED 稳定连接状态，并向服务器发送一个ACK 报文段。
+同时，服务器收到来自客户端的ACK 报文段，表示连接成功，进入ESTABLISHED 稳定连接状态，这正是我们建立连接的三次握手过程
+
+四次挥手过程:
+一般来说，都是客户端主动发送一个FIN 报文段来终止连接，此时客户端从ESTABLISHED 稳定连接状态转移为FIN_WAIT_1 状态，并且等待来自服务器的应答确认。
+服务器收到FIN 报文段，知道客户端请求终止连接，那么将返回一个ACK 报文段到客户端确认终止连接，并且服务器状态由稳定状态转移为CLOSE_WAIT 等待终止连接状态。
+客户端收到确认报文段后，进入FIN_WAIT_2 状态，等待来自服务器的主动请求终止连接，此时{客户端->服务器}方向上的连接已经断开。
+一般来说，当客户端终止了连接之后，服务器也会终止{服务器->客户端}方向上的连接，因此服务器的原因程序会主动关闭该方向上的连接，发送一个FIN 报文段给客户端。
+处于FIN_WAIT_2 的客户端收到FIN 报文段后，发送一个ACK 报文段给服务器。
+服务器收到ACK 报文段，就直接关闭，此时{服务器->客户端}方向上的连接已经终止，进入CLOSED 状态。
+客户端还会等待2MSL，以防ACK 报文段没被服务器收到，这就是四次挥手的全部过程。
+
+7.TCP 中的数据结构
+为了描述TCP 协议，LwIP 定义了一个名字叫tcp_pcb 的结构体，我们称之为TCP 控制块，其内定义了大量的成员变量，基本定义了整个TCP 协议运作过程的所有需要的东西，如发送窗口、接收窗口、数据缓冲区。超时处理、拥塞控制、滑动窗口等等。
+
+/** This is the common part of all PCB types. It needs to be at the
+   beginning of a PCB type definition. It is located here so that
+   changes to this common part are made in one location instead of
+   having to change all PCB structs. */
+#define IP_PCB                             \
+  /* ip addresses in network byte order */ \
+  ip_addr_t local_ip;                      \
+  ip_addr_t remote_ip;                     \
+  /* Bound netif index */                  \
+  u8_t netif_idx;                          \
+  /* Socket options */                     \
+  u8_t so_options;                         \
+  /* Type Of Service */                    \
+  u8_t tos;                                \
+  /* Time To Live */                       \
+  u8_t ttl                                 \
+  /* link layer address resolution hint */ \
+  IP_PCB_NETIFHINT
+
+/**
+ * members common to struct tcp_pcb and struct tcp_listen_pcb
+ */
+#define TCP_PCB_COMMON(type) \
+  type *next; /* for the linked list */ \
+  void *callback_arg; \
+  TCP_PCB_EXTARGS \
+  enum tcp_state state; /* TCP state */ \
+  u8_t prio; \
+  /* ports are in host byte order */ \
+  u16_t local_port
+
+
+/** the TCP 协议控制块*/
+struct tcp_pcb {
+/** common PCB members */
+  IP_PCB;
+/** 协议特定的PCB 成员 */
+  TCP_PCB_COMMON(struct tcp_pcb);
+ 
+  /* 远端端口号 */
+  u16_t remote_port;
+ 
+  tcpflags_t flags;
+#define TF_ACK_DELAY   0x01U   /* 延迟发送ACK */
+#define TF_ACK_NOW     0x02U   /* 立即发送ACK. */
+#define TF_INFR        0x04U   /* 在快速恢复 */
+#define TF_CLOSEPEND   0x08U   /* 关闭挂起 */
+#define TF_RXCLOSED    0x10U   /* rx 由tcp_shutdown 关闭 */
+#define TF_FIN         0x20U   /* 连接在本地关闭 (FIN segment enqueued). */
+#define TF_NODELAY     0x40U   /* 禁用Nagle 算法 */
+#define TF_NAGLEMEMERR 0x80U   /* nagle enabled,本地缓冲区溢出*/
+#if LWIP_WND_SCALE
+#define TF_WND_SCALE   0x0100U /* Window Scale option enabled */
+#endif
+#if TCP_LISTEN_BACKLOG
+#define TF_BACKLOGPEND 0x0200U /* If this is set, a connection pcb has increased the backlog on its listener */
+#endif
+#if LWIP_TCP_TIMESTAMPS
+#define TF_TIMESTAMP   0x0400U   /* Timestamp option enabled */
+#endif
+#define TF_RTO         0x0800U /* RTO timer has fired, in-flight data moved to unsent and being retransmitted */
+#if LWIP_TCP_SACK_OUT
+#define TF_SACK        0x1000U /* Selective ACKs enabled */
+#endif
+ 
+  /* the rest of the fields are in host byte order
+     as we have to do some math with them */
+ 
+  /* Timers */
+  u8_t polltmr, pollinterval;
+  u8_t last_timer;       // 控制块被最后一次处理的时间
+  u32_t tmr;
+ 
+  /* 接收窗口相关的字段 */
+  u32_t rcv_nxt;   /* 下一个期望收到的序号 */
+  tcpwnd_size_t rcv_wnd;   /* 接收窗口大小 */
+  tcpwnd_size_t rcv_ann_wnd; /* 告诉对方窗口的大小 */
+  u32_t rcv_ann_right_edge; /* 告诉窗口的右边缘 */
+ 
+#if LWIP_TCP_SACK_OUT
+  /* SACK ranges to include in ACK packets (entry is invalid if left==right) */
+  struct tcp_sack_range rcv_sacks[LWIP_TCP_MAX_SACK_NUM];
+#define LWIP_TCP_SACK_VALID(pcb, idx) ((pcb)->rcv_sacks[idx].left != (pcb)->rcv_sacks[idx].right)
+#endif /* LWIP_TCP_SACK_OUT */
+ 
+  /* 重传计时器. */
+  s16_t rtime;
+ 
+  u16_t mss;   /* 最大报文段大小 */
+ 
+  /* RTT（往返时间）估计变量 */
+  u32_t rttest; /* RTT estimate in 500ms ticks */
+  u32_t rtseq;  /* sequence number being timed */
+  s16_t sa, sv; /* RTT 估计得到的平均值与时间差 */
+ 
+  s16_t rto;    /* 重传超时 (in ticks of TCP_SLOW_INTERVAL) */
+  u8_t nrtx;    /* 重传次数 */
+ 
+  /* 快速重传/恢复 */
+  u8_t dupacks;
+  u32_t lastack; /* 接收到的最大确认序号. */
+ 
+  /* congestion avoidance/control variables 拥塞避免/控制变量 */
+  tcpwnd_size_t cwnd;                /* 连接当前的窗口大小 */
+  tcpwnd_size_t ssthresh;            /* 拥塞避免算法启动的阈值 */
+ 
+  /* first byte following last rto byte */
+  u32_t rto_end;
+ 
+  /* sender variables */
+  u32_t snd_nxt;   /* 下一个要发送的序号 */
+  u32_t snd_wl1, snd_wl2; /* 上一次收到的序号和确认号. */
+  u32_t snd_lbb;       /* 要缓冲的下一个字节的序列号. */
+  tcpwnd_size_t snd_wnd;   /* 发送窗口大小*/
+  tcpwnd_size_t snd_wnd_max; /* 对方的最大发送方窗口 */
+ 
+  tcpwnd_size_t snd_buf;   /* 可用的缓冲区空间（以字节为单位. */
+#define TCP_SNDQUEUELEN_OVERFLOW (0xffffU-3)
+  u16_t snd_queuelen; /* Number of pbufs currently in the send buffer. */
+ 
+#if TCP_OVERSIZE
+  /* Extra bytes available at the end of the last pbuf in unsent. */
+  u16_t unsent_oversize;
+#endif /* TCP_OVERSIZE */
+ 
+  tcpwnd_size_t bytes_acked;
+ 
+  /* These are ordered by sequence number: */
+  struct tcp_seg *unsent;   /* 未发送的报文段. */
+  struct tcp_seg *unacked;  /* 已发送但未收到确认的报文段. */
+#if TCP_QUEUE_OOSEQ
+  struct tcp_seg *ooseq;    /* 已收到的无序报文. */
+#endif /* TCP_QUEUE_OOSEQ */
+ 
+  struct pbuf *refused_data; /* 以前收到但未被上层处理的数据*/
+ 
+#if LWIP_CALLBACK_API || TCP_LISTEN_BACKLOG
+  struct tcp_pcb_listen* listener;
+#endif /* LWIP_CALLBACK_API || TCP_LISTEN_BACKLOG */
+ 
+#if LWIP_CALLBACK_API  //TCP 协议相关的回调函数
+  /* Function to be called when more send buffer space is available. */
+  tcp_sent_fn sent;
+  /* Function to be called when (in-sequence) data has arrived. */
+  tcp_recv_fn recv;
+  /* Function to be called when a connection has been set up. */
+  tcp_connected_fn connected;
+  /* Function which is called periodically.该函数被内核周期调用 */
+  tcp_poll_fn poll;
+  /* Function to be called whenever a fatal error occurs. */
+  tcp_err_fn errf;
+#endif /* LWIP_CALLBACK_API */
+ 
+#if LWIP_TCP_TIMESTAMPS
+  u32_t ts_lastacksent;
+  u32_t ts_recent;
+#endif /* LWIP_TCP_TIMESTAMPS */
+ 
+  /* 保持活性 */
+  u32_t keep_idle;
+#if LWIP_TCP_KEEPALIVE
+  u32_t keep_intvl;
+  u32_t keep_cnt;
+#endif /* LWIP_TCP_KEEPALIVE */
+ 
+  /* Persist timer counter */
+  u8_t persist_cnt;
+  /* Persist timer back-off */
+  u8_t persist_backoff;
+  /* Number of persist probes */
+  u8_t persist_probe;
+ 
+  /* KEEPALIVE counter */
+  u8_t keep_cnt_sent;
+ 
+#if LWIP_WND_SCALE
+  u8_t snd_scale;
+  u8_t rcv_scale;
+#endif
+};
+
+LwIP 中除了定义了一个完整的TCP 控制块之外，还定义了一个删减版的TCP 控制块，叫tcp_pcb_listen，用于描述处于监听状态的连接
+因为分配完整的TCP 控制块是比较消耗内存资源的，而TCP 协议在连接之前，是无法进行数据传输的，那么在监听的时候只需要把对方主机的相关信息得到，然后无缝切换到完整的TCP 控制块中，这样子就能节省不少资源
+
+LwIP 还定义了4 个链表来维护TCP 连接时的各种状态
+
+/** the TCP protocol control block for listening pcbs */
+struct tcp_pcb_listen {
+/** Common members of all PCB types */
+  IP_PCB;
+/** Protocol specific PCB members */
+  TCP_PCB_COMMON(struct tcp_pcb_listen);
+ 
+#if LWIP_CALLBACK_API
+  /* Function to call when a listener has been connected. */
+  tcp_accept_fn accept;
+#endif /* LWIP_CALLBACK_API */
+ 
+#if TCP_LISTEN_BACKLOG
+  u8_t backlog;
+  u8_t accepts_pending;
+#endif /* TCP_LISTEN_BACKLOG */
+};
+ 
+ 
+/* The TCP PCB lists. */
+ 
+/** List of all TCP PCBs bound but not yet (connected || listening) */
+struct tcp_pcb *tcp_bound_pcbs;
+/** List of all TCP PCBs in LISTEN state */
+union tcp_listen_pcbs_t tcp_listen_pcbs;
+/** List of all TCP PCBs that are in a state in which
+ * they accept or send data. */
+struct tcp_pcb *tcp_active_pcbs;
+/** List of all TCP PCBs in TIME-WAIT state */
+struct tcp_pcb *tcp_tw_pcbs;
+
+
+tcp_bound_pcbs 链表上的TCP 控制块可以看做是处于CLOSED 状态，那些新绑定的端口初始的时候都是处于这个状态。
+tcp_listen_pcbs 链表用于记录处于监听状态的TCP 控制块，一般就是记录的是tcp_pcb_listen 控制块。
+tcp_tw_pcbs 链表用于记录连接中处于TIME_WAIT 状态下的TCP 控制块。
+而tcp_active_pcbs 链表用于记录所有其他状态的TCP控制块，这些端口是活跃的，可以不断进行状态转移。
+
+8.窗口的概念
+TCP 协议的发送和接收都会给每个字节的数据进行编号，这个编号可以理解为相对序号
+(1)接收窗口
+TCP 控制块中关于接收窗口的成员变量有rcv_nxt、rcv_wnd、rcv_ann_wnd、rcv_ann_right_edge
+
+rcv_nxt 表示下次期望接收到的数据编号
+rcv_wnd 表示接收窗口的大小
+rcv_ann_wnd 用于告诉发送方窗口的大小
+rcv_ann_right_edge 记录了窗口的右边界，这4 个成员变量都会在数据传输的过程中动态改变
+
+比如在7 字节之前的数据，都是已经接收确认的数据，而7 字节正是主机想要接收到的下一个字节数据编号，而窗口的大小是7，
+它会告诉发送方“你可以发送7 个数据过来”，窗口的右边界为14，当主机下一次接收到N（不一定是7）字节数据的时候，窗口就会向右移动N 个字节，
+但是rcv_wnd、rcv_ann_wnd、rcv_ann_right_edge变量的值是不确定的，通过LwIP 内部计算得出，而下一次想要接收的数据编号就为7+N。
+
+(2)发送窗口
+TCP 控制块中关于发送窗口的成员变量有lastack、snd_nxt、snd_lbb、snd_wnd
+astack 记录了已经确认的最大序号
+snd_nxt 表示下次要发送的序号
+snd_lbb 是表示下一个将被应用线程缓冲的序号
+而snd_wnd 表示发送窗口的大小，是由接收已方提供的。
+这些值也是动态变化的，当发送的数据收到确认，就会更新lastack，并且随着数据的发送出去，窗口会向右移动，即snd_nxt 的值在增加
+
+每条TCP 连接的每一端都必须设有两个窗口——一个发送窗口和一个接收窗口
+TCP的可靠传输机制用字节的序号（编号）进行控制，TCP 所有的确认都是基于数据的序号而不是基于报文段，发送过的数据未收到确认之前必须保留，
+以便超时重传时使用，发送窗口在没收到确认序号之前是保持不动的，当收到确认序号就会向右移动，并且更新lastack的值。
+
+发送缓冲区用来暂时存放应用程序发送给对方的数据，这是主机已发送出但未收到确认的数据。接收缓存用来暂时存放按序到达的、但尚未被接收应用程序读取的数据以及 不按序到达的数据。
+
+窗口的概念必须强调三点：
+1. 发送方的发送窗口并不总是和接收方接收窗口一样大，因为有一定的时间滞后。
+2. TCP 标准没有规定对不按序到达的数据应如何处理，通常是先临时存放在接收窗口中，等到字节流中所缺少的字节收到后，再按序交付上层的应用进程。
+3. TCP 要求接收方必须有确认的功能，这样可以减小传输开销。
+
+9.TCP 报文段处理
+(1)报文段缓冲队列
+TCP 连接的每一端都有接收缓冲区与发送缓冲区（也可以称之为缓冲队列，下文均用缓冲队列），而 TCP 控制块只是维护缓冲区队列的指针，
+通过指针简单对这些缓冲区进行管理，LwIP 为了更好管理TCP 报文段的缓冲队列数据，特地定义了一个数据结构，命名为tcp_seg，
+使用它将所有的报文段连接起来，这些报文可能是无发送的、可能是已发送但未确认的或者是已经接收到的无序报文，
+都是需要缓冲在TCP 控制块内部的，以便识别是哪个连接，而TCP 控制块，又不可能单独为每个连接开辟那么大的空间，只能使用指针来管理。
+
+/* This structure represents a TCP segment on the unsent, unacked and ooseq queues */
+struct tcp_seg {
+  struct tcp_seg *next;    /* used when putting segments on a queue */
+  struct pbuf *p;          /* buffer containing data + TCP header */
+  u16_t len;               /* the TCP length of this segment */
+#if TCP_OVERSIZE_DBGCHECK
+  u16_t oversize_left;     /* Extra bytes available at the end of the last
+                              pbuf in unsent (used for asserting vs.
+                              tcp_pcb.unsent_oversize only) */
+#endif /* TCP_OVERSIZE_DBGCHECK */
+#if TCP_CHECKSUM_ON_COPY
+  u16_t chksum;
+  u8_t  chksum_swapped;
+#endif /* TCP_CHECKSUM_ON_COPY */
+  u8_t  flags;
+#define TF_SEG_OPTS_MSS         (u8_t)0x01U /* Include MSS option (only used in SYN segments) */
+#define TF_SEG_OPTS_TS          (u8_t)0x02U /* Include timestamp option. */
+#define TF_SEG_DATA_CHECKSUMMED (u8_t)0x04U /* ALL data (not the header) is
+                                               checksummed into 'chksum' */
+#define TF_SEG_OPTS_WND_SCALE   (u8_t)0x08U /* Include WND SCALE option (only used in SYN segments) */
+#define TF_SEG_OPTS_SACK_PERM   (u8_t)0x10U /* Include SACK Permitted option (only used in SYN segments) */
+  struct tcp_hdr *tcphdr;  /* the TCP header */
+};
+
+每个已经连接的TCP 控制块中维护了3 个是指针，分别是unsent、unacked、ooseq
+unsent 指向未发送的报文段缓冲队列
+unacked 指向已发送但未收到确认的报文段缓冲队列
+ooseq 指向已经收到的无序报文段缓冲队列
+当然啦，如果都没有这些报文段，那么这些指针都会指向NULL。
+
+(2)TCP 报文段发送
+一般我们在应用层使用NETCONN API 或者Socket API 进行编程的时候，会将用户数据传递给传输层
+应用层是如何传递数据到传输层的就暂时先不讲解，只需要知道数据到达传输层后是怎么输出的即可
+如果我们使用的是NETCONN API 对已经连接的TCP 应用发送数据，那么经过内核的一系列处理，就会调用lwip_netconn_do_writemore()函数对发送数据，
+但是真正处理TCP 报文段缓冲等操作是在tcp_write()函数中，在这个函数里，LwIP 会写入数据，但是不会立即发送，也就是存储在缓冲区里面，等待更多的数据进行高效的发送，
+这也是著名的Nagle 算法，然后在调用tcp_output()函数进行发送出去，这样子一个应用层的数据就通过TCP 协议传递给IP 层了。
+
+err_t
+tcp_output(struct tcp_pcb *pcb)
+{
+  struct tcp_seg *seg, *useg;
+  u32_t wnd, snd_nxt;
+  err_t err;
+  struct netif *netif;
+#if TCP_CWND_DEBUG
+  s16_t i = 0;
+#endif /* TCP_CWND_DEBUG */
+ 
+  LWIP_ASSERT_CORE_LOCKED();
+ 
+  LWIP_ASSERT("tcp_output: invalid pcb", pcb != NULL);
+  /* pcb->state LISTEN not allowed here */
+  LWIP_ASSERT("don't call tcp_output for listen-pcbs",
+              pcb->state != LISTEN);
+ 
+  /* First, check if we are invoked by the TCP input processing
+     code. If so, we do not output anything. Instead, we rely on the
+     input processing code to call us when input processing is done
+     with. */
+  if (tcp_input_pcb == pcb) {
+    return ERR_OK;
+  }
+ 
+  wnd = LWIP_MIN(pcb->snd_wnd, pcb->cwnd);
+ 
+  seg = pcb->unsent;
+ 
+  if (seg == NULL) {
+    LWIP_DEBUGF(TCP_OUTPUT_DEBUG, ("tcp_output: nothing to send (%p)\n",
+                                   (void *)pcb->unsent));
+    LWIP_DEBUGF(TCP_CWND_DEBUG, ("tcp_output: snd_wnd %"TCPWNDSIZE_F
+                                 ", cwnd %"TCPWNDSIZE_F", wnd %"U32_F
+                                 ", seg == NULL, ack %"U32_F"\n",
+                                 pcb->snd_wnd, pcb->cwnd, wnd, pcb->lastack));
+ 
+    /* If the TF_ACK_NOW flag is set and the ->unsent queue is empty, construct
+     * an empty ACK segment and send it. */
+    if (pcb->flags & TF_ACK_NOW) {
+      return tcp_send_empty_ack(pcb);
+    }
+    /* nothing to send: shortcut out of here */
+    goto output_done;
+  } else {
+    LWIP_DEBUGF(TCP_CWND_DEBUG,
+                ("tcp_output: snd_wnd %"TCPWNDSIZE_F", cwnd %"TCPWNDSIZE_F", wnd %"U32_F
+                 ", effwnd %"U32_F", seq %"U32_F", ack %"U32_F"\n",
+                 pcb->snd_wnd, pcb->cwnd, wnd,
+                 lwip_ntohl(seg->tcphdr->seqno) - pcb->lastack + seg->len,
+                 lwip_ntohl(seg->tcphdr->seqno), pcb->lastack));
+  }
+ 
+  netif = tcp_route(pcb, &pcb->local_ip, &pcb->remote_ip);
+  if (netif == NULL) {
+    return ERR_RTE;
+  }
+ 
+  /* If we don't have a local IP address, we get one from netif */
+  if (ip_addr_isany(&pcb->local_ip)) {
+    const ip_addr_t *local_ip = ip_netif_get_local_ip(netif, &pcb->remote_ip);
+    if (local_ip == NULL) {
+      return ERR_RTE;
+    }
+    ip_addr_copy(pcb->local_ip, *local_ip);
+  }
+ 
+  /* Handle the current segment not fitting within the window */
+  if (lwip_ntohl(seg->tcphdr->seqno) - pcb->lastack + seg->len > wnd) {
+    /* We need to start the persistent timer when the next unsent segment does not fit
+     * within the remaining (could be 0) send window and RTO timer is not running (we
+     * have no in-flight data). If window is still too small after persist timer fires,
+     * then we split the segment. We don't consider the congestion window since a cwnd
+     * smaller than 1 SMSS implies in-flight data
+     */
+    if (wnd == pcb->snd_wnd && pcb->unacked == NULL && pcb->persist_backoff == 0) {
+      pcb->persist_cnt = 0;
+      pcb->persist_backoff = 1;
+      pcb->persist_probe = 0;
+    }
+    /* We need an ACK, but can't send data now, so send an empty ACK */
+    if (pcb->flags & TF_ACK_NOW) {
+      return tcp_send_empty_ack(pcb);
+    }
+    goto output_done;
+  }
+  /* Stop persist timer, above conditions are not active */
+  pcb->persist_backoff = 0;
+ 
+  /* useg should point to last segment on unacked queue */
+  useg = pcb->unacked;
+  if (useg != NULL) {
+    for (; useg->next != NULL; useg = useg->next);
+  }
+  /* data available and window allows it to be sent? */
+  while (seg != NULL &&
+         lwip_ntohl(seg->tcphdr->seqno) - pcb->lastack + seg->len <= wnd) {
+    LWIP_ASSERT("RST not expected here!",
+                (TCPH_FLAGS(seg->tcphdr) & TCP_RST) == 0);
+    /* Stop sending if the nagle algorithm would prevent it
+     * Don't stop:
+     * - if tcp_write had a memory error before (prevent delayed ACK timeout) or
+     * - if FIN was already enqueued for this PCB (SYN is always alone in a segment -
+     *   either seg->next != NULL or pcb->unacked == NULL;
+     *   RST is no sent using tcp_write/tcp_output.
+     */
+    if ((tcp_do_output_nagle(pcb) == 0) &&
+        ((pcb->flags & (TF_NAGLEMEMERR | TF_FIN)) == 0)) {
+      break;
+    }
+#if TCP_CWND_DEBUG
+    LWIP_DEBUGF(TCP_CWND_DEBUG, ("tcp_output: snd_wnd %"TCPWNDSIZE_F", cwnd %"TCPWNDSIZE_F", wnd %"U32_F", effwnd %"U32_F", seq %"U32_F", ack %"U32_F", i %"S16_F"\n",
+                                 pcb->snd_wnd, pcb->cwnd, wnd,
+                                 lwip_ntohl(seg->tcphdr->seqno) + seg->len -
+                                 pcb->lastack,
+                                 lwip_ntohl(seg->tcphdr->seqno), pcb->lastack, i));
+    ++i;
+#endif /* TCP_CWND_DEBUG */
+ 
+    if (pcb->state != SYN_SENT) {
+      TCPH_SET_FLAG(seg->tcphdr, TCP_ACK);
+    }
+ 
+    err = tcp_output_segment(seg, pcb, netif);
+    if (err != ERR_OK) {
+      /* segment could not be sent, for whatever reason */
+      tcp_set_flags(pcb, TF_NAGLEMEMERR);
+      return err;
+    }
+#if TCP_OVERSIZE_DBGCHECK
+    seg->oversize_left = 0;
+#endif /* TCP_OVERSIZE_DBGCHECK */
+    pcb->unsent = seg->next;
+    if (pcb->state != SYN_SENT) {
+      tcp_clear_flags(pcb, TF_ACK_DELAY | TF_ACK_NOW);
+    }
+    snd_nxt = lwip_ntohl(seg->tcphdr->seqno) + TCP_TCPLEN(seg);
+    if (TCP_SEQ_LT(pcb->snd_nxt, snd_nxt)) {
+      pcb->snd_nxt = snd_nxt;
+    }
+    /* put segment on unacknowledged list if length > 0 */
+    if (TCP_TCPLEN(seg) > 0) {
+      seg->next = NULL;
+      /* unacked list is empty? */
+      if (pcb->unacked == NULL) {
+        pcb->unacked = seg;
+        useg = seg;
+        /* unacked list is not empty? */
+      } else {
+        /* In the case of fast retransmit, the packet should not go to the tail
+         * of the unacked queue, but rather somewhere before it. We need to check for
+         * this case. -STJ Jul 27, 2004 */
+        if (TCP_SEQ_LT(lwip_ntohl(seg->tcphdr->seqno), lwip_ntohl(useg->tcphdr->seqno))) {
+          /* add segment to before tail of unacked list, keeping the list sorted */
+          struct tcp_seg **cur_seg = &(pcb->unacked);
+          while (*cur_seg &&
+                 TCP_SEQ_LT(lwip_ntohl((*cur_seg)->tcphdr->seqno), lwip_ntohl(seg->tcphdr->seqno))) {
+            cur_seg = &((*cur_seg)->next );
+          }
+          seg->next = (*cur_seg);
+          (*cur_seg) = seg;
+        } else {
+          /* add segment to tail of unacked list */
+          useg->next = seg;
+          useg = useg->next;
+        }
+      }
+      /* do not queue empty segments on the unacked list */
+    } else {
+      tcp_seg_free(seg);
+    }
+    seg = pcb->unsent;
+  }
+#if TCP_OVERSIZE
+  if (pcb->unsent == NULL) {
+    /* last unsent has been removed, reset unsent_oversize */
+    pcb->unsent_oversize = 0;
+  }
+#endif /* TCP_OVERSIZE */
+ 
+output_done:
+  tcp_clear_flags(pcb, TF_NAGLEMEMERR);
+  return ERR_OK;
+}
+
+总的来说，这个函数的流程还是很简单的，如果控制块的flags 字段被设置为TF_ACK_NOW，但是此时还没有数据发送，就只发送一个纯粹的ACK 报文段,
+如果能发送数据，那就将ACK 应答捎带过去，这样子就能减少网络中的流量，同时在发送的时候先找到未发送链表，然后调用tcp_output_segment()->ip_output_if()函数进行发送，
+直到把未发送链表的数据完全发送出去或者直到填满发送窗口，并且更新发送窗口相关字段，
+同时将这些已发送但是未确认的数据存储在未确认链表中，以防丢失数据进行重发操作，放入未确认链表的时候是按序号升序进行排序的。
+
+(3)TCP 报文段接收
+IP 数据报中如果是递交给TCP 协议的数据，就会调用tcp_input()函数往上层传递，而TCP 协议收到数据就会对这些数据进行一系列的处理与验证
+
+tcp_input()函数会对传递进来的IP 数据报进行处理，做一些校验数据报是否正确的操作，查看一下数据报中是否有数据，如果没有就丢掉，看一下是不是多播、广播报文，如果是就不做处理，释放pbuf。
+将TCP 首部中的各字段内容提取出来，首先在tcp_active_pcbs 链表中寻找对应的TCP 控制块，找到了就调用tcp_process()函数进行处理；
+如果找不到就去tcp_tw_pcbs 链表中查找，找到了就调用tcp_timewait_input()函数处理它；
+如果还是找不到就去tcp_listen_pcbs 链表中找，如果找到就调用tcp_listen_input()函数处理，如果找不到的话，就释放pbuf。
+
+还要补充，对于正常接收处理的数据，如果收到的报文段是复位报文或终止连接应答报文，那么就释放pbuf，终止连接；
+如果TCP 协议确认了报文段是新的数据，那么就调用带参宏TCP_EVENT_SENT（其实是一个sent 的回调函数）去处理，如果报文段中包含有效的数据，就调用TCP_EVENT_RECV 去处理 ，如果是收到FIN 报文，则调用TCP_EVENT_CLOSED 去处理它。

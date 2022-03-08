@@ -1,0 +1,208 @@
+swift中函数是"一等公民(first-class function)"
+和OC中的函数相比，首先我们要先知道函数的三个知识点
+1.函数可以赋值给变量，也可以作为另外一个函数的参数和返回值
+func loveSomeBody(name:String) {
+        print("I love \(name)")
+}
+    
+var loveSomeBodyFunc:((String) ->Void)?
+///函数赋值给变量
+loveSomeBodyFunc = loveSomeBody
+loveSomeBodyFunc?("liaoWorking")//I love liaoWorking
+
+///函数作为参数
+func doSomeThing(things: ((String)-> Void)?) {
+    things?("NObody")
+}
+
+doSomeThing(things: loveSomeBodyFunc)///I love NObody
+
+///函数作为返回值
+func lovingYou() -> ((String) ->Void)?{
+    return loveSomeBody
+}
+
+loveSomeBodyFunc = lovingYou()
+
+2.函数可以捕获其局部作用域之前的变量
+
+3.除了func创建函数 {}也可以创建函数，这个叫闭包表达式
+
+我们平时在写懒加载的时候用法如下, {} 就是一个方法，()表示执行这个方法。 和平时调用方法func() 使用是类似的。
+lazy var label: UILabel = { () -> UILabel in
+return UILabel()  
+}()
+
+[1, 2, 3, 4].map{$0 * 2}
+
+==================================================函数的灵活性:
+var mArray = [3, 1, 2]
+mArray.sort() ///1 2 3
+mArray.sort(by: >)  ///3 2 1
+
+
+
+let animal = ["fish", "dog", "elephant"]
+// 反向比较字符串的大小  我们可以嵌套任意的比较函数  让排序功能更强大！
+let okAnimal = animal.sorted { (lhs, rhs) -> Bool in
+    let l = lhs.reversed()
+    let r = rhs.reversed()
+    /// ⭐️核心方法⭐️ 按顺序比较两个字符串的大小   abc > abb 返回值是一个Bool 
+    return l.lexicographicallyPrecedes(r)
+}
+print(okAnimal) //["dog", "fish", "elephant"]
+
+String的lexicographicallyPrecedes方法在项目中挺实用的，是swift标准库自带方法，像比较时间字符串"2018-08-08" 和 "2018-03-04" 的时间先后就可以用这个方法。
+
+堆排序:
+https://www.cnblogs.com/Java3y/p/8639937.html
+swift中的排序算法是基于内省算法（introsort），起实质是快排和堆排的混合。 当集合很小时会转化为插入排序。避免不必要的性能消耗。
+
+
+==================================================
+swfit中的代理用weak 来修饰 防止循环引用
+
+==================================================
+inout 关键字： 一般用来修饰函数的参数 就是让函数的参数变得可变（swift 中方法的参数默认都是 let 不可变的）
+// 给originNum参数加increment   ❌
+func addNumber(originNum: Int, increment: Int) {
+// 这里会报错：Left side of mutating operator isn't mutable: 'originNum' is a 'let' constant
+originNum += increment
+}
+
+// 使用了inout 关键字   ✅
+func addNumber(originNum: inout Int, increment: Int) {
+originNum += increment
+}
+
+// 方法调用 在value参数前有一个&符号
+var value = 50
+addNumber(originNum: &value, increment: 10)
+print(value) // value = 60
+
+
+
+inout的值会在函数返回之前赋值回去
+
+
+计算属性:
+每次被调用的时候都会计算一遍
+
+懒加载 lazy:
+常规写法1：
+lazy var myAge:Int = { ()-> String in
+ return 18
+}()
+
+常规写法2：
+///getMyAge() 是一个返回Int类型的方法
+lazy var myAge:Int = getMyAge()
+
+常规写法3
+///currentYear 和 birthYear是两个变量
+lazy var myAge:Int = currentYear - birthYear
+
+这里多说一句关于常规写法1和常规写法2： 在常规写法1中
+
+{ ()-> String in
+ return 18
+}
+的本质是一个没有参数返回值是String的方法
+后面的() 是对前面的方法的调用。 所以其本质和常规写法2是相同的。
+
+
+
+下标其实也可以像函数一样接受多个参数:
+实现原理： 写一个extension的subscript的方法即可。 Demo主要是以字典的形式展示每个字母出现个个数
+
+///实现多参数下标的核心方法
+extension Dictionary {
+    subscript(key: Key, or defaultValue: Value) -> Value {
+        get {
+            return self[key] ?? defaultValue
+        }
+        set {
+           self[key] = newValue
+        }
+    }
+}
+
+extension Sequence where Iterator.Element: Hashable {
+    var frequencies: [Iterator.Element: Int] {
+        var result: [Iterator.Element: Int] = [:]
+        for x in self {
+            result[x, or: 0] += 1
+        }
+        return result
+    }
+}
+"hello".frequencies // ["e":1, "0":1, "l":2, "h":1]
+
+
+
+重载下标 达到获取collection半有界区的目的:
+struct RangeStart<l>{let start : l}
+struct RangeEnd<l>{let end : l}
+
+postfix operator ..<
+postfix func ..<<l>(lhs: l) -> RangeStart<l> {
+    return RangeStart(start: lhs)
+}
+
+prefix operator ..+
+prefix func ..+<l>(rhs: l) -> RangeEnd<l> {
+    return RangeEnd(end: rhs)
+}
+
+extension Collection {
+    subscript(r: RangeStart<Index>) -> SubSequence {
+        return suffix(from: r.start)
+    }
+    subscript(r: RangeEnd<Index>) -> SubSequence {
+        return prefix(upTo: r.end)
+    }
+}
+fibs[2..<]
+fibs[..+3]
+
+
+
+@autoClosure:
+extension Dictionary {
+    mutating func value(for key: Key, orAdd valueClosure: () -> Value) -> Value {
+        if let value = self[key] {
+            return value
+        }
+        
+        let value = valueClosure()
+        self[key] = value
+        return value
+    }
+}
+
+// 使用：
+var dict = ["name":"liaoWorking","job":"iOS","gender":"m"]
+
+dict.value(for: "salary", orAdd: {"99999"})
+//"99999"
+这样的Api的确看起来有些不友好， 如果使用自动闭包@autoclosure 去修饰你的闭包，会有这样的效果：
+
+extension Dictionary {
+    mutating func value(for key: Key, orAdd valueClosure: @autoclosure () -> Value) -> Value {
+        if let value = self[key] {
+            return value
+        }
+        
+        let value = valueClosure()
+        self[key] = value
+        return value
+    }
+}
+
+dict.value(for: "salary", orAdd: "99999")
+// "99999"
+
+
+闭包作为参数默认都是非逃逸闭包
+@escaping的作用就是延长闭包作为参数时候的生命周期
+一般在项目中网络请求的回调用作为闭包时 系统就会强制添加闭包参数加@escping标注。

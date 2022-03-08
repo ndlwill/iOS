@@ -1,0 +1,351 @@
+Result类型
+(在Swift5中苹果已将Result置为标准库中)
+
+swift中可选值Optional的本质： 其实是一个枚举,它包含.Some 和.None两个枚举值。
+
+// Optional的本质
+@frozen public enum Optional<Wrapped> : ExpressibleByNilLiteral {
+case none
+case some(Wrapped)
+}
+
+项目中需要自定义枚举时，避免不要有 .none 这个case， 因为当你的枚举为可选值时，就和 Optional 中的 .none 重复了
+Result类型结构和可选值Optional结构非常相似
+
+
+Result使用场景
+在通常的网络请求中，我们都是通过success和failed两个闭包来传递结果
+
+AFHTTPSessionManager *session = [AFHTTPSessionManager manager];
+[session GET:@"需要请求的url" parameters:nil success:^(NSURLSessionDataTask *task, id responseObject) {
+        NSLog(@"请求成功");
+} failure:^(NSURLSessionDataTask *task, NSError *error) {
+        NSLog(@"请求失败");        
+}];
+这个时候使用result类型 就可以用一个对象去处理这两种情况
+
+
+实现一个自己的result类型:
+1.我们先定义成功和失败的两个协议：
+成功的协议，可以扩展成功的对象需要的任何东西。 LWSuccessedProtocol
+失败的协议，可以扩展失败的对象需要的任何东西。 LWFailedProtocol
+
+2.我们创建一个LWResult枚举
+Result枚举有2个泛型，T继承LWSuccessedProtocol，Error继承LWFailedProtocol。枚举有2种情况，一种是成功（success），一种是失败（failure），还有对应的初始化。 我们就完成了一个Result类型的定义了。
+
+public protocol LWSuccessedProtocol {
+    
+}
+
+public protocol LWFailedProtocol {
+    
+}
+
+public enum LWResult<T:LWSuccessedProtocol, Error:LWFailedProtocol> {
+    case success(T)
+    case failure(Error)
+    
+    public init(value:T) {
+        self = .success(value)
+    }
+    
+    public init(error:Error) {
+        self = .failure(error)
+    }
+}
+
+自定义Result的具体使用：在拿到网络请求的回调之后去处理拿到的数据
+
+completion为result类型的闭包
+
+NetworkRequest(api:API, completion: LWResult) {
+
+    if 网络请求成功 {
+        let successResult = LWSuccess()
+        completion(TDWResult(value: successResult))
+
+    } else {
+
+        let failResult = LWFailure()
+        completion(TDWResult(error: failResult))
+
+    }
+
+}
+
+// 方法调用和网络请求的处理
+NetworkRequest(api:XXXapi, {result in 
+
+    switch result : 
+    case: .success(let data):
+        //网络请求成功的处理
+    case: .failed(let error)
+        // 网络请求失败的处理
+}
+
+Moya天生就是对Result类型的扩展封装。
+
+==================================================抛出和捕获
+Result作用于类型， throws作用于函数
+
+编译器会认为throws是一个普通的返回，不会像很多语言一样带来运行时的开销。相对效率高一些。
+
+我们通过 do catch 去处理一个函数的throws 可以使用catch的匹配模式去捕获具体的错误 或者在catch-all中去捕获其他异常 如下
+do{
+    
+}catch FileError.fileNotExist {
+    //FileError.fileNotExist是自定义的一个错误类型  
+}catch{
+    //其他error
+}
+
+自己自定义一个指定的error的用法
+///创建error的枚举
+enum MyCustomErrorType: Error {
+case ErrorReasonNoFile
+case ErrorReasonReadWrong
+case ErrorReasonShotDown
+}
+
+///假设myThrowFunc函数需要做抛错处理
+func myThrowFunc() throws {
+    if 触发了没有文件的错误情况 {
+        throw MyCustomErrorType.ErrorReasonNoFile
+    }
+}
+
+///接收对应的error
+do{
+    myThrowFunc()
+}catch MyCustomErrorType.ErrorReasonNoFile {
+    // 无文件的错误情况
+}catch{
+    //其他error
+}
+无论你有多少个自定义的catch分支 最后都要用一个catch { }去结尾，我们认为你无法将所有的error都考虑到。
+
+
+在Result类型的基础上将错误的类型指定为泛型就可以了:
+enum Result <A, ErrorType: Error> {
+	case failure(errorType)
+	case success(A)
+}
+
+///使用方法和普通的Result类型的使用一样样的
+func maybyReturnSomeError() -> Result<[String], someError> {...}
+
+let result = maybeReturnSomeError
+
+switch result {
+	case ...
+	case ...
+}
+
+==================================================将错误桥接到Objective-C
+NSError 对象都有一个Domin字符串，还有一个整数的错误代码code
+将Swift的错误桥接到OC时运行时会默认提供这个NSError对象。
+
+如果有需要我们可以通过遵守CustomNSError来更好的实现错误桥接。
+
+extension ParseError: CustomNSError {
+    ///自定义错误的Domin
+    static let errorDomain = "io.objc.parseError"
+    ///自定义错误的Code
+    var errorCode: Int {
+        switch self {
+        case .wrongEncoding: return 100
+        case .warning(_, _): return 200
+        }
+    }
+    var errorUserInfo: [String: Any] {
+        return [:]
+    }
+}
+
+错误相关的一些协议
+LocalizedError
+提供一个本地化的错误信息，来表示为什么发生(failureReason),从错误中恢复的提示(recoverySuggestion),额外的帮助文本(helpAnchor)
+
+/// Describes an error that provides localized messages describing why
+/// an error occurred and provides more information about the error.
+public protocol LocalizedError : Error {
+
+    /// A localized message describing what error occurred.
+    var errorDescription: String? { get }
+
+    /// A localized message describing the reason for the failure.
+    var failureReason: String? { get }
+
+    /// A localized message describing how one might recover from the failure.
+    var recoverySuggestion: String? { get }
+
+    /// A localized message providing "help" text if the user requests help.
+    var helpAnchor: String? { get }
+}
+
+
+==================================================
+// 一系列文件有效性的检查
+///检查文件有效性的方法
+func checkFile(filename: String) throws -> Bool 
+
+
+func checkAllFiles(filenames: [String]) throws -> Bool { 
+    for filename in filenames {
+        guard try checkFile(filename: filename) else { return false } }
+    return true
+}
+
+
+// 检查一个数字数组中是否含有质数
+// 不会throws异常
+func checkPrimes(_ numbers: [Int]) -> Bool { 
+    for number in numbers {
+        guard number.isPrime else { return false } 
+    }
+    return true
+}
+checkPrimes([2,3,7,17]) // true
+checkPrimes([2,3,4,5]) // false
+
+肯定会对这两个高度相似的方法是做一个完美的封装
+all方法的参数是一个判断条件是否满足的函数。
+extension Sequence {
+    /// Returns `true` iff all elements satisfy the predicate 
+    func all(condition: (Iterator.Element) -> Bool) -> Bool {
+        for element in self {
+            guard condition(element) else { return false }
+        }
+        return true
+    } 
+}
+
+查看是否有质数 一行代码搞定。
+func checkPrimes2(_ numbers: [Int]) -> Bool { 
+    return numbers.all { $0.isPrime }
+}
+
+==================================================Rethrows 关键字
+rethrows关键字作用： 告诉编译器，这个函数只会在它的参数函数抛错时抛错 
+
+extension Sequence {
+    func all(condition: (Iterator.Element) throws -> Bool) rethrows -> Bool {
+        for element in self {
+            guard try condition(element) else { return false } 
+        }
+        return true
+    } 
+}
+
+func checkAllFiles(filenames: [String]) throws -> Bool { 
+    return try filenames.all(condition: checkFile)
+}
+
+标准库中序列和集合几乎所有可以接收函数做参数的函数都被标记成rethrows了。
+
+
+==================================================defer
+defer关键字： 一般在可能抛出异常的方法都会使用 try/finally结构。无论最后是否有抛出异常都会走finally流程。 这个时候我们就可以使用defer语法让代码变得更灵活。
+
+defer关键字的作用：实际是一个闭包，在当前声明的作用域结束时执行
+
+func contents(ofFile ?lename: String) throws -> String {
+	 let file = open("test.txt", O_RDONLY)
+	 defer { close(file) }
+	 let contents = try process(file: file) 
+	 return contents 
+}
+在上面的demo中，如果不用defer关键字 当出现异常，直接就try 提前结束了. 导致当前的文件流没有执行close方法。这个在以后的数据库操作中可算是一个重大bug。
+defer要写在reture 前面。 虽然它的执行上在return后。 你写在return后面，代码编译 return后的代码看都不看。这个时候你写defer实际上没啥用。
+
+
+标准库中对defer的使用:
+Enumeratedlterator协议中next()方法的代码实现。
+struct EnumeratedIterator<Base: IteratorProtocol>: IteratorProtocol, Sequence { 
+    internal var _base: Base 
+    internal var _count: Int ...
+    func next() -> Element? { 
+        guard let b = _base.next() else { return nil } 
+        defer { _count += 1 } 
+        return (offset: _count, element: b) 
+    } 
+}
+
+
+
+// https://www.objc.io/
+var counter = 5
+
+func increment() -> Int {
+    defer { counter += 1 }
+    return counter
+}
+
+counter = increment()// 5
+The defer statement gets executed after the return statement, but before the function actually returns.
+
+
+guard let database = openDatabase(...) else { return } 
+defer { closeDatabase(database) } 
+guard let connection = openConnection(database) else { return } 
+defer { closeConnection(connection) } 
+guard let result = runQuery(connection, ...) else { return }
+类似于压栈操作，前面的后执行，后面的先执行。
+上面的demo中的顺序也是在执行完数据库查询之后先```关闭链接```，再去```关闭数据库```。
+
+
+==================================================错误处理 Error Handling
+try? 关键字的作用： 可以忽略error抛出的错误， 并将返回值转化为可选值， error时返回nil, 成功时正常返回。
+
+// parse方法是一个可以throw error的方法。
+if let result = try? parse(text: input)
+{ 
+    print(result)
+}
+
+使用try? 意味着你能获得的错误信息少了，我们可以写一个optional的extension来补充获得想要的报错信息
+extension Optional {
+/// Unwraps `self` if it is non-`nil`.
+/// Throws the given error if `self` is `nil`. 
+    func or(error: Error) throws -> Wrapped {
+        switch self {
+            case let x?: return x   
+            case nil: throw error
+        } 
+    }
+}
+
+do {
+    let int = try Int("42").or(error: ReadIntError.couldNotRead)
+} catch { 
+    print(error)
+}
+
+
+在遇到异步耗时操作可能抛出错误时候的处理:
+假设方法compute是一个耗时操作，一般我们会使用闭包去异步的拿到返回值。
+
+func compute(callback: Int -> ())
+那么，如果compute方法可能会抛错捏？ 而且正好我们想要拿到这个错误的详细信息。
+
+一般情况下我们会这样写
+func compute(callback: Int throws -> ())
+这样写现在并不是指计算可能失败，而是表示回调本身可能会抛出错误。
+
+可选值和 Result 作用于类型，而 throws 只对函数起效。将一个函数标注为 throws 意味着这个函数可能会失败.
+
+我们真正需要的是用一个 Result 来封装 Int 参数 的函数去解决我们上面的需求。
+func compute(callback: Result<Int> -> ())
+
+对于异步的错误处理来说，Result 可能会是更好的选择，但是如果你已经在你的同步方法中使用throws了，再去你的异步函数中使用Result 会让你的API使用起来更加困难。
+
+
+如果你只有一个回调的话，使用下面这种会友好一些:
+func compute { (theResult: () throws -> Int) in 
+    do {
+        let result = try theResult()
+        print ( result ) 
+    } catch {
+        print("An error happened: \(error)")
+    } 
+}

@@ -3,13 +3,86 @@ https://www.kancloud.cn/jiejietop/tcpip/988475
 http://www.nongnu.org/lwip/2_1_x/index.html
 http://download.savannah.nongnu.org/releases/lwip/
 
+udp over tcp 和 udp in tcp
+两者是同一个东西，都是把 DNS 的 UDP 包封装到 TCP 包中，接收方收到 TCP 包，然后恢复出来 UDP 包。
 
 ###网络相关
 https://blog.csdn.net/zhangyanfei01/article/details/117341965
 https://github.com/yanfeizhang/coder-kung-fu
 ###
 
+
+https://www.cnblogs.com/bj-mr-li/p/11106390.html
+ACK、SYN和FIN这些大写的单词表示标志位，其值要么是1，要么是0；ack、seq小写的单词表示序号
+PSH:
+提示接收端应用程序立即从tcp缓冲区把数据读走
+
+第一次握手：建立连接时，客户端发送syn包（syn=j）到服务器，并进入SYN_SENT状态，等待服务器确认；SYN：同步序列编号（Synchronize Sequence Numbers）。
+第二次握手：服务器收到syn包，必须确认客户的SYN（ack=j+1），同时自己也发送一个SYN包（syn=k），即SYN+ACK包，此时服务器进入SYN_RECV状态；
+第三次握手：客户端收到服务器的SYN+ACK包，向服务器发送确认包ACK(ack=k+1），此包发送完毕，客户端和服务器进入ESTABLISHED（TCP连接成功）状态，完成三次握手。
+
+四次挥手:
+1）客户端进程发出连接释放报文，并且停止发送数据。释放数据报文首部，FIN=1，其序列号为seq=u（等于前面已经传送过来的数据的最后一个字节的序号加1），此时，客户端进入FIN-WAIT-1（终止等待1）状态。 TCP规定，FIN报文段即使不携带数据，也要消耗一个序号。
+2）服务器收到连接释放报文，发出确认报文，ACK=1，ack=u+1，并且带上自己的序列号seq=v，此时，服务端就进入了CLOSE-WAIT（关闭等待）状态。TCP服务器通知高层的应用进程，客户端向服务器的方向就释放了，这时候处于半关闭状态，即客户端已经没有数据要发送了，但是服务器若发送数据，客户端依然要接受。这个状态还要持续一段时间，也就是整个CLOSE-WAIT状态持续的时间。
+3）客户端收到服务器的确认请求后，此时，客户端就进入FIN-WAIT-2（终止等待2）状态，等待服务器发送连接释放报文（在这之前还需要接受服务器发送的最后的数据）。
+4）服务器将最后的数据发送完毕后，就向客户端发送连接释放报文，FIN=1，ack=u+1，由于在半关闭状态，服务器很可能又发送了一些数据，假定此时的序列号为seq=w，此时，服务器就进入了LAST-ACK（最后确认）状态，等待客户端的确认。
+5）客户端收到服务器的连接释放报文后，必须发出确认，ACK=1，ack=w+1，而自己的序列号是seq=u+1，此时，客户端就进入了TIME-WAIT（时间等待）状态。注意此时TCP连接还没有释放，必须经过2∗∗MSL（最长报文段寿命）的时间后，当客户端撤销相应的TCB后，才进入CLOSED状态。
+6）服务器只要收到了客户端发出的确认，立即进入CLOSED状态。同样，撤销TCB后，就结束了这次的TCP连接。可以看到，服务器结束TCP连接的时间要比客户端早一些。
+
+为什么连接的时候是三次握手，关闭的时候却是四次握手？
+因为当Server端收到Client端的SYN连接请求报文后，可以直接发送SYN+ACK报文。其中ACK报文是用来应答的，SYN报文是用来同步的。
+但是关闭连接时，当Server端收到FIN报文时，很可能并不会立即关闭SOCKET，所以只能先回复一个ACK报文，告诉Client端，"你发的FIN报文我收到了"。
+只有等到我Server端所有的报文都发送完了，我才能发送FIN报文，因此不能一起发送。
+
+为什么TIME_WAIT状态需要经过2MSL(最大报文段生存时间)才能返回到CLOSE状态？
+网络是不可靠的，有可以最后一个ACK丢失。
+所以TIME_WAIT状态就是用来重发可能丢失的ACK报文。在Client发送出最后的ACK回复，但该ACK可能丢失。
+Server如果没有收到ACK，将不断重复发送FIN片段。
+所以Client不能立即关闭，它必须确认Server接收到了该ACK。
+Client会在发送出ACK之后进入到TIME_WAIT状态。Client会设置一个计时器，等待2MSL的时间。如果在该时间内再次收到FIN，那么Client会重发ACK并再次等待2MSL。
+所谓的2MSL是两倍的MSL(Maximum Segment Lifetime)。MSL指一个片段在网络中最大的存活时间，2MSL就是一个发送和一个回复所需的最大时间。
+如果直到2MSL，Client都没有再次收到FIN，那么Client推断ACK已经被成功接收，则结束TCP连接。
+
+
+为什么不能用两次握手进行连接？
+3次握手完成两个重要的功能，既要双方做好发送数据的准备工作(双方都知道彼此已准备好)，也要允许双方就初始序列号进行协商，这个序列号在握手过程中被发送和确认。
+
+
+如果已经建立了连接，但是客户端突然出现故障了怎么办？
+TCP还设有一个保活计时器，显然，客户端如果出现故障，服务器不能一直等下去，白白浪费资源。
+服务器每收到一次客户端的请求后都会重新复位这个计时器，时间通常是设置为2小时，若两小时还没有收到客户端的任何数据，服务器就会发送一个探测报文段，以后每隔75秒钟发送一次。
+若一连发送10个探测报文仍然没反应，服务器就认为客户端出了故障，接着就关闭连接。
+
+
+###
+调用low_level_input();得到实际的接收数据pbuf(将网络数据读入内存)
+调用netif->input() 解析数据包
+
+netif_add(&netif, &ipaddr, &netmask, &gw, NULL, &ethernetif_init, &ethernet_input);
+当执行到netif->input();时，函数ethernet_input()被调用；
+###
+
+##
+tcp控制块有2类，一类是用来描述listen状态的的连接tcp_pcb_listen,另外一种是tcp_pcb,描述其他连接状态
+##
+
+https://www.03sec.com/2251.shtml
+
+虚拟网卡构建vpn 
+虚拟网卡通过实现一个字符设备来支持物理层,这样应用层和物理层就通过这个字符设备联系起来了
+从这个字符设备读出来的就是虚拟网卡发往物理层的字节流，写入字符设备的数据作为字节流被虚拟网卡接收
+虚拟网卡下面不再是网线或者无线电波，而是一个字符设备，这样从字符设备读出的还是写入字符设备的都是物理层字节流了
+用它来实现隧道再简单不过了，vpn程序读取字符设备，得到封装好的原始数据，然后用ssl再封装后发往vpn的对端
+和loopback的最初尝试一样，实现配置一条路由，使得要通过隧道的数据从虚拟网卡流出，最终通过虚拟网卡的字符设备导入应用层的vpn进程。
+
 ==================================================LwIP结构体netif:
+https://www.kancloud.cn/jiejietop/tcpip/988506
+
+###
+netif来描述一个网卡
+netif是LwIP抽象出来的网卡
+###
+
 网络接口（如以太网接口）是硬件接口，网络接口又可以称之为网卡 ， LwIP 是软件，那么怎么让硬件与软件无缝连接起来呢？
 而且， 网卡又有多种多样，怎么能让 LwIP 使用同样的软件能兼容不同的硬件呢？
 
@@ -18,12 +91,177 @@ LwIP 提供统一的接口，但是底层的实现需要用户自己去完成，
 同理， LwIP 内核需要发送一个数据包的时候，也需要调用网卡的发送函数，这样子才能把数据从硬件接口到软件内核无缝连接起来。
 
 ethernetif.c 文件中的函数通常为与硬件打交道的底层函数，当有数据需要通过网卡接收或者发送数据的时候就会被调用，经过 LwIP 协议栈内部进行处理后，从应用层就能得到数据或者可以发送数据。
+LwIP中的 ethernetif.c文件即为底层接口的驱动的模版，用户为自己的网络设备实现驱动时应参照此模块做修改。
+LwIP协议栈可以使用多个不同的接口，而ethernetif.c文件则提供了netif访问各种不同的网卡，每个网卡有不同的实现方式，用户只需要修改ethernetif.c文件即可。
 
 netif_add():
 首先我们需要根据我们的网卡定义一个 netif 结构体变量 struct netif gnetif， 我们首先要把网卡挂载到 netif_list 链表上才能使用，
 因为 LwIP 是通过链表来管理所有的网卡，所有第一步是通过 netif_add()函数将我们的网卡挂载到 netif_list 链表上
 在使用之前需要进行初始化主机 IP 地址、子网掩码、网关等，并且在调用 netif_add()函数之后会触发 netif_init_fn 的回调函数。
 在开始使用 LwIP 协议栈的时候，我们就需要将网卡底层移植完成，才能开始使用，而移植的第一步，就是将网络进行初始化，并且设置该网卡为默认网卡，让LwIP 能通过网卡进行收发数据。
+
+struct netif {                                                
+    struct netif *next;    // 指向下一个 netif 结构的指针
+    struct ip_addr ip_addr;    // IP 地址相关配置
+    struct ip_addr netmask;
+    struct ip_addr gw;
+###
+    这个函数由网络设备驱动所调用，从网卡中接收数据包并传递给TCP/IP协议栈
+###
+    err_t (* input)(struct pbuf *p, structnetif *inp);    //调用这个函数可以从网卡上取得一个数据包
+    err_t (* output)(struct netif *netif,struct pbuf *p, struct ip_addr *ipaddr);    // IP 层调用这个函数可以向网卡发送一个数据包   
+    err_t (* linkoutput)(struct netif *netif,struct pbuf *p);   // ARP 模块调用这个函数向网卡发送一个数据包
+    void *state;    // 用户可以独立发挥该指针，用于指向用户关心的网卡信息
+    u8_t hwaddr_len;    // 硬件地址长度，对于以太网就是 MAC 地址长度，为 6 各字节
+    u8_t hwaddr[NETIF_MAX_HWADDR_LEN];    //MAC 地址
+    u16_t mtu;    // 一次可以传送的最大字节数，对于以太网一般设为 1500
+    u8_t flags;    // 网卡状态信息标志位
+    char name[2];    // 网络接口使用的设备驱动类型的种类
+    u8_t num;    // 用来标示使用同种驱动类型的不同网络接口
+};
+ip_addr、 netmask、 gw 三个字段用于发送和处理数据包用，分别表示 IP 地址、子网掩码和网关地址。
+input 字段指向一个函数，这个函数将网卡设备接收到的数据包提交给 IP 层。
+output 字段指向一个函数，这个函数和具体网络接口设备驱动密切相关，它用于 IP 层将一个数据包发送到网络接口上。用户需要根据实际网卡编写该函数，并将 output 字段指向该函数。
+linkoutput 字段和上面的 output 基ᴀ上是起相同的作用，但是这个函数是在 ARP 模块中被调用的。
+state 字段可以指向用户关心的关于设备的一些信息。
+mtu 字段表示该网络一次可以传送的最大字节数，对于以太网一般设为 1500。
+flags 字段是网卡状态信息标志位，是很重要的控制字段，它包括网卡功能使能、广播使能、 ARP 使能等等重要控制位。
+
+
+1 struct netif
+ 2 {
+ 3 #if !LWIP_SINGLE_NETIF
+ 4     /* 指向netif链表中的下一个 */
+ 5     struct netif *next;				(1)
+ 6 #endif
+ 7 
+ 8 #if LWIP_IPV4
+ 9     /* 网络字节中的IP地址、子网掩码、默认网关配置 */
+10     ip_addr_t ip_addr;
+11     ip_addr_t netmask;
+12     ip_addr_t gw;					(2)
+13 #endif /* LWIP_IPV4 */
+14 
+15     /* 此函数由网络设备驱动程序调用，将数据包传递到TCP/IP协议栈。
+16      * 对于以太网物理层，这通常是ethernet_input()*/
+17     netif_input_fn input;				(3)
+18 
+19 #if LWIP_IPV4
+20 
+21     /* 此函数由IP层调用，在接口上发送数据包。通常这个功能，
+22        * 首先解析硬件地址，然后发送数据包。
+23        * 对于以太网物理层，这通常是etharp_output() */
+24     netif_output_fn output;				(4)
+25 
+26 #endif /* LWIP_IPV4 */
+27     /* 此函数由ethernet_output()调用，当需要在网卡上发送一个数据包时。
+28        * 底层硬件输出数据函数，一般是调用自定义函数low_level_output*/
+29     netif_linkoutput_fn linkoutput;			(5)
+30 
+31 #if LWIP_NETIF_STATUS_CALLBACK
+32     /* 当netif状态设置为up或down时调用此函数 */
+33     netif_status_callback_fn status_callback;		(6)
+34 #endif /* LWIP_NETIF_STATUS_CALLBACK */
+35 
+36 #if LWIP_NETIF_LINK_CALLBACK
+37     /* 当netif链接设置为up或down时，将调用此函数 */
+38     netif_status_callback_fn link_callback;		(7)
+39 #endif /* LWIP_NETIF_LINK_CALLBACK */
+40 
+41 #if LWIP_NETIF_REMOVE_CALLBACK
+42     /* 当netif被删除时调用此函数 */
+43     netif_status_callback_fn remove_callback;		(8)	
+44 #endif /* LWIP_NETIF_REMOVE_CALLBACK */
+45 
+46     /* 此字段可由设备驱动程序设置并指向设备的状态信息。
+47      * 主要是将网卡的某些私有数据传递给上层，用户可以自由发挥，也可以不用。*/
+48     void *state;					(9)
+49 
+50 #ifdef netif_get_client_data
+51    void* client_data[LWIP_NETIF_CLIENT_DATA_INDEX_MAX + LWIP_NUM_NETIF_CLIENT_DATA];
+52 #endif
+53 #if LWIP_NETIF_HOSTNAME
+54     /* 这个netif的主机名，NULL也是一个有效值 */
+55     const char*  hostname;
+56 #endif /* LWIP_NETIF_HOSTNAME */
+57 
+58 #if LWIP_CHECKSUM_CTRL_PER_NETIF
+59     u16_t chksum_flags;
+60 #endif /* LWIP_CHECKSUM_CTRL_PER_NETIF*/
+61 
+62     /** 最大传输单位（以字节为单位），对于以太网一般设为 1500 */
+63     u16_t mtu;					(10)
+64 
+65     /** 此网卡的链路层硬件地址 */
+66     u8_t hwaddr[NETIF_MAX_HWADDR_LEN];			(11)
+67 
+68     /** 硬件地址长度，对于以太网就是 MAC 地址长度，为6字节 */
+69     u8_t hwaddr_len;					(12)
+70 
+71     /* 网卡状态信息标志位，是很重要的控制字段，
+72      * 它包括网卡功能使能、广播使能、 ARP 使能等等重要控制位。 */
+73     u8_t flags;					(13)	
+74 
+75     /* 字段用于保存每一个网卡的名字。用两个字符的名字来标识网络接
+76      * 口使用的设备驱动的种类，名字由设备驱动来设置并且应该反映通过网卡
+77      * 表示的硬件的种类。比如蓝牙设备（ bluetooth）的网卡名字可以是 bt，
+78      * 而 IEEE 802.11b WLAN 设备的名字就可以是wl，当然设置什么名字用户是可
+79      * 以自由发挥的，这并不影响用户对网卡的使用。当然，如果两个网卡
+80      * 具有相同的网络名字，我们就用 num 字段来区分相同类别的不同网卡*/
+81     char name[2];					(14)
+82 
+83     /* 用来标示使用同种驱动类型的不同网卡 */
+84     u8_t num;						(15)
+85 
+86 #if MIB2_STATS
+87     /* 连接类型 */
+88     u8_t link_type;
+89     /* 连接速度 */
+90     u32_t link_speed;
+91     /* 最后一次更改的时间戳 */
+92     u32_t ts;
+93     /** counters */
+94     struct stats_mib2_netif_ctrs mib2_counters;
+95 #endif /* MIB2_STATS */
+96 
+97 #if LWIP_IPV4 && LWIP_IGMP
+98     /** 可以调用此函数来添加或删除多播中的条目
+99           以太网MAC的过滤表。*/
+100     netif_igmp_mac_filter_fn igmp_mac_filter;
+101 #endif /* LWIP_IPV4 && LWIP_IGMP */
+102 
+103 #if LWIP_NETIF_USE_HINTS
+104     struct netif_hint *hints;
+105 #endif /* LWIP_NETIF_USE_HINTS */
+106 
+107 #if ENABLE_LOOPBACK
+108     /* List of packets to be queued for ourselves. */
+109     struct pbuf *loop_first;
+110     struct pbuf *loop_last;
+111 
+112 #if LWIP_LOOPBACK_MAX_PBUFS
+113     u16_t loop_cnt_current;
+114 #endif /* LWIP_LOOPBACK_MAX_PBUFS */
+115 
+116 #endif /* ENABLE_LOOPBACK */
+117 };
+
+(1)：LwIP使用链表来管理同一设备的多个网卡。在netif.c文件中定义两个全局指针：struct netif *netif_list和struct netif *netif_default，其中netif_list就是网卡链表指针，指向网卡链表的首节点（第一个网卡），后者表示默认情况下（有多网口时）使用哪个网卡。next字段指向下一个netif结构体指针，在一个设备中有多个网卡时，才使用该字段。
+(2)：ip_addr字段记录的是网络中的IP地址，netmask字段记录的是子网掩码，gw记录的是网关地址，这些字段是用于描述网卡的网络地址属性。
+IP地址必须与网卡对应，即设备拥有多少个网卡那就必须有多少个IP地址；子网掩码可以用来判断某个IP地址与当前网卡是否处于同一个子网中，IP在发送数据包的时候会选择与目标IP地址处于同一子网的网卡来发送；网关地址在数据包的发送、转发过程非常重要，如果要向不属于同一子网的主机（主机目标IP地址与网卡不属于同一子网）发送一个数据包，那么LwIP就会将数据包发送到网关中，网关设备会对该数据包进行正确的转发，除此之外，网关还提供很多高级功能，如DNS，DHCP等。
+(3)：input是一个函数指针，指向一个函数，该函数由网络设备驱动程序调用，将数据包传递到TCP/IP协议栈（IP层）。对于以太网物理层，这通常是ethernet_input()，参数为pbuf和netif类型，其中pbuf为接收到的数据包。
+(4)：output也是一个函数指针，指向一个函数，此函数由IP层调用，在接口上发送数据包。用户需要编写该函数并使output指向它，通这个函数的处理步骤是首先解析硬件地址，然后发送数据包。对于以太网物理层，该函数通常是etharp_output()，参数为pbuf、netif和ip_addr类型，其中，ipaddr代表要将该数据包发送到的地址，但不一定是数据包最终到到达的IP地址，比如，要发送IP数据报到一个并不在本网络的主机上，该数据包要被发送到一个路由器上，这里的ipaddr就是路由器IP地址。
+(5)：linkoutput字段和output类似，也需要用户自己实现一个函数，但只有两个参数，它是由ARP模块调用的，一般是自定义函数low_level_output()。当需要在网卡上发送一个数据包时，该函数会被ethernet_output()函数调用。
+(6)：当netif状态设置为up或down时，将调用此函数。
+(7)：当netif连接设置为up或down时，将调用此函数。
+(8)：当netif被删除时调用此函数。
+(9)：此字段可由设备驱动程序设置并指向设备的状态信息。主要是将网卡的某些私有数据传递给上层，用户可以自由发挥，也可以不用。
+(10)：最大传输单位（以字节为单位），对于以太网一般设为 1500，在IP层发送数据的时候，LwIP会使用该字段决定是否需要对数据包进行分片处理，为什么是在IP层进行分片处理？因为链路层不提供任何的差错处理机制，如果在网卡中接收的数据包不满足网卡自身的属性，那么网卡可能就会直接丢弃该数据包，也可能在底层进行分包发送，但是这种分包在IP层看来是不可接受的，因为它打乱了数据的结构，所以只能由IP层进行分片处理。
+(11)：此网卡的链路层硬件地址。
+(12)：硬件地址长度，对于以太网就是 MAC 地址长度，为6字节
+(13)：网卡状态信息标志位，是很重要的控制字段，它包括网卡功能使能、广播使能、 ARP 使能等等重要控制位。
+(14)：name字段用于保存每一个网卡的名字。用两个字符的名字来标识网卡使用的设备驱动的种类，名字由设备驱动来设置并且应该反映通过网卡表示的硬件的种类。比如蓝牙设备（bluetooth）的网卡名字可以是 bt，而 IEEE 802.11b WLAN设备的名字就可以是wl，当然设置什么名字用户是可以自由发挥的，这并不影响用户对网卡的使用。当然，如果两个网卡具有相同的网络名字，我们就用 num字段来区分相同类别的不同网卡。
+(15)：用来标识使用同种驱动类型的不同网卡。
 
 
 ==================================================原始套接字（SOCK_RAW）
@@ -298,12 +536,19 @@ __recv_more:
 ==================================================LWIP动态内存管理
 LWIP中的动态内存管理有三种方式:
 运行时C库自带的内存分配方式、LWIP中自带的内存堆（HEAP）分配方式、内存池（POOL）分配方式。
-
 内存堆的特点是对一块事先分配好的内存块进行合理有效的组织和管理，主要用于任意大小的内存分配。缺点是容易产生内存碎片。
 内存池的特点是预先开辟许多固定大小的内存块组织成链表，实现快速分配/回收，且不会产生内存碎片，但大小固定会带来一定内存浪费。
 
+LWIP宏编译开关:
+若定义MEM_LIBC_MALLOC = 1，直接使用C库中的malloc、free来分配动态内存；否则使用LWIP自带的mem_malloc、mem_free等函数。
+若定义MEMP_MEM_MALLOC = 1，则用内存堆来实现内存池分配，使用这种方式得考虑是否能忍受内存堆分配带来的时间延迟。
+若定义MEM_USE_POOLS  = 1，则用内存池来实现内存堆的分配，使用这种方式得考虑是否能忍受因为POOL内存固定大小而带来的内存浪费。
+
+LW_CFG_LWIP_MEM_SIZE定义了内存堆区大小，LW_CFG_LWIP_POOL_SIZE和LW_CFG_LWIP_NUM_POOLS定义了内存池的大小和数量。
+
 ==================================================pbuf数据包管理
 LWIP中常用的内存分配策略有两种，一种是内存堆分配，一种是内存池分配。
+
 内存堆能分配合理的任意大小的内存块，缺点是当经过多次的分配释放后，内存堆中间会出现很多碎片，使得需要分配较大内存块时分配失败；
 内存池分配速度快，通过简单的链表操作（各种类型的 POOL 已经分配内存，大小固定），但是采用 POOL 会浪费掉一定的内存空间。
 在 LWIP 数据包管理中，将这两种分配策略混合使用，达到了很好的内存使用效率。
@@ -357,6 +602,622 @@ PBUF_REF
 
 每一种pbuf分配内存的方式都不一样，只有选择合适的pbuf类型才能发挥LWIP的最大性能
 
+
+pbuf就是一个描述协议栈中数据包的数据结构
+1 /** Main packet buffer struct */
+ 2 struct pbuf
+ 3 {
+ 4     /** next pbuf in singly linked pbuf chain */
+ 5     struct pbuf *next;					(1)
+ 6 
+ 7     /** pointer to the actual data in the buffer */
+ 8     void *payload;					(2)
+ 9 
+10     u16_t tot_len;					(3)	
+11 
+12     /** length of this buffer */
+13     u16_t len;					(4)	
+14 
+15     u8_t type_internal;				(5)	
+16 
+17     /** misc flags */
+18     u8_t flags;					(6)	
+19 
+20     LWIP_PBUF_REF_T ref;				(7)
+21 
+22     /** For incoming packets, this contains the input netif's index */
+23     u8_t if_idx;					(8)	
+24 };
+
+(1)：next是一个pbuf类型的指针，指向下一个pbuf，因为网络中的数据包可能很大，而pbuf能管理的数据包大小有限，就会采用链表的形式将所有的pbuf包连接起来，这样子才能完整描述一个数据包，这些连接起来的pbuf包会组成一个链表，我称之为pbuf链表。
+(2)：payload是一个指向数据区域的指针，指向该pbuf管理的数据区域起始地址，这里的数据区域可以是紧跟在pbuf结构体地址后面的RAM空间，也可以是ROM中的某个地址上，取决于pbuf的类型。
+(3)：tot_len中记录的是当前pbuf及其后续pbuf所有数据的长度，例如如果当前pbuf是pbuf链表上第一个数据结构，那么tot_len就记录着整个pbuf链表中所有pbuf中数据的长度；如果当前pbuf是链表上最后一个数据结构，那就记录着当前pbuf的长度。
+(4)：len表示当前pbuf中有效的数据长度。
+(5)：type_internal表示pbuf的类型，LwIP中有4种pbuf的类型，并且使用了一个枚举类型的数据结构定义他们，具体见代码清单 6 2。
+(6)：flags字段在初始化的时候一般被初始化为0，此处就不对flags字段进行过多讲解。
+(7)：ref表示该pbuf被引用的吃的啥，引用表示有其他制造指向当前pbuf，这里的指针可以是pbuf的next指针，也可以是其他任意形式的指针，初始化一个pbuf的时候，ref会被设置为1，因为该pbuf的地址一点会被返回一个指针变量，当有其他指针指向pbuf的时候，就必须调用相关函数将ref字段加1。
+(8)：if_idx用于记录传入的数据包中输入netif的索引，也就是netif中num字段。
+
+
+协议栈中各层首部的大小都会被预留出来，LwIP采用枚举类型的变量将各个层的首部大小记录下来，在申请的时候就把layer需要空间的大小根据协议进行分配
+1 #define PBUF_TRANSPORT_HLEN 20
+ 2 #define PBUF_IP_HLEN        20
+ 3 
+ 4 typedef enum
+ 5 {
+ 6     PBUF_TRANSPORT = PBUF_LINK_ENCAPSULATION_HLEN +
+ 7               PBUF_LINK_HLEN + PBUF_IP_HLEN + PBUF_TRANSPORT_HLEN,(1)
+ 8 
+ 9     PBUF_IP = PBUF_LINK_ENCAPSULATION_HLEN +
+10               PBUF_LINK_HLEN + PBUF_IP_HLEN,			(2)
+11 
+12     PBUF_LINK = PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN,	(3)
+13 
+14     PBUF_RAW_TX = PBUF_LINK_ENCAPSULATION_HLEN,			(4)	
+15 
+16     PBUF_RAW = 0						(5)
+17 } pbuf_layer;
+
+(1)：传输层协议首部内存空间，如UDP、TCP报文协议首部。
+(2)：网络层协议首部内存空间，如IP协议。
+(3)：链路层协议首部内存空间，如以太网。
+(4)(5)： 原始层，不预留空间， PBUF_LINK_ENCAPSULATION_HLEN宏定义默认为0。
+
+对于PBUF_ROM与PBUF_REF类型的pbuf，内核不会申请数据区域，因此，pbuf结构体中payload指针就需要用户自己去设置，我们通常在申请PBUF_ROM与PBUF_REF类型的pbuf成功后，紧接着就将payload指针指向某个数据区域。
+
+TCP协议需要申请一个pbuf数据包
+p = pbuf_alloc(PBUF_TRANSPORT, 1472, PBUF_RAM);
+内核就会根据这句代码进行分配一个PBUF_RAM类型的pbuf，其数据区域大小是1472字节，
+并且会根据协议层次进行预留协议首部空间，由于是传输层，所以内核需要预留54个字节空间，
+即以太网帧首部长度PBUF_LINK_HLEN（14字节）、IP数据报首部长度PBUF_IP_HLEN（20字节）、TCP首部长度PBUF_TRANSPORT_HLEN（20字节）。
+
 ==================================================以太网网卡接口部分初始化
+以太网卡包括无线网卡，无线网卡是以太网卡的一部分。
+以太网卡：以太网卡分为有线网卡和无线网卡两种，电脑里的网卡都是可以统称为以太网卡的。
+无线网卡：无线网卡是通过无线信号来连接网络设备以实现上网的一种网卡。
+
+netdev结构体是对netif 结构体的一层封装。它们都是用来描述一个以太网网卡接口的。
+
+以太网网卡接口结构是怎样被初始化
+static struct netdev_funcs net_drv = {                         ①
+    .init      = __enetCoreInit,
+    .transmit  = __enetCoreTx,
+    .receive   = __enetCoreRecv,
+};
+pNetDev->speed        = 0;                              ②
+pNetDev->mtu          = 1500;
+pNetDev->hwaddr_len   = 6;
+pNetDev->drv          =&net_drv;
+lib_strcpy(ip,     "192.168.3.202");                         ③
+lib_strcpy(gw,     "192.168.3.1");
+lib_strcpy(netmask, "255.255.255.0");
+netdev_add(pNetDev, ip, netmask, gw, IFF_UP |IFF_RUNNING | IFF_BROADCAST | IFF_MULTICAST) == 0) ;④
+
+①声明了网卡驱动函数，分别是以太网初始化函数，以太网发送函数，以太网接收函数。
+②声明了网卡驱动参数（省略了一部分）。
+③声明了三个分别用于暂存 IP 地址、子网掩码和网关地址的变量。
+④网卡驱动程序调用netdev_add函数来增加一个网络接口。
+
+int  netdev_add (netdev_t *netdev, const char *ip, const char *netmask, const char *gw, int if_flags)
+{
+......
+  netif = (struct netif *)netdev->sys;
+  lib_bzero(netif, sizeof(struct netif));
+......
+  if (netifapi_netif_add(netif, &ip4, &netmask4, &gw4, netdev, netdev_netif_init, tcpip_input)) {
+    return (-1);
+  }
+......
+  if (netdev->init_flags & NETDEV_INIT_AS_DEFAULT) {
+    netifapi_netif_set_default(netif);
+  }
+}
+
+netdev_add函数其实是netif_add的封装。最终还是通过调用netif_add函数来增加一个网络接口。（其中netdev->sys 是预留的用于存储netif结构体的成员变量）
+其中netdev_netif_init 是用户自己定义的底层接口初始化函数， tcpip_input 函数是向 IP 层递交数据包的函数。
+
+struct netif *
+netif_add(struct netif *netif,
+          const ip4_addr_t *ipaddr, const ip4_addr_t *netmask, const ip4_addr_t *gw,
+          void *state, netif_init_fn init, netif_input_fn input)
+{
+......
+  netif->state = state; //指向用户关心的信息，这里为 NULL
+  netif->num = netifnum++; //设置 num 字段，
+  netif->input = input; // input 函数被赋值 ，（tcpip_input向 IP 层递交数据包的函数）
+......
+  netif_set_addr(netif, ipaddr, netmask, gw); //设置变量 enc28j60 的三个地址
+ 
+  if (init(netif) != ERR_OK) { //用户自己的底层接口初始化函数（netdev_netif_init自己定义的底层接口初始化函数）
+      return NULL;
+  }
+  netif->next = netif_list; //将初始化后的节点插入链表 netif_list
+  netif_list = netif; // netif_list 指向链表头
+......
+}
+
+上面的初始化函数调用了用户自己定义的底层接口初始化函数，这里为netdev_netif_init函数
+/* lwip netif add call back function */
+static err_t  netdev_netif_init (struct netif *netif)
+{
+......
+  netif->output = etharp_output;  //IP 层发送数据包函数
+......
+  netif->linkoutput = netdev_netif_linkoutput; //ARP 模块发送数据包函数
+......
+}
+
+最终使用的还是netif结构体和netif_add函数。
+netif_add函数中填充了input、output、linkoutput等函数用于IP层从网卡上取得一个数据包、IP层向网卡发送一个数据包  、ARP 模块向网卡发送一个数据包。
+
+==================================================netdev_pbuf_alloc函数
+netdev_pbuf_alloc是网卡驱动中的内存申请函数，申请一块缓冲区用于存放网络报文数据。
+netdev_pbuf_alloc函数是pbuf_alloc函数的函数封装
+而pbuf_alloc函数有三个参数，分别是申请的pbuf数据缓冲区是否带有偏移，数据缓冲区大小及缓冲区类型。
+在netdev_pbuf_alloc函数中，申请的pbuf结构缓冲区数据偏移固定为0，缓冲区类型为PBUF_POOL
+
+###
+网卡驱动收到数据后，会调用netdev_pbuf_alloc函数申请pbuf结构，并将数据拷贝至pbuf。
+
+设备驱动实现了虚拟网卡的功能
+###
+
+pbuf_alloc函数第一个参数分析
+在网络中通信的数据报文，除了真正的数据段外，还包括了TCP/IP各层协议的报文头。
+如用户有特殊需求，要在应用层构建报文并直接通过网卡驱动发送，则需要申请pbuf结构的数据缓冲区带有各层偏移
+typedef enum {
+  PBUF_TRANSPORT,                                        /*  传输层报文头偏移          */
+  PBUF_IP,                                               /*  IP层报文头偏移           */
+  PBUF_LINK,                                             /*  链路层报文头偏移         */
+  PBUF_RAW_TX,                                           /*  封装链路层偏移           */
+  PBUF_RAW                                               /*  无偏移                 */
+} pbuf_layer;
+
+pbuf_alloc函数第三个参数分析
+申请pbuf结构需要指定pbuf类型，原因是不同类型的pbuf申请内存的方式不同
+typedef enum {
+  PBUF_RAM,                                                 /*  内存堆分配             */
+  PBUF_ROM,                                                 /*  指向ROM空间内数据      */
+  PBUF_REF,                                                 /*  指向RAM空间内数据      */
+  PBUF_POOL                                                 /*  内存池分配             */
+} pbuf_type;
+PBUF_POOL类型的pbuf通过内存池分配，这种类型的pbuf可以在极短时间内得到分配，在网卡驱动接收数据时，一般采用这种方式。
+
+netdev_pbuf_alloc函数申请PBUF_POOL类型pbuf，
+若申请的缓冲区大于PBUF_POOL池中单个pbuf缓冲区长度，系统会分配多个固定大小的PBUF_POOL类型pbuf，并把这些pbuf链成一个链表，以满足用户的分配空间请求
+
+==================================================tcpip_input函数解析(协议栈入口)
+pcb: protocol control block
+
+==================================================lwip源码分析 之 网络接口netif
+https://www.cnblogs.com/qinzhou/p/8375869.html
+
+
+在lwip中每一个网络接口都由一个netif结构体表示。表示不同网卡的netif结构体链接成一个链表。全局变量struct netif *netif_list指向该链表表头。
+全局变量struct netif *netif_default指向的netif结构所表示的网卡为缺省网卡。在发送消息的时候，会首先会通过这个网卡，若是没有回应，再使用其他网卡。
+
+以太网通信中，硬件层的实现是靠网卡，每个网卡都有ip地址，mac地址，最大传输包长度，输入输出功能
+lwip使用netif来描述这些网卡，并将网卡的输入输出数据传递给ip层。
+
+网关地址，若目的ip不在同一网络，则将报文发送给网关
+
+struct netif {
+  struct netif *next; //指向下一个网口
+
+  ip_addr_t ip_addr;  //网口ip地址
+  ip_addr_t netmask;  //网口子网掩码，用来判断ip是否处于同一网络
+  ip_addr_t gw; //网关地址，若目的ip不在同一网络，则将报文发送给网关
+
+  netif_input_fn input; //网口调用该函数将数据包传递给ip层
+
+  netif_output_fn output; //ip层调用该函数将数据包传递给网口
+
+  netif_linkoutput_fn linkoutput; //网口调用该函数将数据包传递给以太网驱动
+
+  void *state;
+#if LWIP_DHCP
+  struct dhcp *dhcp;
+#endif /* LWIP_DHCP */
+  u16_t mtu;  //最大数据包长度
+  u8_t hwaddr_len;  //硬件地址长度
+  u8_t hwaddr[NETIF_MAX_HWADDR_LEN];//硬件地址
+  u8_t flags; //网口的状态 属性控制位
+  char name[2]; //网口名称
+  u8_t num; //网口的编号
+#if LWIP_IGMP
+  netif_igmp_mac_filter_fn igmp_mac_filter;
+#endif /* LWIP_IGMP */
+
+};
+
+netif的初始化函数为netif_add()；这个函数实际上就是用获取到的ip地址等填充netif结构体，并将网卡的初始化和输入函数赋值到netif中，调用网卡初始化函数初始化网卡，并将netif插入链表。
+初始化和输入函数是由网卡的驱动者提供的。
+struct netif *
+netif_add(struct netif *netif, ip_addr_t *ipaddr, ip_addr_t *netmask,
+  ip_addr_t *gw, void *state, netif_init_fn init, netif_input_fn input)
+{
+  static u8_t netifnum = 0; //静态变量：网口编号
+
+  //重置网口地址
+  ip_addr_set_zero(&netif->ip_addr);
+  ip_addr_set_zero(&netif->netmask);
+  ip_addr_set_zero(&netif->gw);
+  
+  netif->flags = 0;
+  netif->dhcp = NULL;
+  netif->igmp_mac_filter = NULL;
+
+  netif->state = state;
+  netif->num = netifnum++;  //新编号
+  netif->input = input; //添加ip层输入函数
+
+  netif_set_addr(netif, ipaddr, netmask, gw);//设置网口的地址
+
+  //调用初始化函数，初始化硬件
+  if (init(netif) != ERR_OK) {
+    return NULL;
+  }
+
+  //将网口插入链表头
+  netif->next = netif_list;
+  netif_list = netif;
+  snmp_inc_iflist();
+  return netif;
+}
+
+需要注意的是在添加网口的ip地址时，会检查是否有tcp连接绑定在之前的网口上，若有则需要将该tcp连接终止，因为网口的ip地址修改将导致tcp连接断开。
+//设置网口ip地址
+void
+netif_set_ipaddr(struct netif *netif, ip_addr_t *ipaddr)
+{
+#if LWIP_TCP
+  struct tcp_pcb *pcb;
+  struct tcp_pcb_listen *lpcb;
+
+  //新的ipaddr与之前的ip不一样，需要更新tcp控制块
+  if ((ip_addr_cmp(ipaddr, &(netif->ip_addr))) == 0) {
+    pcb = tcp_active_pcbs;  //正常的tcp连接链表
+    while (pcb != NULL) {
+      //判断是否有tcp绑定到当前网口的ip上。若有则终止tcp
+      if (ip_addr_cmp(&(pcb->local_ip), &(netif->ip_addr)))
+       {
+        struct tcp_pcb *next = pcb->next;//将pcb从链表删除
+        tcp_abort(pcb);
+        pcb = next;
+      } else {
+        pcb = pcb->next;  //检查下一个tcp
+      }
+    }
+    //检查处于listen状态的tcp
+    for (lpcb = tcp_listen_pcbs.listen_pcbs; lpcb != NULL; lpcb = lpcb->next) {
+     
+      //若tcp绑定到当前网口，则更新tcp的ip信息，此时无tcp连接
+      if ((!(ip_addr_isany(&(lpcb->local_ip)))) &&
+          (ip_addr_cmp(&(lpcb->local_ip), &(netif->ip_addr)))) {
+        ip_addr_set(&(lpcb->local_ip), ipaddr);
+      }
+    }
+  }
+#endif
+
+  ip_addr_set(&(netif->ip_addr), ipaddr); //设置网口ip
+}
+
+###
+netif_add()函数将我们的网卡挂载到netif_list链表上
+###
+
+ethernetif_input()函数的主要作用就是调用low_level_input()函数从网卡中读取一个数据包，
+然后解析该数据包的类型是属于ARP数据包还是IP数据包，再将包递交给上层
+
+在函数ethernetif_input（）主要完成两个工作
+1、调用low_level_input();得到实际的接收数据pbuf
+2、调用netif->input();
+
+==================================================lwip源码分析 之 IP协议 数据输入
+ip层是lwip代码的核心领域，它负责将以太网数据传递上来的数据整理并传递给传输层，或者将数据转发到其他网络。
+网络接口接收到数据后，调用以下函数将数据传递给ip层。该函数将根据ipv4 or ipv6 调用真正的处理函数。
+//以太网调用该函数
+err_t
+ip_input(struct pbuf *p, struct netif *inp)
+{
+  if (p != NULL) {
+    if (IP_HDR_GET_VERSION(p->payload) == 6) {
+      return ip6_input(p, inp);
+    }
+    return ip4_input(p, inp);
+  }
+  return ERR_VAL;
+}
+
+
+
+==================================================lwip源码分析之 TCP协议 数据输入
+###
+https://blog.csdn.net/weixin_44821644/article/details/111339566
+###
+
+ip层接收到数据后，经过处理需要将数据传递给tcp层。
+ip层通过tcp_input函数将接收到的数据传递给tcp层，该函数是tcp数据的总入口
+
+ip层递交的数据仍然是以pbuf的形式出现的，其中payload指向的是tcp数据的首部，我们需要将tcp的首部与数据分离
 
 ==================================================
+1.应用程序与TCP通信：socket(AF_INET, SOCK_STREAM, 0))；
+
+2.应用程序与UDP通信：socket(AF_INET, SOCK_DGRAM, 0))；
+
+3.应用程序与ICMP通信：socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+
+4.应用程序与IP通信：socket(AF_INET, SOCK_RAW, IPPROTO_IP);
+
+5.应用程序与以太网通信：socket(AF_PACKET, SOCK_RAW, IPPROTO_RAW);
+
+
+==================================================lwip数据包接收过程
+接收链路层数据:
+在以太网中断中接收到数据，最先调用
+ethernetif_input(&g_stFslNetif0);
+g_stFslNetif0是网卡接口结构体，数据处理过程为：
+
+1.调用low_level_input，从网卡中获取数据
+2.申请pbuf，将数据放进其中
+3.将数据交给 netif->input，处理
+（ netif->input在初始化的时候赋值为ethernet_input）
+
+static struct pbuf * low_level_input(struct netif *netif)
+{
+  struct pbuf *p = NULL;
+  ETH_BufferTypeDef RxBuff;
+  uint32_t framelength = 0;
+  struct pbuf_custom* custom_pbuf;
+  
+  if (HAL_ETH_IsRxDataAvailable(&EthHandle))
+  {
+    HAL_ETH_GetRxDataBuffer(&EthHandle, &RxBuff);
+    HAL_ETH_GetRxDataLength(&EthHandle, &framelength);
+    
+    /* Build Rx descriptor to be ready for next data reception */
+	HAL_ETH_BuildRxDescriptors(&EthHandle);
+
+    /* Invalidate data cache for ETH Rx Buffers */
+    SCB_InvalidateDCache_by_Addr((uint32_t *)RxBuff.buffer, framelength);
+    
+    custom_pbuf  = (struct pbuf_custom*)LWIP_MEMPOOL_ALLOC(RX_POOL);
+    custom_pbuf->custom_free_function = pbuf_free_custom;
+
+    p = pbuf_alloced_custom(PBUF_RAW, framelength, PBUF_REF, custom_pbuf, RxBuff.buffer, ETH_RX_BUFFER_SIZE);
+    
+    return p;
+  }
+  else
+  {
+    return NULL;
+  }
+}
+
+void ethernetif_input(struct netif *netif)
+{
+  err_t err;
+  struct pbuf *p;
+  
+  /* move received packet into a new pbuf */
+  p = low_level_input(netif);
+    
+  /* no packet could be read, silently ignore this */
+  if (p == NULL) return;
+    
+  /* entry point to the LwIP stack */
+  err = netif->input(p, netif);
+    
+  if (err != ERR_OK)
+  {
+    LWIP_DEBUGF(NETIF_DEBUG, ("ethernetif_input: IP input error\n"));
+    pbuf_free(p);
+    p = NULL;
+  }
+}
+这时候ethernet_input函数处理的是完整的以太网数据
+
+
+处理链路层数据:
+ethernet_input函数处理流程
+
+以太网帧的结构式:
+/** Ethernet header */
+struct eth_hdr {
+#if ETH_PAD_SIZE
+  PACK_STRUCT_FLD_8(u8_t padding[ETH_PAD_SIZE]);
+#endif
+  PACK_STRUCT_FLD_S(struct eth_addr dest);
+  PACK_STRUCT_FLD_S(struct eth_addr src);
+  PACK_STRUCT_FIELD(u16_t type);
+} PACK_STRUCT_STRUCT;
+目的地址，源地址，类型，共14个字节
+是通过pbuf_header， 改变p->payload指向的地址来改变去掉帧头
+
+err_t
+ethernet_input(struct pbuf *p, struct netif *netif)
+{
+  struct eth_hdr* ethhdr;
+  u16_t type;
+#if LWIP_ARP || ETHARP_SUPPORT_VLAN || LWIP_IPV6
+  s16_t ip_hdr_offset = SIZEOF_ETH_HDR;
+#endif /* LWIP_ARP || ETHARP_SUPPORT_VLAN */
+
+  if (p->len <= SIZEOF_ETH_HDR) {
+    /* a packet with only an ethernet header (or less) is not valid for us */
+    ETHARP_STATS_INC(etharp.proterr);
+    ETHARP_STATS_INC(etharp.drop);
+    MIB2_STATS_NETIF_INC(netif, ifinerrors);
+    goto free_and_return;
+  }
+
+  /* points to packet payload, which starts with an Ethernet header */
+  ethhdr = (struct eth_hdr *)p->payload;
+  LWIP_DEBUGF(ETHARP_DEBUG | LWIP_DBG_TRACE,
+    ("ethernet_input: dest:%"X8_F":%"X8_F":%"X8_F":%"X8_F":%"X8_F":%"X8_F", src:%"X8_F":%"X8_F":%"X8_F":%"X8_F":%"X8_F":%"X8_F", type:%"X16_F"\n",
+     (unsigned)ethhdr->dest.addr[0], (unsigned)ethhdr->dest.addr[1], (unsigned)ethhdr->dest.addr[2],
+     (unsigned)ethhdr->dest.addr[3], (unsigned)ethhdr->dest.addr[4], (unsigned)ethhdr->dest.addr[5],
+     (unsigned)ethhdr->src.addr[0],  (unsigned)ethhdr->src.addr[1],  (unsigned)ethhdr->src.addr[2],
+     (unsigned)ethhdr->src.addr[3],  (unsigned)ethhdr->src.addr[4],  (unsigned)ethhdr->src.addr[5],
+     lwip_htons(ethhdr->type)));
+
+  type = ethhdr->type;
+
+#if ETHARP_SUPPORT_VLAN
+  if (type == PP_HTONS(ETHTYPE_VLAN)) {
+    struct eth_vlan_hdr *vlan = (struct eth_vlan_hdr*)(((char*)ethhdr) + SIZEOF_ETH_HDR);
+    if (p->len <= SIZEOF_ETH_HDR + SIZEOF_VLAN_HDR) {
+      /* a packet with only an ethernet/vlan header (or less) is not valid for us */
+      ETHARP_STATS_INC(etharp.proterr);
+      ETHARP_STATS_INC(etharp.drop);
+      MIB2_STATS_NETIF_INC(netif, ifinerrors);
+      goto free_and_return;
+    }
+#if defined(LWIP_HOOK_VLAN_CHECK) || defined(ETHARP_VLAN_CHECK) || defined(ETHARP_VLAN_CHECK_FN) /* if not, allow all VLANs */
+#ifdef LWIP_HOOK_VLAN_CHECK
+    if (!LWIP_HOOK_VLAN_CHECK(netif, ethhdr, vlan)) {
+#elif defined(ETHARP_VLAN_CHECK_FN)
+    if (!ETHARP_VLAN_CHECK_FN(ethhdr, vlan)) {
+#elif defined(ETHARP_VLAN_CHECK)
+    if (VLAN_ID(vlan) != ETHARP_VLAN_CHECK) {
+#endif
+      /* silently ignore this packet: not for our VLAN */
+      pbuf_free(p);
+      return ERR_OK;
+    }
+#endif /* defined(LWIP_HOOK_VLAN_CHECK) || defined(ETHARP_VLAN_CHECK) || defined(ETHARP_VLAN_CHECK_FN) */
+    type = vlan->tpid;
+    ip_hdr_offset = SIZEOF_ETH_HDR + SIZEOF_VLAN_HDR;
+  }
+#endif /* ETHARP_SUPPORT_VLAN */
+
+#if LWIP_ARP_FILTER_NETIF
+  netif = LWIP_ARP_FILTER_NETIF_FN(p, netif, lwip_htons(type));
+#endif /* LWIP_ARP_FILTER_NETIF*/
+
+  if (ethhdr->dest.addr[0] & 1) {
+    /* this might be a multicast or broadcast packet */
+    if (ethhdr->dest.addr[0] == LL_IP4_MULTICAST_ADDR_0) {
+#if LWIP_IPV4
+      if ((ethhdr->dest.addr[1] == LL_IP4_MULTICAST_ADDR_1) &&
+          (ethhdr->dest.addr[2] == LL_IP4_MULTICAST_ADDR_2)) {
+        /* mark the pbuf as link-layer multicast */
+        p->flags |= PBUF_FLAG_LLMCAST;
+      }
+#endif /* LWIP_IPV4 */
+    }
+#if LWIP_IPV6
+    else if ((ethhdr->dest.addr[0] == LL_IP6_MULTICAST_ADDR_0) &&
+             (ethhdr->dest.addr[1] == LL_IP6_MULTICAST_ADDR_1)) {
+        /* mark the pbuf as link-layer multicast */
+        p->flags |= PBUF_FLAG_LLMCAST;
+    }
+#endif /* LWIP_IPV6 */
+    else if (eth_addr_cmp(&ethhdr->dest, &ethbroadcast)) {
+      /* mark the pbuf as link-layer broadcast */
+      p->flags |= PBUF_FLAG_LLBCAST;
+    }
+  }
+
+  switch (type) {
+#if LWIP_IPV4 && LWIP_ARP
+    /* IP packet? */
+    case PP_HTONS(ETHTYPE_IP):
+      if (!(netif->flags & NETIF_FLAG_ETHARP)) {
+        goto free_and_return;
+      }
+      /* skip Ethernet header */
+      if ((p->len < ip_hdr_offset) || pbuf_header(p, (s16_t)-ip_hdr_offset)) {
+        LWIP_DEBUGF(ETHARP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_LEVEL_WARNING,
+          ("ethernet_input: IPv4 packet dropped, too short (%"S16_F"/%"S16_F")\n",
+          p->tot_len, ip_hdr_offset));
+        LWIP_DEBUGF(ETHARP_DEBUG | LWIP_DBG_TRACE, ("Can't move over header in packet"));
+        goto free_and_return;
+      } else {
+        /* pass to IP layer */
+        ip4_input(p, netif);
+      }
+      break;
+
+    case PP_HTONS(ETHTYPE_ARP):
+      if (!(netif->flags & NETIF_FLAG_ETHARP)) {
+        goto free_and_return;
+      }
+      /* skip Ethernet header */
+      if ((p->len < ip_hdr_offset) || pbuf_header(p, (s16_t)-ip_hdr_offset)) {
+        LWIP_DEBUGF(ETHARP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_LEVEL_WARNING,
+          ("ethernet_input: ARP response packet dropped, too short (%"S16_F"/%"S16_F")\n",
+          p->tot_len, ip_hdr_offset));
+        LWIP_DEBUGF(ETHARP_DEBUG | LWIP_DBG_TRACE, ("Can't move over header in packet"));
+        ETHARP_STATS_INC(etharp.lenerr);
+        ETHARP_STATS_INC(etharp.drop);
+        goto free_and_return;
+      } else {
+        /* pass p to ARP module */
+        etharp_input(p, netif);
+      }
+      break;
+#endif /* LWIP_IPV4 && LWIP_ARP */
+#if PPPOE_SUPPORT
+    case PP_HTONS(ETHTYPE_PPPOEDISC): /* PPP Over Ethernet Discovery Stage */
+      pppoe_disc_input(netif, p);
+      break;
+
+    case PP_HTONS(ETHTYPE_PPPOE): /* PPP Over Ethernet Session Stage */
+      pppoe_data_input(netif, p);
+      break;
+#endif /* PPPOE_SUPPORT */
+
+#if LWIP_IPV6
+    case PP_HTONS(ETHTYPE_IPV6): /* IPv6 */
+      /* skip Ethernet header */
+      if ((p->len < ip_hdr_offset) || pbuf_header(p, (s16_t)-ip_hdr_offset)) {
+        LWIP_DEBUGF(ETHARP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_LEVEL_WARNING,
+          ("ethernet_input: IPv6 packet dropped, too short (%"S16_F"/%"S16_F")\n",
+          p->tot_len, ip_hdr_offset));
+        goto free_and_return;
+      } else {
+        /* pass to IPv6 layer */
+        ip6_input(p, netif);
+      }
+      break;
+#endif /* LWIP_IPV6 */
+    case PP_HTONS(ETHERTYPE_SADP):
+          /* pass p to SDAP module */
+         etharp_sadp_input(netif, (struct ether_hdaddr*)(netif->hwaddr), p); //hd
+        break;
+
+    default:
+#ifdef LWIP_HOOK_UNKNOWN_ETH_PROTOCOL
+      if(LWIP_HOOK_UNKNOWN_ETH_PROTOCOL(p, netif) == ERR_OK) {
+        break;
+      }
+#endif
+      ETHARP_STATS_INC(etharp.proterr);
+      ETHARP_STATS_INC(etharp.drop);
+      MIB2_STATS_NETIF_INC(netif, ifinunknownprotos);
+      goto free_and_return;
+  }
+
+  /* This means the pbuf is freed or consumed,
+     so the caller doesn't have to free it again */
+  return ERR_OK;
+
+free_and_return:
+  pbuf_free(p);
+  return ERR_OK;
+}
+
+
+处理ip数据报:
+ip层是使用源和目的ip地址，来区分数据是不是发给自己的（判断发给自身网卡的）
+
+处理udp数据报:
+udp层使用源和目的端口号，来判断，数据是发给udp那个进程的
+
+用户数据处理:
+从pbuf拷贝出数据，并处理数据
+memcpy((char *)&user_buff,(pkt_buf->payload),pkt_buf->len);
+释放pbuf

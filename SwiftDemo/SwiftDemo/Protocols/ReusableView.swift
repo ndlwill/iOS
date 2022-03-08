@@ -6,7 +6,7 @@
 //  Copyright © 2020 AiJiaSu Inc. All rights reserved.
 //
 import UIKit
-protocol ReusableView: class {
+protocol ReusableView: AnyObject {
     static var defaultReusableID: String { get }
 }
 

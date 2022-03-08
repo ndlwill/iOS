@@ -1,0 +1,93 @@
+事件->UIApplication ->Window->rootViewController ->旋转控制器的view
+
+
+https://www.jianshu.com/u/cac92b864886
+=============================================
+https://www.jianshu.com/p/8f85f79b2648
+
+class HitTestExampleView: UIView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if !isUserInteractionEnabled || isHidden || alpha <= 0.01 {
+            return nil // 此处指视图无法接受事件
+        }
+        if self.point(inside: point, with: event) { // 判断触摸点是否在自身内部
+            for subview in subviews.reversed() { // 按 FILO 遍历子视图
+                let convertedPoint = subview.convert(point, from: self)
+                let resultView = subview.hitTest(convertedPoint, with: event) 
+                // ⬆️这句是判断触摸点是否在子视图内部，在就返回视图，不在就返回nil
+                if resultView != nil { return resultView }
+            }
+            return self // 此处指该视图的所有子视图都不符合要求，而触摸点又在该视图自身内部
+        }
+        return nil // 此处指触摸点是否不在该视图内部
+    }
+}
+
+UIControl及其子类默认来说，是不会将事件传递下去的
+UIScrollView 也是这样的工作机制
+
+事件沿「响应链」传递这个过程，就是响应者通过调用其 next的touches 系列方法来实现的。
+
+
+响应链+手势:
+蓝色部分的流程并不会只执行一次，举例来说：当我们用一根手指在一个视图上缓慢滑动时，会产生一个 UITouch 对象，这个 UITouch 对象会随着你手指的滑动，不断的更新自身，同时也不断地触发 touches 系列方法。一般来说，我们会得到如下类似的触发顺序：
+touchesBegan     // 手指触摸屏幕
+touchesMoved     // 手指在屏幕上移动
+touchesMoved     // ...
+...
+touchesMoved     // ...
+touchesMoved     // 手指在屏幕上移动
+touchesEnded     // 手指离开屏幕
+
+UITouch 的 gestureRecognizers 属性中的存储了在寻找第一响应者的过程中收集到的手势，而在不断触发 touches 系列方法的过程中，手势识别系统也在在不停的判断当前这个 UITouch 是否符合收集到的某个手势。
+
+
+当手势识别成功： 被触摸的那个视图，也就是第一响应者会收到 touchesCancelled 的消息，并且该视图不会再收到来自该 UITouch 的 touches 事件。
+同时也让该 UITouch 关联的其他手势也收到 touchesCancelled，并且之后不再收到此 UITouch 的 touches 事件。
+这样做就实现了该识别到的手势能够独占该 UITouch
+
+touchesBegan     // 手指触摸屏幕
+touchesMoved     // 手指在屏幕上移动
+touchesMoved     // ...
+...
+touchesMoved     // ...
+touchesMoved     // 手指在屏幕上移动
+touchesCancelled // 手势识别成功，touches 系列方法被阻断
+// 现在手指💅并没有离开屏幕
+// 但如果继续滑动🛹的话
+// 并不会触发 touches 系列方法
+
+当手势识别未成功： 指暂时未识别出来，不代表以后不会识别成功，不会阻断响应链。注意这里指的是未成功，并不一定是失败。在手势的内部状态中，手势大部分情况下状态是 .possible，指的是UITouch 暂时与其不匹配，但之后可能有机会识别成功。而 .fail 是真的识别失败，指的是以目前的触摸情况来看已经不可能是这个手势了，并且在下个runloop 会从 gestureRecognizers 中移除该手势。
+
+当不带手势的情况下，手指按下去的时候，响应者的 touchBegan 方法会触发，随着手指的移动，touchMoved会不断触发，当手指结束移动并抬起来的时候，touchEnded会触发。在这个过程中，我们接收到一直是一个不断更新的 UITouch。
+在该视图有添加一个UIPanGestureRecognizer 手势的情况下，我们多了下方这一条来表示与响应链同时工作的手势识别系统，可以看到手势识别系统也是在手指按下去那一刻就开始工作的，前半段处于一直正在识别的状态。在我们拖动了很小一段距离之后（注意这时候我们的手指还没抬起）， 手势识别系统确定了该 UITouch 所做的动作是符合UIPanGestureRecognizer 的特点的，于是给该视图的响应链发送了touchCancelled 的信息，从而阻止这个 UITouch 继续触发这个视图的 touches 系列方法（同时也取消了别的相关手势的touches 系列方法，图中未体现）。在这之后，被调用的只有与手势关联的 target-action方法（也就是图中的墨绿色节点 call PanFunction）。
+
+手势识别器的状态
+手势在图中 recognizing 的橙色节点处和recognized棕色节点处都处于 .possible 状态
+手势在图中绿色节点处的状态变化是.began -> [.changed] -> ended
+
+手势识别器不是响应者，但也有touches系列方法，比它所添加的视图的 touches方法更早那么一点触发
+手势那条线上的橙、棕、墨绿色节点处也可以看做手势识别器的touches 方法触发
+
+我们可以通过配置手势的属性来改变它的表现，下面介绍三个常用的属性：
+1.cancelsTouchesInView：该属性默认是 true。顾名思义，如果设置成 false，当手势识别成功时，将不会发送touchesCancelled给目标视图，从而也不会打断视图本身方法的触发，最后的结果是手势和本身方法同时触发。有的时候我们不希望手势覆盖掉视图本身的方法，就可以更改这个属性来达到效果。
+2.delaysTouchesBegan：该属性默认是false。在上个例子中我们得知，在手指触摸屏幕之后，手势处于.possible状态时，视图的touches方法已经开始触发了，当手势识别成功之后，才会取消视图的 touches方法。当该属性时true 时，视图的 touches方法会被延迟到手势识别成功或者失败之后才开始。也就是说，假如设置该属性为 true ，在整个过程中识别手势又是成功的话，视图的touches 系列方法将不会被触发。
+3.delaysTouchesEnded: 默认为YES。这种情况下发生一个touch时，在手势识别成功后,发送给touchesCancelled消息给hit-testview，手势识别失败时，会延迟大概0.15ms,期间没有接收到别的touch才会发送touchesEnded。如果设置为NO，则不会延迟，即会立即发送touchesEnded以结束当前触摸
+
+
+UIControl 与手势识别:
+由于 UIControl接收target-action方法的方式是在其touches 方法中识别、接收、处理，而手势的touches方法一定比其所在视图的 touches方法早触发。再根据上文的描述的触发规则，可以得到的结论是：
+###
+对于自定义的UIControl来说，手势识别的优先级比UIControl 自身处理事件的优先级高。
+###
+
+举个例子来说：当我们给一个 UIControl 添加了一个 .touchupInside 的方法，又添加了一个UITapGestureRecognizer 之后。点击这个 UIControl，会看到与手势关联的方法触发了，并且给 UIControl 发送了touchCancelled，导致其自身的处理时间机制被中断，从而也没能触发那个 .touchupInside的方法。
+
+同时这样的机制可能会导致一个问题：当我们给一个已经拥有点击手势的视图，添加一个 UIControl作为子视图，那么我们无论怎么给该 UIControl 添加点击类型的 target-action 方法，最后的结果都是触发其父视图的手势（因为在命中测试的过程中收集到了这个手势），并且中断 UIControl 的事件处理，导致添加的 target-action方法永远无法触发。
+
+UITouch在寻找第一响应者的时候，会把整条响应链上的手势收集在自身的 gestureRecognizers 数组中，当找到第一响应者之后，在每次第一响应者触发 touches 方法之前，会先触发 UITouch 手势数组里手势的 touches 方法
+
+那其实🍎已经给我们做了一个解决方案,UIKit 对部分控件（同时也是 UIControl 的子类）做了特殊处理，当这些控件的父视图上有与该控件冲突功能的手势时，会优先触发控件自身的方法，不会触发其父视图上的那个手势。
+
+也举个例子来说：当我们给一个已经拥有点击手势的视图，添加一个 UIButton 作为子视图，并且给按钮添加点击类型的 target-action 方法，那么当点击按钮时，按钮的 target-action 方法会触发，手势的方法会被忽略。
+并且文档中也提到了，如果不想要这种情况发生，那就应当把手势添加到目标控件上（因为手势比控件更早识别到事件，也就是上文提到的给 UIControl 添加了.touchupInside方法的例子），这样的话生效的就是手势了。

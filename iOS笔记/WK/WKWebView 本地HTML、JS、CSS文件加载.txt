@@ -1,0 +1,66 @@
+NSString类型的文件路径转换为URL的时候，一定要用
+NSURL *pathURL = [NSURL fileURLWithPath:filePath];方法去转换
+
+loadRequest方式加载:
+- (nullable WKNavigation *)loadRequest:(NSURLRequest *)request;
+1：主要用来加载网络URL
+2：也可以加载本地HTML文件
+
+let filePath = Bundle.main.path(forResource: "WKJSPOST", ofType: "html")
+let fileUrl = URL(fileURLWithPath: filePath!)
+webView.load(URLRequest(url: fileUrl))
+页面能加载出来，但是效果是很差的，因为CSS、JS、图片资源文件没有得到正确的引用！
+那我们该通过什么方式来让这些附属的文件得到正确引用呢？
+iOS9之后新增了 loadFileURL 等一系列加载本地文件的方法
+
+
+loadFileURL:
+用途：主要用于加载本地文件（一般指相对路径）
+- (nullable WKNavigation *)loadFileURL:(NSURL *)URL allowingReadAccessToURL:(NSURL *)readAccessURL API_AVAILABLE(macosx(10.11), ios(9.0));
+URL:文件相对路径 readAccessURL：访问文件需要引用的文件的路径 一般都是比URL大一级或者更高几级
+let filePath = Bundle.main.path(forResource: "WKJSPOST", ofType: "html")
+let fileUrl = URL(fileURLWithPath: filePath!)
+webView.loadFileURL(fileUrl, allowingReadAccessTo: URL(fileURLWithPath: Bundle.main.bundlePath))
+加载出来了耶！但是 依旧是没能加载其他资源文件
+
+
+loadHTMLString:
+- (nullable WKNavigation *)loadHTMLString:(NSString *)string baseURL:(nullable NSURL *)baseURL;
+用途：主要用于 HTML转换成的字符串
+
+loadData:
+值得一提的是MIMEType,text/html、image/jpg、text/plain
+- (nullable WKNavigation *)loadData:(NSData *)data MIMEType:(NSString *)MIMEType characterEncodingName:(NSString *)characterEncodingName baseURL:(NSURL *)baseURL API_AVAILABLE(macosx(10.11), ios(9.0));
+用途：主要用于加载 二进制状态下的文件，主要包括HTML、Image、Text文本
+
+
+
+
+这才是iOS8系统下加载有相互引用关系的HTML、JS、CSS以及图片资源的正确方法
+HTML位于APP沙盒下tmp临时缓存文件夹
+//项目中的文件夹路径
+NSString *directoryPath = [KFileManger appSourceName:@"FeedbackH5" andType:@""];
+
+//tmp缓存文件夹路径
+NSString *tmpPath = [KFileManger tmpPath];
+
+//新文件夹名字
+NSString *wwwDir =@"www";
+
+//tmp文件夹下创建www文件夹
+[KFileManger createDirWithPath:tmpPath andDirectoryName: wwwDir];
+
+//tmp中的www文件夹中的路径
+NSString *tmpWWW = [tmpPath stringByAppendingString: wwwDir];
+
+//copy文件夹到 tmp/www 路径下
+[KFileManger copyMissingFile:directoryPath toPath:tmpWWW];
+
+// 字符 tmp/www/FeedbackH5/pages/feedback.html 全路径
+NSString *tmpWWWFeedback = [tmpWWW stringByAppendingString:@"/FeedbackH5/pages/feedback.html"];
+
+//tmp 操作，字符转换成URL
+NSURL *feedbackURL = [NSURL fileURLWithPath:tmpWWWFeedback];
+
+//WKWebView加载
+[_webview loadRequest:[NSURLRequest requestWithURL:feedbackURL]];

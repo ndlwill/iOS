@@ -1,0 +1,237 @@
+swift 中的协议
+1.可以当做代理来使用。
+
+2.可以让结构体，枚举来满足协议。
+
+3.还可以通过协议的extension为协议添加新方法。
+
+4.协议允许我们动态派发。
+
+5.OC中共享代码通常使用的继承，swift中可以通过使用的是协议来共享代码。
+
+6.你可以为你的类添加协议去达到功能点整合。
+
+
+面向协议编程:
+图形渲染的Demo
+将 Core Graphics 的 CGContext 渲染到屏幕上，或者创建一个 SVG 格式的图形文件。我们可以从定义绘图 API 的最 小功能集的协议开始进行实现
+
+1.先写协议方法
+protocol Drawing {
+    mutating func addEllipse(rect: CGRect, fill: UIColor) 
+    mutating func addRectangle(rect: CGRect, fill: UIColor)
+}
+
+2.为CGContext添加扩展来满足协议
+extension CGContext: Drawing {
+    func addEllipse(rect: CGRect, fill: UIColor) {
+        // do something here        
+    }
+    func addRectangle(rect: CGRect, fill fillColor: UIColor) { 
+       // do something here
+    } 
+}
+
+3.
+对自定义的SVG类添加扩展来满足协议
+struct SVG {
+
+}
+
+extension SVG: Drawing {
+    mutating func addEllipse(rect: CGRect, fill: UIColor) {
+        // 针对于svg的具体实现
+    }
+    mutating func addRectangle(rect: CGRect, fill: UIColor) {
+        // 针对于svg的具体实现
+    }
+}
+
+4.正式使用
+
+var context: Drawing = SVG()
+let rect1 = CGRect(x: 0, y: 0, width: 100, height: 100)
+let rect2 = CGRect(x: 0, y: 0, width: 50, height: 50) 
+context.addRectangle(rect: rect1, fill: .yellow) 
+context.addEllipse(rect: rect2, fill: .blue)
+
+协议扩展:
+优点： 1.不需要被强制使用某个父类
+2.可以让已经存在的类型满足协议(比如我们让CGContext满足了Drawing)。子类就没那么灵活了，如果 CGContext 是一个类的话，我们无法以追溯的方式去变更它的父类。
+
+3.协议既可以用于类，也可以用于结构体，而父类就无法和结构体一起使用了
+
+4.当处理协议时，我们无需担心方法重写或者在正确的时间调用super这样的问题
+
+在协议扩展中重写方法:
+extension SVG {
+    mutating func addCircle(center: CGPoint, radius: CGFloat, fill: UIColor) {
+    var attributes: [String:String] = [ "cx": "\(center.x)",
+    "cy": "\(center.y)",
+    "r": "\(radius)",
+    ]
+    attributes["fill"] = String(hexColor: fill)
+    append(node: XMLNode(tag: "circle", attributes: attributes))
+    } 
+}
+
+var sample = SVG()
+sample.addCircle(center: .zero, radius: 20, fill: .red) print(sample)
+
+
+如果我们把sample强转为Drawing
+var otherSample: Drawing = SVG() 
+otherSample.addCircle(center: .zero, radius: 20, fill: .red)
+print(otherSample)
+
+它返回的是 ellipse 元素，而不是我们所期望的 circle。
+当我们将 otherSample 定义为 Drawing 类型的变量时，编译器会自动将 SVG 值封装到一个代表协议的类型中，这个封装被称作存在容器 (existential container)
+当我们对存在容器调用 addCircle 时，方法是静态派发的
+
+想要将 addCircle 变为动态派发，我们可以将它添加到协议定义里:
+protocol Drawing {
+    mutating func addEllipse(rect: CGRect, fill: UIColor)
+    mutating func addRectangle(rect: CGRect, fill: UIColor)
+    mutating func addCircle(center: CGPoint, radius: CGFloat, fill: UIColor)
+}
+
+==================================================协议的两种类型带有关联类型的协议和普通的协议
+什么是带有关联类型的协议：
+class 的泛型类型参数写法
+
+class Person<T> { ... }
+
+protocol 和 class、struct 以及 enum 不同，它不支持泛型类型参数。取而代之的是支持抽象类型成员；称作关联类型。
+关联类型就是可以使你在协议方法中的参数类型保存一致。
+
+带有关联类型的协议的使用场景
+有时候会遇到这样的需求，继承自某一协议的类中需要保证代理方法处理的参数类型保持一致 我们可以联想UITableView的代理来记忆关联类型的使用场景
+
+protocol ATypeDelegate {
+    /// 关联类型的协议需要你去手动写associatedtype  创建系统提供的关联类型 T  
+    associatedtype T
+    /// 自定义函数的参数是
+    func printContent( ct : T)
+
+    func colum( ct : T)
+
+}
+
+class ATypeClass: ATypeDelegate {
+    ///只要遵守了ATypeDelegate协议 系统会自动补全 typealias T = "你指定的类型"
+    typealias T = Int
+
+    func printContent(ct: Int) {
+        print("Int",#function)
+
+    }
+
+    
+
+    func colum(ct: Int) {
+
+        print("Int",#function)
+
+    }
+}
+
+ATypeClass 遵守了ATypeDelegate协议，必须在ATypeClass类中定义 T 的具体类型才能使用
+
+let a = ATypeClass()
+a.printContent(ct: 888)
+a.colum(ct: 999)
+//Int printContent(ct:)
+//Int colum(ct:)
+
+==================================================类型抹消
+https://swift.gg/2018/10/11/friday-qa-2017-12-08-type-erasure-in-swift/
+
+所谓类型抹消就是不将某实例的真实类型暴露出去，对外只暴露一个必要的类型。
+举例 当我们编写一个class或者struct并实现了一个协议，当我们对外提供该实例时，只想让外界知道这个东西实现了该协议，可是又不想让外界知道实现了这个协议的class或者struct是哪一个类型的，这时我们就需要用到类型抹消
+
+var context: Drawing = SVG()
+这里将 Drawing协议 作为一个类型来使用。
+
+当你的协议存在关联类型的协议就不能够像Drawing这样去使用，编译器会报错。
+
+==================================================带有 Self 的协议
+当我们的协议中需要引入自身相关的参数或者返回自身相关的返回值的时候用Self
+protocol Equatable {
+    static func ==(lhs: Self, rhs: Self) -> Bool
+}
+
+
+protocol GHEqual {
+    ///这里引入了self
+    static func == (lhs: Self, rhs: Self) -> Bool
+}
+
+class Person: NSObject, GHEqual {
+    
+    var gender: String = ""
+    ///这里实现的时候系统会自动将self替换成了具体的类型。
+    static func == (lhs: Person, rhs: Person) -> Bool {
+        if lhs.gender == rhs.gender {
+            return true
+        } else {
+            return false
+        }
+    }
+}
+
+let personA = Person()
+personA.gender = "male"
+
+let personB = Person()
+personB.gender = "male"
+
+let isSame = (personA == personB) ///true
+
+在我们的认知中，上面用到的 == 应该是对象方法。 为嘛在协议中声明的时候会用 static func？
+https://stackoverflow.com/questions/35246003/why-must-a-protocol-operator-be-implemented-as-a-global-function
+由于swift语法的原因，操作符的实现必须是一个全局函数。
+
+我们不能简单地用 Equatable 来作为类型进行变量声明:
+我们不能把带有self的协议作为类来变量声明
+let x: Equatable = MonetaryAmount(currency: "EUR", amountInCents: 100)
+// 会编译错误:因为 'Equatable' 协议中有 Self 或者关联类型的要求，
+// 所以它只能被⽤用作泛型约束
+
+==================================================
+///使用泛型参数的方法--性能高
+func f<C: CustomStringConvertible>(_ x: C) -> Int {
+    return MemoryLayout.size(ofValue: x)
+}
+///使用协议做参数的方法--性能低
+func g(_ x: CustomStringConvertible) -> Int {
+    return MemoryLayout.size(ofValue: x)
+}
+f(5) // 8--正常一个Int类型在64位中Int的尺寸
+g(5) // 40
+
+明明是同一个Int为嘛后面的方法size就大很多。
+
+我们先看看g(5) 值为 40 是怎么组成的,这里面存在一个不透明的容器的概念
+40的长度是由三部分组成
+1.存储值的缓冲区(3个指针长度) 3 * 8 = 24
+2.元数据 8
+3.目击表(vtable 可以有0个或者多个 这里有1个) 8
+
+什么是目击表?
+目击表是让动态派发成为可能的关键，为一个特定的类型将协议的实现进行编码，表中会包含一个指向特定类型中的实现的入口。
+知识点：如果我们合并多个协议，每多加一个协议，就会多 8 字节的数据块
+OC中的协议不需要封装在存在容器中 MemoryLayout.size // 8
+
+
+性能调优：
+不推荐❎
+//隐式打包
+func printProtocol(array: [CustomStringConvertible]) {
+    print(array) 
+}
+
+推荐✅ swift标准库中大多数使用场景。
+//没有打包
+func printGeneric<A: CustomStringConvertible>(array: [A]) {
+    print(array) 
+}

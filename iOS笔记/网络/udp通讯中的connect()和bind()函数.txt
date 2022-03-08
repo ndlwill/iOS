@@ -1,0 +1,136 @@
+udp是一个基于无连接的通讯协议
+不论是在客户端还是服务器，connect()似乎用不上，bind()在客户端也用不上，但是事实并非如此。
+
+1.udp客户端使用connect()函数
+udp客户端建立了socket后可以直接调用sendto()函数向服务器发送数据，但是需要在sendto()函数的参数中指定目的地址/端口，
+但是可以调用connect()函数先指明目的地址/端口，然后就可以使用send()函数向目的地址发送数据了，因为此时套接字已经包含目的地址/端口，也就是send()函数已经知道包含目的地址/端口。
+
+
+//用sendto()函数发送数据的udp客户端程序
+int main(int argc, char *argv[])
+{
+    int sd;
+    struct sockaddr_in svr_addr;
+    int ret;
+    socklen_t addrlen = sizeof(struct sockaddr_in);
+    char buf[BUFSZ] = {};
+
+    if ((sd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+    {
+        perror("socket");
+        exit(EXIT_FAILURE);
+    }
+
+    //sendto()函数需要指定目的端口/地址
+    svr_addr.sin_family = AF_INET;
+    svr_addr.sin_port = htons(PORT);
+    svr_addr.sin_addr.s_addr = inet_addr("192.168.1.166");
+
+    while (1)
+    {   
+        memset(buf, 0, BUFSZ);
+        printf("ple input: ");
+        fgets(buf, BUFSZ, stdin);
+        sendto(sd, buf, BUFSZ, 0, (struct sockaddr* )&svr_addr, addrlen);
+
+        ret = recvfrom(sd, buf, BUFSZ, 0, (struct sockaddr* )&svr_addr, &addrlen);
+        printf("client: IPAddr = %s, Port = %d, buf = %s\n", inet_ntoa(svr_addr.sin_addr), ntohs(svr_addr.sin_port), buf);  
+    }
+
+    close(sd);  
+    return 0;
+}
+
+
+//用send()函数发送数据的udp客户端程序
+int main(int argc, char *argv[])
+{
+    int sd;
+    struct sockaddr_in svr_addr;
+    int ret;
+    socklen_t addrlen = sizeof(struct sockaddr_in);
+    char buf[BUFSZ] = {};
+
+    if ((sd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+    {
+        perror("socket");
+        exit(EXIT_FAILURE);
+    }
+
+    //先调用connect()函数，为套接字指定目的地址/端口
+    svr_addr.sin_family = AF_INET;
+    svr_addr.sin_port = htons(PORT);
+    svr_addr.sin_addr.s_addr = inet_addr("192.168.1.166");
+    connect(sd, (struct sockaddr* )&svr_addr, addrlen);
+
+    while (1)
+    {   
+        memset(buf, 0, BUFSZ);
+        printf("ple input: ");
+        fgets(buf, BUFSZ, stdin);
+        //sendto(sd, buf, BUFSZ, 0, (struct sockaddr* )&svr_addr, addrlen);
+        send(sd, buf, BUFSZ, 0);
+
+        ret = recvfrom(sd, buf, BUFSZ, 0, (struct sockaddr* )&svr_addr, &addrlen);
+        printf("client: IPAddr = %s, Port = %d, buf = %s\n", inet_ntoa(svr_addr.sin_addr), ntohs(svr_addr.sin_port), buf);  
+    }
+
+    close(sd);  
+    return 0;
+}
+
+2. udp客户端程序使用bind()函数
+udp服务器调用了bind()函数为服务器套接字绑定本地地址/端口，这样使得客户端的能知道它发数据的目的地址/端口，
+服务器如果单单接收客户端的数据，或者先接收客户端的数据(此时通过recvfrom()函数获取到了客户端的地址信息/端口)再发送数据，客户端的套接字可以不绑定自身的地址/端口，
+因为udp在创建套接字后直接使用sendto()，隐含操作是，在发送数据之前操作系统会为该套接字随机分配一个合适的udp端口，将该套接字和本地地址信息绑定。
+但是，如果服务器程序就绪后一上来就要发送数据给客户端，那么服务器就需要知道客户端的地址信息和端口，那么就不能让客户端的地址信息和端口号由客户端所在操作系统分配，而是要在客户端程序指定了。
+怎么指定，那就是用bind()函数：
+
+//为客户端绑定端口和地址信息
+int main(int argc, char *argv[])
+{
+    int sd;
+    struct sockaddr_in svr_addr, cli_addr;
+    int ret;
+    socklen_t addrlen = sizeof(struct sockaddr_in);
+    char buf[BUFSZ] = {};
+
+    if ((sd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+    {
+        perror("socket");
+        exit(EXIT_FAILURE);
+    }
+
+    //绑定地址信息
+    cli_addr.sin_family = AF_INET;
+    cli_addr.sin_port = htons(9693);
+    cli_addr.sin_addr.s_addr = 0;
+    if ((ret = bind(sd, (struct sockaddr* )&cli_addr, addrlen)) < 0)
+    {
+        perror("bind");
+        exit(EXIT_FAILURE);
+    }
+
+    svr_addr.sin_family = AF_INET;
+    svr_addr.sin_port = htons(PORT);
+    svr_addr.sin_addr.s_addr = inet_addr("192.168.1.166");
+
+    while (1)
+    {   
+        memset(buf, 0, BUFSZ);
+        printf("ple input: ");
+        fgets(buf, BUFSZ, stdin);
+        sendto(sd, buf, BUFSZ, 0, (struct sockaddr* )&svr_addr, addrlen);
+
+        ret = recvfrom(sd, buf, BUFSZ, 0, (struct sockaddr* )&svr_addr, &addrlen);
+        printf("client: IPAddr = %s, Port = %d, buf = %s\n", inet_ntoa(svr_addr.sin_addr), ntohs(svr_addr.sin_port), buf);  
+    }
+
+    close(sd);
+
+    return 0;
+}
+
+
+3. udp服务器程序使用connect()函数
+connect()函数可以用来指明套接字的目的地址/端口号，那么若udp服务器可以使用connect，将导致服务器只接受这特定一个主机的请求。

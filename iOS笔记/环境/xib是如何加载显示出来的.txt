@@ -1,0 +1,52 @@
+(1).xib的本质是一个xml文件, 在xib文件上右键[Open as]->[Source Code]可以查看其xml源码。
+(2).xib创建View 走的是 init?(coder: NSCoder) 方法，纯代码走的是init(frame: CGRect)
+
+流程
+系统在编译的时候，会将xib文件编译生成.nib文件，这个在app的ipa文件里能找到。
+
+先用xib创建一个UIView 的子类NibView
+我们在项目里加载一个xib的写法：
+let nibView = Bundle.main.loadNibNamed("NibView", owner: self, options: nil)?.first as! NibView
+view.addSubview(nibView)
+
+当执行代码loadNibNamed的时候只做了三件事:
+1.根据你的NibName找到nib文件， 再通过UINib(dataforpath: nibPath) 方法生成data数据。
+// 获取Bundle path
+let nibPath = Bundle.main.path(forResource: "NibView", ofType: "nib")
+// 私有api 通过path 生成data数据
+let nibData = UINib(dataforpath: nibPath)
+
+2.UINibDecoder(系统私有类) 会根据data数据创建自己的UINibDecoder实例，这里的UINibDecoder实例也就是init?(coder: NSCoder)传入的coder。
+// UINibDecoder(私有类)通过data创建实例
+let coder = UINibDecoder(readingData:nibData, error: error)
+
+3.最后通过第二步获得的coder，调用对应NibView的init?(coder: NSCoder) 方法创建视图。
+let nibView = NibView(coder: coder)
+至此一个xib生成的View就创建了出来。
+
+
+
+当调用 init?(coder: NSCoder) 时, 通过coder的decodeObject(forKey: String)方法。获取对应的UI信息。 这里的key是系统规定好的一些key。获取子视图会实用"UISubviews"的key。
+class NibView: UIView {
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        
+        /// coder为 UINibDecoder类  isSameClass 结果为 true
+        let isSameClass = coder.isKind(of: NSClassFromString("UINibDecoder")!)
+
+        // coder 通过"UISubviews" key 获取到子视图的信息，在cocoa系统中key为"NSSubviews"
+        let nibSubviews = coder.decodeObject(forKey: "UISubviews")!
+        print(nibSubviews)
+    }
+}
+
+
+那么是不是subviews标签的内容就对应着之前coder的key "UISubviews"？
+这里是不一定。在一些UIView的子类如会有一些其他处理，如UITableViewCell。
+像tableviewCell会外部自动包裹一层contentView，contentView的中coder的key "UISubviews"所对应的内容才是subviews标签下的内容。
+不过可以肯定的是都是通过coder 都是读取 key"UISubviews"的值来获取子视图。 然后添加到视图上。
+一些有趣key可以解析到对应的UI属性信息
+coder.decodeBool(forKey: "UIOpaque")
+coder.decodeBool(forKey: "UIHidden")
+coder.decodeObject(forKey: "UIBackgroundColor")

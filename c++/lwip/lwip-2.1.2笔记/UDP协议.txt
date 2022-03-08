@@ -1,0 +1,454 @@
+UDP 是一个简单的数据报的传输层协议：应用线程的每个输出数据都正好产生一个UDP 数据报，并组装成一份待发送的 IP 数据报。
+
+UDP 是User Datagram Protocol 的简称， 中文名是用户数据报协议，是一种无连接、不可靠的协议，它只是简单地实现从一端主机到另一端主机的数据传输功能，
+这些数据通过IP 层发送，在网络中传输，到达目标主机的顺序是无法预知的，因此需要应用程序对这些数据进行排序处理，这就带来了很大的不方便，
+此外，UDP 协议更没有流量控制、拥塞控制等功能，在发送的一端，UDP 只是把上层应用的数据封装到UDP 报文中，在差错检测方面，仅仅是对数据进行了简单的校验，然后将其封装到IP 数据报中发送出去。
+而在接收端，无论是否收到数据，它都不会产生一个应答发送给源主机，并且如果接收到数据发送校验错误，那么接收端就会丢弃该UDP 报文，也不会告诉源主机，这样子传输的数据是无法保障其准确性的，如果想要其准确性，那么就需要应用程序来保障了。
+
+UDP 协议的特点：
+
+(1) 无连接、不可靠。
+
+(2) 尽可能提供交付数据服务，出现差错直接丢弃，无反馈。
+
+(3) 面向报文，发送方的UDP 拿到上层数据直接添加个UDP 首部，然后进行校验后就递交给IP 层，而接收的一方在接收到UDP 报文后简单进行校验，然后直接去除数据递交给上层应用。
+
+(4) 支持一对一，一对多，多对一，多对多的交互通信。
+
+(5) 速度快，UDP 没有TCP 的握手、确认、窗口、重传、拥塞控制等机制，UDP 是一个无状态的传输协议，所以它在传递数据时非常快，即使在网络拥塞的时候UDP 也不会降低发送的数据。
+
+UDP 虽然有很多缺点，但是也不排除其能用于很多场合，因为在如今的网络环境下，UDP 协议传输出现错误的概率是很小的，并且它的实时性是非常好，常用于实时视频的传输，比如直播、网络电话等，因为即使是出现了数据丢失的情况，导致视频卡帧，这也不是什么大不了的事情，所以，UDP 协议还是会被应用与对传输速度有要求，并且可以容忍出现差错的数据传输中。
+
+1.UDP 常用端口号
+UDP 报文协议根据对应的端口号传递到目标主机的应用线程，同样的，传输层到应用层的唯一标识是通过端口号决定的，两个线程之间进行通信必须用端口号进行识别，同样的使用“IP 地址+端口号”来区分主机不同的线程。
+
+2.UDP 报文
+UDP 报文也被称为用户数据报，与TCP 协议一样，由报文首部与数据区域组成。在UDP 协议中，它只是简单将应用层的数据进行封装（添加一个UDP 报文首部），然后传递到IP 层，再通过网卡发送出去，因此，UDP 数据也是经过两次封装.
+
+关于源端口号、目标端口号与校验和字段的作用与TCP 报文段一样，端口号的取值在0~65535 之间；16bit 的总长度用于记录UDP 报文的总长度，包括8 字节的首部长度与数据区域。
+
+3.UDP 报文的数据结构
+(1)UDP 报文首部结构体
+LwIP 定义了一个UDP 报文首部数据结构，名字叫udp_hdr，是一个结构体，它定义了UDP 报文首部的各个字段。
+PACK_STRUCT_BEGIN
+struct udp_hdr {
+  PACK_STRUCT_FIELD(u16_t src);
+  PACK_STRUCT_FIELD(u16_t dest);  /* src/dest UDP ports */
+  PACK_STRUCT_FIELD(u16_t len);
+  PACK_STRUCT_FIELD(u16_t chksum);
+} PACK_STRUCT_STRUCT;
+PACK_STRUCT_END
+
+(2)UDP 控制块
+LwIP 定义了一个UDP 控制块，记录与UDP 通信的所有信息，如源端口号、目标端口号、源IP 地址、目标IP 地址以及收到数据时候的回调函数等等，系统会为每一个基于UDP 协议的应用线程创建一个UDP 控制块，并且将其与对应的端口绑定，这样子就能进行UDP 通信了。
+与TCP 协议一样，LwIP 会把多个这样子的UDP 控制块用一个链表连接起来，在处理的时候遍历列表，然后对控制块进行操作。
+
+/** the UDP protocol control block */
+struct udp_pcb {
+/** Common members of all PCB types */
+  IP_PCB;
+ 
+/* Protocol specific PCB members */
+ 
+  struct udp_pcb *next;
+ 
+  u8_t flags;
+  /** ports are in host byte order */
+  u16_t local_port, remote_port;
+ 
+#if LWIP_MULTICAST_TX_OPTIONS
+#if LWIP_IPV4
+  /** outgoing network interface for multicast packets, by IPv4 address (if not 'any') */
+  ip4_addr_t mcast_ip4;
+#endif /* LWIP_IPV4 */
+  /** outgoing network interface for multicast packets, by interface index (if nonzero) */
+  u8_t mcast_ifindex;
+  /** TTL for outgoing multicast packets */
+  u8_t mcast_ttl;
+#endif /* LWIP_MULTICAST_TX_OPTIONS */
+ 
+#if LWIP_UDPLITE
+  /** used for UDP_LITE only */
+  u16_t chksum_len_rx, chksum_len_tx;
+#endif /* LWIP_UDPLITE */
+ 
+  /** receive callback function */
+  udp_recv_fn recv;
+  /** user-supplied argument for the recv callback */
+  void *recv_arg;
+};
+ 
+#define IP_PCB                             \
+  /* ip addresses in network byte order */ \
+  ip_addr_t local_ip;                      \
+  ip_addr_t remote_ip;                     \
+  /* Bound netif index */                  \
+  u8_t netif_idx;                          \
+  /* Socket options */                     \
+  u8_t so_options;                         \
+  /* Type Of Service */                    \
+  u8_t tos;                                \
+  /* Time To Live */                       \
+  u8_t ttl                                 \
+  /* link layer address resolution hint */ \
+  IP_PCB_NETIFHINT
+
+UDP 控制块会使用IP 层的一个宏定义IP_PCB，里面包括IP 层需要使用的信息，如本地IP 地址与目标IP 地址（或者称为远端IP 地址），服务类型、网卡、生存时间等，此外UDP 控制块还要本地端口号与目标（远端）端口号，这两个字段很重要，UDP 协议就是根据这些端口号识别应用线程
+当UDP 收到一个报文的时候，会遍历链表上的所有控制块，根据报文的目标端口号找到与本地端口号相匹配的UDP 控制块，然后递交数据到上层应用，而如果找不到对应的端口号，那么就会返回一个端口不可达ICMP 差错控制报文。
+
+除此之外LwIP 会为我们注册一个接收数据回调函数，当然啦，如果我们使用RAWAPI 编程，这个回调函数就需要我们自己实现，在LwIP 接收到一个给本地的数据时候，就会调用这个回调函数，而recv 字段就是指向这个回调函数的
+typedef void (*udp_recv_fn)(void *arg, struct udp_pcb *pcb, struct pbuf *p,
+    const ip_addr_t *addr, u16_t port);
+一般来说，我们使用NETCONN API 或者是Socket API 编程，是不需要我们自己去注册回调函数recv_udp()，因为这个函数LwIP 内核会自动给我们注册。
+
+void
+udp_recv(struct udp_pcb *pcb, udp_recv_fn recv, void *recv_arg)
+{
+  LWIP_ASSERT_CORE_LOCKED();
+ 
+  LWIP_ERROR("udp_recv: invalid pcb", pcb != NULL, return);
+ 
+  /* remember recv() callback and user data */
+  pcb->recv = recv;
+  pcb->recv_arg = recv_arg;
+}
+
+LwIP 中定义了一个名字为udp_pcbs 的UDP 控制块链表，记录主机中所有的UDP 控制块，每个UDP 协议的应用线程都能受到内核的处理，UDP 控制块链表将UDP 控制块连接起来，在收到数据需要处理的时候，内核变量链表，查找UDP 控制块的信息，从而调用对应的回调函数，当然，我们不使用RAW API 编程的时候，回调函数只有一个。
+
+4.UDP 报文发送
+UDP 协议是传输层，所以需要从上层应用线程中得到数据，我们使用NETCONN API或者是Socket API 编程，那么传输的数据经过内核的层层处理，最后调用udp_sendto_if_src()函数进行发送UDP 报文。
+
+/** Same as udp_sendto_if(), but with checksum */
+err_t
+udp_sendto_if_chksum(struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *dst_ip,
+                     u16_t dst_port, struct netif *netif, u8_t have_chksum,
+                     u16_t chksum)
+{
+#endif /* LWIP_CHECKSUM_ON_COPY && CHECKSUM_GEN_UDP */
+  const ip_addr_t *src_ip;
+ 
+  LWIP_ERROR("udp_sendto_if: invalid pcb", pcb != NULL, return ERR_ARG);
+  LWIP_ERROR("udp_sendto_if: invalid pbuf", p != NULL, return ERR_ARG);
+  LWIP_ERROR("udp_sendto_if: invalid dst_ip", dst_ip != NULL, return ERR_ARG);
+  LWIP_ERROR("udp_sendto_if: invalid netif", netif != NULL, return ERR_ARG);
+ 
+  if (!IP_ADDR_PCB_VERSION_MATCH(pcb, dst_ip)) {
+    return ERR_VAL;
+  }
+ 
+  /* PCB local address is IP_ANY_ADDR or multicast? */
+#if LWIP_IPV6
+  if (IP_IS_V6(dst_ip)) {
+    if (ip6_addr_isany(ip_2_ip6(&pcb->local_ip)) ||
+        ip6_addr_ismulticast(ip_2_ip6(&pcb->local_ip))) {
+      src_ip = ip6_select_source_address(netif, ip_2_ip6(dst_ip));
+      if (src_ip == NULL) {
+        /* No suitable source address was found. */
+        return ERR_RTE;
+      }
+    } else {
+      /* use UDP PCB local IPv6 address as source address, if still valid. */
+      if (netif_get_ip6_addr_match(netif, ip_2_ip6(&pcb->local_ip)) < 0) {
+        /* Address isn't valid anymore. */
+        return ERR_RTE;
+      }
+      src_ip = &pcb->local_ip;
+    }
+  }
+#endif /* LWIP_IPV6 */
+#if LWIP_IPV4 && LWIP_IPV6
+  else
+#endif /* LWIP_IPV4 && LWIP_IPV6 */
+#if LWIP_IPV4
+    if (ip4_addr_isany(ip_2_ip4(&pcb->local_ip)) ||
+        ip4_addr_ismulticast(ip_2_ip4(&pcb->local_ip))) {
+      /* if the local_ip is any or multicast
+       * use the outgoing network interface IP address as source address */
+      src_ip = netif_ip_addr4(netif);
+    } else {
+      /* check if UDP PCB local IP address is correct
+       * this could be an old address if netif->ip_addr has changed */
+      if (!ip4_addr_cmp(ip_2_ip4(&(pcb->local_ip)), netif_ip4_addr(netif))) {
+        /* local_ip doesn't match, drop the packet */
+        return ERR_RTE;
+      }
+      /* use UDP PCB local IP address as source address */
+      src_ip = &pcb->local_ip;
+    }
+#endif /* LWIP_IPV4 */
+#if LWIP_CHECKSUM_ON_COPY && CHECKSUM_GEN_UDP
+  return udp_sendto_if_src_chksum(pcb, p, dst_ip, dst_port, netif, have_chksum, chksum, src_ip);
+#else /* LWIP_CHECKSUM_ON_COPY && CHECKSUM_GEN_UDP */
+  return udp_sendto_if_src(pcb, p, dst_ip, dst_port, netif, src_ip);
+#endif /* LWIP_CHECKSUM_ON_COPY && CHECKSUM_GEN_UDP */
+}
+ 
+/** @ingroup udp_raw
+ * Same as @ref udp_sendto_if, but with source address */
+err_t
+udp_sendto_if_src(struct udp_pcb *pcb, struct pbuf *p,
+                  const ip_addr_t *dst_ip, u16_t dst_port, struct netif *netif, const ip_addr_t *src_ip)
+{
+#if LWIP_CHECKSUM_ON_COPY && CHECKSUM_GEN_UDP
+  return udp_sendto_if_src_chksum(pcb, p, dst_ip, dst_port, netif, 0, 0, src_ip);
+}
+
+5.UDP 报文接收
+当有一个UDP 报文被IP 层接收的时候，IP 层会调用udp_input()函数将报文传递到传输层，LwIP 就会去处理这个UDP 报文，UDP 协议会对报文进行一些合法性的检测，如果确认了这个报文是合法的，那么就遍历UDP 控制块链表，在这些控制块中找到对应的端口，然后递交到应用层，首先要判断本地端口号、本地IP 地址与报文中的目标端口号、目标IP 地址是否匹配，如果匹配就说明这个报文是给我们的，然后调用用户的回调函数recv_udp()将受到的数据传递给上层应用。
+而如果找不到对应的端口，那么将返回一个端口不可达ICMP 差错控制报文到源主机，当然，如果LwIP 接收到这个端口不可达ICMP 报文，也是不会去处理它的。
+
+void
+udp_input(struct pbuf *p, struct netif *inp)
+{
+  struct udp_hdr *udphdr;
+  struct udp_pcb *pcb, *prev;
+  struct udp_pcb *uncon_pcb;
+  u16_t src, dest;
+  u8_t broadcast;
+  u8_t for_us = 0;
+ 
+  LWIP_UNUSED_ARG(inp);
+ 
+  LWIP_ASSERT_CORE_LOCKED();
+ 
+  LWIP_ASSERT("udp_input: invalid pbuf", p != NULL);
+  LWIP_ASSERT("udp_input: invalid netif", inp != NULL);
+ 
+  PERF_START;
+ 
+  UDP_STATS_INC(udp.recv);
+ 
+  /* Check minimum length (UDP header) */
+  if (p->len < UDP_HLEN) {
+    /* drop short packets */
+    LWIP_DEBUGF(UDP_DEBUG,
+                ("udp_input: short UDP datagram (%"U16_F" bytes) discarded\n", p->tot_len));
+    UDP_STATS_INC(udp.lenerr);
+    UDP_STATS_INC(udp.drop);
+    MIB2_STATS_INC(mib2.udpinerrors);
+    pbuf_free(p);
+    goto end;
+  }
+ 
+  udphdr = (struct udp_hdr *)p->payload;
+ 
+  /* is broadcast packet ? */
+  broadcast = ip_addr_isbroadcast(ip_current_dest_addr(), ip_current_netif());
+ 
+  LWIP_DEBUGF(UDP_DEBUG, ("udp_input: received datagram of length %"U16_F"\n", p->tot_len));
+ 
+  /* convert src and dest ports to host byte order */
+  src = lwip_ntohs(udphdr->src);
+  dest = lwip_ntohs(udphdr->dest);
+ 
+  udp_debug_print(udphdr);
+ 
+  /* print the UDP source and destination */
+  LWIP_DEBUGF(UDP_DEBUG, ("udp ("));
+  ip_addr_debug_print_val(UDP_DEBUG, *ip_current_dest_addr());
+  LWIP_DEBUGF(UDP_DEBUG, (", %"U16_F") <-- (", lwip_ntohs(udphdr->dest)));
+  ip_addr_debug_print_val(UDP_DEBUG, *ip_current_src_addr());
+  LWIP_DEBUGF(UDP_DEBUG, (", %"U16_F")\n", lwip_ntohs(udphdr->src)));
+ 
+  pcb = NULL;
+  prev = NULL;
+  uncon_pcb = NULL;
+  /* Iterate through the UDP pcb list for a matching pcb.
+   * 'Perfect match' pcbs (connected to the remote port & ip address) are
+   * preferred. If no perfect match is found, the first unconnected pcb that
+   * matches the local port and ip address gets the datagram. */
+  for (pcb = udp_pcbs; pcb != NULL; pcb = pcb->next) {
+    /* print the PCB local and remote address */
+    LWIP_DEBUGF(UDP_DEBUG, ("pcb ("));
+    ip_addr_debug_print_val(UDP_DEBUG, pcb->local_ip);
+    LWIP_DEBUGF(UDP_DEBUG, (", %"U16_F") <-- (", pcb->local_port));
+    ip_addr_debug_print_val(UDP_DEBUG, pcb->remote_ip);
+    LWIP_DEBUGF(UDP_DEBUG, (", %"U16_F")\n", pcb->remote_port));
+ 
+    /* compare PCB local addr+port to UDP destination addr+port */
+    if ((pcb->local_port == dest) &&
+        (udp_input_local_match(pcb, inp, broadcast) != 0)) {
+      if ((pcb->flags & UDP_FLAGS_CONNECTED) == 0) {
+        if (uncon_pcb == NULL) {
+          /* the first unconnected matching PCB */
+          uncon_pcb = pcb;
+#if LWIP_IPV4
+        } else if (broadcast && ip4_current_dest_addr()->addr == IPADDR_BROADCAST) {
+          /* global broadcast address (only valid for IPv4; match was checked before) */
+          if (!IP_IS_V4_VAL(uncon_pcb->local_ip) || !ip4_addr_cmp(ip_2_ip4(&uncon_pcb->local_ip), netif_ip4_addr(inp))) {
+            /* uncon_pcb does not match the input netif, check this pcb */
+            if (IP_IS_V4_VAL(pcb->local_ip) && ip4_addr_cmp(ip_2_ip4(&pcb->local_ip), netif_ip4_addr(inp))) {
+              /* better match */
+              uncon_pcb = pcb;
+            }
+          }
+#endif /* LWIP_IPV4 */
+        }
+#if SO_REUSE
+        else if (!ip_addr_isany(&pcb->local_ip)) {
+          /* prefer specific IPs over catch-all */
+          uncon_pcb = pcb;
+        }
+#endif /* SO_REUSE */
+      }
+ 
+      /* compare PCB remote addr+port to UDP source addr+port */
+      if ((pcb->remote_port == src) &&
+          (ip_addr_isany_val(pcb->remote_ip) ||
+           ip_addr_cmp(&pcb->remote_ip, ip_current_src_addr()))) {
+        /* the first fully matching PCB */
+        if (prev != NULL) {
+          /* move the pcb to the front of udp_pcbs so that is
+             found faster next time */
+          prev->next = pcb->next;
+          pcb->next = udp_pcbs;
+          udp_pcbs = pcb;
+        } else {
+          UDP_STATS_INC(udp.cachehit);
+        }
+        break;
+      }
+    }
+ 
+    prev = pcb;
+  }
+  /* no fully matching pcb found? then look for an unconnected pcb */
+  if (pcb == NULL) {
+    pcb = uncon_pcb;
+  }
+ 
+  /* Check checksum if this is a match or if it was directed at us. */
+  if (pcb != NULL) {
+    for_us = 1;
+  } else {
+#if LWIP_IPV6
+    if (ip_current_is_v6()) {
+      for_us = netif_get_ip6_addr_match(inp, ip6_current_dest_addr()) >= 0;
+    }
+#endif /* LWIP_IPV6 */
+#if LWIP_IPV4
+    if (!ip_current_is_v6()) {
+      for_us = ip4_addr_cmp(netif_ip4_addr(inp), ip4_current_dest_addr());
+    }
+#endif /* LWIP_IPV4 */
+  }
+ 
+  if (for_us) {
+    LWIP_DEBUGF(UDP_DEBUG | LWIP_DBG_TRACE, ("udp_input: calculating checksum\n"));
+#if CHECKSUM_CHECK_UDP
+    IF__NETIF_CHECKSUM_ENABLED(inp, NETIF_CHECKSUM_CHECK_UDP) {
+#if LWIP_UDPLITE
+      if (ip_current_header_proto() == IP_PROTO_UDPLITE) {
+        /* Do the UDP Lite checksum */
+        u16_t chklen = lwip_ntohs(udphdr->len);
+        if (chklen < sizeof(struct udp_hdr)) {
+          if (chklen == 0) {
+            /* For UDP-Lite, checksum length of 0 means checksum
+               over the complete packet (See RFC 3828 chap. 3.1) */
+            chklen = p->tot_len;
+          } else {
+            /* At least the UDP-Lite header must be covered by the
+               checksum! (Again, see RFC 3828 chap. 3.1) */
+            goto chkerr;
+          }
+        }
+        if (ip_chksum_pseudo_partial(p, IP_PROTO_UDPLITE,
+                                     p->tot_len, chklen,
+                                     ip_current_src_addr(), ip_current_dest_addr()) != 0) {
+          goto chkerr;
+        }
+      } else
+#endif /* LWIP_UDPLITE */
+      {
+        if (udphdr->chksum != 0) {
+          if (ip_chksum_pseudo(p, IP_PROTO_UDP, p->tot_len,
+                               ip_current_src_addr(),
+                               ip_current_dest_addr()) != 0) {
+            goto chkerr;
+          }
+        }
+      }
+    }
+#endif /* CHECKSUM_CHECK_UDP */
+    if (pbuf_remove_header(p, UDP_HLEN)) {
+      /* Can we cope with this failing? Just assert for now */
+      LWIP_ASSERT("pbuf_remove_header failed\n", 0);
+      UDP_STATS_INC(udp.drop);
+      MIB2_STATS_INC(mib2.udpinerrors);
+      pbuf_free(p);
+      goto end;
+    }
+ 
+    if (pcb != NULL) {
+      MIB2_STATS_INC(mib2.udpindatagrams);
+#if SO_REUSE && SO_REUSE_RXTOALL
+      if (ip_get_option(pcb, SOF_REUSEADDR) &&
+          (broadcast || ip_addr_ismulticast(ip_current_dest_addr()))) {
+        /* pass broadcast- or multicast packets to all multicast pcbs
+           if SOF_REUSEADDR is set on the first match */
+        struct udp_pcb *mpcb;
+        for (mpcb = udp_pcbs; mpcb != NULL; mpcb = mpcb->next) {
+          if (mpcb != pcb) {
+            /* compare PCB local addr+port to UDP destination addr+port */
+            if ((mpcb->local_port == dest) &&
+                (udp_input_local_match(mpcb, inp, broadcast) != 0)) {
+              /* pass a copy of the packet to all local matches */
+              if (mpcb->recv != NULL) {
+                struct pbuf *q;
+                q = pbuf_clone(PBUF_RAW, PBUF_POOL, p);
+                if (q != NULL) {
+                  mpcb->recv(mpcb->recv_arg, mpcb, q, ip_current_src_addr(), src);
+                }
+              }
+            }
+          }
+        }
+      }
+#endif /* SO_REUSE && SO_REUSE_RXTOALL */
+      /* callback */
+      if (pcb->recv != NULL) {
+        /* now the recv function is responsible for freeing p */
+        pcb->recv(pcb->recv_arg, pcb, p, ip_current_src_addr(), src);
+      } else {
+        /* no recv function registered? then we have to free the pbuf! */
+        pbuf_free(p);
+        goto end;
+      }
+    } else {
+      LWIP_DEBUGF(UDP_DEBUG | LWIP_DBG_TRACE, ("udp_input: not for us.\n"));
+ 
+#if LWIP_ICMP || LWIP_ICMP6
+      /* No match was found, send ICMP destination port unreachable unless
+         destination address was broadcast/multicast. */
+      if (!broadcast && !ip_addr_ismulticast(ip_current_dest_addr())) {
+        /* move payload pointer back to ip header */
+        pbuf_header_force(p, (s16_t)(ip_current_header_tot_len() + UDP_HLEN));
+        icmp_port_unreach(ip_current_is_v6(), p);
+      }
+#endif /* LWIP_ICMP || LWIP_ICMP6 */
+      UDP_STATS_INC(udp.proterr);
+      UDP_STATS_INC(udp.drop);
+      MIB2_STATS_INC(mib2.udpnoports);
+      pbuf_free(p);
+    }
+  } else {
+    pbuf_free(p);
+  }
+end:
+  PERF_STOP("udp_input");
+  return;
+#if CHECKSUM_CHECK_UDP
+chkerr:
+  LWIP_DEBUGF(UDP_DEBUG | LWIP_DBG_LEVEL_SERIOUS,
+              ("udp_input: UDP (or UDP Lite) datagram discarded due to failing checksum\n"));
+  UDP_STATS_INC(udp.chkerr);
+  UDP_STATS_INC(udp.drop);
+  MIB2_STATS_INC(mib2.udpinerrors);
+  pbuf_free(p);
+  PERF_STOP("udp_input");
+#endif /* CHECKSUM_CHECK_UDP */
+}
+
+
+虽然udp_input()函数看起来很长，但是其实是非常简单的处理，主要就是遍历UDP 控制块链表udp_pcbs 找到对应的UDP 控制块，然后将去掉UDP 控制块首部信息，提取UDP报文数据递交给应用程序，而递交的函数就是在UDP 控制块初始化时注册的回调函数，即recv_udp()，而这个函数会让应用能读取到数据，然后做对应的处理。
+

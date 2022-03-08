@@ -1,0 +1,1261 @@
+###
+https://blog.csdn.net/XieWinter/article/details/97629336
+###
+
+==============================目录结构
+lwip主要特性:
+TCP（传输控制协议）具有拥塞控制，RTT估计快速恢复/快速重传和发送SACK
+
+/src/netif
+该目录下主要包含通用网络接口设备驱动程序。实现最底层的相关协议，该部分的多数源码基本与与硬件相关
+/ppp
+包含了PPP 协议实现的源代码。PPP 协议即点对点协议，它提供了 一种在点对点线路上传输多协议数据包的标准格式，PPP 协议为链路的建立、控制与认证提供 了标准。
+起初PPP 主要用来替代SLIP 这种简单的串行链路数据传输协议，但是由于其完整的认证机制，后来在以太网上也引入了PPP 机制，即PPPoE，它已成为近年来小区宽带拨号上网的主要方式。
+使用PPPoE，为用户的上网计费、配置、接入等提供了方便。LwIP 提供了对PPPoE 的支持，在ppp文件夹下的PPPoE.c文件中有相关的函数实现。
+ethernet.c
+以太网接口的共享代码。两个函数：用来从网卡接收以太网数据包的函数和在网卡上发送以太网数据包的函数
+ethernetif.c
+包含了与以太网网卡密切相关的初始化、发送、接收等函数的实现。
+注意：此文件最该版本并没有被包含在源码中，需要去示例代码中拷贝，并且不能直接使用，需要开发者根据自己的需求修改。
+
+==============================配置文件 opt.h & lwipopts.h
+为了保持lwIP TCP/IP协议栈中源码的独立性，一般不会直接更改 opt.h ,而是会单独添加一个用户自定义的文件来表明用户自己的配置，即 lwipopts.h 。
+在lwIP 的 例程中，或应用中，都可以发现lwipopts.h文件，此文件已经约定俗成，故此用户自定义配置就在此处。
+
+==============================配置文件 per.h & cc.h
+per.h（性能测试）
+在opt.h配置中，LWIP_PERF 选项，控制性能测试
+所有与此部分相关的定义都不能放在lwipopts.h中，而是放在 arch/perf.h 中
+PERF_START：开始测量某事。
+PERF_STOP（x）：停止测量某些东西，并记录结果。
+per.h 既可新建亦可从官方例程中获取，然后修改成适合自己的内容。
+很多情况下，是不使用此功能，仅仅把文件添加进来，直接定义为空就可以了
+#ifndef LWIP_ARCH_PERF_H
+#define LWIP_ARCH_PERF_H
+ 
+/* 定义为空 */
+#define PERF_START    
+#define PERF_STOP(x) 
+ 
+#endif /* LWIP_ARCH_PERF_H */
+
+cc.h（cpu和compiler配置）
+cc.h 既可新建亦可从官方例程中获取，然后修改成适合自己的内容。放置于perf.h相同目录，/arch/cc.h。因为协议栈使用中包含的是目录，因此，不能写成其他
+/* 
+    定义系统的字节顺序。 需要将网络数据转换为主机字节顺序。 
+    允许的值：LITTLE_ENDIAN和BIG_ENDIAN */
+#define 	BYTE_ORDER   LITTLE_ENDIAN
+ 
+/* 定义系统的随机数生成器功能 */ 
+#define 	LWIP_RAND()   ((u32_t)rand())
+
+==============================操作系统配置文件 sys_arch.c & sys_arch.h
+Misc（杂项）:
+/*
+    初始化sys_arch层。
+    必须在其他任何事情之前调用sys_init（）。 
+ */
+void 	sys_init (void)
+
+
+Time（时间）:
+相关声明见 sys.h
+
+/*
+    返回当前时间（以毫秒为单位），可以与sys_jiffies相同或至少基于它。 这仅用于时间差异。
+    不实现此功能意味着您不能使用某些模块（例如，TCP时间戳，NO_SYS == 1的内部超时）。
+    无论有无操作系统，为了使用完整的协议栈，最好都实现
+*/
+u32_t 	sys_now (void)
+
+==============================内存管理
+常见的内存分配策略有两种，一种是分配固定大小的内存块；另一种是利用内存堆进行动态分配，属于可变长度的内存块。
+两种内存分配策略都会在LwIP 中被使用到，他们各有所长，LwIP 的作者根据不同的应用场景选择不同的内存分配策略，这样子使得系统的内存开销、分配效率等都得到很大的提高。
+此外LwIP 还支持使用C 标准库中的malloc和free 进行内存分配，但是这种内存分配我们不建议使用，因为C 标准库在嵌入式设备中使用会有很多问题
+
+固定大小的内存块:
+固定大小的内存块分配策略，用户只能申请大小固定的内存块，在内存初始化的时候，系统会将所有可用的内存区域划分为N 块固定大小的内存，
+然后将这些内存块通过单链表的方式连接起来，用户在申请内存块的时候就直接从链表的头部取出一个内存块进行分配，同理释放内存块的时候也是很简单，直接将内存块释放到链表的头部即可。
+优点： 分配时间固定，高效，回收完全
+缺点：只能申请固定大小的内存块，若实际使用过大则无法申请成功，若很小则造成资源浪费。
+LwIP 中有很多固定的数据结构空间，如TCP 首部、UDP 首部，IP 首部，以太网首部等都是固定的数据结构，其大小就是一个固定的值，那么我们就能采用这种方式分配这些固定大小的内存空间，
+这样子的效率就会大大提高，并且无论怎么申请与释放，都不会产生内存碎片，这就让系统能很稳定地运行。这种分配策略在LwIP 中被称之为动态内存池分配策略。
+
+可变长度分配:
+这种内存分配策略在很多系统中都会被使用到，系统运行的时候，各个空闲内存块的大小是不固定的，它会随着用户的申请而改变，
+刚开始的时候，系统就是一块大的内存堆，随着系统的运行，用户会申请与释放内存块，所以系统的内存块的大小。数量都会随之改变，并且对于这种内存分配策略是有多种不同的算法的。
+采用这种内存堆的分配方式，在申请和释放的时候肯定需要消耗时间。
+优点:  内存浪费小，比较简单，适合用于小内存的管理
+缺点：频繁的动态分配和释放，可能会造成严重的内存碎片，甚至，可能会导致内存分配不成功从而导致系统崩溃。
+
+
+动态内存池（POOL）:
+(1)内存池的预处理
+在内核初始化时，会事先在内存中初始化相应的内存池，内核会将所有可用的区域根据宏定义的配置以固定的大小为单位进行划分，然后用一个简单的链表将所有空闲块连接起来，这样子就组成一个个的内存池。
+由于链表中所有节点的大小相同，所以分配时不需要查找，直接取出第一个节点中的空间分配给用户即可。
+###
+内核在初始化内存池的时候，是根据用户配置的宏定义进行初始化的。
+###
+不同协议的POOL 内存块的大小是不一样的，这由协议的性质决定。
+如UDP 协议控制块的内存块大小是sizeof(struct udp_pcb)，而TCP 协议控制块的POOL 大小则为sizeof(struct tcp_pcb)。
+
+typedef enum {
+#define LWIP_MEMPOOL(name,num,size,desc)  MEMP_##name,
+#include "lwip/priv/memp_std.h"
+  MEMP_MAX
+} memp_t;
+定义的枚举类型，经编译器处理后，代码如下：
+typedef enum {
+ 
+  MEMP_RAW_PCB,
+  MEMP_UDP_PCB,
+  MEMP_TCP_PCB,
+  /* ... 省略 */
+  MEMP_MAX
+} memp_t;
+在memp_std.h文件的最后需要对LWIP_MEMPOOL 宏定义进行撤销，因为该文件很会被多个地方调用，在每个调用的地方会重新定义这个宏定义的功能，所以在文件的末尾添加这句#undef LWIP_MEMPOOL 代码是非常有必要的。
+(2)内存池初始化
+在LwIP 协议栈初始化的时候， memp_init()会对内存池进行初始化，真正的内存初始化函数是memp_init_pool()函数
+void
+memp_init_pool(const struct memp_desc *desc)
+{
+ 
+  int i;
+  struct memp *memp;
+ 
+  *desc->tab = NULL;
+  memp = (struct memp *)LWIP_MEM_ALIGN(desc->base);
+  /* force memset on pool memory */
+  memset(memp, 0, (size_t)desc->num * (MEMP_SIZE + desc->size));
+ 
+  /* create a linked list of memp elements */
+  /* 将内存块链接成链表形式 */
+  for (i = 0; i < desc->num; ++i) {
+    memp->next = *desc->tab;
+    *desc->tab = memp;
+ 
+    /* cast through void* to get rid of alignment warnings */
+    /* 地址偏移 */
+    memp = (struct memp *)(void *)((u8_t *)memp + MEMP_SIZE + desc->size);
+  }
+}
+(3)内存池分配
+内存池的初始化之后，这些内存池中的内存块就可以使用了，这就需要用户通过memp_malloc 函数进行申请内存块，而内存块的大小就是指定的大小，根据内存池的类型去选择从哪个内存池进行分配。
+系统中所有的内存池类型都会被记录在memp_pools 数组中，我们可以将该数组称之为内存池描述表，它负责将系统所有的内存池信息描述并且记录下来。
+内存池申请函数的核心代码就一句，那就是memp = *desc->tab;，通过这句代码，能直接得到对应内存块中的第一个空闲内存块，并将其取出，并且移动*desc->tab 指针，指向下一个空闲内存块，
+然后将((u8_t *)memp + MEMP_SIZE)返回，MEMP_SIZE 偏移的空间大小，因为内存块需要一些空间存储内存块相关的信息。
+(4)内存释放
+
+
+动态内存堆:
+为使用者提供两种简单却又高效的动态内存管理策略：动态内存堆管理（heap）、动态内存池管理（pool）
+动态内存堆管理（heap）又可以分为两种：一种是 C 标准库自带的内存管理策略，另一种是LwIP 自身实现的内存堆管理策略。这两者的选择需要通过宏值MEM_LIBC_MALLOC 来选择，且二者只能选择其一。
+LwIP 在自身内存堆和内存池的实现上设计得非常灵活。内存池可由内存堆实现，反之，内存堆也可以由内存池实现。通过MEM_USE_POOLS 和MEMP_MEM_MALLOC这两个宏定义来选择，且二者只能选择其一。
+内存堆结构:
+struct mem {
+  /** index (-> ram[next]) of the next struct */
+  mem_size_t next;                    // 偏移量，而非指针，下一个结构体索引
+  /** index (-> ram[prev]) of the previous struct */
+  mem_size_t prev;                    // 偏移量，而非指针，前一个结构体索引
+  /** 1: this area is used; 0: this area is unused */
+  u8_t used;                          // 标记内存是否被使用
+#if MEM_OVERFLOW_CHECK
+  /** this keeps track of the user allocation size for guard checks */
+  mem_size_t user_size;
+#endif
+};
+
+#ifndef MIN_SIZE
+#define MIN_SIZE             12                                    
+#endif /* MIN_SIZE */
+/* some alignment macros: we define them here for better source code layout */
+#define MIN_SIZE_ALIGNED     LWIP_MEM_ALIGN_SIZE(MIN_SIZE)
+#define SIZEOF_STRUCT_MEM    LWIP_MEM_ALIGN_SIZE(sizeof(struct mem))
+#define MEM_SIZE_ALIGNED     LWIP_MEM_ALIGN_SIZE(MEM_SIZE)
+
+ram_heap
+ram_heap[]就是内核的内存堆空间，LWIP_RAM_HEAP_POINTER这个宏定义相对于重新命名ram_heap。
+
+ram
+全局指针变量，指向内存堆对齐后的起始地址，因为真正的内存堆起始地址不一定是按照CPU 的对齐方式对齐的，而此处就要确保内存堆的起始地址是对齐的。
+
+ram_end
+mem 类型指针，指向内存堆中最后一个内存块
+
+lfree
+mem 类型指针，指向内存堆中低地址的空闲内存块，简单来说就是空闲内存块链表指针。用于更快的搜索。
+
+(1)内存堆的初始化
+在内核初始化的时候，会调用mem_init()函数进行内存堆的初始化，内存堆初始化主要的过程就是对上述所属的内存堆组织结构进行初始化，主要设置内存堆的起始地址，以及初始化空闲列表。
+经过mem_init()函数后，内存堆会被初始化为两个内存块，第一个内存块的大小就是整个内存堆的大小，而第二个内存块就是介绍内存块，其大小为0，并且被标记为已使用状态，无法进行分配。
+系统在运行的时候，随着内存的分配与释放，lfree指针的指向地址不断改变，都指向内存堆中低地址空闲内存块，而ram_end 则不会改变，它指向系统中最后一个内存块，也就是内存堆的结束地址。
+(2)内存分配
+内存分配函数根据用户指定申请大小的内存空间进行分配内存，其大小要大于MIN_SIZE。
+LwIP 中使用内存分配算法是首次拟合方法，其分配原理就是在空闲内存块链表中遍历寻找，直到找到第一个合适用户需求大小的内存块进行分配，
+如果该内存块能进行分割，则将用户需要大小的内存块分割出来，剩下的空闲内存块则重新插入空闲内存块链表中。经过多次的分配与释放，很可能会出现内存碎片
+mem_malloc()函数是LwIP 中内存分配函数，其参数是用户指定大小的内存字节数，如果申请成功则返回内存块的地址，如果内存没有分配成功，则返回NULL，分配的内存空间会受到内存对其的影响，
+可能会比申请的内存略大，比如用户需要申请22 个字节的内存，而CPU 是按照4 字节内存对齐的，那么分配的时候就会申请24 个字节的内存块。
+内存块在申请成功后返回的是内存块的起始地址，但是该内存并未进行初始化，可能包含任意的随机数据，用户可以立即对其进行初始化或者写入有效数据以防止数据错误。
+###
+申请内存的过程，其实本质就是标识使用的内存块链表，新建空闲内存块链表，并插入
+###
+(3)内存释放
+它根据用户释放的内存块地址，通过偏移mem 结构体大小得到正确的内存块起始地址，并且根据mem 中保存的内存块信息进行释放、合并等操作，并将used 字段清零，表示该内存块未被使用。
+LwIP 为了防止内存碎片的出现，通过算法将内存相邻的两个空闲内存块进行合并，在释放内存块的时候，如果内存块与上一个或者下一个空闲内存块在地址上是连续的，那么就将这两个内存块进行合并。
+
+
+连接符 ##:
+## 被称为连接符（concatenator），用来将两个Token 连接为一个Token。注意这里连接的对象是Token 就行，而不一定是宏的变量。
+在编译器编译的时候，它会扫描源码，将代码分解为一个个的Token，Token 可以是C 语言的关键字，如int、for、while 等，也可以是用户自定义的变量，如，a、num、name 等。
+宏定义： #define LWIP_MEMPOOL(name,num,size,desc)   MEMP_##name
+编译过程遇到代码：  LWIP_MEMPOOL(Test,num,size,desc)
+编译器就会自动替换成：MEMP_Test
+
+字符串化操作符 #:
+# 的功能是将其后面的宏参数进行字符串化操作
+
+==============================无操作系统移植
+1.lwIP添加到工程
+把源码中src 添加到工程，并添加LwIP 头文件路径。
+2.添加头文件
+lwipopts.h、cc.h、pref.h，并放入 新建的/arch 目录。
+直接从“contrib-2.1.0 官方例程中拷贝，并修改。
+3.修改网卡驱动
+参考contrib-2.1.0\examples\ethernetif 修改。
+4.lwIP 时基
+实现sys_now()函数来获取系统的时钟，以毫秒为单位
+LwIP 通过两次获取的时间就能判断是否有超时，从而让内核去处理对应的事件。
+5.协议栈初始化
+使用LwIP，那就必须先将协议栈初始化，我们就创建一个函数，在函数中初始化协议栈，注册网卡，设置主机的IP 地址、子网掩码、网关地址等。
+挂载网卡的函数netif_add()
+
+void LwIP_Init(void)
+{
+  /* IP addresses initialization */
+  /* USER CODE BEGIN 0 */
+#ifdef USE_DHCP
+  ip_addr_set_zero_ip4(&ipaddr);
+  ip_addr_set_zero_ip4(&netmask);
+  ip_addr_set_zero_ip4(&gw);
+#else
+  IP4_ADDR(&ipaddr,IP_ADDR0,IP_ADDR1,IP_ADDR2,IP_ADDR3);
+  IP4_ADDR(&netmask,NETMASK_ADDR0,NETMASK_ADDR1,NETMASK_ADDR2,NETMASK_ADDR3);
+  IP4_ADDR(&gw,GW_ADDR0,GW_ADDR1,GW_ADDR2,GW_ADDR3);
+#endif /* USE_DHCP */
+  /* USER CODE END 0 */
+    
+  /* Initilialize the LwIP stack without RTOS */
+  lwip_init();
+  
+  /* add the network interface (IPv4/IPv6) without RTOS */
+  netif_add(&gnetif, &ipaddr, &netmask, &gw, NULL, &ethernetif_init, &ethernet_input);
+ 
+  /* Registers the default network interface */
+  netif_set_default(&gnetif);
+ 
+  if (netif_is_link_up(&gnetif))
+  {
+    /* When the netif is fully configured this function must be called */
+    netif_set_up(&gnetif);
+  }
+  else
+  {
+    /* When the netif link is down this function must be called */
+    netif_set_down(&gnetif);
+  }
+ 
+/* USER CODE BEGIN 3 */
+ 
+/* USER CODE END 3 */
+}
+6.获取数据包
+获取数据包的方式有两种，一种是查询方式，另一种是中断方式。查询方式通过主函数的while 循环进行周期性处理，去获取网卡中是否接收到数据包，然后递交给上层协议去处理，
+而中断方式则不一样，在网卡接收到一个数据包的时候，就触发中断，通知CPU 去处理，这样子效率就会高很多，特别是在操作系统环境下，我们都采用中断方式去获取数据包。
+方式需底层驱动配置支持，在初始化的时候，如果网卡接收模式被配置为ETH_RXINTERRUPT_MODE，则表示使用中断方式获取数据包，而如果网卡接收模式被配置为ETH_RXPOLLING_MODE 则表明用查询方式获取数据包。
+(1)查询方式
+使用查询方式获取数据包的时候，我们只需要在程序中周期性调用网卡接收函数即可
+int main(void)
+{
+  //板级外设初始化
+  BSP_Init();
+  
+  //LwIP协议栈初始化
+  LwIP_Init();  
+  
+  while (1)
+  {
+    //调用网卡接收函数
+    ethernetif_input(&gnetif);
+  
+    //处理LwIP中定时事件
+    sys_check_timeouts();
+  }
+}
+
+(2)中断方式
+中断方式来接收数据，当接收完成的时候，就通知CPU 来处理即可，效率会比较高
+int flag = 0;
+int main(void)
+{
+  //板级外设初始化
+  BSP_Init();
+  
+  //LwIP协议栈初始化
+  LwIP_Init();  
+  
+  while (1)
+  {
+    if(flag)
+    {
+      flag = 0;
+      //调用网卡接收函数
+      ethernetif_input(&gnetif);
+    }
+    //处理LwIP中定时事件
+    sys_check_timeouts();
+  }
+}
+
+void ETH_IRQHandler(void)
+{
+ 
+  HAL_ETH_IRQHandler(&heth);
+  
+}
+ 
+/**
+  * @brief  Ethernet Rx Transfer completed callback
+  * @param  heth: ETH handle
+  * @retval None
+  */
+extern int flag ;
+ 
+void HAL_ETH_RxCpltCallback(ETH_HandleTypeDef *heth)
+{
+  flag = 1;
+//  LWIP_Process();
+}
+
+==============================有操作系统（FreeRTOS）移植
+LwIP 不仅能在裸机上运行，也能在操作系统环境下运行，而且在操作系统环境下，用户能使用NETCONN API 与Socket API 编程，相比RAW API 编程会更加简便。
+操作系统环境下，这意味着多线程环境，一般来说LwIP 作为一个独立的处理线程运行，用户程序也独立为一个/多个线程，这样子在操作系统中就相互独立开，并且借助操作系统的IPC 通信机制，更好地实现功能的需求。
+LwIP 在设计之初，设计者无法预测LwIP 运行的环境，如果LwIP 要运行在操作系统环境中，那么就必须产生依赖，即LwIP 需要依赖操作系统自身的通信机制，如信号量、互斥量、消息队列（邮箱）等，
+所以LwIP 设计者在设计的时候就提供一套与操作系统相关的接口，由用户根据操作系统的不同进行移植，这样子就能降低耦合度，让LwIP 内核不受其运行的环境影响，
+因为往往用户并不能完全了解内核的运作，所以只需要用户在移植的时候对LwIP 提供的接口根据不同操作系统进行完善即可。
+
+1.lwIP添加到工程
+2.添加文件
+添加通用文件 lwipopts.h、cc.h、pref.h
+添加系统需要文件sys_arch.h 和 sys_arch.c， 实现系统抽象层相关功能
+官方有现成的例子，可以直接拷贝使用
+contrib-2.1.0\ports\freertos
+3.修改网卡驱动
+参考contrib-2.1.0\examples\ethernetif 修改
+本质来讲，就是从让数据的收发，从无操作系统的轮询模式，切换到受IPC控制的多任务。
+4.协议栈初始化
+使用LwIP，那就必须先将协议栈初始化，我们就创建一个函数，在函数中初始化协议栈，注册网卡，设置主机的IP 地址、子网掩码、网关地址等。
+void TCPIP_Init(void)
+{
+  
+  tcpip_init(NULL, NULL);
+  
+  /* IP addresses initialization */
+  /* USER CODE BEGIN 0 */
+#ifdef USE_DHCP
+  ip_addr_set_zero_ip4(&ipaddr);
+  ip_addr_set_zero_ip4(&netmask);
+  ip_addr_set_zero_ip4(&gw);
+#else
+  IP4_ADDR(&ipaddr,IP_ADDR0,IP_ADDR1,IP_ADDR2,IP_ADDR3);
+  IP4_ADDR(&netmask,NETMASK_ADDR0,NETMASK_ADDR1,NETMASK_ADDR2,NETMASK_ADDR3);
+  IP4_ADDR(&gw,GW_ADDR0,GW_ADDR1,GW_ADDR2,GW_ADDR3);
+#endif /* USE_DHCP */
+  /* USER CODE END 0 */
+  /* Initilialize the LwIP stack without RTOS */
+  /* add the network interface (IPv4/IPv6) without RTOS */
+  netif_add(&gnetif, &ipaddr, &netmask, &gw, NULL, &ethernetif_init, &tcpip_input);
+ 
+  /* Registers the default network interface */
+  netif_set_default(&gnetif);
+ 
+  if (netif_is_link_up(&gnetif))
+  {
+    /* When the netif is fully configured this function must be called */
+    netif_set_up(&gnetif);
+  }
+  else
+  {
+    /* When the netif link is down this function must be called */
+    netif_set_down(&gnetif);
+  }
+ 
+/* USER CODE BEGIN 3 */
+ 
+/* USER CODE END 3 */
+}
+
+注意：
+tcpip_init(NULL, NULL);
+netif_add(&gnetif, &ipaddr, &netmask, &gw, NULL, &ethernetif_init, &tcpip_input);
+
+==============================网络数据包
+TCP/IP 是一种数据通信机制，因此，协议栈的实现本质上就是对数据包进行处理，为了实现高效的效率，LwIP 数据包管理要提供一种高效处理的机制。
+协议栈各层能对数据包进行灵活的处理，同时减少数据在各层间传递时的时间与空间开销，这是提高协议栈工作效率的关键点。
+在BSD 的实现中，一个描述数据包的结构体叫做mbuf，同样的 在 LwIP中，也有个类似的结构，称之为 pbuf
+
+pbuf 就是一个描述协议栈中数据包的数据结构，LwIP 中在pbuf.c 和pubf.h 实现了协议栈数据包管理的所有函数与数据结构。
+/** Main packet buffer struct */
+struct pbuf {
+  /** next pbuf in singly linked pbuf chain */
+  struct pbuf *next;
+ 
+  /** pointer to the actual data in the buffer */
+  void *payload;
+ 
+  /**
+   * total length of this buffer and all next buffers in chain
+   * belonging to the same packet.
+   *
+   * For non-queue packet chains this is the invariant:
+   * p->tot_len == p->len + (p->next? p->next->tot_len: 0)
+   */
+  u16_t tot_len;
+ 
+  /** length of this buffer */
+  u16_t len;
+ 
+  /** a bit field indicating pbuf type and allocation sources
+      (see PBUF_TYPE_FLAG_*, PBUF_ALLOC_FLAG_* and PBUF_TYPE_ALLOC_SRC_MASK)
+    */
+  u8_t type_internal;
+ 
+  /** misc flags */
+  u8_t flags;
+ 
+  /**
+   * the reference count always equals the number of pointers
+   * that refer to this pbuf. This can be pointers from an application,
+   * the stack itself, or pbuf->next pointers from a chain.
+   */
+  LWIP_PBUF_REF_T ref;
+ 
+  /** For incoming packets, this contains the input netif's index */
+  u8_t if_idx;
+};
+next 是一个pbuf 类型的指针，指向下一个pbuf，因为网络中的数据包可能很大，单个数据包被分割成几个pbuf来记录数据，并以单链表的形式连接起来，被称为pbuf 链表。
+
+payload 是一个指向数据区域的指针，指向该pbuf 管理的数据区域起始地址，这里的数据区域可以是紧跟在pbuf 结构体地址后面的RAM空间，也可以是ROM中的某个地址上，取决于pbuf 的类型。
+
+tot_len 中记录的是当前pbuf 及其后续pbuf 所有数据的长度，例如如果当前pbuf 是pbuf 链表上第一个数据结构，那么tot_len 就记录着整个pbuf 链表中所有pbuf 中数据的长度；如果当前pbuf 是链表上最后一个数据结构，那就记录着当前pbuf 的
+长度。
+
+len 表示当前pbuf 中有效的数据长度
+
+type_internal 表示pbuf 的类型，LwIP 中有4 种pbuf 的类型，并且使用了一个枚举类型的数据结构定义
+
+flags 字段在初始化的时候一般被初始化为0
+
+ref 表示该pbuf 被引用的次数， 引用计数总是等于引用此pbuf的指针数。 这可以是来自应用程序，堆栈本身或pbuf->链中的下一个指针的指针。初始化一个pbuf 的时候，ref 会被设置为1，因为该pbuf 的地址一点会被返回一个指针变量，当有其他指针指向pbuf 的时候，就必须调用相关函数将ref 字段加1。
+
+if_idx 用于记录传入的数据包中输入netif 的索引，也就是netif 中num 字段。
+
+
+pbuf 的类型有4 种，分别为PBUF_RAM、PBUF_POOL 、PBUF_ROM、PBUF_REF:
+/**
+ * @ingroup pbuf
+ * Enumeration of pbuf types
+ */
+typedef enum {
+  /** pbuf data is stored in RAM, used for TX mostly, struct pbuf and its payload
+      are allocated in one piece of contiguous memory (so the first payload byte
+      can be calculated from struct pbuf).
+      pbuf_alloc() allocates PBUF_RAM pbufs as unchained pbufs (although that might
+      change in future versions).
+      This should be used for all OUTGOING packets (TX).*/
+  PBUF_RAM = (PBUF_ALLOC_FLAG_DATA_CONTIGUOUS | PBUF_TYPE_FLAG_STRUCT_DATA_CONTIGUOUS | PBUF_TYPE_ALLOC_SRC_MASK_STD_HEAP),
+  /** pbuf data is stored in ROM, i.e. struct pbuf and its payload are located in
+      totally different memory areas. Since it points to ROM, payload does not
+      have to be copied when queued for transmission. */
+  PBUF_ROM = PBUF_TYPE_ALLOC_SRC_MASK_STD_MEMP_PBUF,
+  /** pbuf comes from the pbuf pool. Much like PBUF_ROM but payload might change
+      so it has to be duplicated when queued before transmitting, depending on
+      who has a 'ref' to it. */
+  PBUF_REF = (PBUF_TYPE_FLAG_DATA_VOLATILE | PBUF_TYPE_ALLOC_SRC_MASK_STD_MEMP_PBUF),
+  /** pbuf payload refers to RAM. This one comes from a pool and should be used
+      for RX. Payload can be chained (scatter-gather RX) but like PBUF_RAM, struct
+      pbuf and its payload are allocated in one piece of contiguous memory (so
+      the first payload byte can be calculated from struct pbuf).
+      Don't use this for TX, if the pool becomes empty e.g. because of TCP queuing,
+      you are unable to receive TCP acks! */
+  PBUF_POOL = (PBUF_ALLOC_FLAG_RX | PBUF_TYPE_FLAG_STRUCT_DATA_CONTIGUOUS | PBUF_TYPE_ALLOC_SRC_MASK_STD_MEMP_PBUF_POOL)
+} pbuf_type;
+
+PBUF_RAM类型:
+PBUF_RAM类型的pbuf 空间是通过内存堆分配而来的，一般协议栈中要发送的数据都是采用这种形式，这种类型的pbuf 在协议栈中使用得最多，在申请这种pbuf 内存块的时候，协议栈会在管理的内存堆中根据需要的大小进行分配对应的内存空间，这种pbuf 内存块包含数据空间以及pbuf 数据结构区域，在连续的RAM内存空间中。
+内核申请这类型的pbuf 时，也算上了协议首部的空间，当然是根据协议栈不同层次需要的首部进行申请，LwIP 也使用一个枚举类型对不同的协议栈分层需要的首部大小进行定义。
+###
+整个pbuf 就是一个连续的内存区域，layer（offset）就是各层协议的首部，如TCP 报文首部、IP 首部、以太网帧首部等，预留出来的这些空间是为了在各个协议层中灵活地处理这些数据，当然layer 的大小也可以是0，具体是多少就与数据包的申请方式有关。
+###
+
+PBUF_POOL 类型:
+PBUF_POOL 类型的pbuf 与PBUF_RAM类型的pbuf 都是差不多的，其pbuf 结构体与数据缓冲区也是存在于连续的内存块中，但它的空间是通过内存池分配的，这种类型的pbuf 可以在极短的时间内分配得到，因为这是内存池分配策略的优势，在网卡接收数据的时候，LwIP 一般就使用这种类型的pbuf 来存储接收到的数据，申请PBUF_POOL 类型时，协议栈会在内存池中分配适当的内存池个数以满足需要的数据区域大小。
+在系统进行内存池初始化的时候，还需初始化两个与pbuf 相关的内存池，分别为MEMP_PBUF、MEMP_ PBUF_POOL。
+LWIP_MEMPOOL(PBUF, MEMP_NUM_PBUF, sizeof(struct pbuf),"PBUF_REF/ROM")
+LWIP_PBUF_MEMPOOL(PBUF_POOL,PBUF_POOL_SIZE,PBUF_POOL_BUFSIZE,"PBUF_POOL")
+
+MEMP_PBUF 内存池是专门用于存放pbuf 数据结构的内存池，主要用于PBUF_ROM、PBUF_REF 类型的pbuf，其大小为sizeof(struct pbuf)，内存块的数量为MEMP_NUM_PBUF；
+MEMP_PBUF_POOL 则包含pbuf 结构与数据区域，也就是PBUF_POOL 类型的pbuf，内存块的大小为PBUF_POOL_BUFSIZE，其值由用户自己定义，默认为590（536+40+0+14）字节，当然也可以由我们定义TCP_MSS 的大小改变该宏定义，我们将宏定义TCP_MSS 的值定义为1460，这样子我们PBUF_POOL 类型的pbuf 的内存池大小为1514（1460+40+0+14），内存块的个数为PBUF_POOL_SIZE。
+
+如果按照默认的内存大小，对于有些很大的以太网数据包，可能就需要多个pbuf 才能将这些数据存放下来，这就需要申请多个pbuf，因为是PBUF_POOL 类型的pbuf，所以申请内存空间只需要调用memp_malloc()函数进行申请即可。然后再将这些pbuf 通过链表的形式连接起组成pbuf 链表上，以保证用户的空间需求
+
+PBUF_ROM和PBUF_REF 类型:
+PBUF_ROM和PBUF_REF 类型的pbuf 基本是一样的，它们在内存池申请的pbuf 不包含数据区域，只包含pbuf 结构体，即MEMP_PBUF 类型的POOL，这也是PBUF_ROM和PBUF_REF 与前面两种类型的pbuf 最大的差别。
+PBUF_ROM类型的pbuf 的数据区域存储在ROM中，是一段静态数据，而PBUF_REF 类型的pbuf 的数据区域存储在RAM空间中。
+申请这两种类型的pbuf 时候也是只需要调用memp_malloc()函数从内存池中申请即可，申请内存的大小就是MEMP_PBUF，它只是一个pbuf 结构体大小
+
+
+注意：对于一个数据包，它可能会使用任意类型的pbuf 进行描述，也可能使用多种不同的pbuf 一起描述
+无论怎么样描述，数据包的处理都是不变的，payload 指向的始终是数据区域，采用链表的形式连接起来的数据包，其tot_len 字段永远是记录当前及其后续pbuf 的总大小。
+
+pbuf_alloc():
+数据包申请函数pbuf_alloc()在系统中的许多地方都会用到，例如在网卡接收数据时，需要申请一个数据包，然后将网卡中的数据填入数据包中；
+在发送数据的时候，协议栈会申请一个pbuf 数据包，并将即将发送的数据装入到pbuf 中的数据区域，同时相关的协议首部信息也会被填入到pbuf 中的layer 区域内，所以pbuf 数据包的申请函数几乎无处不在，存在协议栈于各层之中
+当然，在不同层的协议中，layer 字段的大小是不一样的，因为不一样的协议其首部大小是不同的。
+协议栈中各层首部的大小都会被预留出来，LwIP 采用枚举类型的变量将各个层的首部大小记录下来，在申请的时候就把layer 需要空间的大小根据协议进行分配。
+#define PBUF_TRANSPORT_HLEN 20
+#if LWIP_IPV6
+#define PBUF_IP_HLEN        40
+#else
+#define PBUF_IP_HLEN        20
+#endif
+ 
+/**
+ * @ingroup pbuf
+ * Enumeration of pbuf layers
+ */
+typedef enum {
+  /** Includes spare room for transport layer header, e.g. UDP header.
+   * Use this if you intend to pass the pbuf to functions like udp_send().
+   */
+  /* 传输层协议首部内存空间，如UDP、TCP 报文协议首部 */
+  PBUF_TRANSPORT = PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN + PBUF_IP_HLEN + PBUF_TRANSPORT_HLEN,
+  /** Includes spare room for IP header.
+   * Use this if you intend to pass the pbuf to functions like raw_send().
+   */
+  /* 网络层协议首部内存空间 */
+  PBUF_IP = PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN + PBUF_IP_HLEN,
+  /** Includes spare room for link layer header (ethernet header).
+   * Use this if you intend to pass the pbuf to functions like ethernet_output().
+   * @see PBUF_LINK_HLEN
+   */
+  /* 链路层协议首部内存空间*/
+  PBUF_LINK = PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN,
+  /** Includes spare room for additional encapsulation header before ethernet
+   * headers (e.g. 802.11).
+   * Use this if you intend to pass the pbuf to functions like netif->linkoutput().
+   * @see PBUF_LINK_ENCAPSULATION_HLEN
+   */
+   /* 原始层，不预留空间 */
+  PBUF_RAW_TX = PBUF_LINK_ENCAPSULATION_HLEN,
+  /** Use this for input packets in a netif driver when calling netif->input()
+   * in the most common case - ethernet-layer netif driver. */
+  PBUF_RAW = 0
+} pbuf_layer;
+
+数据包申请函数有两个重要的参数：数据包pbuf 的类型和数据包在哪一层被申请。layer 值，当数据包申请时，所处的层次不同，就会导致预留空间的的layer 值不同。
+struct pbuf *
+pbuf_alloc(pbuf_layer layer, u16_t length, pbuf_type type)
+{
+  struct pbuf *p;
+  u16_t offset = (u16_t)layer;
+  LWIP_DEBUGF(PBUF_DEBUG | LWIP_DBG_TRACE, ("pbuf_alloc(length=%"U16_F")\n", length));
+ 
+  switch (type) {
+    case PBUF_REF: /* fall through */
+    case PBUF_ROM:
+      /* 根据具体的pbuf 类型进行分配，对于PBUF_ROM与PBUF_REF 类
+         型的pbuf，只分配pbuf 结构体空间大小 */
+      p = pbuf_alloc_reference(NULL, length, type);
+      break;
+    case PBUF_POOL: {
+      struct pbuf *q, *last;
+      u16_t rem_len; /* remaining length */
+      p = NULL;
+      last = NULL;
+      rem_len = length;
+      do {
+        u16_t qlen;
+        /* 分配内存块，内存块类型为MEMP_PBUF_POOL。 */
+        q = (struct pbuf *)memp_malloc(MEMP_PBUF_POOL);
+        if (q == NULL) {
+          PBUF_POOL_IS_EMPTY();
+          /* free chain so far allocated */
+          if (p) {
+            pbuf_free(p);
+          }
+          /* bail out unsuccessfully */
+          return NULL;
+        }
+        /* 分配成功，得到实际数据区域长度。 */
+        qlen = LWIP_MIN(rem_len, (u16_t)(PBUF_POOL_BUFSIZE_ALIGNED - LWIP_MEM_ALIGN_SIZE(offset)));
+        /* 初始化pbuf 结构体的成员变量 */
+        pbuf_init_alloced_pbuf(q, LWIP_MEM_ALIGN((void *)((u8_t *)q + SIZEOF_STRUCT_PBUF + offset)),
+                               rem_len, qlen, type, 0);
+        LWIP_ASSERT("pbuf_alloc: pbuf q->payload properly aligned",
+                    ((mem_ptr_t)q->payload % MEM_ALIGNMENT) == 0);
+        LWIP_ASSERT("PBUF_POOL_BUFSIZE must be bigger than MEM_ALIGNMENT",
+                    (PBUF_POOL_BUFSIZE_ALIGNED - LWIP_MEM_ALIGN_SIZE(offset)) > 0 );
+        if (p == NULL) {
+          /* allocated head of pbuf chain (into p) */
+          p = q;
+        } else {
+          /* make previous pbuf point to this pbuf */
+          /* 将这些pbuf 连接成pbuf 链表。 */
+          last->next = q;
+        }
+        last = q;
+        rem_len = (u16_t)(rem_len - qlen);  // 计算存下所有数据需要的长度
+        offset = 0;
+      } while (rem_len > 0);                // 继续分配内存块，直到将所有的数据装下为止
+      break;
+    }
+    case PBUF_RAM: {
+      u16_t payload_len = (u16_t)(LWIP_MEM_ALIGN_SIZE(offset) + LWIP_MEM_ALIGN_SIZE(length));
+      mem_size_t alloc_len = (mem_size_t)(LWIP_MEM_ALIGN_SIZE(SIZEOF_STRUCT_PBUF) + payload_len);
+ 
+      /* bug #50040: Check for integer overflow when calculating alloc_len */
+      if ((payload_len < LWIP_MEM_ALIGN_SIZE(length)) ||
+          (alloc_len < LWIP_MEM_ALIGN_SIZE(length))) {
+        return NULL;
+      }
+ 
+      /* If pbuf is to be allocated in RAM, allocate memory for it. */
+      p = (struct pbuf *)mem_malloc(alloc_len);
+      if (p == NULL) {
+        return NULL;
+      }
+      pbuf_init_alloced_pbuf(p, LWIP_MEM_ALIGN((void *)((u8_t *)p + SIZEOF_STRUCT_PBUF + offset)),
+                             length, length, type, 0);
+      LWIP_ASSERT("pbuf_alloc: pbuf->payload properly aligned",
+                  ((mem_ptr_t)p->payload % MEM_ALIGNMENT) == 0);
+      break;
+    }
+    default:
+      LWIP_ASSERT("pbuf_alloc: erroneous type", 0);
+      return NULL;
+  }
+  LWIP_DEBUGF(PBUF_DEBUG | LWIP_DBG_TRACE, ("pbuf_alloc(length=%"U16_F") == %p\n", length, (void *)p));
+  return p;
+}
+
+pbuf_alloc()函数的思路很清晰，根据传入的pbuf 类型及协议层次layer，去申请对应的pbuf，就能预留出对应的协议首部空间，对于PBUF_ROM与PBUF_REF 类型的pbuf，内核不会申请数据区域，因此，pbuf 结构体中payload 指针就需要用户自己去设置，我们通常在申请PBUF_ROM与PBUF_REF 类型的pbuf 成功后，紧接着就将payload 指针指向某个数据区域。
+
+pbuf_free():
+数据包pbuf 的释放是必须的，因为当内核处理完数据就要将这些资源进行回收，否则就会造成内存泄漏，在后续的数据处理中无法再次申请内存。当底层将数据发送出去后或者当应用层将数据处理完毕的时候，数据包就要被释放掉。
+
+释放数据包有条件，pbuf 中ref 字段就是记录pbuf 数据包被引用的次数，在申请pbuf 的时候，ref 字段就被初始化为1，当释放pbuf 的时候，先将ref减1，如果ref 减1 后为0，则表示能释放pbuf 数据包，此外，能被内核释放的pbuf 数据包只能是首节点或者其他地方未被引用过的节点，如果用户错误地调用pbuf 释放函数，将pbuf 链表中的某个中间节点删除了，那么必然会导致错误。
+
+一个数据包可能会使用链表的形式将多个pbuf 连接起来，那么假如删除一个首节点，怎么保证删除完属于一个数据包的数据呢？LwIP 的数据包释放函数会自动删除属于一个数据包中连同首节点在内所有pbuf。
+
+举个例子，假设一个数据包需要3 个pbuf 连接起来，那么在删除第一个pbuf 的时候，内核会检测一下它下一个pbuf释放与首节点是否存储同一个数据包的数据，如果是那就将第二个节点也删除掉，同理第三个也会被删除。但如果删除某个pbuf 链表的首节点时，链表中第二个节点的pbuf 中ref字段不为0，则表示该节点还在其他地方被引用，那么第二个节点不与第一个节点存储同一个数据包，那么就不会删除第二个节点。
+
+
+其它pbuf 操作函数:
+pbuf_realloc():
+pbuf_realloc()函数在相应pbuf(链表）尾部释放一定的空间，将数据包pbuf 中的数据长度减少为某个长度值。对于PBUF_RAM类型的pbuf，函数将调用内存堆管理中介绍到的mem_realloc()函数，释放这些多余的空间。对于其他三种类型的pbuf，该函数只是修改pbuf 中的长度字段值，并不释放对应的内存池空间。
+
+pbuf_header():
+pbuf_header()函数用于调整pbuf 的payload 指针（向前或向后移动一定字节数） 。
+函数使payload 指针指向数据区前的首部字段，这就为各层对数据包首部的操作提供了方便。当然，进行这个操作的时候，len 和tot_len 字段值也会随之更新
+
+pbuf_take()函数用于向pbuf 的数据区域拷贝数据。
+
+pbuf_copy()函数用于将一个任何类型的pbuf 中的数据拷贝到一个PBUF_RAM类型的pbuf 中。
+
+pbuf_chain()函数用于连接两个pbuf（链表）为一个pbuf 链表。
+
+pbuf_ref() 函数用于将pbuf 中的值加1。
+
+网卡中使用的pbuf:
+low_level_output()
+low_level_input()
+ethernetif_input()
+
+==============================LwIP 数据流框架
+通信过程中，本质上是数据的交互，数据传递，理解LwIP的框架，就可以更清晰的理解数据传递过程、原理
+以下皆为有操作系统环境下，网卡数据传递到内核的运作流程:
+
+1.网卡数据接收流程
+ETH（网卡）接收到数据后，产生中断，然后，释放一个信号量通知网卡接收线程处理这些接收的数据，然后，将数据封装成消息，投递到tcpip_mbox邮箱中，LwIP内核获取到该消息，对消息进行解析；根据消息中数据包类型进行处理，实际上是调用ethernet_input()函数决定是否递交到IP 层，如果是ARP 包，内核就不会递交给IP 层，而是更新ARP 缓存表，对于IP 数据包则递交给IP 层去处理，这就是一个数据从网卡到内核的过程
+
+用户程序与内核是完全独立的，只是通操作系统的IPC 通信机制进行数据交互
+
+2.内核超时处理
+在LwIP 中很多时候都要用到超时处理，例如ARP 缓存表项的时间管理、IP 分片数据报的重装等待超时、TCP 中的建立连接超时、重传超时机制等，因此超时处理的实现是TCP/IP 协议栈中一个重要部分，LwIP 为每个与外界网络连接的任务都有设定了 timeout 属性，即等待超时时间，超时处理的相关代码实现在timeouts.c 与timeouts.h 中。
+LwIP 采用软件定时器对这些超时进行处理，因为软件定时器很容易维护，并且与平台无关，只需要用户提供一个较为准确的时基即可。
+(1)sys_timeo 结构体与超时链表
+LwIP 通过一个sys_timeo 类型的数据结构管理与超时链表相关的所有超时事件。LwIP使用这个结构体记录下内核中所有被注册的超时事件，这些结构体会以链表的形式一个个连接在超时链表中，而内核中只有一条超时链表。
+LwIP定义了一个sys_timeo 类型的指针next_timeout，并且将next_timeout 指向当前内核中链表头部，所有被注册的超时事件都会按照被处理的先后顺序排列在超时链表上。
+struct sys_timeo {
+  struct sys_timeo *next;            // 指向下一个超时事件的指针，用于超时链表的连接
+  u32_t time;                        // 当前超时事件的等待时间
+  sys_timeout_handler h;             // 指向超时的回调函数
+  void *arg;                         // 向回调函数传入参数
+#if LWIP_DEBUG_TIMERNAMES
+  const char* handler_name;
+#endif /* LWIP_DEBUG_TIMERNAMES */
+};
+ 
+/** The one and only timeout list */
+static struct sys_timeo *next_timeout;    // 指向超时链表第一个超时事件
+
+(2)注册超时事件
+LwIP 虽然使用超时链表进行管理所有的超时事件，那么它首先需要知道有哪些超时事件才能去管理，而这些超时事件就是通过注册的方式被挂载在链表上.
+超时事件要在内核中登记一下，内核才会去处理，LwIP 中注册超时事件的函数是sys_timeout()，但是实际上是调用sys_timeout_abs()函数.
+sys_timeout(u32_t msecs, sys_timeout_handler handler, void *arg)
+{
+  u32_t next_timeout_time;
+ 
+  LWIP_ASSERT_CORE_LOCKED();
+ 
+  LWIP_ASSERT("Timeout time too long, max is LWIP_UINT32_MAX/4 msecs", msecs <= (LWIP_UINT32_MAX / 4));
+ 
+  /* 根据当前时间计算超时时间 */
+  next_timeout_time = (u32_t)(sys_now() + msecs); /* overflow handled by TIME_LESS_THAN macro */ 
+  
+  /* 当前事件插入超时链表 */
+  sys_timeout_abs(next_timeout_time, handler, arg);
+}
+
+sys_timeout_abs(u32_t abs_time, sys_timeout_handler handler, void *arg)
+{
+  struct sys_timeo *timeout, *t;
+ 
+  /* 内存池中申请,用以保存超时事件相关信息 */
+  timeout = (struct sys_timeo *)memp_malloc(MEMP_SYS_TIMEOUT);
+  if (timeout == NULL) {
+    LWIP_ASSERT("sys_timeout: timeout != NULL, pool MEMP_SYS_TIMEOUT is empty", timeout != NULL);
+    return;
+  }
+ 
+  /* 填写对应的超时事件信息，超时回调函数、函数参数、超时的 时间 */
+  timeout->next = NULL;
+  timeout->h = handler;
+  timeout->arg = arg;
+  timeout->time = abs_time;
+ 
+  /* 如果超时链表中没有超时事件，那么新添加的事件就是链表的第一个 */
+  if (next_timeout == NULL) {
+    next_timeout = timeout;
+    return;
+  }
+ 
+  /* 若新插入的超时事件比链表上第一个事件的时间短，则将新插入的超时事件设置成链表的第一个 */
+  if (TIME_LESS_THAN(timeout->time, next_timeout->time)) {
+    timeout->next = next_timeout;
+    next_timeout = timeout;
+  } else {
+    for (t = next_timeout; t != NULL; t = t->next) {
+      if ((t->next == NULL) || TIME_LESS_THAN(timeout->time, t->next->time)) {
+ 
+        /* 遍历链表，寻找合适的插入节点，超时链表根据超时事件的时间升序排列。 */
+        timeout->next = t->next;
+        t->next = timeout;
+        break;
+      }
+    }
+  }
+}
+在timeouts.c 中，有一个名字为lwip_cyclic_timer 的结构，LwIP 使用该结构存放了其内部使用的循环超时事件。这些超时事件在LwIP 初始化时通过函数sys_timeouts_init()调用定时器注册函数sys_timeout()注册进入超时链表中。
+lwip_cyclic_timers 数组中存放了每个周期性的超时事件回调函数及超时时间，在LwIP初始化的时候就将这些事件一个个插入超时链表中。
+
+/** Initialize this module */
+void sys_timeouts_init(void)
+{
+  size_t i;
+  /* tcp_tmr() at index 0 is started on demand */
+  for (i = (LWIP_TCP ? 1 : 0); i < LWIP_ARRAYSIZE(lwip_cyclic_timers); i++) {
+    /* we have to cast via size_t to get rid of const warning
+      (this is OK as cyclic_timer() casts back to const* */
+    sys_timeout(lwip_cyclic_timers[i].interval_ms, lwip_cyclic_timer, LWIP_CONST_CAST(void *, &lwip_cyclic_timers[i]));
+  }
+}
+
+每个sys_timeo 结构体中的h 成员变量记录着对应的超时回调函数，对于周期性的回调函数，LwIP 是这样子处理的：在初始化的时候将他们注册到 lwip_cyclic_timer()函数中，每次在处理回调函数之后，就调用sys_timeout_abs()函数将其重新注册到超时链表中。
+void
+lwip_cyclic_timer(void *arg)
+{
+  u32_t now;
+  u32_t next_timeout_time;
+  const struct lwip_cyclic_timer *cyclic = (const struct lwip_cyclic_timer *)arg;
+ 
+  cyclic->handler();
+ 
+  now = sys_now();
+  next_timeout_time = (u32_t)(current_timeout_due_time + cyclic->interval_ms);  /* overflow handled by TIME_LESS_THAN macro */ 
+  if (TIME_LESS_THAN(next_timeout_time, now)) {
+    /* timer would immediately expire again -> "overload" -> restart without any correction */
+ 
+    sys_timeout_abs((u32_t)(now + cyclic->interval_ms), lwip_cyclic_timer, arg);
+ 
+  } else {
+    /* correct cyclic interval with handler execution delay and sys_check_timeouts jitter */
+    sys_timeout_abs(next_timeout_time, lwip_cyclic_timer, arg);
+ 
+  }
+}
+(3)超时检查
+LwIP 实现了超时处理，那么无论我们的开发平台是否使用操作系统，都可以对其进行超时检查并且去处理
+void sys_check_timeouts(void)
+用于裸机的函数，用户需要在裸机应用程序中周期性调用该函数，每次调用的时候LwIP 都会检查超时链表上第一个sys_timeo 结构体是否到期，如果没有到期，直接退出该函数，否则，执行sys_timeo 结构体中对应的超时回调函数，并从链表上删除它，然后继续检查下一个sys_timeo 结构体，直到sys_timeo 结构体没有超时才退出。
+tcpip_timeouts_mbox_fetch(sys_mbox_t *mbox, void **msg) （tcpip.c）
+这个函数在操作系统的线程中循环调用，主要是等待tcpip_mbox 消息，是可阻塞的，如果在等待tcpip_mbox 的过程中发生超时事件，则会同时执行超时事件处理，即调用超时回调函数。LwIP 是这样子处理的，如果已经发生超时，LwIP 就会内部调用sys_check_timeouts()函数去检查超时的sys_timeo 结构体并调用其对应的回调函数，如果没有发生超时，那就一直等待消息，其等待的时间为下一个超时时间的时间，一举两得。 LwIP 中tcpip 线程就是靠这种方法，即处理了上层及底层的tcpip_mbox 消息，同时处理了所有需要超时处理的事件。
+
+#define TCPIP_MBOX_FETCH(mbox, msg) tcpip_timeouts_mbox_fetch(mbox, msg)
+/**
+ * Wait (forever) for a message to arrive in an mbox.
+ * While waiting, timeouts are processed.
+ *
+ * @param mbox the mbox to fetch the message from
+ * @param msg the place to store the message
+ */
+static void
+tcpip_timeouts_mbox_fetch(sys_mbox_t *mbox, void **msg)
+{
+  u32_t sleeptime, res;
+ 
+again:
+  LWIP_ASSERT_CORE_LOCKED();
+ 
+  /* 得到距离事件超时的时间并保存在sleeptime 变量中 */
+  sleeptime = sys_timeouts_sleeptime();
+  if (sleeptime == SYS_TIMEOUTS_SLEEPTIME_INFINITE) {
+    /* 无超时事件，那只需一直等待mbox 消息即可 */
+    UNLOCK_TCPIP_CORE();
+    sys_arch_mbox_fetch(mbox, msg, 0);
+    LOCK_TCPIP_CORE();
+    return;
+  } else if (sleeptime == 0) {
+    /* 0 表示已经发生超时了，那就调用sys_check_timeouts()去检查一下,并处理 */
+    sys_check_timeouts();
+    /* We try again to fetch a message from the mbox. */
+    goto again;
+  }
+ 
+  UNLOCK_TCPIP_CORE();
+ 
+  /* 对于其他时间，LwIP 就在等待tcpip_mbox 的消息的同时就去处理超时事件, 
+    等待tcpip_mbox 的消息的时间为sleeptime，然后在时间到达的时候就处理超时事件*/
+  res = sys_arch_mbox_fetch(mbox, msg, sleeptime);
+  LOCK_TCPIP_CORE();
+  if (res == SYS_ARCH_TIMEOUT) {
+    /* If a SYS_ARCH_TIMEOUT value is returned, a timeout occurred
+       before a message could be fetched. */
+    sys_check_timeouts();
+    /* We try again to fetch a message from the mbox. */
+    goto again;
+  }
+}
+
+3.tcpip_thread 线程
+LwIP 在操作系统的环境下，LwIP 内核是作为操作系统的一个线程运行的，在协议栈初始化的时候就会创建tcpip_thread 线程。
+static void
+tcpip_thread(void *arg)
+{
+  struct tcpip_msg *msg;
+  LWIP_UNUSED_ARG(arg);
+ 
+  LWIP_MARK_TCPIP_THREAD();
+ 
+  LOCK_TCPIP_CORE();
+  if (tcpip_init_done != NULL) {
+    tcpip_init_done(tcpip_init_done_arg);
+  }
+ 
+  while (1) {                          /* MAIN Loop */
+    LWIP_TCPIP_THREAD_ALIVE();
+    /* wait for a message, timeouts are processed while waiting */
+    /* 等待消息并且处理超时事件 */
+    TCPIP_MBOX_FETCH(&tcpip_mbox, (void **)&msg);
+    if (msg == NULL) {
+      /* 如果没有等到消息就继续等待 */
+      LWIP_DEBUGF(TCPIP_DEBUG, ("tcpip_thread: invalid message: NULL\n"));
+      LWIP_ASSERT("tcpip_thread: invalid message", 0);
+      continue;
+    }
+    /* 等待到消息就对消息进行处理 */
+    tcpip_thread_handle_msg(msg);
+  }
+}
+
+/* Handle a single tcpip_msg
+ * This is in its own function for access by tests only.
+ */
+static void
+tcpip_thread_handle_msg(struct tcpip_msg *msg)
+{
+  switch (msg->type) {
+#if !LWIP_TCPIP_CORE_LOCKING
+    /* TCPIP_MSG_API 和 TCPIP_MSG_API_CALL
+        根据消息中的不同类型进行不同的处理，对于TCPIP_MSG_API类型，就执行对应的API 函数 */
+    case TCPIP_MSG_API:
+      LWIP_DEBUGF(TCPIP_DEBUG, ("tcpip_thread: API message %p\n", (void *)msg));
+      msg->msg.api_msg.function(msg->msg.api_msg.msg);
+      break;
+    case TCPIP_MSG_API_CALL:
+      LWIP_DEBUGF(TCPIP_DEBUG, ("tcpip_thread: API CALL message %p\n", (void *)msg));
+      msg->msg.api_call.arg->err = msg->msg.api_call.function(msg->msg.api_call.arg);
+      sys_sem_signal(msg->msg.api_call.sem);
+      break;
+#endif /* !LWIP_TCPIP_CORE_LOCKING */
+ 
+#if !LWIP_TCPIP_CORE_LOCKING_INPUT
+    /* TCPIP_MSG_INPKT 类型，直接交给ARP 层处理。 */
+    case TCPIP_MSG_INPKT:
+      LWIP_DEBUGF(TCPIP_DEBUG, ("tcpip_thread: PACKET %p\n", (void *)msg));
+      if (msg->msg.inp.input_fn(msg->msg.inp.p, msg->msg.inp.netif) != ERR_OK) {
+        pbuf_free(msg->msg.inp.p);
+      }
+      memp_free(MEMP_TCPIP_MSG_INPKT, msg);
+      break;
+#endif /* !LWIP_TCPIP_CORE_LOCKING_INPUT */
+ 
+#if LWIP_TCPIP_TIMEOUT && LWIP_TIMERS
+    /* TCPIP_MSG_TIMEOUT 类型，表示上层注册一个超时事件，直接执行注册超时事件即可。 */
+    case TCPIP_MSG_TIMEOUT:
+      LWIP_DEBUGF(TCPIP_DEBUG, ("tcpip_thread: TIMEOUT %p\n", (void *)msg));
+      sys_timeout(msg->msg.tmo.msecs, msg->msg.tmo.h, msg->msg.tmo.arg);
+      memp_free(MEMP_TCPIP_MSG_API, msg);
+      break;
+    
+    /* TCPIP_MSG_ UNTIMEOUT 类型，表示上层删除一个超时事件，直接执行删除超时事件即可。 */
+    case TCPIP_MSG_UNTIMEOUT:
+      LWIP_DEBUGF(TCPIP_DEBUG, ("tcpip_thread: UNTIMEOUT %p\n", (void *)msg));
+      sys_untimeout(msg->msg.tmo.h, msg->msg.tmo.arg);
+      memp_free(MEMP_TCPIP_MSG_API, msg);
+      break;
+#endif /* LWIP_TCPIP_TIMEOUT && LWIP_TIMERS */
+ 
+    /* TCPIP_MSG_CALLBACK 或者是TCPIP_MSG_CALLBACK_STATIC 类型，
+        表示上层通过回调方式执行一个回调函数，那么就执行对应的回调函数即可*/
+    case TCPIP_MSG_CALLBACK:
+      LWIP_DEBUGF(TCPIP_DEBUG, ("tcpip_thread: CALLBACK %p\n", (void *)msg));
+      msg->msg.cb.function(msg->msg.cb.ctx);
+      memp_free(MEMP_TCPIP_MSG_API, msg);
+      break;
+ 
+    case TCPIP_MSG_CALLBACK_STATIC:
+      LWIP_DEBUGF(TCPIP_DEBUG, ("tcpip_thread: CALLBACK_STATIC %p\n", (void *)msg));
+      msg->msg.cb.function(msg->msg.cb.ctx);
+      break;
+ 
+    default:
+      LWIP_DEBUGF(TCPIP_DEBUG, ("tcpip_thread: invalid message: %d\n", msg->type));
+      LWIP_ASSERT("tcpip_thread: invalid message", 0);
+      break;
+  }
+}
+
+4. LwIP 中的消息
+(1)消息结构
+LwIP 中消息是有多种结构的的，对于不同的消息类型其封装是不一样的，tcpip_thread 线程是通过tcpip_msg 描述消息的，tcpip_thread 线程接收到消息后，根据消息的类型进行不同的处理。
+LwIP 中使用tcpip_msg_type 枚举类型定义了系统中可能出现的消息的类型。
+
+消息结构msg 字段是一个共用体，其中定义了各种消息类型的具体内容，每种类型的消息对应了共用体中的一个字段，其中注册与删除事件的消息使用了同一个tmo 字段。LwIP 中的API 相关的消息内容很多，不适合直接放在tcpip_msg 中，所以LwIP 用一个api_msg 结构体来描述API 消息，在tcpip_msg 中只存放指向api_msg 结构体的指针。
+
+enum tcpip_msg_type {
+#if !LWIP_TCPIP_CORE_LOCKING
+  TCPIP_MSG_API,                                
+  TCPIP_MSG_API_CALL,                            // API 函数调用
+#endif /* !LWIP_TCPIP_CORE_LOCKING */
+#if !LWIP_TCPIP_CORE_LOCKING_INPUT
+  TCPIP_MSG_INPKT,                               // 底层数据包输入
+#endif /* !LWIP_TCPIP_CORE_LOCKING_INPUT */
+#if LWIP_TCPIP_TIMEOUT && LWIP_TIMERS
+  TCPIP_MSG_TIMEOUT,                             // 注册超时事件
+  TCPIP_MSG_UNTIMEOUT,                           // 删除超时事件
+#endif /* LWIP_TCPIP_TIMEOUT && LWIP_TIMERS */
+  TCPIP_MSG_CALLBACK,                                
+  TCPIP_MSG_CALLBACK_STATIC                      // 执行回调函数
+};
+
+
+struct tcpip_msg {
+  enum tcpip_msg_type type;               // 消息的类型
+  union {
+#if !LWIP_TCPIP_CORE_LOCKING
+    
+    /* API 消息主要由两部分组成，
+        一部分是用于表示内核执行的API 函数，
+        另一部分是执行函数时候的参数，都会被记录在api_msg 中*/
+    struct {
+      tcpip_callback_fn function;
+      void* msg;
+    } api_msg;
+ 
+    /* 与API 消息差不多，也是由两部分组成，
+        一部分是tcpip_api_call_fn类型的函数，
+        另一部分是其对应的形参，
+        此外还有用于同步的信号量 */
+    struct {
+      tcpip_api_call_fn function;
+      struct tcpip_api_call_data *arg;
+      sys_sem_t *sem;
+    } api_call;
+#endif /* LWIP_TCPIP_CORE_LOCKING */
+#if !LWIP_TCPIP_CORE_LOCKING_INPUT
+ 
+    /* inp 用于记录数据包消息的内容，
+        p 指向接收到的数据包；
+        netif 表示接收到数据包的网卡；
+        input_fn 表示输入的函数接口，在tcpip_inpkt 进行配置。
+*/
+    struct {
+      struct pbuf *p;
+      struct netif *netif;
+      netif_input_fn input_fn;
+    } inp;
+#endif /* !LWIP_TCPIP_CORE_LOCKING_INPUT */
+ 
+    /* cb 用于记录回调函数与其对应的形参 */
+    struct {
+      tcpip_callback_fn function;
+      void *ctx;
+    } cb;
+ 
+#if LWIP_TCPIP_TIMEOUT && LWIP_TIMERS
+    /* mo 用于记录超时相关信息，如超时的时间，超时回调函数，参数等 */
+    struct {
+      u32_t msecs;
+      sys_timeout_handler h;
+      void *arg;
+    } tmo;
+#endif /* LWIP_TCPIP_TIMEOUT && LWIP_TIMERS */
+  } msg;
+};
+
+(2)数据包消息
+数据包的消息，是通过tcpip_input()函数对消息进行构造并且投递的，但是真正执行这些操作的函数是tcpip_inpkt().
+err_t
+tcpip_input(struct pbuf *p, struct netif *inp)
+{
+#if LWIP_ETHERNET
+  if (inp->flags & (NETIF_FLAG_ETHARP | NETIF_FLAG_ETHERNET)) {
+    return tcpip_inpkt(p, inp, ethernet_input);
+  } else
+#endif /* LWIP_ETHERNET */
+    return tcpip_inpkt(p, inp, ip_input);
+}
+
+err_t
+tcpip_inpkt(struct pbuf *p, struct netif *inp, netif_input_fn input_fn)
+{
+#if LWIP_TCPIP_CORE_LOCKING_INPUT
+  err_t ret;
+  LWIP_DEBUGF(TCPIP_DEBUG, ("tcpip_inpkt: PACKET %p/%p\n", (void *)p, (void *)inp));
+  LOCK_TCPIP_CORE();
+  ret = input_fn(p, inp);
+  UNLOCK_TCPIP_CORE();
+  return ret;
+#else /* LWIP_TCPIP_CORE_LOCKING_INPUT */
+  struct tcpip_msg *msg;
+ 
+  LWIP_ASSERT("Invalid mbox", sys_mbox_valid_val(tcpip_mbox));
+ 
+  msg = (struct tcpip_msg *)memp_malloc(MEMP_TCPIP_MSG_INPKT);
+  if (msg == NULL) {
+    return ERR_MEM;
+  }
+ 
+  msg->type = TCPIP_MSG_INPKT;
+  msg->msg.inp.p = p;
+  msg->msg.inp.netif = inp;
+  msg->msg.inp.input_fn = input_fn;
+  /* 构造消息完成，就调用sys_mbox_trypost 进行投递消息 */
+  if (sys_mbox_trypost(&tcpip_mbox, msg) != ERR_OK) {
+    memp_free(MEMP_TCPIP_MSG_INPKT, msg);
+    return ERR_MEM;
+  }
+  return ERR_OK;
+#endif /* LWIP_TCPIP_CORE_LOCKING_INPUT */
+}
+
+(3)API 消息
+LwIP 使用api_msg 结构体描述一个API 消息的内容。(api_msg.h)
+/** This struct includes everything that is necessary to execute a function
+    for a netconn in another thread context (mainly used to process netconns
+    in the tcpip_thread context to be thread safe). */
+struct api_msg {
+  /** The netconn which to process - always needed: it includes the semaphore
+      which is used to block the application thread until the function finished. */
+  struct netconn *conn;    // 当前连接
+  /** The return value of the function executed in tcpip_thread. */
+  err_t err;               // 执行结果
+  /** Depending on the executed function, one of these union members is used */
+  union {
+    /** used for lwip_netconn_do_send */
+    struct netbuf *b;    // 执行lwip_netconn_do_send 需要的参数，待发送数据    
+    /** used for lwip_netconn_do_newconn */
+    struct {
+      u8_t proto;        // lwip_netconn_do_newconn 需要的参数，连接类型
+    } n;
+    /** used for lwip_netconn_do_bind and lwip_netconn_do_connect */
+    struct {
+      API_MSG_M_DEF_C(ip_addr_t, ipaddr);    // ip 地址
+      u16_t port;                            // 端口号
+      u8_t if_idx;
+    } bc;
+    /** used for lwip_netconn_do_getaddr */
+    struct {
+      ip_addr_t API_MSG_M_DEF(ipaddr);
+      u16_t API_MSG_M_DEF(port);
+      u8_t local;
+    } ad;
+    /** used for lwip_netconn_do_write */
+    struct {
+      /** current vector to write */
+      const struct netvector *vector;
+      /** number of unwritten vectors */
+      u16_t vector_cnt;
+      /** offset into current vector */
+      size_t vector_off;
+      /** total length across vectors */
+      size_t len;
+      /** offset into total length/output of bytes written when err == ERR_OK */
+      size_t offset;
+      u8_t apiflags;
+#if LWIP_SO_SNDTIMEO
+      u32_t time_started;
+#endif /* LWIP_SO_SNDTIMEO */
+    } w;
+    /** used for lwip_netconn_do_recv */
+    struct {
+      size_t len;
+    } r;
+#if LWIP_TCP
+    /** used for lwip_netconn_do_close (/shutdown) */
+    struct {
+      u8_t shut;
+#if LWIP_SO_SNDTIMEO || LWIP_SO_LINGER
+      u32_t time_started;
+#else /* LWIP_SO_SNDTIMEO || LWIP_SO_LINGER */
+      u8_t polls_left;
+#endif /* LWIP_SO_SNDTIMEO || LWIP_SO_LINGER */
+    } sd;
+#endif /* LWIP_TCP */
+#if LWIP_IGMP || (LWIP_IPV6 && LWIP_IPV6_MLD)
+    /** used for lwip_netconn_do_join_leave_group */
+    struct {
+      API_MSG_M_DEF_C(ip_addr_t, multiaddr);
+      API_MSG_M_DEF_C(ip_addr_t, netif_addr);
+      u8_t if_idx;
+      enum netconn_igmp join_or_leave;
+    } jl;
+#endif /* LWIP_IGMP || (LWIP_IPV6 && LWIP_IPV6_MLD) */
+#if TCP_LISTEN_BACKLOG
+    struct {
+      u8_t backlog;
+    } lb;
+#endif /* TCP_LISTEN_BACKLOG */
+  } msg;
+#if LWIP_NETCONN_SEM_PER_THREAD
+  sys_sem_t* op_completed_sem;
+#endif /* LWIP_NETCONN_SEM_PER_THREAD */
+};
+
+api_msg 只包含3 个字段，描述连接信息的conn、内核返回的执行结果err、还有msg，msg 是一个共用体，根据不一样 的API 接口使用不一样的数据结构。
+上层的API 函数，想要与内核进行数据交互，也是通过LwIP 的消息机制，API 消息由用户线程发出，与内核进行交互，因为用户的应用程序并不是与内核处于同一线程中
+简单来说，就是用户使用NETCONN API 接口的时候，LwIP 会将对应API 函数与参数构造成消息传递到tcpip_thread 线程中，然后根据对应的API 函数执行对应的操作。
+这样就不要求用户对内核很熟悉，与数据包消息类似，也是有独立的API 消息投递函数去处理，那就是netconn_apimsg()函数，在NETCONN API 中构造完成数据包，就会调用netconn_apimsg()函数进行投递消息。
+
+err_t
+netconn_bind(struct netconn *conn, const ip_addr_t *addr, u16_t port)
+{
+  API_MSG_VAR_DECLARE(msg);
+  err_t err;
+ 
+  LWIP_ERROR("netconn_bind: invalid conn", (conn != NULL), return ERR_ARG;);
+ 
+#if LWIP_IPV4
+  /* Don't propagate NULL pointer (IP_ADDR_ANY alias) to subsequent functions */
+  if (addr == NULL) {
+    addr = IP4_ADDR_ANY;
+  }
+#endif /* LWIP_IPV4 */
+ 
+#if LWIP_IPV4 && LWIP_IPV6
+  /* "Socket API like" dual-stack support: If IP to bind to is IP6_ADDR_ANY,
+   * and NETCONN_FLAG_IPV6_V6ONLY is 0, use IP_ANY_TYPE to bind
+   */
+  if ((netconn_get_ipv6only(conn) == 0) &&
+      ip_addr_cmp(addr, IP6_ADDR_ANY)) {
+    addr = IP_ANY_TYPE;
+  }
+#endif /* LWIP_IPV4 && LWIP_IPV6 */
+ 
+  /* 初始化 msg */
+  API_MSG_VAR_ALLOC(msg);
+  API_MSG_VAR_REF(msg).conn = conn;
+  API_MSG_VAR_REF(msg).msg.bc.ipaddr = API_MSG_VAR_REF(addr);
+  API_MSG_VAR_REF(msg).msg.bc.port = port;
+  /* 投递 msg ,需要等待tcpip_thread 回应*/
+  err = netconn_apimsg(lwip_netconn_do_bind, &API_MSG_VAR_REF(msg));
+  API_MSG_VAR_FREE(msg);
+ 
+  return err;
+}
+ 
+static err_t
+netconn_apimsg(tcpip_callback_fn fn, struct api_msg *apimsg)
+{
+  err_t err;
+ 
+#ifdef LWIP_DEBUG
+  /* catch functions that don't set err */
+  apimsg->err = ERR_VAL;
+#endif /* LWIP_DEBUG */
+ 
+#if LWIP_NETCONN_SEM_PER_THREAD
+  apimsg->op_completed_sem = LWIP_NETCONN_THREAD_SEM_GET();
+#endif /* LWIP_NETCONN_SEM_PER_THREAD */
+ 
+  err = tcpip_send_msg_wait_sem(fn, apimsg, LWIP_API_MSG_SEM(apimsg));
+  if (err == ERR_OK) {
+    return apimsg->err;
+  }
+  return err;
+}
+
+err_t
+tcpip_send_msg_wait_sem(tcpip_callback_fn fn, void *apimsg, sys_sem_t *sem)
+{
+#if LWIP_TCPIP_CORE_LOCKING
+  LWIP_UNUSED_ARG(sem);
+  LOCK_TCPIP_CORE();
+  fn(apimsg);
+  UNLOCK_TCPIP_CORE();
+  return ERR_OK;
+#else /* LWIP_TCPIP_CORE_LOCKING */
+  TCPIP_MSG_VAR_DECLARE(msg);
+ 
+  LWIP_ASSERT("semaphore not initialized", sys_sem_valid(sem));
+  LWIP_ASSERT("Invalid mbox", sys_mbox_valid_val(tcpip_mbox));
+ 
+  /* 构造类型为TCPIP_MSG_API消息 */
+  TCPIP_MSG_VAR_ALLOC(msg);
+  TCPIP_MSG_VAR_REF(msg).type = TCPIP_MSG_API;
+  TCPIP_MSG_VAR_REF(msg).msg.api_msg.function = fn;
+  TCPIP_MSG_VAR_REF(msg).msg.api_msg.msg = apimsg;
+  /* 调用sys_mbox_post()函数向内核进行投递消息 */
+  sys_mbox_post(&tcpip_mbox, &TCPIP_MSG_VAR_REF(msg));
+ 
+  /* 同时调用sys_arch_sem_wait()函数等待消息处理完毕 */
+  sys_arch_sem_wait(sem, 0);
+  TCPIP_MSG_VAR_FREE(msg);
+  return ERR_OK;
+#endif /* LWIP_TCPIP_CORE_LOCKING */
+}
+
+总的来说，用户的应用线程与内核也是相互独立的，依赖操作系统的 IPC 通信机制进行数据交互与同步（邮箱、信号量等），LwIP 提供上层NETCONN API 接口，会自动帮我们处理这些事情，只需要我们根据API 接口传递正确的参数接口.
+
+从底层数据包输入到内核，从应用程序到内核间的数据交互，都依赖操作系统的IPC 通信机制。

@@ -1,0 +1,236 @@
+tcp.c 包含同tcp编程、tcp定时器相关函数实现
+tcp.h包含与tcp编程接口相关的控制块、控制块操作函数定义
+tcp_in.c包含tcp报文段输入处理相关函数
+tcp_out.c包含tcp报文段输出处理相关函数
+tcp_impl.h包含所有tcp内核实现需要的宏、结构体、内部函数的定义
+
+
+tcp报文首部数据结构:
+在tcp_impl.h中定义
+
+tcp的11种状态:
+在tcp.h中枚举了这11种状态
+
+tcp控制块:
+tcp控制块有2类，一类是用来描述listen状态的的连接tcp_pcb_listen,另外一种是tcp_pcb,描述其他连接状态
+
+/* the TCP protocol control block */
+struct tcp_pcb {
+/** common PCB members */
+  IP_PCB;//宏，在ip.h中定义，包含源目ip字段
+/** protocol specific PCB members */
+  TCP_PCB_COMMON(struct tcp_pcb);//宏，tcp_pcb和tcp_pcb_listen共有字段
+
+  /* ports are in host byte order */
+  u16_t remote_port;//远端port
+  
+  u8_t flags;//控制块状态、标志字段
+#define TF_ACK_DELAY   ((u8_t)0x01U)   /* Delayed ACK. *///延迟发送ack(延迟确认)
+#define TF_ACK_NOW     ((u8_t)0x02U)   /* Immediate ACK. *///立即发送ack
+#define TF_INFR        ((u8_t)0x04U)   /* In fast recovery. *///连接处于快速重传状态
+#define TF_TIMESTAMP   ((u8_t)0x08U)   /* Timestamp option enabled *///连接时间戳选项已使能
+#define TF_RXCLOSED    ((u8_t)0x10U)   /* rx closed by tcp_shutdown *///
+#define TF_FIN         ((u8_t)0x20U)   /* Connection was closed locally (FIN segment enqueued). *///连接已关闭
+#define TF_NODELAY     ((u8_t)0x40U)   /* Disable Nagle algorithm *///禁止nagle算法
+#define TF_NAGLEMEMERR ((u8_t)0x80U)   /* nagle enabled, memerr, try to output to prevent delayed ACK to happen *///本地缓冲区溢出
+
+  /* the rest of the fields are in host byte order
+     as we have to do some math with them */
+
+  /* Timers *///
+  u8_t polltmr, pollinterval;//这2个字段用于周期性调用一个函数,polltmr周期增加,当超过pollinterval，poll函数被调用
+  u8_t last_timer;//控制块最近一次被定时器处理时间
+  u32_t tmr;//系统时间
+
+  /* receiver variables *///接收窗口相关字段
+  u32_t rcv_nxt;   /* next seqno expected *///下一个期望接受的序列号
+  u16_t rcv_wnd;   /* receiver window available *///当前接受窗口大小
+  u16_t rcv_ann_wnd; /* receiver window to announce *///将向对方通告窗口大小
+  u32_t rcv_ann_right_edge; /* announced right edge of window *///上次一通告时窗口右边界值
+
+  /* Retransmission timer. */
+  s16_t rtime;//重传定时器，随时间增加，当大于rto时重传报文
+
+  u16_t mss;   /* maximum segment size *///对方可接收最大报文段
+
+  /* RTT (round trip time) estimation variables *///RTT估算相关字段
+  u32_t rttest; /* RTT estimate in 500ms ticks *///RTT估计时，已500ms为周期递增
+  u32_t rtseq;  /* sequence number being timed *///用于测试RTT的报文序号
+  s16_t sa, sv; /* @todo document this *///RTT估计的平均值和时间差
+
+  s16_t rto;    /* retransmission time-out *///重发超时时间，由上面计算得到
+  u8_t nrtx;    /* number of retransmissions *///重发次数，多次重发时，使用该字段设置rto
+
+  /* fast retransmit/recovery *///快速重传快速恢复字段
+  u8_t dupacks;//lastack重复收到次数
+  u32_t lastack; /* Highest acknowledged seqno. *///接受到最大确认号
+
+  /* congestion avoidance/control variables *///拥塞控制字段
+  u16_t cwnd;//当前连接拥塞窗口大小
+  u16_t ssthresh;//拥塞避免算法启动阈值
+
+  /* sender variables *///发送窗口字段
+  u32_t snd_nxt;   /* next new seqno to be sent *///下一个将要发生序列号
+  u32_t snd_wl1, snd_wl2; /* Sequence and acknowledgement numbers of last
+                             window update. *///上次窗口更新时收到数据序号和确认号
+  u32_t snd_lbb;       /* Sequence number of next byte to be buffered. *///下一个被缓存的应用数据编号
+  u16_t snd_wnd;   /* sender window *///发送窗口大小
+  u16_t snd_wnd_max; /* the maximum sender window announced by the remote host *///对端通告的最大接收窗口
+
+  u16_t acked;//上次成功发送的字节数
+
+  u16_t snd_buf;   /* Available buffer space for sending (in bytes). *///可用发送缓冲区大小
+#define TCP_SNDQUEUELEN_OVERFLOW (0xffffU-3)//次宏用于缓冲区溢出检查
+  u16_t snd_queuelen; /* Available buffer space for sending (in tcp_segs). *///缓冲数据已占用pbuf个数
+
+#if TCP_OVERSIZE
+  /* Extra bytes available at the end of the last pbuf in unsent. */
+  u16_t unsent_oversize;
+#endif /* TCP_OVERSIZE */ 
+
+  /* These are ordered by sequence number: */
+  struct tcp_seg *unsent;   /* Unsent (queued) segments. *///未发生报文段队列
+  struct tcp_seg *unacked;  /* Sent but unacknowledged segments. *///发送了但未收到确认报文段队列
+#if TCP_QUEUE_OOSEQ  
+  struct tcp_seg *ooseq;    /* Received out of sequence segments. *///收到的无序报文段队列
+#endif /* TCP_QUEUE_OOSEQ */
+                             //上一次成功接收但未被应用层取用的数据pbuf
+  struct pbuf *refused_data; /* Data previously received but not yet taken by upper layer */
+
+#if LWIP_CALLBACK_API
+  /* Function to be called when more send buffer space is available. */
+  tcp_sent_fn sent;//当数据被成功发送后调用
+  /* Function to be called when (in-sequence) data has arrived. */
+  tcp_recv_fn recv;//接收到数据后调用
+  /* Function to be called when a connection has been set up. */
+  tcp_connected_fn connected;//建立连接后调用
+  /* Function which is called periodically. */
+  tcp_poll_fn poll;//该函数被内核周期性调用
+  /* Function to be called whenever a fatal error occurs. */
+  tcp_err_fn errf;//连接发生错误时调用
+#endif /* LWIP_CALLBACK_API */
+
+#if LWIP_TCP_TIMESTAMPS
+  u32_t ts_lastacksent;
+  u32_t ts_recent;
+#endif /* LWIP_TCP_TIMESTAMPS */
+
+  /* idle time before KEEPALIVE is sent */
+  u32_t keep_idle;//保活计时器上限值
+#if LWIP_TCP_KEEPALIVE
+  u32_t keep_intvl;
+  u32_t keep_cnt;
+#endif /* LWIP_TCP_KEEPALIVE */
+  
+  /* Persist timer counter */
+  u8_t persist_cnt;//坚持定时器计数值
+  /* Persist timer back-off */
+  u8_t persist_backoff;//坚持定时器探测报文发送数目
+
+  /* KEEPALIVE counter */
+  u8_t keep_cnt_sent;//保活报文发送次数
+}
+
+
+tcp_pcb_listen:
+struct tcp_pcb_listen {  
+/* Common members of all PCB types */
+  IP_PCB;
+/* Protocol specific PCB members */
+  TCP_PCB_COMMON(struct tcp_pcb_listen);
+};
+
+/**
+ * members common to struct tcp_pcb and struct tcp_listen_pcb
+ */
+#define TCP_PCB_COMMON(type) \
+  type *next; /* for the linked list */ \
+  void *callback_arg; \//指向用户自定义数据，回调时使用
+  /* the accept callback for listen- and normal pcbs, if LWIP_CALLBACK_API */ \
+  DEF_ACCEPT_CALLBACK \//accept回调函数，处于listen的pcb侦听到连接accept被调用
+  enum tcp_state state; /* TCP state */ \//连接状态
+  u8_t prio; \//优先级，可用于回收低优先级控制块
+  /* ports are in host byte order */ \
+  u16_t local_port//本地端口
+
+
+控制块链表:
+tcp用4条链表来链接处于不同状态下的控制块，方便查找
+tcp.c中
+
+
+TCP编程函数:
+1.新建控制块
+通过调用tcp_alloc为连接分配一个tcp控制块tcp_pcb，tcp_alloc内部是从内存池获取内存分配，若不够则会释放处于TIME-WAIT状态控制块或者比他优先级地的控制块（所以有个TCP_PRIO_NORMAL优先级字段），最后初始化tcp_pcb各个字段
+
+2.绑定控制块
+一般是服务器会主动调用tcp_bind,将本地ip和port设置到控制块的local_ip和local_port字段(前提是这个端点没有被其他控制块绑定过，所以需要遍历前面说的4种tcp链表)，最后把绑定的控制块插入到tcp_bound_pcbs链表首部
+
+3.侦听控制块
+服务端调用tcp_listen使控制块进入LISTEN状态,所做的事是把控制块从tcp_bound_pcbs链表取下来，把state字段设置为LISTEN,最后把此控制块挂在tcp_listen_pcbs链表上，其中接收client连接的默认回调函数accept在这里设置
+
+注意，listen后server就等待client发送SYN，当收到SYN后，server就遍历tcp_listen_pcbs链表，匹配目的ip、port的控制块，若找到匹配的就会新建tcp_pcb结构把他加到tcp_active_pcbs中，
+这个tcp_pcb的state是SYN_RCVD，但是tcp_listen_pcbs链表中的tcp_listen_pcb会一直存在不会被删，以等待其他client连接。
+
+4.控制块连接
+client需要主动执行打开操作就想server发送SYN报文，通过tcp_connect实现，该函数会包控制块从tcp_bound_pcbs链表取下来搬到tcp_active_pcbs，同时控制块state设置为SYN_SENT，初始化发送、接收窗口字段最后用tcp_enqueue组装握手报文，用tcp_output发送出去
+
+5.关闭连接
+任意时刻都可以调用tcp_close关闭一个tcp连接，因为该函数会根据控制块的不同状态做相应处理，释放相关资源，发送相关报文
+
+
+TCP缓冲队列:
+对于tcp数据输出输入缓冲，控制块是使用缓冲队列指针来管理数据，这样目的是节省内存，并专门定义tcp_seg数据结构将数据报文连接起来
+缓冲队列指针是如下3种，（tcp控制块中有定义）
+/* These are ordered by sequence number: */
+struct tcp_seg *unsent;   /* Unsent (queued) segments. *///未发生报文段队列
+struct tcp_seg *unacked;  /* Sent but unacknowledged segments. *///发送了但未收到确认报文段队列
+struct tcp_seg *ooseq;    /* Received out of sequence segments. *///收到的无序报文段队列
+
+TCP输出:
+tcp发送报文会先判断待发送数据长度len是否小于缓冲区pcb->snd_buf,若缓冲区不够则不会进行处理
+再判断pcb->snd_queuelen是否超过了控制块上允许挂接的pbuf个数上限值TCP_SND_QUEUELEN,如果超过,也不会发送
+再将数据组装程tcp报文段，每个报文段用tcp_seg描述，将所有创建好的tcp_seg连接在queue队列上，queue是一个临时变量
+再将queue插入到unsent队列指针的最后，如果连接处相邻的2个tcp_seg包含的数据小于pcb-mss且相邻的2个段都不是FIN、SYN，则会合并成1个报文段
+
+tcp_output是把控制块上unsent队列上报文段发送出去或者只发送一个ACK（当置位了TF_ACK_NOW或者发送窗口此时不允许发送数据时）
+然后把发送的报文段插入unacked队列中，以便后续重发。
+tcp_output里面调用tcp_output_segment,tcp_output_segment里面调用ip_output最终发送出去
+
+TCP输入:
+ip层收到数据报后ip_input把是tcp协议的报文交给tcp_input,tcp_input主要根据tcp报文中ip、port遍历匹配的控制块，遍历顺序如下
+1.遍历tcp_active_pcbs，若匹配，则调用tcp_process处理报文,找不到则2
+2.遍历tcp_tw_pcbs和tcp_listen_pcbs,找到则调用tcp_timewait_input和tcp_listen_input处理报文，若还未找到则调用tcp_rst向源主机发送tcp复位报文
+
+
+可靠性:
+RTT(Round-Trip Time): 往返时延
+
+超时重传与RTT
+rtime表示重传定时器，每500ms加1，当超过rto时，发生报文重传，rto是动态估算的，rtseq表示当前正在进行往返估算的报文序列号，nrtx表示报文重传次数。
+当用tcp_output_segment把报文发出去后，会把报文放在unacked队列上，
+rttest记录当前时间，rtseq记录当前报文序列号，当收到对方关于rtseq的确认后，根据rttest计算出RTT
+
+慢启动与拥塞避免
+慢起动需要维持2个变量，拥塞窗口cwnd和拥塞避免启动阈值ssthresh，对于新建的连接，初始化cwnd=1，
+发送放可以发送的数据量不能超过有效窗口（有效窗口时拥塞窗口和对方通告窗口的最小值），每当收到一个ack，cwnd就增加，
+增加的方式依赖于发送方是处于慢起动阶段还是拥塞避免阶段，慢起动阶段每收到一个ack则cwnd就+1，拥塞避免阶段每收到一个ack则cwnd增加1/cwnd，当整个窗口数据都被ack后，cwnd才只增加了1.
+
+快速重传与快速恢复
+如果发送方一连串收到3个或3个以上重复ack后，发送方就会重发丢失报文，而无须等待超时定时器溢出，这就是快速重传，
+当处于快速重传模式时，拥塞窗口被设置为有效窗口的一般或者更大，这同样是为了避免窗口导致减少数据流，在退出快速重传模式后，
+拥塞窗口不会像超市那样被设置为1，而是直接设置为ssthresh，直接进入拥塞避免阶段，这就是快速恢复
+
+零窗口探测
+当接收方传来的窗口为0时，发送方就要停止发送数据，直到接收方再次传来非0窗口，但是接收方再次传来的非0窗口有可能在传输过程中丢失，这样就无法再传输数据，
+所以为了防止这种死锁，发送方使用一个坚持定时器（persist timer）来周期性的向接收方查询窗口，以便发现窗口是否增大，这种报文称为窗口探测报文（window probe）
+
+tcp定时器
+lwip为每条连接建立了7个定时器
+建立定时器，是在响应SYN报文，发生SYN+ACK后开始计时，若75s内没有收到ACK，则连接终止
+重传定时器
+数据组装定时器，如果很长世间ooseq上失序报文不能被组装则被丢弃
+坚持定时器
+保活定时器
+FIN_WAIT_2定时器
+TIME_WAIT定时器，即2MSL定时器

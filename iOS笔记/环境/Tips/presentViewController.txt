@@ -1,0 +1,111 @@
+https://juejin.cn/user/3966693681926029/posts
+
+
+当VCA模态的弹出了VCB，那么VCA就是presenting view controller，VCB就是presented view controller
+
+container view controller 指的是VC的容器类，通过container view controller，我们可以很方便的管理子VC，实现VC之间的跳转等，iOS中container view controller包括UINavigationController, UISplitViewController, 以及 UIPageViewController.
+
+
+UIModalPresentationFullScreen
+UIKit默认的presentation style。 使用这种模式时，presented VC的宽高与屏幕相同，并且UIKit会直接使用rootViewController做为presentation context，在此次presentation完成之后，UIKit会将presentation context及其子VC都移出UI栈，这时候观察VC的层级关系，会发现UIWindow下只有presented VC.
+
+UIModalPresentationCurrentContext
+使用这种方式present VC时，presented VC的宽高取决于presentation context的宽高，并且UIKit会寻找属性definesPresentationContext为YES的VC作为presentation context
+当此次presentation完成之后，presentation context及其子VC都将被暂时移出当前的UI栈。
+
+UIModalPresentationCustom
+自定义模式，需要实现UIViewControllerTransitioningDelegate的相关方法，并将presented VC的transitioningDelegate 设置为实现了UIViewControllerTransitioningDelegate协议的对象。
+
+UIModalPresentationOverFullScreen
+与UIModalPresentationFullScreen的唯一区别在于，UIWindow下除了presented VC，还有其他正常的VC层级关系。也就是说该模式下，UIKit以rootViewController为presentation context，但presentation完成之后不会讲rootViewController移出当前的UI栈。
+
+UIModalPresentationOverCurrentContext
+寻找presentation context的方式与UIModalPresentationCurrentContext相同，所不同的是presentation完成之后，不会将context及其子VC移出当前UI栈。
+但是，这种方式只适用于transition style为UIModalTransitionStyleCoverVertical的情况(UIKit默认就是这种transition style)。其他transition style下使用这种方式将会触发异常。
+
+UIModalPresentationBlurOverFullScreen
+presentation完成之后，如果presented VC的背景有透明部分，会看到presented VC下面的VC会变得模糊，其他与UIModalPresentationOverFullScreen模式没有区别。
+
+
+presentation context是指为本次present提供上下文环境的类，需要指出的是，presenting
+VC通常并不是presentation context，Apple官方文档对于presentation context的选择是这样介绍的：
+When you present a view controller, UIKit looks for a view controller that provides a suitable context for the presentation. 
+In many cases, UIKit chooses the nearest container view controller but it might also choose the window’s root view controller. 
+In some cases, you can also tell UIKit which view controller defines the presentation context and should handle the presentation.
+
+当我们需要present VC的时候，除非我们指定了context，否则UIKit会优先选择presenting VC所属的容器类做为presentation context，如果没有容器类，那么会选择rootViewController。
+但是，UIKit搜索context的方式还与presented VC的modalPresentationStyle属性有关，当modalPresentationStyle为UIModalPresentationFullScreen、UIModalPresentationOverFullScreen等模式时，UIKit会直接选择rootViewController做为context。
+当modalPresentationStyle为UIModalPresentationOverCurrentContext、UIModalPresentationCurrentContext模式时，UIKit搜索context的方式如下：
+UIModalPresentationOverCurrentContext、UIModalPresentationCurrentContext模式下，一个VC能否成为presentation context 是由VC的definesPresentationContext属性决定的，这是一个BOOL值，默认UIViewController的definesPresentationContext属性值是NO，而 container view controller的definesPresentationContext默认值是YES，这也是上文中，UIKit总是将container
+view controller做为presentation context的原因。
+如果我们想指定presenting VC做为context，只需要在presenting VC的viewDidLoad方法里添加如下代码即可：
+self.definesPresentationContext = YES
+
+UIKit搜索presentation context的顺序为：  1. presenting VC  2. presenting VC 的父VC  3. presenting VC 所属的container VC  4. rootViewController
+
+还有另外一种特殊情况，当我们在一个presented VC上再present一个VC时，UIKit会直接将这个presented VC做为presentation context。
+
+
+###
+在iOS 中，presented VC 总是与 presentation context 处于同一层级，而与presenting VC所在的层级无关，且同一个presentation context同时只能有一个presented VC。
+###
+
+modalTransitionStyle:
+可以设置presentation的转场动画，官方提供了几种不同的转场动画，默认是UIModalTransitionStyleCoverVertical。如果想要使用别的style，只需要设置presented VC的modalTransitionStyle属性即可。其余三种包括UIModalTransitionStyleFlipHorizontal、UIModalTransitionStyleCrossDissolve、UIModalTransitionStylePartialCurl.
+
+
+
+==================================================UIModalPresentationStyleCustom不调用viewWillDisappear问题
+加入自定义转场，modalPresentationStyle必须设置为UIModalPresentationStyle.custom
+modalPresentationStyle设置为UIModalPresentationStyle.custom，那么presentingViewController的viewWillDisappear和viewDidDisappear就不会调用了
+
+先说在UIModalPresentationStyle.fullScreen下为什么会调用viewWillDisappear和viewDidDisappear
+https://developer.apple.com/library/archive/featuredarticles/ViewControllerPGforiPhoneOS/PresentingaViewController.html#//apple_ref/doc/uid/TP40007457-CH14-SW1
+When presenting a view controller using the UIModalPresentationFullScreen style, 
+UIKit normally removes the views of the underlying view controller after the transition animations finish. 
+You can prevent the removal of those views by specifying the UIModalPresentationOverFullScreen style instead. 
+You might use that style when the presented view controller has transparent areas that let underlying content show through.
+当使用UIModalPresentationFullScreen样式presenting一个view controller时，UIKit 通常会在过渡动画完成后移除底层视图控制器的视图，
+你可以通过指定 UIModalPresentationOverFullScreen 样式来防止删除这些视图，当呈现的view controller想让底层内容显示在透明区域时，您可以使用该样式，
+就是present一个B页面后，下面的presentingViewController（A页面）还在
+
+那么在UIModalPresentationStyle.fullScreen下为什么会调用viewWillDisappear和viewDidDisappear就很好解释了，因为在转场时，他会移除下面的viewController
+
+可以看到在UIModalPresentationOverCustom模式下，presentingViewController（A页面）还在，没有被移除，这也就解释了，为什么viewWillDisappear和viewDidDisappear不调用
+
+
+viewwilldisappear
+This method is called in response to a view being removed from a view hierarchy. This method is called before the view is actually removed and before any animations are configured
+调用此方法是为了响应从视图层次结构中删除的视图。在实际删除视图之前和配置任何动画之前调用此方法
+https://developer.apple.com/documentation/uikit/uiviewcontroller/1621485-viewwilldisappear
+
+
+viewDidDisappear
+Notifies the view controller that its view was removed from a view hierarchy
+通知视图控制器它的视图已从视图层次结构中删除
+https://developer.apple.com/documentation/uikit/uiviewcontroller/1621477-viewdiddisappear
+
+那么到了这里，我们可以知道，在modal切换的场景中，presentingViewController(A页面)的viewwilldisappear和viewDidDisappear调用，是和modalPresentationStyle有关的
+
+https://blog.csdn.net/tianweitao/article/details/80314598
+
+UIModalPresentation.popover
+主要配合UIPopoverPresentationController使用，做一个气泡弹窗视图
+
+
+
+###
+总结：
+###
+A present B，A，B的viewWillAppear、viewDidAppear、viewWillDisappear和viewDidDisappear调用顺序是怎样的？
+PresentingVC viewWillDisappear(_:)
+PresentedVC viewWillAppear(_:)
+PresentedVC viewDidAppear(_:)
+PresentingVC viewDidDisappear(_:)
+
+A页面的viewWillDisappear和viewDidDisappear在什么情况会调用，什么情况不会调用，为什么？
+根据modalPresentationStyle的类型决定，如果不需要从视图层级上移除的就不会掉用，反之
+
+在自定义了转场之后（modalPresentationStyle设置为custom），怎么让A页面的viewWillDisappear和viewDidDisappear调用？
+自定义UIPresentationController，并将shouldRemovePresentersView返回true
+https://developer.apple.com/library/archive/featuredarticles/ViewControllerPGforiPhoneOS/DefiningCustomPresentations.html#//apple_ref/doc/uid/TP40007457-CH25-SW1

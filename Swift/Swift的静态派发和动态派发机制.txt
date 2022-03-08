@@ -1,0 +1,124 @@
+https://trinhngocthuyen.github.io/posts/tech/method-dispatch-in-swift/
+
+###
+https://medium.com/flawless-app-stories/static-vs-dynamic-dispatch-in-swift-a-decisive-choice-cece1e872d
+https://betterprogramming.pub/static-dispatch-over-dynamic-dispatch-a-performance-analysis-47f9fee3803a
+###
+
+
+静态派发机制 同时支持 值类型 和 引用类型 。
+然而，动态派发机制仅支持 引用类型(reference types), 比如 Class 。简而言之: 对于动态性或者动态派发，我们需要用到继承特性，而这是值类型不支持的。
+
+
+4种派发机制，而不是两种(静态和动态):
+内联(inline) (最快)
+静态派发 (Static Dispatch)
+函数表派发 (Virtual Dispatch)
+动态派发 (Dynamic Dispatch)(最慢)
+
+由编译器决定应该使用哪种派发技术。当然，优先选择内联函数, 然后按需选择
+
+Objective-C默认支持动态派发, 这种派发技术以多态的形式为开发人员提供了灵活性。比如子类可以重写父类的方法，这很棒，然而，这也是需要代价的。
+动态派发以一定量的运行时开销为代价，提高了语言的灵活性。这意味着，在动态派发机制下，对于每个方法的调用，编译器必须在方法列表(witness table(虚函数表或者其他语言中的动态表))中查找执行方法的实现。
+编译器需要判断调用方，是选择父类的实现，还是子类的实现。而且由于所有对象的内存都是在运行时分配的，因此编译器只能在运行时执行检查。
+
+而静态调用，则没有这个问题。在编译期的时候，编译器就知道要为某个方法调用某种实现。因此, 编译器可以执行某些优化，甚至在可能的情况下，可以将某些代码转换成inline函数，从而使整体执行速度异常快。
+
+如何在Swift中实现动态派发和静态派发？
+要实现动态派发，我们可以使用继承，重写父类的方法。另外我们可以使用dynamic关键字，并且需要在@objc关键字前面加上关键字，以便将方法公开给OC runtime使用。
+要实现静态派发，我们可以使用final和static关键字，保证不会被覆写。
+
+注: 编译性语言有3种基础的函数派发方式: 直接派发(Direct Dispatch)，函数表派发(Table Dispatch), 消息机制派发(Message Dispatch)
+
+静态派发(或者直接派发)
+如上面所说，他们和动态派发相比，非常快。编译器可以在编译期定位到函数的位置。因此，当函数被调用时，编译器能通过函数的内存地址，直接找到它的函数实现。这极大的提高了性能，可以到达类似inline的编译期优化。
+
+动态派发
+在这种类型的派发中，在运行时而不是编译时选择实现方法，这会增加一下性能开销。
+既然动态派发有性能开销，我们为什么还要使用它？
+因为它具有灵活性。实际上，大多数的OOP语言都支持动态派发，因为它允许多态。
+动态派发有两种形式：
+函数表派发( Table dispatch )
+这种调用方式利用一个表，该表是一组函数指针，称为witness table，以查找特性方法的实现。
+
+witness table如何工作？
+每个子类都有它自己的表结构
+对于类中每个重写的方法，都有不同的函数指针
+当子类添加新方法时，这些方法指针会添加在表数组的末尾
+最后，编译器在运行时使用此表来查找调用函数的实现
+
+由于编译器必须从表中读取方法实现的内存地址，然后跳转到该地址，因此它需要两条附加指令，因此它比静态分派慢，但仍比消息分派快。
+这种特殊的派发技术可以是虚拟派发，因为它利用了虚拟表
+
+
+消息派发( Message dispatch )
+这种动态派发方式是最动态的。事实上，它表现优异(省去了优化部分)，目前，Cocoa框架在KVO，CoreData等很多地方在使用它。
+此外，它还可以使用method swizzling, 我们可以在运行时更改函数的实现。
+eg:
+let original = #selector(getter: UIViewController.childForStatusBarStyle)
+let swizzled = #selector(getter: UIViewController.swizzledChildForStatusBarStyle)
+let originalMethod = class_getInstanceMethod(UIViewController.self, original)
+let swizzled = class_getInstanceMethod(UIViewController.self, swizzled)
+method_exchangeImplementations(originalMethod, swizzledMethod)
+目前，Swift本身不支持这种功能，而是利用Objective-C的runtime特性，间接实现这种动态性。
+
+要使用动态性，我们需要使用dynamic关键字。在Swift4.0之前，我们需要一起使用dynamic和@objc. Swift4.0之后，我们需要表明@objc让我们的方法支持Objective-C的调用，以支持消息派发。
+由于我们使用了Objective-C的runtime特性, 当一个message被发送时, runtime会去动态查找方法的实现(implemention)。这很慢，为了提供效率，我们使用缓存来尽可能的让常用的方法被快速找到。
+
+
+
+举例：
+值类型 (Value type)
+struct Person {
+   func isIrritating() -> Bool { }  // Static
+}
+extension Person {
+   func canBeEasilyPissedOff() -> Bool { } // Static
+}
+由于struct和enum都是值类型, 不支持继承，编译器将他们置为静态派发下，因为他们永远不可能被子类化。
+
+
+协议 (Protocol)
+Protocol Animal {
+   func isCute() -> Bool { } // Table
+}
+extension Animal {
+   func  canGetAngry() -> Bool { } // Static
+}
+这里的重点是在extenison(扩展)里面定义的函数，使用静态派发(static dispatch)
+
+
+类 (Class)
+class Dog: Animal {
+   func isCute() -> Bool { } // Tablel
+   @objc dynamic func hoursSleep() -> Int { } // Message
+}
+extenison Dog {
+   func canBite() -> Bool { } // Static
+   @objc func goWild() { } // Message
+}
+final class Employee {
+   func canCode() -> Bool { } // Static
+}
+
+普通方法声明遵循协议的规则
+当我们将方法公开给Objecitve-C runtime时用@objc，使用动态派发
+当一个类被标记为final时，该类不能被子类化，因为使用静态派发(static dispatch)
+
+
+
+如何证明这些方法实际上是使用我上面解释的派发技术？
+必须看一下Swift中间语言(SIL)。
+https://github.com/apple/swift/blob/main/docs/SIL.rst
+
+如果函数使用Table派发，则它会出现在vtable（或witness_table）中
+sil_vtable Animal { 
+＃Animal.isCute！1：（Animal）->（）->（）：main.Animal.isCute（）->（）// Animal.isCute（）
+…… 
+}
+
+如果函数使用Message Dispatch，则关键字volatile应该存在于调用中。另外，您将找到两个标记foreign和objc_method，指示使用Objective-C运行时调用了该函数。
+％14 = class_method [volatile]％13：$ Dog，＃Dog.goWild！1.foreign：（Dog）->（）->（），$ @ convention（objc_method）（Dog）->（） 
+
+
+如果没有以上两种情况的证据，答案是静态派发。
