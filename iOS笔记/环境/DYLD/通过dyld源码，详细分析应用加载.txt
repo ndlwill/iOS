@@ -1,0 +1,292 @@
+分析一个程序的执行流程都是从main函数开始的。但是在main函数之前其实也做了不少操作，值得我们分析一下。
+一个类的load的方法是先于main函数执行的，通过对load方法设置一个断点，查看调用栈可知程序在加载过程中大致所执行的一些方法。
+
+其中可见dyld（the dynamic link editor），它是苹果的动态链接器，是苹果操作系统一个重要组成部分，在系统内核做好程序准备工作之后，交由dyld负责余下的工作。
+
+dyld源码
+https://github.com/opensource-apple/dyld
+
+准备分析:
+1、通过分析_dyld_start的汇编实现。发现调用了dyldbootstrap::start方法。
+# call dyldbootstrap::start(app_mh, argc, argv, slide, dyld_mh, &startGlue)
+    movl    8(%rbp),%esi    # param2 = argc into %esi
+    leaq    16(%rbp),%rdx   # param3 = &argv[0] into %rdx
+    movq    __dyld_start_static(%rip), %r8
+    leaq    __dyld_start(%rip), %rcx
+    subq     %r8, %rcx  # param4 = slide into %rcx
+    leaq    ___dso_handle(%rip),%r8 # param5 = dyldsMachHeader
+    leaq    -8(%rbp),%r9
+
+2、在下载好的dyld源码中搜索dyldbootstrap,在这个命名空间中寻找start方法。
+在这个方法中，通过slideOfMainExecutable得到因ASLR产生的偏移。通过rebaseDyld重绑定。通过__guard_setup来栈溢出保护。
+uintptr_t start(const struct macho_header* appsMachHeader, int argc, const char* argv[], 
+                intptr_t slide, const struct macho_header* dyldsMachHeader,
+                uintptr_t* startGlue)
+这个start的方法的返回值是调用了一个main函数,将start的一些值作为参数传到main
+return dyld::_main(appsMachHeader, appsSlide, argc, argv, envp, apple, startGlue);
+
+3、dyld也可以看做一个程序的执行，它的main函数和我们日常开发应用的main函数类似，都可以看做程序的入口。接下来我们主要便是分析main函数的实现。
+_main(const macho_header* mainExecutableMH, uintptr_t mainExecutableSlide, 
+        int argc, const char* argv[], const char* envp[], const char* apple[], 
+        uintptr_t* startGlue)
+
+加载过程:
+0x01 配置环境，设置环境变量等
+设置上下文
+setContext(mainExecutableMH, argc, argv, envp, apple);
+配置进程是否受限
+configureProcessRestrictions(mainExecutableMH);
+检查环境变量
+checkEnvironmentVariables(envp);
+根据Xcode设置的环境变量，来打印程序相应参数。
+
+if ( sEnv.DYLD_PRINT_OPTS )
+        printOptions(argv);
+if ( sEnv.DYLD_PRINT_ENV ) 
+        printEnvironmentVariables(envp);
+
+会打印程序相关的目录、用户级别、插入的动态库、动态库的路径等。
+opt[0] = "/var/containers/Bundle/Application/731D64D1-8B04-491B-A512-4010011413E6/dyld.app/dyld"
+CA_DEBUG_TRANSACTIONS=0
+TMPDIR=/private/var/mobile/Containers/Data/Application/EF8F63AD-B59A-42E7-92EE-076BC9F664D0/tmp
+__CF_USER_TEXT_ENCODING=0x1F5:0:0
+SHELL=/bin/sh
+SQLITE_ENABLE_THREAD_ASSERTIONS=1
+OS_ACTIVITY_DT_MODE=YES
+HOME=/private/var/mobile/Containers/Data/Application/EF8F63AD-B59A-42E7-92EE-076BC9F664D0
+DYLD_PRINT_TO_STDERR=YES
+CFFIXED_USER_HOME=/private/var/mobile/Containers/Data/Application/EF8F63AD-B59A-42E7-92EE-076BC9F664D0
+NSUnbufferedIO=YES
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+LOGNAME=mobile
+XPC_SERVICE_NAME=UIKitApplication:dyoung.dyld[0x1b53][62]
+DYLD_INSERT_LIBRARIES=/Developer/usr/lib/libBacktraceRecording.dylib:/Developer/usr/lib/libMainThreadChecker.dylib:/Developer/Library/PrivateFrameworks/DTDDISupport.framework/libViewDebuggerSupport.dylib
+CLASSIC=0
+DYLD_PRINT_OPTS=1
+DYLD_PRINT_ENV=1
+USER=mobile
+XPC_FLAGS=0x1
+CA_ASSERT_MAIN_THREAD_TRANSACTIONS=0
+DYLD_LIBRARY_PATH=/usr/lib/system/introspection
+
+通过getHostInfo获取machO头部获取当前运行架构的信息。
+static void getHostInfo(const macho_header* mainExecutableMH, uintptr_t mainExecutableSlide)
+
+0x02 加载共享缓存库。
+判断共享缓存库是否被禁用。iOS cannot run without shared region，注释说明iOS平台下是不能被禁用的。
+checkSharedRegionDisable((dyld3::MachOLoaded*)mainExecutableMH, mainExecutableSlide);
+通过mapSharedCache()函数加载、进入函数内部其主要实现是loadDyldCache这个函数。其中作了如下三种判断
+ if ( options.forcePrivate ) {
+        // mmap cache into this process only
+        //只加载到当前缓存。
+        return mapCachePrivate(options, results);
+    }
+ else {
+        // fast path: when cache is already mapped into shared region
+        //快速路径，如果已经加载的话就不处理了。
+        bool hasError = false;
+        if ( reuseExistingCache(options, results) ) {
+            hasError = (results->errorMessage != nullptr);
+        } else {
+            // slow path: this is first process to load cache
+            //第一次加载的话通过它来加载。
+            hasError = mapCacheSystemWide(options, results);
+        }
+        return hasError;
+}
+
+0x03 实例化主程序(Mach0，程序的可执行文件)
+实例化过程：instantiateFromLoadedImage
+
+static ImageLoaderMachO* instantiateFromLoadedImage(const macho_header* mh, uintptr_t slide, const char* path)
+{
+    // try mach-o loader
+    //isCompatibleMachO 是检查mach-o的subtype是否是当前cpu可以支持
+    if ( isCompatibleMachO((const uint8_t*)mh, path) ) {
+        ImageLoader* image = ImageLoaderMachO::instantiateMainExecutable(mh, slide, path, gLinkContext);
+        addImage(image);//将image添加到imagelist。所以我们在Xcode使用image list命令查看的第一个便是我们的machO
+        return (ImageLoaderMachO*)image;
+    }
+    
+    throw "main executable not a known format";
+}
+
+0x04 加载插入库
+通过loadInsertedDylib方法执行插入动态库的加载。在实现中调用load方法返回imageLoader对象，
+
+imageLoader是一个抽象基类，专门用于辅助加载特定可执行文件格式的类，对于程序中需要的依赖库、插入库，会创建一个对应的image对象，
+对这些image进行链接，调用各image的初始化方法等等，包括对runtime的初始化。
+
+// load any inserted libraries
+        if  ( sEnv.DYLD_INSERT_LIBRARIES != NULL ) {
+//遍历DYLD_INSERT_LIBRARIES的环境变量。
+            for (const char* const* lib = sEnv.DYLD_INSERT_LIBRARIES; *lib != NULL; ++lib) 
+                loadInsertedDylib(*lib);
+        }
+
+0x05 链接主程序，并加载系统和第三方的动态库
+在 main中通过link链接主程序。
+//main 函数中
+link(sMainExecutable, sEnv.DYLD_BIND_AT_LAUNCH, true, ImageLoader::RPathChain(NULL, NULL), -1);
+内部通过imageLoader的实例对象去调用link方法。
+//image调用link
+image->link(gLinkContext, forceLazysBound, false, neverUnload, loaderRPaths, path);
+递归加载我们所需要的依赖的系统库和第三方库。
+this->recursiveLoadLibraries(context, preflightOnly, loaderRPaths, imagePath);
+
+对依赖库进行重定位。相当于加上ASLR滑块。
+this->recursiveRebase(context);
+
+递归绑定符号表和弱绑定。
+绑定就是将这个二进制调用的外部符号进行绑定的过程。
+比如我们objc代码中需要使用到NSObject, 即符号OBJC_CLASS$_NSObject，但是这个符号又不在我们的二进制中，在系统库 Foundation.framework中，因此就需要binding这个操作将对应关系绑定到一起。
+
+lazyBinding就是在加载动态库的时候不会立即binding, 当第一次调用这个方法的时候再实施binding。
+做到的方法也很简单： 通过dyld_stub_binder 这个符号来做。
+lazy binding的方法第一次会调用到dyld_stub_binder, 然后dyld_stub_binder负责找到真实的方法，并且将地址bind到桩上，下一次就不用再bind了。
+
+this->recursiveBindWithAccounting(context, forceLazysBound, neverUnload);
+this->weakBind(context);
+
+插入动态库
+if ( sInsertedDylibCount > 0 ) {//有的话就开始链接加载。
+    for(unsigned int i=0; i < sInsertedDylibCount; ++i) {
+        ImageLoader* image = sAllImages[i+1];//1过滤到主程序。
+        link(image, sEnv.DYLD_BIND_AT_LAUNCH, true, ImageLoader::RPathChain(NULL, NULL), -1);
+        image->setNeverUnloadRecursive();
+    }
+    // only INSERTED libraries can interpose
+    // register interposing info after all inserted libraries are bound so chaining works
+    for(unsigned int i=0; i < sInsertedDylibCount; ++i) {
+        ImageLoader* image = sAllImages[i+1];
+        image->registerInterposing(gLinkContext);
+    }
+}
+
+
+
+一、dyld流程分析:
+-> 在main函数中我们进入initializeMainExecutable
+->runInitializers初始化主程序
+->processInitializers
+->recursiveInitialization循环初始化
+->关键函数 ：notifySingle。在这个方法中调用了objc的loadImages。通过command+shift+o全局搜索寻找实现。
+
+static void notifySingle(dyld_image_states state, const ImageLoader* image, ImageLoader::InitializerTimingList* timingInfo)
+发现一个函数指针的调用：
+(*sNotifyObjCInit)(image->getRealPath(), image->machHeader());
+搜索sNotifyObjCInit函数指针，我们找到了赋值的地方。
+void registerObjCNotifiers(_dyld_objc_notify_mapped mapped, _dyld_objc_notify_init init, _dyld_objc_notify_unmapped unmapped)
+{
+    sNotifyObjCInit     = init;//赋值函数。
+}
+
+全局搜索registerObjCNotifiers调用的地方
+void _dyld_objc_notify_register(_dyld_objc_notify_mapped    mapped,
+                                _dyld_objc_notify_init      init,
+                                _dyld_objc_notify_unmapped  unmapped)
+{
+    dyld::registerObjCNotifiers(mapped, init, unmapped);
+}
+
+再次全局搜索_dyld_objc_notify_register便找不到这个方法调用。于是我们通过Xcode设置符号断点来分析。
+我们则能推断出这个方法的调用是在runtime中。
+
+二、runtime流程分析:
+分析runtime源码。可知上面的函数_dyld_objc_notify_register是在其初始化的时候进行调用的。
+
+load_images赋值到dyld中的sNotifyObjCInit指针。
+void _objc_init(void)
+{
+    static bool initialized = false;
+    if (initialized) return;
+    initialized = true;
+    
+    // fixme defer initialization until an objc-using image is found?
+    environ_init();
+    tls_init();
+    static_init();
+    lock_init();
+    exception_init();
+    _dyld_objc_notify_register(&map_images, load_images, unmap_image);
+}
+
+在load_images中，完成call_load_methods的调用。
+load_images(const char *path __unused, const struct mach_header *mh)
+{
+    // Return without taking locks if there are no +load methods here.
+    if (!hasLoadMethods((const headerType *)mh)) return;
+
+    recursive_mutex_locker_t lock(loadMethodLock);
+
+    // Discover load methods
+    {
+        mutex_locker_t lock2(runtimeLock);
+        prepare_load_methods((const headerType *)mh);
+    }
+
+    // Call +load methods (without runtimeLock - re-entrant)
+    call_load_methods();
+}
+
+在call_load_methods中，通过doWhile循环来调用call_class_loads实现每个类的load方法。
+void call_load_methods(void)
+{
+    static bool loading = NO;
+    bool more_categories;
+
+    loadMethodLock.assertLocked();
+
+    // Re-entrant calls do nothing; the outermost call will finish the job.
+    if (loading) return;
+    loading = YES;
+
+    void *pool = objc_autoreleasePoolPush();
+
+    do {
+        // 1. Repeatedly call class +loads until there aren't any more
+        while (loadable_classes_used > 0) {
+            call_class_loads();
+        }
+
+        // 2. Call category +loads ONCE
+        more_categories = call_category_loads();
+
+        // 3. Run more +loads if there are classes OR more untried categories
+    } while (loadable_classes_used > 0  ||  more_categories);
+
+    objc_autoreleasePoolPop(pool);
+
+    loading = NO;
+}
+
+
+三、_ _ attribute_ _((constructor))
+是GCC的扩展语法（黑魔法），由它修饰过的函数，会在main函数之前调用。
+原理是在ELF的.ctors段增加一条函数引用，加载器在执行main函数前，检查.ctror section，并执行里面的函数。
+
+继续dyld分析。在imageLoader.cpp文件中，notifySingle调用之后，接着调用了doInitialization方法。
+
+其中doModInitFunctions会调用machO文件中_mod_init_func段的函数，也就是我们在文件中所定义的全局C++构造函数。
+bool ImageLoaderMachO::doInitialization(const LinkContext& context)
+{
+    CRSetCrashLogMessage2(this->getPath());
+
+    // mach-o has -init and static initializers
+    doImageInit(context);
+    doModInitFunctions(context);
+    
+    CRSetCrashLogMessage2(NULL);
+    
+    return (fHasDashInit || fHasInitializers);
+}
+
+通过以上分析加载流程我们可得知函数的执行顺序为：
+load -> attribute((constructor)) -> main -> initialize
+
+
+寻找应用程序主函数入口
+最后return,dyld的main函数结束。
+// find entry point for main executable
+result = (uintptr_t)sMainExecutable->getThreadPC();
+至此，程序进入了main函数
