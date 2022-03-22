@@ -1,0 +1,99 @@
+bytes pixel可以理解为将一张图片的所有像素点写到二维数组中
+将图片UIImage与BGRA pixel之间转换
+
+图片生成上下文的CGBitmapContextCreate方法的原型及参数:
+/**
+*  @param data                 指向要渲染的绘制内存的地址。这个内存块的大小至少是（bytesPerRow*height）个字节
+*  @param width                bitmap的宽度,单位为像素
+*  @param height               bitmap的高度,单位为像素
+*  @param bitsPerComponent     内存中像素的每个组件的位数.例如，对于32位像素格式和RGB颜色空间，你应该将这个值设为8.
+*  @param bytesPerRow          bitmap的每一行在内存所占的比特数
+*  @param space                bitmap上下文使用的颜色空间
+*  @param bitmapInfo           指定bitmap是否包含alpha通道，像素中alpha通道的相对位置，像素组件是整形还是浮点型等信息的字符串。
+*/
+CGContextRef CGBitmapContextCreate(void *data, size_t width, size_t height, size_t bitsPerComponent, size_t bytesPerRow, CGColorSpaceRef colorspace, CGBitmapInfo bitmapInfo);
+
+UIImage对象转换为BGRA:
+- (unsigned char *)pixelBRGABytesFromImage:(UIImage *)image {
+    return [self pixelBRGABytesFromImageRef:image.CGImage];
+}
+
+- (unsigned char *)pixelBRGABytesFromImageRef:(CGImageRef)imageRef {
+    
+    NSUInteger iWidth = CGImageGetWidth(imageRef);
+    NSUInteger iHeight = CGImageGetHeight(imageRef);
+    NSUInteger iBytesPerPixel = 4;
+    NSUInteger iBytesPerRow = iBytesPerPixel * iWidth;
+    NSUInteger iBitsPerComponent = 8;
+    unsigned char *imageBytes = malloc(iWidth * iHeight * iBytesPerPixel);
+    
+    CGColorSpaceRef colorspace = CGColorSpaceCreateDeviceRGB();
+    
+    CGContextRef context = CGBitmapContextCreate(imageBytes,
+                                                 iWidth,
+                                                 iHeight,
+                                                 iBitsPerComponent,
+                                                 iBytesPerRow,
+                                                 colorspace,
+                                                 kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+    
+    CGRect rect = CGRectMake(0 , 0 , iWidth , iHeight);
+    CGContextDrawImage(context , rect ,imageRef);
+    CGColorSpaceRelease(colorspace);
+    CGContextRelease(context);
+    CGImageRelease(imageRef);
+    
+    return imageBytes;
+}
+
+
+UIImage *image = [UIImage imageNamed:@"pict1.png"];
+unsigned char *imageBytes = [self pixelBRGABytesFromImage:image];
+//注：不要忘记释放malloc的内存
+free(imageBytes);
+
+
+BGRA转换为UIImage对象:
+- (UIImage *)imageFromBRGABytes:(unsigned char *)imageBytes imageSize:(CGSize)imageSize {
+    CGImageRef imageRef = [self imageRefFromBGRABytes:imageBytes imageSize:imageSize];
+    UIImage *image = [UIImage imageWithCGImage:imageRef];
+    CGImageRelease(imageRef);
+    return image;
+}
+
+- (CGImageRef)imageRefFromBGRABytes:(unsigned char *)imageBytes imageSize:(CGSize)imageSize {
+ 
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(imageBytes,
+                                                imageSize.width,
+                                                imageSize.height,
+                                                8,
+                                                imageSize.width * 4,
+                                                colorSpace,
+                                                kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+    CGImageRef imageRef = CGBitmapContextCreateImage(context);
+    CGContextRelease(context);
+    CGColorSpaceRelease(colorSpace);
+    
+    return imageRef;
+}
+
+UIImage *image = [self imageFromBRGABytes:imageBytes imageSize:imageSize];
+NSLog(@"image = %@",image);
+
+CGImageRef为Core Graphics框架中的结构体指针。原型为:
+typedef struct CGImage *CGImageRef;
+即使在ARC中也需要手动释放对象，调用CGImageRelease或者CFRelease释放。
+
+
+扩展:
+UIImage转换为Gray pixel灰色图方法
+将获取CGColorSpaceRef方法修改CGColorSpaceCreateDeviceGray(),并iBytesPerPixel的4改为1即可。原先用4byte BGRA来描述图片，现在只用1byte描述灰度。
+
+实例中Alpha选项为kCGImageAlphaPremultipliedFirst,该选项中的premultiplied代表着图片的BGR值是已乘以Alpha值，因此想得到该像素点的BGR值。
+CGFloat oldAlpha = 255.0 / imageBytes[3];
+CGFloat newAlpha = (CGFloat)newAlphaValue / 255;
+imageBytes[0] *= oldAlpha * newAlpha;
+imageBytes[1] *= oldAlpha * newAlpha;
+imageBytes[2] *= oldAlpha * newAlpha;
+imageBytes[3] = newAlphaValue;

@@ -1,3 +1,5 @@
+https://tech.glowing.com/cn/practice-in-uiscrollview/
+
 UIScrollView 是 UIKit 中为数不多能响应滑动手势的 view
 
 拖动相关的 delegate 方法按调用顺序分别是：
@@ -16,7 +18,9 @@ didEndDragging 中的 decelerate 为 NO，即没有减速过程，willBeginDecel
 
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate
 在用户结束拖动后被调用，decelerate 为 YES 时，结束拖动后会有减速过程。
+###
 注，在 didEndDragging 之后，如果有减速过程，scroll view 的 dragging 并不会立即置为 NO，而是要等到减速结束之后，所以这个 dragging 属性的实际语义更接近 scrolling。
+###
 
 - (void)scrollViewWillBeginDecelerating:(UIScrollView *)scrollView
 减速动画开始前被调用。
@@ -44,7 +48,7 @@ scrollViewDidEndDecelerating:
 虽然很少有因为这个导致的 bug，但是你需要知道这种很常见的用户操作会导致的中间状态。
 例如你尝试在 UITableViewDataSource 的 tableView:cellForRowAtIndexPath: 方法中基于 tableView 的 dragging 和 decelerating 属性判断是在用户拖拽还是减速过程中的话可能会误判
 
-
+==================================================
 1. Table View 中图片加载逻辑的优化
 原文的思路：
 当用户手动 drag table view 的时候，会加载 cell 中的图片；
@@ -300,8 +304,431 @@ if (shouldLoadImage) {
 
 
 ==================================================分页的几种实现方式
+2.1 pagingEnabled
+这是系统提供的分页方式，最简单，但是有一些局限性：
+只能以 frame size 为单位翻页，减速动画阻尼大，减速过程不超过一页
+需要一些 hacking 实现 bleeding 和 padding（即页与页之间有 padding，在当前页可以看到前后页的部分内容）
+
+简单实现 bleeding 和 padding 效果的代码，主要的思路是：
+让 scroll view 的宽度为 page 宽度 + padding，并且设置 clipsToBounds 为 NO
+这样虽然能看到前后页的内容，但是无法响应 touch，所以需要另一个覆盖期望的可触摸区域的 view 来实现类似 touch bridging 的功能
+
+@implementation GLTouchDelegateView
+
+- (id)initWithFrame:(CGRect)frame
+{
+    self = [super initWithFrame:frame];
+    if (self) {
+        // Initialization code
+    }
+    return self;
+}
+
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event
+{
+    // touchDelegateView: scrollView
+    if (self.touchDelegateView && [self pointInside:point withEvent:event]) {
+        CGPoint newPoint = [self convertPoint:point toView:self.touchDelegateView];
+        UIView *test = [self.touchDelegateView hitTest:newPoint withEvent:event];
+        if (test) {
+            return test;
+        } else {
+            return self.touchDelegateView;
+        }
+    }
+    return [super hitTest:point withEvent:event];
+}
+
+@end
 
 
-==================================================
+2.2 Snap
+这种方法就是在 didEndDragging 且无减速动画，或在减速动画完成时，snap 到一个整数页。
+核心算法是通过当前 contentOffset 计算最近的整数页及其对应的 contentOffset，通过动画 snap 到该页。
+这个方法实现的效果都有个通病，就是最后的 snap 会在 decelerate 结束以后才发生，总感觉很突兀。
 
-==================================================
+#define BUBBLE_DIAMETER     60.0
+#define BUBBLE_PADDING      10.0
+
+@interface GLPaginationTwoViewController () <UIScrollViewDelegate>
+@property (weak, nonatomic) IBOutlet UIScrollView *scrollView;
+@property (weak, nonatomic) IBOutlet UIView *contentView;
+@property (weak, nonatomic) IBOutlet NSLayoutConstraint *contentWidthConstraint;
+@end
+
+@implementation GLPaginationTwoViewController
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    [self setupPages];
+}
+
+- (void)setupPages
+{
+    int totalNum = 100;
+    
+    for (UIView *view in self.contentView.subviews) {
+        [view removeFromSuperview];
+    }
+    
+    [self.view setNeedsLayout];
+    [self.view layoutIfNeeded];
+    
+    CGFloat x = (self.scrollView.frame.size.width - BUBBLE_DIAMETER) / 2.0;
+    CGFloat y = (self.scrollView.frame.size.height - BUBBLE_DIAMETER) / 2.0;
+    for (int i = 0; i < totalNum; ++i) {
+        CGRect frame = CGRectMake(x, y, BUBBLE_DIAMETER, BUBBLE_DIAMETER);
+        UILabel *label = [[UILabel alloc] initWithFrame:frame];
+        label.font = [UIFont boldSystemFontOfSize:20.0];
+        label.textAlignment = NSTextAlignmentCenter;
+        label.text = [NSString stringWithFormat:@"#%d", i];
+        label.textColor = [UIColor whiteColor];
+        label.backgroundColor = UIColorFromRGB(0x5a62d2);
+        label.layer.cornerRadius = frame.size.width / 2.0;
+        label.layer.masksToBounds = YES;
+        label.autoresizingMask = UIViewAutoresizingFlexibleTopMargin|UIViewAutoresizingFlexibleBottomMargin|UIViewAutoresizingFlexibleRightMargin;
+        [self.contentView addSubview:label];
+        x += BUBBLE_DIAMETER + BUBBLE_PADDING;
+    }
+    self.contentWidthConstraint.constant = x + (self.scrollView.frame.size.width) / 2.0;
+    [self.view setNeedsLayout];
+    [self.view layoutIfNeeded];
+}
+
+- (void)snapToNearestItem
+{
+    CGPoint targetOffset = [self nearestTargetOffsetForOffset:self.scrollView.contentOffset];
+    [self.scrollView setContentOffset:targetOffset animated:YES];
+}
+
+- (CGPoint)nearestTargetOffsetForOffset:(CGPoint)offset
+{
+    CGFloat pageSize = BUBBLE_DIAMETER + BUBBLE_PADDING;
+    NSInteger page = roundf(offset.x / pageSize);
+    CGFloat targetX = pageSize * page;
+    return CGPointMake(targetX, offset.y);
+}
+
+- (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate
+{
+    if (!decelerate) {
+        [self snapToNearestItem];
+    }
+}
+
+- (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView
+{
+    [self snapToNearestItem];
+}
+
+@end
+
+
+2.3 修改 targetContentOffset
+通过修改 scrollViewWillEndDragging: withVelocity: targetContentOffset: 方法中的 targetContentOffset 直接修改目标 offset 为整数页位置。其中核心代码：
+- (CGPoint)nearestTargetOffsetForOffset:(CGPoint)offset
+{
+    CGFloat pageSize = BUBBLE_DIAMETER + BUBBLE_PADDING;
+    NSInteger page = roundf(offset.x / pageSize);
+    CGFloat targetX = pageSize * page;
+    return CGPointMake(targetX, offset.y);
+}
+
+- (void)scrollViewWillEndDragging:(UIScrollView *)scrollView withVelocity:(CGPoint)velocity targetContentOffset:(inout CGPoint *)targetContentOffset
+{
+    CGPoint targetOffset = [self nearestTargetOffsetForOffset:*targetContentOffset];
+    targetContentOffset->x = targetOffset.x;
+    targetContentOffset->y = targetOffset.y;
+}
+
+==================================================重用
+重用机制如下：
+维护一个重用队列
+当元素离开可见范围时，removeFromSuperview 并加入重用队列（enqueue）
+当需要加入新的元素时，先尝试从重用队列获取可重用元素（dequeue）并且从重用队列移除
+如果队列为空，新建元素
+这些一般都在 scrollViewDidScroll: 方法中完成
+
+
+实际使用中，需要注意的点是：
+当重用对象为 view controller 时，记得 addChildeViewController
+当 view 或 view controller 被重用但其对应 model 发生变化的时候，需要及时清理重用前留下的内容
+数据可以适当做缓存，在重用的时候尝试从缓存中读取数据甚至之前的状态（如 table view 的 contentOffset），以得到更好的用户体验
+当 on screen 的元素数量可确定的时候，有时候可以提前 init 这些元素，不会在 scroll 过程中遇到因为 init 开销带来的卡顿（尤其是以 view controller 为重用对象的时候）
+
+
+#define TOTAL_PAGES     10
+
+@interface ViewController () <UIScrollViewDelegate>
+
+@property (weak, nonatomic) IBOutlet UIView *titleView;
+@property (weak, nonatomic) IBOutlet UIScrollView *scrollView;
+@property (weak, nonatomic) IBOutlet UIView *contentView;
+@property (weak, nonatomic) IBOutlet NSLayoutConstraint *contentWidthConstraint;
+
+@property (weak, nonatomic) IBOutlet UIPageControl *pageControl;
+
+@property (weak, nonatomic) IBOutlet UIScrollView *navScrollView;
+@property (weak, nonatomic) IBOutlet UIView *navContentView;
+@property (weak, nonatomic) IBOutlet NSLayoutConstraint *navContentWidthConstraint;
+
+@property (strong, nonatomic) NSNumber *currentPage;
+
+@property (strong, nonatomic) NSMutableArray *reusableViewControllers;
+@property (strong, nonatomic) NSMutableArray *visibleViewControllers;
+
+@end
+
+@implementation ViewController
+
+- (NSMutableArray *)reusableViewControllers
+{
+    if (!_reusableViewControllers) {
+        _reusableViewControllers = [NSMutableArray array];
+    }
+    return _reusableViewControllers;
+}
+
+- (NSMutableArray *)visibleViewControllers
+{
+    if (!_visibleViewControllers) {
+        _visibleViewControllers = [NSMutableArray array];
+    }
+    return _visibleViewControllers;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    [self setupPages];
+    [self loadPage:0];
+}
+
+- (void)setupPages
+{
+    [self.contentWidthConstraint autoRemove];
+    self.contentWidthConstraint = [self.contentView autoMatchDimension:ALDimensionWidth toDimension:ALDimensionWidth ofView:self.scrollView withMultiplier:TOTAL_PAGES];
+    [self.navContentWidthConstraint autoRemove];
+    self.navContentWidthConstraint = [self.navContentView autoMatchDimension:ALDimensionWidth toDimension:ALDimensionWidth ofView:self.navScrollView withMultiplier:TOTAL_PAGES];
+    [self.view setNeedsLayout];
+    [self.view layoutIfNeeded];
+    
+    CAGradientLayer *l = [CAGradientLayer layer];
+    l.frame = self.titleView.bounds;
+    l.colors = [NSArray arrayWithObjects:(id)[UIColor clearColor].CGColor, (id)[UIColor whiteColor].CGColor, (id)[UIColor clearColor].CGColor, nil];
+    l.startPoint = CGPointMake(0.0f, 0.5f);
+    l.endPoint = CGPointMake(1.0f, 0.5f);
+    self.titleView.layer.mask = l;
+    
+    CGFloat x = 0;
+    for (int i = 0; i < TOTAL_PAGES; ++i) {
+        CGRect frame = CGRectMake(x, 0.0, self.navScrollView.frame.size.width, self.navScrollView.frame.size.height - 10.0);
+        UILabel *title = [[UILabel alloc] initWithFrame:frame];
+        title.text = [NSString stringWithFormat:@"#%d", i];
+        title.textAlignment = NSTextAlignmentCenter;
+        title.textColor = [UIColor blackColor];
+        title.font = [UIFont boldSystemFontOfSize:14.0];
+        [self.navContentView addSubview:title];
+        x += self.navScrollView.frame.size.width;
+    }
+    
+    self.pageControl.numberOfPages = TOTAL_PAGES;
+}
+
+- (void)setCurrentPage:(NSNumber *)currentPage
+{
+    if (_currentPage != currentPage) {
+        _currentPage = currentPage;
+        self.pageControl.currentPage = [currentPage integerValue];
+    }
+}
+
+- (void)loadPage:(NSInteger)page
+{
+    if (self.currentPage && page == [self.currentPage integerValue]) {
+        return;
+    }
+    self.currentPage = @(page);
+    NSMutableArray *pagesToLoad = [@[@(page), @(page - 1), @(page + 1)] mutableCopy];
+    NSMutableArray *vcsToEnqueue = [NSMutableArray array];
+    for (GLReusableViewController *vc in self.visibleViewControllers) {
+        if (!vc.page || ![pagesToLoad containsObject:vc.page]) {
+            [vcsToEnqueue addObject:vc];
+        } else if (vc.page) {
+            [pagesToLoad removeObject:vc.page];
+        }
+    }
+    for (GLReusableViewController *vc in vcsToEnqueue) {
+        [vc.view removeFromSuperview];
+        [self.visibleViewControllers removeObject:vc];
+        [self enqueueReusableViewController:vc];
+    }
+    for (NSNumber *page in pagesToLoad) {
+        [self addViewControllerForPage:[page integerValue]];
+    }
+}
+
+- (void)enqueueReusableViewController:(GLReusableViewController *)viewController
+{
+    [self.reusableViewControllers addObject:viewController];
+}
+
+- (GLReusableViewController *)dequeueReusableViewController
+{
+    static int numberOfInstance = 0;
+    GLReusableViewController *vc = [self.reusableViewControllers firstObject];
+    if (vc) {
+        [self.reusableViewControllers removeObject:vc];
+    } else {
+        vc = [GLReusableViewController viewControllerFromStoryboard];
+        vc.numberOfInstance = numberOfInstance;
+        numberOfInstance++;
+        [vc willMoveToParentViewController:self];
+        [self addChildViewController:vc];
+        [vc didMoveToParentViewController:self];
+    }
+    return vc;
+}
+
+- (void)addViewControllerForPage:(NSInteger)page
+{
+    if (page < 0 || page >= TOTAL_PAGES) {
+        return;
+    }
+    GLReusableViewController *vc = [self dequeueReusableViewController];
+    vc.page = @(page);
+    vc.view.frame = CGRectMake(self.scrollView.frame.size.width * page, 0.0, self.scrollView.frame.size.width, self.scrollView.frame.size.height);
+    [self.contentView addSubview:vc.view];
+    [self.visibleViewControllers addObject:vc];
+}
+
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView
+{
+    if (scrollView == self.scrollView) {
+        CGFloat navX = scrollView.contentOffset.x / scrollView.frame.size.width * self.navScrollView.frame.size.width;
+        self.navScrollView.contentOffset = CGPointMake(navX, 0.0);
+        NSInteger page = roundf(scrollView.contentOffset.x / scrollView.frame.size.width);
+        page = MAX(page, 0);
+        page = MIN(page, TOTAL_PAGES - 1);
+        [self loadPage:page];
+    }
+}
+
+@end
+
+
+==================================================联动/视差滚动
+所谓联动，就是当 A 滚动的时候，在 scrollViewDidScroll: 里根据 A 的 contentOffset 动态计算 B 的 contentOffset 并设给 B。
+同样对于非 scroll view 的 C，也可以动态计算 C 的 frame 或是 transform实现视差滚动或者其他高级动画，这在现在许多应用的引导页面里会被用到。
+
+@interface ViewController () <UIScrollViewDelegate>
+@property (weak, nonatomic) IBOutlet NSLayoutConstraint *contentWidthConstraint;
+@property (weak, nonatomic) IBOutlet NSLayoutConstraint *titleWidthConstraint;
+@property (weak, nonatomic) IBOutlet UIImageView *backgroundImage;
+@property (weak, nonatomic) IBOutlet UIScrollView *contentScrollView;
+@property (weak, nonatomic) IBOutlet UIView *contentView;
+@property (weak, nonatomic) IBOutlet UIScrollView *titleScrollView;
+@property (weak, nonatomic) IBOutlet UIView *titleContentView;
+@end
+
+@implementation ViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    [self setupPages];
+}
+
+- (void)setupPages
+{
+    NSArray *titles = @[@"New York City",
+                        @"History",
+                        @"Geography",
+                        @"Demographics",
+                        @"Economy",
+                        @"Human Resources",
+                        @"Culture and Contemporary Life",
+                        @"Infrastructure",
+                        @"Government and Politics",
+                        @"Notable People",
+                        @"Global Outreach",
+                        @"The End"
+                        ];
+    NSArray *contents = @[@"",
+                          @"In the precolonial era, the area of present day New York City was inhabited by various bands of Algonquian tribes of Native Americans, including the Lenape, whose homeland, known as Lenapehoking, included Staten Island, the western portion of Long Island (including the area that would become Brooklyn and Queens), Manhattan, and the Lower Hudson Valley, including The Bronx.[66]",
+                          @"New York City is in the Northeastern United States, in southeastern New York State, approximately halfway between Washington, D.C. and Boston.[120] The location at the mouth of the Hudson River, which feeds into a naturally sheltered harbor and then into the Atlantic Ocean, has helped the city grow in significance as a trading port. Most of New York City is built on the three islands of Long Island, Manhattan, and Staten Island, making land scarce and encouraging a high population density.",
+                        @"New York City is the most-populous city in the United States,[198][199] with an estimated record high of 8,405,837 residents as of 2013,[1] incorporating more immigration into the city than outmigration since the 2010 United States Census.[200][201] More people live in New York City than in the next two most-populous U.S. cities (Los Angeles and Chicago) combined.[b] This amounts to about 40% of the state of New York's population and a similar percentage of the metropolitan regional population. In 2006, demographers estimated that New York's population will reach between 9.2 and 9.5 million by 2030.[204]",
+                        @"New York is a global hub of international business and commerce and is one of three \"command centers\" for the world economy (along with London and Tokyo).[261] In 2012, New York City topped the first Global Economic Power Index, published by The Atlantic (to be differentiated from a namesake list published by the Martin Prosperity Institute), with cities ranked according to criteria reflecting their presence on similar lists as published by other entities.[262] The city is a major center for banking and finance, retailing, world trade, transportation, tourism, real estate, new media as well as traditional media, advertising, legal services, accountancy, insurance, theater, fashion, and the arts in the United States; while Silicon Alley, metonymous for New York's broad-spectrum high technology sphere, continues to expand. The Port of New York and New Jersey is also a major economic engine, handling record cargo volume in the first half of 2014.[263]",
+                        @"The New York City Public Schools system, managed by the New York City Department of Education, is the largest public school system in the United States, serving about 1.1 million students in more than 1,700 separate primary and secondary schools.[319] The city's public school system includes nine specialized high schools to serve academically and artistically gifted students.",
+                        @"New York City has been described as the cultural capital of the world by the diplomatic consulates of Iceland[13] and Latvia[14] and by New York's Baruch College.[15] A book containing a series of essays titled New York, culture capital of the world, 1940–1965 has also been published as showcased by the National Library of Australia.[16] In describing New York, author Tom Wolfe said, \"Culture just seems to be in the air, like part of the weather.\"[352]",
+                        @"Mass transit in New York City, most of which runs 24 hours a day, accounts for one in every three users of mass transit in the United States, and two-thirds of the nation's rail riders live in the New York City Metropolitan Area.[411][412] The iconic New York City Subway system is the busiest in the Western Hemisphere, while Grand Central Terminal, also popularly referred to as \"Grand Central Station\", is the world's largest railway station by number of platforms.",
+                        @"New York City has been a metropolitan municipality with a mayor-council form of government[457] since its consolidation in 1898. The government of New York is more centralized than that of most other U.S. cities. In New York City, the central government is responsible for public education, correctional institutions, libraries, public safety, recreational facilities, sanitation, water supply, and welfare services. The mayor and councilors are elected to four-year terms. The New York City Council is a unicameral body consisting of 51 Council members whose districts are defined by geographic population boundaries.[458] Each term for the mayor and councilors lasts four years and has a three consecutive-term limit.[459] but can run again after a four-year break.",
+                        @"This list of people from New York City is a list of notable people who were either born in New York City or were adopted in New York City.",
+                        @"In 2006, the Sister City Program of the City of New York, Inc. was restructured and renamed New York City Global Partners. New York City has expanded its international outreach via this program to a network of cities worldwide, promoting the exchange of ideas and innovation between their citizenry and policymakers, according to the city's website. The list of historic sister cities above was consolidated into the Global Partners network and joined by the cities below,[473] including Chongqing (Chungking), Jakarta, Kuala Lumpur and Tel Aviv (four \"non-historic\" sister cities of New York).",
+                          @"Demo by Allen from Glow, Inc."
+                        ];
+    
+    NSInteger pages = MIN(titles.count, contents.count);
+    
+    [self.contentWidthConstraint autoRemove];
+    self.contentWidthConstraint = [self.contentView autoMatchDimension:ALDimensionWidth toDimension:ALDimensionWidth ofView:self.contentScrollView withMultiplier:pages];
+    [self.titleWidthConstraint autoRemove];
+    self.titleWidthConstraint = [self.titleContentView autoMatchDimension:ALDimensionWidth toDimension:ALDimensionWidth ofView:self.titleScrollView withMultiplier:pages];
+    [self.view setNeedsLayout];
+    [self.view layoutIfNeeded];
+    
+    CGFloat titleX = 0.0;
+    CGFloat contentX = 0.0;
+    
+    for (int i = 0; i < pages; ++i) {
+        CGRect titleFrame = CGRectMake(titleX + 15.0, 50.0, self.titleScrollView.frame.size.width - 20.0, 50.0);
+        UILabel *title = [[UILabel alloc] initWithFrame:titleFrame];
+        title.text = titles[i];
+        title.font = [UIFont fontWithName:@"Georgia" size:32.0];
+        title.textColor = [UIColor whiteColor];
+        title.numberOfLines = 0;
+        [title sizeToFit];
+        [self.titleContentView addSubview:title];
+        titleX += self.titleScrollView.frame.size.width;
+        
+        CGFloat contentY = title.frame.origin.y + title.frame.size.height + 10.0;
+        CGFloat maxHeight = self.titleScrollView.frame.size.height - contentY - 100.0;
+        CGRect contentFrame = CGRectMake(contentX + 15.0, contentY, self.titleScrollView.frame.size.width - 20.0, maxHeight);
+        UILabel *content = [[UILabel alloc] initWithFrame:contentFrame];
+        content.text = contents[i];
+        content.font = [UIFont fontWithName:@"HelveticaNeue-Light" size:18.0];
+        content.textColor = [UIColor colorWithWhite:0.8 alpha:0.9];
+        content.numberOfLines = 0;
+        [content sizeToFit];
+        if (content.frame.size.height > maxHeight) {
+            content.frame = contentFrame;
+        }
+        [self.contentView addSubview:content];
+        contentX += self.contentScrollView.frame.size.width;
+    }
+}
+
+- (void)didReceiveMemoryWarning {
+    [super didReceiveMemoryWarning];
+    // Dispose of any resources that can be recreated.
+}
+
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView
+{
+    if (scrollView == self.titleScrollView) {
+        CGFloat contentX = self.titleScrollView.contentOffset.x / self.titleScrollView.frame.size.width * self.contentScrollView.frame.size.width;
+        self.contentScrollView.contentOffset = CGPointMake(contentX, 0.0);
+        CGFloat transX = self.titleScrollView.contentOffset.x / (self.titleScrollView.contentSize.width - self.titleScrollView.frame.size.width) * (self.backgroundImage.frame.size.width - self.view.frame.size.width);
+        transX = MAX(0.0, transX);
+        transX = MIN(self.backgroundImage.frame.size.width - self.view.frame.size.width, transX);
+        self.backgroundImage.transform = CGAffineTransformMakeTranslation(-transX, 0.0);
+    }
+}
+
+- (UIStatusBarStyle)preferredStatusBarStyle
+{
+    return UIStatusBarStyleLightContent;
+}
+
+@end
+
+
