@@ -4,6 +4,10 @@ cmake_minimum_required(VERSION 3.10)
 
 project(TestExec)
 
+message("==========Debug Start==========")
+message("MACOSX_DEPLOYMENT_TARGET =${MACOSX_DEPLOYMENT_TARGET}")
+message("==========Debug End==========")
+
 message("==========TestExec CMakeLists start==========")
 # The CMake variable CMAKE_INSTALL_PREFIX is used to determine the root of where the files will be installed.
 message("CMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}")

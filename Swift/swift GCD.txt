@@ -1,0 +1,151 @@
+//串行队列
+let serial = DispatchQueue(label: "serial",attributes: .init(rawValue:0))
+//并发队列
+let concurrent = DispatchQueue(label: "serial",attributes: .concurrent)
+//主队列
+let mainQueue = DispatchQueue.main
+//全局队列
+let global = DispatchQueue.global()
+
+
+GCD 栅栏
+在swift中栅栏不再是一个单独的方法。而是DispatchWorkItemFlags结构体中的一个属性。sync/async方法的其中一个参数类型即为DispatchWorkItemFlags
+这样的调用方式可以更好的理解栅栏，其实它就是一个分隔任务，将其添加到需要栅栏的队列中，以分隔添加前后的其他任务。以下代码栅栏前后均为并发执行。如果将添加栅栏修改为sync则会阻塞当前线程。
+for i in 0...10 {
+    DispatchQueue.global().async {
+        print(i)
+    }
+}
+DispatchQueue.global().async(flags: .barrier) {
+    print("this is barrier")
+}
+for i in 11...20 {
+    DispatchQueue.global().async {
+        print(i)
+    }
+}
+
+
+使用notify添加结束任务
+必须要等待group中的任务执行完成后才能执行，无法定义超时。
+
+override func viewDidLoad() {
+    let group = DispatchGroup()
+    for i in 0...10 {
+        DispatchQueue.global().async(group: group) {
+            sleep(arc4random()%3)//休眠时间随机
+            print(i)// 0-10乱序显示
+        }
+    }
+    //queue参数表示以下任务添加到的队列
+    group.notify(queue: DispatchQueue.main) {
+        print("group 任务执行结束")
+    }
+}
+
+使用wait进行等待——可定义超时
+let group = DispatchGroup()
+for i in 0...10 {
+    DispatchQueue.global().async(group: group) {
+        sleep(arc4random()%10)//休眠时间随机
+        print(i)
+    }
+}
+switch group.wait(timeout: DispatchTime.now()+5) {
+case .success:
+    print("group 任务执行结束")
+case .timedOut:
+    print("group 任务执行超时")
+}
+
+
+信号量 semaphore
+计数为0时等待，不可通过。计数为1或大于1时，计数减1且不等待，可通过。
+let semaphore = DispatchSemaphore(value: 0)//创建一个信号量，并初始化信号总量
+semaphore.signal()//发送一个信号让信号量加1
+semaphore.wait()//可以使总信号量减1，当信号总量为0时就会一直等待
+
+如必须等待异步的网络请求返回后才能执行后续任务时。
+
+let semaphore = DispatchSemaphore(value: 0)
+DispatchQueue.global().async {
+    sleep(arc4random()%5)//休眠时间随机
+    print("completed")
+    semaphore.signal()
+}
+switch semaphore.wait(timeout: DispatchTime.now()+10) {//信号量为0，调用wait后阻塞线程
+case .success:
+    print("success")
+case .timedOut:
+    print("timeout")
+}
+print("over")
+
+信号量控制最大并发数
+在Operation中可以通过maxConcurrentOperationCount轻松实现控制最大并发数，GCD中需要借助信号量实现。以下代码就限制了最多两个任务并发执行。
+
+let semaphore = DispatchSemaphore(value: 2)
+for i in 0...10 {
+    semaphore.wait()//当信号量为0时，阻塞在此
+    DispatchQueue.global().async {
+        sleep(3)
+        print(i,Thread.current)
+        semaphore.signal()//信号量加1
+    }
+    print("=======================")
+}
+
+使用DispatchSemaphore加锁
+非线程安全，即当一个变量可能同时被多个线程修改。以下代码如果不使用信号量输出是随机值。
+
+let semaphore = DispatchSemaphore(value: 1)
+var i = 0
+for _ in 1...10 {
+    DispatchQueue.global().async {
+        semaphore.wait()//当信号量为0时，阻塞在此
+        for _ in 1...10 {
+            i += 1
+        }
+        print(i)
+        semaphore.signal()//信号量加1
+    }
+}
+
+
+DispatchWorkItem与任务取消:
+DispatchWorkItem其实就是用来代替OC中的dispatch_block_t。如果任务是通过DispatchWorkItem定义。在执行之前，可以执行取消操作。
+注意即使任务已经加入队列，只要还未执行就可以进行取消，但是无法判断任务在队列中的状态，所以一般会根据加入队列的时间确定是否可以取消。
+
+let workItem = DispatchWorkItem {
+    print("延时任务")
+}
+DispatchQueue.global().asyncAfter(deadline: DispatchTime.now()+2, execute: workItem)
+sleep(1)
+workItem.cancel()
+
+DispatchWorkItem主动执行
+let workItem = DispatchWorkItem {
+    print("workItem")
+}
+workItem.perform()
+等待DispatchWorkItem执行完成
+let workItem = DispatchWorkItem {
+    sleep(3)
+    print("workItem")
+}
+DispatchQueue.global().async(execute: workItem)
+switch workItem.wait(timeout: DispatchTime.now()+5) {
+case .success:
+    print("success")
+case .timedOut:
+    print("timeout")
+}
+DispatchWorkItem执行完成通知
+let workItem = DispatchWorkItem {
+    sleep(3)
+    print("workItem")
+}
+DispatchQueue.global().async(execute: workItem)
+workItem.notify(queue: DispatchQueue.main) {
+    print("completed")
+}

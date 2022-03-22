@@ -1,0 +1,179 @@
+AppDelegate是iOS开发中一个很重要的类，很多系统的事件处理都在这个类下，如推送,分享,支付等等，这个类加太多的处理会导致很臃肿，有人建议说可以用分类，这也是一种办法
+分类有一个不好的地方就是会导致代码分散，阅读性会差一些。
+
+可以有其它的解决方案,AppDelegate下相关的代理还是写在其下，AppDelegate只做粘合作用，其它不同的业务需要单独处理,定义到自己的业务类中。
+
+项目中的MCHKit文件夹只做共用代码包，与业务无关，拿到任何项目中都可以拿来直接使用，并不会报错。下面以推送功能为例.
+在项目的MCHKit下创建 ModuleManager,RemotePushMoudel类，包含一个ModuleManagerDelegate 协议，业务类需要实现ModuleManagerDelegate协议，作为业务组件和AppDlegate通信的桥梁。
+
+import UIKit
+ 
+@objc public protocol ModuleManagerDelegate {
+ 
+    @objc optional func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions:[UIApplicationLaunchOptionsKey : Any]?)
+ 
+   //其它的处理。。。
+ 
+    func applicationWillResignActive(_ application: UIApplication)
+ 
+    func applicationDidEnterBackground(_ application: UIApplication)
+}
+ 
+public class ModuleManager : NSObject{
+    static  let sharedInstace = ModuleManager.init()
+    private override init(){
+ 
+    }
+    public func loadModule(_ module: ModuleManagerDelegate? ){
+        if((module) != nil){
+            self.allModules.append(module!)
+        }
+    }
+    public func loadAllModule(_ modules:[Array<ModuleManagerDelegate>]?){
+        if((modules) != nil){
+            self.allModules.removeAll()
+            for item in modules!{
+                self.allModules.append(item as! ModuleManagerDelegate)
+            }
+        }
+    }
+    // MARK: - app delegate
+    public  func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions:[UIApplicationLaunchOptionsKey : Any]?){
+        for  service in self.allModules {
+            let serviceDelegate  =   service
+            if serviceDelegate.application != nil{
+                serviceDelegate.application!(application, didFinishLaunchingWithOptions: launchOptions)
+            }
+        }
+    }
+ 
+    lazy var allModules: Array<ModuleManagerDelegate> = {
+        var array = Array<ModuleManagerDelegate>()
+        return array
+    }()
+}
+
+ModuleManagerDelegate里的名称可以改为自己的名称，为了和系统相呼应，建议和系统保持一样的名字。
+
+
+
+==================================================
+定义一个推送消息模块RemotePushMoudel，继承ModuleManagerDelegate，用来处理协议方法。
+如下，把推送相关的处理用extension定义，减少AppDelegate的臃肿
+
+
+class RemotePushMoudel:NSObject, ModuleManagerDelegate {
+    
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplicationLaunchOptionsKey : Any]?){
+        print("RemotePush 实现 application")
+        self.registerAppNotificationSettings(launchOptions: launchOptions)
+    }
+
+
+    func registerAppNotificationSettings(launchOptions: [UIApplicationLaunchOptionsKey : Any]?) {
+        if #available(iOS 10.0, *) {
+            let notifiCenter = UNUserNotificationCenter.current()
+            notifiCenter.delegate = self
+            let types = UNAuthorizationOptions(arrayLiteral: [.alert, .badge, .sound])
+            notifiCenter.requestAuthorization(options: types) { (flag, error) in
+                if flag {
+                    print("iOS request notification success")
+                }else{
+                    print(" iOS 10 request notification fail")
+                }
+            }
+        } else {
+            let setting = UIUserNotificationSettings(types: [.alert, .badge, .sound], categories: nil)
+            UIApplication.shared.registerUserNotificationSettings(setting)
+        }
+        UIApplication.shared.registerForRemoteNotifications()
+    }
+ 
+    // MARK: - RemoteNotification
+ 
+    @available(iOS 10.0, *)
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Swift.Void){
+ 
+    }
+ 
+    @available(iOS 10.0, *)
+    public func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Swift.Void){
+ 
+    }
+}
+
+
+==================================================
+// MARK: - push extension
+extension AppDelegate{
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        print("deviceToken: \(deviceToken)")
+    }
+ 
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error){
+ 
+    }
+ 
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable : Any]){
+ 
+        //方法1. 此处处理推送业务逻辑 具体的业务实现       
+        //方法2. 为了减少耦合，也可以把业务逻辑单独定义实现
+        PushBusiness.oneBusinessReceiveRemotePush(userInfo: userInfo)
+    }
+ 
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable : Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+ 
+    }
+}
+
+
+定义一个业务类PushBusiness，这个类可以专门处理推送相关的业务逻辑，实现如下：
+
+//业务处理
+class PushBusiness: NSObject {
+ 
+    class  func oneBusinessReceiveRemotePush(userInfo: [AnyHashable : Any]) {
+        print("userInfo: \(userInfo)")<br>        //处理具体推送业务
+    }
+ 
+}
+
+
+
+==================================================
+下一步用一个类管理所有的业务，定义 ServiceComponentManager:
+public class ServiceComponentManager {
+    public class func  registerAllService(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions:[UIApplicationLaunchOptionsKey : Any]?){
+        ///  add all Moudel
+        //push
+        let pushModule = RemotePushMoudel()
+        ModuleManager.sharedInstace.loadModule(pushModule)
+        //添加其它
+        //pay
+        //other
+        ModuleManager.sharedInstace.application(application,didFinishLaunchingWithOptions: launchOptions)
+    }
+}
+
+
+
+==================================================
+直接在AppDelegate的入口方法添加即可
+class AppDelegate: UIResponder, UIApplicationDelegate ,UNUserNotificationCenterDelegate{
+var window: UIWindow?
+func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplicationLaunchOptionsKey: Any]?) -> Bool {
+    // Override point for customization after application launch.
+    self.window = UIWindow(frame: UIScreen.main.bounds)
+    self.window?.backgroundColor = UIColor.white
+    self.window?.rootViewController = RootTabBarController()
+    self.window?.makeKeyAndVisible()
+
+    //注册服务模块
+    ServiceComponentManager.registerAllService(application, didFinishLaunchingWithOptions: launchOptions)
+    return true
+} }
+
+通过以上说明，可以做到对AppDelegate组件化分解，减少AppDelegate的臃肿，这样定义耦合性就很低了，不同的业务互不干扰，方便维护。
+如果项目需要增加如分享，支付等，都可以使用类似方法
+如果想在不同的项目中复用RemotePushMoudel，还可以在改造，RemotePushMoudel放到MCHKit中，业务代码抽离到业务模块类，可以通过通知或delegate等来实现。 
+虽然代码量稍有增加，但是可读性更强，同时也做到了高内聚，低耦合。
