@@ -1,0 +1,95 @@
+#import <arpa/inet.h>// sockaddr_in
+#import <net/if_dl.h>// sockaddr_dl
+#import <sys/un.h>// sockaddr_un
+#import <sys/kern_control.h>// sockaddr_ctl
+
+printf("%lu\n", sizeof(sockaddr));// 16byte
+printf("%lu\n", sizeof(sockaddr_in));// 16
+printf("%lu\n", sizeof(sockaddr_in6));// 28
+
+printf("%lu\n", sizeof(sockaddr_storage));// 128
+// 数据链路套接口地址结构
+printf("%lu\n", sizeof(sockaddr_dl));// 20
+
+printf("%lu\n", sizeof(sockaddr_un));// 106
+
+printf("%lu\n", sizeof(sockaddr_ctl));//32
+
+printf("%d\n", _SS_MAXSIZE);// 128
+printf("%lu\n", _SS_ALIGNSIZE);// 8
+printf("%lu\n", _SS_PAD1SIZE);// 6
+printf("%lu\n", _SS_PAD2SIZE);// 112
+
+sockaddr_un
+进程间通信的一种方式是使用UNIX套接字,称为本地套接字的方式
+域参数应该是PF_LOCAL或者PF_UNIX
+本地套接字的通讯类型应该是SOCK_STREAM或SOCK_DGRAM，协议为默认协议
+int sockfd;
+sockfd = socket(PF_LOCAL, SOCK_STREAM, 0);
+
+sun_path是本地文件的路径,通常将文件放在/tmp目录下
+
+char *sock_ntop(const struct sockaddr *sa, socklen_t salen) {
+    char port[8];
+    static char addr[_SS_MAXSIZE];
+    
+    switch (sa->sa_family) {
+        case AF_INET:
+        {
+            struct sockaddr_in *sa_in = (struct sockaddr_in *)sa;
+            if (inet_ntop(AF_INET, &sa_in->sin_addr, addr, INET_ADDRSTRLEN) == NULL) {
+                return NULL;
+            }
+            if (ntohs(sa_in->sin_port) != 0) {
+                snprintf(port, sizeof(port), ":%d", ntohs(sa_in->sin_port));
+                strcat(addr, port);
+            }
+            return addr;
+        }
+        case AF_INET6:
+        {
+            struct sockaddr_in6 *sa_in6 = (struct sockaddr_in6 *)sa;
+            addr[0] = '[';
+            if (inet_ntop(AF_INET6, &sa_in6->sin6_addr, addr + 1, INET6_ADDRSTRLEN) == NULL) {
+                return NULL;
+            }
+            if (ntohs(sa_in6->sin6_port) != 0) {
+                snprintf(port, sizeof(port), "]:%d", ntohs(sa_in6->sin6_port));
+                strcat(addr, port);
+                return addr;
+            }
+            return addr + 1;
+        }
+        case AF_UNIX:
+        {
+            struct sockaddr_un *sa_un = (struct sockaddr_un *)sa;
+            if (sa_un->sun_path[0] == 0) {
+                strcpy(addr, "(no pathname bound)");
+            } else {
+                snprintf(addr, sizeof(addr), "%s", sa_un->sun_path);
+            }
+            return addr;
+        }
+        case AF_LINK:
+        {
+            struct sockaddr_dl *sa_dl = (struct sockaddr_dl *)sa;
+            if (sa_dl->sdl_len > 0) {
+                printf("====totalLength = %d\n", sa_dl->sdl_len);
+                printf("====interface type = %d\n", sa_dl->sdl_type);
+                printf("====interface name length = %d\n", sa_dl->sdl_nlen);
+                printf("====address length = %d\n", sa_dl->sdl_alen);
+                printf("====selector length = %d\n", sa_dl->sdl_slen);
+                
+                snprintf(addr, sizeof(addr), "%.*s (index %d)", sa_dl->sdl_nlen, &sa_dl->sdl_data[0], sa_dl->sdl_index);
+            } else {
+                snprintf(addr, sizeof(addr), "AF_LINK, index=%d", sa_dl->sdl_index);
+            }
+            return addr;
+        }
+        default:
+        {
+            snprintf(addr, sizeof(addr), "sock_ntop: unknown AF_xxx: %d, len %d", sa->sa_family, salen);
+            return addr;
+        }
+    }
+}
