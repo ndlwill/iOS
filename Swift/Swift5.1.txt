@@ -1,0 +1,195 @@
+-----可以使用Self替代类名来访问静态成员
+class Student {    
+    static var age = 10
+    
+    static func study(){
+        print("Good Study")
+    }
+    
+    func say(){
+        print(Self.age)  // 访问静态属性
+        Self.study()  // 访问静态方法
+    }    
+}
+
+let stu = Student()
+stu.say()
+
+
+-----可以在Key Path中使用元组，通过.访问元素
+struct Student  {    
+    var name: String
+    var age: Int
+    var score: (Swift: Double, iOS: Double, Mac: Double)
+}
+
+let stu = Student(name: "zhangsan", age: 20, score: (Swift: 88.0, iOS: 90.0, Mac: 95.0))
+
+// 访问元组的元素
+let swift = stu[keyPath:\Student.score.Swift]
+let ios = stu[keyPath:\Student.score.iOS]
+let mac = stu[keyPath:\Student.score.Mac]
+
+
+-----@dynamicMemberLookup查找Key Path
+struct Person { 
+    var name: String
+    var age: Int
+}
+
+@dynamicMemberLookup
+struct Student<T> {
+    
+    var stuNo: String
+    var person: T
+    
+    // 实现方法
+    subscript<U>(dynamicMember member: KeyPath<T, U>) -> U {
+       
+        person[keyPath: member]
+    }
+}
+
+let p = Person(name: "zhangsan", age: 20)
+let stu = Student(stuNo: "123456789", person: p)
+
+// 可以直接访问 name 和 age 属性
+stu.name
+stu.age
+
+
+-----如果一个闭包或者函数只包含一个返回表达式，那么可以把return省略掉，隐式返回该表达式。
+
+
+-----根据默认值合成结构体的构造函数
+以前一个结构体的所有属性都有默认值时，编译器会基于属性生成两个构造函数。
+结构体名()和结构体名(所有属性参数),但是并不会生成可选属性参数的构造函数
+struct Person {
+  var age = 0
+  var name = "zhangsan"
+}
+
+let zhangsan = Person()
+let lisi = Person(age: 20, name: "lisi")
+let wangwu = Person(name: "wangwu")
+
+
+-----不透明的返回类型（Opaque Result Types）
+// 报错：Protocol 'Equatable' can only be used as a generic constraint because it has Self or associated type requirements
+func generateIntNumber() -> Equatable {
+    return 5
+}
+
+let number1 = generateIntNumber()
+let number2 = generateIntNumber()
+
+// 报错：Binary operator '==' cannot be applied to two 'Equatable' operands
+if number1 == number2 {
+    print("numbers equal")
+}
+
+
+Swift5.1之前解决
+// 使用泛型约束
+func generateIntNumber<T: Equatable>() -> T {    
+    // 强制转换
+    return 5 as! T
+}
+
+let number1: Int = generateIntNumber()
+let number2: Int = generateIntNumber()
+
+if number1 == number2 {
+    print("numbers equal")
+}
+但如果此时把: Int去掉，会发现依然报错，因为返回的类型是一个不确定的T
+
+
+Swift5.1解决
+// 用some修饰，返回值的类型对编译器就变成透明的了。在这个值使用的时候编译器可以根据反回值进行类型推断得到具体类型。
+func generateIntNumber() -> some Equatable {
+    return 5
+}
+
+// 此时number1和number2的类型是some Equatable
+let number1 = generateIntNumber()
+let number2 = generateIntNumber()
+
+
+if number1 == number2 {
+    print("numbers equal")
+}
+
+在保持性能的同时，隐藏真实类型的新功能
+通过引入some这个关键字去修饰返回值，语法上隐藏具体类型，所以叫做不透明结果类型，这样可以让被调用方选择具体的返回值类型，并且是在编译时确定下来的。
+允许带有Self或者associatedtype的 protocol 作为返回类型。
+
+
+protocol Animal {
+    associatedtype Element
+    
+    func feed(food: Element)
+}
+struct Cat: Animal {
+    typealias Element = String    
+    
+    func feed(food: String) {
+        print("Cat eat \(food)")
+    }
+}
+
+// 会发现这行报错：Protocol 'Animal' can only be used as a generic constraint because it has Self or associated type requirements
+//func makeAnimal() -> Animal {
+//    return Cat()
+//}
+
+// 从返回值看不出具体类型
+func makeAnimal() -> some Animal {
+    return Cat()
+}
+
+let animal = makeAnimal()
+type(of: animal)
+
+
+
+SwiftUI 中广泛使用:
+import SwiftUI
+
+struct ContentView: View {
+    var body: some View {
+        Text("Hello World")
+    }
+}
+
+
+-----属性包装类型（Property Wrapper Types）
+关键字@propertyWrapper，用它修饰一个结构体，它修饰的结构体可以变成一个新的修饰符并作用在其他代码上，来改变这些代码默认的行为。
+用修饰符@结构体名去修饰其他的属性，将属性“包裹”起来，从而控制某个属性的行为。属性包装类型名字由此而来。
+
+@propertyWrapper struct Trimmed {
+    
+    private var value: String = ""
+    // 计算属性
+    var wrappedValue: String {
+        get { value }
+        set { value = newValue.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+
+    init(wrappedValue initialValue: String) {
+        self.wrappedValue = initialValue
+    }
+}
+
+struct Post {
+    // 用上面定义的Trimmed修饰同类型的变量
+    @Trimmed var title: String
+    @Trimmed var body: String
+}
+// 任何字符串无论是在初始化期间还是通过后面的属性访问都会自动删除前后面的空格。
+var post = Post(title: "  Swift Property Wrappers  ", body: " is very important ")
+post.title  // "Swift Property Wrappers"
+post.body  // "is very important"
+
+post.title = "      @propertyWrapper     "
+post.title  // "@propertyWrapper"

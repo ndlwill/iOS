@@ -1,0 +1,107 @@
+场景只有iPad和macOS下才可用，场景可以理解为窗口
+一个场景（窗口）对应一个Scene Delegate对象，建议每个Scene Delegate类对应一个UIViewController
+
+默认的info.plist配置（如不需要多场景，建议删除此配置，应用程序的生命周期将变为由AppDelegate管理）
+Enable Multiple Windows：如果需要多场景（窗口），需要把此值设为YES，否则无法使用多场景
+Configuration Name：配置名，可理解为场景的标识符（必填项）
+Delegate Class Name：场景对应的代理对象类，每新建一个场景，都会创建一个新的代理对象（必填项）
+Storyboard Name：场景将自动生成此Storyboard里的Initial View Controller（默认视图控制器），如不设置，则需要在Scene Delegate里创建UIWindow和UIViewController对象（选填项）
+Class Name：自定义UIScene子类，默认为UIWindowScene，一般不需要更改（选填项）
+
+AppDelegate.m 修改
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+    // 兼容iOS13之前版本
+    if (@available(iOS 13.0, *)) { } else {
+        UIStoryboard *storyboard            = [UIStoryboard storyboardWithName:@"Main" bundle:nil];
+        UIViewController *viewController    = [storyboard instantiateInitialViewController];
+        self.window.rootViewController      = viewController;
+    }
+    return YES;
+}
+
+- (UISceneConfiguration *)application:(UIApplication *)application configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession options:(UISceneConnectionOptions *)options API_AVAILABLE(ios(13.0)) {
+    // 应用程序正常退出/全部的窗口被正常关闭后再启动才会进入此方法
+    NSUserActivity *userActivity    = options.userActivities.anyObject;
+    NSString *activityType          = userActivity.activityType;
+    UISceneSessionRole role         = connectingSceneSession.role;
+    // 假如activityType为空，表示是刚启动的，否则是新创建的场景
+    if (activityType == nil) {
+        activityType                = @"Default Configuration";
+        role                        = UIWindowSceneSessionRoleApplication;
+    }
+    return [[UISceneConfiguration alloc] initWithName:activityType sessionRole:role];
+}
+
+OtherSceneDelegate.h 需要遵循<UIWindowSceneDelegate>协议（OtherSceneDelegate.m的内容和SceneDelegate.m一样）
+#import <UIKit/UIKit.h>
+@interface OtherSceneDelegate : UIResponder <UIWindowSceneDelegate>
+@property (strong, nonatomic) UIWindow * window;
+@end
+
+Other.storyboard 新增一个视图控制器并设置Is Initial View Controller
+
+创建（激活）场景
+NSUserActivity *userActivity    = [[NSUserActivity alloc] initWithActivityType:@"Other Configuration"];
+UIApplication *app              = [UIApplication sharedApplication];
+[app requestSceneSessionActivation:nil
+                      userActivity:userActivity
+                           options:nil
+                      errorHandler:nil];
+Show Other Scene为按钮，点击后执行上面的代码
+
+
+关闭场景（例如在UIViewController实例里）
+UIApplication *app = [UIApplication sharedApplication];
+[app requestSceneSessionDestruction:self.view.window.windowScene.session
+                            options:nil
+                       errorHandler:nil];
+
+
+激活（前置）已有的场景
+UIApplication *app      = [UIApplication sharedApplication];
+NSArray *openSessions   = app.openSessions.allObjects;
+for (UISceneSession *session in openSessions) {
+    if ([session.configuration.name isEqualToString:@"Other Configuration"]) {
+        [app requestSceneSessionActivation:session
+                              userActivity:nil
+                                   options:nil
+                              errorHandler:nil];
+    }
+}
+
+假如info.plist的场景配置不设置Storyboard Name，则需要自行创建窗口和视图控制器
+// OtherSceneDelegate.m
+
+- (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)connectionOptions API_AVAILABLE(ios(13.0)) {
+    UIStoryboard *storyboard            = [UIStoryboard storyboardWithName:@"Other" bundle:nil];
+    UIViewController *viewController    = [storyboard instantiateInitialViewController];
+    UIWindowScene *windowScene          = (UIWindowScene *)scene;
+    UIWindow *window                    = [[UIWindow alloc] initWithWindowScene:windowScene];
+    self.window                         = window;
+    window.rootViewController           = viewController;
+    [window makeKeyAndVisible];
+}
+
+
+恢复场景
+场景（窗口）在程序意外退出后，重启时会调用Scene Delegate里的
+ - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)connectionOptions 方法以重新连接（恢复）场景，
+每一个场景都有一个唯一标识符(session.persistentIdentifier)，假如遇到意外退出恢复时会带上旧的标识符，可通过使用此标识符保存或读取数据
+
+macOS上运行的问题
+窗口全部关闭后点击程序坞（Dock）上的图标，控制台会出现警告或应用程序Crash
+解决方法：通过添加AppKit插件解决，详情请参阅《Mac Catalyst - macOS AppKit 插件》
+
+
+生命周期:
+-[AppDelegate application:didFinishLaunchingWithOptions:]
+-[AppDelegate application:configurationForConnectingSceneSession:options:] 
+-[SceneDelegate scene:willConnectToSession:options:]
+-[SceneDelegate sceneWillEnterForeground:]
+-[SceneDelegate sceneDidBecomeActive:]
+
+// 关闭后...
+-[SceneDelegate sceneWillResignActive:]
+-[SceneDelegate sceneDidEnterBackground:]
+-[SceneDelegate sceneDidDisconnect:]
+-[AppDelegate application:didDiscardSceneSessions:]

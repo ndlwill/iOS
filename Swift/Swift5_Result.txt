@@ -1,0 +1,141 @@
+经常会有很多时候接收异步回调，比如网络部分 URLSession 的 dataTask(with:completionHandler:) 方法
+let request = URLRequest(url: URL(string: "https://xxxx")!)
+        
+URLSession.shared.dataTask(with: request) { 
+data, response, error in
+    
+    if error != nil {
+            
+        //处理错误error
+            
+        } else {
+            
+            //处理数据data
+    }
+}
+
+这里有三个参数：(Data?, URLResponse?, Error?)，它们都是可选型，当请求成功时，Data参数包含 response 中的数据，Error 为 nil；
+当发生错误时，Error 指明具体的错误，Data 为 nil。显然 data 和 error 是互斥的，
+不存在 data 和 error 同时为 nil 或者同时非 nil的情况，但是编译器却无法确认这个事实。
+于是在 Swift 5 中，新增了一个枚举类型 Result，使我们能够更简单、更清晰地处理复杂代码中的错误。
+
+
+public enum Result<Success, Failure> where Failure: Error {
+
+    /// A success, storing a `Success` value.
+    case success(Success)
+
+    /// A failure, storing a `Failure` value.
+    case failure(Failure)
+    
+    ...
+}
+
+接收两个泛型参数，一个为Success，一个为Failure，但是Failure必须是Error类型的
+Success代表正确执行的值
+Failure代表出现问题时的错误值
+
+import UIKit
+
+// 定义Error
+enum FileReadError: Error {
+    case FileISNull
+    case FileNotFound
+}
+
+// 用Result处理
+func readFileContent(filePath: String) -> Result<String, FileReadError> {
+    // 1.filePath为""
+    if filePath == "" {
+        
+        return .failure(.FileISNull)
+    }
+    // 2.filepath有值，但是没有对应的文件
+    if filePath != "/User/Desktop/123.plist" {
+        
+        return .failure(.FileNotFound)
+        
+    }
+    // 3.取出其中的内容
+    return .success("123")
+}
+
+//let result = readFileContent(filePath: "")  //文件为空
+
+//let result = readFileContent(filePath: "11111")  //文件找不到
+
+let result = readFileContent(filePath: "/User/Desktop/123.plist")  //123
+
+// 处理Result
+switch result {
+    
+case .failure(let error):
+    
+    switch error {
+        
+    case .FileISNull:
+        print("文件为空")
+        
+    case .FileNotFound:
+        print("文件找不到")
+    }
+    
+case .success(let content):
+    print(content)
+    
+}
+
+
+错误处理:
+有了Result，处理异常有了明显的变化，显得更简洁
+
+// swift5 之前的 throw 的异常需要 do try catch 处理
+do {
+    handle(try String(contentsOfFile: myFile))
+} catch {
+    handleError(error)
+}
+
+
+// 有了Reuslt之后
+let str = Result { try String(contentsOfFile: myFile) }
+handle(str)
+
+
+
+异步回调:
+// 1.定义Error
+enum NetworkError: Error {    
+    case URLInvalid
+}
+
+// 定义一个函数，包含一个逃逸闭包进行异步回调
+func getInfo(from urlString: String, completionHandler: @escaping (Result<String, NetworkError>) -> Void)  {
+    
+    if urlString.hasPrefix("https://") {        
+        // 经过一系列网络处理以后得到一个服务器返回的数据
+        let data = "response result"        
+        // 获取数据
+        completionHandler(.success(data))
+    }
+        
+    else{        
+        // URL有问题
+        completionHandler(.failure(.URLInvalid))
+    }
+}
+
+// 调用函数
+getInfo(from: "https://www.baidu.com") { result in
+    
+    // 处理Result
+    switch result {
+        
+    case .success(let content):        
+        print(content)
+        
+    case .failure:
+        // 如果参数不是https://开头 会打印
+        print("url有问题")
+    }
+}
