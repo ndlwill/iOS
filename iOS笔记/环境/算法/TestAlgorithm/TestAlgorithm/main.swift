@@ -85,7 +85,8 @@ colorSort(colorArray: &colorArray)
 /**
  思路是寻找逆序对
  分别从左往右和从右往左找到逆序对，这样即可确定范围。
- 
+ 从左往右扫描，记录最大值，如果发现当前值小于最大值，则记录它的位置（有可能是逆序对最大范围），如果当前值大于最大值，则覆盖最大值。
+ 从右往左扫描，记录最小值，如果发现当前值大于最小值，则记录它的位置（有可能是逆序对最大范围），如果当前值小于最小值，则覆盖最小值。
  两次扫描记录的位置范围，就是需要排序的范围。
  
  [1, 2, 4, 7, 10, 11, 7, 12, 6, 7, 16, 18, 19]
@@ -133,11 +134,129 @@ func partialSort(array: [Int]) -> [Int] {
 }
 _ = partialSort(array: [1, 2, 4, 7, 10, 11, 7, 12, 6, 7, 16, 18, 19])
 
-func bubbleSort(_ arr: [Int]) {
+
+// MARK: - 冒泡排序（Bubble Sort）
+/**
+ 从头开始比较每一对相邻元素，如果第一个比第二个大，就交换它们的位置。
+ 执行完一轮后，最末尾那个元素就是最大元素。
+ 忽略上一步中曾经找到的最大元素，重复执行步骤一，直到全部元素有序。
+ */
+func bubbleSort(array: inout [Int]) {
+    let count = array.count
+    for endIndex in (1..<count).reversed() {
+        for startIndex in 1...endIndex {
+            if array[startIndex] < array[startIndex - 1] {// 生序排序
+                array.swapAt(startIndex, startIndex - 1)
+            }
+        }
+    }
+    print("\(#function) array = \(array)")
+}
+var array1 = [12, 76, 35, 34, 8]
+bubbleSort(array: &array1)
+
+/**
+ 如果序列已经完全有序，可以提前终止冒泡排序
+ 
+ 增加一个bool值，用于判断一次循环后是否有数据交换，如果没有，则退出排序。
+ 如果数据不是完全有序，此优化会因添加成员变量而导致计算时间更长。
+ */
+func optimizedBubbleSort1(array: inout [Int]) {
+    let count = array.count
+    for endIndex in (1..<count).reversed() {
+        var sorted = false
+        for startIndex in 1...endIndex {
+            if array[startIndex] < array[startIndex - 1] {// 生序排序
+                array.swapAt(startIndex, startIndex - 1)
+                sorted = true
+            }
+        }
+        if !sorted {
+            break
+        }
+    }
+    print("\(#function) array = \(array)")
+}
+var array2 = [12, 34, 35, 38, 85]
+optimizedBubbleSort1(array: &array2)
+
+/**
+ 如果序列尾部已经局部有序，可以记录最后一次交换的位置，减少比较次数。
+ 
+ 记录上一次循环最后一次交换的位置，将其作为下一次循环的截止位置。
+ 
+ 平均时间复杂度O(n^2)
+ 最好时间复杂度O(n)
+ 空间复杂度O(1)
+ */
+func optimizedBubbleSort2(array: inout [Int]) {
+    let count = array.count
+    var endIndex = count - 1
+    while endIndex > 0 {
+        // sortedIndex的初始值在数组完全有序的时候有用
+        var sortedIndex = 1
+        for startIndex in 1...endIndex {
+            if array[startIndex] < array[startIndex - 1] {// 生序排序
+                array.swapAt(startIndex, startIndex - 1)
+                sortedIndex = startIndex
+            }
+        }
+        
+        endIndex = sortedIndex
+        endIndex -= 1
+    }
+    print("\(#function) array = \(array)")
+}
+var array3 = [12, 76, 35, 34, 88, 98, 100]
+optimizedBubbleSort2(array: &array3)
+
+/**
+ 排序算法的稳定性（Stability）:
+ 如果相等的2个元素，在排序前后的相对位置保持不变，那么这是稳定的排序算法。
+ 排序前：5，1，3a，4，7，3b
+ 稳定的排序：1，3a，3b，4，5，7
+ 不稳定的排序：1，3b，3a，4，5，7
+ 冒泡排序是稳定排序算法
+ 
+ 原地算法（In-place Algorithm）:
+ 不依赖额外的资源或依赖少数的额外资源，仅依靠输出来覆盖输入。
+ 空间复杂度为O(1)的都可以认为是原地算法。
+ 非原地算法，称为Not-in-place或者Out-of-place。
+ 冒泡排序属于In-place。
+ */
+
+// MARK: - 选择排序（Selection Sort）
+/**
+ 从序列中找出最大的那个元素，然后与最末尾的元素交换位置。执行完一轮后，最末尾的那个元素就是最大的元素。
+ 忽略上一步中曾经找到的最大元素，重复执行上一步。
+ 
+ 选择排序的交换次数要远远少于冒泡排序，平均性能优于冒泡排序。
+ 最好，最坏，平均时间复杂度：O(n^2)，空间复杂度：O(1)。
+ 属于不稳定排序。
+ */
+func selectionSort(array: inout [Int]) {
+    let count = array.count
+    for endIndex in (1..<count).reversed() {
+        var maxIndex = 0
+        for startIndex in 1...endIndex {
+            if array[maxIndex] <= array[startIndex] {
+                maxIndex = startIndex
+            }
+        }
+        array.swapAt(maxIndex, endIndex)
+    }
+    print("\(#function) array = \(array)")
+}
+var array4 = [50, 21, 80, 43, 38, 14]
+selectionSort(array: &array4)
+
+// MARK: - 堆排序（Heap Sort）
+/**
+ 堆排序可以认为是对选择排序的一种优化
+ */
+func heapSort(array: inout [Int]) {
     
 }
-
-bubbleSort([12, 76, 35, 34, 8])
 
 // MARK: - 归并排序（Merge Sort）
 /**
