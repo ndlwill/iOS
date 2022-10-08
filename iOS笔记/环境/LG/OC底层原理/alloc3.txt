@@ -1,0 +1,158 @@
+alloc + init给对象开辟内存空间并完成对象初始化
+
+allocwithZone: 和alloc一样，为对象分配足够的内存， cocoa 会遍历该对象所有的成员变量，通过成员变量的类型来计算所需占用的内存。
+
+alloc核心函数:
+static ALWAYS_INLINE id
+_class_createInstanceFromZone(Class cls, size_t extraBytes, void *zone,
+                              int construct_flags = OBJECT_CONSTRUCT_NONE,
+                              bool cxxConstruct = true,
+                              size_t *outAllocatedSize = nil)
+{
+    ASSERT(cls->isRealized());
+
+    // Read class's info bits all at once for performance
+    bool hasCxxCtor = cxxConstruct && cls->hasCxxCtor();
+    bool hasCxxDtor = cls->hasCxxDtor();
+    bool fast = cls->canAllocNonpointer();
+    size_t size;
+
+    // 1. 计算开辟的内存大小
+    size = cls->instanceSize(extraBytes);
+    if (outAllocatedSize) *outAllocatedSize = size;
+
+    id obj;
+    if (zone) {
+        obj = (id)malloc_zone_calloc((malloc_zone_t *)zone, 1, size);
+    } else {
+      // 2. 申请内存空间
+        obj = (id)calloc(1, size);
+    }
+    if (slowpath(!obj)) {
+        if (construct_flags & OBJECT_CONSTRUCT_CALL_BADALLOC) {
+            return _objc_callBadAllocHandler(cls);
+        }
+        return nil;
+    }
+
+    if (!zone && fast) {
+        // 初始化isa并与objc关联
+        obj->initInstanceIsa(cls, hasCxxDtor);
+    } else {
+        // Use raw pointer isa on the assumption that they might be
+        // doing something weird with the zone or RR.
+        obj->initIsa(cls);
+    }
+
+    if (fastpath(!hasCxxCtor)) {
+        // 返回成品对象
+        return obj;
+    }
+
+    construct_flags |= OBJECT_CONSTRUCT_FREE_ONFAILURE;
+    return object_cxxConstructFromClass(obj, cls, construct_flags);
+}
+
+1. 计算内存大小: instanceSize
+if (size < 16) size = 16 ：做了小于16字节的判断
+
+static inline size_t align16(size_t x) {
+    return (x + size_t(15)) & ~size_t(15);
+}
+align16的实现，就是使用位运算算法完成16字节对齐
+
+算法(x + size_t(15)) & ~size_t(15)
+以x=8为例，计算过程如下:
+
+8 + size(15) = 23 二进制-> 0000 0000 0001 0111
+size_t(15) 二进制-> 0000 0000 0000 1111
+取反~size_t(15) 二进制-> 1111 1111 1111 0000
+求交 & :
+0000 0000 0001 0111 & 1111 1111 1111 0000 = 0000 0000 0001 0000
+结果表示为十进制: 16
+
+目的:
+提高性能,加快存储速度
+通常内存是由一个个字节组成，cpu在存储数据时，是以固定字节块为单位进行存取的。
+这是一个空间换时间的优化方式，这样不用考虑字节未对齐的数据，极大节省了计算资源，提升了存取速度。
+更安全
+在一个对象中,isa占8字节，对象属性也占8字节。苹果公司现在采用16字节对齐，当对象无属性是，会预留8字节，即16字节对齐。 
+
+2. 分配内存 calloc
+执行前打印obj只有cls类名,执行后打印，已成功申请内存首地址
+但并不是我们想象中的格式<HTPerson: 0x10069eff0>,这是因为这一步只是单纯的完成内存申请，返回首地址
+类和地址的绑定是下一步initInstanceIsa的工作
+
+3. initInstanceIsa
+初始化isa，完成与类的绑定
+在isainit之后加断点，打印obj,此时发现地址与类完成绑定
+
+
+==========init
++ (id)init {
+    return (id)self;
+}
+
+- (id)init {
+    return _objc_rootInit(self);
+}
+
+id
+_objc_rootInit(id obj)
+{
+    // In practice, it will be hard to rely on this function.
+    // Many classes do not properly chain -init calls.
+    return obj;
+}
+
+init的类方法和对象方法返回的都是id对象本身
+不同的是类方法返回了一个id类型的self，这是为了可以给开发者提供自定义构造方法的入口，通过id强转类型实现工厂设计，返回我们定义的类型
+
+new:
++ (id)new {
+    return [callAlloc(self, false/*checkNil*/) init];
+}
+
+唯一区别:
+alloc + init允许对init进行重写，可自定制init完成工厂设计
+new是完整封装，无法在初始化这一步加入自定制需求
+
+
+==========
+在[NSObject alloc]入口和alloc类方法打断点
+发现未进入alloc类方法
+发现下一个执行函数是objc_alloc
+在NSObject.mm文件中找到objc_alloc函数，加断点检测
+发现此时cls刚好是NSObject
+接下来调用callAlloc函数
+
+llvm源码文件
+有明确标注，[self alloc] -> objc_alloc(self)
+函数中显示，当接收到alloc名称的selector时，调用EmitObjCAlloc函数。我们继续搜索EmitObjCAlloc：
+我们看到发射了一个objc_alloc消息
+objc4源码中objc_alloc信号是从这发出的
+NSObject的alloc是系统在llvm底层帮我们转发到objc_alloc。LLVM在我们编译启动时，就已经处理好了 
+
+
+自定义类HTTest的alloc方法进入callAlloc被调用2次:
+因为NSArray没有alloc方法。objc_msgSend发送alloc消息
+这时系统会查NSArray有没有alloc方法，没有就往父类NSObject查
+由于NSObject的初始化，系统在llvm编译时就已经初始化好了。所以此时会直接响应NSObject的alloc类方法
+NSArray的alloc最终还是交给了系统allocWithZone去处理
+
+[HTTest alloc]:
+与NSArray不同的是，HTTest的第二次调用是_objc_rootAllocWithZone
+
+objc_alloc->callAlloc(cls, true/*checkNil*/, false/*allocWithZone*/)
+_objc_rootAlloc(cls, false, true)
+
+任何类调用alloc时，并不会先进入Alloc类方法直接执行
+
+系统使用objc_msgSend消息机制发送了alloc消息
+消息会先到达llvm层的GeneratePossiblySpecializedMessageSend函数，条件判断中触发tryGenerateSpecializedMessageSend函数
+tryGenerateSpecializedMessageSend函数内部将alloc消息转发成了objc_alloc消息。所以我们第一次响应是objc_alloc->callAlloc
+第一次时，类没有实现，所以tryGenerateSpecializedMessageSend返回false，if条件不成立，发送GenerateMessageSend常规方法，调用alloc类方法创建。
+此时会调用常规的alloc->_objc_rootAlloc->callAlloc流程
+
+当一个类创建完第一个实例，再次创建第二个实例时，tryGenerateSpecializedMessageSend会返回true。我们只会响应第一次。不会调用常规的alloc方法
+这是缓存的作用。后面cache和objc_msgSend机制

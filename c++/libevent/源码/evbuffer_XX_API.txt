@@ -1,0 +1,347 @@
+==============================向evbuffer中插入
+都是追加数据（相当于Append操作）
+int evbuffer_add(struct evbuffer *buf, const void *data, size_t datlen);
+int evbuffer_add_printf(struct evbuffer *buf, const char *fmt, ...)
+int evbuffer_add_vprintf(struct evbuffer *buf, const char *fmt, va_list ap);
+
+evbuffer扩容
+一次性扩容可以防止在使用evbuffer的途中，由于不断地扩容而导致更多的系统调用所造成性能上的开销。
+int evbuffer_expand(struct evbuffer *buf, size_t datlen);
+
+把源Evbuffer的所有或者部分数据全部都追加到目标Evbuffer的末尾上，当该函数成功调用后源Evbuffer数据减少，目标Evbuffer的数据增多
+int evbuffer_add_buffer(struct evbuffer *dst, struct evbuffer *src);
+int evbuffer_remove_buffer(struct evbuffer *src, struct evbuffer *dst,
+size_t datlen); v2.0.1
+第二个函数中会移动datlen个字节大小的数据。如果datlen值大于源Evbuffer的大小，就移动所有的Evbuffer的数据追加到目标Evbuffer队尾处。
+
+==============================从evbuffer中读取数据
+队列是FIFO所以队头的数据也是即将要输出的数据，即在Input缓冲区中是将要读走的数据，在Output缓冲区中是将要write到底层的数据。
+
+unsigned char *evbuffer_pullup(struct evbuffer *buf, ev_ssize_t size);
+
+会删除原evbuffer的数据
+int evbuffer_drain(struct evbuffer *buf, size_t len); 成功 0 失败 -1
+int evbuffer_remove(struct evbuffer *buf, void *data, size_t datlen);失败 -1 
+
+copy数据，不删除原有数据
+v 2.0.5
+ev_ssize_t evbuffer_copyout(struct evbuffer *buf, void *data, size_t datlen);
+v 2.1.1
+ev_ssize_t evbuffer_copyout_from(struct evbuffer *buf,
+const struct evbuffer_ptr *pos,
+void *data_out, size_t datlen);
+
+==============================evbuffer_pullup
+unsigned char *evbuffer_pullup(struct evbuffer *buf, ev_ssize_t size);
+
+有时候需要取出evbuffer前面的N字节，将其看作连续的字节数组。要做到这一点，首先必须确保缓冲区的前面确实是连续的
+
+#include <event2/buffer.h>
+#include <event2/util.h>
+
+#include <string.h>
+
+int parse_socks4(struct evbuffer *buf, ev_uint16_t *port, ev_uint32_t *addr)
+{
+    /* Let's parse the start of a SOCKS4 request!  The format is easy:
+     * 1 byte of version, 1 byte of command, 2 bytes destport, 4 bytes of
+     * destip. */
+    unsigned char *mem;
+
+    mem = evbuffer_pullup(buf, 8);
+
+    if (mem == NULL) {
+        /* Not enough data in the buffer */
+        return 0;
+    } else if (mem[0] != 4 || mem[1] != 1) {
+        /* Unrecognized protocol or command */
+        return -1;
+    } else {
+        memcpy(port, mem+2, 2);
+        memcpy(addr, mem+4, 4);
+        *port = ntohs(*port);
+        *addr = ntohl(*addr);
+        /* Actually remove the data from the buffer now that we know we
+           like it. */
+        evbuffer_drain(buf, 8);
+        return 1;
+    }
+}
+
+==============================evbuffer_ptr
+从evbuffer中查询字符串
+struct evbuffer_ptr evbuffer_search(struct evbuffer *buffer,
+const char *what, size_t len, const struct evbuffer_ptr *start);
+
+evbuffer_ptr结构体指示evbuffer中的一个位置
+
+struct evbuffer_ptr {
+        ev_ssize_t pos;
+        struct {
+                /* internal fields */
+        } _internal;
+};
+pos是唯一的公有字段，用户代码不应该访问其他字段。pos指示evbuffer中的一个位置，以到开始处的偏移量表示
+
+struct evbuffer_ptr evbuffer_search(struct evbuffer *buffer,
+    const char *what, size_t len, const struct evbuffer_ptr *start);
+struct evbuffer_ptr evbuffer_search_range(struct evbuffer *buffer,
+    const char *what, size_t len, const struct evbuffer_ptr *start,
+    const struct evbuffer_ptr *end);
+
+evbuffer_search()函数在缓冲区中查找含有len个字符的字符串what。函数返回包含字符串位置的evbuffer_ptr结构体，或者在没有找到字符串时返回-1。如果提供了start参数，则从指定的位置开始搜索；否则，从开始处进行搜索。
+evbuffer_search_range()函数和evbuffer_search行为类似，只是它只考虑在end之前出现的what
+
+
+enum evbuffer_ptr_how {
+        EVBUFFER_PTR_SET,
+        EVBUFFER_PTR_ADD
+};
+int evbuffer_ptr_set(struct evbuffer *buffer, struct evbuffer_ptr *pos,
+    size_t position, enum evbuffer_ptr_how how);
+evbuffer_ptr_set()函数操作buffer中的位置pos。如果how等于EVBUFFER_PTR_SET,指针被移动到缓冲区中的绝对位置position；
+如果等于EVBUFFER_PTR_ADD，则向前移动position字节。函数成功时返回0，失败时返回-1
+
+#include <event2/buffer.h>
+#include <string.h>
+
+/* Count the total occurrences of 'str' in 'buf'. */
+int count_instances(struct evbuffer *buf, const char *str)
+{
+    size_t len = strlen(str);
+    int total = 0;
+    struct evbuffer_ptr p;
+
+    if (!len)
+        /* Don't try to count the occurrences of a 0-length string. */
+        return -1;
+
+    evbuffer_ptr_set(buf, &p, 0, EVBUFFER_PTR_SET);
+
+    while (1) {
+         p = evbuffer_search(buf, str, len, &p);
+         if (p.pos < 0)
+             break;
+         total++;
+         evbuffer_ptr_set(buf, &p, 1, EVBUFFER_PTR_ADD);
+    }
+
+    return total;
+}
+
+==============================检测数据而不复制
+int
+evbuffer_peek(struct evbuffer *buffer, ev_ssize_t len,
+    struct evbuffer_ptr *start_at,
+    struct evbuffer_iovec *vec, int n_vec)
+{
+	struct evbuffer_chain *chain;
+	int idx = 0;
+	ev_ssize_t len_so_far = 0;
+
+	EVBUFFER_LOCK(buffer);
+
+	if (start_at) {
+		chain = start_at->_internal.chain;
+		len_so_far = chain->off
+		    - start_at->_internal.pos_in_chain;
+		idx = 1;
+		if (n_vec > 0) {
+			vec[0].iov_base = chain->buffer + chain->misalign
+			    + start_at->_internal.pos_in_chain;
+			vec[0].iov_len = len_so_far;
+		}
+		chain = chain->next;
+	} else {
+		chain = buffer->first;
+	}
+
+	if (n_vec == 0 && len < 0) {
+		/* If no vectors are provided and they asked for "everything",
+		 * pretend they asked for the actual available amount. */
+		len = buffer->total_len;
+		if (start_at) {
+			len -= start_at->pos;
+		}
+	}
+
+	while (chain) {
+		if (len >= 0 && len_so_far >= len)
+			break;
+		if (idx<n_vec) {
+			vec[idx].iov_base = chain->buffer + chain->misalign;
+			vec[idx].iov_len = chain->off;
+		} else if (len<0) {
+			break;
+		}
+		++idx;
+		len_so_far += chain->off;
+		chain = chain->next;
+	}
+
+	EVBUFFER_UNLOCK(buffer);
+
+	return idx;
+}
+
+
+evbuffer预读操作
+有的时候我们不想copy和move，我们只是想简简单单的知道evbuffer中保存了什么，所以我们可以用预读的方式来达到这个目的
+struct evbuffer_iovec {
+        void *iov_base;
+        size_t iov_len;
+};
+int evbuffer_peek(struct evbuffer *buffer, ev_ssize_t len,
+    struct evbuffer_ptr *start_at,
+    struct evbuffer_iovec *vec_out, int n_vec);
+
+evbuffer_iovec是用来保存evbuffer内部块的一个结构体
+这个函数的len参数指我们要读多少个字节，start_at参数指从哪个位置预读，vec_out指我们提供给这个函数的数组，n_vec指的是我们提供的数组大小。
+
+如果 len 为负数，该函数就会尝试填充满你给它的数组
+如果为正数，那么该函数就会要么填充满你的数组要么填充至少len个字节的内容
+对于返回值，如果你提供的数组足够它去填充你请求的数据的时候，它就会它填充了多个iovec
+对于返回值，如果你提供的数组不足够的话，它会返回它需要的iovec的数量
+
+从evbuffer的起始处处开始读取2个chunk的内容
+{
+    /* Let's look at the first two chunks of buf, and write them to stderr. */
+    int n, i;
+    struct evbuffer_iovec v[2];
+    n = evbuffer_peek(buf, -1, NULL, v, 2);
+    for (i=0; i<n; ++i) { /* There might be less than two chunks available. */
+        fwrite(v[i].iov_base, 1, v[i].iov_len, stderr);
+    }
+}
+
+从evbuffer中读取 4096个字节
+{
+    /* Let's send the first 4906 bytes to stdout via write. */
+    int n, i, r;
+    struct evbuffer_iovec *v;
+    size_t written = 0;
+
+    /* determine how many chunks we need. */
+    n = evbuffer_peek(buf, 4096, NULL, NULL, 0);
+    /* Allocate space for the chunks.  This would be a good time to use
+       alloca() if you have it. */
+    v = malloc(sizeof(struct evbuffer_iovec)*n);
+    /* Actually fill up v. */
+    n = evbuffer_peek(buf, 4096, NULL, v, n);
+    for (i=0; i<n; ++i) {
+        size_t len = v[i].iov_len;
+        if (written + len > 4096)
+            len = 4096 - written;
+        r = write(1 /* stdout */, v[i].iov_base, len);
+        if (r<=0)
+            break;
+        /* We keep track of the bytes written separately; if we don't,
+           we may write more than 4096 bytes if the last chunk puts
+           us over the limit. */
+        written += len;
+    }
+    free(v);
+}
+
+从evbuffer中读取16kb的数据去调用consume函数消费
+{
+    /* Let's get the first 16K of data after the first occurrence of the
+       string "start\n", and pass it to a consume() function. */
+    struct evbuffer_ptr ptr;
+    struct evbuffer_iovec v[1];
+    const char s[] = "start\n";
+    int n_written;
+
+    ptr = evbuffer_search(buf, s, strlen(s), NULL);
+    if (ptr.pos == -1)
+        return; /* no start string found. */
+
+    /* Advance the pointer past the start string. */
+    if (evbuffer_ptr_set(buf, &ptr, strlen(s), EVBUFFER_PTR_ADD) < 0)
+        return; /* off the end of the string. */
+
+    while (n_written < 16*1024) {
+        /* Peek at a single chunk. */
+        if (evbuffer_peek(buf, -1, &ptr, v, 1) < 1)
+            break;
+        /* Pass the data to some user-defined consume function */
+        consume(v[0].iov_base, v[0].iov_len);
+        n_written += v[0].iov_len;
+
+        /* Advance the pointer so we see the next chunk next time. */
+        if (evbuffer_ptr_set(buf, &ptr, v[0].iov_len, EVBUFFER_PTR_ADD)<0)
+            break;
+    }
+}
+
+==============================直接向evbuffer添加数据 evbuffer_reserve_space()和evbuffer_commit_space()
+高级追加函数
+
+http://www.wangafu.net/~nickm/libevent-book/
+
+一般如果我们想要追加数据是通过先申请一段字符串数组，然后再调用evbuffer_add去追加它。这样会有俩次copy，第一次生成字符串数组，第二个调用evbuffer_add函数。
+如果我们想直接把数据追加到evbuffer中，有一对高级函数可以完成这种功能：evbuffer_reserve_space()和evbuffer_commit_space()。
+int evbuffer_reserve_space(struct evbuffer *buf, ev_ssize_t size,
+struct evbuffer_iovec *vec, int n_vecs);
+int evbuffer_commit_space(struct evbuffer *buf,
+struct evbuffer_iovec *vec, int n_vecs);
+
+跟evbuffer_peek()一样，这两个函数使用evbuffer_iovec结构体来提供对evbuffer内部内存的直接访问。
+第一个函数是用来先扩容的函数。第二个参数是追加数据的大小，第三个参数是evbuffer_iovec数组也就是我们即将要追加的数据，第四个参数是我们提供的这个数组的大小。
+对于evbuffer_reserve_space 中的第四个参数来说，它至少为1。并且如果设置为1，Libevent就会认为我们想要一个线性化的空间去扩展，这样会造成一些额外的性能开销比如浪费内存，为了性能至少传递2个。
+当我们调用完evbuffer_reserve_space函数后，evbuffer_iovec内部的data就会被置为指向 evbuffer 中新申请的空间。
+当我们在iovec中填充完数据后，其内容并没有被累计到evbuffer中，只有我们调用了evbuffer_commit_space函数，这些数据才会被提交到evbuffer中。
+如果我们reserve的时候size很大，当填充完数据后，我们并不想提交这么多的数据。第一个方法可以通过减少iovec内的iov_len的值，第二个方法可以通过减少提交的iovec数组的数量。
+返回值
+evbuffer_reserve_space 返回你申请size个空间时所需的Vec数量
+evbuffer_commit_space 成功0 失败-1
+
+evbuffer_reserve_space()函数给出evbuffer内部空间的指针。函数会扩展缓冲区以至少提供size字节的空间。
+到扩展空间的指针，以及其长度，会存储在通过vec传递的向量数组中，n_vec是数组的长度。
+
+写入到向量中的数据不会是缓冲区的一部分，直到调用evbuffer_commit_space()，使得写入的数据进入缓冲区。
+如果需要提交少于请求的空间，可以减小任何evbuffer_iovec结构体的iov_len字段，也可以提供较少的向量。函数成功时返回0，失败时返回-1。
+
+
+==============================evbuffer在网络I/O的应用
+如果我们使用了bufferevent，那么我们是不需要去使用这些接口的
+
+v 2.0.1
+int evbuffer_write(struct evbuffer *buffer, evutil_socket_t fd);
+int evbuffer_write_atmost(struct evbuffer *buffer, evutil_socket_t fd,
+ev_ssize_t howmuch);
+int evbuffer_read(struct evbuffer *buffer, evutil_socket_t fd, int howmuch);
+
+evbuffer_read函数的howmuch参数表示帮我们从fd中最多读取多少字节的数据追加到evbuffer的尾部。如果howmuch是个负数，evbuffer_read函数会自己判断从fd中读多少数据追加到evbuffer的尾部
+evbuffer_write_atmost函数中howmuch参数表示我们要从evbuffer的队头移动多少字节数据到fd中。如果howmuch为负数就是表示把evbuffer的所有数据都刷新到fd中。evbuffer_write函数就是上面这个函数howmuch为负数的情况
+返回值如read/write系统调用一样，需要自己判断error
+
+==============================evbuffer的回调函数
+让使用evbuffer的用户知道何时有数据在evbuffer上新增或者移除，Libevent提供了一个基本的evbuffer的回调机制
+
+struct evbuffer_cb_info {
+size_t orig_size;//原先的evbuffer数据量大小，在它新增或者移出前，它的大小有多少
+size_t n_added;//新增了多少数据
+size_t n_deleted;//减少了多少数据
+};
+typedef void (*evbuffer_cb_func)(struct evbuffer *buffer,
+const struct evbuffer_cb_info *info, void *arg);
+
+struct evbuffer_cb_entry;
+struct evbuffer_cb_entry *evbuffer_add_cb(struct evbuffer *buffer,
+evbuffer_cb_func cb, void *cbarg);
+int evbuffer_remove_cb_entry(struct evbuffer *buffer,
+struct evbuffer_cb_entry *ent);
+int evbuffer_remove_cb(struct evbuffer *buffer, evbuffer_cb_func cb,
+void *cbarg);
+#define EVBUFFER_CB_ENABLED 1
+int evbuffer_cb_set_flags(struct evbuffer *buffer,
+struct evbuffer_cb_entry *cb,
+ev_uint32_t flags);
+int evbuffer_cb_clear_flags(struct evbuffer *buffer,
+struct evbuffer_cb_entry *cb,
+ev_uint32_t flags);
+
+当我们evbuffer_add_cb的时候就会注册成功并会返回一个evbuffer_cb_entry的一个指针，当我们想要移除该callback函数的时候，我们可以把它传给evbuffer_remove_cb_entry。
+
+第二个移除的方法，就是调用evbuffer_cb_clear_flags函数去传递 EVBUFFER_CB_ENABLED 标志，这样就会导致该callback函数不会再有效，但是还可以再次开启通过调evbuffer_cb_set_flags函数。

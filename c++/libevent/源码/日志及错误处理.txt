@@ -1,0 +1,84 @@
+libevent的日志及错误处理模块在log.c和log-internal.h中。日志及错误处理函数声明位于log-internal.h中
+
+__attribute__指令
+它实际上是对编译器进行指示，对于函数相当于是一个修饰作用。
+
+#define EV_CHECK_FMT(a,b) __attribute__((format(printf, a, b)))
+#define EV_NORETURN __attribute__((noreturn))
+
+其中EV_CHECK_FMT(2,3)  对应与__attribute__((format(printf, 2, 3)))，提示编译器按照printf函数格式化的形式来对event_err函数进行编译，2表示第2个参数为格式化字符串，3表示格式化的可变参数从第3个参数开始。
+简单来说，就是提示编译器从第3个参数开始按照第2个参数字符串的格式进行格式化；
+EV_NORETURN表示event_err函数没有返回值，也不能有返回值。
+
+可变参数宏:
+可变参数宏常用于C语言中的变参函数，所谓变参函数是指在定义函数的时候无法确定函数有多少个参数，就像你要定义一个序列求和函数，但是你并不知道这个序列有多少个元素，那么就可以使用可变参数宏。
+另一个例子就是printf函数，实际上printf函数就是用可变参数宏实现的。
+常用的可变参数宏有以下几个：va_list、va_start、va_arg和va_end
+
+其中va_list是一个指向参数列表的指针类型，使用时直接用该类型定义一个变量即可，如上面的va_list ap；
+va_start是用来指定最后一个非可变参数（也就相当于指明了可变参数列表的起始位置），如上面的错误处理函数最后一个非可变参数是fmt，因此调用方式为va_start(ap,fmt)
+va_arg用来获取下一个可变参数，由其返回值实现
+它需要输入两个参数，一个是va_list变量，也就是这里的ap，另一个就是参数的类型，比如说这里当前参数fmt类型为const char *，那么就需要使用va_arg(ap,const char *);
+
+函数的参数都是放在栈中的，并且函数的参数是从从右至左依次入栈，第一个参数地址最低，最后一个参数地址最高
+函数原型中相邻的参数在物理地址上也是相邻的
+
+static void
+event_exit(int errcode)   //
+{
+	if (fatal_fn) {
+		fatal_fn(errcode);
+		exit(errcode); /* should never be reached */
+	} else if (errcode == _EVENT_ERR_ABORT)
+		abort();
+	else
+		exit(errcode);
+}
+
+libevent默认的日志处理行为是打印在终端屏幕，这往往不符合我们真正的需求。
+如果我们想按照自己的方式进行日志处理，那么就可以自定义一个日志处理函数（比如说将错误或警告信息输出到文件中），
+再将该函数名作为参数调用event_set_log_callback即可，如果想再恢复默认的日志处理行为，那么再次调用event_set_log_callback函数传入NULL即可。
+
+
+==================================================
+typedef char *  va_list;
+
+va_start(va_list, arg)，va_start初始化va_list变量，使得va_list变量指向可变参数列表第一个参数的地址，第二个参数固定为可变参数列表(…)左边第一个参数。
+
+_INTSIZEOF 宏,获取类型占用的空间长度，最小占用长度为int的整数倍
+#define _INTSIZEOF(n)   ( (sizeof(n) + sizeof(int) - 1) & ~(sizeof(int) - 1) )
+#define va_start(ap,v)  ( ap = (va_list)_ADDRESSOF(v) + _INTSIZEOF(v) )
+
+
+va_arg(va_list, t)，va_arg获取当前参数并使得va_list变量指向下一个参数的地址，第二个参数是获取参数的类型。
+#define va_arg(ap,t)    ( *(t *)((ap += _INTSIZEOF(t)) - _INTSIZEOF(t)) )
+
+
+va_end(va_list)，va_end结束可变参数列表获取，将va_list变量置NULL
+#define va_end(ap)      ( ap = (va_list)0 )
+
+void sum(char* msg, ...)
+{
+    va_list vaList;                        //定义一个va_list型的变量
+
+    va_start(vaList, msg);                 //va_start初始化vaList
+    int first = va_arg(vaList, int);       //va_arg获取第一个参数
+    char* second = va_arg(vaList, char*);  //va_arg获取第二个参数
+    int third = va_arg(vaList, int);       //va_arg获取第三个参数
+    va_end(vaList);                        //va_end结束vaList，将vaList置NULL
+
+    char str[256]{0};
+    va_start(vaList, msg);
+    vsprintf(str, msg, vaList); //配合格式化字符串，输出可变参数
+    va_end(vaList);
+    printf("%s", str);
+
+    return;
+}
+ 
+ int main()
+ {
+     sum("hello world %d %s %d", 9, "666", 3);
+     system("pause");
+     return 0;
+ }

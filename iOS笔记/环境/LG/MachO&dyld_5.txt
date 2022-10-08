@@ -1,0 +1,210 @@
+https://blog.csdn.net/airths/article/details/108579159
+
+dyld 加载和链接动态库的流程
+① 设置运行环境
+② 加载系统共享缓存
+③ 实例化主程序
+④ 加载插入的动态库
+⑤ 链接主程序
+⑥ 链接插入的动态库
+⑦ 执行弱符号绑定
+⑧ 执行初始化方法
+⑨ 查找主程序入口点并返回
+
+==========共享缓存机制:
+因为同一份动态库可以被多个程序使用，所以动态库也被称为共享库
+所谓的共享缓存，其实就是共享库的缓存（即，动态库的缓存）
+因为 macOS 和 iOS 都使用 dyld 来加载和链接动态库，所以共享缓存有时也被称为 dyld 缓存
+
+iOS 有很多系统库几乎是每个 App 都会用到的（比如：Foundation.framework、UIKit.framework）
+与其等 App 需要时，再将这些系统库一个一个加载进内存；不如在一开始时，就先把这些系统库打包好一次加载进内存
+
+从iOS 3.1开始，为了提高系统的性能，所有的系统库文件都被打包合并成了一个大的缓存文件，存放在 /System/Library/Caches/com.apple.dyld/ 目录下（并按不同的 CPU 架构类型分别保存）
+并且为了减少冗余，iOS 用于存放系统库的默认目录：/System/Library/Frameworks/ 下的系统库文件都被删除掉了
+
+iOS 系统共享缓存的路径为：/System/Library/Caches/com.apple.dyld/
+macOS 系统共享缓存的路径为：/var/db/dyld/
+
+==========Objective-C 的 RunTime:
+C 是一门静态语言，它在编译其间进行数据类型的检查，函数调用的确定。C 程序在编译完成之后，数据的类型与函数的调用，无任何二义性
+
+Objective-C 是一门动态语言，它将很多静态语言在 编译和链接 时所做的事放到了 运行 时来处理。
+比如：Objective-C 在编译时并不能真正决定调用哪个函数，只有在运行时才会根据函数的名称找到对应的函数实现进行调用。
+事实上，在编译阶段，Objective-C 可以调用任何函数，即使这个函数只有声明没有实现，只要进行了函数声明，编译器就不会报错。
+而 C 语言如果在编译阶段调用只有声明没有实现的函数，那么编译器就会马上报错
+
+与此同时，Objective-C 也是一门简单的语言，它有很大一部分内容基于 C，只是在语言层面扩展了些关键字和语法，
+使得 C 语言具备面向对象设计的能力。苹果通过以下两个层面的支持，使得基于 C 的 Objective-C 拥有了 动态的 面向对象的 特性
+① 编译器层面
+Objective-C 的类和方法，在编译时，会被编译器转换成 C 的结构体和函数
+// Person 类在编译时会被编译器转换成以下结构体
+struct objc_class {
+	Class isa; 			// 实例的 isa 指针指向类对象，类对象的 isa 指针指向元类
+#if !__OBJC2__	
+	Class super_class;  // 指向父类
+	const char *name;  	// 类名
+	long version; 		// 类的版本信息，初始化默认为 0，可以通过 Runtime 函数 class_getVersion 和 class_setVersion 进行读取和修改
+	long info; 			// 一些标识信息，如 CLS_CLASS(0x1L) 表示该类为普通 class，其中包含对象方法和成员变量；CLS_META(0x2L) 表示该类为 metaclass，其中包含类方法静态成员变量
+	long instance_size;	// 该类的实例变量的大小（包括从父类继承下来的实例变量）
+	struct objc_ivar_list *ivars; 			// 成员变量列表
+	struct objc_method_list **methodLists; 	// 方法列表
+	struct objc_cache *cache;				// 方法缓存，存储最近使用的方法指针，用于提升效率
+	struct objc_protocol_list *protocols; 	// 协议列表
+#endif
+} OBJC2_UNAVAILABLE;
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// person 对象调用 eat 方法
+[person eat]
+// 在编译时会被编译器转换成以下 C 函数
+objc_msgSend(person, @selector(eat));
+
+② 运行机制层面
+要使 Objective-C 成为一门 动态的 面向对象的 语言，只有编译器层面的支持是不够的，我们还需要一个运行时系统来执行编译后的代码，这个运行时系统就是 RunTime。
+RunTime 是一套底层的 C 语言 API（这也是为什么编译器需要将 Objective-C 的类和方法编译成 C 结构体和函数的原因）,为 iOS 系统的核心组件之一（在 iOS 系统中以 libobjc.dylib 动态共享库的形式存在）。
+RunTime 库使得 C 语言拥有了动态的特性和面向对象的能力。
+RunTime 库很小却很强大，其中最主要的就是消息机制，因此，Objective-C 的方法调用有时也被称为消息发送。
+
+在使用 Objective-C 开发的 MachO 文件中，LoadCommands 区域会有一条 LC_LOAD_DYLIB (libobjc.A.dylib) 加载命令，用于加载 Objective-C 的运行时环境
+
+==========dyld
+dyld（动态链接器）英文全称为：dynamic loader（动态加载器）、dynamic link editor（动态链接编辑器），
+是 macOS 和 iOS 的重要组成部分，默认路径为：/usr/lib/dyld主要用于：加载和链接与 MachO 可执行文件相关的动态库
+
+这里的 usr 可不是 user 的意思，而是 unix system resource 的缩写，macOS / iOS 的 dyld 都在此路径下
+
+注意：
+网上很多文章中都提到说 dyld 加载了主程序和动态库，这个理解明显是错误的
+我们在 XNU 加载 MachO 和 dyld 的源码讲解中已经知道，是内核 XNU 加载了主程序
+
+dyld 只会负责动态库的加载和链接，并不会加载主程序（虽然在 dyld 的源码中，主程序也会以镜像的形式被 dyld 管理起来，但是这并不意味着 dyld 加载了主程序）
+
+==========dyld 加载和链接（与 MachO 可执行文件相关的动态库）的流程
+dyld 源码
+https://opensource.apple.com/tarballs/dyld/
+RunTime 源码
+https://opensource.apple.com/tarballs/objc4/
+
+dyld 执行流程的"起始点"：dyld 自启动
+__dyld_start 是内核 XNU 加载完 dyld 之后，dyld 的入口函数（dyldStartup.s 中存储着各个 CPU 架构的 __dyld_start）
+
+dyldbootstrap::start(...) 函数主要用于 dyld 的自启动，它做了很多 dyld 初始化相关的工作，包括:
+rebaseDyld(...)：dyld 的重定位
+mach_init(...)：mach 消息初始化
+__guard_setup(...)：栈溢出保护
+
+初始化工作完成后，此函数会调用 dyld::_main(...) 进行动态库加载等一系列流程
+之后将 dyld::_main(...) 函数的返回值（App main(...) 函数的地址）传递给 __dyld_start，用于调用 App 的 main(...)
+
+dyld 本质上也是一个 MachO，而普通 MachO 的重定位工作又是由 dyld 来完成的。那么 dyld 的重定位工作又由谁来完成呢？
+为了解决这个问题，dyld 需要满足以下 2 个条件：
+dyld 本身不依赖其他任何 MachO 文件
+dyld 本身所需要的全局和静态变量的重定位工作由它本身完成
+
+第 1 个条件苹果在开发 dyld 的时候就已经做了规避
+第 2 个条件要求 dyld 在启动时，必须有一段代码可以在获得自身的重定位表和符号表的同时，又不能用到全局变量和静态变量，甚至不能调用函数。这样的自启动代码被称为引导程序（Bootstrap）
+
+当系统内核将进程的控制权交给 dyld 时，dyld 的引导程序开始执行，它会找到 dyld 本身的重定位入口，进而完成其自身的重定位
+在此之后 dyld 中的代码才可以开始使用自己的全局变量、静态变量和各种函数
+
+dyld 执行流程的"总调度"：dyld main 函数
+dyld::_main(...) 是整个 App 启动的关键函数，此函数的调用会完成动态库加载和链接的一系列过程，并返回 App main(...) 函数的入口，也就是 主程序 main(...) 的地址，并保持在 x0 寄存器 中
+整个流程可细分为 9 步 :
+① 设置运行环境
+② 加载系统共享缓存
+③ 实例化主程序
+④ 加载插入的动态库
+⑤ 链接主程序
+⑥ 链接插入的动态库
+⑦ 执行弱符号绑定
+⑧ 执行初始化方法
+⑨ 查找 App 入口点并返回
+
+① 设置运行环境
+setContext(...) 函数用于设置全局链接上下文（gLinkContext）的信息，包括一些：回调函数、参数、标志信息
+注意：全局链接上下文（gLinkContext）是定义在 dyld-750.6/src/ImageLoader.h 中 struct LinkContext 类型的结构体，
+里面包含大量的：函数指针、变量、标志位，用于控制 dyld 在 加载和链接 镜像时的行为
+
+configureProcessRestrictions(...) 函数用于配置进程是否受限，主要也是设置全局链接上下文（gLinkContext）
+
+checkEnvironmentVariables(...) 函数用于检查环境变量，其内部调用 processDyldEnvironmentVariable(...) 函数用于处理并设置环境变量
+
+getHostInfo(...) 函数用于获取 cpu 的类型与 cpu 的子类型
+
+如何启用环境变量:
+在 dyld 的源码中，有很多 DYLD_* 开头的环境变量，其实只要在 App 的工程中配置一下，即可让这些环境变量生效。
+XCode 打开任意的 App，然后依次选择：Product - Scheme - Edit Scheme... - Run - Arguments，并在 Environment Variables 栏目中添加对应的环境变量
+DYLD_PRINT_OPTS
+DYLD_PRINT_ENV
+DYLD_PRINT_STATISTICS
+DYLD_PRINT_STATISTICS_DETAILS
+运行 App，即可在 XCode 的控制台看到对应环境变量的输出结果
+
+② 加载系统共享缓存
+checkSharedRegionDisable(...) 函数用于检查共享缓存是否被禁用。该函数的 iOS 实现部分仅有一句注释：iOS 必须开启共享缓存机制
+
+mapSharedCache(...) 函数用于
+① 在加载共享缓存之前，构造用于解析共享缓存的参数
+② 在加载共享缓存之后，更新全局状态
+而 mapSharedCache(...) 函数里面实际上是调用了 loadDyldCache(...) 函数用于加载共享缓存
+
+loadDyldCache(...) 函数用于根据不同情况调用不同的解析共享缓存的函数，共享缓存的加载可以分为以下 3 种情况：
+① 如果共享缓存仅加载到当前进程，则调用 mapCachePrivate(...) 函数解析和加载共享缓存
+② 如果共享缓存已加载，则不做任何处理
+③ 如果当前进程首次加载共享缓存，则调用 mapCacheSystemWide(...) 函数解析和加载共享缓存
+
+③ 实例化主程序
+###
+instantiateFromLoadedImage(...) 函数用于为主程序初始化 ImageLoader，用于后续的链接等过程
+###
+因为 主程序作为 dyld 加载过程中第一个被 addImage(...) 函数添加到全局镜像列表（sAllImages）中的镜像
+所以 我们总是能够通过 _dyld_get_image_header(0)、_dyld_get_image_name(0) 等，索引到全局镜像列表中的第一个镜像（image）为主程序的相关信息
+
+ImageLoaderMachO::instantiateMainExecutable(...) 函数用于根据 MachO 文件不同的 LinkEdit 段类型为主程序创建不同的镜
+ImageLoader是抽象类，其子类负责把 MachO 文件实例化为镜像（image）
+当 sniffLoadCommands(...) 函数解析完成以后，会根据 compressed 的值来决定调用哪个具体的子类进行镜像的实例化
+
+ImageLoader 及其子类的继承关系如下
+class ImageLoaderMachO			 : 	class ImageLoader
+class ImageLoaderMachOClassic 	 : 	class ImageLoaderMachO
+class ImageLoaderMachOCompressed : 	class ImageLoaderMachO
+
+sniffLoadCommands(...) 函数用于校验 MachO 文件的格式是否合法 && 获取一些与 MachO 文件相关的数据，包括：
+① compressed：MachO 文件 LinkEdit 段的类型（true - 压缩类型，false - 经典类型）
+② segCount：MachO 文件所包含的 Segment（段）的数量
+③ libCount：MachO 文件所包含的 Library（库）的数量
+④ codeSigCmd：获取代码签名加载命令结构体 struct linkedit_data_command*
+⑤ encryptCmd：获取加密信息加载命令结构体 struct encryption_info_command*
+
+当主程序 MachO 文件的 LinkEdit 段为压缩类型时，调用 ImageLoaderMachOCompressed::instantiateMainExecutable(...) 函数为主程序创建镜像
+当主程序 MachO 文件的 LinkEdit 段为经典类型时，调用 ImageLoaderMachOClassic::instantiateMainExecutable(...) 函数为主程序创建镜像
+
+addImag(...) 函数用于将镜像（image）加入到全局镜像列表（sAllImages），并将镜像（image）映射到申请的内存中
+
+④ 加载插入的动态库
+loadInsertedDylib(...) 函数用于构造 LoadContext context 参数，并调用 load(...) 函数加载插入的动态库
+load(...) 函数是查找动态库镜像的一系列流程的入口
+
+ImageLoaderMachO::instantiateFromFile(...) 函数用于从 MachO 文件中映射被插入的动态库（即，用于从 MachO 文件中初始化被插入的动态库的镜像）
+
+ImageLoaderMachOCompressed::instantiateFromFile(...) 用于从 MachO 文件中初始化要被插入的动态库的镜像
+注意：因为现在的 MachO 文件的 LinkEdit 段大多是压缩类型的
+
+ImageLoaderMachO::instantiateFromCache(...) 函数用于从系统共享缓存中映射被插入的动态库
+（即，用于从系统共享缓存中初始化被插入的动态库的镜像）
+
+checkandAddImage(...) 函数用于验证镜像（image）并将其加入到全局镜像列表（sAllImages）中
+
+⑤ 链接主程序
+dyld::link(...) 函数用于对镜像进行一些必要的检查和处理，然后调用 ImageLoader::link(...) 函数来完成镜像的链接
+ImageLoader::link(...) 函数用于链接一个镜像（所谓的镜像包括：App主程序 + 动态库）
+本函数用于对实例化后的镜像的数据进行动态的修正，让镜像的二进制变为正常可用的状态（典型的就是主程序中符号表的修正操作）
+
+
+
+
+
+==========iOS 函数的调用顺序
+dyld 会根据 App 主程序中对动态库的编译顺序来初始化动态库的镜像（先编译先初始化，后编译后初始化）
+dyld 会优先初始化动态库的镜像，然后再初始化 App 主程序的镜像（App 主程序的镜像最后初始化）
+在同一个镜像内，Objective-C 的 +load 方法 会比 C 的 __attribute__((constructor) 函数 先调用
+所有镜像（包括 App 主程序的镜像）中的 +load 方法 和 __attribute__((constructor) 函数 都会比 主程序的 main 函数 先调用

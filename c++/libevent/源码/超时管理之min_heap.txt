@@ -1,0 +1,199 @@
+对于每一个需要监听的event，它都对应一个感兴趣的事件，当感兴趣的事件发生时，这个event就激活了。
+
+而实际上，往往都需要设置一个超时结构体timeval，这个超时结构体用来告诉内核“用多长时间去监听这个事件发生”，
+如果超过了这个时间event对应的感兴趣事件还没有发生，那么也会把这个event激活。
+为每一个event设置监听超时是很有必要的，因为不是所有event都需要永久监听的，
+当event的数目很多，就会有大量的超时结构体，定时器min_heap就是用来管理所有被监听的event的超时结构体的。
+
+在libevent中，提供了common_timeout+min_heap的方式来进行超时管理
+
+==============================min_heap的定义
+struct event_base {
+	......
+	/** Priority queue of events with timeouts. */
+	struct min_heap timeheap;
+	......
+};
+event_base中的所有设置了超时的event都会放在event_base的timeheap这一成员中
+
+==============================向min_heap中添加event
+为event添加一个超时是通过event_add实现的，而在event_add内部实际上是event_add_internal函数，该函数共有三个传入参数
+第一个参数是event指针，第二个参数是一个超时结构体timeval，第三个参数用于指明传入的超时结构体是否为绝对时间
+如果传入的timeval非空，说明event是需要设置超时的，通过event_add_internal就可以将该event添加到min_heap中
+
+static inline int
+event_add_internal(struct event *ev, const struct timeval *tv,
+    int tv_is_absolute)  
+{   
+	......
+	/*
+	 * prepare for timeout insertion further below, if we get a
+	 * failure on any step, we should not change any state.
+	 */
+	 //如果event设置了超时，并且event所设超时结构体不在time小根堆上，则在time小根堆中预留空间
+	if (tv != NULL && !(ev->ev_flags & EVLIST_TIMEOUT)) {  
+		if (min_heap_reserve(&base->timeheap,
+			1 + min_heap_size(&base->timeheap)) == -1)
+			return (-1);  /* ENOMEM == errno */
+	}
+ 
+	/*
+	 * we should change the timeout state only if the previous event
+	 * addition succeeded.
+	 */
+	if (res != -1 && tv != NULL) {
+		......
+		gettime(base, &now); //获取系统时间
+ 
+		common_timeout = is_common_timeout(tv, base);
+		if (tv_is_absolute) {  //如果是绝对时间 就直接用ev_timeout存储
+			ev->ev_timeout = *tv;
+		} else if (common_timeout) {  
+                ......
+		} else {
+			evutil_timeradd(&now, tv, &ev->ev_timeout); //如果就只是一个普通的相对时间，就直接用系统时间加上超时时长作为超时时间
+		}
+		......
+		event_queue_insert(base, ev, EVLIST_TIMEOUT); //插入到超时队列中
+		......
+}
+这里会先判断event的ev_flags，如果当前的ev_flags设置了EVLIST_TIMEOUT，说明此时这个event已经存在于超时队列中了
+否则说明这个event不存在与超时队列中，那么就会先在min_heap中预留一个位置，将来用于存放该event。
+
+接下来就会计算超时时间了
+用户在调用 event_add函数时，传入的timeval结构体一般来说都是相对时间，比如说传入3s的超时结构体，那么我们的想法自然是从现在开始的3s
+而在libevent中，判断一个事件是否到了超时的时间点，使用的是绝对时间
+举个例子，libevent会先找到当前的绝对时间（即从1970年1月1日到目前经过的时间，可以由gettimeofday函数获得）
+然后用当前的绝对时间加上传入的相对时间3s，得到的时间就是event最终超时的绝对时间。
+当需要判断这个event是否超时时，就会判断当前时刻的绝对时间是否达到了event的超时绝对时间，如果达到了那么就是超时了。
+
+因此，event_add_internal函数的第三个参数也就是指明了传入的时间是绝对时间还是相对时间
+如果是绝对时间，其含义就是当系统时间达到了这个绝对时间那就说明该事件超时了,因此就直接把传入的绝对直接设置到event的ev_timeout中
+而如果传入的不是一个绝对时间，那么就相当于前面举例，会将当前的系统时间加上传入的相对时间参数最终得到的绝对超时时间设置到event的ev_timeout中。
+
+最后一步也是最关键的一步，将设置了ev_timeout的event添加到min_heap中。
+这一步使用的是event_queue_insert函数,传入的第三个参数是EVLIST_TIMEOUT，说明这里是把event添加到超时队列中
+
+static void
+event_queue_insert(struct event_base *base, struct event *ev, int queue)
+{
+	......
+	switch (queue) {
+	case EVLIST_INSERTED:   ......
+	case EVLIST_ACTIVE:  ......
+	case EVLIST_TIMEOUT: {   //如果是设置超时事件
+		if (is_common_timeout(&ev->ev_timeout, base)) {
+			struct common_timeout_list *ctl =
+			    get_common_timeout_list(base, &ev->ev_timeout);
+			insert_common_timeout_inorder(ctl, ev);
+		} else
+			min_heap_push(&base->timeheap, ev);
+		break;
+	}
+	default:
+		event_errx(1, "%s: unknown queue %x", __func__, queue);
+	}
+}
+
+这里对传入的第三个参数进行了判断，由于刚刚说的传入的是EVLIST_TIMEOUT，
+并且由于设置的只是一个普通的超时时间，因此执行的是case EVLIST_TIMEOUT下的else部分，
+这一部分实现的功能很简单，就是把event插入到timeheap中。
+
+event添加到timeheap的过程:
+先通过传入的timeval计算event超时的绝对时间并且将其保存到event的ev_timeout成员中，
+然后将event插入到其对应的timeheap中，这样就完成了event在定时器min_heap中的添加。
+
+==============================min_heap中event的激活
+当你把所有event都设置好相应的感兴趣事件、回调函数等信息，并将其通过event_add添加到定时器中后
+就可以执行event_base_dispatch去监听event_base上的所有event了
+
+在该函数中执行的实际上是event_base_loop函数，这也就是事件主循环，在event_base_loop中，会对所有需要监听的事件进行监听
+如果有相应事件发生，就会把对应的event激活，而定时器上的event就在其中
+
+在event_base_loop函数中会调用timeout_process函数去处理定时器中超时的event
+static void
+timeout_process(struct event_base *base) //将所有超时的事件以超时激活类型添加到激活队列中
+{
+	/* Caller must hold lock. */
+	struct timeval now;
+	struct event *ev;
+ 
+	if (min_heap_empty(&base->timeheap)) {
+		return;
+	}
+ 
+	gettime(base, &now); //获取当前的系统时间
+ 
+	while ((ev = min_heap_top(&base->timeheap))) {
+		if (evutil_timercmp(&ev->ev_timeout, &now, >)) //比较定时器堆顶的event是否超时，如果没有超时说明定时器中没有event超时
+			break;
+		//如果定时器中有事件超时
+		/* delete this event from the I/O queues */
+		event_del_internal(ev);  //从相关队列中删除该event
+ 
+		event_debug(("timeout_process: call %p",
+			 ev->ev_callback));
+		event_active_nolock(ev, EV_TIMEOUT, 1); //按超时激活类型将事件添加到激活队列中
+	}
+}
+
+这个函数的作用就是先得到当前的系统绝对时间，然后从定时器堆顶开始，比较堆顶event的ev_timeout与当前系统绝对时间的大小关系
+如果前者更大，说明堆顶的event都还没有超时，那么整个定时器中的event都肯定没有超时了
+而如果后者更大，则说明当前堆顶的event已经超时，那么就会先调用event_del_internal函数
+
+static inline int
+event_del_internal(struct event *ev)
+{
+	......
+	if (ev->ev_flags & EVLIST_TIMEOUT) { //如果事件在超时队列中
+		/* NOTE: We never need to notify the main thread because of a
+		 * deleted timeout event: all that could happen if we don't is
+		 * that the dispatch loop might wake up too early.  But the
+		 * point of notifying the main thread _is_ to wake up the
+		 * dispatch loop early anyway, so we wouldn't gain anything by
+		 * doing it.
+		 */
+		event_queue_remove(base, ev, EVLIST_TIMEOUT);
+	}
+ 
+	if (ev->ev_flags & EVLIST_ACTIVE)   //如果事件已激活
+		event_queue_remove(base, ev, EVLIST_ACTIVE);
+ 
+	if (ev->ev_flags & EVLIST_INSERTED) {  //如果事件已添加
+		event_queue_remove(base, ev, EVLIST_INSERTED);
+		if (ev->ev_events & (EV_READ|EV_WRITE))
+			res = evmap_io_del(base, ev->ev_fd, ev);
+		else
+			res = evmap_signal_del(base, (int)ev->ev_fd, ev);
+		if (res == 1) {
+			/* evmap says we need to notify the main thread. */
+			notify = 1;
+			res = 0;
+		}
+	}
+	......
+}
+
+也就相当于是把超时的event从相关队列中删除，比如说在定时器的event的ev_flags中肯定是设置了EVLIST_TIMEOUT的，因此这里就会执行event_queue_remove(base, ev, EVLIST_ACTIVE)
+在该函数中则会将event从min_heap中删除
+static void
+event_queue_remove(struct event_base *base, struct event *ev, int queue)
+{
+	......
+	switch (queue) {
+	......
+	case EVLIST_TIMEOUT:
+		if (is_common_timeout(&ev->ev_timeout, base)) {
+			......
+		} else {
+			min_heap_erase(&base->timeheap, ev);
+		}
+		break;
+	}
+}
+
+timeout_process函数会把定时器min_heap中已经超时的event从定时器min_heap中删除
+接着又会执行event_active_nolock(ev, EV_TIMEOUT, 1);
+在该函数中又会调用event_queue_insert(base, ev, EVLIST_ACTIVE);函数来把这个event添加到激活队列中。
+
+接着只需要处理激活队列，就可以执行这些超时的event对应的回调函数。

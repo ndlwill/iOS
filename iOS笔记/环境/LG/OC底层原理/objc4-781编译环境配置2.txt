@@ -1,0 +1,61 @@
+基于macOS 10.15.1版本发布的objc4-781源码
+源码无法直接运行和编译，我们需要搭建可编译环境
+
+macOS 10.15.6
+Xcode 11.7
+objc4-781
+
+1.objc4-781源码下载
+https://opensource.apple.com/tarballs/，搜索objc4
+或者
+苹果开源源码汇总: https://opensource.apple.com
+点击Releases
+点击macOS选择10.15.1版本中，objc4-781
+
+2.依赖文件
+dyld-733.6
+launchd-106.10
+libauto-187
+Libc-1353.41.1 // 没有这个h文件, 重新下载https://opensource.apple.com/source/Libc/  Libc-583/pthreads/pthread_machdep.h
+libclosure-74
+libdispatch-1173.40.5
+libplatform-220
+libpthread-416.40.3
+xnu-6153.41.3
+
+除了lauchd-106.10需要在macOS -> 10.4.4.x86版本中下载。 其余均可在macOS -> 10.15.1版本中搜索到
+
+https://opensource.apple.com/source/Libc/Libc-825.24/include/CrashReporterClient.h.auto.html
+复制CrashReporterClient.h
+在 Build Settings搜索Preprocessor Macros, 加入：LIBC_NO_LIBCRASHREPORTERCLIENT
+
+pthread_machdep.h文件报错
+将193行至244行替换以下内容
+#if TARGET_IPHONE_SIMULATOR || defined(__ppc__) || defined(__ppc64__) || \
+    (defined(__arm__) && !defined(_ARM_ARCH_7) && defined(_ARM_ARCH_6) && defined(__thumb__))
+
+#define _pthread_getspecific_direct(key) pthread_getspecific((key))
+#define _pthread_setspecific_direct(key, val) pthread_setspecific((key), (val))
+
+#else
+#endif
+
+我们在HTCommon/mach-o/dyld_priv.h文件顶部加入缺失的宏
+#define DYLD_MACOSX_VERSION_10_11 0x000A0B00
+#define DYLD_MACOSX_VERSION_10_12 0x000A0C00
+#define DYLD_MACOSX_VERSION_10_13 0x000A0D00
+#define DYLD_MACOSX_VERSION_10_14 0x000A0E00
+
+在工程的 Order File 中添加搜索路径 $(SRCROOT)/libobjc.order
+
+搜索Other Linker Flags， 删除lCrashReporterClient（Debug和Release都删）
+
+选择target -> objc -> Build Phases -> Run Script(markgc)
+将macosx.internal改为macosx
+
+3. 编译源码
+
+编译成功后
+新建Target： Test
+macOS->Command Line Tool
+添加objc依赖

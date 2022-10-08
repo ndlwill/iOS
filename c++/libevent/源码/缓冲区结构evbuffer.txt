@@ -1,0 +1,1376 @@
+对于每一个fd，都相应有读和写两个缓冲区，而缓冲区管理则是由evbuffer这一结构实现的
+
+struct evbuffer {
+	struct evbuffer_chain *first; //指向第一个缓冲区结点
+ 
+	struct evbuffer_chain *last; //指向最后一个缓冲区结点
+ 
+	struct evbuffer_chain **last_with_datap; //指向最后一个有数据的缓冲区结点
+ 
+	size_t total_len; //缓冲区中的数据量
+ 
+	size_t n_add_for_cb; //当次缓冲区发生改变对应的数据增加量
+ 
+	size_t n_del_for_cb; //当次缓冲区发生改变对应的数据减少量
+ 
+#ifndef _EVENT_DISABLE_THREAD_SUPPORT
+	/** A lock used to mediate access to this buffer. */
+	void *lock; //锁变量
+#endif
+	unsigned own_lock : 1;//设置1则在释放evbuffer之前解锁
+ 
+	unsigned freeze_start : 1;//设置1则禁止从缓冲区头部添加或删除数据
+ 
+	unsigned freeze_end : 1;//设置1则禁止从缓冲区尾部添加或删除数据
+	 
+	unsigned deferred_cbs : 1; //使用延迟回调标志：设为1则开启延迟回调，初始化为0，由函数evbuffer_defer_callbacks设置
+ 
+	ev_uint32_t flags; //缓冲区的标志，目前版本仅支持一个默认标志EVBUFFER_FLAG_DRAINS_TO_FD
+ 
+	struct deferred_cb_queue *cb_queue; //开启延迟回调后，cb_queue指向event_base的defer_queue
+ 
+	int refcnt;  //缓冲区的引用计数
+ 
+	struct deferred_cb deferred; //作为缓冲区回调函数“代表”添加到主循环中，主循环处理它时就会调用缓冲区回调队列中的所有回调函数
+ 
+	TAILQ_HEAD(evbuffer_cb_queue, evbuffer_cb_entry) callbacks; //回调函数队列
+ 
+	struct bufferevent *parent;  //evbuffer属于哪个bufferevent
+};
+
+从evbuffer的结构可以看到，它其中最主要的是前面三个指针：两个evbuffer_chain一级指针以及一个evbuffer_chain二级指针。
+evbuffer是用来描述整个缓冲区的，缓冲区是由一个链表构成，链表的每一个结点都是evbuffer_chain类型，而缓冲区的所有数据也是存放在这些evbuffer_chain中的。
+而这三个指针则分别指向了链表中的头结点、尾结点以及最后一个含数据的结点。
+
+==============================evbuffer_chain结构
+struct evbuffer_chain {//每一个evbuffer_chain都有指向下一个evbuffer_chain的指针，并且包含一个字符串
+	/** points to next buffer in the chain */
+	struct evbuffer_chain *next;//下一个evbuffer_chain地址
+ 
+	/** total allocation available in the buffer field. */
+	size_t buffer_len;//buffer的容量
+ 
+	/** unused space at the beginning of buffer or an offset into a
+	 * file for sendfile buffers. */
+	ev_off_t misalign;//buffer前面有多少不可使用的字节
+ 
+	/** Offset into buffer + misalign at which to start writing.
+	 * In other words, the total number of bytes actually stored
+	 * in buffer. */
+	size_t off;   //off表示当前buffer中有多少字节的数据，off+misalign表示下一次buffer中写入的位置
+ 
+	/** Set if special handling is required for this chain */
+	unsigned flags;
+#define EVBUFFER_MMAP		0x0001	/**< memory in buffer is mmaped */
+#define EVBUFFER_SENDFILE	0x0002	/**< a chain used for sendfile */
+#define EVBUFFER_REFERENCE	0x0004	/**< a chain with a mem reference */
+#define EVBUFFER_IMMUTABLE	0x0008	/**< read-only chain */
+	/** a chain that mustn't be reallocated or freed, or have its contents
+	 * memmoved, until the chain is un-pinned. */
+#define EVBUFFER_MEM_PINNED_R	0x0010
+#define EVBUFFER_MEM_PINNED_W	0x0020
+#define EVBUFFER_MEM_PINNED_ANY (EVBUFFER_MEM_PINNED_R|EVBUFFER_MEM_PINNED_W)
+	/** a chain that should be freed, but can't be freed until it is
+	 * un-pinned. */
+#define EVBUFFER_DANGLING	0x0040
+ 
+	/** Usually points to the read-write memory belonging to this
+	 * buffer allocated as part of the evbuffer_chain allocation.
+	 * For mmap, this can be a read-only buffer and
+	 * EVBUFFER_IMMUTABLE will be set in flags.  For sendfile, it
+	 * may point to NULL.
+	 */
+	unsigned char *buffer;//存放数据的首地址
+};
+
+对于每个chain，也有相应的flags设置，这个flags用来描述这个chain中的数据性质
+Libevent提供了以下8种flag，后面4种主要用于windows iocp中
+
+EVBUFFER_MMAP和EVBUFFER_SENDFILE用于把文件传输给socket，EVBUFFER_MMAP表示chain中的数据是由文件内存映射而来，chain中包含了文件的相关信息以及文件映射地址；EVBUFFER_SENDFILE表示文件到socket的传输是通过sendfile进行的，chain中包含了文件的相关信息但没有数据。
+EVBUFFER_REFERENCE ：表示当前chain中的数据内存引用自其它数据，这样就无需拷贝；
+EVBUFFER_IMMUTABLE：表示当前chain中的数据是只读的。
+
+evbuffer_chain的结构中还有三个非常重要的成员：buffer_len、misalign和off。这三个成员都是用来描述chain中存放数据的buffer成员的。
+
+buffer_len是这个chain的容量；
+misalign是这个chain的整体数据偏移量，也可以理解为chain的buffer头部有misalign个字节的空间不可用；
+off则是描述chain的buffer现有的数据量。
+
+由于chain中存放数据的buffer是char *类型的，因此知道每次写入的位置是非常重要的，一般来说，写入的位置应当是buffer+misalign+off
+
+关于前面misalign个字节的作用，它们既可以用来在进行头插数据时，用来存放头插的数据，也可以在删除chain中数据时，如果只需要删除其中一部分数据
+一个比较好的方法就是直接把需要删除的数据放到这misalign个字节中，这样就从概念上进行了删除而避免删除一部分数据时的效率降低
+也还有其它很多作用，因此这misalign个字节的空间可以理解为“具有特殊作用”的区域。
+
+==============================evbuffer及evbuffer_chain的创建
+evbuffer的创建，是通过evbuffer_new函数进行的，这是一个向用户开放的接口
+struct evbuffer *
+evbuffer_new(void)//创建一个evbuffer
+{
+	struct evbuffer *buffer;
+ 
+	buffer = mm_calloc(1, sizeof(struct evbuffer));//用的是calloc，因此first和last存储的都是0，两个指针都是NULL
+	if (buffer == NULL)
+		return (NULL);
+ 
+	TAILQ_INIT(&buffer->callbacks);
+	buffer->refcnt = 1;  //初始化evbuffer的引用计数为1
+	buffer->last_with_datap = &buffer->first;//初始化时指向first指针
+ 
+	return (buffer);
+}
+
+evbuffer_chain的创建，它是通过evbuffer_chain_new进行的，不过该函数并不对用户开放
+#define EVBUFFER_CHAIN_EXTRA(t, c) (t *)((struct evbuffer_chain *)(c) + 1)
+ 
+//分配一个evbuffer_chain，并且包含一个额外大小为size，分配的size大小的额外部分与evbuffer_chain本体是连续的
+static struct evbuffer_chain *
+evbuffer_chain_new(size_t size)
+{
+	struct evbuffer_chain *chain;
+	size_t to_alloc;
+ 
+	size += EVBUFFER_CHAIN_SIZE;//宏定义为evbuffer_chain的size，因此size就是evbuffer_chain本身大小加上需要分配的额外空间大小的总大小
+ 
+	/* get the next largest memory that can hold the buffer */
+	to_alloc = MIN_BUFFER_SIZE;//在32位下最小分配大小为512字节
+	while (to_alloc < size)
+		to_alloc <<= 1;  //加倍保证大于size，
+ 
+	/* we get everything in one chunk */
+	if ((chain = mm_malloc(to_alloc)) == NULL)//to_alloc是evbuffer_chain加上额外空间，最终需要分配的总的大小
+		return (NULL);
+ 
+	memset(chain, 0, EVBUFFER_CHAIN_SIZE);//初始化evbuffer_chain本体部分为0
+ 
+	chain->buffer_len = to_alloc - EVBUFFER_CHAIN_SIZE;  //buffer_len就是额外分配的空间的大小
+ 
+	/* this way we can manipulate the buffer to different addresses,
+	 * which is required for mmap for example.
+	 */
+	chain->buffer = EVBUFFER_CHAIN_EXTRA(u_char, chain);//buffer指向额外分配的空间的首地址
+ 
+	return (chain);
+}
+在创建一个evbuffer_chain的时候，除了分配evbuffer_chain本身的大小之外，还会额外分配一个空间，这个额外分配的空间大小不会小于size
+并且在chain分配之后，会用chain中的buffer_len变量去记录这个额外分配空间的大小，用buffer变量去记录这个额外分配空间的首地址。
+额外分配的空间与evbuffer_chain本身是一起分配的，也就是说，额外分配的那一部分和evbuffer_chain本体部分是连续的。
+
+chain是缓冲区链表中存放数据的结点，这个额外分配的空间通常就用来存放缓冲区数据，但它也可以存放其它信息，这一点在后面文件向socket的传输实现中体现
+
+EVBUFFER_CHAIN_EXTRA。从名字上来看应该大致猜到这个宏与chain的额外空间相关
+它需要有两个参数，第二个参数c传入的是一个地址，它会将这个地址强制转换为evbuffer_chain类型，然后加1就相当于在这个地址上偏移了sizeof(evbuffer_chain)
+evbuffer_chain分配的额外空间实际上和它本身是连续的
+偏移后的地址实际上就是额外空间的首地址了
+然后这个宏传入的第一个参数是一个类型参数，它将额外空间的首地址进行强制类型转换。
+这里是强制类型转换为u_char类型，那么就相当于把额外空间的地址保存到了buffer变量中。
+
+==============================向evbuffer中插入一个evbuffer_chain
+由evbuffer_chain_insert函数实现，这是一个非开放接口
+
+static void
+evbuffer_chain_insert(struct evbuffer *buf,
+    struct evbuffer_chain *chain)
+{
+	ASSERT_EVBUFFER_LOCKED(buf);//前提需要持有锁
+	if (*buf->last_with_datap == NULL) {//由于缓冲区为空时last_with_datap是指向first的，如果它为空，说明此时缓冲区中一个chain都没有
+		/* There are no chains data on the buffer at all. */
+		EVUTIL_ASSERT(buf->last_with_datap == &buf->first);
+		EVUTIL_ASSERT(buf->first == NULL);
+		buf->first = buf->last = chain;//first和last都指向chain
+	} else {
+		struct evbuffer_chain **ch = buf->last_with_datap;//从last_with_datap的指向开始往后遍历
+		/* Find the first victim chain.  It might be *last_with_datap */
+		while ((*ch) && ((*ch)->off != 0 || CHAIN_PINNED(*ch)))//找到第一个没有数据的chain
+			ch = &(*ch)->next;
+		if (*ch == NULL) {//到这里说明整个缓冲区都遍历了，所有chain都是有数据的
+			/* There is no victim; just append this new chain. */
+			buf->last->next = chain;//将当前last指向的最后一个chain与新的chain连接起来
+			if (chain->off)//off非0表示chain中的buffer有数据，那么last_with_datap就指向新的chain
+				buf->last_with_datap = &buf->last->next;//last_with_datap指向last的next
+		} else {//到这里说明遍历到了一个空的chain，就用新的chain来替换这个空的chain及其后面所有的chain
+			/* Replace all victim chains with this chain. */
+			EVUTIL_ASSERT(evbuffer_chains_all_empty(*ch));//确保从这个空的chain后面的所有chain都是空的
+			evbuffer_free_all_chains(*ch);//释放这个空的chain以及后面的空chain，不会改变ch的值
+			*ch = chain;//ch依然是刚才的空chain的地址，赋值为新chain。
+		}
+		buf->last = chain;//last指向新的chain
+	}
+	buf->total_len += chain->off;//evbuffer中的总字节数
+}
+
+将chain插入evbuffer的过程，首先判断evbuffer是否为空，如果为空那么新插入的chain就是唯一的，直接让evbuffer的first和last指向新的chain即可，由于last_with_datap初始化是指向first的，因此，这里也不需要改变last_with_datap
+
+如果evbuffer非空，那么就遍历整个evbuffer的chain链表，去寻找第一个没有数据的chain
+如果遍历完整个链表都没有发现没有数据的chain，那么就让last的next指针指向新的chain,这就相当于把新的chain接入到了链表中
+如果新的chain中有数据，那么last_with_datap就会指向last的next指针，而此时next指针保存的是新的chain的地址
+如果在遍历过程中发现了一个空的chain，在正常情况下，这个chain包括它后面的所有chain就都应该是空的了，所以就直接把它及其后面的所有chain都释放，然后用新的chain进行替换。
+
+
+==============================向evbuffer中添加数据
+libevent提供了两种向缓冲区中添加数据的方法:头插和尾插。
+由于libevent中的缓冲区都是采取队列形式，即缓冲区中的数据都是先进先出，尾进头出的形式，
+因此evbuffer默认的添加数据形式是尾插法。两种形式都有相对应的开放接口。
+
+==============================向evbuffer的尾部添加数据
+int
+evbuffer_add(struct evbuffer *buf, const void *data_in, size_t datlen)
+{
+	struct evbuffer_chain *chain, *tmp;
+	const unsigned char *data = data_in;
+	size_t remain, to_alloc;
+	int result = -1;
+ 
+	EVBUFFER_LOCK(buf);
+ 
+	if (buf->freeze_end) {//如果不允许从后面追加就直接结束
+		goto done;
+	}
+ 
+	chain = buf->last;//找到evbuffer中的最后一个chain
+ 
+	/* If there are no chains allocated for this buffer, allocate one
+	 * big enough to hold all the data. */
+	if (chain == NULL) {//last为NULL，说明evbuffer中没有evbuffer_chain，就分配一个新的evbuffer_chain，chain中buffer的长度就是传入的数据参数的长度
+		chain = evbuffer_chain_new(datlen);
+		if (!chain)//如果分配失败直接结束
+			goto done;
+		evbuffer_chain_insert(buf, chain);//将新分配的chain添加到evbuffer中
+	}
+	//到这里就相当于找到了last所指向的chain，往这个chain中插入data
+	if ((chain->flags & EVBUFFER_IMMUTABLE) == 0) {//如果chain没有设置为只读
+		remain = (size_t)(chain->buffer_len - chain->misalign - chain->off);//计算chain中buffer考虑misalign的情况下还可以写入的字节数
+		if (remain >= datlen) {//如果chain中的buffer还能够放下data
+			/* there's enough space to hold all the data in the
+			 * current last chain */
+			//说明当前chain中的buffer可以存放下数据
+			memcpy(chain->buffer + chain->misalign + chain->off,
+			    data, datlen);//将data拷贝到chain的buffer中
+			chain->off += datlen;
+			buf->total_len += datlen; //buf中所有chain的buffer的总字节数
+			buf->n_add_for_cb += datlen;
+			goto out;
+		} else if (!CHAIN_PINNED(chain) &&
+		    evbuffer_chain_should_realign(chain, datlen)) {//remain<datlen
+		    //如果考虑misalign时buffer中剩下的长度不足以放下data，那么就考虑消除misalign时能否放下data
+		    //如果un-pinned并且清楚misalign后无需重新分配chain中的buffer即可装下data
+		    //即：1.chain中的buffer中剩余的空间足够 
+		    //2.并且chain中的buffer的数据长度还未达到buffer容量的一半和扩容阈值（2048B）
+			/* we can fit the data into the misalignment */
+			evbuffer_chain_align(chain); //消除misalign，把off个数据整体前移到buffer的开头
+ 
+			memcpy(chain->buffer + chain->off, data, datlen);//把data复制到修改后的chain的buffer中
+			chain->off += datlen;
+			buf->total_len += datlen;
+			buf->n_add_for_cb += datlen;
+			goto out;
+		}
+	} else {//如果设置chain为只读
+		/* we cannot write any data to the last chain */
+		remain = 0; //不能再写入数据
+	}
+	//如果chain中的buffer不管是否考虑misalign都放不下data
+	/* we need to add another chain */
+	to_alloc = chain->buffer_len;//chain的buffer长度
+	if (to_alloc <= EVBUFFER_CHAIN_MAX_AUTO_SIZE/2)
+		to_alloc <<= 1;
+	//EVBUFFER_CHAIN_MAX_AUTO_SIZE为4096，因此to_alloc不得低于4096
+	if (datlen > to_alloc)
+		to_alloc = datlen;
+	tmp = evbuffer_chain_new(to_alloc);//分配一个buffer长度为to_alloc的chain
+	if (tmp == NULL)
+		goto done;
+ 
+	if (remain) {//如果还能写入数据，就能写多少写多少到原来的chain的buffer中
+		memcpy(chain->buffer + chain->misalign + chain->off,
+		    data, remain);
+		chain->off += remain;
+		buf->total_len += remain;
+		buf->n_add_for_cb += remain;
+	}
+ 
+	data += remain;  //data偏移到未写入的部分
+	datlen -= remain;  //未写入的长度
+ 
+	memcpy(tmp->buffer, data, datlen);//未写入的部分直接写到新分配的tmp的buffer中，然后把tmp插入到buf中
+	tmp->off = datlen;
+	evbuffer_chain_insert(buf, tmp);//在该函数中total_len会增加datlen
+	buf->n_add_for_cb += datlen;
+ 
+out:
+	evbuffer_invoke_callbacks(buf);
+	result = 0;
+done:
+	EVBUFFER_UNLOCK(buf);
+	return result;
+}
+evbuffer_add需要传入待添加数据的缓冲区buf、待添加的数据data以及数据的长度datlen
+函数的作用就是将datlen字节长的data添加到buf所对应的链表末尾。
+此时就会存在三种情况:
+1.evbuffer对应的链表全为空，即一个chain都没有，此时只需要新建一个evbuffer_chain，让这个chain能够装下datlen长的数据，然后再把这个chain添加到evbuffer中即可；
+2.evbuffer中本身就有数据，计算最后一个chain是否能放下datlen长的数据。
+在这种情况下又有两种可能:
+一个是最后一个chain从off的地方开始可以存放下datlen长的数据，一个则是存放不下datlen长的数据
+对于前者，就是比较好的情况，就直接把data添加到off开始的位置即可；
+而对于后者，存放不下就会考虑如果把chain前面的misalign个字节空出来看看是否能把data放进去，这里的判断是由evbuffer_chain_should_realign函数实现的
+
+static int
+evbuffer_chain_should_realign(struct evbuffer_chain *chain,
+    size_t datlen)
+{
+	return chain->buffer_len - chain->off >= datlen &&
+	    (chain->off < chain->buffer_len / 2) &&
+	    (chain->off <= MAX_TO_REALIGN_IN_EXPAND);
+}
+因此这种情况的前提就是:
+去掉前面的misalign个字节就能放下
+并且当前chain中的数据量还未达到容量的一半和扩容阈值。
+如果三个条件都满足，那么就直接把现有的off个字节的数据向前偏移misalign个字节，然后再把data写在后面即可
+3.如果最后一个chain不管是否考虑misalign都放不下data，那就只能重新分配一个足以放下datlen长度的chain，然后把这个chain接到链表的最后即可。
+
+==============================在evbuffer的头部插入数据
+在evbuffer的头部插入数据，使用的是evbuffer_prepend函数
+
+int
+evbuffer_prepend(struct evbuffer *buf, const void *data, size_t datlen)
+{
+	struct evbuffer_chain *chain, *tmp;
+	int result = -1;
+ 
+	EVBUFFER_LOCK(buf);
+ 
+	if (buf->freeze_start) {//如果禁用了头部就直接结束
+		goto done;
+	}
+ 
+	chain = buf->first;//找到第一个结点
+ 
+	if (chain == NULL) {//如果evbuffer为空，就直接创建一个datlen大小的chain并插入evbuffer中
+		chain = evbuffer_chain_new(datlen);
+		if (!chain)
+			goto done;
+		evbuffer_chain_insert(buf, chain);
+	}
+ 
+	/* we cannot touch immutable buffers */
+	if ((chain->flags & EVBUFFER_IMMUTABLE) == 0) {
+		/* If this chain is empty, we can treat it as
+		 * 'empty at the beginning' rather than 'empty at the end' */
+		if (chain->off == 0)//如果第一个chain本身没有数据，就把整个buffer作为可插入区域
+			chain->misalign = chain->buffer_len;
+		//头插数据实际上是把数据插到第一个chain的misalign区域中
+		if ((size_t)chain->misalign >= datlen) {//如果misalign区域足以放下datlen个字节
+			/* we have enough space to fit everything */
+			memcpy(chain->buffer + chain->misalign - datlen,
+			    data, datlen);//直接用misalign区域的最后datlen个字节来存放data
+			chain->off += datlen;//把misalign中存放data的区域转换成off区域的数据
+			chain->misalign -= datlen;
+			buf->total_len += datlen;
+			buf->n_add_for_cb += datlen;
+			goto out;
+		} else if (chain->misalign) {//如果misalign区域放不下datlen个字节
+			/* we can only fit some of the data. */
+			memcpy(chain->buffer,
+			    (char*)data + datlen - chain->misalign,
+			    (size_t)chain->misalign);//就只把data的最后misalign个字节拷贝到misalign区域中
+			chain->off += (size_t)chain->misalign;
+			buf->total_len += (size_t)chain->misalign;
+			buf->n_add_for_cb += (size_t)chain->misalign;
+			datlen -= (size_t)chain->misalign;//计算剩下没有拷贝的字节数
+			chain->misalign = 0;
+		}
+	}
+	//到这里会有几种情况：
+	//1.第一个chain是只读的，并且evbuffer原本是空的，那么到这里evbuffer中就有一个空的chain；
+	//2.第一个chain是只读的，但是evbuffer本身非空，那么到这里evbuffer还未进行任何改变；
+	//3.第一个chain非只读，但是第一个chain只放的下一部分数据，那么就还剩datlen需要存放
+ 
+	//对于前两种情况，都只需要新建一个足够大的chain，然后把这个chain头插入链表即可
+	//对于第三种情况，就只需要新建一个datlen大的chain用来存放剩下还未存放的数据，然后把这个新的chain头插入链表即可
+	/* we need to add another chain */
+	if ((tmp = evbuffer_chain_new(datlen)) == NULL)//创建一个足以放下datlen长的数据的chain
+		goto done;
+	buf->first = tmp;//将新建的chain头插到链表中
+	if (buf->last_with_datap == &buf->first)
+		buf->last_with_datap = &tmp->next;
+ 
+	tmp->next = chain;
+ 
+	tmp->off = datlen;
+	tmp->misalign = tmp->buffer_len - datlen;
+ 
+	memcpy(tmp->buffer + tmp->misalign, data, datlen);//将data拷贝到新建的chain中
+	buf->total_len += datlen;
+	buf->n_add_for_cb += (size_t)chain->misalign;
+ 
+out:
+	evbuffer_invoke_callbacks(buf);
+	result = 0;
+done:
+	EVBUFFER_UNLOCK(buf);
+	return result;
+}
+
+头插数据就是把datlen长的数据data插入到evbuffer的头部，因此就从第一个结点开始。此时就分为以下几种情况:
+1.第一个结点只读，或者evbuffer中没有结点。这种情况下只需要新建一个足够大的chain来存放datlen长的数据data，然后把这个新建的chain头插到现有的evbuffer对应的链表中即可
+2.如果第一个结点非只读，那么就检查第一个结点是否能放下datlen长的数据。
+这里需要注意的是，向第一个结点进行头插，插入的位置实际上是第一个结点的misalign区域。
+如果第一个结点的misalign区域足以放下，那么就直接把data按末尾对齐的方式拷贝到misalign区域中（即是拷贝后的data与off区域相邻）
+如果第一个结点的misalign区域放不下data，那么就直接能放多少就放多少，然后新建一个chain用来存放剩下的字节，在新的chain中也应当是按照末尾对齐的方式来存放这些字节的
+
+==============================从evbuffer中提取数据
+libevent提供了两种从缓冲区提取数据的方法：拷贝式提取以及提取后删除
+前者是通过拷贝的方式从缓冲区中提取数据，而后者则是提取数据之后把被提取的数据从缓冲区中删除。二者分别对应evbuffer_copyout和evbuffer_drain。
+
+==============================拷贝式提取数据
+ev_ssize_t
+evbuffer_copyout(struct evbuffer *buf, void *data_out, size_t datlen)//将buf中的datlen字节复制到data_out中
+{
+	/*XXX fails badly on sendfile case. */
+	struct evbuffer_chain *chain;
+	char *data = data_out;
+	size_t nread;
+	ev_ssize_t result = 0;
+ 
+	EVBUFFER_LOCK(buf);
+ 
+	chain = buf->first;  //第一个chain的指针
+ 
+	if (datlen >= buf->total_len)//如果需要拷贝的数据长度超过了缓冲区的长度，就拷贝缓冲区中所有的数据
+		datlen = buf->total_len;
+ 
+	if (datlen == 0)
+		goto done;
+ 
+	if (buf->freeze_start) {//如果buf关闭了头部，那就无法取出数据了，直接结束
+		result = -1;
+		goto done;
+	}
+ 
+	nread = datlen;//保存总共需要拷贝的字节数
+ 
+	while (datlen && datlen >= chain->off) {//如果剩余需要拷贝的字节数超过当前chain的数据量
+		memcpy(data, chain->buffer + chain->misalign, chain->off);//将当前chain的所有数据都拷贝到data中
+		data += chain->off; //data地址偏移到末尾
+		datlen -= chain->off;  //计算剩余需要拷贝的字节数
+ 
+		chain = chain->next;  //下一个chain
+		EVUTIL_ASSERT(chain || datlen==0);
+	}
+ 
+	if (datlen) {//如果剩余需要拷贝的字节数少于chain的数据量
+		EVUTIL_ASSERT(chain);
+		memcpy(data, chain->buffer + chain->misalign, datlen);//剩多少就拷贝多少
+	}
+ 
+	result = nread;
+done:
+	EVBUFFER_UNLOCK(buf);
+	return result;  //返回拷贝的字节数
+}
+
+就可以从指定的缓冲区中提取datlen长度的数据到data_out中
+
+==============================提取后删除数据
+int
+evbuffer_drain(struct evbuffer *buf, size_t len)
+{
+	struct evbuffer_chain *chain, *next;
+	size_t remaining, old_len;
+	int result = 0;
+ 
+	EVBUFFER_LOCK(buf);
+	old_len = buf->total_len;//缓冲区的总长度
+ 
+	if (old_len == 0)
+		goto done;
+ 
+	if (buf->freeze_start) {//如果不允许从缓冲区头部删除数据就直接结束
+		result = -1;
+		goto done;
+	}
+ 
+	if (len >= old_len && !HAS_PINNED_R(buf)) {//如果要抽走的字节数超过了缓冲区的字节数
+		len = old_len;//抽空缓冲区
+		for (chain = buf->first; chain != NULL; chain = next) {
+			next = chain->next;
+			evbuffer_chain_free(chain);
+		}
+ 
+		ZERO_CHAIN(buf);//重新初始化缓冲区
+	} else { //如果要抽走的字节数少于缓冲区的字节数，就需要多少抽多少
+		if (len >= old_len)
+			len = old_len;
+ 
+		buf->total_len -= len;//减少缓冲区的长度
+		remaining = len;
+		for (chain = buf->first;
+		     remaining >= chain->off;
+		     chain = next) {//从第一个chain开始遍历，直到最后一个删除的chain
+			next = chain->next;
+			remaining -= chain->off;//剩余需要抽取的字节数
+			//如果当前chain已经是最后一个有数据的chain，remaining依然大于chain中的字节数，
+			//说明这个chain也需要被删除，删除后相当于直接清空缓冲区了，last_with_datap就重新指向first
+			if (chain == *buf->last_with_datap) { 
+				buf->last_with_datap = &buf->first;
+			}
+			//如果当前chain已经是倒数第二个有数据的chain，remaining依然大于chain中的字节数，
+			//说明这个chain也需要被删除，删除后就只剩下一个有数据的chain了，
+			//需要注意的是，如果free了倒数第二个有数据的chain，而last_with_datap是指向这个chain的next指针，
+			//删除之后指针就变成了野指针，并且缓冲区中就只剩一个chain了，
+			//而在缓冲区只有唯一一个cain的情况下，last_with_datap就是指向first的，所以这里直接让last_with_datap指向first
+			if (&chain->next == buf->last_with_datap)
+				buf->last_with_datap = &buf->first;
+ 
+			if (CHAIN_PINNED_R(chain)) {
+				EVUTIL_ASSERT(remaining == 0);
+				chain->misalign += chain->off;
+				chain->off = 0;
+				break;
+			} else
+				evbuffer_chain_free(chain); //释放chain
+		}
+ 
+		buf->first = chain;//把当前chain作为修改后的buffer的第一个chain
+		//对于remaining大于存放的数据长度的chain，会直接free
+		//而对于remaining小于存放的数据长度的chain，按理来说应该只删除前面remaining那一部分，
+		//但是这里并没有选择去删除这一部分字节，而是直接移动chain的misalign到remaning的位置，相应的减少chain的off，这样前面的remaning个字节就相当于被“禁用”了
+		if (chain) {
+			chain->misalign += remaining;//移动这个chain的misalign位置
+			chain->off -= remaining;
+		}
+	}
+ 
+	buf->n_del_for_cb += len;//删除的字节数
+	/* Tell someone about changes in this buffer */
+	evbuffer_invoke_callbacks(buf);//发送缓冲区变化，就调用回调函数
+ 
+done:
+	EVBUFFER_UNLOCK(buf);
+	return result;
+}
+
+从头开始遍历整个evbuffer_chain链表，不断判断chain的数据量与剩余需要抽取的数据量datlen关系。
+如果chain的数据量不超过datlen，那么就直接把整个chain中的数据抽取后删除这个chain，并计算新的datlen
+如果chain的数据量大于datlen，那么说明当前chain中的数据只需要抽取一部分，此时采取的措施并不是抽取这一部分数据后从chain中删除这一部分数据，而是直接改变chain的misalign，把需要删除的数据全部都包含到misalign中，这样就从概念上完成了删除。
+
+==============================evbuffer预留一定大小的空间
+举个例子，如果多次通过evbuffer_add向缓冲区中添加数据，如果最后一个chain无法放下datlen长的数据,那么就需要重新申请datlen大小的chain并用其来存放数据。
+这样就很容易多次开辟新空间来存放新数据。
+因此libevent提供了一种方法：用户可自行扩大缓冲区中最后一个chain的空间（因为添加数据绝大部分情况下都是尾插，因此扩大最后一个chain即可），这样就可以尽量避免多次开辟空间的开销。
+
+这里使用到的函数是evbuffer_expand
+int
+evbuffer_expand(struct evbuffer *buf, size_t datlen)
+{
+	struct evbuffer_chain *chain;
+ 
+	EVBUFFER_LOCK(buf);
+	chain = evbuffer_expand_singlechain(buf, datlen);
+	EVBUFFER_UNLOCK(buf);
+	return chain ? 0 : -1;
+}
+ 
+static struct evbuffer_chain *
+evbuffer_expand_singlechain(struct evbuffer *buf, size_t datlen)//保证buf的最后一个chain（或者是最后一个有数据的chain）能够放下datlen个数据，并返回这个chain
+{
+	struct evbuffer_chain *chain, **chainp;
+	struct evbuffer_chain *result = NULL;
+	ASSERT_EVBUFFER_LOCKED(buf);
+ 
+	chainp = buf->last_with_datap;
+	//*chainp指向最后一个有数据的chain
+ 
+	/* XXX If *chainp is no longer writeable, but has enough space in its
+	 * misalign, this might be a bad idea: we could still use *chainp, not
+	 * (*chainp)->next. */
+	if (*chainp && CHAIN_SPACE_LEN(*chainp) == 0)//如果最后一个有数据的chain已经放不下任何数据了
+		chainp = &(*chainp)->next;//找到下一个chain
+ 
+	/* 'chain' now points to the first chain with writable space (if any)
+	 * We will either use it, realign it, replace it, or resize it. */
+	chain = *chainp;
+ 
+	if (chain == NULL ||
+	    (chain->flags & (EVBUFFER_IMMUTABLE|EVBUFFER_MEM_PINNED_ANY))) {
+		/* We can't use the last_with_data chain at all.  Just add a
+		 * new one that's big enough. */
+		goto insert_new;
+	}
+ 
+	/* If we can fit all the data, then we don't have to do anything */
+	if (CHAIN_SPACE_LEN(chain) >= datlen) {//如果chain能够放下datlen个字节的数据，就可以直接返回该chain然后结束
+		result = chain;
+		goto ok;
+	}
+ 
+	/* If the chain is completely empty, just replace it by adding a new
+	 * empty chain. */
+	if (chain->off == 0) {//如果chain中本身就没有数据，那么就直接新建并插入一个足够大的chain（插入过程中这个空的chain实际上会被新的chain替代）
+		goto insert_new;
+	}
+ 
+	/* If the misalignment plus the remaining space fulfills our data
+	 * needs, we could just force an alignment to happen.  Afterwards, we
+	 * have enough space.  But only do this if we're saving a lot of space
+	 * and not moving too much data.  Otherwise the space savings are
+	 * probably offset by the time lost in copying.
+	 */
+	if (evbuffer_chain_should_realign(chain, datlen)) {
+		evbuffer_chain_align(chain);
+		result = chain;//如果不考虑misalign就能放下datlen长的数据，就可以直接返回该chain然后结束
+		goto ok;
+	}
+ 
+	/* At this point, we can either resize the last chunk with space in
+	 * it, use the next chunk after it, or   If we add a new chunk, we waste
+	 * CHAIN_SPACE_LEN(chain) bytes in the former last chunk.  If we
+	 * resize, we have to copy chain->off bytes.
+	 */
+ 
+	/* Would expanding this chunk be affordable and worthwhile? */
+	if (CHAIN_SPACE_LEN(chain) < chain->buffer_len / 8 ||
+	    chain->off > MAX_TO_COPY_IN_EXPAND) {//如果chain的剩余空间太小，或者已有数据过多
+		/* It's not worth resizing this chain. Can the next one be
+		 * used? */
+		if (chain->next && CHAIN_SPACE_LEN(chain->next) >= datlen) {
+			/* Yes, we can just use the next chain (which should
+			 * be empty. */
+			result = chain->next;//如果这个chain的下一个结点能够放下datlen个数据，就直接返回它的下一个结点
+			goto ok;
+		} else {
+			/* No; append a new chain (which will free all
+			 * terminal empty chains.) */
+			goto insert_new; //就直接新建并插入一个足够大的chain
+		}
+	} else {//到这里说明这个chain中的数据量还很少，那么为了不浪费这些空间，就直接新建一个足够大的chain，把已有的数据复制到新的chain中，然后用新的chain替换原来的chain
+		/* Okay, we're going to try to resize this chain: Not doing so
+		 * would waste at least 1/8 of its current allocation, and we
+		 * can do so without having to copy more than
+		 * MAX_TO_COPY_IN_EXPAND bytes. */
+		/* figure out how much space we need */
+		size_t length = chain->off + datlen;
+		struct evbuffer_chain *tmp = evbuffer_chain_new(length);
+		if (tmp == NULL)
+			goto err;
+ 
+		/* copy the data over that we had so far */
+		tmp->off = chain->off;
+		memcpy(tmp->buffer, chain->buffer + chain->misalign,
+		    chain->off);
+		/* fix up the list */
+		EVUTIL_ASSERT(*chainp == chain);
+		result = *chainp = tmp;
+ 
+		if (buf->last == chain)
+			buf->last = tmp;
+ 
+		tmp->next = chain->next;
+		evbuffer_chain_free(chain);
+		goto ok;
+	}
+ 
+insert_new:
+	result = evbuffer_chain_insert_new(buf, datlen);//创建一个新的足够放下datlen长度的chain，并将其直接插入buf中
+	if (!result)
+		goto err;
+ok:
+	EVUTIL_ASSERT(result);
+	EVUTIL_ASSERT(CHAIN_SPACE_LEN(result) >= datlen);
+err:
+	return result;
+}
+
+evbuffer_expand所采取的策略是：如果最后一个chain本身就足以放下datlen长度的数据，那么就什么都不干直接返回
+如果最后一个chain放不下，就又会分为以下几种情况:
+如果这个chain中的数据量比较多（剩余空间不到容量的1/8或者已有数据量达到了阈值），那么就检查它的下一个chain，一般来说下一个chain应该是空的
+如果大小足够就直接结束，否则就新建并插入一个datlen足够大小的chain来替换这个空的chain
+如果这个chain中的数据量比较少，那么就新建并插入一个足够大小的chain来替换这个chain，并且把这个chain中的数据拷贝到新的chain中。
+
+evbuffer_expand函数是为了让datlen长度的数据能够存放在一个chain中，Libevent还提供了另外一种扩容函数，该函数希望能在指定个数的chain中存放datlen长度的数据，函数为_evbuffer_expand_fast，不过它是内部使用的，函数定义如下
+
+//计算从缓冲区中的last_with_datap所指向的chain开始（包括该chain）不超过n个chain的总剩余空间大小，
+//如果这些大小不足datlen就重新在last_with_datap chain的后面分配一个能放下的新的chain，并且释放原来的后面所有空chain，这个chain的大小是datlen减去last_with_datap chain的剩余空间
+//如果足够就直接返回。
+int
+_evbuffer_expand_fast(struct evbuffer *buf, size_t datlen, int n)
+{
+	struct evbuffer_chain *chain = buf->last, *tmp, *next;//获取缓冲区的最后一个chain
+	size_t avail;
+	int used;
+ 
+	ASSERT_EVBUFFER_LOCKED(buf);
+	EVUTIL_ASSERT(n >= 2);
+ 
+	if (chain == NULL || (chain->flags & EVBUFFER_IMMUTABLE)) {//如果缓冲区是空的或者只读
+		/* There is no last chunk, or we can't touch the last chunk.
+		 * Just add a new chunk. */
+		chain = evbuffer_chain_new(datlen);//创建一个新的chain
+		if (chain == NULL)
+			return (-1);
+ 
+		evbuffer_chain_insert(buf, chain);//将新建的chain插入到缓冲区末尾
+		return (0);
+	}
+ 
+	used = 0; /* number of chains we're using space in. */
+	avail = 0; /* how much space they have. */
+	/* How many bytes can we stick at the end of buffer as it is?  Iterate
+	 * over the chains at the end of the buffer, tring to see how much
+	 * space we have in the first n. */
+	//从最后一个有数据的chain开始，遍历前n个chain，如果这些chain的空间大小足够放下datlen，就直接返回
+	for (chain = *buf->last_with_datap; chain; chain = chain->next) {
+		if (chain->off) {//如果chain中有数据就记录下chain的buffer的剩余空间
+			size_t space = (size_t) CHAIN_SPACE_LEN(chain);//获取chain的buffer剩余可写入大小 
+			EVUTIL_ASSERT(chain == *buf->last_with_datap);
+			if (space) {
+				avail += space;
+				++used;
+			}
+		} else {//如果chain中没有数据，就直接消除misalign
+			/* No data in chain; realign it. */
+			chain->misalign = 0;
+			avail += chain->buffer_len;
+			++used;
+		}
+		if (avail >= datlen) {//如果缓冲区的大小足够，就直接返回
+			/* There is already enough space.  Just return */
+			return (0);
+		}
+		if (used == n) //如果遍历的chain达到4个就不再遍历了
+			break;
+	}
+ 
+	/* There wasn't enough space in the first n chains with space in
+	 * them. Either add a new chain with enough space, or replace all
+	 * empty chains with one that has enough space, depending on n. */
+	//执行到这里说明n个chain遍历完了，或者是提前遍历到了buffer的末尾，此时这些遍历到的chain的剩余空间不足datlen
+	//
+	if (used < n) {//如果是提前遍历到了buffer的末尾
+		/* The loop ran off the end of the chains before it hit n
+		 * chains; we can add another. */
+		EVUTIL_ASSERT(chain == NULL);
+ 
+		tmp = evbuffer_chain_new(datlen - avail);//还需要多大就创建buffer多大的chain
+		if (tmp == NULL)
+			return (-1);
+		//将新建的chain尾接入缓冲区中
+		buf->last->next = tmp;
+		buf->last = tmp;
+		/* (we would only set last_with_data if we added the first
+		 * chain. But if the buffer had no chains, we would have
+		 * just allocated a new chain earlier) */
+		return (0);
+	} else {//如果是遍历的n个chain的剩余空间不足datlen
+		/* Nuke _all_ the empty chains. */
+		int rmv_all = 0; /* True iff we removed last_with_data. */
+		chain = *buf->last_with_datap;//找到最后一个有数据的chain
+		if (!chain->off) {//如果最后一个有数据的chain没有数据，说明整个缓冲区是空的
+			EVUTIL_ASSERT(chain == buf->first);
+			rmv_all = 1;
+			avail = 0;
+		} else {//重新计算最后一个有数据的chain的剩余空间
+			avail = (size_t) CHAIN_SPACE_LEN(chain);
+			chain = chain->next;
+		}
+ 
+ 
+		for (; chain; chain = next) {//遍历后面的chain，这些chain理应都是空的，然后释放这些空的chain
+			next = chain->next;
+			EVUTIL_ASSERT(chain->off == 0);
+			evbuffer_chain_free(chain);
+		}
+		tmp = evbuffer_chain_new(datlen - avail);//创建所需大小buffer的chain
+		if (tmp == NULL) {//分配失败
+			if (rmv_all) {//如果缓冲区本身就是空的，就重新初始化缓冲区
+				ZERO_CHAIN(buf);
+			} else {//否则把last_with_datap作为缓冲区最后一个chain
+				buf->last = *buf->last_with_datap;
+				(*buf->last_with_datap)->next = NULL;
+			}
+			return (-1);
+		}
+		//tmp分配成功
+		if (rmv_all) {//如果缓冲区本身就是空的，就把tmp插入缓冲区作为唯一的chain
+			buf->first = buf->last = tmp;
+			buf->last_with_datap = &buf->first;
+		} else {//否则插入到尾部
+			(*buf->last_with_datap)->next = tmp;
+			buf->last = tmp;
+		}
+		return (0);
+	}
+}
+
+从最后一个有数据的chain开始向后遍历n个chain（包括它本身）
+计算这n个chain总共能存放多少数据，如果能够放下datlen长度的数据就直接返回
+如果放不下，就先计算剩余长度，此时有两种情况:
+一种是从最后一个有数据的chain开始，后面不足n个chain，那么就直接新建一个能放下剩余数据的chain并将其尾插入链表中
+一种则是遍历了n个chain，但是这n个chain不足以放下datlen长度的数据，那么就只留下最后一个有数据的chain，然后用足够大小的chain来替换后面的n-1个chain
+
+==============================从fd读取数据到缓冲区中
+把数据从fd的内核缓冲区中读取到evbuffer中，使用到的函数是evbuffer_read函数
+
+int
+evbuffer_read(struct evbuffer *buf, evutil_socket_t fd, int howmuch)//将fd的howmuch个字节数据读到buf中
+{
+	struct evbuffer_chain **chainp;
+	int n;
+	int result;
+ 
+#ifdef USE_IOVEC_IMPL
+	int nvecs, i, remaining;
+#else
+	struct evbuffer_chain *chain;
+	unsigned char *p;
+#endif
+ 
+	EVBUFFER_LOCK(buf);
+ 
+	if (buf->freeze_end) {//如果缓冲区的尾部输入是关闭的，就直接结束
+		result = -1;
+		goto done;
+	}
+ 
+	n = get_n_bytes_readable_on_socket(fd);//获取fd对应的读缓冲区有多少字节可读
+	if (n <= 0 || n > EVBUFFER_MAX_READ)//如果获取失败或者可读字节数太大，就读取4096个字节
+		n = EVBUFFER_MAX_READ;
+	if (howmuch < 0 || howmuch > n)//如果howmuch设置为负数或者大于了fd读缓冲区中的数据，就直接把fd读缓冲区中的数据全部读出
+		howmuch = n;
+ 
+#ifdef USE_IOVEC_IMPL
+	/* Since we can use iovecs, we're willing to use the last
+	 * NUM_READ_IOVEC chains. */
+	if (_evbuffer_expand_fast(buf, howmuch, NUM_READ_IOVEC) == -1) {//保证缓冲区足够放下howmuch个字节，不够就重新分配
+		result = -1;//出错直接结束
+		goto done;
+	} else {//缓冲区大小足够
+		IOV_TYPE vecs[NUM_READ_IOVEC];//io向量数组
+#ifdef _EVBUFFER_IOVEC_IS_NATIVE
+		nvecs = _evbuffer_read_setup_vecs(buf, howmuch, vecs,
+		    NUM_READ_IOVEC, &chainp, 1);//vecs的每个元素都是存放howmuch个字节的chain的存放首地址和长度，chainp就是第一个存放howmuch个字节的那个chain
+#else
+		/* We aren't using the native struct iovec.  Therefore,
+		   we are on win32. */
+		struct evbuffer_iovec ev_vecs[NUM_READ_IOVEC];
+		nvecs = _evbuffer_read_setup_vecs(buf, howmuch, ev_vecs, 2,
+		    &chainp, 1);
+ 
+		for (i=0; i < nvecs; ++i)
+			WSABUF_FROM_EVBUFFER_IOV(&vecs[i], &ev_vecs[i]);
+#endif
+ 
+#ifdef WIN32
+		{
+			DWORD bytesRead;
+			DWORD flags=0;
+			if (WSARecv(fd, vecs, nvecs, &bytesRead, &flags, NULL, NULL)) {
+				/* The read failed. It might be a close,
+				 * or it might be an error. */
+				if (WSAGetLastError() == WSAECONNABORTED)
+					n = 0;
+				else
+					n = -1;
+			} else
+				n = bytesRead;
+		}
+#else
+		n = readv(fd, vecs, nvecs);//调用readv函数，将fd的数据读出到vecs中存放的chain首地址中，每个chain中存放相应长度的数据，n为总共读到的字节数，这个数字很可能不等于howmuch
+#endif
+	}
+	//到这里，howmuch个字节就全部从fd的内核缓冲区中读到了输入缓冲区中了
+#else /*!USE_IOVEC_IMPL*/
+	/* If we don't have FIONREAD, we might waste some space here */
+	/* XXX we _will_ waste some space here if there is any space left
+	 * over on buf->last. */
+	if ((chain = evbuffer_expand_singlechain(buf, howmuch)) == NULL) {
+		result = -1;
+		goto done;
+	}
+ 
+	/* We can append new data at this point */
+	p = chain->buffer + chain->misalign + chain->off;
+ 
+#ifndef WIN32
+	n = read(fd, p, howmuch);
+#else
+	n = recv(fd, p, howmuch, 0);//从fd中读入数据，最多读入howmuch个，实际读取字节数保存到n中
+#endif
+#endif /* USE_IOVEC_IMPL */
+ 
+	if (n == -1) {//如果前面的readv出错就直接结束
+		result = -1;
+		goto done;
+	}
+	if (n == 0) {//如果readv从fd中没有读到数据
+		result = 0;
+		goto done;
+	}
+ 
+#ifdef USE_IOVEC_IMPL
+	//到这里实际上就已经把所有数据都读到了buffer的nvecs个chain中，接下来就是更新这nvecs个chain的off
+	remaining = n;//remaining一开始初始化为从fd中读取到的字节数，这个值小于或等于howmuch
+	for (i=0; i < nvecs; ++i) {//nvecs是实际存放howmuch个字节用的chain的数量，即是遍历存放howmuch个字节的所有chain
+		ev_ssize_t space = (ev_ssize_t) CHAIN_SPACE_LEN(*chainp);
+		if (space < remaining) {//如果当前chain放不下剩余的字节，就能放多少是多少
+			(*chainp)->off += space;
+			remaining -= (int)space;//计算剩余能放下的字节数
+		} else {//如果当前chain能够放下剩余的字节，就直接把剩下的都放进去，而这个chain就理应是缓冲区中最后一个有数据的chain了
+			(*chainp)->off += remaining;
+			buf->last_with_datap = chainp;
+			break;
+		}
+		chainp = &(*chainp)->next;
+	}
+#else
+	chain->off += n;
+	advance_last_with_data(buf);
+#endif
+	buf->total_len += n;//缓冲中实际读入了n个字节数据
+	buf->n_add_for_cb += n;//记录下向缓冲区中添加的字节数
+ 
+	/* Tell someone about changes in this buffer */
+	evbuffer_invoke_callbacks(buf);//调用回调函数
+	result = n;
+done:
+	EVBUFFER_UNLOCK(buf);
+	return result;
+}
+
+在该函数中，会先通过get_n_bytes_readable_on_socket来获取fd的内核缓冲区中一共有多少数据可读
+static int
+get_n_bytes_readable_on_socket(evutil_socket_t fd)//返回fd的读缓冲区中可读的字节数
+{
+#if defined(FIONREAD) && defined(WIN32)
+	unsigned long lng = EVBUFFER_MAX_READ;
+	if (ioctlsocket(fd, FIONREAD, &lng) < 0)//windows下
+		return -1;
+	return (int)lng;
+#elif defined(FIONREAD)
+	int n = EVBUFFER_MAX_READ;
+	if (ioctl(fd, FIONREAD, &n) < 0)//linux下
+		return -1;
+	return n;
+#else
+	return EVBUFFER_MAX_READ;
+#endif
+}
+这就相当于知道了有多少数据需要读取，不过这并不能决定最终读取的数据量
+get_n_bytes_readable_on_socket的返回值是需要和EVBUFFER_MAX_READ作比较的，二者取其较小值并且不能最大只能为EVBUFFER_MAX_READ
+然后这个值又会和howmuch作类似的比较，最终evbuffer_read一次读取的数据量不能超过EVBUFFER_MAX_READ，也就是不能一次读取超过4096字节的数据。
+
+接着就是通过_evbuffer_expand_fast来预分配缓冲区大小用来存放需要读取的数据
+由于读取数据使用的函数是readv，该函数需要用到iovec数组，因此还需要对iovec数组进行一系列设置，用来指定接收数据的地址，这个过程由_evbuffer_read_setup_vecs完成
+int
+_evbuffer_read_setup_vecs(struct evbuffer *buf, ev_ssize_t howmuch,
+    struct evbuffer_iovec *vecs, int n_vecs_avail,
+    struct evbuffer_chain ***chainp, int exact)//把buf中用来存放howmuch个字节的所有chain的存放首地址和存放长度保存在io向量数组中，chainp返回第一个chain的地址
+{
+	struct evbuffer_chain *chain;
+	struct evbuffer_chain **firstchainp;
+	size_t so_far;
+	int i;
+	ASSERT_EVBUFFER_LOCKED(buf);
+ 
+	if (howmuch < 0)
+		return -1;
+ 
+	so_far = 0;
+	/* Let firstchain be the first chain with any space on it */
+	firstchainp = buf->last_with_datap;//从最后一个有数据的chain开始
+	if (CHAIN_SPACE_LEN(*firstchainp) == 0) {//如果最后一个有数据的chain已经没有空间了就找下一个
+		firstchainp = &(*firstchainp)->next;
+	}
+ 
+	chain = *firstchainp;
+	for (i = 0; i < n_vecs_avail && so_far < (size_t)howmuch; ++i) {
+		size_t avail = (size_t) CHAIN_SPACE_LEN(chain);//当前chain的buffer剩余空间
+		if (avail > (howmuch - so_far) && exact)//从前面到当前的chain能刚好放下howmuch个字节
+			avail = howmuch - so_far;
+		vecs[i].iov_base = CHAIN_SPACE_PTR(chain);//当前chain可以存放新数据的起始地址
+		vecs[i].iov_len = avail;//当前chain的可存放长度
+		so_far += avail;//当前chain及之前的chain总共存放的字节数
+		chain = chain->next;//下一个chain
+	}
+	//向量数组中每个iovec存放的都是chain存放数据的起始地址以及数据长度
+	*chainp = firstchainp;//把第一个用来存放数据的chain保存下来
+	return i;//返回实际上遍历的chain的数量
+}
+
+实际上iovec对应的就是多个连续的chain
+接下来就只需要通过readv函数来将数据从fd的内核缓冲区中读到chain中，最后一步则是再去遍历这些chain，更新各个chain的off
+
+==============================把缓冲区中的数据写到fd中
+把数据从缓冲区写出到fd的内核缓冲区中，使用到的函数是evbuffer_write函数
+int
+evbuffer_write(struct evbuffer *buffer, evutil_socket_t fd)
+{
+	return evbuffer_write_atmost(buffer, fd, -1);
+}
+ 
+ 
+int
+evbuffer_write_atmost(struct evbuffer *buffer, evutil_socket_t fd,
+    ev_ssize_t howmuch)//从buffer中的数据写出到fd中
+{
+	int n = -1;
+ 
+	EVBUFFER_LOCK(buffer);
+ 
+	if (buffer->freeze_start) {//如果缓冲区头部依然是freeze状态，说明此时不能从缓冲区向fd写出
+		goto done;
+	}
+ 
+	if (howmuch < 0 || (size_t)howmuch > buffer->total_len)
+		howmuch = buffer->total_len;//单次写出的字节数不能超过输出缓冲区的长度
+ 
+	if (howmuch > 0) {
+#ifdef USE_SENDFILE
+		struct evbuffer_chain *chain = buffer->first;
+		if (chain != NULL && (chain->flags & EVBUFFER_SENDFILE))
+			n = evbuffer_write_sendfile(buffer, fd, howmuch);
+		else {
+#endif
+#ifdef USE_IOVEC_IMPL
+		n = evbuffer_write_iovec(buffer, fd, howmuch);//从输出缓冲区的头部写出数据到fd中
+#elif defined(WIN32)
+		/* XXX(nickm) Don't disable this code until we know if
+		 * the WSARecv code above works. */
+		void *p = evbuffer_pullup(buffer, howmuch);
+		n = send(fd, p, howmuch, 0);
+#else
+		void *p = evbuffer_pullup(buffer, howmuch);
+		n = write(fd, p, howmuch);
+#endif
+#ifdef USE_SENDFILE
+		}
+#endif
+	}
+ 
+	if (n > 0)//把已经发送了的数据从输出缓冲区中清除
+		evbuffer_drain(buffer, n);
+ 
+done:
+	EVBUFFER_UNLOCK(buffer);
+	return (n);
+}
+与读入数据不同的是，写出数据时就不会去获取fd的内核缓冲区可写入多少字节的数据，而是直接按照当前缓冲区中的数据量，有多少就尽量写出多少
+数据的写出是通过evbuffer_write_iovec函数实现的
+
+#ifdef USE_IOVEC_IMPL
+static inline int
+evbuffer_write_iovec(struct evbuffer *buffer, evutil_socket_t fd,
+    ev_ssize_t howmuch)//期望发送howmuch个字节，返回实际发送的字节数
+{
+	IOV_TYPE iov[NUM_WRITE_IOVEC];
+	struct evbuffer_chain *chain = buffer->first;
+	int n, i = 0;
+ 
+	if (howmuch < 0)
+		return -1;
+ 
+	ASSERT_EVBUFFER_LOCKED(buffer);
+	/* XXX make this top out at some maximal data length?  if the
+	 * buffer has (say) 1MB in it, split over 128 chains, there's
+	 * no way it all gets written in one go. */
+	while (chain != NULL && i < NUM_WRITE_IOVEC && howmuch) {
+#ifdef USE_SENDFILE
+		/* we cannot write the file info via writev */
+		if (chain->flags & EVBUFFER_SENDFILE)
+			break;
+#endif
+		iov[i].IOV_PTR_FIELD = (void *) (chain->buffer + chain->misalign);//chain中数据的首地址
+		if ((size_t)howmuch >= chain->off) {//如果剩余要发的数据大于或等于当前chain中的数据长度
+			/* XXXcould be problematic when windows supports mmap*/
+			iov[i++].IOV_LEN_FIELD = (IOV_LEN_TYPE)chain->off;//全部发送
+			howmuch -= chain->off;//计算剩余要发的数据
+		} else {//如果剩余要发的数据小于当前chain中的数据长度
+			/* XXXcould be problematic when windows supports mmap*/
+			iov[i++].IOV_LEN_FIELD = (IOV_LEN_TYPE)howmuch;//当前chain是最后一个需要发送的
+			break;
+		}
+		chain = chain->next;//下一个chain
+	}
+	if (! i)//说明没有发送数据
+		return 0;
+#ifdef WIN32
+	{
+		DWORD bytesSent;
+		if (WSASend(fd, iov, i, &bytesSent, 0, NULL, NULL))
+			n = -1;
+		else
+			n = bytesSent;
+	}
+#else
+	n = writev(fd, iov, i);//发送数据
+#endif
+	return (n);
+}
+#endif
+
+也会借助iovec去存放需要写出数据的chain的地址，然后通过writev函数将这些数据写出
+在数据写出之后，回到evbuffer_write函数中，还会调用evbuffer_drain函数来把已经发送的数据从缓冲区中删除
+
+==============================缓冲区的回调函数处理
+在每次对缓冲区进行修改的函数（如evbuffer_read、evbuffer_drain等函数）最后，都会调用evbuffer_invoke_callbacks函数
+并且每次在调用该函数之前，都还会用n_del_for_cb或n_add_for_cb变量来记录此次缓冲区的修改量（缓冲区增加/减少了多少数据）
+每个缓冲区都存在一个回调函数队列，evbuffer_invoke_callbacks则是用来处理回调函数队列中的函数,这是一个内部函数
+
+void
+evbuffer_invoke_callbacks(struct evbuffer *buffer)
+{
+	if (TAILQ_EMPTY(&buffer->callbacks)) {//如果buffer回调队列为空，就重置n_add_for_cb和n_del_for_cb
+		buffer->n_add_for_cb = buffer->n_del_for_cb = 0;
+		return;
+	}
+	
+	if (buffer->deferred_cbs) {//该标志位为1表明调用了evbuffer_defer_callbacks函数，此时buffer的cb_queue指向了base的defer_queue
+		if (buffer->deferred.queued)//如果deferred已经插入到base的defer队列中了就直接返回
+			return;
+		_evbuffer_incref_and_lock(buffer);//增加引用计数并上锁
+		if (buffer->parent)
+			bufferevent_incref(buffer->parent);//把缓冲区所在的bufferevent的引用计数也加一
+		EVBUFFER_UNLOCK(buffer);
+		event_deferred_cb_schedule(buffer->cb_queue, &buffer->deferred);//将deferred插入到base的defer_queue中并唤醒主线程
+	}
+	//第二个参数为0，那么就会立即处理水位回调函数，其他回调函数根据buffer->deferred_cbs来确定是否延迟到主循环中处理
+	evbuffer_run_callbacks(buffer, 0);
+}
+
+这个函数并没有直接处理回调函数队列，而是先判断buffer->deferred_cbs这个变量的值
+这个变量设置为1时表示开启延时回调。延迟回调的作用就是让应当立刻处理的缓冲区回调函数放到事件主循环中去处理。
+那么这个变量的值是如何去设置的呢？
+由于evbuffer在创建的时候使用的是calloc函数，也就相当于会把evbuffer中所有成员都置为0，因此，deferred_cbs的默认值就是0，也就是默认不开启延迟回调。延迟回调的开启是通过evbuffer_defer_callbacks函数实现的。
+
+int
+evbuffer_defer_callbacks(struct evbuffer *buffer, struct event_base *base)
+{
+	EVBUFFER_LOCK(buffer);
+	buffer->cb_queue = event_base_get_deferred_cb_queue(base);//buffer的cb_queue指向base的defer_queue
+	buffer->deferred_cbs = 1;//设置deferred_cbs为1
+	event_deferred_cb_init(&buffer->deferred,
+	    evbuffer_deferred_callback, buffer);//清空deferred，然后设置deferred回调函数为evbuffer_deferred_callback
+	EVBUFFER_UNLOCK(buffer);
+	return 0;
+}
+ 
+struct deferred_cb_queue *
+event_base_get_deferred_cb_queue(struct event_base *base)//获取base的defer_queue
+{
+	return base ? &base->defer_queue : NULL;
+}
+ 
+void
+event_deferred_cb_init(struct deferred_cb *cb, deferred_cb_fn fn, void *arg)
+{
+	memset(cb, 0, sizeof(struct deferred_cb));
+	cb->cb = fn;
+	cb->arg = arg;
+}
+
+在evbuffer_defer_callbacks函数中，做了这样几件事:
+让buffer的cb_queue指针变量指向了event_base的延迟回调队列defer_queue、设置deferred_cbs的值为1、为buffer的deferred变量添加回调函数为evbuffer_deferred_callback
+接着回到evbuffer_invoke_callbacks函数中，如果开启了延迟回调，那么就会在evbuffer_invoke_callbacks函数中调用函数event_deferred_cb_schedule
+
+void
+event_deferred_cb_schedule(struct deferred_cb_queue *queue,
+    struct deferred_cb *cb)//将cb追加到queue的回调函数队列末尾
+{
+	if (!queue) {
+		if (current_base)
+			queue = &current_base->defer_queue;
+		else
+			return;
+	}
+ 
+	LOCK_DEFERRED_QUEUE(queue);
+	if (!cb->queued) {//如果还没有插入
+		cb->queued = 1;//插入回调队列前置为1，表示这个deferred_cb已经添加到base的defer_queue了
+		TAILQ_INSERT_TAIL(&queue->deferred_cb_list, cb, cb_next);//把这个deferred_cb插入到queue的deferred_cb_list末尾
+		++queue->active_count;
+		if (queue->notify_fn)//唤醒主线程的dispatch
+			queue->notify_fn(queue, queue->notify_arg);
+	}
+	UNLOCK_DEFERRED_QUEUE(queue);
+}
+
+调用该函数时传入的两个参数是buffer->cb_queue和&buffer->deferred
+在开启延迟回调的evbuffer_defer_callbacks函数中已经知道，cb_queue会指向event_base，而deferred也会设置一个回调函数evbuffer_deferred_callback
+在event_deferred_cb_schedule函数中，做的最重要的事情，就是把deferred插入到了event_base的延迟回调队列中，然后唤醒了主线程的dispatch。
+
+延迟回调的过程:
+在evbuffer_defer_callbacks开启延迟回调时，就会为buffer的deferred变量设置回调函数
+如果开启了延迟回调，又去调用evbuffer_invoke_callbacks函数，那么这个deferred变量就会被添加到event_base的延迟回调队列中
+###
+当事件主循环处理激活队列时，也会处理延迟回调队列，此时就会调用deferred的回调函数evbuffer_deferred_callback
+###
+
+static void
+evbuffer_deferred_callback(struct deferred_cb *cb, void *arg)//选择主循环处理时，放在base的defer队列中的那个deferred_cb的回调函数
+{
+	struct bufferevent *parent = NULL;
+	struct evbuffer *buffer = arg;
+ 
+	/* XXXX It would be better to run these callbacks without holding the
+	 * lock */
+	EVBUFFER_LOCK(buffer);
+	parent = buffer->parent;
+	evbuffer_run_callbacks(buffer, 1);//处理除水位回调函数以外的其他函数（水位回调函数在选择主循环延迟调用时就已经调用了）
+	_evbuffer_decref_and_unlock(buffer);
+	if (parent)
+		bufferevent_decref(parent);
+}
+在该函数中，会调用evbuffer_run_callbacks函数，而该函数在evbuffer_invoke_callbacks的最后也会进行调用，只不过这两个地方调用的参数不同
+
+//running_deferred的设置与是否及时处理高水位回调函数有关，水位回调函数都是设置为NODEFER的，即不应该延迟回调
+//running_deferred为1：evbuffer_run_callbacks不会处理水位回调函数，会处理其他回调函数
+//running_deferred为0：evbuffer_run_callbacks会处理水位回调函数，至于其他回调函数是否处理，需要看在调用该函数之前是否选择在主循环中处理
+static void
+evbuffer_run_callbacks(struct evbuffer *buffer, int running_deferred)
+{
+	struct evbuffer_cb_entry *cbent, *next;
+	struct evbuffer_cb_info info;//记录从上一次调用evbuffer_run_callbacks结束到这次调用evbuffer_run_callbacks之间，缓冲区的长度变化，包括原长度、添加量和删除量
+	size_t new_size;
+	ev_uint32_t mask, masked_val;
+	int clear = 1;
+	//evbuffer_cb_entry的flags
+	//EVBUFFER_CB_NODEFER:仅读高水位回调函数使用
+	//EVBUFFER_CB_ENABLED:表明当前回调函数可以执行
+	//EVBUFFER_CB_OBSOLETE:表明使用废弃函数
+	if (running_deferred) {
+		mask = EVBUFFER_CB_NODEFER|EVBUFFER_CB_ENABLED;
+		masked_val = EVBUFFER_CB_ENABLED;
+	} else if (buffer->deferred_cbs) {//如果running_deferred为0，但是延迟到主循环处理
+		mask = EVBUFFER_CB_NODEFER|EVBUFFER_CB_ENABLED;
+		masked_val = EVBUFFER_CB_NODEFER|EVBUFFER_CB_ENABLED;
+		/* Don't zero-out n_add/n_del, since the deferred callbacks
+		   will want to see them. */
+		clear = 0;//当前只处理水位回调函数，clear置为0
+	} else {//如果running_deferred为0并且不需要延迟到主循环处理
+		mask = EVBUFFER_CB_ENABLED;
+		masked_val = EVBUFFER_CB_ENABLED;
+	}
+ 
+	ASSERT_EVBUFFER_LOCKED(buffer);
+ 
+	if (TAILQ_EMPTY(&buffer->callbacks)) {
+		buffer->n_add_for_cb = buffer->n_del_for_cb = 0;
+		return;
+	}
+	if (buffer->n_add_for_cb == 0 && buffer->n_del_for_cb == 0)
+		return;
+ 
+	new_size = buffer->total_len;//缓冲区的字节数
+	info.orig_size = new_size + buffer->n_del_for_cb - buffer->n_add_for_cb;//计算缓冲区原来的字节数
+	info.n_added = buffer->n_add_for_cb;//此次缓冲区增加的字节数
+	info.n_deleted = buffer->n_del_for_cb;//此次缓冲区删除的字节数
+	if (clear) {//如果不需要延迟到主循环处理回调，说明当前就会处理完所有回调函数，就直接复位
+		buffer->n_add_for_cb = 0;
+		buffer->n_del_for_cb = 0;
+	}
+	for (cbent = TAILQ_FIRST(&buffer->callbacks);
+	     cbent != TAILQ_END(&buffer->callbacks); 
+	     cbent = next) {//遍历回调队列，调用回调函数
+		/* Get the 'next' pointer now in case this callback decides
+		 * to remove itself or something. */
+		next = TAILQ_NEXT(cbent, next);
+ 
+		if ((cbent->flags & mask) != masked_val)
+			continue;
+		//执行到这里，
+		//如果是第一种类型，那么flags就应当为设置EVBUFFER_CB_ENABLED但是没有设置EVBUFFER_CB_NODEFER
+		//如果是第二种类型，那么flags就应当同时设置了EVBUFFER_CB_ENABLED和EVBUFFER_CB_NODEFER
+		//如果是第三种类型，那么flags就只需要设置了EVBUFFER_CB_ENABLED
+ 
+		//设置running_deffer为1，那么就不会立即处理读高水位回调函数
+		//设置running_deffer为0，并且选择由主循环延迟回调，那么就只处理读高水位回调函数
+		//设置running_deffer为0，也没有选择由主循环延迟回调，那么就全部马上处理
+		if ((cbent->flags & EVBUFFER_CB_OBSOLETE))
+			cbent->cb.cb_obsolete(buffer,
+			    info.orig_size, new_size, cbent->cbarg);
+		else
+			cbent->cb.cb_func(buffer, &info, cbent->cbarg);
+	}
+}
+在缓冲区的回调队列中，存在两种类型的回调函数：水位回调函数与非水位回调函数
+水位回调函数顾名思义，就是当缓冲区中的数据量达到水位时的回调函数
+Libevent将这两种回调函数区分开，是因为水位回调本身就更要求“及时”，因为缓冲区数据量达到水位时，往往都需要立即处理，如果还进行延迟处理，那就缓冲区就有可能会丢失数据了
+
+因此，为了区分这两种类型的回调函数，evbuffer_run_callbacks就进行了相应的定义:
+running_deferred的设置与是否及时处理高水位回调函数有关，水位回调函数都是设置为NODEFER的，即不应该延迟回调
+running_deferred为1：evbuffer_run_callbacks不会处理水位回调函数，会处理其他回调函数；
+running_deferred为0：evbuffer_run_callbacks会处理水位回调函数，至于其他回调函数是否处理，需要看在调用该函数之前是否开启了延迟回调。
+
+在evbuffer_invoke_callbacks函数最后，传入的running_deferred参数为0，这表明evbuffer_run_callbacks会立即处理水位回调函数，但是其他回调函数会根据是否开启延迟回调来进行处理，这是符合逻辑的
+而在开启延迟回调后，主循环处理延迟回调队列的回调函数evbuffer_deferred_callback中，传入的running_deferred则是1，这是因为执行该函数时表明已经开启了延迟回调，而水位回调函数已经在前面被“立刻调用”了，因此此时就只需要处理其他回调函数即可，这也是符合逻辑的
+
+==============================struct evbuffer
+struct evbuffer {
+	struct evbuffer_chain *first; //指向第一个缓冲区结点
+ 
+	struct evbuffer_chain *last; //指向最后一个缓冲区结点
+ 
+	struct evbuffer_chain **last_with_datap; //指向最后一个有数据的缓冲区结点
+ 
+	size_t total_len; //缓冲区中的数据量
+ 
+	size_t n_add_for_cb; //当次缓冲区发生改变对应的数据增加量
+ 
+	size_t n_del_for_cb; //当次缓冲区发生改变对应的数据减少量
+ 
+#ifndef _EVENT_DISABLE_THREAD_SUPPORT
+	/** A lock used to mediate access to this buffer. */
+	void *lock; //锁变量
+#endif
+	unsigned own_lock : 1;//设置1则在释放evbuffer之前解锁
+ 
+	unsigned freeze_start : 1;//设置1则禁止从缓冲区头部添加或删除数据
+ 
+	unsigned freeze_end : 1;//设置1则禁止从缓冲区尾部添加或删除数据
+	 
+	unsigned deferred_cbs : 1; //使用延迟回调标志：设为1则开启延迟回调，初始化为0，由函数evbuffer_defer_callbacks设置
+ 
+	ev_uint32_t flags; //缓冲区的标志，目前版本仅支持一个默认标志EVBUFFER_FLAG_DRAINS_TO_FD
+ 
+	struct deferred_cb_queue *cb_queue; //开启延迟回调后，cb_queue指向event_base的defer_queue
+ 
+	int refcnt;  //缓冲区的引用计数
+ 
+	struct deferred_cb deferred; //作为缓冲区回调函数“代表”添加到主循环中，主循环处理它时就会调用缓冲区回调队列中的所有回调函数
+ 
+	TAILQ_HEAD(evbuffer_cb_queue, evbuffer_cb_entry) callbacks; //回调函数队列
+ 
+	struct bufferevent *parent;  //evbuffer属于哪个bufferevent
+};
+
+==============================struct deferred_cb
+/** A deferred_cb is a callback that can be scheduled to run as part of
+ * an event_base's event_loop, rather than running immediately. */
+struct deferred_cb {
+	/** Links to the adjacent active (pending) deferred_cb objects. */
+	TAILQ_ENTRY (deferred_cb) cb_next;
+	/** True iff this deferred_cb is pending in an event_base. */
+	unsigned queued : 1;
+	/** The function to execute when the callback runs. */
+	deferred_cb_fn cb;
+	/** The function's second argument. */
+	void *arg;
+};
+
+==============================struct deferred_cb_queue
+/** A deferred_cb_queue is a list of deferred_cb that we can add to and run. */
+struct deferred_cb_queue {
+	/** Lock used to protect the queue. */
+	void *lock;
+
+	/** How many entries are in the queue? */
+	int active_count;
+
+	/** Function called when adding to the queue from another thread. */
+	void (*notify_fn)(struct deferred_cb_queue *, void *);
+	void *notify_arg;
+
+	/** Deferred callback management: a list of deferred callbacks to
+	 * run active the active events. */
+	TAILQ_HEAD (deferred_cb_list, deferred_cb) deferred_cb_list;
+};

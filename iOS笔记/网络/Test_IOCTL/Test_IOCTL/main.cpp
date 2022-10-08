@@ -71,6 +71,7 @@ int get_if_info(int fd) {
     ret = ioctl(fd, SIOCGIFCONF, (char *)&ifc);
     printf("ret = %d\n", ret);
     
+    // 492 / 32
     if_num = ifc.ifc_len / sizeof(struct ifreq);
     printf("interface num is interface = %d\n", if_num);// 15
     
@@ -104,7 +105,9 @@ void ifconfig() {
  ifconfig命令首先打开一个socket，然后通过系统管理员输入的参数初始化一个数据结构，并通过ioctl调用将数据传送到内核
  */
 int main(int argc, const char * argv[]) {
-    getIFADDR();
+    //getIFADDR();
+    
+    ifconfig();
     
     return 0;
 }

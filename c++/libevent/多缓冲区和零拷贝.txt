@@ -1,0 +1,191 @@
+在libevent的报文收发处理过程中采用了一系列提高收发性能的技术，其中多缓冲区的接收和发送以及零拷贝技术
+
+struct iovec {
+    ptr_t iov_base; /* Starting address */
+    size_t iov_len; /* Length in bytes */
+};
+
+int readv(int fd, const struct iovec *vector, int count);
+int writev(int fd, const struct iovec *vector, int count);
+
+其中的iovec是指一个缓冲区，包含了数据区的地址和对应的长度，在两个函数中的count是指iovec的个数。
+这种多缓冲区的发送和接收操作性能相对更好。而iovec需要在使用前分配好相关的内存空间。
+
+零拷贝技术:
+零拷贝能够减少数据之间无效的数据拷贝，而直接进行数据的发送，通常在数据发送的过程中使用,特别是在文件发送的过程中被经常使用。
+通常情况下要将文件a.txt中的内容发送出去，需要进行如下的操作:
+
+读取文件内容: read(),然后发送读取的内容send()。
+因此一个完整的过程会出现一个读取再发送的操作，往往文件的IO操作是相对费时的操作，
+因此零拷贝技术实际上就是较少了read()的处理过程，即在发送数据前不需要进行文件的读取操作，这样相对而言就会提高处理的性能。
+关于零拷贝的技术有很多方式，这里主要介绍sendfile和mmap.
+
+其中的mmap是采用映射的方式将文件内容映射到内存中，在发送报文时直接读取内存中的内容，这样就能提高发送效率。
+sendfile则是直接将读取到文件fd的内容发送到输出的fd中，也不需要文件读取的过程，性能也会提高。
+
+以上两种处理方式实际上都是内核协助完成
+void *mmap(void *start,size_t length,int prot,int flags,int fd,off_t offsize）;
+ssize_t sendfile(int out_fd, int in_fd, off_t *offset, size_t count);
+
+Libevent中多缓存的分析:
+关于多缓冲区的数据发送和接收主要是在报文的接收和发送过程中使用，多缓冲区减少了调用send和recv的次数
+/* 如果支持多缓冲区的写操作 */
+int
+evbuffer_write_iovec(struct evbuffer *buffer, evutil_socket_t fd,
+    ev_ssize_t howmuch)
+{
+    IOV_TYPE iov[NUM_WRITE_IOVEC];
+    struct evbuffer_chain *chain = buffer->first;
+    int n, i = 0;
+
+    if (howmuch < 0)
+        return -1;
+
+    ASSERT_EVBUFFER_LOCKED(buffer);
+    /* XXX make this top out at some maximal data length? if the
+     * buffer has (say) 1MB in it, split over 128 chains, there's
+     * no way it all gets written in one go. */
+     /* 从evbuffer中将对应的数据拷贝出来 */
+    while (chain != NULL && i < NUM_WRITE_IOVEC && howmuch) {
+#ifdef USE_SENDFILE
+        /* we cannot write the file info via writev */
+        if (chain->flags & EVBUFFER_SENDFILE)
+            break;
+#endif
+        /*iov[i].iov_base XXX的含义*/
+        iov[i].IOV_PTR_FIELD = (void *) (chain->buffer + chain->misalign);
+        if ((size_t)howmuch >= chain->off) {
+            /* XXXcould be problematic when windows supports mmap*/
+            /*iov[i++].iov_len是指长度*/
+            iov[i++].IOV_LEN_FIELD = (IOV_LEN_TYPE)chain->off;
+            howmuch -= chain->off;
+        } else {
+            /* XXXcould be problematic when windows supports mmap*/
+            iov[i++].IOV_LEN_FIELD = (IOV_LEN_TYPE)howmuch;
+            break;
+        }
+        chain = chain->next;
+    }
+    if (! i)
+        return 0;
+    /* 采用多缓冲区发送，因此fd应该是发送的接口 */
+    n = writev(fd, iov, i);
+
+    return (n);
+}
+
+接收报文的的处理过程:
+int
+evbuffer_read(struct evbuffer *buf, evutil_socket_t fd, int howmuch)
+{
+    struct evbuffer_chain **chainp;
+    int n;
+    int result;
+
+    int nvecs, i, remaining;
+
+    EVBUFFER_LOCK(buf);
+
+    if (buf->freeze_end) {
+        result = -1;
+        goto done;
+    }
+
+    n = get_n_bytes_readable_on_socket(fd);
+    if (n <= 0 || n > EVBUFFER_MAX_READ)
+        n = EVBUFFER_MAX_READ;
+    if (howmuch < 0 || howmuch > n) /* 读写长度 */
+        howmuch = n;
+
+    /* Since we can use iovecs, we're willing to use the last
+     * NUM_READ_IOVEC chains. */
+    if (_evbuffer_expand_fast(buf, howmuch, NUM_READ_IOVEC) == -1) {
+        result = -1;
+        goto done;
+    } else {
+        IOV_TYPE vecs[NUM_READ_IOVEC];
+        /* 实际是完成数据空间的预分配，即vecs空间的分配，4个vecs的空间，chainp是缓冲区的开始地址 */
+        nvecs = _evbuffer_read_setup_vecs(buf, howmuch, vecs,
+         NUM_READ_IOVEC, &chainp, 1);
+
+        /* 调用readv，采用多缓冲区的读写方式，linux的高级套接字，n是实际返回的长度 */
+        n = readv(fd, vecs, nvecs);
+    }
+
+    if (n == -1) {
+        result = -1;
+        goto done;
+    }
+    if (n == 0) {
+        result = 0;
+        goto done;
+    }
+
+    remaining = n;
+    /* nvecs是指多个缓冲区，但是不一定有那么多的数据 */
+    for (i=0; i < nvecs; ++i) {
+        /* 获取chain的长度 */
+        ev_ssize_t space = (ev_ssize_t) CHAIN_SPACE_LEN(*chainp);
+        if (space < remaining) { /* 若长度不够 */
+            (*chainp)->off += space; /* 则当前chain的内存使用完毕 */
+            remaining -= (int)space; /* 剩下的内存空间 */
+        } else {
+            (*chainp)->off += remaining; /* 当前空间已经足够 */
+            buf->last_with_datap = chainp;
+            break;
+        }
+        chainp = &(*chainp)->next;
+    }
+
+    /* 更新当前实际的有效长度 */
+    buf->total_len += n;
+    buf->n_add_for_cb += n;
+
+    /* Tell someone about changes in this buffer */
+    evbuffer_invoke_callbacks(buf);
+    result = n;
+done:
+    EVBUFFER_UNLOCK(buf);
+    return result;
+
+设置缓存队列:
+int
+_evbuffer_read_setup_vecs(struct evbuffer *buf, ev_ssize_t howmuch,
+    struct evbuffer_iovec *vecs, int n_vecs_avail,
+    struct evbuffer_chain ***chainp, int exact)
+{
+    struct evbuffer_chain *chain;
+    struct evbuffer_chain **firstchainp;
+    size_t so_far;
+    int i;
+    ASSERT_EVBUFFER_LOCKED(buf);
+
+    if (howmuch < 0)
+        return -1;
+
+    so_far = 0;
+    /* Let firstchain be the first chain with any space on it */
+    /* 从当前有数据的位置保存 */
+    firstchainp = buf->last_with_datap;
+    if (CHAIN_SPACE_LEN(*firstchainp) == 0) {
+        firstchainp = &(*firstchainp)->next;
+    }
+
+    chain = *firstchainp;
+    for (i = 0; i < n_vecs_avail && so_far < (size_t)howmuch; ++i) {
+        /* 获取当前chain可用的内存大小 */
+        size_t avail = (size_t) CHAIN_SPACE_LEN(chain);
+        if (avail > (howmuch - so_far) && exact) /* 当前内存足够存放 */
+            avail = howmuch - so_far;
+        /* vecs的基地址 */
+        vecs[i].iov_base = CHAIN_SPACE_PTR(chain);
+        vecs[i].iov_len = avail;
+        so_far += avail;
+        
+        chain = chain->next;
+    }
+
+    *chainp = firstchainp;
+    return i;
+}
+在接收的过程中只需要设置好对应的缓存区大小以及对应的缓存地址，然后调用readv进行报文的接收。
