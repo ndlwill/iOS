@@ -1,0 +1,40 @@
+锁对应的结构体为evthread_lock_callbacks
+
+struct evthread_lock_callbacks {
+   /** The current version of the locking API.  Set this to
+    * EVTHREAD_LOCK_API_VERSION */
+   int lock_api_version;
+   /** Which kinds of locks does this version of the locking API
+    * support?  A bitfield of EVTHREAD_LOCKTYPE_RECURSIVE and
+    * EVTHREAD_LOCKTYPE_READWRITE.
+    *
+    * (Note that RECURSIVE locks are currently mandatory, and
+    * READWRITE locks are not currently used.)
+    **/
+   unsigned supported_locktypes;
+   /** Function to allocate and initialize new lock of type 'locktype'.
+    * Returns NULL on failure. */   //以下都是函数指针
+   void *(*alloc)(unsigned locktype);    //分配一个指定类型的锁，如果分配失败返回NULL
+   /** Funtion to release all storage held in 'lock', which was created
+    * with type 'locktype'. */
+   void (*free)(void *lock, unsigned locktype);   //释放一个指定类型的锁，分配成功返回0，否则失败
+   /** Acquire an already-allocated lock at 'lock' with mode 'mode'.
+    * Returns 0 on success, and nonzero on failure. */
+   int (*lock)(unsigned mode, void *lock);     //对一个已分配的锁进行加锁，锁的模式为read/write/try，获取成功返回0
+   /** Release a lock at 'lock' using mode 'mode'.  Returns 0 on success,
+    * and nonzero on failure. */
+   int (*unlock)(unsigned mode, void *lock);   //对一个已持有的锁进行解锁，解锁成功返回0；需指定锁的模式
+};
+
+
+后面4个成员为函数指针，分别指向锁的分配(alloc)、释放(free)、上锁(lock)和解锁(unlock)四个函数，由此可见，libevent中的锁函数也是可以用户自己定制的
+
+thread.h中宏定义了WRITE、READ和TRY三种模式，以及RECURSIVE和READWRITE两种类型
+#define EVTHREAD_WRITE    0x04      //用于读写锁中的写模式
+#define EVTHREAD_READ    0x08       //用于读写锁中的读模式
+#define EVTHREAD_TRY    0x10      //尝试加锁模式，如果获取不到锁也不用阻塞
+#define EVTHREAD_LOCKTYPE_RECURSIVE 1        //递归锁，同一线程可以多次持有同一个锁，其他线程如果想获取该锁，需要持有线程进行加锁次数的解锁，此时递归锁才能被其他线程持有
+#define EVTHREAD_LOCKTYPE_READWRITE 2      //读写锁，可以多个线程同时以读模式持有同一个锁，但是只能有一个线程以写模式持有该锁，如果该锁被写模式持有，那么其他线程也无法以读模式持有该锁
+
+实际上还有默认的普通锁类型和模式，值为0
+

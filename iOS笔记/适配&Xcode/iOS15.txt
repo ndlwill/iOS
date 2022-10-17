@@ -1,0 +1,354 @@
+https://blog.csdn.net/u014084081/article/details/102605945
+
+
+
+Bottom Sheet：UISheetPresentationController
+class UISheetPresentationController : UIPresentationController
+
+UIPresentationController用于管理过渡动画和屏幕上控制器的presentation
+https://developer.apple.com/documentation/uikit/uipresentationcontroller
+
+从一个控制器被presented到dismissed，UIKit使用presentation控制器来管理视图控制器的显示过程的各个方面。
+
+presentation可以在animator对象提供的动画之上添加自己的动画，可以响应size的变化，并且可以管理视图控制器在屏幕上的呈现方式的其他方面
+当使用present(_:animated:completion:) 方法present视图控制器时，UIKit始终管理展示过程。 
+该过程的一部分涉及创建适合给定表示样式的表示控制器。
+对于内置样式（例如UIModalPresentationStyle.pageSheet样式），UIKit定义并创建所需的presentation控制器对象。
+你的应用程序唯一可以提供自定义表示控制器，是在设置视图控制器modalPresentationStyle属性为UIModalPresentationStyle.custom时。
+当你想在要显示的视图控制器下方添加阴影视图或装饰视图时，或者想要以其他方式修改显示行为时，可以提供自定义的显示控制器。
+可以通过控制器的transitioning委托，提供自定义的presentation对象
+
+
+UIViewControllerTransitioningDelegate
+https://developer.apple.com/documentation/uikit/uiviewcontrollertransitioningdelegate
+
+有如下的方法
+func presentationController(forPresented: UIViewController, presenting: UIViewController?, source: UIViewController) -> UIPresentationController?
+提供一个UIPresentationController，用于管理视图层次结构
+
+----------在Presentation中添加自定义View:
+当一个控制器即将被presented，UIKit调用presentation控制器的 presentationTransitionWillBegin()方法。可以使用这个方法将view添加到view层级中，并设置相关的动画
+在presentation结束的时候，UIKit调用presentationTransitionDidEnd(_:) 方法
+在dismissing控制器的时候，使用 dismissalTransitionWillBegin() 方法来配置动画，使用 dismissalTransitionDidEnd(_:) 方法从视图层级中移除自定义view
+
+eg:
+添加了一个dimming view作为背景，在presentationTransitionWillBegin()方法中添加dimming view，然后淡入动画和过渡动画一起执行。
+在presentationTransitionDidEnd(_:) 中移除dimming view。
+
+- (void)presentationTransitionWillBegin {
+   // Add a custom dimming view behind the presented view controller's view
+   [[self containerView] addSubview:_dimmingView];
+   [_dimmingView addSubview:[[self presentedViewController] view]];
+ 
+   // Use the transition coordinator to set up the animations.
+    id <UIViewControllerTransitionCoordinator> transitionCoordinator =
+          [[self presentingViewController] transitionCoordinator];
+ 
+   // Fade in the dimming view during the transition.
+    [_dimmingView setAlpha:0.0];
+    [transitionCoordinator animateAlongsideTransition:
+       ^(id<UIViewControllerTransitionCoordinatorContext> context) {
+          [_dimmingView setAlpha:1.0];
+       } completion:nil];
+}
+ 
+- (void)presentationTransitionDidEnd:(BOOL)completed {
+   // Remove the dimming view if the presentation was aborted.
+   if (!completed) {
+      [_dimmingView removeFromSuperview];
+   }
+}
+
+
+----------Adapting Size Class的改变:
+Presentation控制器管理size class的改变，通过调整presentation style。
+
+当水平的size class从regular变为compact时，presentation控制器调用adaptivePresentationStyle方法来确定应用那种新样式。
+因为presentation控制器对象可能会改变，所以应该从presented控制器的presentationController属性获取presentation控制器。
+
+当presentation style 改变时，presentation控制器可以让你有机会指定新的presented view controller。
+在开始过渡之前，presentation控制器调用其委托对象的presentationController(_:viewControllerForAdaptivePresentationStyle:) 方法。
+
+----------响应Size的改变
+Size改变表示的是控制器view的高或者宽的微小变化。
+通常，这些变化会在设备在纵向和横向之间旋转时发生，当size发生变化时，UIKit会调用presentation控制的viewWillTransition(to:with:) 方法。
+
+在通知你的演示presentation控制器即将发生大小更改后，UIKit会开始正常的视图布局过程。
+使用自动布局的应用程序无需执行任何操作，因为自动布局机制会根据需要调整视图的大小。
+但是，如果自定义presentation控制器需要进行特定于布局的更改，则可以在containerViewWillLayoutSubviews() 和 containerViewDidLayoutSubviews()方法中进行更改。
+这些方法等价于UIViewController类的viewWillLayoutSubviews() 和viewDidLayoutSubviews()方法。
+
+----------继承
+继承UIPresentationController，在初始化的过程中需要调用init(presentedViewController:presenting:) 方法，这是这个类的指定初始化器
+
+
+----------IPresentationController Tutorial: Getting Started
+https://www.raywenderlich.com/3636807-uipresentationcontroller-tutorial-getting-started
+
+how to present view controllers with custom transitions and custom presentation styles.
+
+==================================================SlideInPresentationAnimator
+final class SlideInPresentationAnimator: NSObject {
+  // MARK: - Properties
+  let direction: PresentationDirection
+  let isPresentation: Bool
+
+  // MARK: - Initializers
+  init(direction: PresentationDirection, isPresentation: Bool) {
+    self.direction = direction
+    self.isPresentation = isPresentation
+    super.init()
+  }
+}
+
+// MARK: - UIViewControllerAnimatedTransitioning
+extension SlideInPresentationAnimator: UIViewControllerAnimatedTransitioning {
+  func transitionDuration(
+    using transitionContext: UIViewControllerContextTransitioning?
+  ) -> TimeInterval {
+    return 0.3
+  }
+  
+  func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
+    let key: UITransitionContextViewControllerKey = isPresentation ? .to : .from
+    guard let controller = transitionContext.viewController(forKey: key)
+      else { return }
+    
+    if isPresentation {
+      transitionContext.containerView.addSubview(controller.view)
+    }
+
+    let presentedFrame = transitionContext.finalFrame(for: controller)
+    var dismissedFrame = presentedFrame
+    switch direction {
+    case .left:
+      dismissedFrame.origin.x = -presentedFrame.width
+    case .right:
+      dismissedFrame.origin.x = transitionContext.containerView.frame.size.width
+    case .top:
+      dismissedFrame.origin.y = -presentedFrame.height
+    case .bottom:
+      dismissedFrame.origin.y = transitionContext.containerView.frame.size.height
+    }
+
+    let initialFrame = isPresentation ? dismissedFrame : presentedFrame
+    let finalFrame = isPresentation ? presentedFrame : dismissedFrame
+
+    let animationDuration = transitionDuration(using: transitionContext)
+    controller.view.frame = initialFrame
+    UIView.animate(
+      withDuration: animationDuration,
+      animations: {
+        controller.view.frame = finalFrame
+    }, completion: { finished in
+      if !self.isPresentation {
+        controller.view.removeFromSuperview()
+      }
+      transitionContext.completeTransition(finished)
+    })
+  }
+}
+
+
+==================================================SlideInPresentationController
+final class SlideInPresentationController: UIPresentationController {
+  // MARK: - Properties
+  private var dimmingView: UIView!
+  private let direction: PresentationDirection
+  
+  // frameOfPresentedViewInContainerView
+  override var frameOfPresentedViewInContainerView: CGRect {
+    var frame: CGRect = .zero
+    frame.size = size(forChildContentContainer: presentedViewController,
+                      withParentContainerSize: containerView!.bounds.size)
+    
+    switch direction {
+    case .right:
+      frame.origin.x = containerView!.frame.width*(1.0/3.0)
+    case .bottom:
+      frame.origin.y = containerView!.frame.height*(1.0/3.0)
+    default:
+      frame.origin = .zero
+    }
+    return frame
+  }
+  
+  // MARK: - Initializers
+  init(presentedViewController: UIViewController,
+       presenting presentingViewController: UIViewController?,
+       direction: PresentationDirection) {
+    self.direction = direction
+    super.init(presentedViewController: presentedViewController, presenting: presentingViewController)
+    setupDimmingView()
+  }
+  
+  override func presentationTransitionWillBegin() {
+    guard let dimmingView = dimmingView else {
+      return
+    }
+    containerView?.insertSubview(dimmingView, at: 0)
+    
+    NSLayoutConstraint.activate(NSLayoutConstraint.constraints(withVisualFormat: "V:|[dimmingView]|",
+                                                               options: [],
+                                                               metrics: nil,
+                                                               views: ["dimmingView": dimmingView]))
+    
+    NSLayoutConstraint.activate(NSLayoutConstraint.constraints(withVisualFormat: "H:|[dimmingView]|",
+                                                               options: [],
+                                                               metrics: nil,
+                                                               views: ["dimmingView": dimmingView]))
+    
+    guard let coordinator = presentedViewController.transitionCoordinator else {
+      dimmingView.alpha = 1.0
+      return
+    }
+    
+    coordinator.animate(alongsideTransition: { _ in
+      self.dimmingView.alpha = 1.0
+    })
+  }
+  
+  override func dismissalTransitionWillBegin() {
+    guard let coordinator = presentedViewController.transitionCoordinator else {
+      dimmingView.alpha = 0.0
+      return
+    }
+    
+    coordinator.animate(alongsideTransition: { _ in
+      self.dimmingView.alpha = 0.0
+    })
+  }
+  
+  override func containerViewWillLayoutSubviews() {
+    presentedView?.frame = frameOfPresentedViewInContainerView
+  }
+  
+  /*
+ When the content container forwards viewWillTransitionToSize:withTransitionCoordinator: to its children, 
+ it will call this method to determine what size to send them. 
+ 
+ If the returned size is the same as the child container's current size, 
+ viewWillTransitionToSize:withTransitionCoordinator: will not be called.
+ */
+  override func size(forChildContentContainer container: UIContentContainer,
+                     withParentContainerSize parentSize: CGSize) -> CGSize {
+    switch direction {
+    case .left, .right:
+      return CGSize(width: parentSize.width*(2.0/3.0), height: parentSize.height)
+    case .bottom, .top:
+      return CGSize(width: parentSize.width, height: parentSize.height*(2.0/3.0))
+    }
+  }
+}
+
+// MARK: - Private
+private extension SlideInPresentationController {
+  func setupDimmingView() {
+    dimmingView = UIView()
+    dimmingView.translatesAutoresizingMaskIntoConstraints = false
+    dimmingView.backgroundColor = UIColor(white: 0.0, alpha: 0.5)
+    dimmingView.alpha = 0.0
+    
+    let recognizer = UITapGestureRecognizer(target: self,
+                                            action: #selector(handleTap(recognizer:)))
+    dimmingView.addGestureRecognizer(recognizer)
+  }
+  
+  @objc func handleTap(recognizer: UITapGestureRecognizer) {
+    presentingViewController.dismiss(animated: true)
+  }
+}
+
+
+==================================================SlideInPresentationManager
+enum PresentationDirection {
+  case left
+  case top
+  case right
+  case bottom
+}
+
+final class SlideInPresentationManager: NSObject {
+  // MARK: - Properties
+  var direction: PresentationDirection = .left
+  var disableCompactHeight = false
+}
+
+// MARK: - UIViewControllerTransitioningDelegate
+extension SlideInPresentationManager: UIViewControllerTransitioningDelegate {
+  func presentationController(
+    forPresented presented: UIViewController,
+    presenting: UIViewController?,
+    source: UIViewController
+  ) -> UIPresentationController? {
+    let presentationController = SlideInPresentationController(
+      presentedViewController: presented,
+      presenting: presenting,
+      direction: direction
+    )
+    presentationController.delegate = self
+    return presentationController
+  }
+
+  func animationController(
+    forPresented presented: UIViewController,
+    presenting: UIViewController,
+    source: UIViewController
+  ) -> UIViewControllerAnimatedTransitioning? {
+    return SlideInPresentationAnimator(direction: direction, isPresentation: true)
+  }
+
+  func animationController(
+    forDismissed dismissed: UIViewController
+  ) -> UIViewControllerAnimatedTransitioning? {
+    return SlideInPresentationAnimator(direction: direction, isPresentation: false)
+  }
+}
+
+// MARK: - UIAdaptivePresentationControllerDelegate
+extension SlideInPresentationManager: UIAdaptivePresentationControllerDelegate {
+  func adaptivePresentationStyle(
+    for controller: UIPresentationController,
+    traitCollection: UITraitCollection
+  ) -> UIModalPresentationStyle {
+    if traitCollection.verticalSizeClass == .compact && disableCompactHeight {
+      return .overFullScreen
+    } else {
+      return .none
+    }
+  }
+  
+  func presentationController(
+    _ controller: UIPresentationController,
+    viewControllerForAdaptivePresentationStyle style: UIModalPresentationStyle
+  ) -> UIViewController? {
+    guard case(.overFullScreen) = style else { return nil }
+    return UIStoryboard(name: "Main", bundle: nil)
+      .instantiateViewController(withIdentifier: "RotateViewController")
+  }
+}
+
+==================================================MainViewController
+lazy var slideInTransitioningDelegate = SlideInPresentationManager()
+
+override func prepare(for segue: UIStoryboardSegue, sender: Any?) {
+    if let controller = segue.destination as? GamesTableViewController {
+      if segue.identifier == "SummerSegue" {
+        controller.gamesArray = dataStore.allGames.summer
+        slideInTransitioningDelegate.direction = .left
+      } else if segue.identifier == "WinterSegue" {
+        controller.gamesArray = dataStore.allGames.winter
+        slideInTransitioningDelegate.direction = .right
+      }
+      controller.delegate = self
+      slideInTransitioningDelegate.disableCompactHeight = false
+      controller.transitioningDelegate = slideInTransitioningDelegate
+      controller.modalPresentationStyle = .custom
+    } else if let controller = segue.destination as? MedalCountViewController {
+      controller.medalWinners = presentedGames?.medalWinners
+      slideInTransitioningDelegate.direction = .bottom
+      slideInTransitioningDelegate.disableCompactHeight = true
+      controller.transitioningDelegate = slideInTransitioningDelegate
+      controller.modalPresentationStyle = .custom
+    }
+  }

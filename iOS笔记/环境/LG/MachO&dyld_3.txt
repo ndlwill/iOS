@@ -1,0 +1,380 @@
+https://blog.csdn.net/Airths/article/details/109405609
+
+Data（数据）
+Header 区域主要用于存储 MachO 文件的一般信息，并且描述了 LoadCommands 区域
+而 LoadCommands 区域则详细描述了 Data 区域
+
+如果说 Header 区域和 LoadCommands 区域的主要作用是：
+① 让系统内核加载器知道如何读取 MachO 文件
+② 并指定动态链接器来完成 MachO 文件后续的动态库加载
+③ 然后设置好程序入口等一些列程序启动前的信息
+Data 区域的作用，就是当程序运行起来后，为每一个映射到虚拟内存中的指令操作提供真实的物理存储支持
+
+Data 区域通常是 MachO 文件中最大的部分，主要包含：代码段、数据段，链接信息等
+注意：不要把 Data 区域与数据段搞混掉了，Data 区域指的是广义上的数据，而不是特指数据段的数据
+
+在 MachO 文件中，Data 为第三个区域
+与 LoadCommands 区域紧跟着 Header 区域不同的是，Data 区域并没有紧跟着 LoadCommands 区域。
+LoadCommands 与 Data 之间还留有不少的空间，为代码注入提供了很大的便利
+
+MachOView 中的 Segment 与 Section:
+segment（段）的名称为双下划线加全大写字母（如 __TEXT）
+section（节）的名称为双下划线加全小写字母（如 __text）
+
+
+MachO 文件的 Header 区域和 LoadCommands 区域也会被映射到进程的虚拟地址空间中
+LoadCommands 区域的 LC_SEGMENT_64 命令用于将 MachO 文件中 64 位的 Segment（段）映射到进程的虚拟地址空间中（即加载命令）
+在 MachO 文件中，并不是只有 Data 区域会被映射到进程的虚拟地址空间中
+Header 区域和 LoadCommands 区域也会被映射到进程的虚拟地址空间中
+
+① LoadCommands 区域的第一条加载命令 LC_SEGMENT_64(__PAGEZERO) 用于：加载空指针陷阱段（不可读，不可写，不可执行）
+用于将 MachO 文件中，起始地址为 0x0，大小为 0x0 的区域 映射到
+进程的虚拟地址空间 [0x0, 0x1 0000 0000 (4GB)] 中
+即规定了进程地址空间的前 4GB：不可读、不可写、不可执行
+
+② LoadCommands 区域的第二条加载命令 LC_SEGMENT_64(__TEXT) 用于：加载代码段（可读，可执行，不可写）
+用于将 MachO 文件中，起始地址为 0x0，大小为 0x8000 的区域 映射到
+进程的虚拟地址空间 [0x1 0000 0000 (4GB), 0x1 0000 8000] 中
+
+③ 我们注意到：
+在 MachO 文件中，Header 区域并上 LoadCommands 区域的起始地址（0x0）和结束地址（0x0B77），包含在 LC_SEGMENT_64(__TEXT) 对 MachO 文件的映射范围 [0x0, 0x8000] 内
+
+④ 特别地，Data 区域中的第一个节 Section64(__TEXT, __text) ，在 MachO 文件中的起始地址为 0x6158，大小为 0x2A4，将会被映射到进程的虚拟地址空间 0x1 0000 6158 处
+也就是说，进程的可用虚拟地址空间起始处（0x1 0000 0000 (4GB)），最先存储的是 MachO 文件的 Header 区域和 LoadCommands 区域的数据（[0x1 0000 0000 (4GB), 0x1 0000 0B77]）
+然后接着是一段留白的区域（[0x1 0000 0B78, 0x1 0000 6157]）
+接着才是 Data 区域中代码段的第一个节 Section64(__TEXT, __text)（0x1 0000 6158）
+
+⑤ 这里还有一点需要注意：
+既然在内存中 MachO 文件的 Header 区域和 LoadCommands 区域被映射成代码段的一部分
+那么在内存中 Header 和 LoadCommands 的数据的访问权限就跟代码段是一样的（可读，可执行，不可写）
+
+
+查看 Dynamic Loader Info:
+LoadCommands 区域的 LC_DYLD_INFO_ONLY 命令中记录着动态链接器加载动态库所需的必要信息的位置和大小
+Data 区域的 Dynamic Loader Info 则实际存储着动态链接器加载动态库所需的必要信息
+
+查看主线程的入口
+主线程的入口即 main 函数的入口
+
+==========Demo:
+在项目 MachODemo 的 ViewController.m 里面，有以下代码
+静态 C 字符串 和 静态 OC 字符串
+无参数和带参数的 C 函数
+无参数和带参数的 OC 方法
+一个动态库 libHcgServices.dylib
+
+① 静态的 C 字符串 和 静态的 OC 字符串，都被存储在 Section64(__TEXT, __cstring) 里面
+不仅如此，函数和方法里面用到的字符串（哪怕是像 %d、%s 这样的占位符），也都被存储在 Section64(__TEXT, __cstring) 里面。并且所有相同的字符串，只会被保存一次
+
+② 由于 C 语言是静态语言，在程序构建时，所有的 C 函数都被编译成汇编代码了，所以在 MachO 文件中，找不到 无参数和带参数的 C 函数
+
+③ 所有的 OC 方法名都被存储在 Section64(__TEXT, __objc_methname) 中
+
+④ 在 LoadCommands 区域，有加载动态库 libHcgServices.dylib 的命令
+
+
+==========查看 Symbol Table
+① LoadCommands 区域的 LC_SYMTAB 命令中记录了：
+Symbol Table 的偏移量为 50272（0x0000C460）
+String Table 的偏移量为 54004（0x0000D2F4）
+
+② Data 区域的 Symbol Table 的起始地址正好为 0x0000C460
+Symbol Table 中的每一个元素都是一个 struct nlist_64 结构体
+#import <mach-o/nlist.h>
+
+struct nlist_64 {
+    union {
+        uint32_t  n_strx;	/* 符号的名称在 string table 中的索引 */
+    } n_un;
+    uint8_t n_type;			/* 符号的类型标识，可选的值有：N_STAB、N_PEXT、N_TYPE、N_EXT */
+    uint8_t n_sect;        	/* 符号所在的 section 的索引。如果没有对应的 section，则为 NO_SECT */
+    uint16_t n_desc;       	/* 符号的描述，see <mach-o/stab.h> */
+    uint64_t n_value;      	/* 符号所在的地址 或 stab 的偏移量 */
+};
+
+
+Data 区域的 String Table 的起始地址正好为 0x0000D2F4
+String Table 存储着所有符号的名字，以 . 作为分隔符
+
+③ 这里以类 AppDelegate 为例进行演示（注意：这里说的 AppDelegate 是一个类）
+AppDelegate 的符号在 Symbol Table 中所对应的 struct nlist_64 结构体
+
+符号 AppDelegate 所对应的字符串在 String Table 中的偏移量为 0x00000ABF
+又因为 String Table 的起始地址为 0x0000D2F4
+所以符号 AppDelegate 所对应的字符串在 String Table 中的位置为 0x0000D2F4 + 0x00000ABF = 0x0000DDB3
+String Table 的 0x0000DDB3 处，确实存储着类 AppDelegate 的符号名称
+
+符号 AppDelegate 位于第 0x15（21） 个 Section 里面，并且符号的地址为 0x00009568
+MachOView 已经帮我们解析出第 21 个 Section 就是 Section64(__DATA, __objc_data)
+Section64(__DATA, __objc_data) 中的第二个条目（地址为 0x00009568），记录着类 AppDelegate 的基本信息:
+类 AppDelegate 的 isa 指针 指向了 _OBJC_METACLASS_$_AppDelegate
+类 AppDelegate 的父类是 _OBJC_CLASS_$_UIResponder（也就是我们所熟知的 UIResponder）
+此时类 AppDelegate 的缓存为空
+类 AppDelegate 的 VTable 数量为 0
+类 AppDelegate 的详细信息在地址 0x100008CF0 处
+
+通过 clang 把 AppDelegate.m 重写为 AppDelegate.cpp
+clang -x objective-c -rewrite-objc -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk AppDelegate.m
+
+0x100008CF0 就是 _OBJC_CLASS_RO_$_AppDelegate 的地址
+_OBJC_CLASS_RO_$_AppDelegate 实际上是一个 struct class_ro_t 结构体
+struct class_ro_t 结构体的原始定义位于 runtime 的源码中
+AppDelegate.cpp 对 struct class_ro_t 结构体的描述为
+[AppDelegate.cpp...]
+
+struct _class_ro_t {
+    unsigned int flags;
+    unsigned int instanceStart;
+    unsigned int instanceSize;
+    const unsigned char *ivarLayout;
+    const char *name;
+    const struct _method_list_t *baseMethods;// ######
+    const struct _objc_protocol_list *baseProtocols;
+    const struct _ivar_list_t *ivars;
+    const unsigned char *weakIvarLayout;
+    const struct _prop_list_t *properties;
+};
+
+[AppDelegate.cpp...]
+
+
+我们想看看类 AppDelegate 的方法列表
+上一步显示结果可知：Base Methods = 0x100008C48
+这里的每一个条目（item）都对应一个 struct objc_method 结构体
+同样地，struct objc_method 结构体的原始定义也位于 runtime 的源码中
+AppDelegate.cpp 对 struct objc_method 结构体的描述为
+[AppDelegate.cpp...]
+
+struct _objc_method {
+	struct objc_selector * _cmd;
+	const char *method_type;
+	void  *_imp;
+};
+
+[AppDelegate.cpp...]
+
+
+想看看类 AppDelegate 的属性列表
+显示结果可知：Base Properties = 0x100008C98
+
+总结:
+我们根据 LoadCommands 区域的 LC_SYMTAB 命令知道了 Symbol Table 和 String Table 的位置和大小，并在 Data 区域实际找到了 Symbol Table 和 String Table
+接下来，我们以类 AppDelegate 为例，说明 Symbol Table 是如何工作的
+首先，我们根据类 AppDelegate 的 Symbol Table 找到了 AppDelegate 的符号名称
+其次，我们根据类 AppDelegate 的 Symbol Table 知道了 AppDelegate 位于 Section64(__DATA, __objc_data)
+在 Section64(__DATA, __objc_data) 中，我们获取到了类 AppDelegate 的一般信息（比如：isa 指针、父类、类缓存）
+并且知道了类 AppDelegate 详细的信息存储在 Section64(__DATA, __objc_constant) 中
+之后我们根据 struct class_ro_t 结构体的描述，找到类 AppDelegate 的详细信息（比如：类名，方法列表，属性列表）
+这里有一点需要注意：
+如果 Project 通过 Release 配置进行构建，那么 MachO 中 Section64(__DATA, __objc_data) 里面的内容会被抹去
+
+
+==========查看 Dynamic Symbol Table
+① LoadCommands 区域的 LC_DYSYMTAB 命令中记录了所有动态链接时需要用到的符号的信息：
+
+② 由 LC_DYSYMTAB 命令可知，MachO 文件内部的符号在符号表（Symbol Table）中的起始索引为 0 ，数量为 201 个
+③ 由 LC_DYSYMTAB 命令可知，MachO 文件导出给外部使用的符号在符号表（Symbol Table）中的起始索引为 201 ，数量为 1个
+④ 由 LC_DYSYMTAB 命令可知，MachO 文件用于懒绑定的符号在符号表（Symbol Table）中的起始索引为 202 ，数量为 24 个
+⑤ 由 LC_DYSYMTAB 命令可知，间接符号表在 MachO 文件中的偏移量为 0x0000D280(53888)，共有 0x1D(29) 个元素
+
+实际上，Indirect Symbols 里面所存储的每一个元素，都只是一个 8Byte 的数据
+这个 8Byte 的数据，代表的是 和动态库相关的符号 在符号表（Symbol Table）中的索引值
+而 MachOView Value 列的数据，都是 MachOView 根据这个 8Byte 的索引值，一步一步解析出来的
+通过这个 8Byte 的索引值，可以解析出来的数据有：
+Symbol：符号的名称
+Section：符号所处在的 section，一般有 section64(__TEXT, __stubs)、section64(__DATA, __got)、section64(__DATA, __la_symbol_ptr)
+Indirect Address：可以通过 Indirect Address 找到符号在 section64(__TEXT, __stubs)、section64(__DATA, __got)、section64(__DATA, __la_symbol_ptr) 中的地址
+
+
+查看 Function Starts:
+LoadCommands 区域的 LC_FUNCTION_STARTS 命令用于描述函数的起始地址信息，指向了 Data 区域的链接信息段（__LINKEDIT）中 Function Starts 的首地址
+Function Starts 定义了一个函数起始地址表，调试器和其他程序通过该表可以很容易地判断出一个地址是否在函数内
+
+
+==========iOS 系统的懒绑定机制
+iOS 的懒绑定流程 && MachO 相关的数据结构
+
+新建一个 iOS Project：LazyBindingDemo
+并使用如下代码来探究 iOS 系统动态库 Foundation.framwork 的 NSLog 函数是如何被懒绑定的
+使用 Release 配置构建项目 LazyBindingDemo，并使用 MachOView 打开主程序的 MachO 文件
+
+① 在 iOS 系统中，当程序调用动态库的函数时，它实际上是执行 Section64(__TEXT, __stubs) 处的代码
+调用 NSLog 函数的 Symbol Stub
+它的地址是 0x100006524 （先记住这个地址，后面通过 LLDB 调试验证的时候会用到）
+
+② 外部函数的地址被存储在 Section64(__DATA, __la_symbol_ptr) 中，
+###
+而 Symbol Stub 的作用便是获取相应的 Lazy Symbol Pointer 并跳转到它所包含的地址
+###
+此处 NSLog 函数的 Lazy Symbol Pointer 所记录的地址为 0x00000001 000065E4
+
+③ 当我们第一次调用 NSLog 函数时， Lazy Symbol Pointer 尚未记录 NSLog 函数的真实地址，而是指向 Section64(__TEXT, __stub_helper) 中相关的内容。
+在 Section64(__TEXT, __stub_helper) 中，它将懒绑定函数 dyld_stub_binder 所需的参数放到 寄存器 w16 中，之后跳转到地址 0x000065CC 处，
+也就是 Section64(__TEXT, __stub_helper) 的头部，然后调用懒绑定函数 dyld_stub_binder 进行符号绑定，
+最后会将 NSLog 函数的真实地址回写到 Section64(__DATA, __la_symbol_ptr) 中对应的 Lazy Symbol Pointer
+
+寄存器 w16 实际上是存放一个 int 类型的值，那么这个 int 类型的值究竟代表什么呢？为什么懒绑定函数 dyld_stub_binder 可以利用它来绑定符号？
+实际上，它是相对于 Lazy Binding Info 的偏移量（在 LINKEDIT 段的 Dynamic Loader Info 中）
+懒绑定函数 dyld_stub_binder 根据这个偏移量便可从 Lazy Binding Info 中找到绑定过程所需的信息（比如：到系统的 Foundation 动态库中寻找 NSLog 函数）
+
+
+==========通过 LLDB 的调试，验证懒绑定流程
+在调试的时候显示汇编代码（XCode - Debug - Debug Wrokflow - Always Show Disassembly）
+① 程序运行到 NSLog(@"First"); 处，我们可以看到程序实际上是跳转到地址 0x104116524 处的 Symbol Stub 代码。
+但是等等，我们之前在 MachOView 中观察到程序此时应该跳转到地址 0x100006524 处才对，但是为什么这里的地址却是 0x104116524 呢？
+
+这是因为 iOS 系统在加载 MachO 文件的时候，使用了 ASLR 技术（地址空间布局随机化）。通过计算 0x104116524 - 0x100006524 可以得到程序此次加载的偏移量为 0x04110000
+
+②
+当程序调用动态库的函数时，它实际上是执行 Section64(__TEXT, __stubs) 处的代码
+那么地址 0x104116524 处对应的汇编代码，应该就是 NSLog 函数的 Symbol Stub
+我们通过 LLDB 打印地址 0x104116524 处对应的汇编代码
+dis -a 0x104116524
+NSLog:
+0x00000001041165e4
+
+查看反汇编(显示汇编)
+disassemble -a 虚拟地址
+dis -s +地址
+
+③ 因为是首次调用 NSLog 函数，所以地址 0x00000001 041165e4 处记录的，应该是 Section64(__TEXT, __stub_helper) 中 NSLog 函数执行懒绑定前，
+用于准备懒绑定的参数的代码
+dis -s 0x00000001041165e4
+
+0x1041165e4: ldr w16, 0x1041165ec
+0x1041165e8: b        0x1041165cc
+...
+
+④ 那么可想而知，地址0x1041165cc 应该就是 Section64(__TEXT, __stub_helper) 的首地址，其记录的应该就是对懒绑定函数 dyld_stub_binder 的调用
+我们通过 LLDB 打印地址 0x1041165cc 处对应的汇编代码
+果不其然，地址 0x1041165cc 记录的就是对懒绑定函数 dyld_stub_binder 的调用
+dis -s 0x1041165cc
+0x00000001a986e08c: dyld_stub_binder
+
+dis -s 0x00000001a986e08c
+libdylb.dylib`dyld_stub_binder`:
+
+⑤ iOS 系统首次调用 NSLog 函数进行懒绑定的流程，我们已经验证完了
+接下来清空 LLDB 的输出并过掉第一个断点，程序运行到 NSLog(@"Second"); 处
+我们接着探索 iOS 系统第二次调用 NSLog 函数的流程
+地址 0x104116524 记录的应该还是 NSLog 函数在 Section64(__TEXT, __stubs) 的 Symbol Stub
+通过 LLDB 打印地址 0x104116524 处对应的汇编代码
+
+dis -a 0x104116524
+0x00000001a9e6253c: NSLog
+
+⑥ 我们注意到， 此时 Section64(__TEXT, __stubs) 中 NSLog 函数的 Symbol Stub 获取到的不再是指向 Section64(__TEXT, __stub_helper) 的调用，而是 NSLog 函数的真实地址
+这也证实了，懒绑定只会在外部函数首次调用的时候执行一次
+
+dis -s 0x00000001a9e6253c
+Foundation`NSLog`:
+
+⑦ 懒绑定函数 dyld_stub_binder 位于动态链接器 dyld 中，大致的绑定过程如下：
+(libdyld.dylib) dyld_stub_binder ->
+(libdyld.dylib) dyld::fastBindLazySymbol(...) ->  
+(libdyld.dylib) ImageLoader::doBindFastLazySymbol(...) ->  
+(libdyld.dylib) ImageLoaderMachOCompressed::doBindFastLazySymbol(...)
+
+
+==========如何获取到 Lazy Symbol Pointers 对应的函数名
+Lazy Symbol Pointers
+在调用 NSLog 函数时，会到这里获取 NSLog 函数的地址，然后跳转执行
+
+第一次从这里获取到的地址值会指向 stub_helper
+第二次从这里获取到的地址值会指向 NSLog 函数的入口
+
+右边的 Value 列，这里 MachOView 已经帮我们解析出：地址 0x10000C000 存储的是指向 NSLog 函数的调用
+这里需要注意一点：MachOView 仅仅是帮我们解析出了地址 0x10000C000 调用的函数名是 NSLog，而不是解析出了 NSLog 函数的真实地址。
+因为 MachOView 打开的仅仅是存储在磁盘上的静态 MachO 文件，而不是装载到内存中的动态进程，所以 MachOView 是无法获取到位于动态库中的 NSLog 函数的真实地址的
+
+在 Lazy Symbol Pointers 中，MachOView 是如何解析出地址 0x10000C000 对应的函数名就是 NSLog 的呢？
+
+Section64 Header 中的 Indirect Sym Index:
+MachO 文件的 Data 区域是分段（Segment）管理的，每个段（Segment）会有 0 到 多个节（Section）
+其中，用于描述节（Section）的数据结构
+// （64 位的）节
+struct section_64 {
+	char		sectname[16];	/* 16 Byte 的节名 */
+	char		segname[16];	/* 16 Byte 的段名，该节所属的段 */
+	uint64_t	addr;			/* 节的虚拟内存起始地址 */
+	uint64_t	size;			/* 节所占内存空间的大小（Byte） */
+	uint32_t	offset;			/* 节数据在文件中的偏移 */
+	uint32_t	align;			/* 节的内存对齐边界（2 的次方） */
+	uint32_t	reloff;			/* 重定位信息在文件中的偏移 */
+	uint32_t	nreloc;			/* 重定位信息的条数 */
+	uint32_t	flags;			/* 标志信息（节的类型与属性。一个节只能有一个类型，但是可以有多个属性，可以通过位运算分别获取节的类型和属性） */
+	uint32_t	reserved1;		/* 保留字段 1（可以用来表示偏移量或者索引，一般用来表示 Indirect Symbol Index，也就是当前节的首元素在间接索引表的位置） */
+	uint32_t	reserved2;		/* 保留字段 2(可以用来表示数量或者大小，比如，在 Section64(__TEXT, __sutbs) 中就用来表示 stub 的个数 */
+	uint32_t	reserved3;		/* 保留字段 3（无任何用处，真正的保留字段）*/
+};
+
+留意到 uint32_t reserved1 字段：保留字段 1（可以用来表示偏移量或者索引，一般用来表示 Indirect Symbol Index，也就是当前节的首元素在间接索引表的位置）。
+uint32_t reserved1 字段其实是一个索引偏移量，指的是当前 Section 的第 0 个元素对应 Indirect Symbols 表中的第几个元素。
+
+
+由 Lazy Symbol Pointers 获取函数名的过程:
+① 由 LoadCommands 区域的 LC_SEGMENT_64(__DATA).Section64 Header(__la_symbol_ptr)
+Indirect Sym Index = 0x0000000F(15) 可知
+
+Lazy Symbol Pointers 的第 0 个元素对应 Indirect Symbols 的第 15 个元素。
+因为 NSLog 函数正好为 Lazy Symbol Pointers 的第 0 个元素，所以 NSLog 函数对应 Indirect Symbols 的第 15 个元素
+
+② 留意NSLog 函数在 Indirect Symbols 中对应的条目，其 Data 列的值为 0x00000C0(192)，说明 NSLog 函数的符号在符号表 Symbol Table 中的索引为 192，找到 Symbol Table 的第 192 个元素
+
+③ 留意 NSLog 函数在 Symbol Table 中对应的条目，其 String Table Index 为 0x16，说明 NSLog 函数在符号表 String Table 中的起始位置为 0x16，找到 String Table 的第 0x16 个位置，正好为 _NSLog
+
+④ 整体的解析顺序为：
+Section64 Header(__la_symbol_ptr) -> Lazy Symbol Pointers -> Indirect Symbols -> Symbols -> String Table
+Section64 Header(__stubs) -> Symbol Stubs -> Indirect Symbols -> Symbols -> String Table
+
+
+==========通用二进制文件（多层 MachO 文件）
+不同的 iOS 设备，可能具有不同的 CPU 架构（armv7、armv7s、arm64）
+那么，通过 XCode 存档（Archive）出来的同一个 IPA 包为什么可以运行在具有不同 CPU 架构的所有 iOS 设备上呢？
+因为，通过 XCode 存档（Archive）出来的 IPA 包中，包含了不同 CPU 架构的二进制代码
+
+可以在 XCode - Target - Build Setttings - Architectures 中，设置项目所支持的 CPU 架构
+Architectures 选项，指示项目将被编译成支持哪些 CPU 指令集的二进制代码。Standard architectures 表示标准架构，里面包含 armv7 和 arm64
+Valid Architectures 选项：指示项目可支持的 CPU 指令集。Architectures 选项 和 Valid Architectures 选项的交集，将是 XCode 最终生成的 IPA 包所支持的指令集
+Build Active Architecture Only 选项：指示是否只编译出当前真机调试的设备所对应的指令集，该选项 Debug 模式下默认为 YES，Release 模式下默认为 NO
+开发调试时，为了加快编译速度，一般只需编译出调试设备的 CPU 型号所对应的二进制代码即可
+测试发布时，为了涵盖大部分机型，一般需要编译出所有主流机型的 CPU 型号所对应的二进制代码
+
+通用二进制文件（Universal Binary）也叫胖二进制文件（Fat Binary），是由苹果公司提出的 能同时适用多种 CPU 架构的二进制文件，具有以下特点:
+使用 通用二进制文件 的同一个程序包能同时为多种 CPU 架构提供最理想的性能
+因为 通用二进制文件 需要储存多种 CPU 架构的二进制代码，所以（通用二进制应用程序）通常比（单一平台二进制应用程序）要大
+因为两种 CPU 架构的二进制代码有共同的非可执行资源，所以（通用二进制应用程序）的大小并不会达到（单一平台二进制应用程序）的两倍之多
+因为一个 iOS 设备只会有一种 CPU 架构，所以（通用二进制应用程序）在执行时只会调用一种 CPU 架构的代码。因此，（通用二进制应用程序）运行起来不会比（单一平台二进制应用程序）耗费额外的内存
+
+可以通过 file 指令，查看 MachO 文件支持哪些 CPU 指令集
+
+通用二进制文件的结构:
+① Fat Header
+② 存储不同 CPU 架构代码的 MachO 文件
+按次序组成。因此，有时候，通用二进制文件也被叫做多层 MachO 文件
+
+Fat Header 的数据结构:
+struct fat_header {
+	uint32_t	magic;			/* 魔数，用于描述通用二进制文件的字节顺序 */
+	uint32_t	nfat_arch;		/* 通用二进制文件所包含的架构数量 */
+};
+
+struct fat_arch {
+	cpu_type_t	cputype;		/* cpu 类型 */
+	cpu_subtype_t	cpusubtype;	/* cpu 子类型 */
+	uint32_t	offset;			/* 当前架构在通用二进制文件中的偏移量 */
+	uint32_t	size;			/* 当前架构的大小 */
+	uint32_t	align;			/* 内存对齐边界（2 的次方） */
+};
+
+#define FAT_MAGIC	0xcafebabe 	/* 小端模式（arm cpu 默认工作在小端模式） */
+#define FAT_CIGAM	0xbebafeca	/* 大端模式（需要转换成小端模式） */
+
+# lipo -info 命令只能查看 MachO 文件包含哪些 CPU 架构
+# 如果要查看 MachO 文件的详细信息，可以使用 OTool 或者 MachOView
+使用 lipo 命令查看 MachO 文件的信息
+lipo -info MachODemo
+使用 lipo 命令拆分多层 MachO 文件（通用二进制文件）
+lipo MachODemo -thin arm64 -output MachO_arm64
+使用 lipo 命令合并 MachO 文件
+lipo -create MachO_armv7 MachO_arm64 -output MachO_standard

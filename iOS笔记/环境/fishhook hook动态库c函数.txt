@@ -1,0 +1,89 @@
+如果C语言函数指针的地址也是在某个时机绑定的，而不是编译完成就确定地址的话，那么理论也是可以进行方法hook的。
+
+我们假设C函数的地址是编译时期确定的，那么系统的动态库的c函数的地址就需要是固定的，那么就是编译时期分配给这些函数的手机的内存地址都是预留给这些函数占用了；这显然不符合设计规范
+iOS系统的动态库，所有的app在使用的时候就是共享的，并且是按需加载到内存的，没有app使用的是不会加载进去造成浪费的；
+
+苹果系统在动态库的c函数调用的时候，编译阶段会给一个符号地址，在运行时首次调用该函数的时候才会去对符号进行绑定，
+映射到它真正的函数地址，这种手段专业的术语PIC(Position Independent Code)
+
+https://stackoverflow.com/questions/5311515/gcc-fpic-option?r=SearchResults
+Position Independent Code means that the generated machine code is not dependent on being located at a specific address in order to work.
+由于PIC的存在，那么我们就可以修改符号的绑定来达到方法替换的目的
+facebook开源的fishhook库就能对动态库的c函数进行hook
+https://github.com/facebook/fishhook
+
+Mach-O就是iOS app的可执行文件，在程序启动的时候，dyld读取Mach-O文件的配置，进行动态库的加载，对动态链接库进行 rebase 指针调整和 bind 符号绑定等操作。
+
+struct rebinding {
+  const char *name;      // 需要替换的函数名
+  void *replacement;     // 新函数的指针
+  void **replaced;       // 老函数的新指针-被替换的函数
+};
+
+int rebind_symbols(struct rebinding rebindings[], size_t rebindings_nel);
+
+fishhook源码的解析
+https://www.jianshu.com/p/b6a72aa6c146
+// 逆向
+https://www.jianshu.com/u/0e8949590432
+
+
+hook系统动态库的c函数，一般步骤:
+声明并定义新函数
+声明一个函数指针用来存储老函数的地址，如果hook的函数内需要调用原始函数
+初始化struct rebinding
+调用 rebind_symbols
+
+hook系统的objc_setAssociatedObject
+static char kAssociatedKey;
+static void (*system_objc_setAssociatedObject)(id _Nonnull object, const void * _Nonnull key,
+                                               id _Nullable value, objc_AssociationPolicy policy);
+
+- (void)testHookCocoaFrameworkMethod {
+    NSLog(@"before objc_setAssociatedObject hook");
+    objc_setAssociatedObject(self, &kAssociatedKey, @(111), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    struct rebinding rebindingStruct;
+    rebindingStruct.name = "objc_setAssociatedObject";
+    rebindingStruct.replacement = (void *)hook_objc_setAssociatedObject;
+    rebindingStruct.replaced = (void **)&system_objc_setAssociatedObject;
+    rebind_symbols(&rebindingStruct, 1);
+    
+    NSLog(@"after objc_setAssociatedObject hook");
+    objc_setAssociatedObject(self, &kAssociatedKey, @(222), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+void hook_objc_setAssociatedObject(id _Nonnull object, const void * _Nonnull key,
+                                   id _Nullable value, objc_AssociationPolicy policy) {
+    NSLog(@"%s", __FUNCTION__);
+    system_objc_setAssociatedObject(object, key, value, policy);
+}
+rebinding之后函数符号保存的真实调用的地址被修改为我们定义的函数了。
+
+
+hook自定义动态库c函数:
+建一个动态库，添加一个c方法
+int calculate_add(int a, int b) {
+    return a + b;
+}
+
+static int (*libadd_calculate_add)(int a, int b);
+
+- (void)testHookSelfDefineDynamicFrameworkMethod {
+    int sum = calculate_add(2, 3);
+    NSLog(@"before calculate_add hook: 2 + 3 = %d", sum);
+    struct rebinding rebindingStruct;
+    rebindingStruct.name = "calculate_add";
+    rebindingStruct.replacement = (void *)hook_calculate_add;
+    rebindingStruct.replaced = (void **)&libadd_calculate_add;
+    rebind_symbols(&rebindingStruct, 1);
+
+    int sum1 = calculate_add(2, 3);
+    NSLog(@"after calculate_add hook: 2 + 3 = %d", sum1);
+}
+
+int hook_calculate_add(int a, int b) {
+    NSLog(@"%s", __FUNCTION__);
+    int sum = libadd_calculate_add(a, b);
+    NSLog(@"正确的和是：%d", sum);
+    return 100;
+}

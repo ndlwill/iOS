@@ -1,0 +1,112 @@
+getpeername函数用于获取与某个套接字关联的外地协议地址,getpeername - get name of connected peer socket
+getsockname函数用于获取与某个套接字关联的本地协议地址,get socket name
+
+#include<sys/socket.h>
+int getsockname(int sockfd, struct sockaddr *localaddr, socklen_t *addrlen);
+int getpeername(int sockfd, struct sockaddr *peeraddr, socklen_t *addrlen);
+调用成功，则返回0，如果调用出错，则返回-1
+
+getpeername只有在连接建立以后才调用，否则不能正确获得对方地址和端口，所以它的参数描述字一般是已连接描述字而非监听套接口描述字。
+没有连接的UDP不能调用getpeername，但是可以调用getsockname和TCP一样，它的地址和端口不是在调用socket就指定了，而是在第一次调用sendto函数以后。
+已经连接的UDP，在调用connect以后，这2个函数（getsockname，getpeername）都是可以用的。但是这时意义不大，因为已经连接（connect）的UDP已经知道对方的地址。
+
+需要这两个函数的理由:
+1.在一个没有调用bind的TCP客户上，connect成功返回后，getsockname用于返回由内核赋予该连接的本地IP地址和本地端口号。
+2.在以端口号为0调用bind（告知内核去选择本地临时端口号）后，getsockname用于返回由内核赋予的本地端口号。
+
+
+/*服务器端*/
+#define MAXLINE 4096
+#define PORT 6563
+#define LISTENQ 1024
+#include<stdio.h>
+#include<sys/socket.h>
+#include<netinet/in.h>
+#include<unistd.h>
+#include<string.h>
+#include<arpa/inet.h>
+ 
+int main() {
+    int listenfd, connfd;
+    struct sockaddr_in servaddr;//服务器绑定的地址
+    struct sockaddr_in listendAddr, connectedAddr, peerAddr;//分别表示监听的地址，连接的本地地址，连接的对端地址
+    int listendAddrLen, connectedAddrLen, peerLen;
+    char ipAddr[INET_ADDRSTRLEN];//保存点分十进制的地址
+    listenfd = socket(AF_INET, SOCK_STREAM, 0);
+    memset(&servaddr, 0, sizeof(servaddr));
+ 
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    servaddr.sin_port = htons(PORT);
+    
+    bind(listenfd, (struct sockaddr*)&servaddr, sizeof(servaddr));//服务器端绑定地址
+ 
+    listen(listenfd, LISTENQ);
+    listendAddrLen = sizeof(listendAddr);
+    getsockname(listenfd, (struct sockaddr *)&listendAddr, &listendAddrLen);//获取监听的地址和端口
+    printf("listen address = %s:%d\n", inet_ntoa(listendAddr.sin_addr), ntohs(listendAddr.sin_port));
+ 
+    while(1) {
+        connfd = accept(listenfd, (struct sockaddr *)NULL, NULL);
+        connectedAddrLen = sizeof(connectedAddr);
+        getsockname(connfd, (struct sockaddr *)&connectedAddr, &connectedAddrLen);//获取connfd表示的连接上的本地地址
+        printf("connected server address = %s:%d\n", inet_ntoa(connectedAddr.sin_addr), ntohs(connectedAddr.sin_port));
+        getpeername(connfd, (struct sockaddr *)&peerAddr, &peerLen); //获取connfd表示的连接上的对端地址
+        printf("connected peer address = %s:%d\n", inet_ntop(AF_INET, &peerAddr.sin_addr, ipAddr, sizeof(ipAddr)), ntohs(peerAddr.sin_port));
+    }
+    return 0;
+}
+
+/*客户端*/
+#define PORT 6563
+#include<stdio.h>
+#include<sys/socket.h>
+#include<netinet/in.h>
+#include<unistd.h>
+#include<string.h>
+#include<arpa/inet.h>
+ 
+int main(int argc, char **argv) {
+    struct sockaddr_in servaddr;//服务器端地址
+    struct sockaddr_in clientAddr;//客户端地址
+    int sockfd; 
+    int clientAddrLen = sizeof(clientAddr);
+    char ipAddress[INET_ADDRSTRLEN];//保存点分十进制的ip地址
+    
+    if(argc < 2) {
+        printf("parameter error");
+    }
+ 
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    memset(&servaddr, 0, sizeof(servaddr));
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_port = htons(PORT);  
+    if(inet_pton(AF_INET, argv[1], &servaddr.sin_addr) <= 0) {
+        printf("server address error\n");//地址参数不合法
+    }
+ 
+    connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr));//向服务器端发起连接请求
+    
+    getsockname(sockfd, (struct sockaddr*)&clientAddr, &clientAddrLen);//获取sockfd表示的连接上的本地地址
+ 
+    printf("client:client ddress = %s:%d\n", inet_ntop(AF_INET, &clientAddr.sin_addr, ipAddress, sizeof(ipAddress)), ntohs(clientAddr.sin_port));
+    return 0;
+}
+
+==================================================
+获取socket的对方地址。简单明了getpeername。accept函数也有这个功能
+int listenfd,connfd;
+socklen_t  clilen;
+struct sockaddr_in cliaddr,servaddr;
+
+listenfd=socket(AF_INET,SOCK_STREAM,0);
+bzero(&servaddr,sizeof(servaddr));
+servaddr.sin_family=AF_INET;
+servaddr.sin_addr.s_addr=htonl(INADDR_ANY);
+servaddr.sin_port=htons(8888);
+bind(listenfd,(struct sockaddr *)&servaddr,sizeof(servaddr));  
+listen(listenfd,5);
+clilen=sizeof(cliaddr);
+//connfd=accept(listenfd,(struct sockaddr *)&cliaddr,&clilen);
+connfd=accept(listenfd,(struct sockaddr *)NULL,NULL);
+getpeername(connfd,(struct sockaddr *)&cliaddr,&clilen);

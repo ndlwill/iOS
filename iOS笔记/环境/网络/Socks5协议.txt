@@ -1,0 +1,109 @@
+SOCKS5 是一个代理协议
+它在使用TCP/IP协议通讯的前端机器和服务器机器之间扮演一个中介角色，使得内部网中的前端机器变得能够访问Internet网中的服务器，或者使通讯更加安全。
+SOCKS5 服务器通过将前端发来的请求转发给真正的目标服务器， 模拟了一个前端的行为。
+在这里，前端和SOCKS5之间也是通过TCP/IP协议进行通讯，前端将原本要发送给真正服务器的请求发送给SOCKS5服务器，然后SOCKS5服务器将请求转发给真正的服务器。
+Socks代理只是简单地传递数据包，而不必关心是何种应用协议(比如FTP、HTTP和NNTP请求)，所以Socks代理服务器比应用层代理服务器要快。
+
+对于各种基于 TCP/IP的应用层协议都能够适应，几乎是万能的。
+
+有很多公司不能直接和Internet相连，必须通过代理
+
+RFC1928描述了Socks协议的细节，告诉我们客户程序如何同Socks代理协商
+https://www.ietf.org/rfc/rfc1928.txt
+
+建立一个与socks服务器上socks端口的TCP连接。通常这个TCP端口是1080。
+当连接建立后，客户端进入协议的“握手”过程：认证方式的选择，根据选中的方式进行认证，然后发送转发的请求。
+
+
+1.客户端首先要与代理服务器连接，连接后要向代理发送版本号、认证方法、方法选择格式如下：
+版本号（1字节） |  供选择的认证方法(1字节)  |  方法序列（1-255个字节长度）
+如果你支持的版本为SOCKS5那么版本号就为0x05
+可供选择的方法是指你的协议支持几种认证方式，因为我们实现只支持一种所以就填0x01，如果你是两种就写0x02
+认证方法序列包括（0x00为不需认证、0x02为需要用户名和密码认证，通常是这两种，如果想了解更多请参看Rfc1928）
+报文应该为：0x05 0x01 0x00
+如果需要认证那么为：0x05 0x01 0x02
+
+2．代理接收到客户端的请求，会向客户端返回信息，格式为：
+版本号 | 服务器选定的方法
+如果服务器支持验证方式，返回的报文为：
+0x05 0x02
+
+3．接下来根据服务器的验证方式，发送验证信息了，报文格式为：
+0x01 | 用户名长度（1字节）| 用户名（长度根据用户名长度域指定） | 口令长度（1字节） | 口令（长度由口令长度域指定）
+
+4．服务器接收信息后进行验证，返回如下格式：
+0x01 | 验证结果标志
+验证结果标志：0x00表示验证成功，其他值均为错误码
+
+SOCKS请求如下表所示:
+  +----+-----+-------+------+----------+----------+ 
+  | VER| CMD | RSV   | ATYP |  DST.ADDR|  DST.PORT|
+  +----+-----+-------+------+----------+----------+ 
+  | 1  | 1   | X'00' | 1    | variable |      2   |
+  +----+-----+-------+------+----------+----------+ 
+
+各个字段含义如下:
+  VER  版本号X'05'
+  CMD：  
+       1. CONNECT X'01'
+       2. BIND    X'02'
+       3. UDP ASSOCIATE X'03'
+  RSV  保留字段
+  ATYP IP类型 
+       1.IPV4 X'01'
+       2.DOMAINNAME X'03'
+       3.IPV6 X'04'
+  DST.ADDR 目标地址 
+       1.如果是IPv4地址，这里是big-endian序的4字节数据
+       2.如果是FQDN，比如"www.nsfocus.net"，这里将是:
+         0F 77 77 77 2E 6E 73 66 6F 63 75 73 2E 6E 65 74
+         注意，没有结尾的NUL字符，非ASCIZ串，第一字节是长度域
+       3.如果是IPv6地址，这里是16字节数据。
+  DST.PORT 目标端口
+
+
+SOCKS响应如下:
++----+-----+-------+------+----------+----------+
+ |VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
+ +----+-----+-------+------+----------+----------+
+ | 1  |  1  | X'00' |  1   | Variable |    2     |
+ +----+-----+-------+------+----------+----------+
+ VER  版本号X'05'
+ REP  
+      1. 0x00        成功
+      2. 0x01        一般性失败
+      3. 0x02        规则不允许转发
+      4. 0x03        网络不可达
+      5. 0x04        主机不可达
+      6. 0x05        连接拒绝
+      7. 0x06        TTL超时
+      8. 0x07        不支持请求包中的CMD
+      9. 0x08        不支持请求包中的ATYP
+      10. 0x09-0xFF   unassigned
+ RSV         保留字段，必须为0x00
+ ATYP        用于指明BND.ADDR域的类型
+ BND.ADDR    CMD相关的地址信息，不要为BND所迷惑
+ BND.PORT    CMD相关的端口信息，big-endian序的2字节数据
+
+
+connect命令:
+假设CMD为CONNECT，SOCKS Client、SOCKS Server之间通信的相关四元组是:
+SOCKSCLIENT.ADDR，SOCKSCLIENT.PORT，SOCKSSERVER.ADDR，SOCKSSERVER.PORT
+一般SOCKSSERVER.PORT是1080/TCP。
+CONNECT请求包中的DST.ADDR/DST.PORT指明转发目的地。
+SOCKS Server可以靠DST.ADDR、DST.PORT、SOCKSCLIENT.ADDR、SOCKSCLIENT.PORT进行评估，以决定建立到转发目的地的TCP连接还是拒绝转发。
+
+假设规则允许转发并且成功建立到转发目的地的TCP连接，相关四元组是:
+BND.ADDR，BND.PORT，DST.ADDR，DST.PORT
+此时SOCKS Server向SOCKS Client发送的CONNECT响应包中将指明BND.ADDR/BND.PORT。
+
+假设拒绝转发或未能成功建立到转发目的地的TCP连接，CONNECT响应包中REP字段将指明具体原因。
+响应包中REP非零时表示失败，SOCKS Server必须在发送响应包后不久(不超过10s)关闭与SOCKS Client之间的TCP连接。
+响应包中REP为零时表示成功。之后SOCKS Client直接在当前TCP连接上发送待转发数据。
+
+
+BIND命令:
+假设CMD为BIND。这多用于FTP协议，FTP协议在某些情况下要求FTP Server主动建立到FTP Client的连接，即FTP数据流。
+FTP Client - SOCKS Client - SOCKS Server - FTP Server
+
+FTP是FileTransferProtocol（文件传输协议）

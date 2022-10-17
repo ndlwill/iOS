@@ -1,0 +1,548 @@
+==========Mach 微内核:
+
+macOS 原名 Mac OS X，后缩写为 OS X，至 WWDC 2016 改名为 macOS
+iOS 原名 iPhone OS，是 macOS 应对移动设备所开发的分支
+
+macOS 内核和二进制文件编译的目标架构是 Intel 的 i386 和 x86_64
+iOS 内核和二进制文件编译的目标架构是 ARM 架构
+相比 Intel，ARM 芯片的优势在于电源管理
+
+核心操作系统层（Core OS）+ 内核与设备驱动层（Kernel and Device Drivers） = Darwin（中文名称：达尔文）
+Darwin 是一个由苹果公司开发的类 Unix 操作系统核心
+
+Darwin 的内核是 XNU
+XNU 是两种技术的混合体：Mach 和 BSD
+BSD 层确保了 Darwin 符合 Unix 特性，真正的内核是 Mach（对外隐藏）
+BSD 层以上属于用户态，所有的内容都可以被应用程序访问
+从 BSD 层开始是内核态，应用程序不能访问内核态
+当需要从用户态切换到内核态的时候，需要通过mach trap（Mach 陷阱）实现切换
+
+XUN 包含以下 4 部分：
+① Mach微内核
+② BSD 层
+③ libkern
+④ I/O Kit
+
+① Mach 是 XNU 的原子核，仅处理最核心的任务：
+1.1 进程和线程抽象
+1.2 任务调度
+1.3 进程间通讯和消息传递
+1.4 虚拟内存管理
+
+② BSD 层建立在 Mach 微内核之上，确保了 Darwin 符合 POSIX 标准 。提供了更高层次的功能，包括：
+2.1 Unix 进程模型
+2.2 POSIX 线程模型（Pthread）及相关的同步原语
+2.3 Unix 用户和组
+2.4 网络协议栈（BSD Socket API）
+2.5 文件系统访问
+2.6 设备访问（通过 /dev 目录访问）
+
+③ libKern 是一个內建的自包含的 C++ 库，是 IOKit 的驱动程序
+
+④ I/O Kit 是设备驱动程序运行时环境。比如，设备的电源信息、内存信息、CPU 信息等都是在 IOKit 中进行管理的
+
+BSD && POSIX:
+BSD（Berkeley Software Distribution，伯克利软件套件）：最早 BSD 是 Unix 的衍生系统，现在 BSD 并不特指任何一个 BSD 衍生版本，而是类 Unix 操作系统中的一个分支的总称
+iOS 中的 BSD 是指对 Mach 层的封装和扩展，它提供了更现代的 API 和对 POSIX 标准的兼容性。
+
+比如：Mach 层的 fork(...)、vfork(...) 可用来创建进程，而 BSD 层则定义了 posix_spawn(...) 来进行进程的创建。
+又比如：BSD 层的进程结构 struct proc_t，扩展了 Mach 层的进程结构 struct task，也就是说，struct task 是 struct proc_t 的一部分
+
+POSIX（Portable Operating System Interface of UNIX，Unix 可移植操作系统接口）：定义了操作系统应该为应用程序提供的接口的标准，是 IEEE 为要在各种 Unix 操作系统上运行软件而定义的一系列 API 标准的总称
+
+用户态 && 内核态:
+出于安全考虑，需要限制不同程序之间相互访问的能力、获取其他程序数据的能力、访问外围设备的能力等，所以区分了用户态和内核态
+用户态只能受限地访问内存，且不允许访问外围设备等
+内核态可以访问内存的所有数据，包括外围设备等
+如果用户态需要做一些内核态的事情，则需要通过系统调用机制从用户态切换到内核态
+
+
+==========MachO 文件结构:
+MachO（ Mach Object），泛指 Mach 微内核能加载和执行的文件，类似于 Windows 上的 PE 格式（Portable Executable）、Linux 上的 ELF 格式（Executable and Linkable Format）
+
+MachO 是一种文件规范，是一类文件的统称，包括但不限于以下几种常见的文件类型：
+① .o（目标文件）
+② .a（静态库文件 ）
+③ .dylib（动态库文件 ）
+④ .framework（库文件）
+⑤ dSYM（XCode 调试符号文件）
+⑥ 可执行文件（没有扩展名）
+⑦ dyld（动态链接器，一个特殊的可执行文件）
+
+通过 file 指令可以查看 MachO 文件的类型
+
+MachO 查看工具：OTool 与 MachOView
+① OTool 是 macOS 自带的 MachO 文件查看工具，基于命令行，可以通过不同的命令参数快速地查看 MachO 文件各个方面的信息
+OTool 位于（/Library/Developer/CommandLineTools/usr/bin/otool）
+② MachOView 是一款开源的 MachO 文件查看工具，基于图形界面，它为查看和编辑（基于 Intel 和 ARM 架构的）MachO 文件提供了完整的解决方案
+https://sourceforge.net/projects/machoview/
+
+一个 MachO 文件由以下 3 部分组成：
+① Header（头部）
+② LoadCommands（加载命令）
+③ Data（数据）
+
+从 iPhone 5s 开始的机型，其 CPU 架构都是 64 位的
+所以为了更好地贴近实际开发，以下在讲述 MachO 文件结构时，均使用 64 位的数据结构
+
+在 loader.h 中定义着跟 MachO 相关的 数据类型 与 数据结构，并对 MachO 文件各个部分的内容做了详细的说明
+可以通过以下方法找到 loader.h 头文件
+① 苹果官网的开源代码 
+https://opensource.apple.com/source/xnu/xnu-1456.1.26/EXTERNAL_HEADERS/mach-o/loader.h
+② 在 Objective-C 中，通过 # import <macho-o/loader.h> 导入
+
+Header（头部）:
+Header 包含了 MachO 文件的元数据，通过 Header 可以快速地确认 MachO 文件的一般信息（例如：CPU 类型、文件类型）
+Header 为 MachO 文件的第一个区域
+
+在 loader.h 中用于描述 Header 的数据结构
+struct mach_header_64 {
+	uint32_t	magic;			/* 魔数，用来确定 MachO 适用的 cpu 是 32 位 还是 64 位，以及 cpu 的大小端 */
+	cpu_type_t	cputype;		/* cpu 类型 */
+	cpu_subtype_t	cpusubtype;	/* cpu 子类型 */
+	uint32_t	filetype;		/* MachO 的文件类型 */
+	uint32_t	ncmds;			/* 加载命令 LoadCommands 的总数量 */
+	uint32_t	sizeofcmds;		/* 加载命令 LoadCommands 的总大小（Byte） */
+	uint32_t	flags;			/* 标志位，标识 MachO 文件支持的功能，主要与系统加载、链接有关 */
+	uint32_t	reserved;		/* 保留字段 */
+};
+
+
+// magic 字段的取值如下（arm cpu 默认是小端模式）
+// 注意观察下面的这两个宏定义：
+// CIGAM 为 MAGIC 的反写，0xcffaedfe 为 0xfeedfacf 按字节的反写
+#define MH_MAGIC_64 0xfeedfacf /* 64 位小端模式的魔数 */
+#define MH_CIGAM_64 0xcffaedfe /* 64 位大端模式的魔数 */
+--------------------------------------------------------------------------------
+// filetype 字段的取值如下（以下描述了 MachO 文件的所有类型）
+#define	MH_OBJECT	0x1		/* relocatable object file（可重定向的目标文件） */
+#define	MH_EXECUTE	0x2		/* demand paged executable file（使用内存分页技术的可执行文件） */
+#define	MH_FVMLIB	0x3		/* fixed VM shared library file */
+#define	MH_CORE		0x4		/* core file */
+#define	MH_PRELOAD	0x5		/* preloaded executable file */
+#define	MH_DYLIB	0x6		/* dynamically bound shared library（动态绑定的共享库文件） */
+#define	MH_DYLINKER	0x7		/* dynamic link editor（动态链接器） */
+#define	MH_BUNDLE	0x8		/* dynamically bound bundle file */
+#define	MH_DYLIB_STUB 0x9 	/* shared library stub for static */
+					/*  linking only, no section contents */
+#define	MH_DSYM		0xa		/* companion file with only debug（XCode 调试符号文件） */
+					/*  sections */
+#define	MH_KEXT_BUNDLE 0xb	/* x86_64 kexts（内核扩展文件，KEXT = Kernel Extend） */
+--------------------------------------------------------------------------------
+flags 字段常见的取值如下
+MH-NOUNDEFS表示：该文件没有未定义的符号，不存在链接依赖
+MH-DYLDLINK表示：该文件是 dyld 的输入文件，无法再次被静态链接器修改
+MH-TWOLEVEL表示：该文件使用两级名称空间绑定
+MH-PIE表示：该文件使用地址空间布局随机化（ASLR 技术），可执行文件会被加载到随机地址，只对 MH_EXECUTE 有效
+
+
+LoadCommands（加载命令）:
+LoadCommands 描述了 MachO 文件中数据的具体组织结构，用于告诉 系统内核加载器 和 动态链接器 dyld 如何设置和加载 MachO 的二进制数据
+LoadCommands 为 MachO 文件的第二个区域，紧跟着 Header（头部区域）
+
+在 loader.h 中，根据 MachO 文件中存储的数据类型的不同，定义了类型丰富的 LoadCommands。
+（系统内核加载器）和（动态链接器 dyld）根据不同类型的 LoadCommands 获取不同的信息，执行不同的操作，加载不同的数据
+
+不同类型的 LoadCommands，其数据结构不完全相同，所占的大小也不完全相同
+这也是为什么在 Header 的数据结构 struct mach_header_64 中，需要同时定义 ncmds（加载命令的总条数）和 sizeofcmds （加载命令的总大小）的原因
+
+虽然不同类型的 LoadCommands，其数据结构不完全相同
+但是所有类型的 LoadCommands 的数据结构，其前两个字段永远是固定的：
+struct load_command {
+	uint32_t cmd;		/* LoadCommands 的类型，每个类型的 LoadCommands 都有专门用于描述它的数据结构 */
+	uint32_t cmdsize;	/* LoadCommands 所占空间的大小（Byte），在 64 位 cpu 架构中，LoadCommands 按 8 Byte 对齐。因此，cmdsize 恒定为  8 的倍数*/
+};
+
+在 loader.h 中定义的 LoadCommands 的类型非常多，以下仅简单介绍几种经常用到的类型
+
+
+LC_SEGMENT_64:
+用于将 Data（数据区域）中 64 位的 Segment（段）映射到进程的虚拟地址空间，即加载命令
+
+在 loader.h 中用于描述 LC_SEGMENT_64 命令的数据结构
+// （64 位的）段
+// 一个段（segment）可以包含 0 到多个节（section）
+// 一个段（segment）的所有节（section），按顺序紧跟在该段（segment）之后
+struct segment_command_64 {
+	uint32_t	cmd;			/* 加载指令类型，恒定为 LC_SEGMENT_64 */
+	uint32_t	cmdsize;		/* 加载指令的大小，包括 segment 所包含的所有 section 的大小，单位：Byte */
+	char		segname[16];	/* 16 Byte 的段名 */
+	uint64_t	vmaddr;			/* 段的虚拟内存起始地址 */
+	uint64_t	vmsize;			/* 段所占的虚拟内存的大小（Byte） */
+	uint64_t	fileoff;		/* 段数据在文件中的偏移 */
+	uint64_t	filesize;		/* 段数据在文件中的大小 */
+	vm_prot_t	maxprot;		/* 段页面（内存分页）所需要的最高内存保护（r=4, w=2, x=1） */
+	vm_prot_t	initprot;		/* 段页面（内存分页）初始的内存保护（r=4, w=2, x=1） */
+	uint32_t	nsects;			/* segment（段）中所包含的 section（节）的数量 */
+	uint32_t	flags;			/* 标志信息 */
+};
+--------------------------------------------------------------------------------
+// （64 位的）节
+struct section_64 {
+	char		sectname[16];	/* 16 Byte 的节名 */
+	char		segname[16];	/* 16 Byte 的段名，该节所属的段 */
+	uint64_t	addr;			/* 节的虚拟内存起始地址 */
+	uint64_t	size;			/* 节所占内存空间的大小（Byte） */
+	uint32_t	offset;			/* 节数据在文件中的偏移 */
+	uint32_t	align;			/* 节的内存对其边界（2 的次方） */
+	uint32_t	reloff;			/* 重定位信息在文件中的偏移 */
+	uint32_t	nreloc;			/* 重定位信息的条数 */
+	uint32_t	flags;			/* 标志信息（节的类型与属性。一个节只能有一个类型，但是可以有多个属性，可以通过位运算分别获取节的类型和属性） */
+	uint32_t	reserved1;		/* 保留字段 1（可以用来表示偏移量或者索引，一般用来表示 Indirect Symbol Index，也就是间接符号表的索引） */
+	uint32_t	reserved2;		/* 保留字段 2 (可以用来表示数量或者大小，比如：在 Section64(__TEXT, __sutbs) 中就用来表示 stub 的个数 */
+	uint32_t	reserved3;		/* 保留字段 3（无任何用处，真正的保留字段）*/
+};
+
+在 MachO 文件中，常见的段有以下 4 个：
+① LC_SEGMENT_64(__PAGEZERO)：空指针陷阱段（不可读，不可写，不可执行）
+② LC_SEGMENT_64(__TEXT)：代码段（可读，可执行，不可写）
+③ LC_SEGMENT_64(__DATA)：数据段（可读，可写，不可执行）
+④ LC_SEGMENT_64(__LINKEDIT)：链接信息段（只读），保存着动态链接器（dyld）需要的信息
+后面3个在Data区域有对应的部分
+
+
+① LC_SEGMENT_64（__PAGEZERO）：空指针陷阱段
+这是一个不可读、不可写、不可执行的空间，能够在空指针访问时抛出异常（用于捕捉对空指针的引用）
+在 64 位的操作系统上，这个段的虚拟内存大小是 4GB
+4GB 并不是指该段物理文件的真实大小，也不是指该段所占物理内存的真实大小
+4GB 是规定了进程地址空间的前 4GB 被映射为：不可读、不可写、不可执行的空间
+这就是为什么当读写一个 NULL（0x0） 指针时会得到一个 EXC_BAD_ACCESS 错误
+
+因为 LC_SEGMENT_64(__PAGEZERO) 的物理文件大小为 0
+所以 Data（数据区域）中没有与 LC_SEGMENT_64(__PAGEZERO) 对应的部分
+
+② LC_SEGMENT_64（__TEXT）：代码段
+代码段有以下常见的节（Section）：
+01.__text：可执行文件的代码区域，函数、方法、block 等编译成的汇编代码
+02.__stubs：用于存储调用到的外部符号，符号的地址在符号表中。分为：懒绑定与非懒绑定（__la_symbol_ptr、__nl_symbol_ptr）。__stubs 也被称为"桩节区"
+03.__stub_helper：借助 dyld_stub_binder 进行懒绑定的指令段（在 MachO 加载时，dyld 会立即为符号 dyld_stub_binder 进行绑定）
+04.__cstring：用于存储代码中出现的字符串（去重后的 C 字符串）
+05.__ustring：
+06.__objc_methname：用于存储 OC 的方法名（C 字符串）
+07.__objc_classname：用于存储 OC 的类名（C 字符串）
+08.__objc_methtype：用于存储 OC 的方法类型（OC 的方法签名 / OC方法 的 Type Encoding）
+09.__unwind_info：用于存储处理异常情况的信息
+10.eh_frame：用于存储调试辅助信息
+
+
+③ LC_SEGMENT_64（__DATA）：数据段
+数据段有以下常见的节（Section）：
+01.__got：即 __nl_symbol_ptr，里面包含的就是 Non-Lazy Symbol Pointers
+02.__nl_symbol_ptr：Non-Lazy Symbol Pointers，非懒加载指针表，dyld 加载时会立即绑定表项中的符号
+03.__la_symbol_ptr：Lazy Symbol Pointers，懒加载指针表，每个表项中的指针一开始指向 stub_helper
+04.__mod_init_func：模块的构造函数（初始化函数，在 main 函数之前调用）
+05.__mod_term_func：模块的析构函数（终止函数，在 main 函数返回之后调用）
+06.__const：存储 const 关键字修饰的常量。比如使用 extern const 导出的常量
+07.__cfstring：Core Foundation 字符串
+08.__objc_classlist：OC 类信息列表
+09.__objc_nlclslist：OC 的类的 +load 函数列表，比 __mod_init_func 更早执行
+10.__objc_catlist：OC 分类信息列表
+11.__objc_nlcatlist：OC 的分类的 +load 函数列表
+12.__objc_protolist：OC 的协议列表
+13.__objc_imageinfo：objc 镜像信息
+14.__objc_const：OC 常量。保存 objc_classdata 结构体数据。用于映射类相关数据的地址，比如类名，方法名等
+15.__objc_selrefs：指向 __objc_methname 中的方法名称字符串
+16.__objc_protorefs：引用到的 OC 协议
+17.__objc_classrefs：引用到的 OC 类
+18.__objc_superrefs：引用到的 OC 超类
+19.__objc_ivar：实例变量对应的 property、变量名、类型数据
+20.__objc_data：用于保存 OC 类需要的数据。最主要的内容是映射 __objc_const 地址，用于找到类的相关数据
+
+
+④ LC_SEGMENT_64（__LINKEDIT）：链接信息段
+链接信息段用于存储动态链接器运行时，需要用到的信息
+包括：符号表、字符串表、重定位项表、签名 等
+
+与代码段和数据段，在 Data（数据区域）规整化一的存储结构不同的是
+因为，链接信息段存储着诸多类型不同的用于动态链接的加载命令（LoadCommands）所需要的数据
+所以，链接信息段在 Data（数据区域）的存储结构，会根据具体加载命令（LoadCommands）的不同而不同
+
+以下加载命令需要额外的空间用于存储数据，其数据存储在 Data（数据区域）的链接信息段中：
+01.LC_DYLD_INFO_ONLY
+02.LC_SYMTAB
+03.LC_DYSYMTAB
+04.LC_FUNCTION_STARTS
+05.LC_DATA_IN_CODE
+06.LC_CODE_SIGNATURE
+
+以下加载命令不需要额外的空间用于存储数据，其将所有信息存储在 LoadCommands 区域的加载命令本身：
+01.LC_LOAD_DYLINKER
+02.LC_UUID
+03.LC_VERSION_MIN_IPHONEOS / LC_VERSION_MIN_MACOSX
+04.LC_SOURCE_VERSION
+05.LC_LOAD_DYLIB
+06.LC_RPATH
+
+
+LC_DYLD_INFO_ONLY 和 LC_DYLD_INFO
+该命令包含了动态链接器（dyld）加载目标镜像（MachO / dylib）时所需要的必要信息（重定向的信息、绑定的信息、弱绑定的信息、懒绑定的信息、开放函数的信息）
+
+在 loader.h 中用于描述 LC_DYLD_INFO_ONLY 命令和 LC_DYLD_INFO 命令的数据结构
+// LC_DYLD_INFO_ONLY 和 LC_DYLD_INFO 使用同一个结构体
+struct dyld_info_command {
+	// 指令的类型和大小
+	uint32_t   cmd;      		/* LC_DYLD_INFO 或者 LC_DYLD_INFO_ONLY */
+	uint32_t   cmdsize;      	/* sizeof(struct dyld_info_command) */
+	// 重定向：因为使用 ASLR，所以 MachO 会被加载到随机地址，因此需要 rebase 信息
+	uint32_t   rebase_off;   	/* file offset to rebase info  */
+	uint32_t   rebase_size;  	/* size of rebase info   */
+	// 绑定：如果进程依赖其他镜像的符号，则绑定需要 bind 信息
+	uint32_t   bind_off; 		/* file offset to binding info   */
+	uint32_t   bind_size;    	/* size of binding info  */
+	// 弱绑定：对于 C++ 程序而言可能需要通过弱绑定实现代码/数据复用，此时需要 weak bind 信息
+	uint32_t   weak_bind_off;    /* file offset to weak binding info   */
+	uint32_t   weak_bind_size;   /* size of weak binding info  */
+	// 懒绑定：对于一些不需要立即绑定的外部符号可以延时加载，此时需要 lazy bind 信息
+	uint32_t   lazy_bind_off;    /* file offset to lazy binding info */
+	uint32_t   lazy_bind_size;   /* size of lazy binding infs */
+	// 导出符号（开放函数）：对于向外部开放的函数，则需要 export 信息
+	// 导出符号可以被外部的 MachO 访问，通常动态库会导出一个或多个符号供外部使用，而可执行程序会导出 _main 与 _mh_execute_header 符号供 dyld 使用
+	uint32_t   export_off;   	/* file offset to lazy binding info */
+	uint32_t   export_size;  	/* size of lazy binding infs */
+};
+
+
+LC_SYMTAB
+该命令用于描述符号表的位置和大小（即用于描述符号表的地址信息）
+符号表是一个 struct nlist 数组，包含了用于静态链接与动态链接的符号的信息
+
+在 loader.h 中用于描述 LC_SYMTAB 命令的数据结构
+struct symtab_command {
+	uint32_t	cmd;		/* LC_SYMTAB */
+	uint32_t	cmdsize;	/* sizeof(struct symtab_command) */
+	uint32_t	symoff;		/* 符号表在 MachO 文件中的偏移量 */
+	uint32_t	nsyms;		/* 符号表中元素的数量 */
+	uint32_t	stroff;		/* 字符串表在 MachO 文件中的偏移量（字符串表记录了所有符号的名字） */
+	uint32_t	strsize;	/* 字符串表的总大小（Byte） */
+};
+
+
+LC_DYSYMTAB
+该命令用于描述动态符号表，包含了：
+① 一组指向符号表中符号的索引
+② 一组定义了其他几个表位置的偏移量
+
+在 loader.h 中用于描述 LC_DYSYMTAB 命令的数据结构
+struct dysymtab_command {
+    uint32_t cmd; 			/* LC_DYSYMTAB */
+    uint32_t cmdsize; 		/* sizeof(struct dysymtab_command) */
+	// 内部的符号在符号表（Symbol Table）中的索引与数量
+    uint32_t ilocalsym; 	/* index to local symbols */
+    uint32_t nlocalsym; 	/* number of local symbols */
+	// 导出给外部使用的符号在符号表（Symbol Table）中的索引与数量
+    uint32_t iextdefsym;	/* index to externally defined symbols */
+    uint32_t nextdefsym;	/* number of externally defined symbols */
+	// 用于懒绑定的符号在符号表（Symbol Table）中的索引与数量
+    uint32_t iundefsym; 	/* index to undefined symbols */
+    uint32_t nundefsym; 	/* number of undefined symbols */
+	// contents 表在 MachO 文件中的偏移量与元素个数
+    uint32_t tocoff; 		/* file offset to table of contents */
+    uint32_t ntoc; 			/* number of entries in table of contents */
+	// module 表在 MachO 文件中的偏移量与元素个数
+    uint32_t modtaboff; 	/* file offset to module table */
+    uint32_t nmodtab; 		/* number of module table entries */
+	// 引用符号表在 MachO 文件中的偏移量与元素个数
+    uint32_t extrefsymoff; 	/* offset to referenced symbol table */
+    uint32_t nextrefsyms; 	/* number of referenced symbol table entries */
+	// 间接符号表在 MachO 文件中的偏移量与元素个数
+    uint32_t indirectsymoff; /* file offset to the indirect symbol table */
+    uint32_t nindirectsyms;  /* number of indirect symbol table entries */
+	// 外部重定位元素在 MachO 文件中的偏移量与元素个数
+    uint32_t extreloff; 	/* offset to external relocation entries */
+    uint32_t nextrel; 		/* number of external relocation entries */
+	// 内部重定位元素在 MachO 文件中的偏移量与元素个数
+    uint32_t locreloff; 	/* offset to local relocation entries */
+    uint32_t nlocrel; 		/* number of local relocation entries */
+}; 
+
+
+LC_LOAD_DYLINKER
+该命令用于描述 MachO 文件所使用的动态链接器
+一个 MachO 文件最多只能有一个动态链接器
+在 loader.h 中用于描述 LC_LOAD_DYLINKER 命令的数据结构
+struct dylinker_command {
+	uint32_t	 cmd;		/* LC_ID_DYLINKER or LC_LOAD_DYLINKER */
+	uint32_t	 cmdsize;	/* 加载命令的大小（包含了 name 字符串） */
+	union lc_str name;		/* 动态链接器的路径 */
+};
+
+ // LoadCommands 中用于表示可变字符串的联合体
+ // 字符串数据直接存储在 LoadCommands 之后，并且字符串的偏移量是相对于 LoadCommands  计算的
+ // LoadCommands 的 cmdsize 字段包含了字符串的长度
+union lc_str {
+	uint32_t	offset;	/* offset to the string */
+#ifndef __LP64__
+	char		*ptr;	/* pointer to the string */
+#endif 
+};
+
+
+LC_UUID
+该命令包含了一个 128 位的唯一随机数，用于标识由静态链接器生成的 MachO 文件
+在 loader.h 中用于描述 LC_UUID 命令的数据结构
+struct uuid_command {
+    uint32_t	cmd;		/* LC_UUID */
+    uint32_t	cmdsize;	/* sizeof(struct uuid_command) */
+    uint8_t	uuid[16];		/* the 128-bit uuid */
+};
+
+
+LC_VERSION_MIN_IPHONEOS 和 LC_VERSION_MIN_MACOSX
+该命令用于描述 MachO 文件要求的最低操作系统版本
+MachO 文件构建时，可以在 Target - General - Deployment Info 中指定程序所支持的最低的操作系统版本
+在 loader.h 中用于描述 LC_VERSION_MIN_IPHONEOS 命令和 LC_VERSION_MIN_MACOSX 命令的数据结构
+struct version_min_command {
+    uint32_t	cmd;		/* LC_VERSION_MIN_MACOSX 或 LC_VERSION_MIN_IPHONEOS 或 LC_VERSION_MIN_WATCHOS 或 LC_VERSION_MIN_TVOS */
+    uint32_t	cmdsize;	/* sizeof(struct min_version_command) */
+    uint32_t	version;	/* X.Y.Z is encoded in nibbles xxxx.yy.zz */
+    uint32_t	sdk;		/* X.Y.Z is encoded in nibbles xxxx.yy.zz */
+};
+
+
+LC_SOURCE_VERSION
+该命令用于描述 MachO 文件在构建时，所使用的源代码版本
+MachO 文件构建时，可以在 Target - General - Identity - Version 中指定程序的外部版本号
+在 loader.h 中用于描述 LC_SOURCE_VERSION 命令的数据结构
+struct source_version_command {
+    uint32_t  cmd;		/* LC_SOURCE_VERSION */
+    uint32_t  cmdsize;	/* 16 */
+    uint64_t  version;	/* A.B.C.D.E packed as a24.b10.c10.d10.e10 */
+};
+
+
+LC_MAIN
+该命令用于设置程序主线程的入口地址和栈大小。即用于指定：主可执行文件中 main() 函数的入口地址（通过文件偏移量的形式）
+在 loader.h 中用于描述 LC_MAIN 命令的数据结构
+ // entry_point_command 用于替代 thread_command
+ // 如果在构建主可执行文件时，用到了 -stack_size 选项
+ // 那么 stacksize 字段将会包含主线程所需的栈大小
+struct entry_point_command {
+    uint32_t  cmd;			/* LC_MAIN only used in MH_EXECUTE filetypes */
+    uint32_t  cmdsize;		/* 24 */
+    uint64_t  entryoff;		/* file (__TEXT) offset of main() */
+    uint64_t  stacksize;	/* if not zero, initial stack size */
+};
+
+
+LC_ENCRYPTION_INFO_64
+该指令用于描述加密信息段（encrypted segment）的位置和大小，以及使用了哪种加密体系
+在 loader.h 中用于描述 LC_ENCRYPTION_INFO_64 命令的数据结构
+struct encryption_info_command_64 {
+   uint32_t	cmd;		/* LC_ENCRYPTION_INFO_64 */
+   uint32_t	cmdsize;	/* sizeof(struct encryption_info_command_64) */
+   uint32_t	cryptoff;	/* file offset of encrypted range */
+   uint32_t	cryptsize;	/* file size of encrypted range */
+   uint32_t	cryptid;	/* which enryption system, 0 means not-encrypted yet */
+   uint32_t	pad;		/* padding to make this struct's size a multiple of 8 bytes */
+};
+
+
+LC_LOAD_DYLIB
+该命令用于描述 MachO 文件依赖的动态库的信息，每条命令对应一个动态库
+动态链接器根据该命令提供的信息去加载和链接 MachO 文件依赖的动态库
+（动态库包含：系统的 + 第三方的）
+在 loader.h 中用于描述 LC_LOAD_DYLIB 命令的数据结构
+struct dylib_command {
+	uint32_t	 cmd;		/* LC_ID_DYLIB 或 LC_LOAD_{,WEAK_}DYLIB 或 LC_REEXPORT_DYLIB */
+	uint32_t	 cmdsize;	/* includes pathname string */
+	struct dylib dylib;		/* the library identification */
+};
+
+ // 一个动态库由两部分标识：
+ // 1.动态库的路径（更具体地，动态库可执行文件的路径）
+ // 2.兼容的版本号
+ // 要使用一个动态库，必须保证：
+ // 1.外部动态库的存储路径必须和 dylib.name 中声明的路径相匹配
+ // 2.外部动态库的版本必须大于等于 dylib.compatibility_version 中声明的版本
+struct dylib {
+    union lc_str  name;				/* library's path name */
+    uint32_t timestamp;				/* library's build time stamp */
+    uint32_t current_version;		/* library's current version number */
+    uint32_t compatibility_version;	/* library's compatibility vers number*/
+};
+
+ // LoadCommands 中用于表示可变字符串的联合体
+ // 字符串数据直接存储在 LoadCommands 之后，并且字符串的偏移量是相对于 LoadCommands 计算的
+ // LoadCommands 的 cmdsize 字段包含了字符串的长度
+union lc_str {
+	uint32_t	offset;	/* offset to the string */
+#ifndef __LP64__
+	char		*ptr;	/* pointer to the string */
+#endif 
+};
+
+
+LC_RPATH
+该命令用于描述动态链接器在搜索 MachO 文件依赖的动态库时，所用到的搜索路径 ，每条命令对应一个 @rpath
+可以在 Target - Build Settings - Linking - Runpath Search paths 中指定程序用到的 @rpath
+在 loader.h 中用于描述 LC_RPATH 命令的数据结构
+struct rpath_command {
+    uint32_t	 cmd;		/* LC_RPATH */
+    uint32_t	 cmdsize;	/* includes string */
+    union lc_str path;		/* path to add to run path */
+};
+
+ // LoadCommands 中用于表示可变字符串的联合体
+ // 字符串数据直接存储在 LoadCommands 之后，并且字符串的偏移量是相对于 LoadCommands 计算的
+ // LoadCommands 的 cmdsize 字段包含了字符串的长度
+union lc_str {
+	uint32_t	offset;	/* offset to the string */
+#ifndef __LP64__
+	char		*ptr;	/* pointer to the string */
+#endif 
+};
+
+
+LC_FUNCTION_STARTS
+该命令用于描述函数的起始地址信息，指向了链接信息段中 Function Starts 的首地址
+Function Starts 定义了一个函数起始地址表，调试器和其他程序通过该表可以很容易地判断出一个地址是否在函数内
+在 loader.h 中用于描述 LC_FUNCTION_STARTS 命令的数据结构
+struct linkedit_data_command {
+    uint32_t	cmd;		/* LC_CODE_SIGNATURE, LC_SEGMENT_SPLIT_INFO,
+				   			LC_FUNCTION_STARTS, LC_DATA_IN_CODE,
+				   			LC_DYLIB_CODE_SIGN_DRS, LC_LINKER_OPTIMIZATION_HINT,
+				   			LC_DYLD_EXPORTS_TRIE, LC_DYLD_CHAINED_FIXUPS. */
+    uint32_t	cmdsize;	/* sizeof(struct linkedit_data_command) */
+    uint32_t	dataoff;	/* file offset of data in __LINKEDIT segment */
+    uint32_t	datasize;	/* file size of data in __LINKEDIT segment  */
+};
+
+
+LC_DATA_IN_CODE
+该命令使用一个 struct linkedit_data_command 指向一个 data_in_code_entry 数组
+data_in_code_entry 数组中的每一个元素，用于描述代码段中一个存储数据的区域
+在 loader.h 中用于描述 LC_DATA_IN_CODE 命令的数据结构
+struct linkedit_data_command {
+    uint32_t	cmd;		/* LC_CODE_SIGNATURE, LC_SEGMENT_SPLIT_INFO,
+				   			LC_FUNCTION_STARTS, LC_DATA_IN_CODE,
+				   			LC_DYLIB_CODE_SIGN_DRS, LC_LINKER_OPTIMIZATION_HINT,
+				   			LC_DYLD_EXPORTS_TRIE, LC_DYLD_CHAINED_FIXUPS. */
+    uint32_t	cmdsize;	/* sizeof(struct linkedit_data_command) */
+    uint32_t	dataoff;	/* file offset of data in __LINKEDIT segment */
+    uint32_t	datasize;	/* file size of data in __LINKEDIT segment  */
+};
+
+struct data_in_code_entry {
+    uint32_t	offset;  	/* from mach_header to start of data range*/
+    uint16_t	length;  	/* number of bytes in data range */
+    uint16_t	kind;    	/* a DICE_KIND_* value  */
+};
+#define DICE_KIND_DATA              0x0001
+#define DICE_KIND_JUMP_TABLE8       0x0002
+#define DICE_KIND_JUMP_TABLE16      0x0003
+#define DICE_KIND_JUMP_TABLE32      0x0004
+#define DICE_KIND_ABS_JUMP_TABLE32  0x0005
+
+
+LC_CODE_SIGNATURE 命令
+该命令用于描述 MachO 代码签名信息的位置和大小
+在 loader.h 中用于描述 LC_CODE_SIGNATURE 命令的数据结构
+struct linkedit_data_command {
+    uint32_t	cmd;		/* LC_CODE_SIGNATURE, LC_SEGMENT_SPLIT_INFO,
+				   			LC_FUNCTION_STARTS, LC_DATA_IN_CODE,
+				   			LC_DYLIB_CODE_SIGN_DRS, LC_LINKER_OPTIMIZATION_HINT,
+				   			LC_DYLD_EXPORTS_TRIE, LC_DYLD_CHAINED_FIXUPS. */
+    uint32_t	cmdsize;	/* sizeof(struct linkedit_data_command) */
+    uint32_t	dataoff;	/* file offset of data in __LINKEDIT segment */
+    uint32_t	datasize;	/* file size of data in __LINKEDIT segment  */
+};

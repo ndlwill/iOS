@@ -1,0 +1,153 @@
+-----简化的if let/guard let语法
+let name: String? = "zhangsan"
+print(name) // Optional("zhangsan")
+
+// Swift5.7之前
+// if let
+if let name = name {
+    print(name) // zhangsan
+}
+
+// Swift5.7之后
+// if let
+if let name {
+    print(name) // zhangsan
+}
+
+func method(name: String?, age: Int?) {
+    // Swift5.7之前
+    // guard let
+    guard let name = name else { return }
+
+    // Swift5.7之后
+    // guard let
+    guard let age else { return }
+}
+
+
+-----增强的闭包类型推断
+let array: [String] = ["1", "2", "3", "4", "5"]
+
+// Swift5.7之前
+let newArray1 = array.map { str -> Int in
+    Int(str) ?? 0
+}
+print(newArray1) // [1, 2, 3, 4, 5]
+
+// Swift5.7之后
+let newArray2 = array.map { str in
+    Int(str) ?? 0
+}
+print(newArray2) // [1, 2, 3, 4, 5]
+
+
+-----正则表达式
+引入了新的正则类型Regex。
+增加了通过/.../创建正则表达式的功能。
+增加了许多基于正则表达式的 String 处理方法。
+
+let message = "This is a regex test case 123456789"
+
+do {
+    // 字符串中搜索regex
+    let regex = try Regex("[a-z] regex")
+    // 范围
+    print(message.ranges(of: regex))
+    // 替换
+    print(message.replacing(regex, with: "正则表达式"))
+} catch {
+    print("Failed to create Regex")
+}
+
+// /.../创建正则表达式，查找数字并替换
+print(message.replacing(/(\d+)/, with: "一二三四五六七八九"))
+
+
+-----函数参数与返回类型支持不透明结果类型
+import SwiftUI
+
+// 参数与返回值支持不透明结果类型
+// some后面是一个协议
+func getSomeView(username: some StringProtocol, image: String) -> (some View, some View) {
+    return (Text(username), Image(systemName: image))
+}
+
+struct ContentView: View {
+    let someView: (some View, some View) = getSomeView(username: "zhangsan", image: "heart")
+
+    var body: some View {
+        VStack(spacing: 10) {
+            someView.0
+                .font(.title)
+
+            someView.1
+                .foregroundStyle(.tint)
+        }
+    }
+}
+
+
+-----新的时间表示法
+Clock：表示一种测量时间流逝的方式。又分为 2 种。
+ContinuousClock：系统处于睡眠状态时也会记录时间。
+SuspendingClock：系统处于睡眠状态时不会记录时间。
+Instant：表示一个精准的瞬间时间。
+Duration：表示 2 个Instant之间的时间间隔。
+
+// 当前时间 + 3秒
+ContinuousClock.Instant.now + Duration.seconds(3)
+// 当前时间 + 50毫秒
+ContinuousClock.Instant.now + Duration.microseconds(50)
+
+// 应用于Concurrency
+try await Task.sleep(until: .now + .seconds(1), clock: .suspending)
+try await Task.sleep(until: .now + .seconds(1), tolerance: .seconds(0.5), clock: .continuous)
+
+// 异步函数
+func doSomeAsyncWork() async throws {
+    try await Task.sleep(until: .now + .seconds(1), clock: .continuous)
+}
+
+// SuspendingClock
+let suspendingClock = SuspendingClock()
+// 测量
+let elapsedOne = try await suspendingClock.measure {
+    try await doSomeAsyncWork()
+}
+
+// ContinuousClock
+let continuousClock = ContinuousClock()
+// 测量
+let elapsedTwo = try await continuousClock.measure {
+    try await doSomeAsyncWork()
+}
+
+
+-----@MainActor警告修复
+不再出现警告。
+
+
+import SwiftUI
+
+@MainActor
+class ViewModel: ObservableObject {
+}
+
+struct ContentView: View {
+    // 不再产生警告
+    @StateObject private var viewModel = ViewModel()
+
+    var body: some View {
+        Text("Hello, world!")
+    }
+}
+
+
+-----顶级代码支持Concurrency
+Swift 5.7 之前 Concurrency 的代码必须放入函数或者 Task 中，不能出现在顶级代码中，Swift 5.7 之后没有这个限制。因此在 macOS 的命令行项目中可以书写以下代码。
+
+let url = URL(string: "https://www.baidu.com")!
+let (data, _) = try await URLSession.shared.data(from: url)
+let decoder = JSONDecoder()
+let result = String(decoding: data, as: UTF8.self)
+print(result)

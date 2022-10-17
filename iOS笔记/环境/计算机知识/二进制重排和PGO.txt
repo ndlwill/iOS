@@ -1,0 +1,32 @@
+Total pre-main time: 276.51 milliseconds (100.0%)
+         dylib loading time:  43.44 milliseconds (15.7%)
+        rebase/binding time: 170.22 milliseconds (61.5%)
+            ObjC setup time:  24.74 milliseconds (8.9%)
+           initializer time:  37.80 milliseconds (13.6%)
+
+dylib loading ：加载可执行文件（App 的.o 文件的集合）， 加载动态链接库；
+rebase/binding ：对动态链接库进行 rebase 指针调整和 bind 符号绑定；
+Objc setup ：Objc 运行时的初始处理，包括 Objc 相关类的注册、category 注册、selector 唯一性检查等；
+initializer：包括了执行 +load() 方法、attribute((constructor)) 修饰的函数的调用、创建 C++ 静态全局变量
+
+二进制重排，主要是优化我们启动时需要的函数分散在各个页，启动时就会多次Page Fault造成时间的损耗
+
+进程如果能直接访问物理内存无疑是很不安全的，所以操作系统在物理内存的上又建立了一层虚拟内存。
+为了提高效率和方便管理，又对虚拟内存和物理内存又进行分页（Page）。
+当进程访问一个虚拟内存Page而对应的物理内存却不存在时，会触发一次缺页中断（Page Fault），分配物理内存，有需要的话会从磁盘mmap读人数据。
+
+通过App Store渠道分发的App，Page Fault还会进行签名验证，所以一次Page Fault的耗时比想象的要多
+
+编译器在生成二进制代码的时候，默认按照链接的Object File(.o)顺序写文件，按照Object File内部的函数顺序写函数。
+静态库文件.a就是一组.o文件的ar包，可以用ar -t查看.a包含的所有.o
+
+假设我们只有两个page：page1/page2，其中绿色的method1和method3启动时候需要调用，为了执行对应的代码，系统必须进行两个Page Fault。
+但如果我们把method1和method3排布到一起，那么只需要一个Page Fault即可，这就是二进制文件重排的核心原理。
+
+Xcode配置Order
+那么我们需要将启动时候调用的函数进行重排，让它们尽可能的分配在同一个页；比如load方法我们就将其找出来，放到一起；LLVM支持我们通过设置order来达到这个效果
+
+Link Map File中文直译为链接映射文件，它是在Xcode生成可执行文件的同时生成的链接信息文件，用于描述可执行文件的构造部分，包括了代码段和数据段的分布情况
+我们可以在Xcode的配置中将Write Link Map File设置为YES来生成Map File
+Run下一app，查看Map File
+可以选中app，Show In Finder -- 找到build目录

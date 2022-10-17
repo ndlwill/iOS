@@ -1,0 +1,201 @@
+x： memory read的简写，读取内存信息 （iOS是小端模式，低地址存放低位，内存读取要反着读）
+例如： 
+e5 22 00 00 01 80 1d 00  // e5 低地址
+应读取为0x001d8001000022e5  // 最右边的是低位
+
+x/4gx: 打印4条16进制的16字符长度的内存信息
+
+x/4gw: 打印4条16进制的8字符长度的内存信息
+
+p/t: 二进制打印
+
+==================================================获取内存大小
+sizeof:
+操作符。传入数据类型，输出内存大小。编译时固定，
+只与类型相关，与具体数值无关。(如：bool 2字节,int 4字节,对象(指针)8字节)
+
+class_getInstanceSize:
+runtime的api,传入对象,输出对象所占的内存大小，本质是对象中成员变量的大小
+
+malloc_size:
+获取系统实际分配的内存大小，align16对齐标准
+
+#import <Foundation/Foundation.h>
+#import <objc/runtime.h>
+#import <malloc/malloc.h>
+
+int main(int argc, const char * argv[]) {
+    @autoreleasepool {
+        
+        // insert code here...
+        NSObject * objc = [[NSObject alloc] init];
+        NSLog(@"[sizeof]                 内存大小: %lu字节", sizeof(objc));// 8
+        NSLog(@"[class_getInstanceSize]  内存大小: %lu字节", class_getInstanceSize([objc class]));// 8
+        NSLog(@"[malloc_size]            内存大小: %lu字节", malloc_size((__bridge const void *)(objc)));// 16
+    }
+    return 0;
+}
+
+==================================================内存对齐
+苹果系统会采用align16字节对齐开辟内存大小，提高系统存取性能。
+
+对象的本质是结构体，所以研究对象内部的内存，就是研究结构体的内存布局。
+内存对齐目的:最大程度提高资源利用率
+
+struct MyStruct1 {
+    char a;       // 1字节
+    double b;     // 8字节
+    int c;        // 4字节
+    short d;      // 2字节
+    NSString * e; // 8字节(指针)
+} MyStruct1;
+
+struct MyStruct2 {
+    NSString * a; // 8字节(指针)
+    double b;     // 8字节
+    int c;        // 4字节
+    short d;      // 2字节
+    char e;       // 1字节
+} MyStruct2;
+
+int main(int argc, const char * argv[]) {
+    
+    @autoreleasepool {
+        NSLog(@"%lu - %lu", sizeof(MyStruct1), sizeof(MyStruct2));// 32-24
+    }
+    return 0;
+}
+
+每个特定平台上的编译器都有自己的默认“对齐系数”(也叫对齐模数)。
+程序员可以通过预编译命令#pragma pack(n)，n=1,2,4,8,16来改变这一系数，其中的n就是你要指定的“对齐系数”。
+在ios中，Xcode默认为#pragma pack(8)，即8字节对齐
+
+这里的8字节对齐是结构体内部对齐规则，对象在系统中对外实际分配的空间是遵循16字节对齐原则。
+
+结构体对齐规则:
+1.数据成员的对齐规则可以理解为min(m, n) 的公式, 其中 m表示当前成员的开始位置, n表示当前成员所需位数。
+如果满足条件 m 整除 n （即 m % n == 0）, n 从m 位置开始存储, 反之继续检查 m+1 能否整除 n, 直到可以整除, 
+从而就确定了当前成员的开始位置。
+2.最后结构体的内存大小必须是结构体中最大成员内存大小的整数倍，不足的需要补齐
+
+
+struct MyStruct3 {
+    NSString * a; // 8字节(指针)
+    double b;     // 8字节
+    int c;        // 4字节
+    short d;      // 2字节
+    char e;       // 1字节
+    struct MyStruct2 str;
+} MyStruct3;
+
+int main(int argc, const char * argv[]) {
+    
+    @autoreleasepool {
+        NSLog(@"MyStruct3内存大小: %lu", sizeof(MyStruct3));// 48
+        NSLog(@"MyStruct3中的结构体(MyStruct2)内存大小 %lu", sizeof(MyStruct2));// 24
+    }
+    return 0;
+}
+
+==================================================内存优化(属性重排)
+我们观察到MyStruct1和MyStruct2的成员属性一样，但是在内存管理上，MyStruct2比MyStruct1利用率更高
+
+MyStruct2中int、short和char 4 + 2 + 1组合，空间利用得更合理。
+苹果会进行属性重排，对属性进行合理排序，尽可能保持保持属性之间的内存连续，减少padding(白色部分，属性之间置空的内存)。
+
+align16， 是空间换取时间，保障系统在处理对象时能快速存取
+属性重排，保障一个对象尽可能少的占用内存资源
+
+@interface HTPerson : NSObject
+
+@property(nonatomic, copy)   NSString * name;
+@property(nonatomic, copy)   NSString * nickname;
+@property(nonatomic, assign) int        age;
+@property(nonatomic, assign) long       height;
+@property(nonatomic, assign) char       c1;
+@property(nonatomic, assign) char       c2;
+
+@end
+
+#import "HTPerson.h"
+
+int main(int argc, const char * argv[]) {
+    
+    @autoreleasepool {
+        
+        HTPerson * person = [[HTPerson alloc]init];
+        person.age      = 18;
+        person.height   = 190;
+        person.name     = @"mark";
+        person.nickname = @"哈哈";
+        person.c1       = 'A';
+        person.c2       = 'B';
+        
+        NSLog(@"%@", person);
+    }
+    return 0;
+}
+
+x/8gx person
+isa
+age c2 c1
+name
+nickname
+height
+
+name、nickname、height都是各自占用8字节。可以直接打印出来
+而age是Int占用4字节,c1和c2是char,各自占用1字节。我们推测系统可能属性重排，将他们存放在了一个块区。
+
+// float转换为16进制
+void ht_float2HEX(float f){
+    union uuf { float f; char s[4];} uf;
+    uf.f = f;
+    printf("0x");
+    for (int i = 3; i>=0; i--) {
+        printf("%02x", 0xff & uf.s[i]);
+    }
+    printf("\n");
+}
+
+// double转换为16进制
+void ht_double2HEX(float f){
+    union uuf { float f; char s[8];} uf;
+    uf.f = f;
+    printf("0x");
+    for (int i = 7; i>=0; i--) {
+        printf("%02x", 0xff & uf.s[i]);
+    }
+    printf("\n");
+}
+
+
+对象内部字节对齐是8字节:
+size_t class_getInstanceSize(Class cls)
+{
+    if (!cls) return 0;
+    return cls->alignedInstanceSize();
+}
+
+// Class's ivar size rounded up to a pointer-size boundary.
+uint32_t alignedInstanceSize() const {
+    return word_align(unalignedInstanceSize());
+}
+
+#ifdef __LP64__ // 64位操作系统
+#   define WORD_SHIFT 3UL
+#   define WORD_MASK 7UL  // 7字节遮罩
+#   define WORD_BITS 64 
+#else 
+#   define WORD_SHIFT 2UL
+#   define WORD_MASK 3UL
+#   define WORD_BITS 32
+#endif
+
+static inline uint32_t word_align(uint32_t x) {
+    // (x + 7) & (~7)  --> 8字节对齐
+    return (x + WORD_MASK) & ~WORD_MASK;
+}
+
+总结:
+外部处理,按照align16为内存块来存取，效率很快。（所以malloc_size读取的都是16的倍数）
+但为了避免浪费太多内存空间。系统会在每个对象内部进行属性重排，并使用8字节对齐，使单个对象占用的资源尽可能小。（所以class_getInstanceSize读取的都是8的倍数）

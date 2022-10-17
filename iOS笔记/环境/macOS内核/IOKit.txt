@@ -1,0 +1,181 @@
+https://developer.apple.com/documentation/iokit
+
+XNU 内核包含了 BSD 和 Mach
+Mach Kernel 提供了 I/O Kit 给硬件厂商写驱动用的。这个部分在 NeXT 时期是用 Objective-C 提供的 API,叫做 Driver Kit
+
+==================================================电池信息
+
+I/O Kit 里我们可以通过三种不同的方式获取电池信息
+位于 IOKit/pwr_mgt 的 Power Mangement 接口，
+位于 IOKit/ps 的 Power Sources 接口，
+以及通过 IOServiceGetMatchingService 获取 AppleSmartBattery Service 接口。
+
+
+1.IOPM (Power Management) API
+IOPM 接口需要使用 Mach Port 跟 IOKit 进行 IPC 通信
+
+IPC (跨进程通信)
+
+Mach Port
+XNU 是一个混合内核，既有 BSD 又有 Mach Kernel
+
+https://nshipster.com/inter-process-communication/
+
+只有一个进程可以从对应的 port 里 dequeue 一条消息，这个进程被持有接收权利(receive-right)。
+可以有多个进程往某个 port 里 enqueue 消息，这些进程持有该 port 的发送权利(send-rights)。
+
+我们可以简单把 mach port 看做是一个单向的数据发送渠道，构建一个消息结构体后通过mach_msg() 方法发出去。
+因为只能单向发送，所以当 B 进程收到了 A 进程发来的消息之后要自己创建一个新的 Port 然后又发回去 A 进程。
+
+
+手动构建 mach message 发送是比较复杂的:
+natural_t data;
+mach_port_t port;
+
+struct {
+    mach_msg_header_t header;
+    mach_msg_body_t body;
+    mach_msg_type_descriptor_t type;
+} message;
+
+message.header = (mach_msg_header_t) {
+    .msgh_remote_port = port,
+    .msgh_local_port = MACH_PORT_NULL,
+    .msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0),
+    .msgh_size = sizeof(message)
+};
+
+message.body = (mach_msg_body_t) {
+    .msgh_descriptor_count = 1
+};
+
+message.type = (mach_msg_type_descriptor_t) {
+    .pad1 = data,
+    .pad2 = sizeof(data)
+};
+
+mach_msg_return_t error = mach_msg_send(&message.header);
+
+if (error == MACH_MSG_SUCCESS) {
+    // ...
+}
+
+其中最关键的是 msgh_remote_port 和 msgh_local_port。
+上述代码是发送消息，所以 msgh_remote_port 就是要接收这条消息的那个进程的 port。
+我们得先知道这个 port 信息我们才能往里面发消息。
+
+
+使用 Master Port 和 IOKit 通信:
+在 IOKit 里面，所有的通信都通过 IOKit Master Port 来进行，使用以下函数可以获取 master port。
+kern_return_t
+IOMasterPort( mach_port_t   bootstrapPort, mach_port_t * masterPort );
+使用时如下:
+mach_port_t masterPort;
+IOMasterPort(MACH_PORT_NULL, &masterPort)
+默认把 bootstrapPort 置空。如果返回值是 kIOReturnSuccess 就成功构建了一个 mach_port_t 用于跟 IOKit 通信。
+
+
+bootstrapPort:
+如果你不知道对方的 port name
+于是 XNU 系统提供了 bootstrap port 这个东西，由系统提供查询服务，这样所有的进程都可以去广播自己的 mach port 接收端的名字，也可以查询其他人的名字。
+查询接口:
+mach_port_t port;
+kern_return_t kr = bootstrap_look_up(bootstrap_port, "me.justinyan.example", &port);
+注册接口:
+bootstrap_register(bootstrap_port, "me.justinyan.example", port);
+
+
+
+IOPM 获取电池信息接口:
+NSDictionary* get_iopm_battery_info() {
+    mach_port_t masterPort;
+    CFArrayRef batteryInfo;
+
+    if (kIOReturnSuccess == IOMasterPort(MACH_PORT_NULL, &masterPort) &&
+        kIOReturnSuccess == IOPMCopyBatteryInfo(masterPort, &batteryInfo) &&
+        CFArrayGetCount(batteryInfo))
+    {
+        CFDictionaryRef battery = CFDictionaryCreateCopy(NULL, CFArrayGetValueAtIndex(batteryInfo, 0));
+        CFRelease(batteryInfo);
+        return (__bridge_transfer NSDictionary*) battery;
+    }
+    return NULL;
+}
+
+NSDictionary *dict = get_iopm_battery_info();
+NSLog(@"iopm dict: %@", dict);
+不建议大家使用这个接口，可以考虑用 IOPowerSources API 代替。
+
+2. IOPowerSources API
+先用 IOPSCopyPowerSourcesInfo() 取到 info, 然后取 IOPSCopyPowerSourcesList()，最后再 copy 一下就完事了。
+NSDictionary* get_iops_battery_info() {
+    CFTypeRef info = IOPSCopyPowerSourcesInfo();
+
+    if (info == NULL)
+        return NULL;
+
+
+    CFArrayRef list = IOPSCopyPowerSourcesList(info);
+
+    // Nothing we care about here...
+    if (list == NULL || !CFArrayGetCount(list)) {
+        if (list)
+            CFRelease(list);
+
+        CFRelease(info);
+        return NULL;
+    }
+
+    CFDictionaryRef battery = CFDictionaryCreateCopy(NULL, IOPSGetPowerSourceDescription(info, CFArrayGetValueAtIndex(list, 0)));
+
+    // Battery is released by ARC transfer.
+    CFRelease(list);
+    CFRelease(info);
+
+    return (__bridge_transfer NSDictionary* ) battery;
+}
+
+NSDictionary *iopsDict = get_iops_battery_info();
+NSLog(@"iops dict: %@", iopsDict);
+
+
+3. IOPMPS Apple Smart Battery API
+IOKit 里提供了一套 IOService 相关的接口，你可以往里面注册 IOService 服务,带个名字，一样是通过 IOMasterPort() 来通信。
+
+IOKit 主要是面向硬件驱动开发者的，所以如果你的硬件依赖另外一个硬件，但是另外一个硬件还没有接入，这时候你可以往 IOService 注册一个通知。
+使用 IOServiceAddMatchingNotification，等到你观察的硬件接入后调用了 registerService() 你就会收到对应的通知了。
+
+这里我们直接用 IOServiceGetMatchingService() 来获取系统提供的 AppleSmartBattery service。
+
+NSDictionary* get_iopmps_battery_info() {
+    io_registry_entry_t entry = 0;
+    entry = IOServiceGetMatchingService(kIOMasterPortDefault, IOServiceNameMatching("AppleSmartBattery"));
+    if (entry == IO_OBJECT_NULL)
+        return nil;
+
+    CFMutableDictionaryRef battery;
+    IORegistryEntryCreateCFProperties(entry, &battery, NULL, 0);
+    return (__bridge_transfer NSDictionary *) battery;
+}
+
+NSDictionary *iopmsDict = get_iopmps_battery_info();
+NSLog(@"iopmsDict: %@", iopmsDict);
+
+CurrentCapacity = 6360;
+DesignCapacity = 6669;
+有了当前电池容量和设计容量，就可以得到我的电池还剩 95% 的容量。
+
+4. 列出所有 IOService
+怎么知道系统有一个 IOService 叫做 “AppleSmartBattery”
+把系统所有的 IOService 打印出来
+IOKitLib.h 里有一个接口 IORegistryCreateIterator() 可以创建一个迭代器，把所有已注册的 IOService 取出来。
+const char *plane = "IOService";
+io_iterator_t it = MACH_PORT_NULL;
+IORegistryCreateIterator(kIOMasterPortDefault, plane, kIORegistryIterateRecursively, &it) 
+
+有一个开源库实现了这个功能
+https://github.com/Siguza/iokit-utils
+
+iokit-utils ./ioprint| grep -i battery
+AppleSmartBatteryManager(AppleSmartBatteryManager)
+AppleSmartBattery(AppleSmartBattery)

@@ -1,0 +1,112 @@
+main函数之前还有什么呢
+添加三个符号断点libSystem_initializer、libdispatch_init、_objc_init
+
+第一个符号断点libSystem_initializer
+经过一系列流程后在来到libSystem_initailizer.这也就从dyld来到了libSystem库
+
+第二个符号断点libdispatch_init,也就来到了libdispatch库
+
+第三个符号断点_objc_init,也就来到了libobjc的底层
+
+过完以上三个断点才会来到我们熟悉的main函数
+
+详细的堆栈信息
+只需关闭 Xcode 左侧 Debug 区域最下面的第一个按钮就行 show only stack frames with debug symbols and between libraries
+
+==========OC对象的alloc
+Person *p1 = [Person alloc];
+%@ 打印对象 %p 打印地址 &p 指针地址
+
+alloc才是创建对象-开辟内存
+init只是一个初始化构造函数
+new又alloc出了另一内存空间
+
+objc4官方源码:
+https://opensource.apple.com/tarballs/objc4/
+
+符号断点直接定位: 添加alloc符号断点
+[NSObject alloc] 成功看到所在链接库libobjc.A.dylib
+其底层调用的就是 _objc_rootAlloc函数
+
+control + step into:
+control键+鼠标点击 Xcode日志栏的step into按钮
+
+汇编进入:
+Xcode 工具栏 选择 Debug --> Debug Workflow --> Always Show Disassembly,这个 选项表示 始终显示反汇编 ，即 通过汇编 跟流程
+在汇编添加断点到objc_alloc
+按住control键和step into键
+最终都来到了libobjc.A.dylib,进而也看到了底层objc_alloc
+
+==========alloc流程分析
+三个符号断点_objc_rootAlloc、callAlloc、_objc_rootAllocWithZone
+
+寄存器的知识.w代表32位,x代表64位.
+那为什么我们跑到真机上还有w呢?这考虑到兼容问题,例如我们存储一个int = 10类型的数据,在32位下就能存储,不需要用64位.
+寄存器 - 其寄存器的作用就是进行数据的临时存储
+ARM64拥有有31个64位的通用寄存器 x0 到 x30,这些寄存器通常用来存放一般性的数据，称为通用寄存器（有时也有特定用途）
+比如x0 ~ x7 用来存储参数,x0主要用来存储参数和接收返回值.
+那么w0 到 w28 这些是32位的. 因为64位CPU可以兼容32位.所以可以只使用64位寄存器的低32位.
+比如 w0 就是 x0的低32位
+通常，CPU会先将内存中的数据存储到通用寄存器中，然后再对通用寄存器中的数据进行运算
+
+register read w9
+
+###
+不管我是NSObject类,还是自定义的TCJPerson类调用alloc方法为什么最开始走的是objc_alloc
+###
+NSObject没有走alloc方法
+自定义的TCJPerson类走了两次callAlloc
+
+源码中的Calls [cls alloc]告诉我们,当我们调用alloc方法时底层是调用objc_alloc
+
+1.
+#define ALWAYS_INLINE inline __attribute__((always_inline))
+ALWAYS_INLINE宏会强制开启inline
+inline 是一种降低函数调用成本的方法，其本质是在调用声明为 inline 的函数时，会直接把函数的实现替换过去，这样减少了调用函数的成本. 是一种以空间换时间的做法.
+
+2.
+#define fastpath(x) (__builtin_expect(bool(x), 1))
+#define slowpath(x) (__builtin_expect(bool(x), 0))
+__builtin_expect(EXP, N)
+__builtin_expect是gcc引入的
+
+作用： 允许程序员将最有可能执行的分支告诉编译器.编译器可以对代码进行优化，以减少指令跳转带来的性能下降.即性能优化
+函数： __builtin_expect(EXP, N) 表示 EXP==N的概率很大
+
+fastpath:定义中__builtin_expect((x),1)表示 x 的值为真的可能性更大；即 执行if 里面语句的机会更大
+slowpath:定义中的__builtin_expect((x),0)表示 x 的值为假的可能性更大。即执行 else 里面语句的机会更大
+
+在日常的开发中，也可以通过设置来优化编译器，达到性能优化的目的，设置的路径为：Build Setting --> Optimization Level --> Debug --> 将None 改为 fastest 或者 smallest
+
+3.
+if (fastpath(!cls->ISA()->hasCustomAWZ()))
+hasCustomAWZ()
+判断的主要依据:还是看缓存中是否有默认的alloc/allocWithZone方法(这个值会存储在metaclass中).
+因为NSObject的初始化，系统在llvm编译时就已经初始化好了.
+因此缓存中就有alloc/allocWithZone方法了.即hasCustomAWZ()为false那么!cls->ISA()->hasCustomAWZ()就为true
+而我们自定义的TCJPerson类初次创建是没有默认的alloc/allocWithZone实现的。
+所以继续向下执行进入到msgSend消息发送流程，调用[NSObject alloc]方法,即就是alloc方法
+接着会来到_objc_rootAlloc,后再次来callAlloc
+而这次因为调用的是NSObject类的,所以缓存中存在alloc/allocWithZone实现,接着走_objc_rootAllocWithZone方法.
+
+自定义类第一次进入callAlloc走msgSend消息发送流程
+第二次进入callAlloc走_objc_rootAllocWithZone
+
+
+在_class_createInstanceFromZone中，主要做了3件事
+1.计算对象所需的空间大小；
+2.根据计算大小开辟空间,返回地址指针；
+3.初始化isa，使其与当前对象关联
+
+==========
+symbol stub: 符号打桩
+
+把我们的应用程序，编译成汇编代码，执行外部库的函数，
+就成了跳转地址 （ symbol stub ）
+
+走外部函数，就会走外部函数的桩 （ stub ）
+桩里面的代码，指向一个新的地址，是用来寻址的
+
+懒加载符号表, Lazy Symbol Pointers
+例如： Foundation 中的 NSLog
+直接加载符号表, Non-Lazy Symbol Pointers

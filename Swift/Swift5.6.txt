@@ -1,0 +1,167 @@
+-----#unavailable
+if #unavailable(iOS 15) {
+    // iOS15不可用，即iOS15之前的代码可以正常工作
+} else {
+    // iOS15的代码可以正常工作
+}
+
+使用上与#available最大的区别是#unavailable不能使用平台通配符*
+
+-----类型占位符_
+使用_/_?占用类型的位置，然后编译器通过类型推断可以推断出_/_?的类型。
+
+// _?代替Double?
+var a: _? = 3.14
+a = nil
+
+// 数组的元素为Int类型，_代替Int
+let array: Array<_> = [1, 2, 3, 4, 6]
+
+// 字典的value为UIColor类型，_代替UIColor
+let colors: [String: _] = ["red": UIColor.red, "green": UIColor.green, "blue": UIColor.blue]
+
+-----CodingKeyRepresentable
+Swift 5.6 之前，如果字典的 Key 为非Int或String类型，通过 Codable 进行编码后得不到预期的结果。
+
+enum Student: String, Codable {
+    case name
+    case age
+    case sex
+}
+
+// 字典
+let dict: [Student: String] = [.name: "zhangsan", .age: "20", .sex: "male"]
+// 编码
+let encoder = JSONEncoder()
+do {
+    let student = try encoder.encode(dict)
+    print(String(decoding: student, as: UTF8.self)) // ["name","zhangsan","age","20","sex","male"]
+} catch {
+    fatalError(error.localizedDescription)
+}
+
+Swift 5.6 之后增加了 CodingKeyRepresentable，使用它就可以得到预期的结果:
+// 实现CodingKeyRepresentable协议
+enum Student: String, Codable, CodingKeyRepresentable {
+    case name
+    case age
+    case sex
+}
+
+// 字典
+let dict: [Student: String] = [.name: "zhangsan", .age: "20", .sex: "male"]
+// 编码
+let encoder = JSONEncoder()
+do {
+    let student = try encoder.encode(dict)
+    print(String(decoding: student, as: UTF8.self)) // {"sex":"male","name":"zhangsan","age":"20"}
+} catch {
+    fatalError(error.localizedDescription)
+}
+
+-----@MainActor警告
+在 Swift 5.6 之前，以下代码没有任何问题，但在 Swift 5.6 之后，会发出警告
+
+import SwiftUI
+
+@MainActor
+class ViewModel: ObservableObject {
+}
+
+struct ContentView: View {
+    // 警告：expression requiring global actor 'MainActor' cannot appear in default-value expression of property '_viewModel'; this is an error in Swift 6
+    @StateObject private var viewModel = ViewModel()
+
+    var body: some View {
+        Text("Hello, world!")
+    }
+}
+
+为了避免出现警告，可以按照如下的方式进行修改
+import SwiftUI
+
+@MainActor
+class ViewModel: ObservableObject {
+}
+
+struct ContentView: View {
+    @StateObject private var viewModel: ViewModel
+
+    init() {
+        _viewModel = StateObject(wrappedValue: ViewModel())
+    }
+
+    var body: some View {
+        Text("Hello, world!")
+    }
+}
+
+-----存在性any
+Swift 5.6 之前协议的使用:
+protocol SomeProtocol {
+    func work()
+}
+
+class Student: SomeProtocol {
+    func work() {
+        print("Study")
+    }
+}
+
+class Teacher: SomeProtocol {
+    func work() {
+        print("Teach")
+    }
+}
+
+// 泛型函数，泛型遵守了协议
+func generic<T>(who: T) where T: SomeProtocol {
+    who.work()
+}
+
+// 正确
+generic(who: Student())
+generic(who: Teacher())
+
+// 错误
+let student: SomeProtocol = Student()
+// 报错：Protocol 'SomeProtocol' as a type cannot conform to the protocol itself
+generic(who: student)
+
+let teacher: SomeProtocol = Teacher()
+// 报错：Protocol 'SomeProtocol' as a type cannot conform to the protocol itself
+generic(who: teacher)
+
+
+Swift 5.6 之后增加了一种新的类型—存在类型，表示为any 类型。改造上面函数并将初始化部分的SomeProtocol更改为存在类型any SomeProtocol，报错的代码变为正确。
+protocol SomeProtocol {
+    func work()
+}
+
+class Student: SomeProtocol {
+    func work() {
+        print("Study")
+    }
+}
+
+class Teacher: SomeProtocol {
+    func work() {
+        print("Teach")
+    }
+}
+
+// 泛型函数改为any存在类型函数
+func existential(who: any SomeProtocol) {
+    who.work()
+}
+
+// 正确
+existential(who: Student())
+existential(who: Teacher())
+
+// 正确
+let student: any SomeProtocol = Student()
+existential(who: student)
+
+let teacher: any SomeProtocol = Teacher()
+existential(who: teacher)

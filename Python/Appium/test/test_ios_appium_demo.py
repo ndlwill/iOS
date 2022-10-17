@@ -138,11 +138,13 @@ class TestIOSCreateSession(unittest.TestCase):
         print(str(excinfo.exception.msg))
 
     def test_create_ios_session(self):
+        print("test_create_ios_session")
         app_element = self.driver.find_element_by_class_name('XCUIElementTypeApplication')
         self.assertEqual('TestAppium', app_element.get_attribute('name'))
         sleep(3)
 
     def test_button1_click(self):
+        print("test_button1_click")
         button1_element = self.driver.find_element_by_accessibility_id("accIdentifier")
         sleep(3)
         button1_element.click()
