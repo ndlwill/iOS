@@ -2230,6 +2230,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         
+        // MARK: - NetworkUtils
+        let ipValue1 = NetworkUtils.ipValue(with: "125.213.100.123")
+        
         // MARK: NSMutableArray sort
         let arr = NSMutableArray()
         arr.add(10)

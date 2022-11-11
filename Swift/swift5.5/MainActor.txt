@@ -1,0 +1,228 @@
+Using the MainActor attribute to automatically dispatch UI updates on the main queue
+
+Concurrency: 并发
+
+Continuation: 继续
+
+Manual main queue dispatching:
+So far, the most commonly used solution to this problem has been to wrap all UI-related updates in asynchronous calls to DispatchQueue.main, 
+when there’s any chance that those updates will be triggered on a background queue — for example in situations like this:
+
+class ProfileViewController: UIViewController {
+    private let userID: User.ID
+    private let loader: UserLoader
+    private lazy var nameLabel = UILabel()
+    private lazy var biographyLabel = UILabel()
+    ...
+
+    private func loadUser() {
+        loader.loadUser { [weak self] result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let user):
+                    self?.nameLabel.text = user.name
+                    self?.biographyLabel.text = user.biography
+                case .failure(let error):
+                    self?.showError(error)
+                }
+            }
+        }
+    }
+}
+
+
+The main actor:
+Swift 5.5 is introducing what will likely become a much more robust and almost entirely automatic solution to this very common problem — the main actor. 
+
+So how exactly do we “run” our code on that main actor? The first thing that we have to do is to make our asynchronous code use the new async/await pattern, 
+which is also being introduced as part of Swift 5.5’s suite of concurrency features. 
+In this case, that could be done by creating a new, async/await-powered version of the loadUser method that our above view controller is calling — which simply involves wrapping a call to its default, completion handler-based version using Swift’s new continuation API:
+
+extension UserLoader {
+    func loadUser() async throws -> User {
+        try await withCheckedThrowingContinuation { continuation in
+            loadUser { result in
+                switch result {
+                case .success(let user):
+                    continuation.resume(returning: user)
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+}
+
+To learn more about the above pattern, Wrapping completion handlers into async APIs
+
+With the above in place, we can now use an asynchronous Task, along with Swift’s standard do, try catch error handling mechanism, 
+to call our loader’s new async/await-powered API from within our ProfileViewController:
+
+class ProfileViewController: UIViewController {
+    ...
+    
+    private func loadUser() {
+        Task {
+            do {
+                let user = try await loader.loadUser()
+                nameLabel.text = user.name
+                biographyLabel.text = user.biography
+            } catch {
+                showError(error)
+            }
+        }
+    }
+}
+
+But wait, how can the above work without any calls to DispatchQueue.main.async? 
+If loadUser performs its work on a background queue, 
+won’t that mean that our UI will now be incorrectly updated on a background queue as well?
+
+That’s where the main actor comes in. If we take a look at the declarations for both UILabel and UIViewController, 
+we can see that they’ve both been annotated with the new @MainActor attribute:
+@MainActor class UILabel: UIView
+@MainActor class UIViewController: UIResponder
+
+What that means is that, when using Swift’s new concurrency system, 
+all properties and methods on those classes (and any of their subclasses, 
+including our ProfileViewController) will automatically be set, called, 
+and accessed on the main queue. All those calls will automatically be routed through the system-provided MainActor, 
+which always performs all of its work on the main thread — completely eliminating the need for us to manually call DispatchQueue.main.async. Really cool!
+
+
+Custom UI-related classes:
+But what if we’re instead working on a completely custom type that we’d also like to gain the above kind of capability? 
+For example, when implementing an ObservableObject that’s used within a SwiftUI view, we need to make sure to only assign its @Published-marked properties on the main queue, 
+so wouldn’t it be great if we could also leverage the MainActor in those cases as well?
+The good news is — we can! Just like how many of UIKit’s built-in classes are now annotated with @MainActor, 
+we can apply that attribute to our own classes as well — giving them that same automatic main thread-dispatching behavior:
+@MainActor class ListViewModel: ObservableObject {
+    @Published private(set) var result: Result<[Item], Error>?
+    private let loader: ItemLoader
+    ...
+
+    func load() {
+        Task {
+            do {
+                let items = try await loader.loadItems()
+                result = .success(items)
+            } catch {
+                result = .failure(error)
+            }
+        }
+    }
+}
+
+One thing that’s very important to point out, though, 
+is that all of this only works when we’re using Swift’s new concurrency system. 
+So when using other concurrency patterns, 
+for example completion handlers, then the @MainActor attribute has no effect — meaning that the following code will still cause our result property to be incorrectly assigned on a background queue:
+
+@MainActor class ListViewModel: ObservableObject {
+    ...
+
+    func load() {
+        loader.loadItems { [weak self] result in
+            self?.result = result
+        }
+    }
+}
+
+https://www.swiftbysundell.com/podcast/99/
+
+==================================================Wrapping completion handlers into async APIs
+https://wwdcbysundell.com/2021/wrapping-completion-handlers-into-async-apis/
+
+WWDC21: 苹果全球开发者大会（英文全称是“Worldwide Developers Conference”）
+
+then you probably already know that most of the asynchronous APIs within Apple’s SDK that used to return their results through completion handlers now offer brand new async alternatives.
+
+The most obvious example being URLSession, where this existing API:
+URLSession.dataTask(with: URLRequest, completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void)
+
+Now has a more modern, async-based alternative:
+URLSession.data(with: URLRequest) async throws -> (Data,URLResponse)
+
+But how does it work when it comes to our own code? 
+
+func fetchData(_ completionHandler: @escaping (Result<Data, Error>) -> Void) {
+    ...
+}
+
+In order to wrap the function fetchData into a new async function, the first step will be to write the signature of this new function:
+func fetchData() async -> Result<Data, Error>
+
+Notice how the argument of the completion handler has now become the return value of the new function. Now, let’s try to write the actual implementation for our new function:
+func fetchData() async -> Result<Data, Error> {
+    // first, we call the original function
+    fetchData { result in
+        // but how do we return the result?
+    }
+}
+The fist step was easy — we just had to call the original function from within our new one. 
+But then, we quickly ran into a problem — we now need a way to await the execution of the completion handler. 
+However, the completion handler is a regular Swift function, so we cannot use await on it.
+
+“continuations”:
+To solve the issue, we‘re going to use a new function that‘s part of Swift 5.5 and that‘s designed specifically for this purpose. Here‘s its signature:
+func withCheckedContinuation<T>(_ body: (CheckedContinuation<T, Never>) -> Void) async -> T
+
+func fetchData() async -> Result<Data, Error> {
+    // we begin by calling withCheckedContinuation
+    // since it's an async function, we are allowed to use await
+    return await withCheckedContinuation { continuation in
+        // then, we call the original fetchData
+        fetchData { result in
+            // finally, we pass the result to the continuation
+            // doing so will resume the awaiting call to withCheckedContinuation
+            continuation.resume(returning: result)
+        }
+    }
+}
+
+Something that‘s important to take into account is the very specific contract that we must follow when calling withCheckedContinuation. 
+In the function that we pass as an argument, we must be very careful to call the continuation‘s resume method exactly once. 
+Should we forget to call it, then our code would await forever, and should we call it more than once, 
+then our code would trap and crash as doing so would be considered a serious programming error.
+
+Swift also provides a similar function called withUnsafeContinuation. That alternative works exactly like withCheckedContinuation, 
+but with one difference — multiple calls to resume will not be checked and could lead to undefined behavior.
+
+And that's it! We can now call our new function and enjoy the benefits of an async function at the call site:
+let result = await fetchData()
+
+Using Swift's error throwing mechanism:
+The original fetchData function was returning a Result because it had no way of using Swift‘s error throwing mechanism, 
+since it was using a completion handler. Now that we are using an async function, 
+this limitation doesn‘t exist anymore, and we can rework our code as follows:
+
+// notice how the function is now declared as throwing in addition to async
+func fetchData() async throws -> Data {
+    // instead of withCheckedContinuation, we are now calling withCheckedThrowingContinuation
+    return try await withCheckedThrowingContinuation { continuation in
+        fetchData { result in
+            // depending on the content of result, we either resume with a value or an error
+            switch result {
+            case .success(let value):
+                continuation.resume(returning: value)
+            case .failure(let error):
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+}
+
+The call site also needs to be updated, as we now need to catch and deal with any potential error that might be thrown:
+do {
+    let data = try await fetchData()
+} catch {
+    // deal with the error
+}
+
+Swift‘s new async functions are incredibly powerful, and as soon as we begin using them it‘s very hard to go back to the old-fashioned APIs that require completion handlers. 
+Fortunately, as we've seen, Swift provides us with tools to easily wrap these existing APIs into shiny new async functions
+
+if your codebase is very large, then you might be concerned about the amount of boilerplate that you‘ll need to write in order to wrap every existing API. But this might actually not be that much of an issue,
+because the process could be easily automated using a code generation tool, such as Sourcery.
+
+https://github.com/krzysztofzablocki/Sourcery

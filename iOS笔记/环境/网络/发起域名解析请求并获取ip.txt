@@ -1,0 +1,60 @@
+#import <CFNetwork/CFNetwork.h>
+#import <sys/socket.h>
+#import <netinet/in.h>
+#import <arpa/inet.h>
+
+NSArray *array = [self dnsResolvedAddressesWithHostname:@"www.baidu.com"];
+
+- (NSArray<NSString *> *)dnsResolvedAddressesWithHostname:(NSString *)hostname {
+    CFHostRef cfHost = CFHostCreateWithName(NULL, (__bridge CFStringRef)hostname);
+    if (cfHost == NULL) {
+        return nil;
+    }
+
+    CFStreamError error;
+    if (!CFHostStartInfoResolution(cfHost, kCFHostAddresses, &error)) {
+        NSLog(@"can't start resolution: %ld %d", error.domain, error.error);
+        return nil;
+    }
+
+    Boolean resolved;
+    // function result: A CFArray of addresses where address is a sockaddr structure wrapped by a CFDataRef, or null if no addresses were available.
+    CFArrayRef cfAddresses = CFHostGetAddressing(cfHost, &resolved);
+    
+    if (cfAddresses != NULL) {
+        NSLog(@"resolved: %d", resolved);
+        
+        NSMutableArray<NSString *> *addresses = [NSMutableArray array];
+        struct sockaddr *sa;
+        NSString *address;
+        for (long i = 0; i < CFArrayGetCount(cfAddresses); i++) {
+            CFDataRef cfData = (CFDataRef)CFArrayGetValueAtIndex(cfAddresses, i);
+            sa = (struct sockaddr *)CFDataGetBytePtr(cfData);
+            address = [self inet_ntopWithSockAddr:sa];
+            [addresses addObject:address];
+        }
+        CFRelease(cfHost);
+        return addresses;
+    } else {
+        CFRelease(cfHost);
+        return nil;
+    }
+}
+
+- (NSString *)inet_ntopWithSockAddr:(struct sockaddr *)sa {
+    NSString *addrStr = nil;
+    if (sa->sa_family == AF_INET) {
+        const struct sockaddr_in *sa_in = (const struct sockaddr_in *)sa;
+        char addrBuf[INET_ADDRSTRLEN];
+        if (inet_ntop(AF_INET, &sa_in->sin_addr, addrBuf, INET_ADDRSTRLEN)) {
+            addrStr = [NSString stringWithUTF8String:addrBuf];
+        }
+    } else if (sa->sa_family == AF_INET6) {
+        const struct sockaddr_in6 *sa_in6 = (const struct sockaddr_in6 *)sa;
+        char addrBuf[INET6_ADDRSTRLEN];
+        if (inet_ntop(AF_INET6, &sa_in6->sin6_addr, addrBuf, INET6_ADDRSTRLEN)) {
+            addrStr = [NSString stringWithUTF8String:addrBuf];
+        }
+    }
+    return addrStr;
+}

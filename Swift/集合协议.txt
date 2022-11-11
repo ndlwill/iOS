@@ -1,0 +1,144 @@
+==================================================IteratorProtocol:
+一次提供一个序列值的类型。该协议与 Sequence 协议紧密相连
+sequence: 序列
+序列通过创建迭代器来提供对其元素的访问，迭代器跟踪其迭代过程，并随着序列的前进每次返回一个元素
+public protocol IteratorProtocol {
+    associatedtype Element
+    mutating func next() -> Element?
+}
+
+一个名为 next() 的方法，返回下一个元素或 nil。它被标记为 mutating，这样就可以更新他们的内部状态，为下一次调用 next() 做准备。
+如果实现没有返回 nil，迭代器可以无限地生成值。
+
+struct DoublingIterator: IteratorProtocol {
+    var value: Int
+    var limit: Int? = nil
+
+    mutating func next() -> Int? {
+        if let l = limit, value > l {
+            return nil
+        } else {
+            let current = value
+            value *= 2
+            return current
+        }
+    }
+}
+
+var doublingIterator = DoublingIterator(value: 1, limit: 1024)
+while let value = doublingIterator.next() {
+    print(value)
+}
+
+一个简单的迭代器，每次调用 next()，值增加一倍。如果我们初始化 DoublingIterator 时，limit 传 nil，迭代器将永远运行
+
+==================================================Sequence:
+可以用对其元素进行顺序迭代访问的类型。序列就是一系列的值，每次我们都可以访问一个。
+
+public protocol Sequence {
+    associatedtype Element
+    associatedtype Iterator: IteratorProtocol where Iterator.Element == Element
+    func makeIterator() -> some IteratorProtocol
+}
+
+序列通过它的 makeIterator() 方法和关联的类型来确保迭代器的 Element 类型和序列匹配。
+
+struct DoublingSequence: Sequence {
+    var value: Int
+    var limit: Int? = nil
+
+    func makeIterator() -> DoublingIterator {
+        DoublingIterator(value: value, limit: limit)
+    }
+}
+
+let doubler = DoublingSequence(value: 1, limit: 1024)
+for value in doubler {
+    print(value)
+}
+
+print(doubler.contains { $0 == 512 }) // true
+print(doubler.reduce(0, +)) // 2047
+
+仅仅通过遵循 Sequence，我们的具体类型就获得了 for-in 和一些其他操作的能力，如 map、 filter、 reduce 等。
+Sequence 还提供了 dropFirst(_:)、 dropLast(_:) 等方法。
+但是，在序列级别，这些方法的实现受到一次迭代一个元素的约束。
+
+在使用 Sequences 时需要注意一些事情:
+序列不能保证多次迭代产生想要的结果。由实现类型决定如何处理对已经遍历过一次的序列的迭代
+序列提供的迭代器应保证时间复杂度为 O(1)。它对元素访问没有其他要求。因此，除非另有文档说明，否则应该将遍历序列的方法视为 O(n)
+
+给定一个元素，Sequence 允许我们移动到下一个元素。为了能够移动到任何元素，我们需要 Collection。
+
+==================================================Collection:
+一个序列，其元素可以通过下标被多次访问。当我们使用数组、字典或集合时，受益于 Collection 协议声明和实现的操作。除了从 Sequence 协议继承的操作之外，我们还可以访问集合中特定位置的元素的方法。
+
+protocol Collection: Sequence {
+    associatedtype Index: Comparable
+
+    var startIndex: Index { get }
+    var endIndex: Index { get }
+    subscript(position: Index) -> Element { get }
+    func index(after i: Index) -> Index
+}
+
+由于多次遍历和通过索引下标访问的需要，一个集合不能延迟地计算它的值，也不能是无限的。
+这与 Sequences 不同，Sequences 可以通过当前对 next() 的调用更新内部状态，为下一次调用做准备。
+还要注意，associatedtype Index 不是 Int 类型，而是符合 Comparable 的任何类型。
+
+==================================================BidirectionalCollection:
+BidirectionalCollection 支持向后和向前遍历。它可以从任何有效索引(不包括集合的 startIndex)向后遍历。因此，它可以提供一些额外的操作，比如，可以快速的访问集合的最后一个元素。此外，它对某些序列和集合方法有更高效的实现，比如，reverse()。
+
+protocol BidirectionalCollection: Collection {
+    func index(before i: Index) -> Index
+}
+
+因为 BidirectionalCollection 可以向后遍历，所以可以改进 reversed() 方法的实现。reversed() 最初是在 Sequence 里实现的，返回类型为 Array<element>，O(n) 的时间复杂度。
+
+BidirectionalCollection 实现了 reversed()，它不会去读取 Sequence 元素，而是返回一个名为 ReversedCollection 的新类型，该类型包装了原始的 Collection。
+ReversedCollection 将自己的索引转换为基本集合的索引，并根据需要从基本集合中访问元素。创建 ReversedCollection 是 O(1) 的时间复杂度。
+
+由于 Sequence 实现的返回类型与 BidirectionalCollection 的返回类型不同，我们可以看到在 Xcode 有两个 reversed() 的自动提示。
+现在我们可以从两端访问元素，但还不能改变指定索引处的值，该功能由 MutableCollection 提供。
+
+==================================================MutableCollection:
+如果我们尝试使用下标修改集合中的任何值，将会出现编译错误。集合只为我们提供对其元素的下标读访问。为了能写访问，我们需要遵循 MutableCollection
+protocol MutableCollection: Collection {
+    subscript(position: Index) -> Element { get set }
+}
+它提供了一些有用的方法，比如交换两个索引处的元素：swapAt(_: :) 和直接修集合本身的 reverse()。
+
+在实现 MutableCollection 时需要注意，下标赋值不应该改变集合本身的长度。这就是为什么 String 不符合 MutableCollection 的原因。使用下标替换字符可以改变字符串的长度，因为字符本身没有固定的长度。
+
+Collection 可以让我们使用下标访问任何元素，但访问的时间不是固定的。这里就引出了 RandomAccessCollection 协议，它可以让我们以固定的时间访问集合中的任何元素。
+
+==================================================RandomAccessCollection:
+它是一个支持快速随机访问元素的集合。RandomAccessCollections 可以以 O(1) 的时间复杂度把下标移动到任何距离及计算两个索引之间的距离。
+因此，RandomAccessCollection 和 BidirectionalCollection 之间的根本区别在于，索引移动或索引间的计算等操作，RandomAccessCollection 效率更高。
+
+public protocol RandomAccessCollection: BidirectionalCollection
+where SubSequence: RandomAccessCollection, Indices: RandomAccessCollection { }
+除了要求 BidirectionalCollection 的子序列和索引类型本身是 RandomAccessCollection 外，它没有增加额外的实现。
+
+遵循 RandomAccessCollection，虽然不能解锁一些额外技能，但它确实提高了某些现有算法的性能，比如 dropFirst(_:)、 dropLast(_:)、prefix(_:), suffix(_:)，这些都是O(1)时间复杂度。
+最重要的是，访问 count 属性的时间复杂度为 O(1) ，而不需要对整个集合进行迭代。
+
+尽管遵循 MutableCollections的集合是可变集合，但仍然不能调用像 insert(_: at:) 这样的改变长度的函数。
+想改变长度，就得遵循 RangeReplaceableCollection 协议。
+
+==================================================RangeReplaceableCollection
+RangeReplaceableCollection 支持用另一个集合的元素替换任意范围的元素。听起来有点像 MutableCollection，但是这里的关键区别是新集合不需要与被替换的集合具有相同的长度。
+
+protocol RangeReplaceableCollection: Collection {
+    init()
+    mutating func replaceSubrange<C>(_ subrange: Range<Index>, with newElements: C)
+    where C: Collection, C.Element == Element
+}
+
+我们可以在任何索引处插入一个新的集合，通过 index..<index 作为子区域。我们可以在最后添加一个集合，完成在 endIndex 插入集合并从集合中删除所有元素。
+由于 rangereplaceablection 可以修改集合的长度，因此 String 可以安全地遵循它。
+
+==================================================Dictionaries and Sets
+Set 遵循了 Collection 协议，这使得它们可以访问类似 firstIndex(of:) 等方法。对于像 Set 这样的无序集合，此方法虽然没啥意义
+
+Dictionary 也遵循了 Collection 协议。基于使用键作为下标访问值的方式。Dictionary 实际上使用内部类型作为它们的 Index，而它们的 Element 类型是 tuple(Key，Value)。Dictionary 实际上有两个下标，一个基于内部索引来满足 Collection 协议的要求，另一个使用我们熟悉的 Key。

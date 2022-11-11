@@ -1,0 +1,952 @@
+https://developer.apple.com/library/archive/documentation/3DDrawing/Conceptual/OpenGLES_ProgrammingGuide/Introduction/Introduction.html#//apple_ref/doc/uid/TP40008793-CH1-SW1
+
+iOS Device Compatibility Reference:
+https://developer.apple.com/library/archive/documentation/DeviceInformation/Reference/iOSDeviceCompatibility/Introduction/Introduction.html#//apple_ref/doc/uid/TP40013599
+
+https://developer.apple.com/documentation/glkit
+
+==============================Checklist for Building OpenGL ES Apps for iOS
+
+Platforms implementing OpenGL ES provide a rendering context for executing OpenGL ES commands, 
+framebuffers to hold rendering results, 
+and one or more rendering destinations that present the contents of a framebuffer for display.
+
+iOS provides only one type of framebuffer, 
+the OpenGL ES framebuffer object, and the GLKView and CAEAGLLayer classes implement rendering destinations.
+
+Building an OpenGL ES app in iOS requires several considerations, 
+some of which are generic to OpenGL ES programming and some of which are specific to iOS:
+Determine which version(s) of OpenGL ES have the right feature set for your app, and create an OpenGL ES context.
+Verify at runtime that the device supports the OpenGL ES capabilities you want to use.
+Choose where to render your OpenGL ES content.
+Make sure your app runs correctly in iOS.
+Implement your rendering engine.
+Use Xcode and Instruments to debug your OpenGL ES app and tune it for optimal performance .
+
+------------------------------Choosing Which OpenGL ES Versions to Support
+Decide whether your app should support OpenGL ES 3.0, OpenGL ES 2.0, OpenGL ES 1.1, or multiple versions.
+OpenGL ES 3.0 is new in iOS 7. It adds a number of new features that enable higher performance, general-purpose GPU computing techniques, and more complex visual effects previously only possible on desktop-class hardware and game consoles.
+OpenGL ES 2.0 is the baseline profile for iOS devices, featuring a configurable graphics pipeline based on programmable shaders.
+OpenGL ES 1.1 provides only a basic fixed-function graphics pipeline and is available in iOS primarily for backward compatibility.
+
+------------------------------Verifying OpenGL ES Capabilities
+To check for OpenGL ES 3.0 extensions, use the glGetIntegerv and glGetStringi functions:
+BOOL CheckForExtension(NSString *searchName)
+{
+    // Create a set containing all extension names.
+    // (For better performance, create the set only once and cache it for future use.)
+    int max = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &max);
+    NSMutableSet *extensions = [NSMutableSet set];
+    for (int i = 0; i < max; i++) {
+        [extensions addObject: @( (char *)glGetStringi(GL_EXTENSIONS, i) )];
+    }
+    return [extensions containsObject: searchName];
+}
+To check for OpenGL ES 1.1 and 2.0 extensions, call glGetString(GL_EXTENSIONS) to get a space-delimited list of all extension names.
+
+------------------------------Choosing a Rendering Destination
+In iOS, a framebuffer object stores the results of drawing commands.
+
+You can use the contents of a framebuffer object in multiple ways:
+The GLKit framework provides a view that draws OpenGL ES content and manages its own framebuffer object, 
+and a view controller that supports animating OpenGL ES content. 
+Use these classes to create full screen views or to fit your OpenGL ES content into a UIKit view hierarchy.
+
+The CAEAGLLayer class provides a way to draw OpenGL ES content as part of a Core Animation layer composition. 
+You must create your own framebuffer object when using this class.
+
+As with any OpenGL ES implementation, you can also use framebuffers for offscreen graphics processing or rendering to a texture for use elsewhere in the graphics pipeline. 
+With OpenGL ES 3.0, offscreen buffers can be used in rendering algorithms that utilize multiple render targets
+
+
+==============================Configuring OpenGL ES Contexts
+Every implementation of OpenGL ES provides a way to create rendering contexts to manage the state required by the OpenGL ES specification. 
+By placing this state in a context, multiple apps can easily share the graphics hardware without interfering with the other’s state.
+
+------------------------------EAGL Is the iOS Implementation of an OpenGL ES Rendering Context
+Before your app can call any OpenGL ES functions, it must initialize an EAGLContext object. 
+The EAGLContext class also provides methods used to integrate OpenGL ES content with Core Animation.
+
+------------------------------The Current Context Is the Target for OpenGL ES Function Calls
+Every thread in an iOS app has a current context; when you call an OpenGL ES function, 
+this is the context whose state is changed by the call.
+To set a thread’s current context, call the EAGLContext class method setCurrentContext: when executing on that thread.
+[EAGLContext setCurrentContext: myContext];
+Call the EAGLContext class method currentContext to retrieve a thread’s current context.
+
+Note: If your app actively switches between two or more contexts on the same thread, call the glFlush function before setting a new context as the current context. 
+This ensures that previously submitted commands are delivered to the graphics hardware in a timely fashion.
+
+To prevent EAGLContext objects from being deallocated when not the current context, 
+your app must keep strong references to (or retain) these objects.
+
+------------------------------Every Context Targets a Specific Version of OpenGL ES
+An EAGLContext object supports only one version of OpenGL ES.
+For example, code written for OpenGL ES 1.1 is not compatible with an OpenGL ES 2.0 or 3.0 context. 
+Code using core OpenGL ES 2.0 features is compatible with a OpenGL ES 3.0 context, 
+and code designed for OpenGL ES 2.0 extensions can often be used in an OpenGL ES 3.0 context with minor changes. 
+Many new OpenGL ES 3.0 features and increased hardware capabilities require an OpenGL ES 3.0 context.
+
+Your app decides which version of OpenGL ES to support when it creates and initializes the EAGLContext object. 
+If the device does not support the requested version of OpenGL ES, 
+the initWithAPI: method returns nil. Your app must test to ensure that a context was initialized successfully before using it
+
+To support multiple versions of OpenGL ES as rendering options in your app, 
+you should first attempt to initialize a rendering context of the newest version you want to target. 
+If the returned object is nil, initialize a context of an older version instead.
+EAGLContext* CreateBestEAGLContext()
+{
+   EAGLContext *context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
+   if (context == nil) {
+      context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+   }
+   return context;
+}
+
+A context’s API property states which version of OpenGL ES the context supports. 
+Your app should test the context’s API property and use it to choose the correct rendering path. 
+A common pattern for implementing this behavior is to create a class for each rendering path. 
+Your app tests the context and creates a renderer once, on initialization.
+
+------------------------------An EAGL Sharegroup Manages OpenGL ES Objects for the Context
+Although the context holds the OpenGL ES state, it does not directly manage OpenGL ES objects. 
+Instead, OpenGL ES objects are created and maintained by an EAGLSharegroup object. 
+Every context contains an EAGLSharegroup object that it delegates object creation to.
+
+The advantage of a sharegroup becomes obvious when two or more contexts refer to the same sharegroup
+When multiple contexts are connected to a common sharegroup, OpenGL ES objects created by any context are available on all contexts
+if you bind to the same object identifier on another context than the one that created it, you reference the same OpenGL ES object.
+Resources are often scarce on mobile devices; creating multiple copies of the same content on multiple contexts is wasteful.
+Sharing common resources makes better use of the available graphics resources on the device.
+A sharegroup is an opaque object; it has no methods or properties that your app can call. 
+Contexts that use the sharegroup object keep a strong reference to it.
+
+Sharegroups are most useful under two specific scenarios:
+When most of the resources shared between the contexts are unchanging.
+When you want your app to be able to create new OpenGL ES objects on a thread other than the main thread for the renderer. 
+In this case, a second context runs on a separate thread and is devoted to fetching data and creating resources. 
+After the resource is loaded, the first context can bind to the object and use it immediately. 
+The GLKTextureLoader class uses this pattern to provide asynchronous texture loading.
+
+To create multiple contexts that reference the same sharegroup, the first context is initialized by calling initWithAPI:; a sharegroup is automatically created for the context. 
+The second and later contexts are initialized to use the first context’s sharegroup by calling the initWithAPI:sharegroup: method instead.
+
+Important: All contexts associated with the same sharegroup must use the same version of the OpenGL ES API as the initial context.
+
+Creating two contexts with a common sharegroup
+EAGLContext* firstContext = CreateBestEAGLContext();
+EAGLContext* secondContext = [[EAGLContext alloc] initWithAPI:[firstContext API] sharegroup: [firstContext sharegroup]];
+
+It is your app’s responsibility to manage state changes to OpenGL ES objects when the sharegroup is shared by multiple contexts. Here are the rules:
+Your app may access the object across multiple contexts simultaneously provided the object is not being modified.
+While the object is being modified by commands sent to a context, the object must not be read or modified on any other context.
+After an object has been modified, all contexts must rebind the object to see the changes. The contents of the object are undefined if a context references it before binding it.
+
+Here are the steps your app should follow to update an OpenGL ES object:
+Call glFlush on every context that may be using the object.
+On the context that wants to modify the object, call one or more OpenGL ES functions to change the object.
+Call glFlush on the context that received the state-modifying commands.
+On every other context, rebind the object identifier.
+
+Note: Another way to share objects is to use a single rendering context, 
+but multiple destination framebuffers. At rendering time, your app binds the appropriate framebuffer and renders its frames as needed. 
+Because all of the OpenGL ES objects are referenced from a single context, 
+they see the same OpenGL ES data. This pattern uses less resources, 
+but is only useful for single-threaded apps where you can carefully control the state of the context.
+
+
+==============================Drawing with OpenGL ES and GLKit
+The GLKit framework provides view and view controller classes that eliminate the setup and maintenance code that would otherwise be required for drawing and animating OpenGL ES content. 
+The GLKView class manages OpenGL ES infrastructure to provide a place for your drawing code, 
+and the GLKViewController class provides a rendering loop for smooth animation of OpenGL ES content in a GLKit view. 
+These classes extend the standard UIKit design patterns for drawing view content and managing view presentation. 
+As a result, you can focus your efforts primarily on your OpenGL ES rendering code and get your app up and running quickly. 
+The GLKit framework also provides other features to ease OpenGL ES 2.0 and 3.0 development.
+
+------------------------------A GLKit View Draws OpenGL ES Content on Demand
+The GLKView class provides an OpenGL ES–based equivalent of the standard UIView drawing cycle. 
+A UIView instance automatically configures its graphics context so that your drawRect: implementation need only perform Quartz 2D drawing commands, 
+and a GLKView instance automatically configures itself so that your drawing method need only perform OpenGL ES drawing commands. 
+The GLKView class provides this functionality by maintaining a framebuffer object that holds the results of your OpenGL ES drawing commands,
+and then automatically presents them to Core Animation once your drawing method returns.
+
+Like a standard UIKit view, a GLKit view renders its content on demand. 
+When your view is first displayed, it calls your drawing method—Core Animation caches the rendered output and displays it whenever your view is shown. 
+When you want to change the contents of your view, call its setNeedsDisplay method and the view again calls your drawing method, 
+caches the resulting image, and presents it on screen. 
+This approach is useful when the data used to render an image changes infrequently or only in response to user action. 
+By rendering new view contents only when you need to, 
+you conserve battery power on the device and leave more time for the device to perform other actions.
+
+Creating and Configuring a GLKit View:
+You can create and configure a GLKView object either programmatically or using Interface Builder. 
+Before you can use it for drawing, you must associate it with an EAGLContext object 
+When creating a view programmatically, first create a context and then pass it to the view’s initWithFrame:context: method.
+After loading a view from a storyboard, create a context and set it as the value of the view’s context property.
+
+A GLKit view automatically creates and configures its own OpenGL ES framebuffer object and renderbuffers. 
+You control the attributes of these objects using the view’s drawable properties,
+If you change the size, scale factor, or drawable properties of a GLKit view, 
+it automatically deletes and re-creates the appropriate framebuffer objects and renderbuffers the next time its contents are drawn.
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+ 
+    // Create an OpenGL ES context and assign it to the view loaded from storyboard
+    GLKView *view = (GLKView *)self.view;
+    view.context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+ 
+    // Configure renderbuffers created by the view
+    view.drawableColorFormat = GLKViewDrawableColorFormatRGBA8888;
+    view.drawableDepthFormat = GLKViewDrawableDepthFormat24;
+    view.drawableStencilFormat = GLKViewDrawableStencilFormat8;
+ 
+    // Enable multisampling
+    view.drawableMultisample = GLKViewDrawableMultisample4X;
+}
+You can enable multisampling for a GLKView instance using its drawableMultisample property. 
+Multisampling is a form of antialiasing that smooths jagged edges, 
+improving image quality in most 3D apps at the cost of using more memory and fragment processing time—if you enable multisampling, 
+always test your app’s performance to ensure that it remains acceptable.
+
+Drawing With a GLKit View:
+three steps for drawing OpenGL ES content: preparing OpenGL ES infrastructure, issuing drawing commands, and presenting the rendered content to Core Animation for display. 
+The GLKView class implements the first and third steps. For the second step, you implement a drawing method
+- (void)drawRect:(CGRect)rect
+{
+    // Clear the framebuffer
+    glClearColor(0.0f, 0.0f, 0.1f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+ 
+    // Draw using previously configured texture, shader, uniforms, and vertex array
+    glBindTexture(GL_TEXTURE_2D, _planetTexture);
+    glUseProgram(_diffuseShading);
+    glUniformMatrix4fv(_uniformModelViewProjectionMatrix, 1, 0, _modelViewProjectionMatrix.m);
+    glBindVertexArrayOES(_planetMesh);
+    glDrawElements(GL_TRIANGLE_STRIP, 256, GL_UNSIGNED_SHORT);
+}
+Note: The glClear function hints to OpenGL ES that any existing framebuffer contents can be discarded, 
+avoiding costly memory operations to load the previous contents into memory. 
+To ensure optimal performance, you should always call this function before drawing.
+
+The GLKView class is able to provide a simple interface for OpenGL ES drawing because it manages the standard parts of the OpenGL ES rendering process:
+Before invoking your drawing method, the view:
+Makes its EAGLContext object the current context
+Creates a framebuffer object and renderbuffers based on its current size, scale factor, and drawable properties (if needed)
+Binds the framebuffer object as the current destination for drawing commands
+Sets the OpenGL ES viewport to match the framebuffer size
+After your drawing method returns, the view:
+Resolves multisampling buffers (if multisampling is enabled)
+Discards renderbuffers whose contents are no longer needed
+Presents renderbuffer contents to Core Animation for caching and display
+
+帧缓冲对象（Framebuffer Object，FBO）是由颜色附件、深度附件、模板附件组成的，作为着色器各方面（一般包括颜色、深度、模板值）绘制结果存储的逻辑对象。
+渲染缓冲对象（Renderbuffer Object，RBO）是一个由应用程序分配的2D图像缓冲区，可以用于分配和存储颜色、深度或者模板值，可以用作帧缓冲区对象的颜色、深度或者模板附件。
+
+------------------------------Rendering Using a Delegate Object
+Many OpenGL ES apps implement rendering code in a custom class. 
+An advantage of this approach is that it allows you to easily support multiple rendering algorithms by defining a different renderer class for each. Rendering algorithms that share common functionality can inherit it from a superclass. For example, you might use different renderer classes to support both OpenGL ES 2.0 and 3.0. 
+Or you might use them to customize rendering for better image quality on devices with more powerful hardware.
+
+GLKit is well suited to this approach—you can make your renderer object the delegate of a standard GLKView instance. 
+Instead of subclassing GLKView and implementing the drawRect: method, 
+your renderer class adopts the GLKViewDelegate protocol and implements the glkView:drawInRect: method
+
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
+{
+    // Create a context so we can test for features
+    EAGLContext *context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+    [EAGLContext setCurrentContext:context];
+ 
+    // Choose a rendering class based on device features
+    GLint maxTextureSize;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
+    if (maxTextureSize > 2048)
+        self.renderer = [[MyBigTextureRenderer alloc] initWithContext:context];
+    else
+        self.renderer = [[MyRenderer alloc] initWithContext:context];
+ 
+    // Make the renderer the delegate for the view loaded from the main storyboard
+    GLKView *view = (GLKView *)self.window.rootViewController.view;
+    view.delegate = self.renderer;
+ 
+    // Give the OpenGL ES context to the view so it can draw
+    view.context = context;
+ 
+    return YES;
+}
+
+------------------------------A GLKit View Controller Animates OpenGL ES Content
+By default, a GLKView object renders its contents on demand. That said, a key advantage to drawing with OpenGL ES is its ability to use graphics processing hardware for continuous animation of complex scenes—apps such as games and simulations rarely present static images.
+For these cases, the GLKit framework provides a view controller class that maintains an animation loop for the GLKView object it manages.
+This loop follows a design pattern common in games and simulations, with two phases: update and display.
+
+Understanding the Animation Loop:
+For the update phase, the view controller calls its own update method (or its delegate’s glkViewControllerUpdate: method). 
+In this method, you should prepare for drawing the next frame. 
+For example, a game might use this method to determine the positions of player and enemy characters based on input events received since the last frame, and a scientific visualization might use this method to run a step of its simulation. 
+If you need timing information to determine your app’s state for the next frame, 
+use one of the view controller’s timing properties such as the timeSinceLastUpdate property.
+the update phase increments an angle variable and uses it to calculate a transformation matrix.
+
+For the display phase, the view controller calls its view’s display method, which in turn calls your drawing method. 
+In your drawing method, you submit OpenGL ES drawing commands to the GPU to render your content. For optimal performance, your app should modify OpenGL ES objects at the start of rendering a new frame, and submit drawing commands afterward. 
+the display phase sets a uniform variable in a shader program to the matrix calculated in the update phase, 
+and then submits a drawing command to render new content.
+
+The animation loop alternates between these two phases at the rate indicated by the view controller’s framesPerSecond property. 
+You can use the preferredFramesPerSecond property to set a desired frame rate—to optimize performance for the current display hardware, 
+the view controller automatically chooses an optimal frame rate close to your preferred value.
+
+Important: For best results, choose a frame rate your app can consistently achieve. 
+A smooth, consistent frame rate produces a more pleasant user experience than a frame rate that varies erratically.
+
+Using a GLKit View Controller:
+@implementation PlanetViewController // subclass of GLKViewController
+ 
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+ 
+    // Create an OpenGL ES context and assign it to the view loaded from storyboard
+    GLKView *view = (GLKView *)self.view;
+    view.context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+ 
+    // Set animation frame rate
+    self.preferredFramesPerSecond = 60;
+ 
+    // Not shown: load shaders, textures and vertex arrays, set up projection matrix
+    [self setupGL];
+}
+ 
+- (void)update
+{
+    _rotation += self.timeSinceLastUpdate * M_PI_2; // one quarter rotation per second
+ 
+    // Set up transform matrices for the rotating planet
+    GLKMatrix4 modelViewMatrix = GLKMatrix4MakeRotation(_rotation, 0.0f, 1.0f, 0.0f);
+    _normalMatrix = GLKMatrix3InvertAndTranspose(GLKMatrix4GetMatrix3(modelViewMatrix), NULL);
+    _modelViewProjectionMatrix = GLKMatrix4Multiply(_projectionMatrix, modelViewMatrix);
+}
+ 
+- (void)glkView:(GLKView *)view drawInRect:(CGRect)rect
+{
+    // Clear the framebuffer
+    glClearColor(0.0f, 0.0f, 0.1f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+ 
+    // Set shader uniforms to values calculated in -update
+    glUseProgram(_diffuseShading);
+    glUniformMatrix4fv(_uniformModelViewProjectionMatrix, 1, 0, _modelViewProjectionMatrix.m);
+    glUniformMatrix3fv(_uniformNormalMatrix, 1, 0, _normalMatrix.m);
+ 
+    // Draw using previously configured texture and vertex array
+    glBindTexture(GL_TEXTURE_2D, _planetTexture);
+    glBindVertexArrayOES(_planetMesh);
+    glDrawElements(GL_TRIANGLE_STRIP, 256, GL_UNSIGNED_SHORT, 0);
+}
+ 
+@end
+The viewDidLoad method creates an OpenGL ES context and provides it to the view, and also sets the frame rate for the animation loop
+The view controller is automatically the delegate of its view, 
+so it implements both the update and display phases of the animation loop. 
+In the update method, it calculates the transformation matrices needed to display a rotating planet. 
+In the glkView:drawInRect: method, it provides those matrices to a shader program and submits drawing commands to render the planet geometry.
+
+Handling Vector and Matrix Math:
+The GLKit framework includes a comprehensive library of vector and matrix types and functions, optimized for high performance on iOS hardware.
+
+OpenGL ES 2.0 and later removes all functionality associated with the OpenGL ES 1.1 fixed-function graphics pipeline. 
+The GLKBaseEffect class provides an Objective-C analog to the transformation, 
+lighting and shading stages of the OpenGL ES 1.1 pipeline, and the GLKSkyboxEffect and GLKReflectionMapEffect classes add support for common visual effects. 
+
+Loading Texture Data:
+The GLKTextureLoader class provides a simple way to load texture data from any image format supported by iOS into an OpenGL ES context, synchronously or asynchronously. 
+
+==============================Drawing to Other Rendering Destinations.
+To learn about rendering to an offscreen buffer, a texture, or a Core Animation layer, read Drawing to Other Rendering Destinations.
+
+Framebuffer objects are the destination for rendering commands. 
+When you create a framebuffer object, you have precise control over its storage for color, depth, and stencil data. 
+You provide this storage by attaching images to the framebuffer. 
+The most common image attachment is a renderbuffer object. 
+You can also attach an OpenGL ES texture to the color attachment point of a framebuffer, which means that any drawing commands are rendered into the texture. 
+Later, the texture can act as an input to future rendering commands. 
+You can also create multiple framebuffer objects in an single rendering context. 
+You might do this so that you can share the same rendering pipeline and OpenGL ES resources between multiple framebuffers.
+
+All of these approaches require manually creating framebuffer and renderbuffer objects to store the rendering results from your OpenGL ES context, 
+as well as writing additional code to present their contents to the screen and (if needed) run an animation loop.
+
+------------------------------Creating a Framebuffer Object
+Depending on what task your app intends to perform, your app configures different objects to attach to the framebuffer object. 
+In most cases, the difference in configuring the framebuffer is in what object is attached to the framebuffer object’s color attachment point:
+1.To use the framebuffer for offscreen image processing, attach a renderbuffer.
+Creating Offscreen Framebuffer Objects:
+A framebuffer intended for offscreen rendering allocates all of its attachments as OpenGL ES renderbuffers. 
+The following code allocates a framebuffer object with color and depth attachments.
+(1)Create the framebuffer and bind it.
+GLuint framebuffer;
+glGenFramebuffers(1, &framebuffer);
+glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+(2)Create a color renderbuffer, allocate storage for it, and attach it to the framebuffer’s color attachment point.
+GLuint colorRenderbuffer;
+glGenRenderbuffers(1, &colorRenderbuffer);
+glBindRenderbuffer(GL_RENDERBUFFER, colorRenderbuffer);
+glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, width, height);
+glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, colorRenderbuffer);
+(3)Create a depth or depth/stencil renderbuffer, allocate storage for it, and attach it to the framebuffer’s depth attachment point.
+GLuint depthRenderbuffer;
+glGenRenderbuffers(1, &depthRenderbuffer);
+glBindRenderbuffer(GL_RENDERBUFFER, depthRenderbuffer);
+glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, width, height);
+glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthRenderbuffer);
+(4)Test the framebuffer for completeness. This test only needs to be performed when the framebuffer’s configuration changes
+GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER) ;
+if(status != GL_FRAMEBUFFER_COMPLETE) {
+    NSLog(@"failed to make complete framebuffer object %x", status);
+}
+After drawing to an offscreen renderbuffer, you can return its contents to the CPU for further processing using the glReadPixels function.
+
+2.To use the framebuffer image as an input to a later rendering step, attach a texture
+Using Framebuffer Objects to Render to a Texture:
+The code to create this framebuffer is almost identical to the offscreen example, but now a texture is allocated and attached to the color attachment point.
+(1)Create the framebuffer object
+(2)Create the destination texture, and attach it to the framebuffer’s color attachment point.
+// create the texture
+GLuint texture;
+glGenTextures(1, &texture);
+glBindTexture(GL_TEXTURE_2D, texture);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,  width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+(3)Allocate and attach a depth buffer
+(4)Test the framebuffer for completeness
+Although this example assumes you are rendering to a color texture, other options are possible. 
+For example, using the OES_depth_texture extension, you can attach a texture to the depth attachment point to store depth information from the scene into a texture. 
+You might use this depth information to calculate shadows in the final rendered scene.
+
+https://registry.khronos.org/OpenGL/extensions/OES/OES_depth_texture.txt
+
+3.To use the framebuffer in a Core Animation layer composition, use a special Core Animation–aware renderbuffer.
+Rendering to a Core Animation Layer:
+Core Animation is the central infrastructure for graphics rendering and animation on iOS. 
+You can compose your app’s user interface or other visual displays using layers that host content rendered using different iOS subsystems, 
+such as UIKit, Quartz 2D, and OpenGL ES. OpenGL ES connects to Core Animation through the CAEAGLLayer class, 
+a special type of Core Animation layer whose contents come from an OpenGL ES renderbuffer. 
+Core Animation composites the renderbuffer’s contents with other layers and displays the resulting image on screen.
+
+The CAEAGLLayer provides this support to OpenGL ES by providing two key pieces of functionality. 
+First, it allocates shared storage for a renderbuffer. Second, it presents the renderbuffer to Core Animation, 
+replacing the layer’s previous contents with data from the renderbuffer. 
+An advantage of this model is that the contents of the Core Animation layer do not need to be drawn in every frame, only when the rendered image changes.
+
+Note: The GLKView class automates the steps below, so you should use it when you want to draw with OpenGL ES in the content layer of a view.
+To use a Core Animation layer for OpenGL ES rendering:
+(1)Create a CAEAGLLayer object and configure its properties.
+For optimal performance, set the value of the layer’s opaque property to YES.
+
+Optionally, configure the surface properties of the rendering surface by assigning a new dictionary of values to the drawableProperties property of the CAEAGLLayer object. 
+You can specify the pixel format for the renderbuffer and specify whether the renderbuffer’s contents are discarded after they are sent to Core Animation. 
+For a list of the permitted keys
+(2)Allocate an OpenGL ES context and make it the current context.
+(3)Create the framebuffer object 
+(4)Create a color renderbuffer, allocating its storage by calling the context’s renderbufferStorage:fromDrawable: method and passing the layer object as the parameter. 
+The width, height and pixel format are taken from the layer and used to allocate storage for the renderbuffer
+GLuint colorRenderbuffer;
+glGenRenderbuffers(1, &colorRenderbuffer);
+glBindRenderbuffer(GL_RENDERBUFFER, colorRenderbuffer);
+[myContext renderbufferStorage:GL_RENDERBUFFER fromDrawable:myEAGLLayer];
+glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, colorRenderbuffer);
+(4)Note: When the Core Animation layer’s bounds or properties change, your app should reallocate the renderbuffer’s storage. 
+If you do not reallocate the renderbuffers, the renderbuffer size won’t match the size of the layer; in this case, 
+Core Animation may scale the image’s contents to fit in the layer.
+(5)Retrieve the height and width of the color renderbuffer
+GLint width;
+GLint height;
+glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &width);
+glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &height);
+
+In earlier examples, the width and height of the renderbuffers were explicitly provided to allocate storage for the buffer.
+Here, the code retrieves the width and height from the color renderbuffer after its storage is allocated. Your app does this because the actual dimensions of the color renderbuffer are calculated based on the layer’s bounds and scale factor. Other renderbuffers attached to the framebuffer must have the same dimensions. In addition to using the height and width to allocate the depth buffer, 
+use them to assign the OpenGL ES viewport and to help determine the level of detail required in your app’s textures and models.
+
+(6)Allocate and attach a depth buffer
+(7)Test the framebuffer for completeness
+(8)Add the CAEAGLLayer object to your Core Animation layer hierarchy by passing it to the addSublayer: method of a visible layer.
+
+------------------------------Drawing to a Framebuffer Object
+Now that you have a framebuffer object, you need to fill it. 
+Rendering to a texture or offscreen framebuffer acts similarly, differing only in how your app uses the final frame.
+
+Rendering on Demand or with an Animation Loop:
+You must choose when to draw your OpenGL ES content when rendering to a Core Animation layer, just as when drawing with GLKit views and view controllers. 
+If rendering to an offscreen framebuffer or texture, draw whenever is appropriate to the situations where you use those types of framebuffers.
+For on-demand drawing, implement your own method to draw into and present your renderbuffer, and call it whenever you want to display new content.
+
+To draw with an animation loop, use a CADisplayLink object. 
+A display link is a kind of timer provided by Core Animation that lets you synchronize drawing to the refresh rate of a screen. 
+
+Note: The GLKViewController class automates the usage of CADisplayLink objects for animating GLKView content.
+Use the CADisplayLink class directly only if you need behavior beyond what the GLKit framework provides.
+
+Creating and starting a display link:
+displayLink = [myView.window.screen displayLinkWithTarget:self selector:@selector(drawFrame)];
+[displayLink addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+Inside your implementation of the drawFrame method, read the display link’s timestamp property to get the timestamp for the next frame to be rendered. 
+It can use that value to calculate the positions of objects in the next frame.
+
+Normally, the display link object is fired every time the screen refreshes; 
+that value is usually 60 Hz, but may vary on different devices. Most apps do not need to update the screen 60 times per second. 
+You can set the display link’s frameInterval property to the number of actual frames that go by before your method is called. 
+For example, if the frame interval was set to 3, your app is called every third frame, or roughly 20 frames per second.
+
+Important: For best results, choose a frame rate your app can consistently achieve. 
+A smooth, consistent frame rate produces a more pleasant user experience than a frame rate that varies erratically.
+
+Rendering a Frame:
+Clear Buffers
+At the start of every frame, erase the contents of all framebuffer attachments whose contents from a previous frames are not needed to draw the next frame. 
+Call the glClear function,passing in a bit mask with all of the buffers to clear
+
+Clear framebuffer attachments:
+glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
+Using glClear “hints” to OpenGL ES that the existing contents of a renderbuffer or texture can be discarded, 
+avoiding costly operations to load the previous contents into memory.
+
+Prepare Resources and Execute Drawing Commands:
+These two steps encompass most of the key decisions you make in designing your app’s architecture. 
+First, you decide what you want to display to the user and configure the corresponding OpenGL ES objects—such as vertex buffer objects, textures, shader programs and their input variables—for uploading to the GPU. 
+Next, you submit drawing commants that tell the GPU how to use those resources for rendering a frame.
+
+the most important performance optimization to note is that your app runs faster if it modifies OpenGL ES objects only at the start of rendering a new frame.
+
+Execute Drawing Commands:
+
+Resolve Multisampling:
+
+Discard Unneeded Renderbuffers:
+A discard operation is a performance hint that tells OpenGL ES that the contents of one or more renderbuffers are no longer needed. 
+By hinting to OpenGL ES that you do not need the contents of a renderbuffer,
+the data in the buffers can be discarded and expensive tasks to keep the contents of those buffers updated can be avoided.
+
+At this stage in the rendering loop, your app has submitted all of its drawing commands for the frame. 
+While your app needs the color renderbuffer to display to the screen, it probably does not need the depth buffer’s contents.
+
+discards the contents of the depth buffer.
+const GLenum discards[]  = {GL_DEPTH_ATTACHMENT};
+glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+glDiscardFramebufferEXT(GL_FRAMEBUFFER,1,discards);
+
+Note: The glDiscardFramebufferEXT function is provided by the EXT_discard_framebuffer extension for OpenGL ES 1.1 and 2.0. In a OpenGL ES 3.0 context, 
+use the glInvalidateFramebuffer function instead.
+
+Present the Results to Core Animation:
+At this step, the color renderbuffer holds the completed frame, so all you need to do is present it to the user. 
+binds the renderbuffer to the context and presents it. This causes the completed frame to be handed to Core Animation.
+
+Presenting the finished frame
+glBindRenderbuffer(GL_RENDERBUFFER, colorRenderbuffer);
+[context presentRenderbuffer:GL_RENDERBUFFER];
+
+By default, you must assume that the contents of the renderbuffer are discarded after your app presents the renderbuffer. This means that every time your app presents a frame, 
+it must completely re-create the frame’s contents when it renders a new frame. The code above always erases the color buffer for this reason.
+
+If your app wants to preserve the contents of the color renderbuffer between frames, 
+add the kEAGLDrawablePropertyRetainedBacking key to the dictionary stored in the drawableProperties property of the CAEAGLLayer object, 
+and remove the GL_COLOR_BUFFER_BIT constant from the earlier glClear function call. 
+Retained backing may require iOS to allocate additional memory to preserve the buffer’s contents, which may reduce your app’s performance.
+
+------------------------------Using Multisampling to Improve Image Quality
+Multisampling is a form of antialiasing that smooths jagged edges and improves image quality in most 3D apps. OpenGL ES 3.0 includes multisampling as part of the core specification, and iOS provides it in OpenGL ES 1.1 and 2.0 through the APPLE_framebuffer_multisample extension. 
+Multisampling uses more memory and fragment processing time to render the image, 
+but it may improve image quality at a lower performance cost than using other approaches.
+
+Instead of creating one framebuffer object, your app creates two. 
+The multisampling buffer contains all attachments necessary to render your content (typically color and depth buffers). 
+The resolve buffer contains only the attachments necessary to display a rendered image to the user (typically a color renderbuffer, but possibly a texture), 
+The multisample renderbuffers are allocated using the same dimensions as the resolve framebuffer, 
+but each includes an additional parameter that specifies the number of samples to store for each pixel. 
+Your app performs all of its rendering to the multisampling buffer and then generates the final antialiased image by resolving those samples into the resolve buffer.
+
+create the multisampling buffer. This code uses the width and height of the previously created buffer. It calls the glRenderbufferStorageMultisampleAPPLE function to create multisampled storage for the renderbuffer.
+
+Creating the multisample buffer:
+glGenFramebuffers(1, &sampleFramebuffer);
+glBindFramebuffer(GL_FRAMEBUFFER, sampleFramebuffer);
+ 
+glGenRenderbuffers(1, &sampleColorRenderbuffer);
+glBindRenderbuffer(GL_RENDERBUFFER, sampleColorRenderbuffer);
+glRenderbufferStorageMultisampleAPPLE(GL_RENDERBUFFER, 4, GL_RGBA8_OES, width, height);
+glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, sampleColorRenderbuffer);
+ 
+glGenRenderbuffers(1, &sampleDepthRenderbuffer);
+glBindRenderbuffer(GL_RENDERBUFFER, sampleDepthRenderbuffer);
+glRenderbufferStorageMultisampleAPPLE(GL_RENDERBUFFER, 4, GL_DEPTH_COMPONENT16, width, height);
+glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, sampleDepthRenderbuffer);
+ 
+if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+    NSLog(@"Failed to make complete framebuffer object %x", glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+Here are the steps to modify your rendering code to support multisampling:
+1.During the Clear Buffers step, you clear the multisampling framebuffer’s contents.
+glBindFramebuffer(GL_FRAMEBUFFER, sampleFramebuffer);
+glViewport(0, 0, framebufferWidth, framebufferHeight);
+glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+2.After submitting your drawing commands, you resolve the contents from the multisampling buffer into the resolve buffer. The samples stored for each pixel are combined into a single sample in the resolve buffer.
+glBindFramebuffer(GL_DRAW_FRAMEBUFFER_APPLE, resolveFrameBuffer);
+glBindFramebuffer(GL_READ_FRAMEBUFFER_APPLE, sampleFramebuffer);
+glResolveMultisampleFramebufferAPPLE();
+
+3.In the Discard step, you can discard both renderbuffers attached to the multisample framebuffer. This is because the contents you plan to present are stored in the resolve framebuffer.
+const GLenum discards[]  = {GL_COLOR_ATTACHMENT0,GL_DEPTH_ATTACHMENT};
+glDiscardFramebufferEXT(GL_READ_FRAMEBUFFER_APPLE,2,discards);
+
+4.In the Present Results step, you present the color renderbuffer attached to the resolve framebuffer.
+glBindRenderbuffer(GL_RENDERBUFFER, colorRenderbuffer);
+[context presentRenderbuffer:GL_RENDERBUFFER];
+
+Multisampling is not free; additional memory is required to store the additional samples, and resolving the samples into the resolve framebuffer takes time. 
+If you add multisampling to your app, always test your app’s performance to ensure that it remains acceptable.
+Note: The above code assumes an OpenGL ES 1.1 or 2.0 context. Multisampling is part of the core OpenGL ES 3.0 API, but the functions are different.
+
+==============================Multitasking, High Resolution, and Other iOS Features
+Many aspects of working with OpenGL ES are platform neutral, but some details of working with OpenGL ES on iOS bear special consideration. 
+In particular, an iOS app using OpenGL ES must handle multitasking correctly or risk being terminated when it moves to the background. 
+You should also consider display resolution and other device features when developing OpenGL ES content for iOS devices.
+
+------------------------------Implementing a Multitasking-Aware OpenGL ES App
+Your app can continue to run when a user switches to another app.
+An OpenGL ES app must perform additional work when it is moved into the background. 
+If an app handles these tasks improperly, it may be terminated by iOS instead. 
+Also, an app may want to free OpenGL ES resources so that those resources are made available to the foreground app.
+
+Background Apps May Not Execute Commands on the Graphics Hardware:
+An OpenGL ES app is terminated if it attempts to execute OpenGL ES commands on the graphics hardware. 
+iOS prevents background apps from accessing the graphics processor so that the frontmost app is always able to present a great experience to the user. 
+Your app can be terminated not only if it makes OpenGL ES calls while in the background but also if previously submitted commands are flushed to the GPU while in the background. 
+Your app must ensure that all previously submitted commands have finished executing before moving into the background.
+
+If you use a GLKit view and view controller, and only submit OpenGL ES commands during your drawing method, 
+your app automatically behaves correctly when it moves to the background. 
+The GLKViewController class, by default, pauses its animation timer when your app becomes inactive, ensuring that your drawing method is not called.
+
+If you do not use GLKit views or view controllers or if you submit OpenGL ES commands outside a GLKView drawing method, 
+you must take the following steps to ensure that your app is not terminated in the background:
+1.In your app delegate’s applicationWillResignActive: method, your app should stop its animation timer (if any), place itself into a known good state, and then call the glFinish function.
+2.In your app delegate’s applicationDidEnterBackground: method, your app may want to delete some of its OpenGL ES objects to make memory and resources available to the foreground app. 
+Call the glFinish function to ensure that the resources are removed immediately.
+3.After your app exits its applicationDidEnterBackground: method, it must not make any new OpenGL ES calls. If it makes an OpenGL ES call, it is terminated by iOS
+4.In your app’s applicationWillEnterForeground: method, re-create any objects and restart your animation timer
+To summarize, your app needs to call the glFinish function to ensure that all previously submitted commands are drained from the command buffer and are executed by OpenGL ES. 
+After it moves into the background, you must avoid all use of OpenGL ES until it moves back into the foreground
+
+Delete Easily Re-Created Resources Before Moving to the Background:
+Your app is never required to free up OpenGL ES objects when it moves into the background. Usually, your app should avoid disposing of its content. Consider two scenarios:
+A user is playing your game and exits it briefly to check their calendar. When the player returns to your game, the game’s resources are still in memory, and the game can resume immediately.
+Your OpenGL ES app is in the background when the user launches another OpenGL ES app. If that app needs more memory than is available on the device, the system silently and automatically terminates your app without requiring it to perform any additional work.
+
+Your goal should be to design your app to be a good citizen: This means keeping the time it takes to move to the foreground as short as possible while also reducing its memory footprint while it is in the background.
+Here’s how you should handle the two scenarios:
+Your app should keep textures, models and other assets in memory; resources that take a long time to re-create should never be disposed of when your app moves into the background.
+Your app should dispose of objects that can be quickly and easily re-created. Look for objects that consume large amounts of memory.
+
+Easy targets are the framebuffers your app allocates to hold rendering results. When your app is in the background, 
+it is not visible to the user and may not render any new content using OpenGL ES. 
+That means the memory consumed by your app’s framebuffers is allocated, but is not useful. 
+Also, the contents of the framebuffers are transitory; most app re-create the contents of the framebuffer every time they render a new frame. 
+This makes renderbuffers a memory-intensive resource that can be easily re-created, 
+becoming a good candidate for an object that can be disposed of when moving into the background
+
+If you use a GLKit view and view controller, the GLKViewController class automatically disposes of its associated view’s framebuffers when your app moves into the background. 
+If you manually create framebuffers for other uses, you should dispose of them when your app moves to the background. 
+In either case, you should also consider what other transitory resources your app can dispose of at that time.
+
+------------------------------Supporting High-Resolution Displays
+By default, the value of a GLKit view’s contentScaleFactor property matches the scale of the screen that contains it, 
+so its associated framebuffer is configured for rendering at the full resolution of the display. For more information on how high-resolution displays are supported in UIKit, 
+see Supporting High-Resolution Screens In Views.
+https://developer.apple.com/library/archive/documentation/2DDrawing/Conceptual/DrawingPrintingiOS/SupportingHiResScreensInViews/SupportingHiResScreensInViews.html#//apple_ref/doc/uid/TP40010156-CH15
+
+If you present OpenGL ES content using a Core Animation layer, its scale factor is set to 1.0 by default. 
+To draw at the full resolution of a Retina display, you should change the scale factor of the CAEAGLLayer object to match the screen’s scale factor.
+When supporting devices with high resolution displays, you should adjust the model and texture assets of your app accordingly. 
+When running on a high-resolution device, you might want to choose more detailed models and textures to render a better image. 
+Conversely, on a standard-resolution device, you can use smaller models and textures.
+
+Important: Many OpenGL ES API calls express dimensions in screen pixels. If you use a scale factor greater than 1.0, 
+you should adjust dimensions accordingly when using the glScissor, glBlitFramebuffer, glLineWidth, or glPointSize functions or the gl_PointSize shader variable.
+
+An important factor when determining how to support high-resolution displays is performance. 
+The doubling of scale factor on a Retina display quadruples the number of pixels, causing the GPU to process four times as many fragments. 
+If your app performs many per-fragment calculations, the increase in pixels may reduce the frame rate. 
+If you find that your app runs significantly slower at a higher scale factor, consider one of the following options:
+1.Optimize your fragment shader’s performance
+2.Implement a simpler algorithm in your fragment shader. By doing so, you are reducing the quality of individual pixels to render the overall image at a higher resolution.
+3.Use a fractional scale factor between 1.0 and and the screen’s scale factor. A scale factor of 1.5 provides better quality than a scale factor of 1.0 but needs to fill fewer pixels than an image scaled to 2.0.
+4.Use lower-precision formats for your GLKView object’s drawableColorFormat and drawableDepthFormat properties. By doing this, you reduce the memory bandwidth required to operate on the underlying renderbuffers.
+5.Use a lower scale factor and enable multisampling. An added advantage is that multisampling also provides higher quality on devices that do not support high-resolution displays.
+To enable multisampling for a GLKView object, change the value of its drawableMultisample property. 
+If you are not rendering to a GLKit view, you must manually set up multisampling buffers and resolve them before presenting a final image.
+
+Multisampling is not free; additional memory is required to store the additional samples, and resolving the samples into the resolve framebuffer takes time. If you add multisampling to your app, always test your app’s performance to ensure that it remains acceptable.
+
+------------------------------Supporting Multiple Interface Orientations
+Like any app, an OpenGL ES app should support the user interface orientations appropriate to its content. You declare the supported interface orientations for your app in its information property list, 
+or for the view controller hosting your OpenGL ES content using its supportedInterfaceOrientations method.
+
+By default, the GLKViewController and GLKView classes handle orientation changes automatically: When the user rotates the device to a supported orientation, 
+the system animates the orientation change and changes the size of the view controller’s view. When its size changes, 
+a GLKView object adjusts the size of its framebuffer and viewport accordingly. If you need to respond to this change, 
+implement the viewWillLayoutSubviews or viewDidLayoutSubviews method in your GLKViewController subclass, 
+or implement the layoutSubviews method if you’re using a custom GLKView subclass.
+
+If you draw OpenGL ES content using a Core Animation layer, your app should still include a view controller to manage user interface orientation.
+
+------------------------------Presenting OpenGL ES Content on External Displays
+An iOS device can be attached to an external display. The resolution of an external display and its content scale factor may differ from the resolution and scale factor of the main screen; your code that renders a frame should adjust to match.
+
+The procedure for drawing on an external display is almost identical to that running on the main screen.
+
+1.Create a window on the external display by following the steps in Multiple Display Programming Guide for iOS.
+https://developer.apple.com/library/archive/documentation/WindowsViews/Conceptual/WindowAndScreenGuide/Introduction/Introduction.html#//apple_ref/doc/uid/TP40012555
+
+2.Add to the window the appropriate view or view controller objects for your rendering strategy.
+If rendering with GLKit, set up instances of GLKViewController and GLKView (or your custom subclasses) and add them to the window using its rootViewController property.
+If rendering to a Core Animation layer, add the view containing your layer as a subview of the window. 
+To use an animation loop for rendering, create a display link object optimized for the external display by retrieving the screen property of the window and calling its displayLinkWithTarget:selector: method.
+
+==============================OpenGL ES Design Guidelines
+two perspectives for visualizing the design of OpenGL ES: as a client-server architecture and as a pipeline. 
+
+------------------------------How to Visualize OpenGL ES
+OpenGL ES as a Client-Server Architecture:
+Your app communicates state changes, texture and vertex data, and rendering commands to the OpenGL ES client. 
+The client translates this data into a format that the graphics hardware understands, and forwards them to the GPU. These processes add overhead to your app’s graphics performance.
+
+OpenGL ES as a Graphics Pipeline:
+Your app configures the graphics pipeline, and then executes drawing commands to send vertex data down the pipeline. 
+Successive stages of the pipeline run a vertex shader to process the vertex data, assemble vertices into primitives, rasterize primitives into fragments, 
+run a fragment shader to compute color and depth values for each fragment, and blend fragments into a framebuffer for display.
+
+Individual stages in the graphics pipeline can calculate their results simultaneously—for example, 
+your app might prepare new primitives while separate portions of the graphics hardware perform vertex and fragment calculations on previously submitted geometry. 
+However, later stages depend on the output of earlier stages. If any pipeline stage performs too much work or performs too slowly, 
+other pipeline stages sit idle until the slowest stage completes its work. A well-designed app balances the work performed by each pipeline stage according to graphics hardware capabilities.
+
+Important: When you tune your app’s performance, the first step is usually to determine which stage it is bottlenecked in, and why.
+
+------------------------------OpenGL ES Versions and Renderer Architecture
+iOS supports three versions of OpenGL ES. Newer versions provide more flexibility, 
+allowing you to implement rendering algorithms that include high-quality visual effects without compromising performance.
+
+OpenGL ES 3.0:
+OpenGL ES 3.0 is new in iOS 7. Your app can use features introduced in OpenGL ES 3.0 to implement advanced graphics programming techniques—previously available only on desktop-class hardware and game consoles—for faster graphics performance and compelling visual effects.
+
+OpenGL ES Shading Language 3.0 Specification 
+https://registry.khronos.org/OpenGL/index_es.php
+
+OpenGL ES Shading Language Version 3.0:
+GLSL ES 3.0 adds new features such as uniform blocks, 32-bit integers, and additional integer operations, for performing more general-purpose computing tasks within vertex and fragment shader programs. To use the new language in a shader program, 
+your shader source code must begin with the #version 330 es directive. OpenGL ES 3.0 contexts remain compatible with shaders written for OpenGL ES 2.0.
+
+Multiple Render Targets:
+By enabling multiple render targets, you can create fragment shaders that write to multiple framebuffer attachments simultaneously.
+
+This feature enables the use of advanced rendering algorithms such as deferred shading, in which your app first renders to a set of textures to store geometry data, 
+then performs one or more shading passes that read from those textures and perform lighting calculations to output a final image. 
+Because this approach precomputes the inputs to lighting calculations, the incremental performance cost for adding larger numbers of lights to a scene is much smaller. 
+Deferred shading algorithms require multiple render target support, to achieve reasonable performance. 
+Otherwise, rendering to multiple textures requires a separate drawing pass for each texture.
+
+You set up multiple render targets with an addition to the process described in Creating a Framebuffer Object. 
+Instead of creating a single color attachment for a framebuffer, you create several. 
+Then, call the glDrawBuffers function to specify which framebuffer attachments to use in rendering
+
+Setting up multiple render targets:
+// Attach (previously created) textures to the framebuffer.
+glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, _colorTexture, 0);
+glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, _positionTexture, 0);
+glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, _normalTexture, 0);
+glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, _depthTexture, 0);
+ 
+// Specify the framebuffer attachments for rendering.
+GLenum targets[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
+glDrawBuffers(3, targets);
+When your app issues drawing commands, your fragment shader determines what color (or non-color data) is output for each pixel in each render target. 
+
+Fragment shader with output to multiple render targets:
+#version 300 es
+ 
+uniform lowp sampler2D myTexture;
+in mediump vec2 texCoord;
+in mediump vec4 position;
+in mediump vec3 normal;
+ 
+layout(location = 0) out lowp vec4 colorData;
+layout(location = 1) out mediump vec4 positionData;
+layout(location = 2) out mediump vec4 normalData;
+ 
+void main()
+{
+    colorData = texture(myTexture, texCoord);
+    positionData = position;
+    normalData = vec4(normalize(normal), 1.0);
+}
+Multiple render targets can also be useful for other advanced graphics techniques, such as real-time reflections, screen-space ambient occlusion, and volumetric lighting.
+
+Transform Feedback:
+Graphics hardware uses a highly parallelized architecture optimized for vector processing. 
+You can make better use of this hardware with the new transform feedback feature, which lets you capture output from a vertex shader into a buffer object in GPU memory. 
+You can capture data from one rendering pass to use in another, or disable parts of the graphics pipeline and use transform feedback for general-purpose computation.
+
+One technique that benefits from transform feedback is animated particle effects. 
+First, the app sets up the initial state of the particle simulation. 
+Then, for each frame rendered, the app runs a step of its simulation, updating the position, orientation, and velocity of each simulated particle, 
+and then draws visual assets representing the current state of the particles.
+
+Traditionally, apps implementing particle systems run their simulations on the CPU, storing the results of the simulation in a vertex buffer to be used in rendering particle art. 
+However, transferring the contents of the vertex buffer to GPU memory is time-consuming. 
+Transform feedback, by optimizing the power of parallel architecture available in modern GPU hardware, solves the problem more efficiently.
+
+With transform feedback, you can design your rendering engine to solve this problem more efficiently. 
+Because OpenGL ES represents each particle and its state as a vertex, the GPU’s vertex shader stage can run the simulation for several particles at once. Because the vertex buffer containing particle state data is reused between frames, 
+the expensive process of transferring that data to GPU memory only happens once, at initialization time.
+
+1.At initialization time, create a vertex buffer and fill it with data containing the initial state of all particles in the simulation.
+2.Implement your particle simulation in a GLSL vertex shader program, and run it each frame by drawing the contents of the vertex buffer containing particle position data.
+To render with transform feedback enabled, call the glBeginTransformFeedback function. (Call glEndTransformFeedback() before resuming normal drawing.)
+Use the glTransformFeedbackVaryings function to specify which shader outputs should be captured by transform feedback, and use the glBindBufferBase or glBindBufferRange function and GL_TRANSFORM_FEEDBACK_BUFFER buffer type to specify the buffer they will be captured into.
+Disable rasterization (and subsequent stages of the pipeline) by calling glEnable(GL_RASTERIZER_DISCARD).
+3.To render the simulation results for display, use the vertex buffer containing particle positions as an input to second drawing pass, with rasterization (and the rest of the pipeline) once again enabled and using vertex and fragment shaders appropriate for rendering your app’s visual content.
+4.On the next frame, use the vertex buffer output by the last frame’s simulation step as input to the next simulation step.
+
+Other graphics programming techniques that can benefit from transform feedback include skeletal animation (also known as skinning) and ray marching.
+
+OpenGL ES 2.0:
+OpenGL ES 2.0 provides a flexible graphics pipeline with programmable shaders, and is available on all current iOS devices. 
+Many features formally introduced in the OpenGL ES 3.0 specification are available to iOS devices through OpenGL ES 2.0 extensions, 
+so you can implement many advanced graphics programming techniques while remaining compatible with most devices.
+
+OpenGL ES 1.1:
+OpenGL ES 1.1 provides only a basic fixed-function graphics pipeline. iOS supports OpenGL ES 1.1 primarily for backward compatibility. 
+If you are maintaining an OpenGL ES 1.1 app, consider updating your code for newer OpenGL ES versions.
+The GLKit framework can assist you in transitioning from the OpenGL ES 1.1 fixed-function pipeline to later versions.
+
+------------------------------Designing a High-Performance OpenGL ES App
+To summarize, a well-designed OpenGL ES app needs to:
+Exploit parallelism in the OpenGL ES pipeline.
+Manage data flow between the app and the graphics hardware.
+
+------------------------------Avoid Synchronizing and Flushing Operations
+The OpenGL ES specification doesn’t require implementations to execute commands immediately. 
+Often, commands are queued to a command buffer and executed by the hardware at a later time. 
+Usually, OpenGL ES waits until the app has queued many commands before sending the commands to the hardware—batch processing is usually more efficient. 
+However, some OpenGL ES functions must flush the command buffer immediately. 
+Other functions not only flush the command buffer but also block until previously submitted commands have completed before returning control over the app. 
+Use flushing and synchronizing commands only when that behavior is necessary. 
+Excessive use of flushing or synchronizing commands may cause your app to stall while it waits for the hardware to finish rendering.
+
+These situations require OpenGL ES to submit the command buffer to the hardware for execution:
+The function glFlush sends the command buffer to the graphics hardware. It blocks until commands are submitted to the hardware but does not wait for the commands to finish executing.
+The function glFinish flushes the command buffer and then waits for all previously submitted commands to finish executing on the graphics hardware.
+Functions that retrieve framebuffer content (such as glReadPixels) also wait for submitted commands to complete.
+The command buffer is full.
+
+Using glFlush Effectively:
+On some desktop OpenGL implementations, it can be useful to periodically call the glFlush function to efficiently balance CPU and GPU work, 
+but this is not the case in iOS. The Tile-Based Deferred Rendering algorithm implemented by iOS graphics hardware depends on buffering all vertex data in a scene at once, 
+so it can be optimally processed for hidden surface removal. Typically, there are only two situations where an OpenGL ES app should call the glFlush or glFinish functions:
+1.You should flush the command buffer when your app moves to the background, 
+because executing OpenGL ES commands on the GPU while your app is in the background causes iOS to terminate your app.
+2.If your app shares OpenGL ES objects (such as vertex buffers or textures) between multiple contexts, 
+you should call the glFlush function to synchronize access to these resources. For example, you should call the glFlush function after loading vertex data in one context to ensure that its contents are ready to be retrieved by another context. This advice also applies when sharing OpenGL ES objects with other iOS APIs such as Core Image.
+
+Avoid Querying OpenGL ES State:
+Calls to glGet*(), including glGetError(), may require OpenGL ES to execute previous commands before retrieving any state variables. 
+This synchronization forces the graphics hardware to run lockstep with the CPU, reducing opportunities for parallelism. 
+To avoid this, maintain your own copy of any state you need to query, and access it directly, rather than calling OpenGL ES.
+
+When errors occur, OpenGL ES sets an error flag. These and other errors appear in OpenGL ES Frame Debugger in Xcode or OpenGL ES Analyzer in Instruments. 
+You should use those tools instead of the glGetError function, which degrades performance if called frequently. 
+Other queries such as glCheckFramebufferStatus(), glGetProgramInfoLog() and glValidateProgram() are also generally only useful while developing and debugging. 
+You should omit calls to these functions in Release builds of your app.
+
+------------------------------Use OpenGL ES to Manage Your Resources
+Many pieces of OpenGL data can be stored directly inside the OpenGL ES rendering context and its associated sharegroup object. 
+The OpenGL ES implementation is free to transform the data into a format that is optimal for the graphics hardware. 
+This can significantly improve performance, especially for data that changes infrequently. 
+Your app can also provide hints to OpenGL ES about how it intends to use the data. 
+An OpenGL ES implementation can use these hints to process the data more efficiently. 
+For example, static data might be placed in memory that the graphics processor can readily fetch, or even into dedicated graphics memory.
+
+------------------------------Use Double Buffering to Avoid Resource Conflicts
+Resource conflicts occur when your app and OpenGL ES access an OpenGL ES object at the same time. 
+When one participant attempts to modify an OpenGL ES object being used by the other, they may block until the object is no longer in use. 
+Once they begin modifying the object, the other participant may not access the object until the modifications are complete. Alternatively, 
+OpenGL ES may implicitly duplicate the object so that both participants can continue to execute commands. Either option is safe, 
+but each can end up as a bottleneck in your app. Figure 6-7 shows this problem. In this example, there is a single texture object, 
+which both OpenGL ES and your app want to use. When the app attempts to change the texture, 
+it must wait until previously submitted drawing commands complete—the CPU synchronizes to the GPU.
+
+To solve this problem, your app could perform additional work between changing the object and drawing with it. But, if your app does not have additional work it can perform, 
+it should explicitly create two identically sized objects; while one participant reads an object, the other participant modifies the other.
+While the GPU operates on one texture, the CPU modifies the other. 
+After the initial startup, neither the CPU or GPU sits idle. Although shown for textures, 
+this solution works for almost any type of OpenGL ES object.
+
+Double buffering is sufficient for most apps, but it requires that both participants finish processing commands in roughly the same time. To avoid blocking, you can add more buffers; this implements a traditional producer-consumer model. If the producer finishes before the consumer finishes processing commands, 
+it takes an idle buffer and continues to process commands. In this situation, 
+the producer idles only if the consumer falls badly behind.
+Double and triple buffering trade off consuming additional memory to prevent the pipeline from stalling. 
+The additional use of memory may cause pressure on other parts of your app. On an iOS device, 
+memory can be scarce; your design may need to balance using more memory with other app optimizations.
+
+------------------------------Be Mindful of OpenGL ES State
+OpenGL ES implementations maintain a complex set of state data, including switches you set with the glEnable or glDisable functions, 
+the current shader program and its uniform variables, currently bound texture units, and currently bound vertex buffers and their enabled vertex attributes. 
+The hardware has one current state, which is compiled and cached lazily. 
+Switching state is expensive, so it's best to design your app to minimize state switches.
+
+Don't set a state that's already set. Once a feature is enabled, it does not need to be enabled again. 
+For instance, if you call a glUniform function with the same arguments more than once, 
+OpenGL ES may not check to see if the same uniform state is already set. It simply updates the state value even if that value is identical to the current value.
+
+Avoid setting a state more than necessary by using dedicated setup or shutdown routines rather than putting such calls in a drawing loop. 
+Setup and shutdown routines are also useful for turning on and off features that achieve a specific visual effect—for example, 
+when drawing a wire-frame outline around a textured polygon.
+
+Encapsulate State with OpenGL ES Objects:
+To reduce state changes, create objects that collect multiple OpenGL ES state changes into an object that can be bound with a single function call. 
+For example, vertex array objects store the configuration of multiple vertex attributes into a single object. 
+See Consolidate Vertex Array State Changes Using Vertex Array Objects.
+
+Organize Draw Calls to Minimize State Changes:
+Changing OpenGL ES state has no immediate effect. Instead, when you issue a drawing command, 
+OpenGL ES performs the work necessary to draw with a set of state values. You can reduce the CPU time spent reconfiguring the graphics pipeline by minimizing state changes. 
+For example, keep a state vector in your app, and set the corresponding OpenGL ES state only if your state changes between draw calls. 
+Another useful algorithm is state sorting—keep track of the drawing operations you need to do and the amount of state change necessary for each, 
+then sort them to perform operations using the same state consecutively.
+
+The iOS implementation of OpenGL ES can cache some of the configuration data it needs for efficient switching between states, but the initial configuration for each unique state set takes longer. 
+For consistent performance, you can “prewarm” each state set you plan to use during a setup routine:
+Enable a state configuration or shader you plan to use.
+Draw a trivial number of vertices using that state configuration.
+Flush the OpenGL ES context so that drawing during this prewarm phase is not displayed.
+
+==============================Appendix
+Adopting OpenGL ES 3.0
+https://developer.apple.com/library/archive/documentation/3DDrawing/Conceptual/OpenGLES_ProgrammingGuide/AdoptingOpenGLES3/AdoptingOpenGLES3.html#//apple_ref/doc/uid/TP40008793-CH504-SW4
+
+Xcode OpenGL ES Tools Overview
+https://developer.apple.com/library/archive/documentation/3DDrawing/Conceptual/OpenGLES_ProgrammingGuide/ToolsOverview/ToolsOverview.html#//apple_ref/doc/uid/TP40008793-A2-SW7
+
+Using texturetool to Compress Textures
+https://developer.apple.com/library/archive/documentation/3DDrawing/Conceptual/OpenGLES_ProgrammingGuide/TextureTool/TextureTool.html#//apple_ref/doc/uid/TP40008793-CH108-SW1
+
+OpenGL ES 3.0 for Apple A7 GPUs and Later
+https://developer.apple.com/library/archive/documentation/3DDrawing/Conceptual/OpenGLES_ProgrammingGuide/BestPracticesforAppleA7GPUsandLater/BestPracticesforAppleA7GPUsandLater.html#//apple_ref/doc/uid/TP40008793-CH505-DontLinkElementID_8

@@ -1,0 +1,290 @@
+在iOS开发中，进行异步操作，我们通常通过Complete Handler(回调)的方式，返回异步处理的结果。
+
+func processImageData2a(completionBlock: (_ result: Image?, _ error: Error?) -> Void) {
+    loadWebResource("dataprofile.txt") { dataResource, error in
+        guard let dataResource = dataResource else {
+            completionBlock(nil, error) 
+            return
+        }
+        loadWebResource("imagedata.dat") { imageResource, error in // 2
+            guard let imageResource = imageResource else {
+                completionBlock(nil, error)
+                return
+            }
+            decodeImage(dataResource, imageResource) { imageTmp, error in
+                guard let imageTmp = imageTmp else {
+                    completionBlock(nil, error)
+                    return
+                }
+                dewarpAndCleanupImage(imageTmp) { imageResult, error in
+                    guard let imageResult = imageResult else {
+                        completionBlock(nil, error)
+                        return
+                    }
+                    completionBlock(imageResult)
+                }
+            }
+        }
+    }
+}
+
+这种写法看起来很糟糕:
+1，方法之间嵌套太深，可读性差，容易出错。
+2，在 guard let中，在return之前容易忘记handler回调。
+3，代码量比较大，不容易直观的看出这段的功能。
+
+==================================================异步串行
+async-await进行改造后:
+
+func loadWebResource(_ path: String) async throws -> Resource
+func decodeImage(_ r1: Resource, _ r2: Resource) async throws -> Image
+func dewarpAndCleanupImage(_ i : Image) async throws -> Image
+
+func processImageData() async throws -> Image {
+  let dataResource  = try await loadWebResource("dataprofile.txt")
+  let imageResource = try await loadWebResource("imagedata.dat")
+  let imageTmp      = try await decodeImage(dataResource, imageResource)
+  let imageResult   = try await dewarpAndCleanupImage(imageTmp)
+  return imageResult
+}
+
+代码量有了显著的减少，逻辑更加清晰了，代码的可读性增强了
+
+override func viewDidLoad() {
+   super.viewDidLoad()
+   Task {
+       let image = try await downloadImage(imageNumber: 1)
+       let metadata = try await downloadMetadata(for: 1)
+       let detailImage = DetailedImage(image: image, metadata: metadata)
+       self.showImage(detailImage)
+  }
+  setupUI()
+  doOtherThing()
+}
+func setupUI(){
+    print("初始化UI开始")
+    sleep(1)
+    print("初始化UI完成")
+}
+func doOtherThing(){
+    print("其他事开始")
+    print("其他事结束")
+}
+
+@MainActor
+func showImage(_ detailImage: DetailedImage){
+    print("刷新UI")
+    self.imageButton.setImage(detailImage.image, for: .normal)
+}
+
+func downloadImage(imageNumber: Int) async throws -> UIImage {
+        try Task.checkCancellation()
+//        if Task.isCancelled {
+//            throw ImageDownloadError.invalidMetadata
+//        }
+        print("downloadImage----- begin \(Thread.current)")
+        let imageUrl = URL(string: "http://r1on82fmy.hn-bkt.clouddn.com/await\(imageNumber).jpeg")!
+        let imageRequest = URLRequest(url: imageUrl)
+        let (data, imageResponse) = try await URLSession.shared.data(for: imageRequest)
+        print("downloadImage----- end ")
+        guard let image = UIImage(data: data), (imageResponse as? HTTPURLResponse)?.statusCode == 200 else {
+            throw ImageDownloadError.badImage
+        }
+            return image
+}
+func downloadMetadata(for id: Int) async throws -> ImageMetadata {
+    try Task.checkCancellation()
+    //        if Task.isCancelled {
+    //            throw ImageDownloadError.invalidMetadata
+    //        }\
+    print("downloadMetadata --- begin \(Thread.current)")
+    let metadataUrl = URL(string: "http://r1ongpxur.hn-bkt.clouddn.com/imagemeta\(id).json")!
+    let metadataRequest = URLRequest(url: metadataUrl)
+    let (data, metadataResponse) = try await URLSession.shared.data(for: metadataRequest)
+    print("downloadMetadata --- end  \(Thread.current)")
+    guard (metadataResponse as? HTTPURLResponse)?.statusCode == 200 else {
+        throw ImageDownloadError.invalidMetadata
+    }
+    return try JSONDecoder().decode(ImageMetadata.self, from: data)
+}
+
+struct ImageMetadata: Codable {
+    let name: String
+    let firstAppearance: String
+    let year: Int
+}
+
+struct DetailedImage {
+    let image: UIImage
+    let metadata: ImageMetadata
+}
+
+enum ImageDownloadError: Error {
+    case badImage
+    case invalidMetadata
+}
+
+使用Task的原因是在同步线程和异步线程之间，我们需要一个桥接，我们需要告诉系统开辟一个异步环境，否则编译器会报 'async' call in a function that does not support concurrency的错误。
+另外Task表示开启一个任务。@MainActor表示让showImage方法在主线程执行。
+
+使用 async-await并不会阻塞主线程，在同一个Task中，遇到await，后面的任务将会被挂起，等到await任务执行完后，会回到被挂起的地方继续执行。这样就做到了 异步串行。
+
+==================================================异步并行(async-let)
+下载图片和下载图片的metadata是可以并行执行的。我们可以使用 async-let来实现
+
+func downloadImageAndMetadata(imageNumber: Int) async throws -> DetailedImage {
+        print(">>>>>>>>>> 1 \(Thread.current)")
+        async let image =  downloadImage(imageNumber: imageNumber)
+        async let metadata =  downloadMetadata(for: imageNumber)
+        print(">>>>>>>> 2 \(Thread.current)")
+        let detailImage = DetailedImage(image: try await image, metadata: try await metadata)
+        print(">>>>>>>> 3 \(Thread.current)")
+        return detailImage
+}
+
+Task {
+        let detailImage = try await downloadImageAndMetadata(imageNumber: 1)
+        self.showImage(detailImage)
+}
+setupUI()
+doOtherThing()
+    
+// 执行结果
+初始化UI开始
+>>>>>>>>>> 1 <NSThread: 0x6000005db840>{number = 6, name = (null)}
+>>>>>>>> 2 <NSThread: 0x6000005db840>{number = 6, name = (null)}
+downloadImage----- begin <NSThread: 0x6000005a8240>{number = 3, name = (null)}
+downloadMetadata --- begin <NSThread: 0x6000005a8240>{number = 3, name = (null)}
+downloadImage----- end
+downloadMetadata --- end  <NSThread: 0x6000005acf80>{number = 5, name = (null)}
+>>>>>>>> 3 <NSThread: 0x6000005acf80>{number = 5, name = (null)}
+初始化UI完成
+其他事开始
+其他事结束
+刷新UI
+
+
+使用 asyn let修饰后，该函数会并发执行，所以async let又称为并发绑定。
+这里需要注意的是 使用 async let修饰 image ，downloadImage会被挂起，该线程继续执行其他任务， 直到遇到 try await image，downloadImage才会执行
+这也是为什么 print2在downloadImage之前执行的原因了。
+
+我们在一个Task内，异步并发的执行任务，系统会给我们维护一个任务树
+downloadImage和downloadMetadata是该Task(任务)的子任务 如果有一个子任务抛出异常，该Task(任务)，将会抛出异常。
+
+==================================================Group Task
+如果我们要同时下载多张图片，我们该怎么处理呢
+通过遍历数组，开启多个Task，并image添加到数组中。编译器不允许我们这样做，抛出了Mutation of capture var xxxx in concurrenly-excuting code的错误
+多个任务同时引用了可变变量detailImages， 如果有两个任务同时向detailImages里面写入数据，会造成数据竞争(data races)，这样很不安全。
+
+我们可以通过将每一个Task放到任务组(data task)中，来解决这个问题
+func downloadMultipleImagesWithMetadata(imageNumbers: [Int]) async throws -> [DetailedImage]{
+    var imagesMetadata: [DetailedImage] = []
+    try await withThrowingTaskGroup(of: DetailedImage.self) { group in
+        for imageNumber in imageNumbers {
+            // 向Taskgroup中添加
+            group.addTask(priority: .medium) {
+                async let image = self.downloadImageAndMetadata(imageNumber: imageNumber)
+                return try await image
+            }
+        }
+        //等Task组里面的任务都执行完
+        for try await imageDetail in group {
+            imagesMetadata.append(imageDetail)
+        }
+    }
+    return imagesMetadata
+}
+
+Task {
+    do {
+        let images = try await downloadMultipleImagesWithMetadata(imageNumbers: [1,2,3,4])
+    } catch ImageDownloadError.badImage {
+        print("图片下载失败")
+    }
+}
+
+可以看到，多个任务是并行执行的,并且在某一个任务中，也是并行执行的。
+withThrowingTaskGroup 会创建一个任务组，来存放任务。 使用 for await 等待线程里面的任务全部执行完毕后，将全部数据返回，这样就解决了多个Task并行，引起的数据竞争问题。
+如果有一个任务抛出异常，那个整个任务组将会抛出异常。
+
+==================================================异步属性
+可以通过async await异步获取属性值，该属性只能是只读属性
+
+extension UIImage {
+    // only read-only properties can be async
+    var thumbnail: UIImage? {
+        get async {
+            let size = CGSize(width: 40, height: 40)
+            return await self.byPreparingThumbnail(ofSize: size)
+        }
+    }
+}
+
+==================================================如何接入async await
+使用系统async await API
+let (data, metadataResponse) = try await URLSession.shared.data(for: metadataRequest)
+
+改造基于handler的回调
+//MARK: call back based
+func requestUserAgeBaseCallBack(_ completeHandler: @escaping (Int)->() ){
+    NetworkManager<Int>.netWorkRequest("url") { response, error in
+        completeHandler(response?.data ?? 0)
+    }
+}
+
+可以选中该函数，按下command + shift + A，选中 Add Async Alternative，Xcode会自动帮我们生成async替换方法
+//MARK: call back based
+@available(*, deprecated, message: "Prefer async alternative instead")
+func requestUserAgeBaseCallBack(_ completeHandler: @escaping (Int)->() ){
+    Task {
+        let result = await requestUserAgeBaseCallBack()
+        completeHandler(result)
+    }
+}
+
+func requestUserAgeBaseCallBack() async -> Int {
+    return await withCheckedContinuation { continuation in
+        NetworkManager<Int>.netWorkRequest("url") { response, error in
+            continuation.resume(returning: response?.data ?? 0)
+        }
+    }
+}
+也可以自己使用 withCheckedContinuation，仿造这个格式，自己来做改造。
+
+
+改造基于delegate的回调
+通过改造系统的UIImagePickerControllerDelegate
+class ImagePickerDelegate: NSObject, UINavigationControllerDelegate & UIImagePickerControllerDelegate {
+    var contination: CheckedContinuation<UIImage?, Never>?
+    
+    @MainActor
+    func chooseImageFromPhotoLibrary() async throws -> UIImage?{
+        let vc = UIImagePickerController()
+        vc.sourceType = .photoLibrary
+        vc.delegate = self
+        print(">>>>>>>> 图片选择 \(Thread.current)")
+        BasicTool.currentViewController()?.present(vc, animated: true, completion: nil)
+        return await withCheckedContinuation({ continuation in
+            self.contination = continuation
+        })
+    }
+
+    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+        self.contination?.resume(returning: nil)
+        picker.dismiss(animated: true, completion: nil)
+    }
+
+    func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
+        let image = info[UIImagePickerController.InfoKey.originalImage] as? UIImage
+        self.contination?.resume(returning: image)
+        picker.dismiss(animated: true, completion: nil)
+    }
+
+}
+
+Task {
+    let pickerDelegate = ImagePickerDelegate()
+    let image = try? await pickerDelegate.chooseImageFromPhotoLibrary()
+    sender.setImage(image, for: .normal)
+}
+通过 CheckedContinuation实例我们可以完成对delegate的改造。

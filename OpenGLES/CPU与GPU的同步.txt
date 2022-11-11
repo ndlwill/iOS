@@ -1,0 +1,19 @@
+CPU与GPU这两个处理器不是同步运行的，当CPU要GPU画第10个对象时，GPU可能还在画第一个对象。
+CPU与GPU不同步现象与是否使用Shader无关，无论是否使用Shader，CPU与GPU都不会同步运行。
+
+CPU 调用Direct3D和OpenGL的绘图函数来绘图时，这些指定不会被GPU马上运行，而是存放在某一块内存中，这快内存称为Command Buffer。
+GPU会一直从Command Buffer中取出CPU所指派的工作
+当Command Buffer为空时，GPU就会闲下来。当Command Buffer被塞满时，CPU就不能再下新的命令，这个时候若CPU继续下命令，CPU就会被暂停，直到GPU处理并清除掉一些Command Buffer中的命令后，CPU才能继续运行。
+
+如果CPU和GPU是同步运行的，那就代表有很多时候需要把CPU暂停，等GPU画完才能恢复CPU的运行。
+例如，如果CPU调用DrawPrimitive画一万个三角形，DrawPrimitive函数需要等GPU把这一万个三角形全部画完才会return。
+这样CPU在DrawPrimitive运行结束前只是被暂停，没做任何事，浪费了硬件的资源，有效率的做法是CPU调用 DrawPrimitive时，DrawPrimitive函数只是把画一万个三角形的指令放在Command Buffer中，指令放好后立即return，让CPU做其他的事情。
+只要Command Buffer够大、CPU新增指令和GPU绘图的速度配合好，CPU和GPU就可以同时完成各自的工作。
+
+CPU和GPU的不同步现象对Shader的编写事实上没有太大影响，不过要了解这个问题。
+C++代码在试图改变显示内存中的贴图和顶点数据时，有可能这些数据正被GPU使用。这个时候强制更新的话，会得到错误的绘图结果。
+如果要CPU暂停等到GPU更新完后更新数据，会拖慢程序的运行速度。
+有时我们会使用double buffer的方法，让CPU和GPU不同时存取一块内存。
+CPU更新buffer1的时候让GPU读取buffer2，下一个画面是CPU更新 buffer2，GPU读取buffer1。
+虽然这样会让画面显示的数据慢一步，但是在视觉上没有太大的影响。
+通常游戏的帧数是30到60，画面反映慢一步，等于只是慢了1/30 - 1/60秒，几乎不会感觉到。

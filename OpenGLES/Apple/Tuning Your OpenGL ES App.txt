@@ -1,0 +1,81 @@
+The performance of OpenGL ES apps in iOS differs from that of OpenGL in OS X or other desktop operating systems. Although powerful computing devices, 
+iOS–based devices do not have the memory or CPU power that desktop or laptop computers possess. Embedded GPUs are optimized for lower memory and power usage, 
+using algorithms different from those a typical desktop or laptop GPU might use. 
+Rendering your graphics data inefficiently can result in a poor frame rate or dramatically reduce the battery life of an iOS-based device
+
+------------------------------Debug and Profile Your App with Xcode and Instruments
+Don’t optimize your app until you test its performance in a variety of scenarios on a variety of devices. 
+Xcode and Instruments include tools to help you identify performance and correctness problems in your app.
+
+1.Monitor the Xcode debug gauges for a general overview of performance. 
+These gauges are visible whenever you run your app from Xcode, making it easy to spot changes in performance while developing your app.
+2.Use the OpenGL ES Analysis and OpenGL ES Driver tools in Instruments for a deeper understanding of run-time performance. 
+Get detailed information on your app’s resource use and conformance to OpenGL ES best practices, 
+and selectively disable portions of the graphics pipeline so you can determine which part is a significant bottleneck in your app. 
+3.Use the OpenGL ES Frame Debugger and Performance Analyzer tools in Xcode for pinpoint troubleshooting of performance and rendering issues. 
+Capture all OpenGL ES commands used to render and present a single frame, then walk through those commands to see the effect of each on the OpenGL ES state, 
+bound resources, and the output framebuffer. You can also view shader source code, edit it, and see how your changes affect the rendered image. 
+On OpenGL ES 3.0–capable devices, the Frame Debugger also indicates which draw calls and shader instructions contribute most to rendering time
+https://developer.apple.com/library/archive/documentation/3DDrawing/Conceptual/OpenGLES_ProgrammingGuide/ToolsOverview/ToolsOverview.html#//apple_ref/doc/uid/TP40008793-A2-SW7
+
+Watch for OpenGL ES Errors in Xcode and Instruments:
+OpenGL ES errors occur when your app uses the OpenGL ES API incorrectly (for example, by requesting operations that the underlying hardware is not capable of performing). 
+Even if your content renders correctly, these errors may indicate performance problems. The traditional way to check for OpenGL ES errors is to call the glGetError function; 
+however, repeatedly calling this function can significantly degrade performance. Instead, use the tools described above to test for errors:
+1.When profiling your app in Instruments, see the detail pane for OpenGL ES Analyzer tool to view any OpenGL ES errors reported while recording.
+2.While debugging your app in Xcode, capture a frame to examine the drawing commands used to produce it, as well as any errors encountered while performing those commands.
+You can also configure Xcode to stop program execution when an OpenGL ES error is encountered. (See Adding an OpenGL ES Error Breakpoint.)
+
+Annotate Your OpenGL ES Code for Informative Debugging and Profiling:
+You can make debugging and profiling more efficient by organizing your OpenGL ES commands into logical groups and adding meaningful labels to OpenGL ES objects. 
+These groups and labels appear in OpenGL ES Frame Debugger in Xcode , and in OpenGL ES Analyzer in Instruments. 
+To add groups and labels, use the EXT_debug_marker and EXT_debug_label extensions.
+
+how to group the texture, program, vertex array, and draw calls for a single element of a scene. 
+First, it calls the glPushGroupMarkerEXT function to provide a meaningful name, then it issues a group of OpenGL ES commands. 
+Finally, it closes the group with a call to the glPopGroupMarkerEXT function.
+Using a debug marker to annotate drawing commands:
+
+glPushGroupMarkerEXT(0, "Draw Spaceship");
+glBindTexture(GL_TEXTURE_2D, _spaceshipTexture);
+glUseProgram(_diffuseShading);
+glBindVertexArrayOES(_spaceshipMesh);
+glDrawElements(GL_TRIANGLE_STRIP, 256, GL_UNSIGNED_SHORT, 0);
+glPopGroupMarkerEXT();
+
+You can use multiple nested markers to create a hierarchy of meaningful groups in a complex scene. When you use the GLKView class to draw OpenGL ES content, 
+it automatically creates a “Rendering” group containing all commands in your drawing method. Any markers you create are nested within this group
+
+Labels provide meaningful names for OpenGL ES objects, such as textures, shader programs, and vertex array objects. 
+Call the glLabelObjectEXT function to give an object a name to be shown when debugging and profiling. using this function to label a vertex array object. 
+If you use the GLKTextureLoader class to load texture data, it automatically labels the OpenGL ES texture objects it creates with their filenames.
+
+Using a debug label to annotate an OpenGL ES object:
+glGenVertexArraysOES(1, &_spaceshipMesh);
+glBindVertexArrayOES(_spaceshipMesh);
+glLabelObjectEXT(GL_VERTEX_ARRAY_OBJECT_EXT, _spaceshipMesh, 0, "Spaceship");
+
+------------------------------General Performance Recommendations
+For example, if your app draws only a few dozen triangles per frame, changing how it submits vertex data is unlikely to improve its performance. 
+Look for optimizations that provide the most performance improvement for your effort
+
+Redraw Scenes Only When the Scene Data Changes:
+Your app should wait until something in the scene changes before rendering a new frame. 
+Core Animation caches the last image presented to the user and continues to display it until a new frame is presented.
+Even when your data changes, it is not necessary to render frames at the speed the hardware processes commands. 
+A slower but fixed frame rate often appears smoother to the user than a fast but variable frame rate. 
+A fixed frame rate of 30 frames per second is sufficient for most animation and helps reduce power consumption.
+
+Disable Unused OpenGL ES Features:
+The best calculation is one that your app never performs. For example, if a result can be precalculated and stored in your model data, 
+you can avoid performing that calculation at runtime.
+If your app is written for OpenGL ES 2.0 or later, do not create a single shader with lots of switches and conditionals that performs every task your app needs to render the scene. 
+Instead, compile multiple shader programs that each perform a specific, focused task.
+If your app uses OpenGL ES 1.1, disable any fixed-function operations that are not necessary to render the scene. 
+For example, if your app does not require lighting or blending, disable those functions. Similarly, if your app draws only 2D models, it should disable fog and depth testing.
+
+Simplify Your Lighting Models:
+These guidelines apply both to fixed-function lighting in OpenGL ES 1.1 and shader-based lighting calculations you use in your custom shaders in OpenGL ES 2.0 or later.
+
+
+------------------------------

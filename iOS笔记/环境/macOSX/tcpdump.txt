@@ -1,0 +1,244 @@
+tcpdump 是 Unix/Linux 下的抓包工具，在 macOS 上也有实现
+这个命令可以针对指定网卡、端口、协议进行抓包
+
+1.获取适配器列表
+使用 -D 或 --list-interfaces 参数
+tcpdump -D
+其中的适配器名称部分，可以使用 -i 参数监听此适配器的通讯
+
+2.监听适配器
+使用 -i 或 --interface 参数监听适配器，适配器可以用序号或名字来表示，这些内容可以通过 -D 参数获取。
+macOS 下监听适配器的话，必须使用 root 权限。
+
+# 监听适配器 en0 的通讯
+$ sudo tcpdump -i en0
+
+# 或者使用 --interface 参数
+$ sudo tcpdump --interface en0
+
+# 或者使用 --interface= 参数，效果一样
+$ sudo tcpdump --interface=en0
+
+3.监听适配器过滤
+使用 -D 参数拿到适配器列表后，结合 -i 参数就可以监听适配器了。但是这样的话会监听到所有的通讯，可以根据需要，针对感兴趣的内容进行过滤。
+(1)过滤主机
+抓取所有经过 eth1，目的或源地址是 192.168.1.1 的网络数据
+$ sudo tcpdump -i eth1 host 192.168.1.1
+源地址
+$ sudo tcpdump -i eth1 src host 192.168.1.1
+目的地址
+$ sudo tcpdump -i eth1 dst host 192.168.1.1
+
+(2)过滤端口
+抓取所有经过 eth1，目的或源端口是 25 的网络数据
+$ sudo tcpdump -i eth1 port 25
+源端口
+$ sudo tcpdump -i eth1 src port 25
+目的端口
+$ sudo tcpdump -i eth1 dst port 25
+
+(3)过滤网段
+抓取所有经过 eth1，目的或源网段是 192.168 的网络数据
+$ sudo tcpdump -i eth1 net 192.168
+源网段
+$ sudo tcpdump -i eth1 src net 192.168
+目的网段
+$ sudo tcpdump -i eth1 dst net 192.168
+
+(4))协议过滤
+$ sudo tcpdump -i eth1 arp
+$ sudo tcpdump -i eth1 ip
+$ sudo tcpdump -i eth1 tcp
+$ sudo tcpdump -i eth1 udp
+$ sudo tcpdump -i eth1 icmp
+
+(5)使用表达式
+与：&& 或 and
+或：|| 或 or
+非：! 或 not
+
+4.选项
+tcpdump 的选项也很多，要想知道所有选项的话，请参考 man tcpdump
+tcpdump 默认只会截取前 96 字节的内容，要想截取所有的报文内容，可以使用 -s number， number 就是你要截取的报文字节数，如果是 0 的话，表示截取报文全部内容。
+
+-n 表示不要解析域名，直接显示 ip。
+-nn：表示以ip和port的方式显示来源主机和目的主机，而不是用主机名和服务。 不要解析域名和端口. 
+-X 同时用 hex 和 ascii 显示报文的内容。
+-XX 同 -X，但同时显示以太网头部。
+-S 显示绝对的序列号（sequence number），而不是相对编号。
+-i any 监听所有的网卡
+-v, -vv, -vvv：显示更多的详细信息
+-c number: 截取 number 个报文，然后结束
+-A：只使用 ascii 打印报文的全部数据，不要和 -X 一起使用。截取 http 请求的时候可以用 sudo tcpdump -nSA port 80！
+
+5.Flags
+TCP Flag	tcpdump Flag	Meaning
+SYN	[S]	Syn packet, a session establishment request.
+ACK	[A]	Ack packet, acknowledge sender’s data.
+FIN	[F]	Finish flag, indication of termination.
+RESET	[R]	Reset, indication of immediate abort of conn.
+PUSH	[P]	Push, immediate push of data from sender.
+URGENT	[U]	Urgent, takes precedence over other data.
+NONE	[.]	Placeholder, usually used for ACK.
+
+6.实例
+抓取所有经过 eth1，目的地址是 192.168.1.254 或 192.168.1.200 端口是 80 的 TCP 数据
+$ sudo tcpdump -i eth1 '((tcp) and (port 80) and ((dst host 192.168.1.254) or (dst host
+192.168.1.200)))'
+
+抓取所有经过 eth1，目标 MAC 地址是 00:01:02:03:04:05 的 ICMP 数据
+$ sudo tcpdump -i eth1 '((icmp) and ((ether dst host 00:01:02:03:04:05)))'
+
+抓取所有经过 eth1，目的网络是 192.168，但目的主机不是 192.168.1.200 的 TCP 数据
+$ sudo tcpdump -i eth1 '((tcp) and ((dst net 192.168) and (not dst host 192.168.1.200)))'
+
+只抓 SYN 包
+$ sudo tcpdump -i eth1 'tcp[tcpflags] = tcp-syn'、
+
+抓 SYN, ACK
+$ sudo tcpdump -i eth1 'tcp[tcpflags] & tcp-syn != 0 and tcp[tcpflags] & tcp-ack != 0'
+
+抓 SMTP 数据
+抓取数据区开始为 MAIL 的包，MAIL 的十六进制为 0x4d41494c。
+$ sudo tcpdump -i eth1 '((port 25) and (tcp[(tcp[12]>>2):4] = 0x4d41494c))'
+
+抓 HTTP GET 数据
+GET（注意后面有空格）的十六进制是 0x47455420
+$ sudo tcpdump -i eth1 'tcp[(tcp[12]>>2):4] = 0x47455420'
+
+抓 SSH 返回
+SSH- 的十六进制是 0x5353482D
+$ sudo tcpdump -i eth1 'tcp[(tcp[12]>>2):4] = 0x5353482D'
+
+抓 DNS 请求数据
+$ sudo tcpdump -i eth1 udp dst port 53
+
+==================================================使用 tcpdump 观察 DNS 通信过程
+1. 启动 tcpdump 对 DNS 报文进行抓包
+tcpdump -i eth0 -nt -s 500 port domain
+使用“port domain”来过滤数据包，表示只抓取使用 domain（域名）服务的数据包，即 DNS 查询和应答报文
+
+2. 使用 host 命令进行 DNS 查询
+host -t A www.baidu.com
+www.baidu.com is an alias for www.a.shifen.com.
+www.a.shifen.com is an alias for www.wshifen.com.
+www.wshifen.com has address 103.235.46.40
+
+3. 分析 tcpdump 输出
+当执行完第 2 步后，tcpdump 就会有输出
+IP 10.162.201.34.48965 > 10.202.72.118.domain: 18831+ A? www.baidu.com. (28)
+IP 10.202.72.118.domain > 10.162.201.34.48965: 18831 1/4/9 A 101.226.103.106 (275)
+
+Tcpdump 以 “IP 地址.端口号” 的形式来描述通信的某一端； 以 “>” 表示数据传输的方向，“>” 前面是源端，后面是目的端。
+第一个数据包是测试机器（IP 地址是 10.162.201.34）向其首选 DNS 服务器（IP 地址是 10.202.72.118） 发送的 DNS 查询报文（目标端口 53 是 DNS 服务使用的端口）
+第二个数据包是服务器反馈的 DNS 应答报文。
+第一个数据包中，数值 18831 是 DNS 查询报文的标识值，因此该值也出现在 DNS 应答报文中。
+“+” 表示启用递归查询标志。
+“A?” 表示使用 A 类型的查询方式。
+括号中的数值 28 是 DNS 查询报文的长度（以字节为单位）。
+第二个数据包中，“1/4/9” 表示该报文中包含 1 个应答资源记录、4 个授权资源记录和 9 个额外信息记录。
+该应答报文的长度为 275 字节。
+
+我们抓包的时候没有开启 tcpdump 的 -X 选项（或者 -x 选项）。   如果使用 -X 选项，我们将能看到 DNS 报文的每一个字节，也就能明白上面 28 字节的查询报文和 275 字节的应答报文的具体含义。
+上面使用 -X 选项，是以 16 进制和 ASCII 方式打印，不太直观地看出来报文内容，   这里我们可以使用 Tcpdump 将抓到的数据包写入到文件中，然后导入到 Wireshark 中查看。
+
+tcpdump -i eth0 -nt -s 500 -X port domain -w dns-dump.pcap -v
+
+使用 wireshark 查看 tcpdump 的抓包结果:
+https://mozillazg.com/2015/05/open-tcpdump-result-with-wireshark-gui.html
+
+==================================================tcpdump输出
+tcpdump在新行上输出每个捕获的数据包的信息。每行包括一个时间戳和有关该数据包的信息，具体取决于协议。
+
+TCP协议行的典型格式如下：
+[Timestamp] [Protocol] [Src IP].[Src Port] > [Dst IP].[Dst Port]: [Flags], [Seq], [Ack], [Win Size], [Options], [Data Length]
+
+21:53:20.460144 IP 192.168.182.166.57494 > 35.222.85.5.80: Flags [P.], seq 1:88, ack 1, win 29200,  options [nop,nop,TS val 1067794587 ecr 2600218930], length 87
+
+21:53:20.460144 - 捕获的数据包的时间戳为本地时间，并使用以下格式：hours：minutes：seconds.frac，其中frac是自午夜以来的几分之一秒。
+IP - 分组协议。在这种情况下，IP表示Internet协议版本4（IPv4）。
+192.168.182.166.57494 - 源IP地址和端口，以点（.）分隔。
+35.222.85.5.80 - 目的IP地址和端口，以点号（.）分隔。
+TCP标志字段。在此示例中，[P.]表示推送确认数据包，用于确认前一个数据包并发送数据。其他典型标志字段值如下：
+[.] - ACK (Acknowledgment)
+[S] - SYN (Start Connection)
+[P] - PSH (Push Data)
+[F] - FIN (Finish Connection)
+[R] - RST (Reset Connection)
+[S.] - SYN-ACK (SynAcK Packet)
+seq 1:88 - 序列号在first：last表示法中。它显示了数据包中包含的数据数量。除了数据流中的第一个数据包（其中这些数字是绝对的）以外，所有后续数据包均用作相对字节位置。
+在此示例中，数字为1:88，表示此数据包包含数据流的字节1至88。使用-S选项可打印绝对序列号。
+ack 1 - 确认号（acknowledgment number）是此连接另一端所期望的下一个数据的序列号。
+win 29200 - 窗口号是接收缓冲区中可用字节的数目。
+length 87 - 有效载荷数据的长度
+
+==================================================Recording a Packet Trace
+https://developer.apple.com/documentation/network/recording_a_packet_trace
+
+Learn how to record a low-level trace of network traffic.
+
+ios真机抓包命令rvictl
+RVI: remote virtual interface
+它只需要将iOS设备使用USB数据线连接到mac上，然后使用rvictl工具以iOS设备的UDID为参数在Mac中建立一个虚拟网络接口rvi，
+就可以在mac设备上使用tcpdump，wireshark等工具对创建的接口进行抓包分析了。
+
+
+Set Up iOS Packet Tracing:
+iOS doesn’t let you record a packet trace directly. 
+However, you can use your Mac to record a packet trace on an attached iOS device using the Remote Virtual Interface (RVI) mechanism. 
+To get started, first connect your iOS device to your Mac via USB. Next run the rvictl command in Terminal.
+
+rvictl -s b0e8fe73db17d4993bd549418bfbdba70a4af2b1
+
+In this example:
+rvictl is the name of the command that manipulates RVIs.
+-s tells rvictl to set up a new RVI.
+b0e8fe73db17d4993bd549418bfbdba70a4af2b1 is the UDID of the iOS device to target. 
+This UDID is just an example; you can find your device’s UDID in the Devices and Simulators window in Xcode.
+
+This command prints the following output.
+$ rvictl -s b0e8fe73db17d4993bd549418bfbdba70a4af2b1
+Starting device b0e8fe73db17d4993bd549418bfbdba70a4af2b1 [SUCCEEDED] with interface rvi0
+
+This output includes the interface name of the newly-created RVI, rvi0 in this example. 
+Supply this interface name to your favorite packet trace tool to record a trace of the traffic on your iOS device. For example, use the following command to record a packet trace on rvi0 and write it to trace.pcap.
+
+sudo tcpdump -i rvi0 -w trace.pcap
+
+If you’re having problems working with RVIs, see Troubleshooting Packet Traces for some troubleshooting tips.
+
+==================================================Troubleshooting Packet Traces:
+https://developer.apple.com/documentation/network/recording_a_packet_trace/troubleshooting_packet_traces
+
+
+If rvictl fails with the message bootstrap_look_up(): 1102, make sure that the com.apple.rpmuxd daemon is installed and loaded. 
+The following command should print information about the daemon:
+
+sudo launchctl list com.apple.rpmuxd
+
+If the daemon is installed correctly, you should see output like this:
+$ sudo launchctl list com.apple.rpmuxd
+{
+    "Label" = "com.apple.rpmuxd";
+    …
+};
+
+If the daemon isn’t installed correctly you’ll see this:
+$ sudo launchctl list com.apple.rpmuxd
+Could not find service "com.apple.rpmuxd" in domain for system
+
+This message can indicate that the daemon is unloaded. You can force it to load as follows:
+sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.rpmuxd.plist
+
+------------------------------
+macOS m1, Xcode 14.0.1
+which rvictl
+/Library/Apple/usr/bin/rvictl
+
+sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.rpmuxd.plist
+/System/Library/LaunchDaemons/com.apple.rpmuxd.plist: No such file or directory
+13.2以上版本的 xcode 没有将 rpmuxd 安装到上面的路径
+加载正确的目录位置
+sudo launchctl load -w /Library/Apple/System/Library/LaunchDaemons/com.apple.rpmuxd.plist
+
+https://developer.apple.com/forums/thread/122541

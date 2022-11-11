@@ -1,0 +1,115 @@
+When writing those kinds of convenience APIs, we might also want to mix the protocol that we’re currently extending with some functionality provided by another protocol. For example, let’s say that we wanted to provide a default implementation of our DiskWritable protocol’s writeToDisk method for types that also conform to the Encodable protocol — 
+since a type that’s encodable can be transformed into Data, which we could then automatically write to disk.
+
+protocol DiskWritable {
+    func writeToDisk(at url: URL) throws
+}
+
+protocol DiskWritable: Encodable {
+    func writeToDisk(at url: URL) throws
+}
+
+extension DiskWritable {
+    func writeToDisk(at url: URL) throws {
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(self)
+        try data.write(to: url)
+    }
+}
+
+While powerful, the above approach does have a quite significant downside, in that we’ve now completely coupled our DiskWritable protocol with Encodable
+— meaning that we can no longer use that protocol by itself, without also requiring any conforming type to also fully implement Encodable, which might become problematic.
+
+Another, much more flexible approach would be to let DiskWritable remain a completely stand-alone protocol, 
+and instead write a type-constrained extension that only adds our default writeToDisk implementation to types that also conform to Encodable separately — like this:
+
+extension DiskWritable where Self: Encodable {
+    func writeToDisk(at url: URL) throws {
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(self)
+        try data.write(to: url)
+    }
+}
+
+One way to address that discoverability issue, though, could be to create a convenience type alias (using Swift’s protocol composition operator, &) that gives us an indication that DiskWritable and Encodable can be combined to unlock new functionality:
+typealias DiskWritableByEncoding = DiskWritable & Encodable
+
+struct TodoList: DiskWritableByEncoding {
+    var name: String
+    var items: [Item]
+    ...
+}
+
+let list = TodoList(...)
+try list.writeToDisk(at: fileURL)
+
+Combining protocols like that can be a really powerful technique, 
+as we’re not just limited to adding default implementations of protocol requirements — we can also add brand new APIs to any protocol combination, 
+simply by adding new methods or computed properties within one of our extensions.
+
+For example, here we’ve added a second overload of our writeToDisk method, which makes it possible to pass a custom JSONEncoder that’ll be used when serializing the current instance:
+extension DiskWritable where Self: Encodable {
+    func writeToDisk(at url: URL, encoder: JSONEncoder) throws {
+        let data = try encoder.encode(self)
+        try data.write(to: url)
+    }
+
+    func writeToDisk(at url: URL) throws {
+        try writeToDisk(at: url, encoder: JSONEncoder())
+    }
+}
+
+We do have to be bit careful not to over-use the above pattern, though, 
+since doing so could introduce conflicts if a given type ends up getting access to multiple default implementations of the same method.
+
+To illustrate, let’s say that our code base also contains a DataConvertible protocol, which we’d like to extend with a similar, default implementation of writeToDisk — like this:
+protocol DataConvertible {
+    func convertToData() throws -> Data
+}
+
+extension DiskWritable where Self: DataConvertible {
+    func writeToDisk(at url: URL) throws {
+        let data = try convertToData()
+        try data.write(to: url)
+    }
+}
+
+While both of the two DiskWritable extensions that we’ve now created make perfect sense in isolation,
+we’ll now end up with a conflict if a given DiskWritable-conforming type also wants to conform to both Encodable and DataConvertible at the same time (which is highly likely, 
+since both of those protocols are about transforming an instance into Data).
+
+
+So let’s also explore one final, alternative approach to the above set of problems — which would be to implement our disk-writing convenience APIs within a dedicated type, rather than using protocol extensions. For example, here’s how we could define an EncodingDiskWriter, 
+which only requires the types that it’ll be used with to conform to Encodable, since the writer itself conforms to DiskWritable:
+
+struct EncodingDiskWriter<Value: Encodable>: DiskWritable {
+    var value: Value
+    var encoder = JSONEncoder()
+
+    func writeToDisk(at url: URL) throws {
+        let data = try encoder.encode(value)
+        try data.write(to: url)
+    }
+}
+
+So even though the following Document type doesn’t conform to DiskWritable, we can still easily write its data to disk using our new EncodingDiskWriter:
+
+struct Document: Identifiable, Codable {
+    let id: UUID
+    var name: String
+    ...
+}
+
+class EditorViewController: UIViewController {
+    private var document: Document
+    private var fileURL: URL
+    ...
+
+    private func save() throws {
+        let writer = EncodingDiskWriter(value: document)
+try writer.writeToDisk(at: fileURL)
+    }
+}
+
+So, although protocol extensions provide us with an incredibly powerful set of tools, 
+it’s always important to remember that there are other alternatives that might be a better fit for what we’re trying to build.

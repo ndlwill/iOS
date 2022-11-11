@@ -1,0 +1,245 @@
+1.保留 Struct 的默认初始化器
+需要自定义 Struct 的初始化器，又想保留默认的初始化器，但是自定义后，默认的初始化器就消失了。
+将自定义的初始化放到extension
+
+2.有条件的 for 循环
+❌
+for subView in view.subviews {
+    if let button = subView as? UIButton {
+        //不可描述的事情
+    }
+}
+
+✅
+for case let button as UIButton in view.subviews {
+    //不可描述的事情
+}
+
+✅
+for button in view.subviews where button is UIButton {
+    //不可描述的事情
+}
+
+3.enumerated()
+//index 和 subView 在循环体中都能使用到
+for (index, subView) in view.subviews.enumerated() {
+    //不可描述的事情
+}
+
+//只用到 index
+for (index, _) in view.subviews.enumerated() {
+    //不可描述的事情
+}
+
+//只用到 subView
+for (_, subView) in view.subviews.enumerated() {
+    //不可描述的事情
+}
+
+4.first(where: ) contains(where: )
+filter 是 Swift 中几个高级函数之一，过滤集合中的元素时非常的好用，不过在某些情况下，比如获取集合中满足条件的第一个元素时，有一个更好的选择first(where: )
+let article1 = ArticleModel(title: "11", content: "内容1", articleID: "11111", comments: [])
+
+let article2 = ArticleModel(title: "11", content: "内容2", articleID: "22222", comments: [])
+
+let article3 = ArticleModel(title: "33", content: "内容3", articleID: "3333", comments: [])
+
+let articles = [article1, article2, article3]
+
+if let article = articles.first(where: {$0.articleID == "11111"}) {
+    print("\(article.title)-\(article.content)-\(article.articleID)")    //11-内容1-11111
+}
+
+5.forEach
+当循环体内的逻辑比较简单时，forEach 往往比 for...in...来的更加简洁
+articles.forEach { removeArticleBy(ID: $0.articleID) }
+
+6.计算属性 vs 方法
+我们知道计算属性本身不存储数据，而是在 get 中返回计算后的值，在 set 中设置其他属性的值，所以和方法很类似
+
+❌
+class YourManager {
+    static func shared() -> YourManager {
+        //不可描述的事情
+    }
+}
+
+let manager = YourManager.shared()
+
+❌
+extension Date {
+    func formattedString() -> String {
+        //不可描述的事情
+    }
+}
+
+let string = Date().formattedString()
+
+
+✅
+class YourManager {
+    static var shared: YourManager {
+        //不可描述的事情
+    }
+}
+
+let manager = YourManager.shared
+
+✅
+extension Date {
+    var formattedString: String {
+        //不可描述的事情
+    }
+}
+
+let string = Date().formattedString
+
+7.协议 vs 子类化
+尽量使用协议而不是继承。协议可以让代码更加灵活，因为类可同时遵守多个协议。
+此外，结构和枚举不能子类化，但是它们可以遵守协议，这就更加放大了协议的好处
+
+8.Struct vs Class
+尽可能使用 Struct 而不是 Class。Struct 在多线程环境中更安全，更快。
+它们最主要的区别， Struct 是值类型，而 Classe 是引用类型，这意味着 Struct 的每个实例都有它自己的唯一副本，而 Class 的每个实例都有对数据的单个副本的引用。
+
+https://developer.apple.com/documentation/swift/choosing-between-structures-and-classes
+
+9.检查数组是否越界
+if persons.indices.contains(index) {
+    
+} else {
+    
+}
+
+10.检查变量是否在两个数之间
+let age = 23
+
+if (18...32).contains(age) {
+    print("符合要求")
+}
+
+if (18...32) ~= age {
+    print("符合要求")
+}
+
+11.为 dictionary 的某个 key 设置默认值
+有个 names 数组，里面存放的是人名，现在要写个函数返回出现次数最多的人名。
+func findMostCountName(inNames names: [String]) -> String {
+    var occurrenceFor: [String : Int] = [:]
+    for name in names {
+        occurrenceFor[name, default: 0] += 1  //如果 key 存在，返回对应的 value；否则返回 0
+    }
+    
+    var maxCount = 0
+    var result = ""
+    for (name, count) in occurrenceFor {
+        if count > maxCount {
+            maxCount = count
+            result = name
+        }
+    }
+    return result
+}
+
+12.去除集合中指定的重复的对象
+
+第一种，内部元素是可哈希的
+extension Sequence where Element: Hashable {
+    func uniqued() -> [Element] {
+        var seen = Set<Element>()
+        return filter { seen.insert($0).inserted }
+    }
+}
+
+[ 1, 2, 3, 1, 2 ].uniqued()   // [ 1, 2, 3 ]
+
+第二种，内部元素不是可哈希的
+extension Sequence {
+    func uniqued(comparator: (Element, Element) -> Bool) -> [Element] {
+        var result: [Element] = []
+        for element in self {
+            if result.contains(where: {comparator(element, $0)}) {
+                continue
+            }
+            result.append(element)
+        }
+        return result
+    }
+}
+
+let article1 = ArticleModel(title: "111", content: "aa", articleID: "11111", comments: [])
+let article2 = ArticleModel(title: "222", content: "aaa", articleID: "22222", comments: [])
+let article3 = ArticleModel(title: "111", content: "aaaa", articleID: "33333", comments: [])
+let article4 = ArticleModel(title: "333", content: "aaaaa", articleID: "44444", comments: [])
+let articles = [article1, article2, article3, article4]
+
+let newarticles = articles.uniqued(comparator: {$0.title == $1.title})
+print(newarticles)
+
+第三种，keypath 版本
+对第二种的一层封装，内部依然调用的是第二种
+extension Sequence {
+    func uniqued<T: Equatable>(_ keyPath: KeyPath<Element, T>) -> [Element] {
+        uniqued { $0[keyPath: keyPath] == $1[keyPath: keyPath] }
+    }
+}
+
+let newarticles = articles.uniqued(\.title)
+
+13.对数组进行分组
+假如有一组文章，要把这些文章按照 category 进行分组,给字典的某个 key 设置默认值的技巧
+
+struct Article {
+    let title: String
+    let category: String
+}
+
+let articles = [
+    Article(title: "标题1", category: "Swift"),
+    Article(title: "标题2", category: "Swift"),
+    Article(title: "标题3", category: "Objective-C"),
+    Article(title: "标题4", category: "Objective-C"),
+]
+
+var groupByCategory = [String : [Article]]()
+for article in articles {
+    groupByCategory[article.category, default: []].append(article)
+}
+print(groupByCategory)
+
+实际上我们可以使用 Dictionary 的内置初始化方法来简化上面的 for 循环：
+let groupByCategory = Dictionary(grouping: articles, by: {$0.category})
+print(groupByCategory)
+
+
+14.检查所有集合项是否满足条件
+给定一组表示年龄的整型数组，求他们的平均年龄。计算总和，除以数量
+然而并不是每个整数都能表示年龄，因为传入的值有可能小于等于 0。对于输入参数：年龄数组，是不可控的。因此遇到不符合实际的值，需要抛出错误。
+
+func findAverage(ages: [Int]) -> Double {
+    let isAgeValid = ages.allSatisfy { $0 > 0 }
+    guard isAgeValid else {
+        fatalError("所有的年龄必须大于 0")
+    }
+    let sum = ages.reduce(0, +)
+    let count = ages.count
+
+    return Double(sum) / Double(count)
+}
+
+findAverage(ages: [22, 25, 26, 28, 30])
+
+15.zip
+需要同时遍历两个数组
+let array1 = ["title1", "title2", "title3", "title4"]
+let array2 = ["value1", "value2", "value3", "value4", "value5"]
+
+for (title,value) in zip(array1, array2) {
+    print("\(title)---\(value)")
+}
+
+//输出结果
+title1---value1
+title2---value2
+title3---value3
+title4---value4
