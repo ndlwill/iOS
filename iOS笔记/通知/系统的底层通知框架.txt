@@ -1,0 +1,54 @@
+观察者模式是一种用于解耦一系列需要相互协作的类之间进行通信的对象行为模式。
+它定义了对象之间的一种一对多的依赖关系。
+当一个对象的状态发生改变时，所有依赖于它的对象都将得到通知。
+观察者模式的实现一般分为两个步骤：消费者注册通知消息监听器、生产者发送通知消息。
+
+iOS系统提供了多种对观察者模式的实现：
+在Cocoa Touch层通过NSNotification类和NSNotificationCenter类来实现通知消息的注册处理和发送
+在CoreFoundation层则提供了CFNotificationXXX系列的C函数来实现通知消息的注册处理和发送
+而在操作系统层面则通过libsystem_notify.dylib库提供了一套基于C语言的更加底层的通知消息注册和发送机制。
+
+libsystem_notify.dylib(系统通知库)库中所提供用于实现通知消息注册和通知消息发送的各种接口函数。
+系统通知库中的通知消息注册和发送是可以用来实现跨进程通信的一种底层的通知机制。
+
+系统通知库中的所有函数都在notify.h文件中被声明，因此当你要使用系统通知库提供的函数时，需要在代码中#include <notify.h>
+系统通知库在处理通知消息时分别提供了: 基于block的处理器、基于mach port的消息端口、基于信号的处理、基于文件操作的处理器一共四种处理方式。
+
+1.通知消息的注册
+系统通知库为支持上述四种消息处理机制，分别提供四个函数来实现各种处理类型的通知消息的注册：
+//基于block处理的通知注册
+uint32_t notify_register_dispatch(const char *name, int *out_token, dispatch_queue_t queue, notify_handler_t handler)
+
+//基于信号处理的通知注册
+uint32_t notify_register_signal(const char *name, int sig, int *out_token);
+
+//基于mach port消息的通知注册
+uint32_t notify_register_mach_port(const char *name, mach_port_t *notify_port, int flags, int *out_token);
+
+//基于文件描述符的通知注册。
+uint32_t notify_register_file_descriptor(const char *name, int *notify_fd, int flags, int *out_token);
+
+每个函数的第一个参数都是通知消息的名称，也就是我们想要监听的通知消息名称，并且每个函数都有一个out_token输出，用来标识进程在运行时注册的这个通知消息。
+对于block处理器而言，每次监听的通知被触发时总会在某个指定的queue中调用指定的block函数；
+对于signal而言，每次监听的通知被触发时总是会向系统发出指定的信号；
+对于mach port而言，每次监听的通知被触发时总是会往指定的mach port端口发送一条空的mach msg消息；
+对于文件描述符而言，每次监听的通知被触发时总是会往指定的文件中写入特定的内容。
+
+系统通知库不仅支持iOS系统还支持macOS系统，而且是跨进程的通知消息。
+但是一般情况下iOS系统只会用notify_register_dispatch函数来监听通知并通过block的方式进行处理，而macOS系统则所有的处理方式都可用。
+
+通知消息的发送:
+uint32_t notify_post(const char *name);
+系统通知函数中的通知不会附带任何的附加参数。
+
+通知消息监听者的暂停、恢复、取消:
+当注册某个通知消息时，系统会返回一个token值来标识这个通知信息。同时系统还分别提供了对通知消息监听的暂停、恢复、和取消处理
+//通知的暂停，设置后此token将暂时不会接受消息的通知。
+uint32_t notify_suspend(int token)
+//通知的恢复，设置后此token将恢复接受消息的通知。
+uint32_t notify_resume(int token)
+//通知的取消，设置后此token将不再接受消息的通知。
+uint32_t notify_cancel(int token);
+
+
+通知消息发送检测:

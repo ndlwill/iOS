@@ -1,0 +1,41 @@
+https://www.jianshu.com/p/52adf4bf0ac9
+
+iOS中的数组和字典是线程不安全的。多线程编程中，当多个线程对同一个字典dictionary进行多读单写操作时，该如何来保证数据安全呢？
+(void)setSafeObject:(id)object forKey:(NSString *)key
+{
+key = [key copy];
+dispatch_barrier_async(self.ioQueue, ^{
+if (key && object) {
+[_dic setObject:object forKey:key];
+}
+});
+}
+
+(id)getSafeObjectForKey:(NSString *)key
+{
+__block id result = nil;
+dispatch_sync(self.ioQueue, ^{
+result = [_dic objectForKey:key];
+});
+return result;
+}
+
+我们需要创建一个私有的并行队列来处理读写操作。
+在这里不应该使用globe_queue, 因为我们通过dispatch_barrier_async来保证写操作的互斥
+我们不希望写操作阻塞住globe_queue中的其他不相关任务，我们只希望在写的同时，不会有其他的写操作或者读操作。
+
+同时，也不推荐给队列设置优先级，多数情况下使用default就可以了。而改变优先级往往会造成一些无法预料的问题，比如优先级反转
+
+dispatch_barrier_async的block运行时机是，在它之前所有的任务执行完毕，并且在它后面的任务开始之前，期间不会有其他的任务执行。
+注意在barrier执行的时候，队列本质上如同一个串行队列，其执行完以后才会恢复到并行队列。
+
+另外一个值得注意的问题是，在写操作的时候，我们使用dispatch_async，而在读操作的时候我们使用dispatch_sync。
+
+很明显，这2个操作一个是异步的，一个是同步的。
+我们不需要使每次程序执行的时候都等待写操作完成，所以写操作异步执行，但是我们需要同步的执行读操作来保证程序能够立刻得到它想要的值。
+（写操作是异步，不需要等待结果，直接返回；读操作是同步，需要等待读结果，是同步）。
+
+
+在写操作的时候对key进行了copy
+函数调用者可以自由传递一个NSMutableString的key，并且能够在函数返回后修改它。因此我们必须对传入的字符串使用copy操作以确保函数能够正确地工作。
+如果传入的字符串不是可变的（也就是正常的NSString类型），调用copy基本上是个空操作。

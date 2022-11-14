@@ -1,0 +1,36 @@
+托管解决的问题同样是来自C语言，在Cocoa中Core Fundation框架就是封装的一套C语言API。
+在Swift中使用Core Fundation，苹果提出了内存管理注释annotated APIs和Unmanaged<T>泛型结构体结合的解决方案。
+
+对于Core Fundation中有@annotated注释的函数来说，返回的是托管对象，无需自己管理内存，可以直接获取到CF对象，
+并且可以无缝转化(toll free bridging)成Fundation对象，比如NSString和CFString。
+
+对于尚未注释的函数来说，苹果给出的是使用非托管对象Unmanaged<T>进行管理的过渡方案
+当我们从CF函数中获取到Unmanaged<T>对象的时候，我们需要调用takeRetainedValue或者takeUnretainedValue获取到对象T
+具体使用哪一个方法，苹果提出了Ownership Policy，具体来说就是：
+https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFMemoryMgmt/Concepts/Ownership.html
+如果一个函数名中包含Create或Copy，则调用者获得这个对象的同时也获得对象所有权，返回值Unmanaged需要调用takeRetainedValue()方法获得对象。
+调用者不再使用对象时候，Swift代码中不需要调用CFRelease函数放弃对象所有权，这是因为Swift仅支持ARC内存管理，这一点和OC略有不同。
+如果一个函数名中包含Get，则调用者获得这个对象的同时不会获得对象所有权，返回值Unmanaged需要调用takeUnretainedValue()方法获得对象。
+
+let bestFriendID = ABRecordID(...)
+// Create Rule - retained
+let addressBook: ABAddressBook = ABAddressBookCreateWithOptions(nil, nil).takeRetainedValue()
+// Get Rule - unretained
+if let bestFriendRecord: ABRecord = ABAddressBookGetPersonWithRecordID(addressBook, bestFriendID)?.takeUnretainedValue() {
+   // Create Rule (Copy) - retained
+       if let name = ABRecordCopyCompositeName(bestFriendRecord)?.takeRetainedValue() as? String {
+        //do something
+       }
+}
+
+
+let readStreamPointer = UnsafeMutablePointer<Unmanaged<CFReadStream>?>.alloc(1)
+let writeStreamPointer = UnsafeMutablePointer<Unmanaged<CFWriteStream>?>.alloc(1)
+CFStreamCreateBoundPair(kCFAllocatorDefault, readStreamPointer,writeStreamPointer, Int(bufferSize) as CFIndex)
+if let readStream = readStreamPointer.memory?.takeRetainedValue(),writeStream = writeStreamPointer.memory?.takeRetainedValue(){// create rules
+    let rStream = readStream as NSInputStream
+    let wStream = writeStream as NSOutputStream //toll free bridging
+    //do something with rStream/wStream
+}
+readStreamPointer.dealloc(1)
+writeStreamPointer.dealloc(1)

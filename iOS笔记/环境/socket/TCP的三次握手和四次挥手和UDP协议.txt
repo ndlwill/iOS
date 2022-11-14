@@ -1,0 +1,79 @@
+https://blog.csdn.net/qq_36119192/article/details/83500569
+
+TCP(Transmission Control Protocol) 传输控制协议，是面向连接的协议，属于OSI七层模型中的传输层协议
+我们所熟知的FTP、SSH、Telnet、HTTP、HTTPS、SMTP、POP3等都是使用TCP协议
+
+TCP最重要的一个特点就是面向连接的协议，一次TCP的会话连接需要三次握手，会话断开需要四次挥手
+
+数据包交互过程中各信号代表着什么
+
+（1）序号：seq序号，占32位，用来标识从TCP源端向目的端发送的字节流，发起方发送数据时对此进行标记。 
+（2）确认序号：Ack序号，占32位，当Ack=seq+1时，确认序号有效。 
+（3）标志位：共6个，即URG、ACK、PSH、RST、SYN、FIN等，具体含义如下： 
+（A）URG：紧急指针（urgent pointer）有效。 
+（B）ACK：确认序号有效。 
+（C）PUSH：接收方应该尽快将这个报文交给应用层。 
+（D）RST：重置连接。 
+（E）SYN(Synchronize Sequence Numbers)：发起一个新连接。 
+（F）FIN：释放一个连接。 
+
+需要注意的是： 
+（A）不要将确认序号Ack与标志位中的ACK搞混了。 
+（B）确认方Ack=发起方seq+1，两端配对。
+
+（1）第一次握手：Client将标志位SYN置为1，随机产生一个值 Seq=x，并将该数据包发送给Server，Client进入 SYN_SENT 状态，等待Server确认。 
+（2）第二次握手：Server收到数据包后由标志位SYN=1知道Client请求建立连接，Server将标志位SYN和ACK都置为1，Ack=x+1，随机产生一个值 Seq=y，并将该数据包发送给Client以确认连接请求，Server进入 SYN_RCVD 状态。 
+（3）第三次握手：Client收到确认后，检Ack是否为 x+1，ACK是否为1，如果正确则将标志位ACK置为1,Seq=x+1,Ack=y+1，并将该数据包发送给Server，Server检查Ack是否为y+1，ACK是否为1，如果正确则连接建立成功，Client和Server进入ESTABLISHED 状态，完成三次握手，随后Client与Server之间可以开始传输数据了
+
+（1）第一次挥手：Client发送一个FIN，Seq=u,用来关闭Client到Server的数据传送，Client进入FIN_WAIT_1状态。 
+（2）第二次挥手：Server收到FIN后，发送一个ACK=1给Client，确认序号Ack=u+1，Server进入CLOSE_WAIT状态。 
+（3）第三次挥手：Server发送一个FIN，Seq=w,用来关闭Server到Client的数据传送，Server进入LAST_ACK状态。 
+（4）第四次挥手：Client收到FIN后，Client进入TIME_WAIT状态，接着发送一个ACK=1给Server，Ack=w+1,Seq=u+1，Server进入CLOSED状态，完成四次挥手。
+
+
+为什么建立连接是三次而断开连接是四次呢？
+这是因为服务端的LISTEN状态下的SOCKET当收到SYN报文的建连请求后，
+它可以把ACK和SYN（ACK起应答作用，而SYN起同步作用）放在一个报文里来发送。
+但关闭连接时，当收到对方的FIN报文通知时，它仅仅表示对方没有数据发送给你了；
+但未必你所有的数据都全部发送给对方了，所以你未必可以马上关闭SOCKET，
+也许你还需要发送一些数据给对方之后，再发送FIN报文给对方来表示你同意现在可以关闭连接了，
+所以它这里的ACK报文和FIN报文多数情况下都是分开发送的
+Server可能还有数据没有发送完。前置条件：Client发起断开请求
+1-在Client发起FIN时仅仅表示Client没有数据要发给Server了，此时2-Server发送ACK给Client，表示我收到你的关闭请求了，但是Server不能立马关闭，原因是Server可能还有数据没有发送完。
+等到Server发送数据完了之后，3-Server就给Client发送FIN请求，表示Server没有数据要发送给Client了，Server 要和Client 关闭连接了
+Client收到Server发送的FIN后，表示收到了服务端的关闭请求，然后Client进入Time-Wait状态，4-发送ACK给Server，在最大报文生存时间之后，Client才会真的关闭连接。
+2倍的最大报文生存时间:
+在4-发送ACK给Server确保服务端收到应答，如果服务端没有收到会重发FIN=1的关闭连接数据。
+所以就是ACK过去的时间+服务端收到ACK然后回应客户端的时间，其实这两个时间是我们假设的，不然一来一回无休止了。
+
+第四次断开连接的消息：
+A发出ACK，用于确认收到B的FIN当B接收到此消息，即认为双方达成了同步：双方都知道连接可以释放了，此时B可以安全地释放此TCP连接所占用的内存资源、端口号。
+所以被动关闭的B无需任何wait time，直接释放资源。
+但A并不知道B是否接到自己的ACK，A是这么想的：
+1）如果B没有收到自己的ACK，会超时重传FiN那么A再次接到重传的FIN，会再次发送ACK
+2）如果B收到自己的ACK，也不会再发任何消息，包括ACK无论是1还是2，A都需要等待，要取这两种情况等待时间的最大值，以应对最坏的情况发生，这个最坏情况是：
+去向ACK消息最大存活时间（MSL) + 来向FIN消息的最大存活时间(MSL)。这恰恰就是2MSL( Maximum Segment Life)。
+等待2MSL时间，A就可以放心地释放TCP占用的资源、端口号，此时可以使用该端口号连接任何服务器。
+为何一定要等2MSL？如果不等，释放的端口可能会重连刚断开的服务器端口，
+这样依然存活在网络里的老的TCP报文可能与新TCP连接报文冲突，造成数据冲突，为避免此种情况，
+需要耐心等待网络老的TCP连接的活跃报文全部死翘翘，2MSL时间可以满足这个需求
+
+
+TCP和UDP的区别
+基于连接与无连接
+TCP要求系统资源较多，UDP较少； 
+UDP程序结构较简单 
+流模式（TCP）与数据报模式(UDP); 
+TCP保证数据正确性，UDP可能丢包 
+TCP保证数据顺序，UDP不保证 
+
+TCP段首部的定长部分为20个字节，即5个单位的长度(1个单位的长度为32位)
+TCP提供超时重发，丢弃重复数据，检验数据，流量控制等功能，保证数据能顺序地从一端传到另一端。
+
+tcp传输数据就像打电话，你必须知道对方的电话号码，电话打通之后才能进行对话，先说的话先到，
+后说的话后到是有顺序的。对方对方没听清你的说的话时你可以重说一遍。
+
+
+udp传输数据就像寄一封信，发信的人只管发，不管到，但必须在信封上写明对方的地址。
+发信者和收信者不需要建立连接，全靠邮电局联系，信发到是可能已经过了很久了，也可能根本没发到。
+先发的信件未必先到，后发的信件也未必后到。

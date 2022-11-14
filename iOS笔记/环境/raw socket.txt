@@ -1,0 +1,116 @@
+套接字（socket）允许在相同或不同的机器上的两个不同进程之间进行通信
+更准确地说，它是使用标准Unix文件描述符与其他计算机通信的一种方式。
+在Unix中，每个I/O操作都是通过写入或读取文件描述符来完成的。
+文件描述符只是与打开文件关联的整数，它可以是网络连接、文本文件、终端或其他内容。
+
+在Linux的文件描述符中有三个是特殊的，任何进程都一样的，0、1、2，分别代表标准输入，标准输出和标准出错
+
+关于AF_INET和PF_INET
+在一些文档中，可能会遇到"PF_INET"。 出现AF_INET和PF_INET是历史原因。
+在网络设计之初，AF = Address Family，PF = Protocol Family，所以最好在指示地址的时候使用AF，在指示协议的时候使用PF。
+因为那时人们希望同一个地址族（ "AF" in "AF_INET" )可能支持多个协议族 ("PF" in "PF_INET" )。这样的话，就可以加以区分。
+但是，并没有出现同一个地址族支持多个协议族的情况
+
+==================================================
+raw socket 给UDP包加上TCP或ICMP header，进而绕过UDP屏蔽或QoS，本质上就是穿透防火墙。
+Udp2raw不是加速器，只是一个帮助你绕过UDP限制的工具
+
+
+raw socket对于数据包的接收
+Raw Socket 捕获到的数据是内核协议栈中数据包的一份拷贝，内核协议栈还会按照原先的决策继续处理该数据包。
+
+SOCK_RAW 接收 数据包的原理:
+1.网卡对该数据帧进行硬过滤（数据链路层过滤）- 二层
+首先进行数据链路层校验和处理，如果校验和出错，直接仍掉
+
+2.向用户层递交数据链路层数据帧 - raw socket捕获数据链路层数据帧
+在进入网络层之前，系统会检查系统中是否有通过socket(AF_PACKET, SOCK_RAW, ...)创建的套接字
+如果有并且与指定的协议相符的话，系统就给每个这样的socket接收缓冲区发送一个数据帧拷贝。然后进入网络层。
+
+3.进入网络层（IP层过滤）- 三层
+IP层会对该数据包进行软过滤
+检查校验或者丢弃非本机IP或者广播IP的数据包等
+
+4.向用户层递交网络层数据包 - raw socket捕获网络层IP数据包
+在进入运输层（如TCP、UDP例程）之前，系统会检查系统中是否有通过socket(AF_INET, SOCK_RAW, ...)创建的套接字
+如果有的话并且协议相符，系统就给每个这样的socket接收缓冲区发送一个数据包拷贝（不管在任何情况下，永远都包含IP数据包头）
+然后进入运输层。
+
+5.进入运输层（如TCP、UDP等例程）— 四层
+这一步由系统内核来处理运输层的协议，用户层无法干涉。
+处理完之后，如果合法，将向用户层递交数据，进而进入用户层处理。
+
+6.进入用户层（如HTTP、FTP等）
+这一层在用户态，由用户应用程序来完成
+
+如果校验和出错的话，内核会直接丢弃该数据包的；而不会拷贝给raw socket套接字
+在没有递交给其他协议处理器（内核协议处理器）之前，先递交给所有的raw socket，换句话说，就是raw socket优先处理。
+
+socket(AF_INET, SOCK_RAW, IPPROTO_XXX)
+指明要接收的包含在IP数据包中的协议包
+这个SOCKET接收的数据是包含IP头的IP数据包
+协议类型为IPPROTO_XXX且发往本机的IP数据包
+
+socket(PF_PACKET, SOCK_RAW, htons(ETH_P_XXX))
+这种套接字可以监听网卡上的所有数据帧
+
+如果protocol是IPPROTO_RAW(255)，这时候，这个socket只能用来发送IP包，而不能接收任何的数据。发送的数据需要自己填充IP包头，并且自己计算校验和。
+对于protocol为0（IPPROTO_IP)的raw socket。用于接收任何的IP数据包。其中的校验和和协议分析由程序自己完成。
+对于domain为AF_INET，type为SOCK_RAW的socket来说，protocol不能为0（即IPPROTO_IP）
+如果protocol既不是0也不是255，那么sock_raw既可以接收数据包，也可以发送数据包。
+如果protocol为 IPPROTO_RAW，则默认设置 IP_HDRINCL 选项。
+虽然设置 IP_HDRINCL 选项，可以由使用者自行指定IP头，但 IP_HDRINCL 选项还是会修改使用者指定的IP头，规则如下:
+IP 头校验和（CheckSum）：总是填充。换句话说就是，使用者在指定IP头，不需要处理IP校验和。
+源IP地址：如果为 0，则被自动填充为本机的 IP 地址。
+包ID（packet ID）：如果为 0，则被自动填充。
+IP包的总长度：总是被填充。换句话说就是，IP头部的关于IP数据包总长度字段不需要使用者来处理。
+如果 raw socket 没有使用 connect 函数绑定对方地址时，则应使用 sendto 或 sendmsg 函数来发送数据包，在函数参数中指定对方地址。如果使用了 connect 函数，则可以直接使用 send、write 或 writev 函数来发送数据包。
+
+
+###
+默认情况下，发送的数据是不包含IP头的IP数据包负载部分（如TCP或UDP包），网络层会自动添加IP头
+如果使用setsocketopt函数设置了IP_HDRINCL选项后，写入的数据就必须包含IP头，即IP头在用户层由使用者自己构建
+###
+
+从应用开发的角度看，SOCK_STREAM、SOCK_DGRAM 这两类套接字似乎已经足够了。
+因为基于 TCP/IP 的应用，在传输层的确只可能建立于 TCP 或 UDP 协议之上，
+而这两种套接字SOCK_STREAM、SOCK_DGRAM 又分别对应于 TCP 和 UDP，所以几乎所有所有的应用都可以使用这两种套接字来实现。
+但是，从另外的角度，这两种套接字有一些局限:
+怎样发送一个 ICMP 协议包？
+怎样伪装本地的 IP 地址？
+怎样实现一个新设计的协议的数据包？
+这两种套接字的局限在于它们只能处理数据载荷，数据包的头部在到达用户程序的时候已经被移除了。
+
+所以，这里我们要引入一个新的socket类型，原始套接字（SOCK_RAW）。
+原始套接字之所以能够做到这一点，是因为它可以绕过系统内核的协议栈，使得用户可以自行构造数据包。
+原始套接字用于接收和发送原始数据包。
+这意味着在以太网层接收的数据包将直接传递到原始套接字。
+准确地说，原始套接字绕过正常的TCP / IP处理并将数据包发送到特定的用户应用程序。
+使用 raw套接字可以实现上至应用层的数据操作，也可以实现下至链路层的数据操作。
+
+#include <sys/types.h>          
+#include <sys/socket.h>
+
+int socket(int domain, int type, int protocol);
+
+对于原始套接字，domain（family）套接字族可以是AF_INET、PF_INET、AF_PACKET和PF_PACKET
+套接字类型是SOCK_RAW
+
+使用AF_INET，用户程序无法获得链路层数据,以太网头部
+简单来说，使用AF_INET，是面向IP层的原始套接字
+使用AF_PACKET，是面向链路层的套接字
+
+对于AF_INET协议族而言有流套接字(SOCK_STREAM)、数据包套接字(SOCK_DGRAM)、原始套接字(SOCK_RAW)
+
+socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+socket(AF_INET, SOCK_STREAM, 0)；
+以及socket(AF_INET, SOCK_RAW, 0)（这个会报错）
+
+为了接收所有分组，可以使用ETH_P_ALL，为了接收IP分组，可以使用ETH_P_IP
+
+如果第一个参数是AF_PACKET，那么是面向链路层的套接字，第三个参数可以是:
+ETH_P_IP - 只接收目的mac是本机的IP类型数据帧
+ETH_P_ARP - 只接收目的mac是本机的ARP类型数据帧
+ETH_P_RARP - 只接收目的mac是本机的RARP类型数据帧
+ETH_P_PAE - 只接收目的mac是本机的802.1x类型的数据帧
+ETH_P_ALL - 接收目的mac是本机的所有类型数据帧，同时还可以接收本机发出的所有数据帧，混杂模式打开时，还可以接收到目的mac不是本机的数据帧

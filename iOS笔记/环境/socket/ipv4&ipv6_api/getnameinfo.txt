@@ -1,0 +1,84 @@
+https://www.jianshu.com/p/eb4223f06006
+
+getnameinfo - 以独立于协议的方式进行地址到名称的转换
+
+#include <netdb.h>
+#include <sys/socket.h>
+
+int getnameinfo(const struct sockaddr* restrict addr, socklen_t addrlen,
+                char* restrict host, socklen_t hostlen,
+                char* restrict serv, socklen_t servlen, int flags);
+
+getnameinfo() 函数与 getaddrinfo 函数相反
+它以独立于协议的方式将套接字地址转换为相应的主机和服务。
+它结合了 gethostbyaddr 和 getservbyport的功能，但与这些函数不同的是，getnameinfo() 是可重入的，并允许程序消除 IPv4 与 IPv6 的依赖关系
+
+addr参数是指向大小为addrlen的通用套接字地址结构（类型为 sockaddr_in 或 sockaddr_in6）的指针,也是getaddrinfo()的返回值结果
+该结构包含输入 IP 地址和端口号。
+参数host和serv是指向调用者分配的缓冲区（分别由hostlen和servlen指定缓冲区的大小）的指针，getnameinfo() 将分别包含主机名和服务名的字符串放入其中。
+
+可通过参数flag来指定getnameinfo()行为:
+NI_NAMEREQD
+如果设置，则在无法确定主机名时返回错误。
+NI_DGRAM
+If set, then the service is datagram (UDP) based rather than stream (TCP) based. 
+This is required for the few ports (512–514) that have different services for UDP and TCP.
+NI_NOFQDN
+If set, return only the hostname part of the fully qualified domain name for local hosts.
+如果设置，则仅返回本地主机的完全限定域名的主机名部分。
+NI_NUMERICHOST
+如果设置，则返回主机名的数字形式。 （如果未设置，则在无法确定节点名称的情况下仍会发生这种情况。）
+NI_NUMERICSERV
+如果设置，则返回服务的数字形式。 （如果未设置，则在无法确定服务名称的情况下仍会发生这种情况。）
+
+成功时，返回 0。 host和serv以空字符结尾的字符串填充，必要时可能会被截断以适应指定的缓冲区长度。 出错时，将返回以下非零错误代码之一：
+EAI_AGAIN
+此时无法解析名称。 稍后再试。
+EAI_BADFLAGS
+flags 参数的值无效。
+EAI_FAIL
+发生了不可恢复的错误。
+EAI_FAMILY
+无法识别地址族，或指定族的地址长度无效。
+EAI_MEMORY
+Out of memory.
+EAI_NONAME
+名称无法解析提供的参数。 NI_NAMEREQD 已设置但无法定位主机名，或者既没有请求主机名也没有请求服务名。
+EAI_OVERFLOW
+host 或 serv 指向的缓冲区太小。
+EAI_SYSTEM
+发生系统错误。 错误代码可以在 errno 中找到。
+gai_strerror函数将这些错误代码转换为人类可读的字符串，适用于错误报告。
+
+
+/etc/hosts
+/etc/nsswitch.conf
+/etc/resolv.conf
+
+
+为了帮助程序员为提供的缓冲区选择合理的大小，<netdb.h> 定义了常量
+#define NI_MAXHOST      1025
+#define NI_MAXSERV      32
+
+获取给定套接字地址的数字主机名和服务名称.请注意，没有对特定地址族的硬编码引用。
+struct sockaddr* addr; /* input */
+socklen_t addrlen; /* input */
+char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
+
+if (getnameinfo(addr, addrlen, hbuf, sizeof(hbuf), sbuf,
+                sizeof(sbuf), NI_NUMERICHOST | NI_NUMERICSERV)
+    == 0)
+    printf("host=%s, serv=%s\n", hbuf, sbuf);
+
+以下代码检查套接字地址是否具有反向地址映射
+struct sockaddr* addr; /* input */
+socklen_t addrlen; /* input */
+char hbuf[NI_MAXHOST];
+
+if (getnameinfo(addr, addrlen, hbuf, sizeof(hbuf),
+                NULL, 0, NI_NAMEREQD))
+    printf("could not resolve hostname");
+else
+    printf("host=%s\n", hbuf);
+
+c语言规定，任何非0的数像1 -1等都被认为是真，而0被认为是假

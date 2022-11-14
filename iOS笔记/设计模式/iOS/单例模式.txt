@@ -1,0 +1,115 @@
+单例模式（Singleton Pattern）
+确保某一个类只有一个实例，而且自行实例化并向整个系统提供这个实例
+
+主要有两个角色组成：
+单例类（signleton）:包含一个实例且能自行创建这个实例的类。
+访问类（Client）：调用单例的类
+
+1.非线程安全单例
++ (instancetype)shareInstance {
+    static Singleton *_instance = nil;
+    if (!_instance) {
+        _instance = [[self alloc] init];
+    }
+    return _instance;
+}
+
+2.使用@synchronized创建线程安全单例
++ (instancetype)shareInstance {
+    static Singleton *_instance = nil;
+    @synchronized (self) {
+        if (!_instance) {
+            _instance = [[self alloc] init];
+        }
+    }
+    return _instance;
+}
+
+3.使用dispatch_once创建线程安全单例
+使用@synchronized的方式创建单例，虽然也能达到线程安全，但是在高并发的情况下性能是比较低的。
+OC的内部机制里提供了一种更加高效的方式，那就是dispatch_once，它可以保证block中的内容只被执行一次且效率更高
++ (instancetype)shareInstance {
+    static Singleton *_instance = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        _shareInstance = [[super allocWithZone:nil] init];
+    });
+    return _shareInstance;
+}
+
+
+如何保证单例:
+由于OC的语言特性，我们无法屏蔽构造函数，虽然我们定义了单例的统一调用接口，但是依然可以通过 alloc、copy等方式创建新的实例。
+
+无论是alloc还是new，都会调用到 allocWithZone方法。
+在通过拷贝的时候创建对象时，会调用到 copyWithZone:，mutableCopyWithZone: 方法。我们可以采用重新这些方法，来控制实例的唯一性。
+
+static Singleton *_shareInstance = nil;
+
+@implementation Singleton
+
++ (instancetype)shareInstance {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        _shareInstance = [[super allocWithZone:nil] init];
+    });
+    return _shareInstance;
+}
+
++ (instancetype)allocWithZone:(struct _NSZone *)zone {
+    return [self shareInstance];
+}
+
+- (id)copyWithZone:(NSZone *)zone{
+    return [Singleton shareInstance];
+}
+
+- (id)mutableCopyWithZone:(NSZone *)zone{
+    return [Singleton shareInstance];
+}
+
+@end
+
+除了直接重写这些创建实例会调用到的方法外，我们可以通过声明alloc，new，copy，mutableCopy方法不可以直接调用。
+这样如果在外部调用这些方法时都会提示编译错误
+
+@interface Singleton : NSObject
+
++(instancetype) alloc __attribute__((unavailable("call sharedInstance instead")));
++(instancetype) new __attribute__((unavailable("call sharedInstance instead")));
+-(instancetype) copy __attribute__((unavailable("call sharedInstance instead")));
+-(instancetype) mutableCopy __attribute__((unavailable("call sharedInstance instead")));
+
++ (instancetype)shareInstance;
+@end
+
+
+使用宏定义创建
+因为单例模式在开发中是经常使用的，所以很多人都会把这些代码封装成一个宏。如：
+#define SINGLETON_DECLARE() \
++ (instancetype) shareInstance; \
++(instancetype) alloc __attribute__((unavailable("call sharedInstance instead")));\
++(instancetype) new __attribute__((unavailable("call sharedInstance instead")));\
+-(instancetype) copy __attribute__((unavailable("call sharedInstance instead")));\
+-(instancetype) mutableCopy __attribute__((unavailable("call sharedInstance instead")));\
+
+#define SINGLETON_IMPLEMENT() \
++ (instancetype) shareInstance \
+{ \
+    static dispatch_once_t _onceToken = 0; \
+    static id _instance = nil; \
+    dispatch_once (&_onceToken, ^ () { \
+        _instance = [[self alloc] init]; \
+    }); \
+     \
+    return _instance; \
+}
+
+
+分析:
+单例模式可以保证在程序运行过程，一个类只有一个实例，而且该实例易于供外界访问，从而方便地控制了实例个数，并节约系统资源
+由于单例对象只要程序在运行中就会一直占用系统内存，该对象在闲置时并不能销毁，在闲置时也消耗了系统内存资源，如果大面积使用的话，会长期消耗大量内存
+
+适用范围:
+当对象需要被全局共享的场合，比如工具类，配置类等。由于单例模式只允许创建一个对象，共享该对象可以节省内存，并加快对象访问速度
+当一个类需要被频繁的创建和释放时，可以使用单例模式，减少创建释放次数，提高效率
