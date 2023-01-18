@@ -1,0 +1,144 @@
+Concurrent and Serial queues help us to manage how we execute tasks and help to make our applications run faster, more efficiently, and with improved responsiveness.
+
+What is a dispatch queue?
+A DispatchQueue is an abstraction layer on top of the GCD queue that allows you to perform tasks asynchronously and concurrently in your application. 
+Tasks are always executed in the order they’re added to the queue.
+
+What is a serial queue?
+A serial Dispatch Queue performs only one task at the time. 
+Serial queues are often used to synchronize access to a specific value or resource to prevent data races to occur.
+
+let serialQueue = DispatchQueue(label: "swiftlee.serial.queue")
+
+serialQueue.async {
+    print("Task 1 started")
+    // Do some work..
+    print("Task 1 finished")
+}
+serialQueue.async {
+    print("Task 2 started")
+    // Do some work..
+    print("Task 2 finished")
+}
+
+/*
+Serial Queue prints:
+Task 1 started
+Task 1 finished
+Task 2 started
+Task 2 finished
+*/
+
+
+What is a concurrent queue?
+A concurrent queue allows us to execute multiple tasks at the same time. 
+Tasks will always start in the order they’re added but they can finish in a different order as they can be executed in parallel.
+Tasks will run on distinct threads that are managed by the dispatch queue. 
+The number of tasks running at the same time is variable and depends on system conditions.
+
+A concurrent dispatch queue can be created by passing in an attribute as a parameter to the DispatchQueue initializer:
+
+let concurrentQueue = DispatchQueue(label: "swiftlee.concurrent.queue", attributes: .concurrent)
+
+concurrentQueue.async {
+    print("Task 1 started")
+    // Do some work..
+    print("Task 1 finished")
+}
+concurrentQueue.async {
+    print("Task 2 started")
+    // Do some work..
+    print("Task 2 finished")
+}
+
+/*
+Concurrent Queue prints:
+Task 1 started
+Task 2 started
+Task 1 finished
+Task 2 finished
+*/
+
+What is a data race?
+A data race can occur when multiple threads access the same memory without synchronization and at least one access is a write.
+You could be reading values from an array from the main thread while a background thread is adding new values to that same array.
+
+Using a barrier on a concurrent queue to synchronize writes:
+A barrier flag can be used to make access to a certain resource or value thread-safe.
+We synchronize write access while we keep the benefit of reading concurrently.
+
+The following code demonstrates a messenger class that can be accessed from multiple threads at the same time.
+Adding new messages to the array is done using the barrier flag which blocks new reads until the write is finished.
+
+final class Messenger {
+
+    private var messages: [String] = []
+
+    private var queue = DispatchQueue(label: "messages.queue", attributes: .concurrent)
+
+    var lastMessage: String? {
+        return queue.sync {
+            messages.last
+        }
+    }
+
+    func postMessage(_ newMessage: String) {
+        queue.sync(flags: .barrier) {
+            messages.append(newMessage)
+        }
+    }
+}
+
+let messenger = Messenger()
+// Executed on Thread #1
+messenger.postMessage("Hello SwiftLee!")
+// Executed on Thread #2
+print(messenger.lastMessage) // Prints: Hello SwiftLee!
+
+You can see a barrier as a task that gets in the way of parallel tasks and, for a moment, makes a concurrent queue a serial queue. 
+A task executed with a barrier is delayed until all previously submitted tasks are finished executing.
+After the last task is finished, the queue executes the barrier block and resumes its normal execution behavior after that.
+
+
+Asynchronous vs synchronous tasks:
+A DispatchQueue task can be run synchronously or asynchronously. 
+The main difference occurs when you create the task.
+1.Synchronously starting a task will block the calling thread until the task is finished
+2.Asynchronously starting a task will directly return on the calling thread without blocking
+
+
+Say you would add a task to the queue from the main thread, you want to prevent yourself from using the sync method for long-running tasks. 
+This would block the main thread and makes your UI unresponsive.
+
+How about the main thread?
+The main dispatch queue is a globally available serial queue executing tasks on the application’s main thread. 
+As the main thread is used for UI updates it’s important to be conscious when executing tasks on this queue.
+Therefore, it’s valuable to use the earlier described dispatch APIs to perform tasks on a different thread.
+
+let concurrentQueue = DispatchQueue(label: "swiftlee.concurrent.queue", attributes: .concurrent)
+
+concurrentQueue.async {
+    // Perform the data request and JSON decoding on the background queue.
+    fetchData()
+
+    DispatchQueue.main.async {
+        /// Access and reload the UI back on the main queue.
+        tableView.reloadData()
+    }
+}
+
+
+Avoiding excessive thread creation:
+Unfortunately, creating threads comes with a cost and you should, therefore, avoid excessive thread creation.
+There are two common scenarios in which excessive thread creation occurs:
+1.Too many blocking tasks are added to concurrent queues forcing the system to create additional threads until the system runs out of threads for your app
+2.Too many private concurrent dispatch queues exist that all consume thread resources.
+
+How to prevent excessive thread creation?
+It’s best practice to make use of the global concurrent dispatch queues.
+This prevents you from creating too many private concurrent queues. 
+Apart from this, you should still be conscious of executing long-blocking tasks.
+DispatchQueue.global().async {
+    /// Concurrently execute a task using the global concurrent queue. Also known as the background queue.
+}
+This global concurrent queue is also known as the background queue and used next to the DispatchQueue.main.

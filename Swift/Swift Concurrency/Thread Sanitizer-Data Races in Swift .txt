@@ -1,0 +1,139 @@
+The Thread Sanitizer, also known as TSan, is an LLVM based tool to audit threading issues in your Swift and C language written code.
+It was first introduced in Xcode 8 and can be a great tool to find less visible bugs in your code, like data races.
+it’s time to dive in and explain how to improve your code with the Thread Sanitizer.
+
+
+What are Data Races?
+Data races occur when the same memory is accessed from multiple threads without synchronization, and at least one access is a write. Data Races can lead to several issues:
+Unpredictable behavior
+Memory corruption
+Flaky tests
+Weird crashes
+As a Data Race is unpredictable, it can be inconsistently occurring when testing your app.
+
+
+Examples of a Data Race in Swift
+In the following piece of code, two different threads access the same String property:
+
+private var name: String = ""
+func updateName() {
+    DispatchQueue.global().async {
+        self.name.append("111")
+    }
+
+// Executed on the main thread
+    print(self.name)
+}
+As the background thread is writing to the name, we have at least one write access. 
+The behavior is unpredictable as it depends on whether the print statement or the write is executed first. This is an example of a Data Race, which the Thread Sanitizer confirms.
+
+
+A Data Race caused by a lazy variable:
+A lazy variable delays the initialization of an instance to the moment it gets called for the first time.
+This means that a data write will happen at the first moment a lazy variable is accessed. When two threads access this same lazy variable for the first time, a Data Race can occur:
+
+private lazy var name: String = ""
+func updateName() {
+    DispatchQueue.global().async {
+        print(self.name)
+    }
+
+// Executed on the main thread
+    print(self.name)
+}
+
+Using the Thread Sanitizer to detect Data Races:
+The above examples show us that a Data Race can easily occur. In small pieces of code, you might be able to catch this, but it gets a lot harder as soon as your project grows. 
+Therefore, it’s time for some help by making use of the Thread Sanitizer.
+You can do the same for your test schemes which can be an efficient way of catching data access related bugs.
+
+
+How to enable the Thread Sanitizer
+You can enable the Thread Sanitizer from the scheme configuration:
+You can do the same for your test schemes, which can efficiently catch data races.
+
+
+How does the Thread Sanitizer work?
+Your app will be rebuild from scratch once you enable the Thread Sanitizer. 
+The compiler will add around each memory access to check whether certain access participates in a race.
+The above code example would look as follows after the compiler transformed it:
+
+func updateName() {
+    DispatchQueue.global().async {
+        self.recordAndCheckWrite(self.name) // Added by the compiler
+        self.name.append("Antoine van der Lee")
+    }
+
+    // Executed on the Main Thread
+    self.recordAndCheckWrite(self.name) // Added by the compiler
+    print(self.name)
+}
+The recordAndCheckWrite method will store a timestamp for each access and each Thread used by the sanitizer to detect a Data Race.
+
+
+
+Are there any restrictions on the Thread Sanitizer?
+The Thread Sanitizer comes with a few restrictions:
+It’s only supported for 64-bit macOS and 64-bit iOS and tvOS simulators
+watchOS is not supported
+You can’t use TSan on a device
+
+
+https://developer.apple.com/documentation/xcode/diagnosing-memory-thread-and-crash-issues-early
+using TSan can lead to decreased performance:
+Running your code with these diagnostics also introduces a 2x to 20x slowdown of your app. To improve your code’s memory usage, compile your code with the -O1 optimization.
+
+
+How to solve a Data Race?
+After you know what a Data Race is and how to detect them, it’s time to write a solution, so they don’t occur again.
+As we’ve learned before, data access related bugs occur when multiple threads access the same memory without proper synchronization.
+Taking the above example, we could write a solution as follows using dispatch queues:
+
+private let lockQueue = DispatchQueue(label: "name.lock.queue")
+private var name: String = "Antoine van der Lee"
+
+func updateNameSync() {
+    DispatchQueue.global().async {
+        self.lockQueue.async {
+            self.name.append("Antoine van der Lee")
+        }
+    }
+
+    // Executed on the Main Thread
+    lockQueue.async {
+        // Executed on the lock queue
+        print(self.name)
+    }
+}
+
+Using a lock queue, we synchronized access and ensured that only one thread at a time accessed the name variable. 
+This is a fundamental solution to our problem. 
+
+
+Using Actors to solve data races:
+The Concurrency Framework announced at WWDC 2021 introduced Actors for synchronizing access to data. 
+This is the best solution for solving data access related bugs and should be more straightforward than dispatch queues.
+
+The above example could be rewritten using actors by creating a name controller:
+
+actor NameController {
+    private(set) var name: String = "My name is: "
+    
+    func updateName(to name: String) {
+        self.name = name
+    }
+}
+
+The name controller actor is responsible for any access to the name property. Our updateName method would be rewritten as follows:
+func updateName() async {
+    DispatchQueue.global(qos: .userInitiated).async {
+        Task {
+            await self.nameController.updateName(to: "Antoine van der Lee")
+        }
+    }
+    
+    // Executed on the Main Thread
+    print(await nameController.name)
+}
+
+As you can see, we need to use the async/await keywords as access becomes asynchronous.

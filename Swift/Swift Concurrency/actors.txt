@@ -1,0 +1,650 @@
+Actor 代表一组在并发环境下可以安全访问的(可变)状态
+Actor 通过所谓数据隔离 (Actor isolation) 的方式确保数据安全，其实现原理是 Actor 内部维护了一个串行队列 (mailbox)，
+所有涉及数据安全的外部调用都要入队，即它们都是串行执行的。
+
+Swift 引入了 actor 关键字，用于声明 Actor 类型
+actor BankAccount {
+  let accountNumber: Int
+  var balance: Double
+
+  enum BankAccountError: Error {
+    case insufficientBalance(Double)
+    case authorizeFailed
+  }
+
+  init(accountNumber: Int, initialDeposit: Double) {
+    self.accountNumber = accountNumber
+    self.balance = initialDeposit
+  }
+
+  func deposit(amount: Double) {
+    assert(amount >= 0)
+    balance = balance + amount
+  }
+}
+除了不支持继承，actor 与 class 非常类似:
+引用类型
+可以遵守指定的协议
+支持 extension 等
+actor 内部实现了数据访问的同步机制
+
+==========Actor isolation
+所谓 Actor isolation 就是以 actor 实例为单元 (边界)，将其内部与外界隔离开。
+严格限制跨界访问
+跨越 Actor isolation 的访问称之为 cross-actor reference
+
+cross-actor reference 有 2 种情况:
+引用 actor 中的 不可变状态 (immutable state)，如上面例子中的accountNumber，由于其初始化后就不会被修改，也就不存在 Data races，故即使是跨界访问也不会有问题；
+引用 actor 中的 可变状态 (mutable state)、调用其方法、访问计算属性 等都被认为有潜在的 Data races，故不能像普通访问那样。
+
+Actor 内部有一个mailbox，专门用于接收此类访问，并依次串行执行它们，从而确保在并发下的数据安全。
+
+此类访问具有异步特征，即不会立即返回结果，需要排队依次执行。
+因此，需要通过 await执行此类访问
+class AccountManager {
+  let bankAccount = BankAccount.init(accountNumber: 123456789, initialDeposit: 1_000)
+
+  func depoist() async {
+    // 下面的 bankAccount.accountNumber、bankAccount.deposit(amount: 1) 都属于cross-actor reference
+
+    // 对 let accountNumber 可以像普通属性那样访问
+    //
+    print(bankAccount.accountNumber)
+
+    // 而对于方法，无论是否是异步方法都需通过 await 调用
+    //
+    await bankAccount.deposit(amount: 1)
+  }
+}
+
+更不可能 cross-actor 直接修改 actor state：
+func depoist() async {    
+  // ❌ Error: Actor-isolated property 'balance' can not be mutated from a non-isolated context
+  bankAccount.balance += 1
+}
+
+==========nonisolated
+
+Actor 内部通过 mailbox 机制实现同步访问，必然会有一定的性能损耗。
+然而，actor 内部的方法、计算属性并不一定都会引起 Data races。
+为了解决这一矛盾，Swift 引入了关键字 nonisolated 用于修饰那些不会引起 Data races 的方法、属性，如:
+
+extension BankAccount {
+  // 在该方法内部只引用了 let accountNumber，故不存在 Data races
+  // 也就可以用 nonisolated 修饰
+  nonisolated func safeAccountNumberDisplayString() -> String {
+    let digits = String(accountNumber)
+    return String(repeating: "X", count: digits.count - 4) + String(digits.suffix(4))
+  }
+}
+
+// 可以像普通方法一样调用，无需 await 入队
+bankAccount.safeAccountNumberDisplayString()
+
+当然了，在nonisolated方法中是不能访问 isolated state 的
+extension BankAccount {
+  nonisolated func deposit(amount: Double) {
+    assert(amount >= 0)
+    // Error: Actor-isolated property 'balance' can not be mutated from a non-isolated context
+    balance = balance + amount
+  }
+}
+
+在 actor 内部，无论是否是 nonisolated，各方法、属性都可以直接访问，如:
+extension BankAccount {
+  // 在 deposit 方法中可以直接访问、修改 balance
+  func deposit(amount: Double) {
+    assert(amount >= 0)
+    balance = balance + amount
+  }
+}
+
+Actor isolation 是以 actor 实例为边界，如下是有问题的:
+extension BankAccount {
+  func transfer(amount: Double, to other: BankAccount) throws {
+    if amount > balance {
+      throw BankAccountError.insufficientBalance(balance)
+    }
+
+    print("Transferring \(amount) from \(accountNumber) to \(other.accountNumber)")
+
+    balance = balance - amount
+    // Actor-isolated property 'balance' can not be mutated on a non-isolated actor instance
+    // Actor-isolated property 'balance' can not be referenced on a non-isolated actor instance
+    other.balance = other.balance + amount  // error: actor-isolated property 'balance' can only be referenced on 'self'
+  }
+}
+other相对于self来说属于另一个 actor 实例，故不能直接跨界访问。
+
+==========Actor reentrancy:
+为了避免死锁、提升性能，Actor-isolated 方法是可重入的
+1.Actor-isolated 方法在显式声明为异步方法时，其内部可能存在暂停点
+2.当 Actor-isolated 方法因暂停点而被挂起时，该方法是可以重入的，也就是在前一个挂起被恢复前可以再次进入该方法
+extension BankAccount {
+  private func authorize() async -> Bool {
+    // Simulate the authentication process
+    //
+    try? await Task.sleep(nanoseconds: 1_000_000_000)
+    return true
+  }
+
+  func withdraw(amount: Double) async throws -> Double {
+    guard balance >= amount else {
+      throw BankAccountError.insufficientBalance(balance)
+    }
+
+    // suspension point
+    //
+    guard await authorize() else {
+      throw BankAccountError.authorizeFailed
+    }
+
+    balance -= amount
+    return balance
+  }
+}
+
+class AccountManager {
+  let bankAccount = BankAccount.init(
+    accountNumber: 123456789, 
+    initialDeposit: 1000
+  )
+
+  func withdraw() async {
+    for _ in 0..<2 {
+      Task {
+        let amount = 600.0
+        do {
+          let balance = try await bankAccount.withdraw(amount: amount)
+          print("Withdrawal succeeded, balance = \(balance)")
+        } catch let error as BankAccount.BankAccountError {
+          switch error {
+          case .insufficientBalance(let balance):
+            print("Insufficient balance, balance = \(balance), withdrawal amount = \(amount)!")
+          case .authorizeFailed:
+            print("Authorize failed!")
+          }
+        }
+      }
+    }
+  }
+}
+
+Withdrawal succeeded, balance = 400.0
+Withdrawal succeeded, balance = -200.0
+结果显然是不对的
+一般的，check---reference/change 二步操作不应跨 await suspension point。
+在真正 reference/change 前再 check 一次
+func withdraw(amount: Double) async throws -> Double {
+    guard balance >= amount else {
+      throw BankAccountError.insufficientBalance(balance)
+    }
+
+    // suspension point
+    //
+    guard await authorize() else {
+      throw BankAccountError.authorizeFailed
+    }
+
+    // re-check
+    guard balance >= amount else {
+      throw BankAccountError.insufficientBalance(balance)
+    }
+
+    balance -= amount
+    return balance
+  }
+Withdrawal succeeded, balance = 400.0
+Insufficient balance, balance = 400.0, withdrawal amount = 600.0!
+在开发过程中要注意 Actor reentrancy 的问题
+
+==========globalActor/MainActor
+actor 是以其实例为界进行数据保护的
+若需要对全局变量 globalVar、静态属性 currentTimeStampe、以及跨类型 (ClassA1、ClassA2)/跨实例进行数据保护该如何做？
+var globalVar: Int = 1
+actor BankAccount {
+  static var currentTimeStampe: Int64 = 0
+}
+
+class ClassA1 {
+  var a1 = 0;
+  func testA1() {}
+}
+
+class ClassA2 {
+  var a2 = 1
+  var a1: ClassA1
+
+  init() {
+    a1 = ClassA1.init()
+  }
+
+  func testA2() {}
+}
+这正是 globalActor 要解决的问题
+currentTimeStampe 虽定义在 actor BankAccount 中，但由于是 static 属性，故不在 actor 的保护范围内。 也就是不属于 BankAccount 的 actor-isolated 范围。
+因此，可以在任意地方通过 BankAccount.currentTimeStampe 访问、修改其值。
+
+@globalActor
+public struct MyGlobalActor {
+  public actor MyActor { }
+
+  public static let shared = MyActor()
+}
+定义了一个 global actor：MyGlobalActor ，几个关键点:
+global actor 的定义需要使用 @globalActor修饰
+@globalActor 需要实现 GlobalActor 协议
+@available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *)
+public protocol GlobalActor {
+
+    /// The type of the shared actor instance that will be used to provide
+    /// mutually-exclusive access to declarations annotated with the given global
+    /// actor type.
+    associatedtype ActorType : Actor
+
+    /// The shared actor instance that will be used to provide mutually-exclusive
+    /// access to declarations annotated with the given global actor type.
+    ///
+    /// The value of this property must always evaluate to the same actor
+    /// instance.
+    static var shared: Self.ActorType { get }
+
+    /// The shared executor instance that will be used to provide
+    /// mutually-exclusive access for the global actor.
+    ///
+    /// The value of this property must be equivalent to `shared.unownedExecutor`.
+    static var sharedUnownedExecutor: UnownedSerialExecutor { get }
+}
+在 GlobalActor 协议中，一般我们只需实现 shared 属性即可 (sharedUnownedExecutor 在 GlobalActor extension 中有默认实现)
+global actor (本例中的MyGlobalActor) 本质上是一个 marker type，其同步功能是借助 shared 属性提供的 actor 实例完成的
+global actor 可用于修饰类型定义 (如：class、struct、enum，但不能用于 actor)、方法、属性、Closure等
+
+// 在闭包中的用法如下：
+Task { @MyGlobalActor in
+  print("")
+}
+
+@MyGlobalActor var globalVar: Int = 1
+
+actor BankAccount {
+  @MyGlobalActor static var currentTimeStampe: Int64 = 0
+}
+
+@MyGlobalActor class ClassA1 {
+  var a1 = 0;
+  func testA1() {}
+}
+
+@MyGlobalActor class ClassA2 {
+  var a2 = 1
+  var a1: ClassA1
+
+  init() {
+    a1 = ClassA1.init()
+  }
+
+  func testA2() {
+    // globalVar、ClassA1/ClassA2 的实例、BankAccount.currentTimeStampe
+    // 它们同属于 MyGlobalActor 的保护范围内
+    // 故它们间的关系属 actor 内部关系，它们间可以正常访问
+    //
+    globalVar += 1
+    a1.testA1()
+    BankAccount.currentTimeStampe += 1
+  }
+}
+
+await globalVar
+await BankAccount.currentTimeStampe
+
+可以通过 @MyGlobalActor 对它们进行数据保护，并在它们间形成一个以MyGlobalActor 为界的 actor-isolated
+在 MyGlobalActor 内部可以对它们进行正常访问，如 ClassA2.testA2 方法所做
+在 MyGlobalActor 以外，需通过同步方式访问，如：await globalVar
+
+UI 操作都需要在主线程上执行，因此有了 MainAcotr，几个关键点:
+MainActor 属于 globalAcotr 的特例
+@globalActor final public actor MainActor : GlobalActor
+被 MainActor 修饰的方法、属性等都将在主线程上执行
+
+异步方法在暂停点前后可能会切换到不同线程上运行吗？
+被 MainActor 修饰的方法是个例外，它一定是在主线程上执行。
+
+除了用 @MainActor 属性外，我们也可以通过 MainActor.run 在主线程上执行一段代码
+extension MainActor {
+  /// Execute the given body closure on the main actor.
+  public static func run<T>(resultType: T.Type = T.self, body: @MainActor @Sendable () throws -> T) async rethrows -> T where T : Sendable
+}
+await MainActor.run {
+  print("")
+}
+
+==========
+actor 是通过 mailbox 机制串行执行外部调用来保障数据安全
+如果在 actor 方法内部存在 Data races，它是无能为力的
+actor BankAccount {
+2    var balances: [Int: Double] = [1: 0.0]
+3
+4    func deposit(amount: Double) {
+5      assert(amount >= 0)
+6      for i in 0..<1000 {
+7        // 在 actor 方法内部手动开启子线程
+8        //
+9        Thread.detachNewThread {
+10         let b = self.balances[1] ?? 0.0
+11         self.balances[1] = b + 1
+12         print("i = \(i), balance = \(self.balances[1])")
+13       }
+14     }
+15   }
+16 }
+17
+18 class AccountManager {
+19   let bankAccount = BankAccount.init(accountNumber: 123, initialDeposit: 1000, name: "Jike", age: 18)
+20   func depoist() async {
+21     await bankAccount.deposit(amount: 1)
+22   }
+23 }
+
+由于BankAccount.deposit 内部手动开启了子线程 (第 9 ~ 13 行)，故存在 Data races 问题，会 crash。
+一般地，actor 主要用作 Data Model，不应在其中处理大量业务逻辑
+尽量避免在其中手动开启子线程、使用GCD等，否则需要使用传统手法 (如 lock) 解决因此引起的多线程问题。
+
+==========
+Actor 通过 mailbox 机制解决了外部调用引起的多线程问题
+
+class User {
+  var name: String
+  var age: Int
+
+  init(name: String, age: Int) {
+    self.name = name
+    self.age = age
+  }
+}
+
+actor BankAccount {
+  let accountNumber: Int
+  var balance: Double
+  var name: String
+  var age: Int
+
+  func user() -> User {
+    return User.init(name: name, age: age)
+  }
+}
+
+class AccountManager {
+  let bankAccount = BankAccount.init(accountNumber: 123, initialDeposit: 1000, name: "Jike", age: 18)
+
+  func user() async -> User {
+    // Wraning: Non-sendable type 'User' returned by implicitly asynchronous call to actor-isolated instance method 'user()' cannot cross actor boundary
+    return await bankAccount.user()
+  }
+}
+上面这段代码在编译时编译器给的 Warning
+所有与 Sendable 相关的 warning 都需要 Xcode 13.3 才会报。
+
+通过 actor-isolated 方法将 User 实例传递到了 actor 外面
+此后，被传递出来的 user 实例自然得不到 actor 的保护，在并发环境下显然就不安全了。
+
+通过参数跨 actor 边界传递类实例也是同样的问题:
+extension actor BankAccount {
+  func updateUser(_ user: User) {
+    name = user.name
+    age = user.age
+  }
+}
+
+extension AccountManager {
+  func updateUser() async {
+    // Wraning: Non-sendable type 'User' passed in implicitly asynchronous call to actor-isolated instance method 'updateUser' cannot cross actor boundary
+    await bankAccount.updateUser(User.init(name: "Bob", age: 18))
+  }
+}
+
+跨 actor 传递函数、闭包也是不行的:
+extension BankAccount {
+  func addAge(amount: Int, completion: (Int) -> Void) {
+    age += amount
+    completion(age)
+  }
+}
+
+extension AccountManager {
+  func addAge() async {
+    // Wraning: Non-sendable type '(Int) -> Void' passed in implicitly asynchronous call to actor-isolated instance method 'addAge(amount:completion:)' cannot cross actor boundary
+    await bankAccount.addAge(amount: 1, completion: { age in
+      print(age)
+    })
+  }
+}
+
+除了这些 warning，还有货真价实的 crash:
+extension User {
+  func testUser(callback: @escaping () -> Void) {
+    for _ in 0..<1000 {
+      DispatchQueue.global().async {
+        callback()
+      }
+    }
+  }
+}
+
+extension BankAccount {
+  func test() {
+    let user = User.init(name: "Tom", age: 18)
+    user.testUser {
+      let b = self.balances[1] ?? 0.0
+      self.balances[1] = b + 1
+      print("i = \(0), \(Thread.current), balance = \(String(describing: self.balances[1]))")
+    }
+  }
+}
+如上，虽然 BankAccount 是 actor 类型，且其内部没有开启子线程等『 非法操作 』，
+但在调用 User.testUser(callback: @escaping () -> Void) 后会 crash。
+
+这时就要轮到 Sendable 登场了
+
+==========总结:
+actor 是一种新的引用类型，旨在解决 Data Races；
+actor 内部通过 mailbox 机制实现所有外部调用的串行执行；
+对于明确不存在 Data Races 的方法、属性可以使用nonisolated修饰使之成为『 常规 』方法，以提升性能；
+通过 @globalActor 可以定义全局 actor，用于对全局变量、静态变量、多实例等进行保护；
+actor 内部尽量避免开启子线程以免引起多线程问题；
+actor 应作 Data Model 用，不宜在其中处理过多业务逻辑。
+
+==============================
+
+Swift Actors are new in Swift 5.5 and are part of the big concurrency changes at WWDC 2021.
+Before actors, data races were a common exception to run into.
+So before we dive into Actors with isolated and nonisolated access, it’s good to understand what Data Races are and to understand how you can solve them today.
+
+Actors in Swift aim to solve data races completely, but it’s important to understand that it’s likely to still run into data races. 
+
+----------
+Actors in Swift are not new: they’re inspired by the Actor Model that treats actors as the universal primitives of concurrent computation.
+Actor model
+https://en.wikipedia.org/wiki/Actor_model
+
+Data races occur when the same memory is accessed from multiple threads without synchronization, and at least one access is a write. 
+Data Races can lead to unpredictable behavior, memory corruption, flaky tests, and weird crashes.
+
+Actors in Swift protect their state from data races, and using them allows the compiler to give us helpful feedback while writing applications.
+In addition, the Swift compiler can statically enforce the limitations that come with actors and prevents concurrent access to mutable data.
+
+You can define an Actor using the actor keyword, just like you would with a class or a struct:
+
+actor ChickenFeeder {
+    let food = "worms"
+    var numberOfEatingChickens: Int = 0
+}
+
+Actors are like other Swift types as they can also have initializers, methods, properties, and subscripts, while you can also use them with protocols and generics.
+Furthermore, unlike structs, an actor requires defining initializers when your defined properties require so manually. Lastly, it’s important to realize actors are reference types.
+
+Actors are reference types but still different compared to classes:
+Actors are reference types which in short means that copies refer to the same piece of data.
+Therefore, modifying the copy will also modify the original instance as they point to the same shared instance.
+
+Actors have an important difference compared to classes: they do not support inheritance.
+Not supporting inheritance means there’s no need for features like the convenience and required initializers, overriding, class members, or open and final statements.
+However, the biggest difference is defined by the main responsibility of Actors, which is isolating access to data.
+
+
+----------How Actors prevent Data Races with synchronization:
+Actors prevent data races by creating synchronized access to its isolated data.
+Before Actors, we would create the same result using all kinds of locks.
+An example of such a lock is a concurrent dispatch queue combined with a barrier for handling write access.
+
+Before Actors, we would create a thread safe chicken feeder as follows:
+final class ChickenFeederWithQueue {
+    let food = "worms"
+    
+    /// A combination of a private backing property and a computed property allows for synchronized access.
+    private var _numberOfEatingChickens: Int = 0
+    var numberOfEatingChickens: Int {
+        queue.sync {
+            _numberOfEatingChickens
+        }
+    }
+    
+    /// A concurrent queue to allow multiple reads at once.
+    private var queue = DispatchQueue(label: "chicken.feeder.queue", attributes: .concurrent)
+    
+    func chickenStartsEating() {
+        /// Using a barrier to stop reads while writing
+        queue.sync(flags: .barrier) {
+            _numberOfEatingChickens += 1
+        }
+    }
+    
+    func chickenStopsEating() {
+        /// Using a barrier to stop reads while writing
+        queue.sync(flags: .barrier) {
+            _numberOfEatingChickens -= 1
+        }
+    }
+
+}
+A barrier flag is required to stop reading for a moment and allow writing. 
+Actors, on the other hand, allow Swift to optimize synchronized access as much as possible.
+The underlying lock that’s used is just an implementation detail. 
+As a result, the Swift compiler can enforce synchronized access, preventing us from introducing data races most of the time.
+actor ChickenFeeder {
+    let food = "worms"
+    var numberOfEatingChickens: Int = 0
+    
+    func chickenStartsEating() {
+        numberOfEatingChickens += 1
+    }
+    
+    func chickenStopsEating() {
+        numberOfEatingChickens -= 1
+    }
+}
+
+The first thing you’ll notice is that the instance is much simpler and easier to read. 
+All logic related to synchronizing access is hidden as an implementation detail within the Swift standard library.
+The most interesting part, however, occurs when we try to use or read any of the mutable properties and methods: 会报错
+The food property on our chicken feeder is immutable and, therefore, thread-safe. 
+There is no risk for a data race as its value can not change from another thread during reading.
+
+
+Our other methods and properties, however, change the mutable state of a reference type. 
+To prevent data races, synchronized access is required to allow access sequentially.
+
+
+----------Using async/await to access data from Actors:
+As we’re unsure when access is allowed, we need to create asynchronous access to our Actor’s mutable data.
+If there’s no other thread accessing the data, we will directly get access. 
+If there’s another thread performing access to the mutable data, however, we need to sit and wait till we’re allowed to go through.
+
+we can create asynchronous access by using the await keyword:
+let feeder = ChickenFeeder()
+await feeder.chickenStartsEating()
+print(await feeder.numberOfEatingChickens) // Prints: 1 
+
+----------Preventing unneeded suspensions:
+Firstly, we update the number of eating chickens after which we perform another asynchronous task to print out the number of eating chickens.
+Each await can result in a suspension of your code to wait for access. 
+In this case, having two suspensions makes sense as both parts don’t really have anything in common.
+However, you need to take into account that there could be another thread waiting to call chickenStartsEating which might result in two eating chickens at the time we print out the result.
+
+To understand this concept better, let’s look into a case in which you want to combine operations into a single method to prevent extra suspensions.
+For example, imagine having a notifier method in our actor that notifies observers about a new chicken that started eating:
+extension ChickenFeeder {
+    func notifyObservers() {
+        NotificationCenter.default.post(name: NSNotification.Name("chicken.started.eating"), object: numberOfEatingChickens)
+    }
+} 
+
+We could use this code by using await twice:
+let feeder = ChickenFeeder()
+await feeder.chickenStartsEating()
+await feeder.notifyObservers() 
+
+However, this can result in two suspension points, one for each await. 
+Instead, we could optimize this code by calling the notifyObservers method from within chickenStartsEating:
+func chickenStartsEating() {
+    numberOfEatingChickens += 1
+    notifyObservers()
+} 
+
+As we’re already within the Actor having synchronized access, we don’t need another await. 
+These are important improvements to consider as they could have an impact on performance.
+
+----------Nonisolated access within Actors:
+The above examples already showed how access is synchronized from outside actor instances by requiring the use of await.
+However, if you watched closely, you might have noticed that our notifyObservers method didn’t require to use await for accessing our mutable property numberOfEatingChickens.
+
+When accessing an isolated method within actors, you’re basically allowed to access any other properties or methods that would require synchronized access. 
+So you’re basically reusing your given access to get the most out of it!
+
+There are cases, however, where you know that it’s not required to have isolated access. 
+Methods in actors are isolated by default. The following method only accesses our immutable property food but still requires await to access it:
+let feeder = ChickenFeeder()
+await feeder.printWhatChickensAreEating() 
+This is odd, as we know that we don’t access anything requiring synchronized access.
+https://github.com/apple/swift-evolution/blob/main/proposals/0313-actor-isolation-control.md was introduced to solve exactly this problem.
+We can mark our method with the nonisolated keyword to tell the Swift compiler our method is not accessing any isolated data:
+extension ChickenFeeder {
+    nonisolated func printWhatChickensAreEating() {
+        print("Chickens are eating \(food)")
+    }
+}
+
+let feeder = ChickenFeeder()
+feeder.printWhatChickensAreEating() 
+
+Note that you can use the nonisolated keyword for computed properties as well,
+which is helpful to conform to protocols like CustomStringConvertible:
+extension ChickenFeeder: CustomStringConvertible {   
+    nonisolated var description: String {     
+        "A chicken feeder feeding \(food)"   
+    } 
+}
+However, defining them on immutable properties is not needed
+
+----------Why Data Races can still occur when using Actors:
+When using Actors consistently in your code, you’ll for sure lower the risks for running into data races.
+
+Race conditions can still occur in your code but might no longer result in an exception. 
+For example, imagine two threads accessing our actors’ data correctly using await:
+
+queueOne.async {
+    await feeder.chickenStartsEating()
+}
+queueTwo.async {
+    print(await feeder.numberOfEatingChickens)
+} 
+
+The race condition here is defined as: “which thread is going to be the first to start isolated access?”. So there are basically two outcomes:
+Queue one being first, increasing the number of eating chickens. Queue two will print 1
+Queue two being first, printing the number of eating chickens which is still 0
+
+The difference here is that we no longer access the data while it’s being modified. Without synchronized access, this could lead to unpredicted behavior in some cases.
+
+
+Conclusion:
+Swift Actors solve data races which were a common issue in applications written in Swift. 
+Mutable data is accessed synchronously, which makes sure it’s safe.

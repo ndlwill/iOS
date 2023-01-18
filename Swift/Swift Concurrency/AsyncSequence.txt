@@ -1,0 +1,150 @@
+https://github.com/apple/swift-evolution/blob/main/proposals/0298-asyncsequence.md
+
+Its name implies it’s a type providing asynchronous, sequential, and iterated access to its elements. 
+In other words: it’s an asynchronous variant of the regular sequence we’re familiar with in Swift.
+
+Like you won’t often create your custom Sequence I don’t expect you to create a custom AsyncSequence implementation often. 
+However, you’ll likely have to work with an asynchronous sequence due to working with types like AsyncThrowingStream and AsyncStream.
+
+What is an AsyncSequence?
+An AsyncSequence is an asynchronous variant of the Sequence we’re familiar with in Swift.
+Due to its asynchronous fashion, we need to use the await keyword since we’re dealing with async-defined methods.
+
+Values can become available over time, meaning that an AsyncSequence can contain none, some, or all of its values by the first time you use it.
+It’s important to understand that AsyncSequence is just a protocol.
+It defines how to access values but doesn’t generate or contain values.
+Implementors of the AsyncSequence protocol provide an AsyncIterator and take care of developing and potentially storing values.
+
+Creating a custom AsyncSequence:
+this is just a code example to understand better how an AsyncSequence works.
+
+struct Counter: AsyncSequence {
+    typealias Element = Int
+
+    let limit: Int
+
+    struct AsyncIterator : AsyncIteratorProtocol {
+        let limit: Int
+        var current = 1
+        mutating func next() async -> Int? {
+            guard !Task.isCancelled else {
+                return nil
+            }
+
+            guard current <= limit else {
+                return nil
+            }
+
+            let result = current
+            current += 1
+            return result
+        }
+    }
+
+    func makeAsyncIterator() -> AsyncIterator {
+        return AsyncIterator(howHigh: limit)
+    }
+}
+
+We could decide to rewrite this example to take away the need for an internal type:
+struct Counter: AsyncSequence, AsyncIteratorProtocol {
+    typealias Element = Int
+
+    let limit: Int
+    var current = 1
+
+    mutating func next() async -> Int? {
+        guard !Task.isCancelled else {
+            return nil
+        }
+
+        guard current <= limit else {
+            return nil
+        }
+
+        let result = current
+        current += 1
+        return result
+    }
+
+    func makeAsyncIterator() -> Counter {
+        self
+    }
+}
+
+Note that we have to help the compiler by providing the typealias to conform to the AsyncSequence protocol.
+
+The next() method takes care of iterating overall values.
+Our example comes down to providing as many counted values until we reach the limit.
+We implement cancellation support by making checking for Task.isCancelled.
+
+
+Iterating over an Asynchronous Sequence:
+for await count in Counter(limit: 5) {
+    print(count)
+}
+print("Counter finished")
+// Prints:
+// 1
+// 2
+// 3
+// 4
+// 5
+// Counter finished
+
+We have to use the await keyword since we might receive values asynchronously. 
+We exit the for loop once there are no values to be expected anymore. 
+Implementors of an asynchronous sequence can indicate reaching the limit by returning nil in the next() method. 
+In our case, we’ll reach that point once the counter reaches the configured limit or when the iteration cancels:
+mutating func next() async -> Int? {
+    guard !Task.isCancelled else {
+        return nil
+    }
+
+    guard current <= limit else {
+        return nil
+    }
+
+    let result = current
+    current += 1
+    return result
+}
+
+Many of the regular Sequence operators are also available for asynchronous sequences. 
+The result is that we can perform operations like mapping and filtering in an asynchronous manner.
+
+For example, we could filter for even numbers only:
+for await count in Counter(limit: 5).filter({ $0 % 2 == 0 }) {
+    print(count)
+}
+print("Counter finished")
+
+// Prints: 
+// 2
+// 4
+// Counter finished
+
+Or we could map the count to a String before iterating:
+let counterStream = Counter(limit: 5)
+    .map { $0 % 2 == 0 ? "Even" : "Odd" }
+for await count in counterStream {
+    print(count)
+}
+print("Counter finished")
+
+// Prints:
+// Odd
+// Even
+// Odd
+// Even
+// Odd
+// Counter finished
+
+We could even use the AsyncSequence without a for loop by using methods like contains:
+let contains = await Counter(limit: 5).contains(3)
+print(contains) // Prints: true
+
+Note that the above method is asynchronous, meaning that it could potentially wait endlessly for a value to exist until the underlying AsyncSequence finishes.
+
+Like you would not often create a custom Sequence yourself, it’s unlikely you’ll create custom asynchronous sequences either. 
+Instead, I’ll recommend having a look at AsyncStreams.

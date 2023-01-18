@@ -1,0 +1,82 @@
+Grand Central Dispatch (GCD)
+
+类型    描述
+串行 （Serial）
+串行队列（也称为私有调度队列）按添加到队列的顺序一次执行一项任务。当前正在执行的任务在由调度队列管理的不同线程上运行（可能因任务而异）。
+串行队列通常用于同步对特定资源的访问。您可以根据需要创建任意数量的串行队列，并且每个队列相对于所有其他队列同时运行。
+换句话说，如果您创建四个串行队列，则每个队列一次仅执行一项任务，但最多仍可以同时执行四个任务，每个队列一个。有关如何创建串行队列的信息，
+请参阅创建串行调度队列。
+https://developer.apple.com/library/archive/documentation/General/Conceptual/ConcurrencyProgrammingGuide/OperationQueues/OperationQueues.html#//apple_ref/doc/uid/TP40008091-CH102-SW6
+
+并发 （Concurrent）
+并发队列（也称为一种全局调度队列）并发执行一个或多个任务，但任务仍然按照它们添加到队列的顺序启动。
+当前正在执行的任务在由调度队列管理的不同线程上运行。在任何给定点执行的确切任务数量是可变的，取决于系统条件。
+在 iOS 5 及更高版本中，您可以通过指定DISPATCH_QUEUE_CONCURRENT队列类型来自己创建并发调度队列。
+此外，还有四个预定义的全局并发队列供您的应用程序使用。有关如何获取全局并发队列的更多信息，请参阅获取全局并发调度队列。
+https://developer.apple.com/library/archive/documentation/General/Conceptual/ConcurrencyProgrammingGuide/OperationQueues/OperationQueues.html#//apple_ref/doc/uid/TP40008091-CH102-SW5
+
+主调度队列      （Main dispatch queue）
+主调度队列是一个全局可用的串行队列，它在应用程序的主线程上执行任务。该队列与应用程序的运行循环（如果存在）一起工作，以将排队任务的执行与附加到运行循环的其他事件源的执行交错​​。
+因为它在应用程序的主线程上运行，所以主队列通常用作应用程序的关键同步点。虽然您不需要创建主调度队列，但您确实需要确保您的应用程序适当地排空它。有关如何管理此队列的更多信息，请参阅在主线程上执行任务。
+https://developer.apple.com/library/archive/documentation/General/Conceptual/ConcurrencyProgrammingGuide/OperationQueues/OperationQueues.html#//apple_ref/doc/uid/TP40008091-CH102-SW15
+
+在向应用程序添加并发性时，调度队列比线程提供了几个优势。
+最直接的优点是工作队列编程模型的简单性。对于线程，您必须为要执行的工作以及线程本身的创建和管理编写代码。
+调度队列让你专注于你真正想要执行的工作，而不必担心线程的创建和管理。相反，系统会为您处理所有线程的创建和管理。
+优点是系统能够比任何单个应用程序更有效地管理线程。系统可以根据可用资源和当前系统条件动态调整线程数量
+
+
+==========获取全局并发调度队列
+系统为每个应用程序提供了四个并发调度队列。这些队列对应用程序是全局的，仅通过它们的优先级来区分。
+您使用该dispatch_get_global_queue函数请求队列之一，如以下示例所示：
+dispatch_queue_t aQueue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
+除了获取默认的并发队列之外，您还可以通过将DISPATCH_QUEUE_PRIORITY_HIGH和DISPATCH_QUEUE_PRIORITY_LOW常量传递给函数来获取具有高优先级和低优先级的队列，或者通过传递常量来获取后台队列DISPATCH_QUEUE_PRIORITY_BACKGROUND。
+
+高优先级并发队列中的任务先于默认队列和低优先级队列中的任务执行。同样，默认队列中的任务在低优先级队列中的任务之前执行。
+注意： dispatch_get_global_queue函数 的第二个参数是为将来扩展保留的。现在，您应该始终通过0此参数。
+尽管调度队列是引用计数对象，但您不需要保留和释放全局并发队列。因为它们对您的应用程序是全局的，所以这些队列的保留和释放调用将被忽略。
+
+==========创建串行调度队列
+与锁不同，串行队列确保任务以可预测的顺序执行。而且只要您将任务异步提交到串行队列，队列就永远不会死锁。
+该dispatch_queue_create函数采用两个参数：队列名称和一组队列属性。调试器和性能工具显示队列名称以帮助您跟踪任务的执行方式。队列属性保留供将来使用，应该是NULL.
+
+dispatch_queue_t queue;
+queue = dispatch_queue_create("com.example.MyQueue", NULL);
+
+==========在运行时获取公共队列
+dispatch_get_current_queue函数用于调试目的或测试当前队列的身份。
+使用该dispatch_get_main_queue函数获取与应用程序主线程关联的串行调度队列。
+使用该dispatch_get_global_queue函数获取任何共享并发队列。
+
+
+队列的创建是一个耗时的操作
+
+==============================死锁的本质
+// 正常
+dispatch_queue_t serial = dispatch_queue_create("com.serial.queue", DISPATCH_QUEUE_SERIAL);
+NSLog(@"1");
+dispatch_async(serial, ^{
+    NSLog(@"2");
+    dispatch_async(serial, ^{
+        NSLog(@"3");
+    });
+    NSLog(@"4");
+});
+NSLog(@"5");
+
+// 死锁
+dispatch_queue_t serial = dispatch_queue_create("com.serial.queue", DISPATCH_QUEUE_SERIAL);
+NSLog(@"1");
+dispatch_async(serial, ^{
+    NSLog(@"2");
+    dispatch_sync(serial, ^{
+        NSLog(@"3");
+    });
+    NSLog(@"4");
+});
+NSLog(@"5");
+从堆栈的信息中可以看到是：
+libdispatch.dylib_dispatch_sync_f_slow: -> libdispatch.dylib__DISPATCH_WAIT_FOR_QUEUE__:
+
+dispatch_syn函数的执行流程如下：
+dispatch_sync -> _dispatch_sync_f -> _dispatch_sync_f_inline

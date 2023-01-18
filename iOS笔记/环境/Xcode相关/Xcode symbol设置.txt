@@ -1,0 +1,75 @@
+Xcode 14.1
+
+Generate Debug Symbols [GCC_GENERATE_DEBUGGING_SYMBOLS] 这个设置在DEBUG和RELEASE下均默认为YES
+Enables or disables generation of debug symbols. 
+When debug symbols are enabled, the level of detail can be controlled by the Debug Information Format (DEBUG_INFORMATION_FORMAT) setting.
+调试符号是在编译时生成的。
+当Generate Debug Symbols选项设置为YES时，每个源文件在编译成.o文件时，编译参数多了-g和-gmodules两项。
+Clang文档对-g的描述是：
+Generate complete debug info.
+当Generate Debug Symbols设置为YES时，编译产生的.o文件会大一些，当然最终生成的可执行文件也大一些。
+当Generate Debug Symbols设置为NO的时候，在Xcode中设置的断点不会中断。但是在程序中打印[NSThread callStackSymbols]，依然可以看到类名和方法名
+在程序崩溃时，也可以得到带有类名和方法名的函数调用栈
+
+Debug Information Level [CLANG_DEBUG_INFORMATION_LEVEL]
+Debug Information Level的默认值为Compiler default，还有一个选项是Line tables only。
+Toggles the amount of debug information emitted when debug symbols are enabled. 
+This can impact the size of the generated debug information, which may matter in some cases for large projects, such as when using LTO.
+当我把Debug Information Level设置为Line tables only的时候，然后构建app，每个源文件在编译时，都多了一个编译参数：-gline-tables-only
+Clang的文档中这样解释-gline-tables-only：
+Generate line number tables only.
+This kind of debug info allows to obtain stack traces with function names, 
+file names and line numbers (by such tools as gdb or addr2line). 
+It doesn’t contain any other data (e.g. description of local variables or function parameters).
+所以当Debug Information Level设置为Line tables only的时候，断点依然会中断，但是无法在调试器中查看局部变量的值
+
+Strip Linked Product [STRIP_INSTALLED_PRODUCT]
+Strip Linked Product在DEBUG和RELEASE下均默认为YES。
+Strip Linked Product也受到Deployment Postprocessing设置选项的影响。
+在Build Settings中，我们可以看到，Strip Linked Product是在Deployment这栏中的，而Deployment Postprocessing相当于是Deployment的总开关。
+Deployment Postprocessing在DEBUG和RELEASE下均默认为NO。
+把Deployment Postprocessing设置为YES，对比Strip Linked Product设为YES和NO的这两种情况，
+发现当Strip Linked Product设为YES的时候，app的构建过程多了这样两步:
+在app构建的开始，会生成一些.hmap辅助文件
+在app构建的末尾，会执行Strip操作。
+当Strip Linked Product设为YES的时候，运行app，断点不会中断，在程序中打印[NSThread callStackSymbols]也无法看到类名和方法名
+而在程序崩溃时，函数调用栈中也无法看到类名和方法名，注意右上角变成了unnamed_function
+
+Strip Style [STRIP_STYLE]
+Strip Style在DEBUG和RELEASE下均默认All Symbols。
+The level of symbol stripping to be performed on the linked product of the build. 
+The default value is defined by the target's product type.
+All Symbols: Completely strips the binary, removing the symbol table and relocation information. all, -s
+Non-Global Symbols: Strips non-global symbols, but saves external symbols. non-global, -x
+Debugging Symbols: Strips debugging symbols, but saves local and global symbols. debugging, -S
+选择不同的Strip Style时，app构建末尾的Strip操作会被带上对应的参数。
+如果选择debugging symbols的话，函数调用栈中，类名和方法名还是可以看到的。
+如果我们构建的不是一个app，而是一个静态库，需要注意，静态库是不可以strip all的。
+这时构建会失败。想想符号在重定位时的作用，如果构建的静态库真的能剥离所有符号，那么它也就没法被链接了。
+
+Strip Debug Symbols During Copy [COPY_PHASE_STRIP]
+Specifies whether binary files that are copied during the build, such as in a Copy Bundle Resources or Copy Files build phase, 
+should be stripped of debugging symbols. 
+It does not cause the linked product of a target to be stripped—use Strip Linked Product (STRIP_INSTALLED_PRODUCT) for that.
+当app中包含extension或者watch app的时候，构建过程中会有Copy的步骤
+当我将app（而非extension）的Strip Debug Symbols During Copy设置为YES之后，在这句copy的命令中会多出-strip-debug-symbols参数
+但是这里，strip并不能成功，并且出现了warning：
+warning: skipping copy phase strip, binary is code signed: /Users/xxx/Library/Developer/Xcode/DerivedData/XSQSymbolsDemo-cysszdsykroyyddkvvyffgboglvo/Build/Products/Debug-iphoneos/Today.appex/Today
+似乎是由于app中的today extention已经经过了code sign，导致无法被篡改引起的警告。
+使用模拟器调试可以略过code sign过程，于是便在模拟器上试了试。果然这个warning消失了。
+Strip Debug Symbols During Copy设置为YES时，打开对应.app文件的“显式包内容”，
+可以看到，/PlugIns/Today.appex文件的大小变小了。（不过这些只能在使用模拟器时奏效）
+Strip Debug Symbols During Copy置为YES的时候，today extension中的断点将不会中断，但是打印[NSThread callStackSymbols]时的类名和方法名还是可以看见的。
+
+Debug Information Format [DEBUG_INFORMATION_FORMAT]
+Debug Information Format在DEBUG下默认为DWARF，在RELEASE下默认为DWARF with dSYM File。
+The type of debug information to produce.
+DWARF: Object files and linked products will use DWARF as the debug information format. dwarf
+DWARF with dSYM File: Object files and linked products will use DWARF as the debug information format, 
+and Xcode will also produce a dSYM file containing the debug information from the individual object files 
+(except that a dSYM file is not needed and will not be created for static library or object file products). dwarf-with-dsym
+当Debug Information Format为DWARF with dSYM File的时候，构建过程中多了一步Generate dSYM File
+最终产出的文件也多了一个dSYM文件
+既然这个设置叫做Debug Information Format，所以首先得有调试信息。如果此时Generate Debug Symbols选择的是NO的话，是没法产出dSYM文件的。
+dSYM文件的生成，是在Strip等命令执行之前。所以无论Strip Linked Product是否开启，生成的dSYM文件都不会受影响。
+无法为静态库生成dSYM文件。即便为给一个静态库的Debug Information Format设置为DWARF with dSYM File，构建过程中依然不会有生成dSYM文件的步骤。

@@ -1,0 +1,105 @@
+https://clang.llvm.org/docs/SanitizerCoverage.html#sanitizercoverage
+
+SanitizerCoverage: code coverage instrumentation  代码覆盖工具
+It inserts calls to user-defined functions on function-, basic-block-, and edge- levels.
+
+SourceBasedCodeCoverage: coverage visualization 覆盖率可视
+
+// trace-pc-guard-cb.cc
+#include <stdint.h>
+#include <stdio.h>
+#include <sanitizer/coverage_interface.h>
+
+// This callback is inserted by the compiler as a module constructor
+// into every DSO. 'start' and 'stop' correspond to the
+// beginning and end of the section with the guards for the entire
+// binary (executable or DSO). The callback will be called at least
+// once per DSO and may be called multiple times with the same parameters.
+extern "C" void __sanitizer_cov_trace_pc_guard_init(uint32_t *start,
+                                                    uint32_t *stop) {
+  static uint64_t N;  // Counter for the guards.
+  if (start == stop || *start) return;  // Initialize only once.
+  printf("INIT: %p %p\n", start, stop);
+  for (uint32_t *x = start; x < stop; x++)
+    *x = ++N;  // Guards should start from 1.
+}
+
+// This callback is inserted by the compiler on every edge in the
+// control flow (some optimizations apply).
+// Typically, the compiler will emit the code like this:
+//    if(*guard)
+//      __sanitizer_cov_trace_pc_guard(guard);
+// But for large functions it will emit a simple call:
+//    __sanitizer_cov_trace_pc_guard(guard);
+extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t *guard) {
+  if (!*guard) return;  // Duplicate the guard check.
+  // If you set *guard to 0 this code will not be called again for this edge.
+  // Now you can get the PC and do whatever you want:
+  //   store it somewhere or symbolize it and print right away.
+  // The values of `*guard` are as you set them in
+  // __sanitizer_cov_trace_pc_guard_init and so you can make them consecutive
+  // and use them to dereference an array or a bit vector.
+  void *PC = __builtin_return_address(0);
+  char PcDescr[1024];
+  // This function is a part of the sanitizer run-time.
+  // To use it, link with AddressSanitizer or other sanitizer.
+  __sanitizer_symbolize_pc(PC, "%p %F %L", PcDescr, sizeof(PcDescr));
+  printf("guard: %p %x PC %s\n", guard, *guard, PcDescr);
+}
+
+Clang插桩原理:
+添加编译选项-fsanitize-coverage=trace-pc-guard, 编译时帮我们在函数中插入__sanitizer_cov_trace_pc_guard
+当函数调用的时候，会callq__sanitizer_cov_trace_pc_guard
+利用__builtin_return_address(0)来获得当前函数返回地址，也就是调用方的地址
+通过dladdr来将指针解析成Dl_info结构体信息，其中dli_sname就是符号的名称
+
+开启 SanitizerCoverage
+OC项目，需要在：在 Build Settings 里的 “Other C Flags” 中添加 -fsanitize-coverage=func,trace-pc-guard
+
+如果是Swift项目，还需要额外在 “Other Swift Flags” 中加入-sanitize-coverage=func 和 -sanitize=undefined
+
+系统在编译的时候会给我们项目中方法添加hook，进行标记，定位我们的方法。我们是通过Other c Flags 添加的标记，所以肯定是在编译期做这个插入代码的动作。
+
+__builtin_return_address(0)这个函数返回的是上一个函数的地址，也就是调用者，这个PC就是上一个函数的地址，表示第0行插入的__sanitizer_cov_trace_pc_guard。
+
+Link Map:
+Linkmap是iOS编译过程的中间产物，记录了二进制文件的布局，需要在Xcode的Build Settings里开启Write Link Map File,Link Map主要包含三部分：
+Object Files 生成二进制用到的link单元的路径和文件编号
+Sections 记录Mach-O每个Segment/section的地址范围
+Symbols 按顺序记录每个符号的地址范围
+
+二进制重排的本质就是对启动加载的符号进行重新排列
+
+
+==============================Clang插桩获取启动调用的函数符号
+c函数, oc方法, block
+Clang插桩可以获取Swift方法
+
+==============================Tracing PCs with guards
+With -fsanitize-coverage=trace-pc-guard the compiler will insert the following code on every edge:
+__sanitizer_cov_trace_pc_guard(&guard_variable)
+
+With -fsanitize-coverage=trace-pc-guard the compiler will insert the following code on every edge:
+
+__sanitizer_cov_trace_pc_guard(&guard_variable)
+Every edge will have its own guard_variable (uint32_t).
+
+The compiler will also insert calls to a module constructor:
+// The guards are [start, stop).
+// This function will be called at least once per DSO and may be called
+// more than once with the same values of start/stop.
+__sanitizer_cov_trace_pc_guard_init(uint32_t *start, uint32_t *stop);
+
+start   stop
+INIT: 0x102141108 0x102141184
+lldb: x (0x102141184 - 4)
+
+With an additional ...=trace-pc,indirect-calls flag __sanitizer_cov_trace_pc_indirect(void *callee) will be inserted on every indirect call.
+The functions __sanitizer_cov_trace_pc_* should be defined by the user.
+
+
+Sanitizer Coverage offers different levels of instrumentation.
+edge (default): edges are instrumented (see below).
+bb: basic blocks are instrumented.
+func: only the entry block of every function will be instrumented.
+Use these flags together with trace-pc-guard or trace-pc, like this: -fsanitize-coverage=func,trace-pc-guard.

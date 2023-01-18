@@ -1,0 +1,164 @@
+https://cmake.org/cmake/help/latest/manual/cmake-toolchains.7.html#id8
+
+Cross Compiling:
+Cross Compiling for Linux
+Cross Compiling for the Cray Linux Environment
+Cross Compiling using Clang
+Cross Compiling for QNX
+Cross Compiling for Windows CE
+Cross Compiling for Windows 10 Universal Applications
+Cross Compiling for Windows Phone
+Cross Compiling for Windows Store
+Cross Compiling for ADSP SHARC/Blackfin
+Cross Compiling for Android
+    Cross Compiling for Android with the NDK
+    Cross Compiling for Android with a Standalone Toolchain
+    Cross Compiling for Android with NVIDIA Nsight Tegra Visual Studio Edition
+Cross Compiling for iOS, tvOS, or watchOS
+    Code Signing
+    Switching Between Device and Simulator
+
+CMake uses a toolchain of utilities to compile, link libraries and create archives, and other tasks to drive the build.
+The toolchain utilities available are determined by the languages enabled.
+In normal builds, CMake automatically determines the toolchain for host builds based on system introspection and defaults.
+In cross-compiling scenarios, a toolchain file may be specified with information about compiler and utility paths.
+
+New in version 3.19: One may use cmake-presets(7) to specify toolchain files.
+
+==============================Languages
+Languages are enabled by the project() command.
+Language-specific built-in variables, such as CMAKE_CXX_COMPILER, CMAKE_CXX_COMPILER_ID etc are set by invoking the project() command.
+If no project command is in the top-level CMakeLists file, one will be implicitly generated.
+
+By default the enabled languages are C and CXX:
+project(C_Only C)
+
+A special value of NONE can also be used with the project() command to enable no languages:
+project(MyProject NONE)
+
+The enable_language() command can be used to enable languages after the project() command:
+enable_language(CXX)
+
+When a language is enabled, CMake finds a compiler for that language, and determines some information, such as the vendor and version of the compiler, the target architecture and bitwidth, the location of corresponding utilities etc.
+
+The ENABLED_LANGUAGES global property contains the languages which are currently enabled.
+
+==============================Variables and Properties
+Several variables relate to the language components of a toolchain which are enabled:
+
+CMAKE_<LANG>_COMPILER
+The full path to the compiler used for <LANG>
+
+CMAKE_<LANG>_COMPILER_ID
+The compiler identifier used by CMake
+
+CMAKE_<LANG>_COMPILER_VERSION
+The version of the compiler.
+
+CMAKE_<LANG>_FLAGS
+The variables and the configuration-specific equivalents contain flags that will be added to the compile command when compiling a file of a particular language.
+
+CMake needs a way to determine which compiler to use to invoke the linker.
+This is determined by the LANGUAGE property of source files of the target, and in the case of static libraries, the LANGUAGE of the dependent libraries.
+The choice CMake makes may be overridden with the LINKER_LANGUAGE target property.
+
+==============================Toolchain Features
+CMake provides the try_compile() command and wrapper macros such as CheckCXXSourceCompiles, CheckCXXSymbolExists and CheckIncludeFile to test capability and availability of various toolchain features.
+These APIs test the toolchain in some way and cache the result so that the test does not have to be performed again the next time CMake runs.
+
+Some toolchain features have built-in handling in CMake, and do not require compile-tests.
+For example, POSITION_INDEPENDENT_CODE allows specifying that a target should be built as position-independent code, if the compiler supports that feature.
+The <LANG>_VISIBILITY_PRESET and VISIBILITY_INLINES_HIDDEN target properties add flags for hidden visibility, if supported by the compiler.
+
+==============================Cross Compiling
+If cmake(1) is invoked with the command line parameter --toolchain path/to/file or -DCMAKE_TOOLCHAIN_FILE=path/to/file, the file will be loaded early to set values for the compilers.
+The CMAKE_CROSSCOMPILING variable is set to true when CMake is cross-compiling.
+
+Note that using the CMAKE_SOURCE_DIR or CMAKE_BINARY_DIR variables inside a toolchain file is typically undesirable.
+The toolchain file is used in contexts where these variables have different values when used in different places (e.g. as part of a call to try_compile()).
+In most cases, where there is a need to evaluate paths inside a toolchain file, the more appropriate variable to use would be CMAKE_CURRENT_LIST_DIR, since it always has an unambiguous, predictable value.
+
+----------Cross Compiling for iOS, tvOS, or watchOS
+For cross-compiling to iOS, tvOS, or watchOS, the Xcode generator is recommended.
+The Unix Makefiles or Ninja generators can also be used, but they require the project to handle more areas like target CPU selection and code signing.
+
+Any of the three systems can be targeted by setting the CMAKE_SYSTEM_NAME variable to a value from the table below.
+By default, the latest Device SDK is chosen.
+As for all Apple platforms, a different SDK (e.g. a simulator) can be selected by setting the CMAKE_OSX_SYSROOT variable, although this should rarely be necessary (see Switching Between Device and Simulator below).
+A list of available SDKs can be obtained by running xcodebuild -showsdks.
+
+OS
+CMAKE_SYSTEM_NAME
+Device SDK (default)
+Simulator SDK
+
+iOS
+iOS
+iphoneos
+iphonesimulator
+
+tvOS
+tvOS
+appletvos
+appletvsimulator
+
+watchOS
+watchOS
+watchos
+watchsimulator
+
+For example, to create a CMake configuration for iOS, the following command is sufficient:
+cmake .. -GXcode -DCMAKE_SYSTEM_NAME=iOS
+
+Variable CMAKE_OSX_ARCHITECTURES can be used to set architectures for both device and simulator.
+Variable CMAKE_OSX_DEPLOYMENT_TARGET can be used to set an iOS/tvOS/watchOS deployment target.
+Next configuration will install fat 5 architectures iOS library and add the -miphoneos-version-min=9.3/-mios-simulator-version-min=9.3 flags to the compiler:
+
+cmake -S. -B_builds -GXcode \
+    -DCMAKE_SYSTEM_NAME=iOS \
+    "-DCMAKE_OSX_ARCHITECTURES=armv7;armv7s;arm64;i386;x86_64" \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET=9.3 \
+    -DCMAKE_INSTALL_PREFIX=`pwd`/_install \
+    -DCMAKE_XCODE_ATTRIBUTE_ONLY_ACTIVE_ARCH=NO \
+    -DCMAKE_IOS_INSTALL_COMBINED=YES
+
+Example:
+# CMakeLists.txt
+cmake_minimum_required(VERSION 3.14)
+project(foo)
+add_library(foo foo.cpp)
+install(TARGETS foo DESTINATION lib)
+
+Install:
+cmake --build _builds --config Release --target install
+
+Check library:
+lipo -info _install/lib/libfoo.a
+Architectures in the fat file: _install/lib/libfoo.a are: i386 armv7 armv7s x86_64 arm64
+otool -l _install/lib/libfoo.a | grep -A2 LC_VERSION_MIN_IPHONEOS
+      cmd LC_VERSION_MIN_IPHONEOS
+  cmdsize 16
+  version 9.3
+
+交叉编译器（Cross compiler）是指一个在某个系统平台下可以产生另一个系统平台的可执行文件的编译器。
+
+1.Code Signing
+Some build artifacts for the embedded Apple platforms require mandatory code signing.
+If the Xcode generator is being used and code signing is required or desired, the development team ID can be specified via the CMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM CMake variable.
+This team ID will then be included in the generated Xcode project.
+By default, CMake avoids the need for code signing during the internal configuration phase (i.e compiler ID and feature detection).
+
+2.Switching Between Device and Simulator
+When configuring for any of the embedded platforms, one can target either real devices or the simulator.
+Both have their own separate SDK, but CMake only supports specifying a single SDK for the configuration phase.
+This means the developer must select one or the other at configuration time.
+When using the Xcode generator, this is less of a limitation because Xcode still allows you to build for either a device or a simulator, even though configuration was only performed for one of the two.
+From within the Xcode IDE, builds are performed for the selected "destination" platform.
+When building from the command line, the desired sdk can be specified directly by passing a -sdk option to the underlying build tool (xcodebuild). For example:
+cmake --build ... -- -sdk iphonesimulator
+
+Commands like find_package(), find_library(), etc. store and use details only for the configured SDK/platform, so they can be problematic if wanting to switch between device and simulator builds.
+You can follow the next rules to make device + simulator configuration work:
+Use explicit -l linker flag, e.g. target_link_libraries(foo PUBLIC "-lz")
+Use explicit -framework linker flag, e.g. target_link_libraries(foo PUBLIC "-framework CoreFoundation")
+Use find_package() only for libraries installed with CMAKE_IOS_INSTALL_COMBINED feature

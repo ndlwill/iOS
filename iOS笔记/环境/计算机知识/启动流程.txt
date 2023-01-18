@@ -1,0 +1,55 @@
+1、点击APP图标后，内核创建APP进程
+
+2、将APP的Mach-O可执行文件mmap进虚拟内存，加载dyld程序，接下来调用_dyld_start函数开始程序的初始化
+
+3、重启手机/更新APP会先创建启动闭包，然后根据启动闭包进行相关的初始化
+
+4、将动态库mmap进虚拟内存，动态库数量太多则这里耗时会增加
+
+5、对动态库和APP的Mach-O可执行文件做bind&rebase，主要耗时在 Page In，影响 Page In 数量的是 objc 的元数据
+
+6、初始化 objc 的 runtime，如果有了闭包，由于闭包已经初始化了大部分，这里只会注册 sel 和装载 category
+
+7、+load 和静态初始化被调用，除了方法本身耗时，这里还会引起大量 Page In
+
+8、初始化 UIApplication，启动 Main Runloop
+
+9、执行 will/didFinishLaunch，这里主要是业务代码耗时
+
+10、Layout，viewDidLoad 和 Layoutsubviews 会在这里调用，Autolayout 太多会影响这部分时间
+
+11、Display，drawRect 会调用
+
+12、Prepare，图片解码发生在这一步
+
+13、Commit，首帧渲染数据打包发给 RenderServer，启动结束
+
+启动速度优化思路:
+1、控制APP的可执行文件大小
+
+2、控制动态库数量
+
+3、控制Page In 次数
+
+4、控制首帧渲染前业务逻辑相关耗时
+
+5、控制首帧视图渲染耗时,即上面流程中的步骤10-12
+
+iOS13之后系统采用dyld3加载器，才有启动闭包的机制。之前使用的是dyld2，无此机制
+
+dyld2 和 dyld3 的主要区别就是没有启动闭包，就导致每次启动都要：
+解析动态库的依赖关系
+解析 LINKEDIT，找到 bind & rebase 的指针地址，找到 bind 符号的地址
+注册 objc 的 Class/Method 等元数据，对大型工程来说，这部分耗时会很长
+
+==============================如何定义启动呢？
+起点：进程创建的时间
+终点：第一个CA::Transaction::commit()
+CATransaction 是 Core Animation 提供的一种事务机制，把一组 UI 上的修改打包，一起发给 Render Server 渲染。
+
+==============================
+标准的三个 Segment 是 TEXT，DATA，LINKEDIT
+
+TEXT，代码段，只读可执行，存储函数的二进制代码(__text)，常量字符串(__cstring)，Objective C 的类/方法名等信息
+DATA，数据段，读写，存储 Objective C 的字符串(__cfstring)，以及运行时的元数据：class/protocol/method…
+LINKEDIT，启动 App 需要的信息，如 bind & rebase 的地址，代码签名，符号表…

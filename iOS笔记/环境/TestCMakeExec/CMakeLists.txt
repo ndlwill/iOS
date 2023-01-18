@@ -5,12 +5,22 @@ cmake_minimum_required(VERSION 3.10)
 project(TestExec)
 
 message("==========Debug Start==========")
-message("MACOSX_DEPLOYMENT_TARGET =${MACOSX_DEPLOYMENT_TARGET}")
+message("CMAKE_CURRENT_BINARY_DIR = ${CMAKE_CURRENT_BINARY_DIR}")
+message("CMAKE_SOURCE_DIR = ${CMAKE_SOURCE_DIR}")
+message("CMAKE_BINARY_DIR = ${CMAKE_BINARY_DIR}")
+message("CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT = ${CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT}")
+
+
+
+message("MACOSX_DEPLOYMENT_TARGET = ${MACOSX_DEPLOYMENT_TARGET}")
+message("CMAKE_C_FLAGS = ${CMAKE_C_FLAGS}")
 message("==========Debug End==========")
 
 message("==========TestExec CMakeLists start==========")
 # The CMake variable CMAKE_INSTALL_PREFIX is used to determine the root of where the files will be installed.
 message("CMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}")
+message("CMAKE_SYSTEM_PREFIX_PATH =${CMAKE_SYSTEM_PREFIX_PATH}")
+message("CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT = ${CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT}")
 
 message(">>> PROJECT_NAME=${PROJECT_NAME} CMAKE_PROJECT_NAME=${CMAKE_PROJECT_NAME}")
 

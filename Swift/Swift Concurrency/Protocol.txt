@@ -1,0 +1,604 @@
+https://juejin.cn/post/7115050654170628127
+
+https://www.hackingwithswift.com/plus/advanced-swift/how-to-use-phantom-types-in-swift
+
+==============================MarkdownBuilder.swift
+import Foundation
+
+public protocol MarkdownBuilder: Equatable, Identifiable {
+  var style: String { get }
+  func build(from text: String) -> String
+}
+
+extension MarkdownBuilder {
+  public var id: String { style }
+}
+
+fileprivate struct RegularBuilder: MarkdownBuilder {
+  public var style: String { "Regular" }
+  
+  public func build(from text: String) -> String { text }
+}
+
+fileprivate struct ItalicsBuilder: MarkdownBuilder {
+  public var style: String { "*Italics*" }
+  
+  public func build(from text: String) -> String { "*\(text)*" }
+}
+
+fileprivate struct BoldBuilder: MarkdownBuilder {
+  public var style: String { "**Bold**" }
+  
+  public func build(from text: String) -> String { "**\(text)**" }
+}
+
+fileprivate struct StrikethroughBuilder: MarkdownBuilder {
+  public var style: String { "~Strikethrough~" }
+  
+  public func build(from text: String) -> String { "~\(text)~" }
+}
+
+fileprivate struct LinkBuilder: MarkdownBuilder {
+  public var style: String { "[Link]" }
+  
+  public func build(from text: String) -> String { "[\(text)](https://github.com)"}
+}
+
+public func regularBuilder() -> some MarkdownBuilder {
+  RegularBuilder()
+}
+
+public func italicsBuilder() -> some MarkdownBuilder {
+  ItalicsBuilder()
+}
+
+public func boldBuilder() -> some MarkdownBuilder {
+  BoldBuilder()
+}
+
+public func strikethroughBuilder() -> some MarkdownBuilder {
+  StrikethroughBuilder()
+}
+
+public func linkBuilder() -> some MarkdownBuilder {
+  LinkBuilder()
+}
+
+==============================AnyBuilder.swift
+import Foundation
+
+public struct AnyBuilder: MarkdownBuilder {
+  
+  public let style: String
+  public var id: String { "AnyBuilder-\(style)" }
+  
+  private let wrappedApply: (String) -> String
+    
+  public init<B: MarkdownBuilder>(_ builder: B) {
+    style = builder.style
+    wrappedApply = builder.build(from:)
+  }
+  
+  public func build(from text: String) -> String {
+    wrappedApply(text)
+  }
+  
+  public static func == (lhs: AnyBuilder, rhs: AnyBuilder) -> Bool {
+    lhs.id == rhs.id
+  }
+}
+
+public extension MarkdownBuilder {
+  func asAnyBuilder() -> AnyBuilder {
+    AnyBuilder(self)
+  }
+}
+
+
+
+
+Swift 是类型安全的语言 (type-safe language)
+
+public protocol MarkdownBuilder {
+  var style: String { get }
+  func build(from text: String) -> String
+}
+var builder: MarkdownBuilder? // 没问题
+
+public protocol MarkdownBuilder: Equatable, Identifiable {
+  var style: String { get }
+  func build(from text: String) -> String
+}
+
+var builder: MarkdownBuilder// 由于有判等需求，MarkdownBuilder 继承了 Equatable 协议。我们直接将 MarkdownBuilder 作为类型使用,会报错
+Use of protocol 'MarkdownBuilder' as a type must be written 'any MarkdownBuilder'
+### var builder: any MarkdownBuilder
+
+public protocol Equatable {
+  static func == (lhs: Self, rhs: Self) -> Bool
+}
+Equatable 有 Self requirements：要求 == 操作符的两个参数 lhs 与 rhs 的类型必须相同 (注意是准确的类型，而不是说只要遵守 Equatable 即可)。
+
+允许有 Self requirements / Associated Type 的 Protocol 作为类型使用，就会出现以下情况，而编译器却无能为力:
+let lhs: Equatable = 1           // Int
+let rsh: Equatable = "1"         // String
+lhs == rsh
+
+对于 Associated Type 也是同样的道理:
+protocol PhoneNumberVerifier {
+  associatedtype Phone
+  func verify(_ model: Phone) -> Bool
+}
+
+struct IntPhoneNumberVerifier: PhoneNumberVerifier {
+  func verify(_ model: Int) -> Bool {
+    // do some verify
+  }
+}
+
+struct StrPhoneNumberVerifier: PhoneNumberVerifier {
+  func verify(_ model: String) -> Bool {
+    // do some verify
+  }
+}
+
+let verifiers: [PhoneNumberVerifier] = [...]
+verifiers.forEach { verifier in
+  verifier.verify(???) // 这里的参数怎么传？Int? String? 编译器无法保证类型安全
+}
+Protocol 是运行时特性，而其附带的 Self requirements / Associated Type 却需要在编译时保证。
+Generics 是编译期特性，在编译时就能明确泛型的具体类型，故有 Self requirements/Associated Type 的 Protocol 只能作为其约束使用。
+
+==============================Type Erasure(类型擦除)
+struct MarkdownView: View 是主界面,需要在其中存储所有支持的 Markdown Builder，以及当前选中的 Builder。
+struct MarkdownView: View {
+  private let allBuilders: [MarkdownBuilder]
+  private var selectedBuilders: [MarkdownBuilder]
+}
+// 上面这么写是有问题的
+
+Type Erasure 是一项通用技术，并非 Swift 特有，核心思想是在编译期擦除 (转换) 原有类型，使其对业务方不可见。
+有多种方式可以实现 Type Erasure，如：Boxing、Closures 等。
+
+我们通过 Boxing 实现 Type Erasure，简单讲就是对原有类型做一次封装 (Wrapper)
+public struct AnyBuilder: MarkdownBuilder {}
+
+几个关键点:
+AnyBuilder 实现了 MarkdownBuilder协议，(一般情况下 Wrapper 都需要实现待封装的协议)
+其 init 是泛型方法，并将参数传递过来的 style、build(from:) 存储下来
+在其自身的build(from:)方法中直接调用存储的 wrappedApply，其本身相当于一个转发代理。
+
+同时，扩展 MarkdownBulider:
+public extension MarkdownBuilder {
+  func asAnyBuilder() -> AnyBuilder {
+    AnyBuilder(self)
+  }
+}
+
+struct MarkdownView: View {
+  private let allBuilders: [AnyBuilder]  
+  private var selectedBuilders: [AnyBuilder]
+}
+
+由于有上面的 MarkdownBuilder 扩展，可以通过 2 种方式生成 AnyBuilder 实例:
+BoldBuilder().asAnyBuilder()
+AnyBuilder(BoldBuilder())
+
+在 Swift 标准库中有大量通过 Boxing 实现的 Type Erasure ，如： AnySequence、AnyHashable、AnyCancellable等等。
+以 Any 为前缀的几乎都是。
+
+==============================Opaque Types
+如果，我们准备将 MarkdownEditor 做成一个独立的三方库，并且除了 MarkdownBuilder 协议，不打算曝露任何其他的实现细节以增加其灵活性。
+即，ItalicsBuilder、BoldBuilder、StrikethroughBuilder 以及 LinkBuilder 都是库私有的。
+
+public func italicsBuilder() -> MarkdownBuilder {
+  ItalicsBuilder()
+}
+
+public func boldBuilder() -> MarkdownBuilder {
+  BoldBuilder()
+}
+上面的会报错
+
+需要用到Opaque Types
+Opaque Types 就是让函数/方法的返回值是协议，而不是具体的类型。
+A function or method with an opaque return type hides its return value’s type information. 
+Instead of providing a concrete type as the function’s return type, 
+the return value is described in terms of the protocols it supports.
+
+
+几个关键点:
+关键字 some，需在返回协议类型前添加 some 关键词，如： public func regularBuilder() -> some MarkdownBuilder 而不是 public func regularBuilder() -> MarkdownBuilder
+Opaque Types 与直接返回协议类型的最大区别是:
+Opaque Types 只是对使用方(人)隐藏了具体类型细节，编译器是知道具体类型的
+而直接返回协议类型，则是运行时行为，编译器是无法知道的
+编译器是明确知道 italicsBuilder 方法的返回值类型是 ItalicsBuilder，但方法调用方却只知道返回值遵守了 MarkdownBuilder 协议。从而也就达到了隐藏实现细节的目的
+public func italicsBuilder() -> some MarkdownBuilder {
+  ItalicsBuilder()
+}
+正是由于编译器需要明确确定 Opaque Types 背后的真实类型，故不能在 Opaque Types 方法中返回不同的类型值
+下面这样是不允许的 (Opaque Types 属于编译期特性)
+public func italicsBuilder() -> some MarkdownBuilder {
+  if ... {
+    return ItalicsBuilder()
+  }
+  else {
+    return BoldBuilder()
+  }
+}
+在 SwiftUI 中，大量使用到 Opaque Types。甚至可以说 Opaque Types 是为 SwiftUI 而生的。
+
+==============================Phantom Types
+Phantom Types 也非 Swift 特有的，属于一种通用编码技巧
+https://www.hackingwithswift.com/plus/advanced-swift/how-to-use-phantom-types-in-swift
+
+Phantom Types 没有严格的定义，一般表述是：出现在泛型参数中，但没有被真正使用。
+Role，它只出现在泛型参数中，在 Employee 实现中并未使用:
+struct Employee<Role>: Equatable {
+    var name: String
+}
+
+用于对类型做进一步的强化。
+Employee 可能有不同的角色，如:Sales、Programmer 等，我们将其定义为空 enum:
+enum Sales { }
+enum Programmer { }
+
+由于 Employee 实现了 Equatable，可以在两个实例间进行判等操作。
+但判等操作明显只有在同一种角色间进行才有意义：
+let john = Employee<Sales>.init(name: "John")
+let sea = Employee<Programmer>.init(name: "Sea")
+john == sea
+
+正是由于 Phantom Types 在起作用，上述代码中的判等操作编译无法通过
+Cannot convert value of type 'Employee' to expected argument type 'Employee'
+
+将 Phantom Types 定义成空 enum，使其无法被实例化，从而真正满足 Phantom Types 语义。
+由于 Swift 没有 NameSpacing 这样的关键字，故通常用空 enum 来实现类似的效果，如 Apple Combine Framework 中的 Publishers:
+public enum Publishers {}
+
+然后在 extension 中添加具体 Publisher 类型的定义，如:
+extension Publishers {
+  struct First<Upstream>: Publisher where Upstream: Publisher {
+    ...
+  }
+}
+可以通过 Publishers.First 的方式引用具体的 Publisher。
+Using the above kind of namespacing can be a great way to add clear semantics to a group of types without having to manually attach a given prefix or suffix to each type’s name.
+So while the above First type could instead have been named FirstPublisher and placed within the global scope, 
+the current implementation makes it publicly available as Publishers.First — which both reads really nicely, 
+and also gives us a hint that First is just one of many publishers available within the Publishers namespace.
+It also lets us type Publishers. within Xcode to see a list of all available publisher variations as autocomplete suggestions.
+
+Protocols:
+协议本身具有隐藏实现细节以及运行时实例化的特性，故编译器、使用方无法知道其背后对应的真实类型；
+但，作为库的开发者 (代码是他写的)，明确知道 Protocol 背后可能对应的所有真实类型。
+
+Opaque Types:
+同 Protocols，库的开发者肯定是知道的；
+由于 Opaque Types 限制只能对应一种真实类型，并在编译期需明确，故编译器是知道的；
+对于使用方来说，他们看到的还是隐藏了细节的 Protocol。
+
+Generics:
+泛型是将类型决定权让给使用方的，故库的开发者是不知道真实类型的，而使用方知道；
+泛型属于编译期行为，故编译器能明确知道泛型对于的真实类型。
+
+Type Erasure:
+类型擦除属于使用方行为，用于规避编译错误等，故只有使用方知道。
+
+==============================Existential Types
+https://juejin.cn/post/7061891716931911687
+
+直接将协议作为类型使用时 (Existential Types),对性能有较大影响
+
+对于没有 Self requirements 和关联类型的协议，可以单独作为类型使用，并称之为『 Existential Type 』
+
+protocol Animal {
+  func eat()
+}
+
+struct Farm {
+  func genericsFeed<T>(_ animal: T) where T: Animal {
+    animal.eat()
+  }
+
+  func existentialFeed(_ animal: Animal) {
+    animal.eat()
+  }
+}
+
+从『 功能使用 』角度看,genericsFeed、existentialFeed没有任何区别，都能达到泛型效果
+从『 代码实现 』角度看，显然 existentialFeed 更简洁明了。
+这显然不是好现象，毕竟『 Existential Type 』有性能问题。
+
+Swift 5.6 引入了 any 关键字:
+https://github.com/apple/swift-evolution/blob/main/proposals/0335-existential-any.md
+any 本身没有任何功能，只是一个标记
+当把协议作类型用时，在其前添加 any 来显式表明开发人员要使用『 Existential Type 』的意图
+目前 any 还不是强制的，但从 Swift 6.0 开始将强制使用 any，否则编译报错。因此，尽早用上 any，以免后期升级成本过高。
+
+struct Farm {
+  var animals: [any Animal]
+
+  func existentialFeed(_ animal: any Animal) {
+    animal.eat()
+  }
+
+  func firstAnimal() -> (any Animal)? {
+    animals.first
+  }
+}
+
+在协议用作类型的地方加上 any 即可。
+相当于显式声明这是个『 Existential Type 』
+
+有没有办法做到：既有泛型的性能又有『 Existential Types 』的简洁？
+答案是肯定的
+
+==============================Opaque Parameter
+https://github.com/apple/swift-evolution/blob/main/proposals/0244-opaque-result-types.md
+Swift 5.1 引入了 some 关键字，用于 Opaque Result Type。
+Swift 5.7 对 some 的功能做了扩展，可用于声明方法参数，即：Opaque Parameter。
+
+struct Farm {  
+  func genericsFeed<T>(_ animal: T) where T: Animal {
+    animal.eat()
+  }
+
+  // some Animal 可以理解为一个匿名的具体类型
+  // 并且该类型实现了 Animal 协议
+  func someFeed(_ animal: some Animal) {
+    animal.eat()
+  }
+}
+someFeed 在性能上与 genericsFeed 无任何差别，但更简洁、可读性更好。
+Opaque Parameter 可以理解为泛型的简化版本。
+
+关于 Opaque Parameter 有 2 点需要注意:
+1.在代替泛型时，仅适用于泛型类型只使用一次的场景，因为 Opaque Parameter 是匿名的，无法复用
+// t1 与 t2 具有相同的类型
+//
+func isEqualGenerics<T>(t1: T, t2: T) -> Bool where T: Equatable {
+  t1 == t2
+}
+
+// 并不要求 t1、t2 的类型完全相同
+// 只要它们都实现了 Equatable 即可
+//
+func isEqualSome(t1: some Equatable, t2: some Equatable) -> Bool {
+  t1 == t2
+}
+
+如上，isEqualGenerics 中的泛型类型 T 使用了2 次，分别用于定义t1、t2
+因此，isEqualGenerics 与 isEqualSome 并不等价，并且 isEqualSome 会报错:
+Cannot convert value of type '' (generic parameter of global function 'isEqualSome(t1:t2:)') to expected argument type '' (generic parameter of global function 'isEqualSome(t1:t2:)')
+
+2. 与Opaque Result Type 不同，可以使用不同类型的实例调用具有 Opaque Parameter 的方法
+struct Cat: Animal {
+  func eat() {
+    print("Eat fish!")
+  }
+}
+
+struct Panda: Animal {
+  func eat() {
+    print("Eat bamboo!")
+  }
+}
+
+struct Farm {
+  func feedAnimals() {
+    let cat = Cat()
+    let panda = Panda()
+
+    someFeed(cat)      // ✅
+    someFeed(panda)    // ✅
+  }
+
+  func someFeed(_ animal: some Animal) {
+    animal.eat()
+  }
+}
+
+用 cat、panda 都可以调用 someFeed 方法。
+因为，someFeed 本质上是一个泛型方法。
+
+==============================any VS some
+通过 some 定义的变量是『 Opqaue type 』
+通过 any 定义的变量是 『 Existential type 』
+
+『 Opqaue type 』是『 匿名 』的、但『真实存在 』的类型，如 someCat 其背后的类型就是 Cat，在方法派发上有较好的性能
+正是因为『 Opqaue type 』是『 匿名 』的，像下面这些写法都是不允许的
+
+var cat: some Animal = Cat()    // ✅
+cat = Cat()   // ❌  Cannot assign value of type 'Cat' to type 'some Animal'
+
+var copyCat: some Animal = cat    // ✅
+copyCat = cat   // ❌  Cannot assign value of type 'some Animal' (type of 'cat') to type 'some Animal' (type of 'copyCat')
+
+『 Opqaue type 』类型的变量一旦初始化完成，就不能修改，因此像下面这种写法也是不允许的:
+var animals: [some Animal] = [
+  Cat()   // ✅
+]
+
+var cat1: some Animal = Cat()
+animals.append(cat1)   // ❌  No exact matches in call to instance method 'append'
+
+
+『 Existential type 』是二次封装后的间接类型，在变量赋值时有一个装箱 (Boxing) 的过程，方法派发一律是动态派发，故性能较差。
+有失必有得，其灵活性比较好:
+var cat: any Animal = Cat()
+cat = Cat()   // ✅
+
+var copyCat: any Animal = cat    // ✅
+copyCat = cat   // ✅
+
+var animals: [any Animal] = [
+  Cat()   // ✅
+]
+
+var cat1: any Animal = Cat()
+animals.append(cat1)   // ✅
+
+// ❌  Type of expression is ambiguous without more context
+//
+let someAnimals: [some Animal] = [
+  Cat(),
+  Panda()
+]
+
+// ✅
+//
+let anyAnimals: [any Animal] = [
+  Cat(),
+  Panda()
+]
+
+Write some by default.
+只有当 some 不能满足需要时 (也就是当你遇到无法解决的编译错误时)，才考虑用 any。
+这是 Apple 的建议。
+通过 Opaque Parameter，可以兼得泛型的性能和『 Existential type 』的简洁
+
+==============================Unlock existentials for all protocols
+从 Swift 5.7 开始，不再会有类似下面的编译错误:
+Protocol 'Equatable' can only be used as a generic constraint because it has Self or associated type requirements.
+也就是说，所有的协议都可以作为类型用(Unlock all protocols)
+
+Apple 解锁所有 Protocols 的出发点是:
+协议中除了有跟 Self requirements、Associated Type 相关的接口，还有不相关的接口。
+而那些不相关的接口应该可以被正常使用
+
+protocol Animal {
+  associatedtype FeedType
+
+  func feed(_ feed: FeedType)
+  func drink()
+}
+
+struct Farm {
+  // 注意，对于含有 `Self requirements`、`Associated Type` 的协议，必须在前面加上 any
+  // 否则报错：Use of protocol 'Animal' as a type must be written 'any Animal'
+  //
+  func drinkAnimal(_ animal: any Animal) {
+    animal.drink()
+  }
+}
+虽然 Animal 含有关联类型 (FeedType)，但其中的 drink 接口与关联类型无关。
+因此，drink 理应可以正常调用。
+Swift 5.7 就是这么做的，故上面的代码在 Swift 5.7 上可以正常编译 ✅ 。
+当然了，与 Self requirements、 Associated Type 有关的接口还是不能调用，如 func feed(_ feed: FeedType)
+struct Farm {
+  func drinkAnimal(_ animal: any Animal) {
+    // ✅
+    //
+    animal.drink()
+  }
+  
+  func feedAnimal(_ animal: any Animal) {
+    // ❌ Member 'feed' cannot be used on value of type 'any Animal'; consider using a generic constraint instead
+    //
+    animal.feed(???)
+  }
+}
+
+==============================Primary Associated Types
+struct Farm { 
+  func drinkAnimals(_ animals: any Sequence) {
+    // ❌  Value of type 'Any' has no member 'drink'
+    //
+    animals.forEach { $0.drink() }
+  }
+}
+
+我们期望 drinkAnimals 能批量的对 Animals 调用 drink方法。
+因为集合 animals 的元素类型未知，编译器看到的都是 Any。
+
+传统地，得像下面这样改造:
+struct Farm {
+  func drinkAnimals<T: Sequence>(_ animals: T) where T.Element: Animal {
+    animals.forEach { $0.drink() }
+  }
+}
+又回到泛型的老路上了
+归根结底都是关联类型惹的祸
+就轮到 Primary Associated Types 登场了
+
+这是在 Swift <= 5.6 版本上，Sequence 的定义：
+public protocol Sequence {
+  /// A type representing the sequence's elements.
+  associatedtype Element where Self.Element == Self.Iterator.Element
+  ...
+}
+
+在 Swift 5.7 上的定义：
+public protocol Sequence<Element> {
+  /// A type representing the sequence's elements.
+  associatedtype Element where Self.Element == Self.Iterator.Element
+  ...
+}
+
+因此，可以对 drinkAnimals 作如下改造:
+struct Farm {
+  // 指定 animals 中的元素需实现 Animal 协议
+  //
+  func drinkAnimals(_ animals: any Sequence<Animal>) {
+    animals.forEach { $0.drink() }  // ✅
+  }
+}
+
+Primary Associated Types
+可以通过 『 泛型约束 』的方式将协议中的关联类型曝露出来
+
+// Element 是 Sequence 中定义的关联类型
+public protocol Sequence<Element>
+
+在使用时可以指定对关联类型的约束
+var animals: any Sequence<Animal>
+var animals: some Sequence<Animal>
+
+『 Primary Associated Types 』与『 泛型约束 』不是一回事，在使用时可以不指定，如在 Swift 5.7 上下面的写法也是合法的
+var animals: any Sequence    // ✅
+
+还可以在 extension 上使用 Primary Associated Types ，更简洁了
+extension Sequence<String> { }
+// Equivalent to:
+extension Sequence where Element == String { }
+
+
+// 将关联类型 FeedType 设定为 Primary Associated Types
+//
+protocol Animal<FeedType> {
+  associatedtype FeedType
+
+  func feed(_ feed: FeedType)
+}
+
+struct FeedTypeIMP {}
+
+struct Farm {
+  // 指定关联类型为 FeedTypeIMP
+  //
+  func feedAnimal(_ animal: any Animal<FeedTypeIMP>) {
+    animal.feed(FeedTypeIMP())
+  }
+}
+
+指定关联类型约束时，可以是协议
+var animals: any Sequence<Animal>  // Animal 是协议
+也可以是具体类型
+var animal: any Animal<FeedTypeIMP>  // FeedTypeIMP 是 struct
+
+==============================Structural opaque result types
+func f0() -> [some P] { /* ... */ }           // ✅ on Swift 5.7
+
+func f1() -> (some P, some Q) { /* ... */ }   // ✅ on Swift 5.7
+
+func f2() -> () -> some P { /* ... */ }       // ✅ on Swift 5.7
+
+func f3() -> S<some P> { /* ... */ }          // ✅ on Swift 5.7
+
+==============================
+Swift 5.6 引入 any 用于显式声明『 Existential type 』
+Swift 5.7 将 some 扩展到方法参数，从而兼得泛型的性能和『 Existential type 』的简洁
+Swift 5.7 解锁了所有协议均可作为类型
+关联类型在作用上有不少障碍，Swift 5.7 引入了『 Primary Associated Types 』，使用方可以更方便地设定关联类型的信息；
+Swift 5.7 对 Opaque Result Types 支持的样式进行了扩展。

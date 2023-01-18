@@ -1,0 +1,537 @@
+https://www.avanderlee.com/concurrency/tasks/
+
+iOS13.0
+
+Task 则能提供「并发执行」的能力
+
+Task几个关键点:
+并发环境中执行任务的基本单元 (「代码块」)
+所有的异步函数 (async) 都运行在 Task 内
+Task 属于线程之上的更高级抽象，由系统负责在合适的线程上调度执行 Task。
+
+Task 有 3 种状态:
+1.暂停 (suspended) — 有 2 种情况会导致 Task 处于暂停状态
+（1）Task 已准备就绪等待系统分配执行线程
+（2）等待外部事件，如 Task 遇到 suspension point（暂停/悬挂点） 后可能会进入暂停状态并等待外部事件来唤醒
+异步函数 (A) 调用另一个异步函数 (B)时，调用方会暂停，并不意味着整个 Task 会暂停。
+从函数 A 的视角看，其会暂停等待函数 B 返回
+但从 Task 视角看，其不一定会暂停，可能会继续在其上执行被调用的函数 B
+当然，Task 也可能会被暂停，如果被调用的函数要在不同的并发上下文中执行
+2.运行中 (running) — Task 当前正在某个线程上运行，直至完成，或遇到 suspension point 而进入暂停状态；
+3.已完成 (completed) — Task 所有工作都已完成。
+
+Task 是线程的高级抽象，用于执行一项任务。
+
+Task 提供了一些高级抽象能力:
+Task 可以携带调度信息，如：任务优先级
+Task 作为正在执行的任务的句柄 (Handle)，可以用于 cancel 等
+Task 可以携带用户提供的 task-local data。
+
+Structured concurrency: 结构化并发
+说白了，就是在 Task 间可以有父子关系，并形成一颗「Task tree」
+
+通过 Task 间的父子关系可以更好地对一组 Task 进行管理:
+子 Task 的生命周期不会超出父 Task 的范围 (这点非常重要)
+cancel 更便捷 (cancel 某个 Task 时，其所有子 Task 也会被 cancel)
+错误处理更方便了，未处理的 error 会自动从子 Task 传播到父 Task
+子 Task 默认会继承父 Task 的优先级
+父子 Task 间会共享 Task-local data
+父 Task 可以很容易收集子 Task 的结果
+
+实现结构化并发有 2 种方式:
+async let
+Task group
+
+1  // given: 
+2  //   func chopVegetables() async throws -> [Vegetables]
+3  //   func marinateMeat() async -> Meat
+4  //   func preheatOven(temperature: Int) async -> Oven
+5  //
+6  func makeDinner() async throws -> Meal {
+7    async let veggies = chopVegetables()
+8    async let meat = marinateMeat()
+9    async let oven = preheatOven(temperature: 350)
+10
+11   let dish = Dish(ingredients: await [try veggies, meat])
+12   return try await oven.cook(dish, duration: .hours(3))
+13 }
+对异步函数的调用不用 await，而是在赋值表达式的最左边加上 async let.称之为 async let binding
+在需要使用 async let 表达式的结果时要用 await，如结果可能会抛出错误，还需要处理错误
+async let 只能出现在异步上下文中 (Task closure、async function 以及 async closure)。
+https://github.com/apple/swift-evolution/blob/main/proposals/0317-async-let.md
+
+其背后的实现机制是:
+系统为每个 async let 创建一个并发的子任务
+子任务创建后立马开始执行
+子任务会继续父任务的优先级以及 task-local datas
+如上例，会创建 3 个并发子任务分别执行 chopVegetables、marinateMeat 以及 preheatOven
+
+Implicit async let awaiting
+正常流程下，对 async let 需要执行 await 操作，如果不执行 await 会怎样呢？
+会导致子任务溢出吗？(超出父任务的生命周期？)
+答案是否定的。
+1  func makeDinner() async throws -> Meal {
+2    async let veggies = chopVegetables()
+3    async let meat = marinateMeat()
+4    async let oven = preheatOven(temperature: 350)
+5  }
+如上代码，系统会添加隐式 cancel、await
+1  func makeDinner() async throws -> Meal {
+2    async let veggies = chopVegetables()
+3    async let meat = marinateMeat()
+4    async let oven = preheatOven(temperature: 350)
+5    // implicitly: cancel veggies
+6    // implicitly: cancel meat
+7    // implicitly: cancel oven
+8    // implicitly: await veggies
+9    // implicitly: await meat
+10   // implicitly: await oven
+11 }
+
+eg:
+1   func noAwaitAsynclet() async {
+2     print("begin noAwaitAsynclet")
+3     try? await Task.sleep(nanoseconds: 1_000_000_000)
+4     Task.isCancelled ? print("noAwaitAsynclet is cancelled") : print("end noAwaitAsynclet")
+5   }
+6  
+7   func testAsynclet() async {
+8     let parentTask =
+9     Task {
+10      async let test = noAwaitAsynclet()
+11    }
+12    
+13    await parentTask.value
+14    print("parentTask finished!")
+15  }
+
+调用 testAsynclet 方法的输出:
+begin noAwaitAsynclet
+noAwaitAsynclet is cancelled
+parentTask finished!
+
+在结构化并发中 cancel 操作会从父任务传递给所有子任务
+
+
+1   func noAwaitAsynclet() async {
+2     print("begin noAwaitAsynclet")
+3     try? await Task.sleep(nanoseconds: 1_000_000_000)
+4     Task.isCancelled ? print("noAwaitAsynclet is cancelled") : print("end noAwaitAsynclet")
+5   }
+6  
+7   func testAsynclet() async {
+8     let parentTask =
+9     Task {
+10      async let test = noAwaitAsynclet()
+11      await test
+12    }
+13    
+14    parentTask.cancel()
+15    await parentTask.value
+16    print("parentTask finished!")
+17  }
+其输出：
+begin noAwaitAsynclet
+noAwaitAsynclet is cancelled
+parentTask finished!
+对父任务的 cancel 操作传递到了 async let 子任务。
+
+
+Task group:
+func makeDinner() async throws -> Meal {
+  // Prepare some variables to receive results from our concurrent child tasks
+  var veggies: [Vegetable]?
+  var meat: Meat?
+  var oven: Oven?
+
+  enum CookingStep { 
+    case veggies([Vegetable])
+    case meat(Meat)
+    case oven(Oven)
+  }
+
+  // Create a task group to scope the lifetime of our three child tasks
+  try await withThrowingTaskGroup(of: CookingStep.self) { group in
+    group.addTask {
+      try await .veggies(chopVegetables())
+    }
+    group.addTask {
+      await .meat(marinateMeat())
+    }
+    group.addTask {
+      try await .oven(preheatOven(temperature: 350))
+    }
+
+    for try await finishedStep in group {
+      switch finishedStep {
+        case .veggies(let v): veggies = v
+        case .meat(let m): meat = m
+        case .oven(let o): oven = o
+      }
+    }
+  }
+
+  let dish = Dish(ingredients: [veggies!, meat!])
+  return try await oven!.cook(dish, duration: .hours(3))
+}
+
+几个关键点:
+Task group 没有公开的 init 方法，只能通过 withTaskGroup 或 withThrowingTaskGroup 方法来获得 Task group 实例
+通过 Task group 的 addTask 方法可以创建并发执行的子任务，且子任务的数量可以是动态的
+同一 group 中所有子任务的结果类型必须相同,上例是通过 enum (CookingStep)封装关联值的方式使得所有子任务结果类型相同的。
+子任务的生命周期不会超出 group 生命周期,因此当 group(withTaskGroup、withThrowingTaskGroup) 方法返回时就意味着所有子任务都已完成或 cancel
+通过 for await ... in 可以遍历所有子任务的运行结果,需要注意的是遍历的顺序是子任务完成的顺序，而非子任务添加的顺序
+当 group 内部抛出错误时 (如某个子任务抛出异常)，所有未完成的子任务都将被 cancel
+
+如果在 group 内不显式地等待所有子任务完成，会如何？
+try await withThrowingTaskGroup(of: CookingStep.self) { group in
+  group.addTask {
+    try await .veggies(chopVegetables())
+  }
+  group.addTask {
+    await .meat(marinateMeat())
+  }
+  group.addTask {
+    try await .oven(preheatOven(temperature: 350))
+  }
+}
+group 还是会隐式的等待所有子任务完成才返回
+注意此处与 async let 的区别，如上文所述，async let 子任务会先被 cancel，再 await。
+
+async let vs Task group:
+async let 与 Task group 同属结构化并发
+基本原则：能用 async let 就不用 Task group
+
+async let 更轻量、更直观
+Task group 要求所有子任务的计算结果类型相同，往往需要多一层封装，如 makeDinner 中的 CookingStep枚举。同时，Task group 接口是基于 closure 的，也进一步导致代码变复杂。
+
+有什么是 Task group 可以做，而 async let 无法做到的？主要有 2 点:
+1.async let 创建子任务的数量是静态的，而 Task group 可以动态创建子任务
+loadImages 方法为每个 url 创建一个下载图片的子任务，其数量由参数 urls 动态决定
+func loadImages(urls: [String]) async -> [Image] {
+  await withTaskGroup(of: Image.self, body: { group in
+    for url in urls {
+      group.addTask {
+        return await downloadImage(url: url)
+      }
+    }
+
+    var images: [Image] = []
+    for await image in group {
+      images.append(image)
+    }
+
+    return images
+  })
+}
+
+2.async let 等待子任务完成的顺序是固定，无法做到按子任务完成顺序取结果。
+如下，无论 3 个子任务哪个先完成，我们一定是先获得 veggiesValue，再获得 meatValue，最后获取 ovenValue
+1  func makeDinner() async throws -> Meal {
+2    async let veggies = chopVegetables()
+3    async let meat = marinateMeat()
+4    async let oven = preheatOven(temperature: 350)
+5    let veggiesValue = await veggies
+6    let meatValue = await meat
+7    let ovenValue = await oven
+8 }
+而 Task group 是以子任务完成的顺序拿到结果的。
+func fastestResponse() async -> Int {
+  await withTaskGroup(of: Int.self, body: { group in
+    group.addTask {
+      let _ = await requestFromServer1()
+      return 1
+    }
+
+    group.addTask {
+      let _ = await requestFromServer2()
+      return 2
+    }
+
+    return await group.next()!
+  })
+}
+有两台布署了相同服务的服务器，需要确定当前哪台服务器响应速度更快。
+通过 Task group 按子任务完成顺序返回的特性很容易就能实现。
+
+###
+子任务的生命周期不会超出父任务。
+###
+其使得我们可以很容易做到:
+1.控制一组任务，如 cancel，只要对父任务执行 cancel，其中的所有子任务都会被 cancel
+如果子任务的生命周期比父任务长，就很难做到这一点。因为在需要执行 cancel 时，父任务可能已经结束了。
+2.等待一组任务完成，只要等待父任务完成即可，因为父任务完成就意味着所有子任务都已完成
+3.配合 async/await 可以很容易地实现多组任务间的依赖
+
+----------Unstructured tasks:
+非结构化任务，简单讲，就是任务间没有父子关系，不存在 「 Task tree 」
+结构化并发最重要的特性就是子任务的生命周期不会超出父任务
+而非结构化任务就不存在这个约束
+创建非结构化任务有 2 种方式:
+Task.init
+Task.detached
+
+Task.init:
+@frozen public struct Task<Success, Failure> : Sendable where Success : Sendable, Failure : Error {}
+
+extension Task where Failure == Error {
+  public init(priority: TaskPriority? = nil, operation: @escaping @Sendable () async throws -> Success)
+}
+let dinnerHandle = Task {
+  try await makeDinner()
+}
+
+await dinnerHandle.value
+dinnerHandle.cancel()
+Task.init 返回一个 task 句柄 (dinnerHandle)，通过该句柄可以获取任务执行的结果，也可以取消任务
+
+Context inheritance:
+通过 Task.init 创建的任务会从当前上下文中继承重要的元信息，如:
+任务优先级
+task-local data
+actor isolation
+
+如果 Task.init 是在异步上下文中调用的 (意味着调用链上存在 Task):
+新创建的任务会继承当前任务的优先级
+通过拷贝的方式继承当前任务的所有 task-local data
+如果是在 actor 方法中调用 Task.init 的，则 Task closure 将成为 actor-isolated
+从上面 Task.init 定义可以知道，Task closure 是用 Sendable 修饰的
+Sendable closure 是不能捕获 actor-isolated 属性，否则报错: Actor-isolated property 'x' can not be referenced from a Sendable closure。
+
+但 Task closure 是个例外，因为它本身也是 actor-isolated，所以下面的代码不会报错:
+public actor TestActor {
+  var value: Int = 0
+
+  func testTask() {
+    Task {
+      value = 1
+    }
+ }
+}
+
+如果 Task.init 是在同步上下文中调用的 (调用链上没有 Task):
+运行时推断合理的优先级
+
+Task.detached:
+extension Task where Failure == Never {
+  public static func detached(priority: TaskPriority? = nil, operation: @escaping @Sendable () async -> Success) -> Task<Success, Failure>
+}
+let dinnerHandle = Task.detached {
+  try await makeDinner()
+}
+通过 Task.detached 创建的任务完全独立于当前上下文，也就是不会继承当前上下文的优先级、task-local data 以及 actor isolation。
+
+https://developer.apple.com/videos/play/wwdc2021/10134
+
+==================================================
+Tasks in Swift are part of the concurrency framework introduced at WWDC 2021.
+A task allows us to create a concurrent environment from a non-concurrent method, calling methods using async/await.
+
+When working with tasks for the first time, you might recognize familiarities between dispatch queues and tasks. 
+Both allow dispatching work on a different thread with a specific priority. 
+Yet, tasks are quite different and make our lives easier by taking away the verbosity from dispatch queues.
+
+create and run a Task:
+let basicTask = Task {
+    return "This is the result of the task"
+}
+we’re keeping a reference to our basicTask which returns a string value. We can use the reference to read out the outcome value:
+let basicTask = Task {
+    return "This is the result of the task"
+}
+print(await basicTask.value)
+This example returns a string but could also have been throwing an error:
+et basicTask = Task {
+    // .. perform some work
+    throw ExampleError.somethingIsWrong
+}
+
+do {
+    print(try await basicTask.value)
+} catch {
+    print("Basic task failed with error: \(error)")
+}
+you can use a task to produce both a value and an error.
+
+
+How do I run a task?
+A task runs immediately after creation and does not require an explicit start.
+It’s important to understand that a job is executed directly after creation since it tells you only to create it when its work is allowed to start.
+
+Performing async methods inside a task:
+Apart from returning a value or throwing an error synchronously, tasks also execute async methods.
+We need a task to perform any async methods within a function that does not support concurrency. The following error might be familiar to you already:
+‘async’ call in a function that does not support concurrency
+
+func executeTask() async {
+    let basicTask = Task {
+        return "This is the result of the task"
+    }
+    print(await basicTask.value)
+}
+
+var body: some View {
+    Text("Hello, world!")
+        .padding()
+        .onAppear {
+            Task {
+                await executeTask()
+            }
+        }
+}
+
+func executeTask() async {
+    let basicTask = Task {
+        return "This is the result of the task"
+    }
+    print(await basicTask.value)
+}
+The task creates a concurrency supporting environment in which we can call the async method executeTask(). 
+our code executes even though we didn’t keep a reference to the created task within the on appear method
+
+Handling cancellation:
+When looking at cancellation, you might be surprised to see your task executing even though you didn’t keep a reference to it.
+Publisher subscriptions in Combine require us to maintain a strong reference to ensure values get emitted.
+Compared to Combine, you might expect a task to cancel as well once all references are released.
+However, tasks work differently since they run regardless of whether you keep a reference. 
+The only reason to keep a reference is to give yourself the ability to wait for a result or cancel the task.
+
+Cancelling a task:
+struct ContentView: View {
+    @State var image: UIImage?
+
+    var body: some View {
+        VStack {
+            if let image = image {
+                Image(uiImage: image)
+            } else {
+                Text("Loading...")
+            }
+        }.onAppear {
+            Task {
+                do {
+                    image = try await fetchImage()
+                } catch {
+                    print("Image loading failed: \(error)")
+                }
+            }
+        }
+    }
+
+    func fetchImage() async throws -> UIImage? {
+        let imageTask = Task { () -> UIImage? in
+            let imageURL = URL(string: "https://source.unsplash.com/random")!
+            print("Starting network request...")
+            let (imageData, _) = try await URLSession.shared.data(from: imageURL)
+            return UIImage(data: imageData)
+        }
+        return try await imageTask.value
+    }
+}
+The above code example fetches a random image and displays it accordingly if the request succeeds.
+For the sake of this demo, we could cancel the imageTask right after its creation:
+func fetchImage() async throws -> UIImage? {
+    let imageTask = Task { () -> UIImage? in
+        let imageURL = URL(string: "https://source.unsplash.com/random")!
+        print("Starting network request...")
+        let (imageData, _) = try await URLSession.shared.data(from: imageURL)
+        return UIImage(data: imageData)
+    }
+    // Cancel the image request right away:
+    imageTask.cancel()
+    return try await imageTask.value
+}
+The cancellation call above is enough to stop the request from succeeding since the URLSession implementation performs cancellation checks before execution.
+Therefore, the above code example is printing out the following:
+
+Starting network request...
+Image loading failed: Error Domain=NSURLErrorDomain Code=-999 "cancelled"
+
+As you can see, our print statement still executes. This print statement is a great way to demonstrate how to implement cancellation checks using one of the two static cancellation check methods. 
+The first one stops executing the current task by throwing an error when a cancellation is detected:
+
+let imageTask = Task { () -> UIImage? in
+    let imageURL = URL(string: "https://source.unsplash.com/random")!
+
+    /// Throw an error if the task was already cancelled.
+    try Task.checkCancellation()
+
+    print("Starting network request...")
+    let (imageData, _) = try await URLSession.shared.data(from: imageURL)
+    return UIImage(data: imageData)
+}
+// Cancel the image request right away:
+imageTask.cancel()
+
+The above code results print:
+Image loading failed: CancellationError()
+As you can see, both our print statement and network requests don’t get called.
+
+The second method we can use gives us a boolean cancellation status. 
+By using this method, we allow ourselves to perform any additional cleanups on cancellation:
+
+let imageTask = Task { () -> UIImage? in
+    let imageURL = URL(string: "https://source.unsplash.com/random")!
+
+    guard Task.isCancelled == false else {
+        // Perform clean up
+        print("Image request was cancelled")
+        return nil
+    }
+
+    print("Starting network request...")
+    let (imageData, _) = try await URLSession.shared.data(from: imageURL)
+    return UIImage(data: imageData)
+}
+// Cancel the image request right away:
+imageTask.cancel()
+In this case, our code only prints out the cancellation statement.
+
+Performing regular cancellation checks is essential to prevent your code from doing unnecessary work. 
+Imagine an example in which we would transform the returned image; we should’ve probably added multiple checks throughout our code:
+let imageTask = Task { () -> UIImage? in
+    let imageURL = URL(string: "https://source.unsplash.com/random")!
+
+    // Check for cancellation before the network request.
+    try Task.checkCancellation()
+    print("Starting network request...")
+    let (imageData, _) = try await URLSession.shared.data(from: imageURL)
+
+    // Check for cancellation after the network request
+    // to prevent starting our heavy image operations.
+    try Task.checkCancellation()
+
+    let image = UIImage(data: imageData)
+
+    // Perform image operations since the task is not cancelled.
+    return image
+}
+We are in control in regards to cancellation, making it easy to make mistakes and perform unnecessary work. 
+Keep an eye sharp when implementing tasks to ensure your code regularly checks for cancellation states.
+
+Setting the priority:
+Each task can have its priority. The values we can apply are similar to the quality of service levels we can configure when using dispatch queues.
+The low, medium, high priorities look similar to priorities set with operations.
+
+Each priority has its purpose and can indicate that a job is more important than others.
+There is no guarantee your task indeed executes earlier. For example, a lower priority job could already be running.
+Configuring a priority helps prevent a low-priority task from avoiding the execution of a higher priority task.
+
+The thread used for execution:
+By default, a task executes on an automatically managed background thread.
+Through testing, I found out that the default priority is 25. Printing out the raw value of the high priority shows a match:
+
+(lldb) p Task.currentPriority
+(TaskPriority) $R0 = (rawValue = 25)
+(lldb) po TaskPriority.high.rawValue
+25
+
+You can set a breakpoint to verify on which thread your method is running
+
+Tasks in Swift allow us to create a concurrent environment to run async methods. 
+Cancellation requires explicit checks to ensure we do not perform any unnecessary work.
+By configuring the priority of our tasks, we can manage the order of execution.
+
+
+
+https://www.avanderlee.com/category/swift/

@@ -1,0 +1,71 @@
+Async let is part of Swift’s concurrency framework and allows instantiating a constant asynchronously. 
+The concurrency framework introduced the concept of async-await, which results in structured concurrency and more readable code for asynchronous methods.
+
+How to use async let:
+func loadImage(index: Int) async -> UIImage {
+    let imageURL = URL(string: "https://picsum.photos/200/300")!
+    let request = URLRequest(url: imageURL)
+    let (data, _) = try! await URLSession.shared.data(for: request, delegate: nil)
+    print("Finished loading image \(index)")
+    return UIImage(data: data)!
+}
+
+Without async let we would call this method as follows:
+func loadImages() {
+    Task {
+        let firstImage = await loadImage(index: 1)
+        let secondImage = await loadImage(index: 2)
+        let thirdImage = await loadImage(index: 3)
+        let images = [firstImage, secondImage, thirdImage]
+    }
+}
+
+This way, we tell our application to wait for the first image to be returned until it can continue to fetch the second image. All images are loaded in sequence, and we will always see the following order being printed out in the console:
+Finished loading image 1
+Finished loading image 2
+Finished loading image 3
+
+Our images are loaded asynchronously, and we end up with an array of images that we could use to display in a view.
+However, it would be much more performant to load the images in parallel and benefit from the available system resources.
+
+This is where async let comes in place:
+func loadImages() {
+    Task {
+        async let firstImage = loadImage(index: 1)
+        async let secondImage = loadImage(index: 2)
+        async let thirdImage = loadImage(index: 3)
+        let images = await [firstImage, secondImage, thirdImage]
+    }
+}
+
+There are a few important parts to point out:
+Our array of images now needs to be defined using the await keyword as we’re dealing with asynchronous constants
+Execution will start as soon as we defined an async let
+
+The last point basically means that one of the images could already be downloaded by your app before it’s even been awaited in the array.
+In this case, it’s just in theory, as it’s likely that your code executes faster than the download of the image.
+Running this code will show a different output in the console:
+Finished loading image 3
+Finished loading image 1
+Finished loading image 2
+It could be different every time you run the app, as the order depends on the request time needed to download the image.
+
+When to use async let?
+Async let should be used when you don’t need the result of the asynchronous method until later in your code. 
+You should use await instead, if any following lines in your code depend on the outcome of the async method.
+
+Can I declare async let at top level?
+final class ContentViewModel: ObservableObject {
+    
+    async let firstImage = await loadImage(index: 1)
+
+    // .. rest of your code
+}
+Unfortunately, the compiler will show an error:
+‘async let’ can only be used on local declarations
+In other words, you can only use async let on local declarations within methods.
+
+Async let allows us to combine multiple asynchronous calls and await all the results at once.
+It’s a great way to benefit from available system resources to download in parallel while still combining results when all asynchronous requests are finished.
+In combination with async-await and actors, they form a powerful new way of handling concurrency in Swift.
+

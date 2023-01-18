@@ -1,0 +1,352 @@
+Sendable and @Sendable are part of the concurrency changes that arrived in Swift 5.5 and address a challenging problem of type-checking values passed between structured concurrency constructs and actor messages.
+
+public protocol Sendable {}
+Sendable 是一个空协议
+用于向外界声明实现了该协议的类型在并发环境下可以安全使用，更准确的说是可以自由地跨 actor 传递。
+
+像 Sendable 这样的协议有一个专有名称: Marker Protocols其具有以下特征:
+1.
+具有特定的语义属性 (semantic property)，且它们是编译期属性而非运行时属性。
+Sendable 的语义属性就是要求并发下可以安全地跨 actor 传递
+2.
+协议体必须为空
+3.
+不能继承自 non-marker protocols
+4.
+不能作为类型名用于 is、as?等操作
+如：x is Sendable，编译报错: Marker protocol 'Sendable' cannot be used in a conditional cast.
+5.
+不能用作泛型类型的约束，从而使某类型遵守一个 non-marker protocol
+protocol P {
+func test()
+}
+
+class A<T> {}
+
+// Error: Conditional conformance to non-marker protocol 'P' cannot depend on conformance of 'T' to non-marker protocol 'Sendable'
+extension A: P where T: Sendable {
+func test() {}
+}
+
+值语义 (Value semantics) 类型在传递时 (如作为函数参数、返回值等) 是会执行拷贝操作的，也就是它们跨 Actor 传递是安全的。
+这些类型隐式地自动遵守 Sendable 协议
+如：
+基础类型，Int、String、Bool 等；
+不含有引用类型成员的 struct；
+不含有引用类型关联值的 enum；
+所含元素类型符合 Sendable 协议的集合，如：Array、Dictionary 等。
+
+所有 actor 类型也是自动遵守 Sendable 协议的。
+事实上是所有 actor 都遵守了 Actor协议，而该协议继承自 Sendable
+@available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *)
+public protocol Actor : AnyObject, Sendable {
+    nonisolated var unownedExecutor: UnownedSerialExecutor { get }
+}
+
+class 需要主动声明遵守 Sendable 协议，并有以下限制:
+class 必须是 final，否则有 Warning: Non-final class 'X' cannot conform to 'Sendable'; use ' @unchecked Sendable'
+class 的存储属性必须是 immutable，否则有 Warning: Stored property 'x' of 'Sendable'-conforming class 'X' is mutable
+class 的存储属性必须都遵守 Sendable 协议，否则 Warning: Stored property 'y' of 'Sendable'-conforming class 'X' has non-sendable type 'Y'
+class 的祖先类 (如有) 必须遵守 Sendable 协议或者是 NSObject，否则 Error: 'Sendable' class 'X' cannot inherit from another class other than 'NSObject'。
+都是确保实现了 Sendable 协议的类数据安全的必要保障
+
+extension AccountManager {
+  func user() async -> User {
+    // Warning: Non-sendable type 'User' returned by implicitly asynchronous call to actor-isolated instance method 'user()' cannot cross actor boundary
+    return await bankAccount.user()
+  }
+}
+要消除例子中的 Warning，只需让 User 实现 Sendable协议即可。
+User有 2 种改造方案:
+由 class 改成 struct：
+struct User {
+  var name: String
+  var age: Int
+}
+
+手动实现 Sendable 协议：
+final
+class User: Sendable {
+  let name: String
+  let age: Int
+}
+Sendable 对实现它的 class 的要求是不是太严格了 (final、immutable property) ？
+从并发安全的角度说，完全可以通过传统的串行队列、锁等机制保障。
+可以通过 @unchecked attribute 告诉编译器不进行 Sendable 语义检查，如:
+// 相当于说 User 的并发安全由开发人员自行保证，不用编译器检查
+class User: @unchecked Sendable {
+  var name: String
+  var age: Int
+}
+Sendable 作为协议只能用于常规类型，对于函数、闭包等则无能为力。
+此时，就轮到 @Sendable 登场了。
+
+@Sendable:
+被 @Sendable 修饰的函数、闭包可以跨 actor 传递
+extension BankAccount {
+  func addAge(amount: Int, completion: (Int) -> Void) {
+    age += amount
+    completion(age)
+  }
+}
+
+extension AccountManager {
+  func addAge() async {
+    // Wraning: Non-sendable type '(Int) -> Void' passed in implicitly asynchronous call to actor-isolated instance method 'addAge(amount:completion:)' cannot cross actor boundary
+    await bankAccount.addAge(amount: 1, completion: { age in
+      print(age)
+    })
+  }
+}
+只需对 addAge 方法的 completion 参数加上 @Sendable 即可
+用@Sendable 修饰 Closure 真正意味着什么？
+其实是告诉 Closure 的实现者，该 Closure 可能会在并发环境下调用，请注意数据安全！
+因此，如果对外提供的接口涉及 Closure (作为方法参数、返回值)，且其可能在并发环境下执行，就应用 @Sendable修饰。
+根据这一原则，actor 对外的方法如涉及 Closure，也应用 @Sendable修饰。
+extension Task where Failure == Error {
+  public init(priority: TaskPriority? = nil, operation: @escaping @Sendable () async throws -> Success)
+}
+如 Task 的 operation 闭包会在并发环境下执行，故用了 @Sendable 修饰。
+
+编译器会对 @Sendable Closure 的实现进行各种合规检查:
+1.不能捕获 actor-isolated 属性，否则 Error: Actor-isolated property 'x' can not be referenced from a Sendable closure(原因也很简单，@Sendable Closure 可能会在并发环境下执行，这与 actor 串行保护数据有冲突)
+如果 @Sendable 闭包是异步的 (@Sendable () async )，则不受此限制。
+2.不能捕获 var 变量，否则 Error: Mutation of captured var 'x' in concurrently-executing code
+3.所捕获对象必须实现 Sendable 协议，否则 Warning: Capture of 'x' with non-sendable type 'X' in a @Sendable closure。
+
+
+crash:
+extension User {
+  func testUser(callback: @escaping () -> Void) {
+    for _ in 0..<1000 {
+      DispatchQueue.global().async {
+        callback()
+      }
+    }
+  }
+}
+
+extension BankAccount {
+  func test() {
+    let user = User.init(name: "Tom", age: 18)
+    user.testUser {
+      let b = self.balances[1] ?? 0.0
+      self.balances[1] = b + 1
+      print("i = \(0), \(Thread.current), balance = \(String(describing: self.balances[1]))")
+    }
+  }
+}
+
+fix crash:
+extension User {
+  // 由于 callback 会在并发环境下执行，故用 `@Sendable` 修饰
+  // 一般情况下，@Sendable closure 都是异步的，否则受限于 @Sendable 的规则无法捕获 Actor-isolated property
+  func test(callback: @escaping @Sendable () async -> Void) {
+    for _ in 0..<1000 {
+      DispatchQueue.global().async {
+        // 在同步上下文中一般通过 Task 开启一个异步上下文
+        Task{
+          await callback()
+        }
+      }
+    }
+  }
+}
+
+extension BankAccount {
+  func changeBalances(newValue: Double) {
+    balances[1] = newValue
+  }
+
+  func test() {
+    let user = User.init(name: "Tom", age: 18)
+
+    user.test { [weak self] in
+      guard let self = self else { return }
+
+      let b = await self.balances[1] ?? 0.0
+      // 对 Actor-isolated property 的修改需提取到单独的方法里
+      // 不能直接在 @Sendable 闭包修改
+      await self.changeBalances(newValue: b + 1)
+      print("i = \(0), \(Thread.current), balance = \(String(describing: await self.balances[1]))")
+    }
+  }
+}
+
+https://developer.apple.com/videos/play/wwdc2021/10133/
+将来 Swift 编译器会禁止共享 (传递) 非 Sendable 类型的实例
+
+总结:
+Sendable 本身是一个 Marker Protocol，用于编译期的合规检查；
+所有值语义类型都自动遵守 Sendable 协议；
+所有遵守 Sendable 协议的类型都可以跨 actor 传递；
+@Sendable 用于修饰方法、闭包；
+对于会在并发环境下执行的闭包都应用 @Sendable 修饰。
+
+==============================
+
+----------When should I use Sendable?
+The Sendable protocol and closure indicate whether the public API of the passed values passed thread-safe to the compiler.
+A public API is safe to use across concurrency domains when there are no public mutators, an internal locking system is in place, 
+or mutators implement copy-on write like with value types.
+
+Many types of the standard library already support the Sendable protocol, taking away the requirement to add conformance to many types.
+As a result of the standard library support, the compiler can implicitly create support for your custom types.
+
+integers support the protocol:
+extension Int: Sendable {}
+
+Once we create a value type struct with a single property of type int, we implicitly get support for the Sendable protocol:
+
+// Implicitly conforms to Sendable
+struct Article {
+    var views: Int
+}
+
+At the same time, the following class example of the same article would not have implicit conformance:
+// Does not implicitly conform to Sendable
+class Article {
+    var views: Int
+}
+
+The class does not conform because it is a reference type and therefore mutable from other concurrent domains.
+In other words, the class article is not thread-safe to pass around, and the compiler can’t implicitly mark it as Sendable.
+
+
+----------Implicit conformance when using generics and enums:
+the compiler does not add implicit conformance to generic types if the generic type does not conform to Sendable.
+
+// No implicit conformance to Sendable because Value does not conform to Sendable
+struct Container<Value> {
+    var child: Value
+}
+
+However, if we add a protocol requirement to our generic value, we will get implicit support:
+// Container implicitly conforms to Sendable as all its public properties do so too.
+struct Container<Value: Sendable> {
+    var child: Value
+}
+
+The same counts for enums with associated values:
+Associated value ‘loggedIn(name:)’ of ‘Sendable’-conforming enum ‘State’ has non-sendable type ‘(name: NSAttributedString)’
+We can solve the error by using a value type String instead, as it already conforms to Sendable:
+enum State: Sendable {
+    case loggedOut
+    case loggedIn(name: String)
+}
+
+
+----------Throwing errors from thread-safe instances:
+The same rules apply to errors that want to conform to Sendable:
+
+struct ArticleSavingError: Error {
+    var author: NonFinalAuthor
+}
+
+extension ArticleSavingError: Sendable { }
+As the author is non-final and not thread-safe (more about that later), we will run into the following error:
+Stored property ‘author’ of ‘Sendable’-conforming struct ‘ArticleSavingError’ has non-sendable type ‘NonFinalAuthor’
+You can solve the error by making sure all members of ArticleSavingError conform to Sendable.
+
+
+----------How to use the Sendable protocol:
+Implicit conformance takes away a lot of cases in which we need to add conformance to the Sendable protocol ourselves.
+However, there are cases in which the compiler does not add implicit conformance while we know that our type is thread-safe.
+
+Common examples of types that are not implicitly sendable but can be marked as such are immutable classes and classes with internal locking mechanisms:
+/// User is immutable and therefore thread-safe, so can conform to Sendable
+final class User: Sendable {
+    let name: String
+
+    init(name: String) { self.name = name }
+}
+
+You need to mark mutable classes with the @unchecked attribute to indicate our class is thread-safe due to internal locking mechanisms:
+extension DispatchQueue {
+    static let userMutatingLock = DispatchQueue(label: "person.lock.queue")
+}
+
+final class MutableUser: @unchecked Sendable {
+    private var name: String = ""
+
+    func updateName(_ name: String) {
+        DispatchQueue.userMutatingLock.sync {
+            self.name = name
+        }
+    }
+}
+
+----------The restriction of conforming to Sendable in the same source file
+Sendable protocol conformance must happen within the same source file to ensure that the compiler checks all visible members for thread safety.
+For example, you could define the following type within a module like a Swift package:
+
+public struct Article {
+    internal var title: String
+}
+
+The article is public, while the title is internal and not visible outside the module.
+Therefore, the compiler can’t apply Sendable conformance outside of the source file as it has no visibility of the title property, even though the title is using a Sendable type String.
+
+The same problem occurs when trying to conform an immutable non-final class to Sendable
+Since the class is non-final, we can’t conform to Sendable as we’re unsure whether other classes will inherit from User with non-Sendable members.
+Therefore, we would run into the following error:
+Non-final class ‘User’ cannot conform to `Sendable`; use `@unchecked Sendable`
+
+As you can see, the compiler suggests using @unchecked Sendable. We can add this attribute to our user instance and get rid of the error:
+class User: @unchecked Sendable {
+    let name: String
+
+    init(name: String) { self.name = name }
+}
+
+However, this does require us to ensure it’s always thread-safe whenever we inherit from User. 
+As we add extra responsibility to ourselves and our colleagues, I would discourage using this attribute instead of using composition, final classes, or value types.
+
+----------How to use @Sendable
+Functions can be passed across concurrency domains and will therefore require sendable conformance too. However, functions can’t conform to protocols, so Swift introduced the @Sendable attribute. 
+Examples of functions that you can pass around are global function declarations, closures, and accessors like getters and setters.
+
+https://github.com/apple/swift-evolution/blob/main/proposals/0302-concurrent-value-and-concurrent-closures.md
+
+Using the @Sendable attribute, we will tell the compiler that he doesn’t need extra synchronization as all captured values in the closure are thread-safe. 
+A typical example would be using closures from within Actor isolation:
+actor ArticlesList {
+    func filteredArticles(_ isIncluded: @Sendable (Article) -> Bool) async -> [Article] {
+        // ...
+    }
+}
+
+In case you would use the closure with a non-sendable type, we would run into an error:
+let listOfArticles = ArticlesList()
+var searchKeyword: NSAttributedString? = NSAttributedString(string: "keyword")
+let filteredArticles = await listOfArticles.filteredArticles { article in
+ 
+    // Error: Reference to captured var 'searchKeyword' in concurrently-executing code
+    guard let searchKeyword = searchKeyword else { return false }
+    return article.title == searchKeyword.string
+}
+Of course, we can quickly solve this case by using a regular String instead, but it demonstrates how the compiler helps us to enforce thread safety.
+
+----------Preparing your code for Swift 6 with strict concurrency checking
+Xcode 14 allows you to enable strict concurrency checking through the SWIFT_STRICT_CONCURRENCY build setting:
+Enable strict concurrency checking to fix sendable conformances and prepare your code for Swift 6.
+This build setting controls the compiler enforcement level of Sendable and actor-isolation checking.
+
+Minimal: The compiler will only diagnose instances explicitly marked with Sendable conformance and equals the behavior of Swift 5.5 and 5.6. There won’t be any warnings or errors.
+Targeted: Enforces Sendable constraints and performs actor-isolation checking for all your code that adopted concurrency like async/await. The compiler will also check Instances that explicitly adopt Sendable. This mode tries to strike a balance between compatibility with existing code and catching potential data races.
+Complete: Matches the intended Swift 6 semantics to check and eliminate data races. This mode checks everything the other two modes do as well but performs these checks for all code in your project.
+
+The strict concurrency checking build setting helps Swift move forward to data-race safety.
+Each of the warnings triggered related to this build setting might indicate a potential data race in your code. 
+Therefore, it’s essential to consider enabling strict concurrency checking to validate your code.
+
+you can temporarily disable Sendable warnings by making use of the @preconcurrency attribute:
+@preconcurrency import SharedWithYou
+It’s important to understand that we didn’t solve the warnings but just disabled them. 
+There’s still a possibility of data races occurring with code from these libraries. 
+If you’re using instances from these frameworks, you need to consider whether instances are actually thread-safe. 
+Once your used framework gets updated with Sendable conformance, you can remove the @preconcurrency attribute and fix potentially triggered warnings.
+
+The Sendable protocol and @Sendable attribute for functions make it possible to tell the compiler about thread safety when working with concurrency in Swift. 
+Swift introduced both features to reach the bigger goal of the Swift Concurrency effort, which is providing a mechanism to isolate states in concurrent programs to eliminate data races. 
+The compiler will help us in many cases with implicit conformance to Sendable, but we can always add conformance ourselves.

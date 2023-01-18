@@ -1,0 +1,310 @@
+https://www.andyibanez.com/posts/understanding-async-await-in-swift/
+
+
+传统并发模型是基于异步模式，代码维护性不够友好
+并发往往意味着 Data Races，这是一类难复现、难排查的常见问题
+Swift 在 5.5 开始引入的新并发框架主要着力解决这 2 个问题。
+Swift 5.5 引入的 async/await
+
+同步(Synchronous)、异步(Asynchronous) 通常指方法(/函数)，同步方法表示直到任务完成才返回，异步方法则是将任务抛出去，在任务完成前就返回
+需要通过某种方式获得异步任务的结果，如：Delegate、Closure 等。
+串行(Serial)、并行(Concurrent) 通常指 App 执行一组任务的模式，串行表示一次只能执行一个任务，只有当前任务完成后才启动下一个任务，而并行指可以同时执行多个任务。最常见的莫过于 GCD 中的串行、并行队列；
+传统的并发模型都是基于异步模式的，即异步获取并发任务的结果。
+异步代码是非线性的、跳跃式的 (类似于 goto 语句)
+异步代码在具体实现上常伴有以下问题:
+回调地狱 (Callback Hell)
+错误处理 (Error Handling)
+
+错误处理分为 2 种情况:
+同步方法：优先考虑通过 throw 抛出error，这样调用方就不得不处理错误，因此带有一定的强制性
+异步方法：在回调中传递 error，这种情况下调用方通常会有意无意地忽略错误，使健壮性大打折扣。
+
+为了处理错误，在 completion 中增加了 error 参数，同时需要将 2 个参数都定义成 Optional。
+completion: (String?, Error?) -> Void)
+Swift 5 引入了 Result 用于优化上述错误处理场景
+Result<String, Error>
+Result 是 enum 类型，含有 success、failure 2 个 case。
+通过使用 Result，参数不必是 Optional，另外可以通过 switch/case 来处理结果
+将异步代码同步化一直是业界努力的方向。
+如：Promise，不过其同步也是建立在 callback 基础上的。
+Swift 5.5 引入了 async/await 用于将异步代码同步化。
+async — 用于修饰方法，被修饰的方法则被称为异步方法 (asynchronous method)，异步方法意味着其在执行过程中可能会被暂停 (挂起)
+await — 对 asynchronous method 的调用需加上 await。同时，await只能出现在异步上下文中 (asynchronous context)
+await 则表示一个潜在暂停点 (potential suspension points)
+什么是 asynchronous context ？其存在于 2 种环境下:
+asynchronous method body — 异步方法体属于异步上下文的范畴
+Task closure — Task 任务闭包也属于 asynchronous context。
+只能在异步方法或 Task 闭包中通过 await 调用异步方法。
+
+异步方法执行过程中可能会暂停？
+暂停的是方法，而不是执行方法的线程
+暂停点前后可能会发生线程切换
+在 Swift 新并发模型中进一步弱化了线程,理想情况下整个 App 的线程数应与内核数一致，线程的创建、管理完全交由并发框架负责。
+
+Swift 对异步方法 (asynchronous method) 的处理就遵守了上述思想:
+异步方法被暂停点 (suspension points) 分割为若干个 Job；
+在并发框架中 Job 是任务调度的基本单元；
+并发框架根据实时情况动态决定某个 Job 的执行线程；
+也就是同一个异步方法中的不同 Job 可能运行在不同线程上。
+正是由于异步方法在其暂停点前后可能会变换执行线程，因此在异步方法中要慎用锁、信号量等同步操作。
+let lock = NSLock.init()
+func test() async {
+  lock.lock()
+  try? await Task.sleep(nanoseconds: 1_000_000_000)
+  lock.unlock()
+}
+这样的代码在 lock.lock() 处会产生死锁
+await 之所以称为潜在暂停点，而不是暂停点，是因为并不是所有的 await 都会暂停，只有遇到类似 IO、手动起子线程等情况时才会暂停当前调用栈的运行。
+https://docs.swift.org/swift-book/LanguageGuide/Concurrency.html#
+
+
+
+Async await is part of the new structured concurrency changes that arrived in Swift 5.5 during WWDC 2021.
+Concurrency in Swift means allowing multiple pieces of code to run at the same time. 
+With the new async methods and await statements, we can define methods performing work asynchronously.
+
+https://gist.github.com/lattner/31ed37682ef1576b16bca1432ea9f782
+
+async:
+Async stands for asynchronous and can be seen as a method attribute making it clear that a method performs asynchronous work. 
+An example of such a method looks as follows:
+func fetchImages() async throws -> [UIImage] {
+    // .. perform data request
+}
+The fetchImages method is defined as async throwing, which means that it’s performing a failable asynchronous job. 
+The method would return a collection of images if everything went well or throws an error if something went wrong.
+
+How async replaces closure completion callbacks:
+Async methods replace the often seen closure completion callbacks.
+Completion callbacks were common in Swift to return from an asynchronous task, often combined with a Result type parameter. 
+The above method would have been written as followed:
+
+func fetchImages(completion: (Result<[UIImage], Error>) -> Void) {
+    // .. perform data request
+}
+Defining a method using a completion closure is still possible in Swift today, but it has a few downsides that are solved by using async instead:
+You have to make sure yourself to call the completion closure in each possible method exit. Not doing so will possibly result in an app waiting for a result endlessly.
+Closures are harder to read. It’s not as easy to reason about the order of execution as compared to how easy it is with structured concurrency.
+Retain cycles need to be avoided using weak references.
+Implementors need to switch over the result to get the outcome. It’s not possible to use try catch statements from the implementation level.
+
+These downsides are based on the closure version using the relatively new Result enum. It’s likely that a lot of projects still make use of completion callbacks without this enumeration:
+func fetchImages(completion: ([UIImage]?, Error?) -> Void) {
+    // .. perform data request
+}
+Defining a method like this makes it even harder to reason about the outcome on the caller’s side. 
+Both value and error are optional, which requires us to perform an unwrap in any case. 
+Unwrapping these optionals results in more code clutter which does not help to improve readability.
+
+await:
+Await is the keyword to be used for calling async methods.
+You can see them as best friends in Swift as one will never go without the other. 
+You could basically say:
+“Await is awaiting a callback from his buddy async”
+do {
+    let images = try await fetchImages()
+    print("Fetched \(images.count) images.")
+} catch {
+    print("Fetching images failed with error \(error)")
+}
+
+Using the await keyword, we tell our program to await a result from the fetchImages method and only continue after a result arrived. 
+This could either be a collection of images or an error if anything went wrong while fetching the images.
+
+
+
+What is structured concurrency?
+Structured concurrency with async-await method calls makes it easier to reason about the order of execution.
+Methods are linearly executed without going back and forth like you would with closures.
+
+// 1. Call the method
+fetchImages { result in
+    // 3. The asynchronous method returns
+    switch result {
+    case .success(let images):
+        print("Fetched \(images.count) images.")
+    case .failure(let error):
+        print("Fetching images failed with error \(error)")
+    }
+}
+// 2. The calling method exits
+
+the calling method returns before the images are fetched.
+Eventually, a result is received, and we go back into our flow within the completion callback. 
+This is an unstructured order of execution and can be hard to follow. 
+This is especially true if we would perform another asynchronous method within our completion callback which would add another closure callback:
+
+// 1. Call the method
+fetchImages { result in
+    // 3. The asynchronous method returns
+    switch result {
+    case .success(let images):
+        print("Fetched \(images.count) images.")
+        
+        // 4. Call the resize method
+        resizeImages(images) { result in
+            // 6. Resize method returns
+            switch result {
+            case .success(let images):
+                print("Decoded \(images.count) images.")
+            case .failure(let error):
+                print("Decoding images failed with error \(error)")
+            }
+        }
+        // 5. Fetch images method returns
+    case .failure(let error):
+        print("Fetching images failed with error \(error)")
+    }
+}
+// 2. The calling method exits
+
+Each closure adds another level of indentation, which makes it harder to follow the order of execution.
+Rewriting the above code example by making use of async-await explains best what structured concurrency does:
+
+do {
+    // 1. Call the method
+    let images = try await fetchImages()
+    // 2. Fetch images method returns
+    
+    // 3. Call the resize method
+    let resizedImages = try await resizeImages(images)
+    // 4. Resize method returns
+    
+    print("Fetched \(images.count) images.")
+} catch {
+    print("Fetching images failed with error \(error)")
+}
+// 5. The calling method exits
+
+The order of execution is linear and, therefore, easy to follow and easy to reason about.
+Understanding asynchronous code will be easier while we’re still performing sometimes complex asynchronous tasks.
+
+
+Async methods call in a function that does not support concurrency:
+This error occurs as we try to call an asynchronous method from a synchronous calling environment that does not support concurrency.
+We can solve this error by either defining our fetchData method as async as well:
+
+func fetchData() async {
+    do {
+        try await fetchImages()
+    } catch {
+        // .. handle error
+    }
+}
+
+However, this would move the error to a different place. Instead, we could use the Task.init method to call the asynchronous method from a new task that does support concurrency and assign the outcome result to a property in our view model:
+final class ContentViewModel: ObservableObject {
+    
+    @Published var images: [UIImage] = []
+    
+    func fetchData() {
+        Task.init {
+            do {
+                self.images = try await fetchImages()
+            } catch {
+                // .. handle error
+            }
+        }
+    }
+}
+
+Using the async method using the trailing closure, we create an environment in which we can call asynchronous methods.
+The fetch data method returns as soon as the async method is called, after which all asynchronous callbacks will happen within the closure.
+
+
+
+Adopting async-await in an existing project:
+it can make it easier to try out async-await in your project. 
+Xcode makes it super easy to refactor your code and also provides an option to create a separate async method
+
+we’ll use the following code as refactor input:
+struct ImageFetcher {
+    func fetchImages(completion: @escaping (Result<[UIImage], Error>) -> Void) {
+        // .. perform data request
+    }
+}
+1.Convert Function to Async
+The first refactor option converts the fetch images method into an async variant without keeping the non-async alternative. 
+This option will be useful if you don’t want to maintain your old implementation. The resulting code looks as follows:
+struct ImageFetcher {
+    func fetchImages() async throws -> [UIImage] {
+        // .. perform data request
+    }
+}
+
+2.Add Async Alternative
+The add async alternative refactor option makes sure to keep the old implementation in place but does take care of adding an available attribute:
+struct ImageFetcher {
+    @available(*, renamed: "fetchImages()")
+    func fetchImages(completion: @escaping (Result<[UIImage], Error>) -> Void) {
+        Task {
+            do {
+                let result = try await fetchImages()
+                completion(.success(result))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+    }
+
+
+    func fetchImages() async throws -> [UIImage] {
+        // .. perform data request
+    }
+}
+
+The available attribute is useful to know where you need to update your code towards the new concurrency variant.
+Though, the default implementation Xcode provides does not come with any warning since it’s not marked as deprecated.
+To do so, you’ll need to adjust the available marker as follows:
+@available(*, deprecated, renamed: "fetchImages()")
+
+https://www.avanderlee.com/swift/available-deprecated-renamed/
+
+
+The benefit of using this refactor option is that it allows you to progressively adapt to the new structured concurrency changes without having to convert your complete project at once. 
+Building in-between is valuable so that you know that your code changes work as expected. 
+Implementations that make use of the old method will get a warning
+
+You can progressively change your implementations throughout your project and use the provided fix button in Xcode to automatically convert your code to make use of the new implementation.
+
+3.Add Async Wrapper
+The final refactor method will result in the easiest conversion since it will simply make use of your existing code:
+struct ImageFetcher {
+    @available(*, renamed: "fetchImages()")
+    func fetchImages(completion: @escaping (Result<[UIImage], Error>) -> Void) {
+        // .. perform data request
+    }
+
+    func fetchImages() async throws -> [UIImage] {
+        return try await withCheckedThrowingContinuation { continuation in
+            fetchImages() { result in
+                continuation.resume(with: result)
+            }
+        }
+    }
+}
+
+The newly added method makes use of the withCheckedThrowingContinuation method which was introduced in Swift to convert closure-based methods without much effort.
+Non-throwing methods can make use of the withCheckedContinuation which works the same but does not support throwing errors.
+
+These two methods suspend the current task until the given closure is called to trigger the continuation of the async-await method.
+In other words: you’ll have to make sure to call the continuation closure based on the callback of your own closure-based method.
+In our example, this comes down to calling the continuation with our result value returned from the original fetch images callback.
+
+
+Picking the right async-await refactor method for your project:
+These three refactor options should be enough to convert your existing code into async alternatives.
+Depending on the size of your project and the amount of time you have for the refactor you might want to pick a different refactor option.
+Though, I would strongly advise progressively applying changes since it allows you to isolate parts that changed, making it easier to test whether your changes work as expected.
+
+
+Solving the “Reference to captured parameter ‘self’ in concurrently-executing code” error:
+Another common error when working with async methods is the following one:
+“Reference to captured parameter ‘self’ in concurrently-executing code”
+
+This basically means that we’re trying to reference an immutable instance of self.
+In other words, you’re likely referencing either a property or an instance that’s immutable
+This error can be fixed by either making your properties mutable or by changing the struct into a reference type, like a class.
+
+
+Async-await in Swift allows for structured concurrency, which will improve the readability of complex asynchronous code.

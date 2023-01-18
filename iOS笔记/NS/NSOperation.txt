@@ -1,0 +1,48 @@
+NSOperation Queue + NSOperation
+
+同步(Synchronous)、异步(Asynchronous)通常指方法(或函数)，同步方法表示直到任务完成才返回(如：dispatch_sync)，异步方法则是将任务抛出去，在任务没完成前就返回(如：dispatch_async)
+
+NSOperation 本身是个抽象类，在使用前必须子类化(系统预定义了两个子类：NSInvocationOperation 和 NSBlockOperation)
+在子类化过程中，需要重写父类的哪些方法？
+在 NSOperation 中还有一个重要概念：operation 的状态，并且当状态变化时需要通过 KVO 的方式通知
+子类化 NSOperation 时需要重写哪些方法？ 这取决于子类化后的 operation 是 Synchronous 还是 Asynchronous(NSOperation 默认是Synchronous)
+
+Synchronous VS. Asynchronous Operations:
+由于操作 NSOperation 与 NSOperation 任务的执行往往在不同的线程上进行，在继续之前需要强调线程安全问题：『NSOperation 本身是 thread-safe，当我们在子类重写或自定义方法时同样需要保证 thread-safe』。
+Synchronous Operations:
+对于 Synchronous Operation，在调用其 start 方法的线程上同步执行该 operation 的任务，start 方法返回时 operation 执行完成。
+因此，对于 Synchronous Operation 一般只需重写 main 方法即可(start方法的默认实现已实现相关 KVO 功能)。
+
+Asynchronous Operations:
+然而对于 Asynchronous Operation，调用其 start 方法后，在 start 返回时 operation 的任务可能还没完成(为了实现异步，一般需要在其他线程执行 operation 的具体任务)。
+因此 start 方法默认实现不能满足异步需要(默认实现会在start返回前将 isExecuting 置为 NO、isFinished 置为 YES，并产生 KVO 通知)。
+此时至少需要重写以下方法:
+start：
+我们知道 NSOperation 本身不具备并发(或者说异步执行)能力，因此需要 start 方法来实现，可以通过创建子线程或其他异步方式完成。同时需要在任务开始前将 isExecuting 置为YES 并抛出 KVO 通知。
+『重写的 start 方法一定不能调用 [super start]
+asynchronous 返回 YES，一般不需要抛出 KVO 通知
+executing 返回 operation 的执行状态，在其值发生变化时需要在 isExecuting 上抛出 KVO 通知
+finished 返回 operation 的完成状态，同样值变化时需要在 isFinished 上抛出 KVO 通知
+
+看看著名的网络框架 AFNetworking 中关于 NSOperation 的使用:
+AFNetworking 3.0 全面使用 NSURLSession，而 NSURLSession 本身是异步的、且没有 NSURLConnection 需要 runloop 配合的问题，因此在3.0版本中并没有使用 NSOperation，
+代码得到很大的简化。这里我们说的是 AFNetworking 2.3.1 版本。
+
+NSOperation 其他细节问题:
+dependencies:
+我们可以在 operation 间添加依赖关系，在某个 operation 所依赖的 operations 完成之前，其一直处于未就绪状态(isReady 为 NO)。
+需要注意的是，依赖关系是 operation 自身的状态，也就是说有依赖关系的 operations 可以处在不同的 NSOperationQueue 中。
+isReady: isReady 默认实现主要处理 operation 间的依赖关系，当我们自定义该方法时需要考虑 super 的值
+qualityOfService:
+用于表示 operation 在获取系统资源时的优先级，默认值：NSQualityOfServiceBackground，我们可以根据需要给 operation 赋不同的优化级，如最高优化级：NSQualityOfServiceUserInteractive。
+queuePriority: 用于设置 operation 在 operation queue 中的相对优化级，同一 queue 中优化级高的 operation(isReady 为 YES) 会被优先执行。
+需要注意区分qualityOfService(在系统层面，operation 与其他线程获取资源的优先级)与queuePriority(同一 queue 中 operation 间执行的优化级)的区别。
+同时，需要注意dependencies(严格控制执行顺序)与queuePriority(queue 内部相对优先级)的区别。
+
+NSOperation Queue:
+NSOperation Queue 用于管理、执行 NSOperation，无论其中的 operation 是并行还是串行，queue 都会在子线程(借用 GCD)中执行 operation。
+实现异步 operation 比同步 operation 要复杂许多，因此如果打算将 operation 加入 queue 中，则完全可以将 operation 实现为同步方式。
+对于 queue 中已就绪的 operation，queue 会选择 queuePriority 值最大的 operation 执行。
+关于 NSOperation Queue 有两点需要强调:
+cancelAllOperations：用于取消队列中的 operations，对 queue 中所有 operations 调用 cancel方法。(对 operation 调用 cancel 方法后的效果完全由 operation 自己决定。cancel 唯一能影响的就是清除 operation 的依赖关系，使其立即可以被执行)。此时 queue 并不会 remove 其中的 operations，remove 操作仅发生在 operation 完成时。
+suspended：将该属性置为 YES，会阻止 queue 执行新的 operation，但已经在执行中的 operation 不受此影响。
