@@ -1,0 +1,423 @@
+==========显式和隐式动画
+在SwiftUI中有两种类型的动画，显式和隐式。
+
+隐式动画指的就是用animation()modifier的view，当该view的可动画的参数变化的时候，系统会自动进行动画，这些所谓的可动画的参数包括size,offset，color，scale等等。
+
+显式动画指的是withAnimation { ... }闭包中指定的参数，所有依赖这些参数的view，都会执行动画。
+
+
+使用了隐式动画：
+struct Example1: View {
+    @State private var half = false
+    @State private var dim = false
+
+    var body: some View {
+        Image("tower")
+            .scaleEffect(half ? 0.5 : 1.0)
+            .opacity(dim ? 0.2 : 1.0)
+            .animation(.easeInOut(duration: 1.0))
+            .onTapGesture {
+                self.dim.toggle()
+                self.half.toggle()
+            }
+    }
+}
+们可以看出动画依赖half,dim这2个参数，我们并没有直接告诉view这2个参数要动画，系统会自动把旧值到新值的变化做动画。
+
+
+把代码做一点简单的改变:
+struct Example2: View {
+    @State private var half = false
+    @State private var dim = false
+
+    var body: some View {
+        Image("tower")
+            .scaleEffect(half ? 0.5 : 1.0)
+            .opacity(dim ? 0.5 : 1.0)
+            .onTapGesture {
+                self.half.toggle()
+
+                withAnimation(.easeInOut(duration: 1.0)) {
+                    self.dim.toggle()
+                }
+        }
+    }
+}
+
+我们去掉了.animation(.easeInOut(duration: 1.0)),新增了withAnimation闭包，我们把self.dim.toggle()放到闭包中，
+这就是显式的告诉系统，view的透明度要执行xxx动画，所有依赖dim参数的view，在dim改变的时候，都会执行动画
+最终发现，只有透明度指定了动画，缩放并没有执行动画，这就说明，我们显式的告诉系统dim需要动画，它就只为dim执行动画
+
+
+我用隐式动画如何实现上边这种动画呢？也非常简单
+struct Example2: View {
+    @State private var half = false
+    @State private var dim = false
+
+    var body: some View {
+        Image("tower")
+            .opacity(dim ? 0.2 : 1.0)
+            .animation(.easeInOut(duration: 1.0))
+            .scaleEffect(half ? 0.5 : 1.0)
+            .onTapGesture {
+                self.dim.toggle()
+                self.half.toggle()
+        }
+    }
+}
+当animationmodifier作用于view时，他的顺序时很重要的，在上边的代码中，它只对它前边的内容生效，当然这个顺序我们其实时可以任意调整的，我们要想使用隐式动画禁用某些动画时，只需要.animation(nil)就行了。
+struct Example2: View {
+    @State private var half = false
+    @State private var dim = false
+
+    var body: some View {
+        Image("tower")
+            .opacity(dim ? 0.2 : 1.0)
+            .animation(nil)
+            .scaleEffect(half ? 0.5 : 1.0)
+                .animation(.easeInOut(duration: 1.0))
+            .onTapGesture {
+                self.dim.toggle()
+                self.half.toggle()
+        }
+    }
+}
+
+==========How Do Animations Work
+SwiftUI动画背后的原理在于Animatable协议，它要求我们实现一个计算属性animatableData,
+该属性遵守VectorArithmetic协议，VectorArithmetic的目的是让系统可以在需要变化的动画数据中间插入很多值，这些值的计算依赖动画的时间函数。
+在SwiftUI中执行动画，就是系统渲染View很多次，每一次渲染，都改变一点点参数，当然，这个参数指的是需要动画的原值到终值。
+
+举个例子，如果我们线性的把透明度从0.3改成0.8，由于0.3是Double类型，实现了VectorArithmetic协议，
+因此系统可以在0.3到0.8之间插入很对中间的值，这些值的计算依赖时间函数和动画时长。在本例中，它是线性的，系统在插值的时候的算法类似于下边的代码：
+let from:Double = 0.3
+let to:Double = 0.8
+
+for i in 0..<6 {
+    let pct = Double(i) / 5
+
+    var difference = to - from
+    difference.scale(by: pct)
+
+    let currentOpacity = from + difference
+
+    print("currentOpacity = \(currentOpacity)")
+}
+currentOpacity = 0.3
+currentOpacity = 0.4
+currentOpacity = 0.5
+currentOpacity = 0.6
+currentOpacity = 0.7
+currentOpacity = 0.8
+本质上，系统会为这些插入的值，都生成一个View，在duration的时间内把这些Views，播放出来，这就是我们看到的动画效果。
+
+==========Why Do I Care About Animatable?
+像opacity，scale，这些系统自动会执行动画，完全不需要我们关心。
+像这些基本的效果，系统是知道该如何做动画的，但在平时的开发中，我们要做的动画往往不是这么简单，比如说，path的变换，渐变色的切换等等
+
+==========Animating Shape Paths
+struct PolygonShape: Shape {
+    var sides: Int
+
+    func path(in rect: CGRect) -> Path {        
+        // hypotenuse
+        let h = Double(min(rect.size.width, rect.size.height)) / 2.0
+
+        // center
+        let c = CGPoint(x: rect.size.width / 2.0, y: rect.size.height / 2.0)
+
+        var path = Path()
+
+        for i in 0..<sides {
+            let angle = (Double(i) * (360.0 / Double(sides))) * Double.pi / 180
+
+            // Calculate vertex position
+            let pt = CGPoint(x: c.x + CGFloat(cos(angle) * h), y: c.y + CGFloat(sin(angle) * h))
+
+            if i == 0 {
+                path.move(to: pt) // move to first vertex
+            } else {
+                path.addLine(to: pt) // draw line to next vertex
+            }
+        }
+
+        path.closeSubpath()
+
+        return path
+    }
+}
+
+PolygonShape(sides: isSquare ? 4 : 3)
+    .stroke(Color.blue, lineWidth: 3)
+    .animation(.easeInOut(duration: duration))
+
+当我们改变siders的时候，你以为这么简单就能指定动画了？
+原因很简单，系统不知道它该如何动画？它只知道在siders改变的时候，重新绘制图形，为了解决这个问题，我们需要做2件事情：
+需要把Int类型的siders改成Double类型，这样才能在其值改变的时候，往中间插入很多值
+通过animatableData告诉系统哪些值需要插值
+
+幸运的是，Shape已经遵守了Animatable协议，因此，代码如下：
+struct PolygonShape: Shape {
+    var sides: Double
+
+    var animatableData: Double {
+        get { return sides }
+        set { sides = newValue }
+    }
+
+    ...
+}
+
+那么问题又来了，假设我们siders从3变为4，系统把siders分割成3.1, 3.2, 3.3... 3.9,4.0,这个时候我们应该如何根据这些数值来画路径呢？
+func path(in rect: CGRect) -> Path {
+
+        // hypotenuse
+        let h = Double(min(rect.size.width, rect.size.height)) / 2.0
+
+        // center
+        let c = CGPoint(x: rect.size.width / 2.0, y: rect.size.height / 2.0)
+
+        var path = Path()
+
+        let extra: Int = Double(sides) != Double(Int(sides)) ? 1 : 0
+
+        for i in 0..<Int(sides) + extra {
+            let angle = (Double(i) * (360.0 / Double(sides))) * Double.pi / 180
+
+            // Calculate vertex
+            let pt = CGPoint(x: c.x + CGFloat(cos(angle) * h), y: c.y + CGFloat(sin(angle) * h))
+
+            if i == 0 {
+                path.move(to: pt) // move to first vertex
+            } else {
+                path.addLine(to: pt) // draw line to next vertex
+            }
+        }
+
+        path.closeSubpath()
+
+        return path
+    }
+
+let extra: Int = Double(sides) != Double(Int(sides)) ? 1 : 0这行代码保证了像3.4这样大于3的数能够画出4个顶点。
+for i in 0..<Int(sides) + extra这里的循环，循环多少次就会产生多少的顶点，这一点很重要。
+
+let angle = (Double(i) * (360.0 / Double(sides))) * Double.pi / 180,不管siders是多少，(360.0 / Double(sides))都是相同的值，也就是说，每次遍历旋转的角度是相同的。
+
+SwiftUI角度旋转是顺时针方向的，水平x轴为0度
+
+我们在上边的基础上再扩展一点东西出来，如果我想同时执行2种动画，那该如何呢？ 
+其实非常简单。animatableData只要求set和get实现了VectorArithmetic协议的值就行，我们上边用到的Double就实现了，如果我们两同时执行2种动画，我们需要使用AnimatablePair<First, Second>.
+
+很明显，它封装了2个参数，我们的代码就会变成这样：
+
+struct PolygonShape: Shape {
+    var sides: Double
+    var scale: Double
+
+    var animatableData: AnimatablePair<Double, Double> {
+        get { AnimatablePair(sides, scale) }
+        set {
+            sides = newValue.first
+            scale = newValue.second
+        }
+    }
+
+    ...
+}
+
+绘制路径的方法也只需要改一点点就可以了，利用scale计算半径：
+
+func path(in rect: CGRect) -> Path {
+      let h = Double(min(rect.size.width, rect.size.height) / 2.0) * scale
+      ...
+  }
+
+如果我们同时执行超过两个动画，应该怎么办？ 答案也同样很简单，
+AnimatablePair<AnimatablePair<CGFloat, CGFloat>, AnimatablePair<CGFloat, CGFloat>>
+
+基于此方法，可以引申到n个值，在系统中CGPoint,CGSize和和CGRect都可以执行动画，是因为他们都实现了Animatable协议。
+extension CGPoint : Animatable {
+    public typealias AnimatableData = AnimatablePair<CGFloat, CGFloat>
+    public var animatableData: CGPoint.AnimatableData
+}
+
+extension CGSize : Animatable {
+    public typealias AnimatableData = AnimatablePair<CGFloat, CGFloat>
+    public var animatableData: CGSize.AnimatableData
+}
+
+extension CGRect : Animatable {
+    public typealias AnimatableData = AnimatablePair<CGPoint.AnimatableData, CGSize.AnimatableData>
+    public var animatableData: CGRect.AnimatableData
+}
+
+
+更加酷炫的效果：
+func path(in rect: CGRect) -> Path {
+        ...
+
+        drawVertexLines(path: &path, vertexs: vertex, n: 0)
+
+        return path
+    }
+
+    func drawVertexLines(path: inout Path, vertexs: [CGPoint], n: Int) {
+        if vertexs.count - n < 3 {
+            return
+        }
+
+        for i in (n+2)..<min(n + vertexs.count - 1, vertexs.count) {
+            path.move(to: vertexs[n])
+            path.addLine(to: vertexs[i])
+        }
+
+        drawVertexLines(path: &path, vertexs: vertexs, n: n+1)
+    }
+
+==========Making Your Own Type Animatable (with VectorArithmetic)
+想使用我们自定义的struct来做动画，只要讲到动画，就离不开一个值从某一个值到另一个值的变化
+要想描述某一刻的时间，我们需要3个属性，时，分，秒，因此我们需要把它们封装到一个结构体中，当需要切换时间的时候，直接在变化的两个结构体中间插值。
+Angle, CGPoint, CGRect, CGSize, EdgeInsets, StrokeStyle 和 UnitPoint，这些都实现了Animatable协议，AnimatablePair, CGFloat, Double, EmptyAnimatableData 和 Float，这些都实现了VectorArithmetic协议。
+
+先写ClockTime结构体：
+struct ClockTime {
+    var hours: Int
+    var minutes: Int
+    var seconds: Double
+
+    init(_ h: Int, _ m: Int, _ s: Double) {
+        self.hours = h
+        self.minutes = m
+        self.seconds = s
+    }
+
+    init(_ seconds: Double) {
+        let hours = Int(seconds) / 3600
+        let minutes = (Int(seconds) - (hours * 3600)) / 60
+        let seconds = seconds - Double(hours * 3600) - Double(minutes * 60)
+
+        self.hours = hours
+        self.minutes = minutes
+        self.seconds = seconds
+    }
+
+    func asSeconds() -> Double {
+        return Double(self.hours * 3600) + Double(self.minutes * 60) + self.seconds
+    }
+
+    func asString() -> String {
+        return String(format: "%2i", self.hours) +
+            " : " +
+            String(format: "%02i", self.minutes) +
+            " : " +
+            String(format: "%02.0f", self.seconds)
+    }
+}
+
+让ClockTime实现VectorArithmetic协议：
+
+extension ClockTime: VectorArithmetic {
+    static func - (lhs: ClockTime, rhs: ClockTime) -> ClockTime {
+        return ClockTime(lhs.asSeconds() - rhs.asSeconds())
+    }
+
+    static func + (lhs: ClockTime, rhs: ClockTime) -> ClockTime {
+        return ClockTime(lhs.asSeconds() + rhs.asSeconds())
+    }
+
+    mutating func scale(by rhs: Double) {
+        var s = Double(self.asSeconds())
+        s.scale(by: rhs)
+
+        let time = ClockTime(s)
+        self.hours = time.hours
+        self.minutes = time.minutes
+        self.seconds = time.seconds
+    }
+
+    var magnitudeSquared: Double {
+        1
+    }
+
+    static var zero: ClockTime {
+        ClockTime(0, 0, 0)
+    }
+}
+上边的代码，基本上算是固定写法，但可以发现一些新的想法，SwiftUI系统内部在做插值的时候，会用到VectorArithmetic协议中的方法。
+
+struct ClockShape: Shape {
+    var time: ClockTime
+
+    var animatableData: ClockTime {
+        get {
+            time
+        }
+        set {
+            time = newValue
+        }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+
+        let radius = min(rect.size.width / 2.0, rect.size.height / 2.0)
+        let center = CGPoint(x: rect.size.width / 2.0, y: rect.size.height / 2.0)
+
+        let hHypotenuse = Double(radius) * 0.5
+        let mHypotenuse = Double(radius) * 0.6
+        let sHypotenuse = Double(radius) * 0.8
+
+        let hAngle: Angle = .degrees(Double(time.hours) / 12 * 360 - 90)
+        let mAngle: Angle = .degrees(Double(time.minutes) / 60 * 360 - 90)
+        let sAngle: Angle = .degrees(Double(time.seconds) / 60 * 360 - 90)
+
+        let hoursNeedle = CGPoint(x: center.x + CGFloat(hHypotenuse * cos(hAngle.radians)), y: center.y + CGFloat(hHypotenuse * sin(hAngle.radians)))
+        let minutesNeedle = CGPoint(x: center.x + CGFloat(mHypotenuse * cos(mAngle.radians)), y: center.y + CGFloat(mHypotenuse * sin(mAngle.radians)))
+        let secondsNeedle = CGPoint(x: center.x + CGFloat(sHypotenuse * cos(sAngle.radians)), y: center.y + CGFloat(sHypotenuse * sin(sAngle.radians)))
+
+        /// 画圆
+        path.addArc(center: center, radius: radius,
+                    startAngle: .degrees(0), endAngle: .degrees(360),
+                    clockwise: true)
+
+        /// 表盘刻度
+        let numberLength: CGFloat = 5.0
+        let numberPadding: CGFloat = 12.0
+        let centerToNumber: CGFloat = radius - numberLength - numberPadding
+
+
+        for i in 0..<12 {
+            let angle: Angle = .degrees(360.0 / 12.0 * Double(i))
+
+            let inPt = CGPoint(x: center.x + centerToNumber * CGFloat(cos(angle.radians)), y: center.y - centerToNumber * CGFloat(sin(angle.radians)))
+
+            let outPt = CGPoint(x: center.x + (centerToNumber + numberLength) * CGFloat(cos(angle.radians)), y: center.y - (centerToNumber + numberLength) * CGFloat(sin(angle.radians)))
+
+            path.move(to: inPt)
+            path.addLine(to: outPt)
+        }
+
+
+        /// 时针
+        path.move(to: center)
+        path.addLine(to: hoursNeedle)
+        path = path.strokedPath(StrokeStyle(lineWidth: 3, lineCap: .round))
+
+        /// 分针
+        path.move(to: center)
+        path.addLine(to: minutesNeedle)
+        path = path.strokedPath(StrokeStyle(lineWidth: 3, lineCap: .round))
+
+        /// 秒针
+        path.move(to: center)
+        path.addLine(to: secondsNeedle)
+        path = path.strokedPath(StrokeStyle(lineWidth: 1, lineCap: .round))
+
+        return path
+    }
+}
+
+==========SwiftUI + Metal
+如果我们想在SwiftUI中实现特别复杂的动画，并在真机上运行，可能会发现，动画不一定那么流畅，这种情况比较适合开启Metal，开启Metal非常简单
+FlowerView().drawingGroup()

@@ -1,0 +1,113 @@
+==========
+struct MyView: View {
+    @State private var flag = false
+
+    var body: some View {
+        Button("Toggle Flag") {
+            self.flag.toggle()
+        }
+    }
+}
+修改状态的代码self.flag.toggle()在一个闭包中，当计算body的时候，并不会执行该闭包，也就是说，在计算body的时候，并没有修改状态，只有点击了按钮后，view的状态才被修改，再次触发body的计算。
+
+
+这个有问题
+struct OutOfControlView: View {
+    @State private var count: Int = 0
+
+    var body: some View {
+        self.count += 1
+
+        return Text("计算次数：\(self.count)")
+            .multilineTextAlignment(.center)
+    }
+}
+运行程序后，我们会得到一个运行时的提示信息:
+[SwiftUI] Modifying state during view update, this will cause undefined behavior.
+DispatchQueue.main.async {
+        self.count += 1
+}
+这么做，就不会产生运行时的提醒信息，但仍然有很大的问题
+OutOfControlView刷新view对CPU的严重消耗
+说明OutOfControlView一直不断的刷新
+
+已经使用了DispatchQueue.main.async{},还有问题呢？原因在于：
+DispatchQueue.main.async是一个异步函数，就跟按钮的点击事件一样，在计算body的时候，并不会直接执行
+当body计算完成后才会执行DispatchQueue.main.async中的代码，这时候状态修改了，又触发了View的刷新
+一直重复循环上边两个过程
+
+==========
+struct Example2: View {
+    @State private var show = false
+    @State private var direction = ""
+
+    var body: some View {
+        print("更新body direction = \(self.direction) ")
+        return VStack {
+            CPUWheel()
+                .frame(height: 150)
+
+            Text("\(self.direction)")
+                .font(.largeTitle)
+
+            Image(systemName: "location.north.fill")
+                .resizable()
+                .frame(width: 100, height: 100)
+                .foregroundColor(.green)
+                .modifier(RotateEffect(direction: self.$direction, angle: self.show ? 360 : 0))
+
+            Button("开始") {
+                withAnimation(.easeInOut(duration: 3.0)) {
+                    self.show.toggle()
+                }
+            }
+            .padding(.top, 50)
+        }
+    }
+}
+
+struct RotateEffect: GeometryEffect {
+    @Binding var direction: String
+    var angle: Double
+
+    var animatableData: Double {
+        get {
+            angle
+        }
+        set {
+            angle = newValue
+        }
+    }
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        DispatchQueue.main.async {
+            self.direction = self.getDirection(self.angle)
+            print("更新effectValue direction = \(self.direction) ")
+        }
+
+        let rotation = CGAffineTransform(rotationAngle: CGFloat(angle * (Double.pi / 180.0)))
+        let offset1 = CGAffineTransform(translationX: size.width / 2.0, y: size.height / 2.0)
+        let offset2 = CGAffineTransform(translationX: -size.width / 2.0, y: -size.height / 2.0)
+        return ProjectionTransform(offset2.concatenating(rotation).concatenating(offset1))
+    }
+
+    func getDirection(_ angle: Double) -> String {
+        switch angle {
+        case 0..<45:
+            return "北"
+        case 45..<135:
+            return "东"
+        case 135..<225:
+            return "南"
+        case 225..<315:
+            return "西"
+        default:
+            return "北"
+        }
+    }
+}
+
+@Binding var direction: String: 在RotateEffect中，我们通过Binding的方式直接修改状态
+通过getDirection来计算某个角度下的方向
+
+更新body direction = X: 系统并不是每次direction改变就更新body，而是非常聪明的知道什么时候需要更新body

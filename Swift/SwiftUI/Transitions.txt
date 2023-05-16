@@ -1,0 +1,208 @@
+transition决定了某个View如何插入到视图栈中，或者如何在视图栈中移除。
+transition自身并没有任何效果， 需要配合动画一起使用
+
+struct Example1: View {
+    @State private var show = false
+
+    var body: some View {
+        VStack {
+            Spacer()
+
+            if show {
+                LabelView()
+                    .transition(.opacity)
+            }
+
+            Spacer()
+
+            Button("点击") {
+                self.show.toggle()
+            }
+            .padding(20)
+        }
+    }
+}
+可以看出，并没有什么动画效果，其实，这也很好理解，transition只是告诉系统视图如何过渡，系统并不知道过渡的动画函数是什么，也就无法做动画。
+###即使使用隐式动画，也就是.animation()modifier也不起作用###
+
+struct Example1: View {
+    @State private var show = false
+
+    var body: some View {
+        VStack {
+            Spacer()
+
+            if show {
+                LabelView()
+                        .animation(.easeInOut)
+                    .transition(.opacity)
+            }
+                    ...
+    }
+}
+
+
+要想让transition有动画，有两种方法：
+第一种是给出一个显式动画
+struct Example1: View {
+    @State private var show = false
+
+    var body: some View {
+        VStack {
+                        ...
+
+            Button("点击") {
+                withAnimation(.easeInOut(duration: 1.0)) {
+                    self.show.toggle()
+                }
+            }
+            .padding(20)
+        }
+    }
+}
+
+另一种方法是为transition关联一个动画，这里值得注意的是，我们下边代码中与transition关联的动画作用于transition，并不是作用于view的。
+struct Example2: View {
+    @State private var show = false
+
+    var body: some View {
+        VStack {
+            Spacer()
+
+            if show {
+                LabelView()
+                    .transition(AnyTransition.opacity.animation(.easeInOut(duration: 1.0)))
+            }
+
+            Spacer()
+
+            Button("点击") {
+                self.show.toggle()
+            }
+            .padding(20)
+        }
+    }
+}
+
+==========非对称的Transitions
+先了解一下对称，对于transition来说，当view出现的时候，会执行某个过渡效果，在默认情况下，当该view消失的时候，会执行与出现相反的过渡效果，这就是transiton的对称性。
+
+我们可以使用.asymmetric来实现非对称的过渡效果，代码如下:
+.transition(.asymmetric(insertion: .opacity, removal: .scale))
+出现和消失使用了不同的过渡效果。
+
+==========组合Transitions
+我们可以使用组合来为某个过渡效果实现多个动画过程
+.transition(AnyTransition.opacity.combined(with: .slide))
+通知执行了opacity和slide两种效果，当然我们也可以在asymmetric中使用：
+.transition(.asymmetric(insertion: AnyTransition.opacity.combined(with: .slide), removal: AnyTransition.scale.combined(with: .slide)))
+
+==========带有参数的Transitions
+.scale(scale: 0.0, anchor: UnitPoint(x: 1, y: 0))
+.scale(scale: 2.0)
+.move(edge: .leading)
+.offset(x: 30)
+.offset(y: 50)
+.offset(x: 100, y: 10)
+
+==========自定义Transitions
+extension AnyTransition {
+    static var myCustomOpacity: AnyTransition {
+        AnyTransition.modifier(active: MyOpacityModifier(opacity: 0), identity: MyOpacityModifier(opacity: 1))
+    }
+}
+
+struct MyOpacityModifier: ViewModifier {
+    let opacity: Double
+
+    func body(content: Content) -> some View {
+        content.opacity(opacity)
+    }
+}
+
+写一个AnyTransition的扩展
+实现一个myCustomOpacity的静态类型
+返回值为AnyTransition.modifier，它接受两个参数，active和identity，分别表示开始和结束
+active和identity是个ViewModifier类型
+
+.transition(.myCustomOpacity)
+
+由于本质上是个ViewModifier，相当于修改了view的opacity，这也就是我们上边说过的，不加显式动画，不会产生过渡效果的原因。
+有很多动画效果，比如.rotationEffect() 和.transformEffect()，用transition都可以实现
+
+
+==========
+struct GeometryEffectTransitionsDemo: View {
+    @State private var show = false
+
+    var body: some View {
+
+        return ZStack {
+            Button("Open Booking") {
+                withAnimation(.easeInOut(duration: 0.8)) {
+                    self.show.toggle()
+                }
+            }.position(x: 100, y: 20)
+
+            if show {
+                RoundedRectangle(cornerRadius: 15)
+                    .fill(Color.green)
+                    .frame(width: 300, height: 400)
+                    .shadow(color: .black, radius: 3)
+                    .transition(.fly)
+                    .zIndex(1)
+            }
+        }
+    }
+}
+
+extension AnyTransition {
+    static var fly: AnyTransition {
+        AnyTransition.modifier(active: FlyModifier(pct: 0), identity: FlyModifier(pct: 1))
+    }
+}
+
+struct FlyModifier: GeometryEffect {
+    var pct: Double
+
+    var animatableData: Double {
+        get {
+            pct
+        }
+        set {
+            pct = newValue
+        }
+    }
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        let a = CGFloat(Angle(degrees: 90 * (1 - pct)).radians)
+
+        var transform3d = CATransform3DIdentity
+        transform3d.m34 = -1 / max(size.width, size.height)
+
+        transform3d = CATransform3DRotate(transform3d, a, 1, 0, 0)
+        transform3d = CATransform3DTranslate(transform3d, -size.width / 2.0, -size.width / 2.0, 0)
+
+        let afffineTransform1 = ProjectionTransform(CGAffineTransform(translationX: size.width / 2.0, y: size.width / 2.0))
+        let afffineTransform2 = ProjectionTransform(CGAffineTransform(scaleX: CGFloat(pct * 2), y: CGFloat(pct * 2)))
+
+        if pct <= 0.5 {
+            return ProjectionTransform(transform3d).concatenating(afffineTransform2).concatenating(afffineTransform1)
+        } else {
+            return ProjectionTransform(transform3d).concatenating(afffineTransform1)
+        }
+    }
+}
+
+GeometryEffect本身即实现了ViewModifier协议，又实现了Animatable协议，因此它可以作为active和identity的参数，也可以通过animatableData获取动画状态。
+
+整个过渡效果的核心代码如下：
+func effectValue(size: CGSize) -> ProjectionTransform {
+      ...
+        if pct <= 0.5 {
+            return ProjectionTransform(transform3d).concatenating(afffineTransform2).concatenating(afffineTransform1)
+        } else {
+            return ProjectionTransform(transform3d).concatenating(afffineTransform1)
+        }
+    }
+我们用pct跟0.5做判断，返回不同的形变值，就实现了上边的效果。

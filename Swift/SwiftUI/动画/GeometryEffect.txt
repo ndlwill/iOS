@@ -1,0 +1,199 @@
+https://zhuanlan.zhihu.com/p/143415397
+
+GeometryEffect实现了Animatable和ViewModifier这两个协议，因此说明它自身就能实现动画，同时也可以通过modifier来写代码
+
+系统中的offset就可以用其实现，代码如下：
+public extension View {
+    func offset(x: CGFloat, y: CGFloat) -> some View {
+        return modifier(_OffsetEffect(offset: CGSize(width: x, height: y)))
+    }
+
+    func offset(_ offset: CGSize) -> some View {
+        return modifier(_OffsetEffect(offset: offset))
+    }
+}
+
+struct _OffsetEffect: GeometryEffect {
+    var offset: CGSize
+
+    var animatableData: CGSize.AnimatableData {
+        get { CGSize.AnimatableData(offset.width, offset.height) }
+        set { offset = CGSize(width: newValue.first, height: newValue.second) }
+    }
+
+    public func effectValue(size: CGSize) -> ProjectionTransform {
+        return ProjectionTransform(CGAffineTransform(translationX: offset.width, y: offset.height))
+    }
+}
+
+==========Animation Keyframes
+SwiftUI并没有直接提供关键帧动画相关的modifier，但我们完全可以用GeometryEffect来实现
+关于view形变的相关的一个核心内容CGAffineTransform
+学过线性代数的同学一定明白，所谓的形变本质上就是把一些点的集合通过一个形变矩阵映射成另外一个点集。这里边设计到了矩阵的乘法。
+
+形变的主要内容有：
+平移
+缩放
+旋转
+
+只考率位移：x只需要设置e，abcdf都为0，tx；y只需要设置f，abcde都为0
+只考率缩放：x只需要设置a，bcdef都为0，sx；y只需要设置d，abcef都为0
+只考率旋转：x只需要设置a，c，bdef都为0，y只需要设置b,d，abcef都为0
+
+func effectValue(size: CGSize) -> ProjectionTransform {
+        return ProjectionTransform(CGAffineTransform(a: 1, b: 0, c: skew, d: 1, tx: offset, ty: 0))
+    }
+
+==========Animation Feedback
+struct FlipEffect: GeometryEffect {
+    @Binding var flipped: Bool
+    var angle: Double
+    let axis: (CGFloat, CGFloat)
+
+    var animatableData: Double {
+        get {
+            angle
+        }
+        set {
+            angle = newValue
+        }
+    }
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        DispatchQueue.main.async {
+            self.flipped = (self.angle >= 90 && self.angle < 270)
+        }
+
+        let a = CGFloat(Angle.degrees(angle).radians)
+
+        var  transform3d = CATransform3DIdentity
+        transform3d.m34 = -1/max(size.width, size.height)
+        transform3d = CATransform3DRotate(transform3d, a, self.axis.0, self.axis.1, 0)
+        transform3d = CATransform3DTranslate(transform3d, -size.width/2.0, -size.height/2.0, 0)
+
+        let affineTransform = ProjectionTransform(CGAffineTransform(translationX: size.width/2.0, y: size.height/2.0))
+
+        return ProjectionTransform(transform3d).concatenating(affineTransform)
+    }
+}
+
+由于GeometryEffect实现了Animatable协议，系统会根据animatableData来动态的计算参数，这里需要计算的参数指的是angle。angle会被打散成很多不同的数字，系统会针对每一个不同的angle都调用effectValue方法。
+
+DispatchQueue.main.async {
+            self.flipped = (self.angle >= 90 && self.angle < 270)
+        }
+
+angle是一个Binding的值：@Binding var flipped: Bool，它的值的改变会往上层抛出
+
+struct RotatingCard: View {
+    @State private var flipped = false
+    @State private var animate3d = false
+    @State private var rotate = false
+    @State private var imgIndex = 0
+
+    let images = ["1", "2", "3", "4", "5"]
+
+    var body: some View {
+        let binding = Binding<Bool>(get: { self.flipped }, set: { self.updateBinding($0) })
+
+        return VStack {
+            Spacer()
+            Image(flipped ? "bg" : images[imgIndex]).resizable()
+                .frame(width: 212, height: 320)
+                .modifier(FlipEffect(flipped: binding, angle: animate3d ? 360 : 0, axis: (x: 1, y: 5)))
+                .rotationEffect(Angle(degrees: rotate ? 0 : 360))
+                .onAppear {
+                    withAnimation(Animation.linear(duration: 4.0).repeatForever(autoreverses: false)) {
+                        self.animate3d = true
+                    }
+
+                    withAnimation(Animation.linear(duration: 8.0).repeatForever(autoreverses: false)) {
+                        self.rotate = true
+                    }
+            }
+            Spacer()
+        }
+    }
+
+    func updateBinding(_ value: Bool) {
+        // If card was just flipped and at front, change the card
+        if flipped != value && !flipped {
+            self.imgIndex = self.imgIndex+1 < self.images.count ? self.imgIndex+1 : 0
+        }
+
+        flipped = value
+    }
+}
+
+可以看出，依赖flipped在临界点的变化，我们切换iamgeIndex,从而实现了切换显示图片的目的。
+
+
+==========Make a View Follow a Path
+
+
+==========Ignored By Layout
+struct IgnoredByLayoutView: View {
+    @State private var animate = false
+    @State private var w: CGFloat = 50
+
+    var body: some View {
+        VStack {
+            HStack {
+                RoundedRectangle(cornerRadius: 5)
+                    .foregroundColor(.green)
+                    .frame(width: 200, height: 40)
+                    .overlay(ShowSize())
+                    .modifier(MyEffect(x: animate ? -10 : 10))
+
+                RoundedRectangle(cornerRadius: 5)
+                    .foregroundColor(.blue)
+                    .frame(width: w, height: 40)
+            }
+
+            HStack {
+                RoundedRectangle(cornerRadius: 5)
+                    .foregroundColor(.orange)
+                    .frame(width: 200, height: 40)
+                    .overlay(ShowSize())
+                    .modifier(MyEffect(x: animate ? -10 : 10).ignoredByLayout())
+
+                RoundedRectangle(cornerRadius: 5)
+                    .foregroundColor(.red)
+                    .frame(width: w, height: 40)
+            }
+        }
+        .onAppear {
+            withAnimation(Animation.easeInOut(duration: 1.0).repeatForever()) {
+                self.animate = true
+            }
+        }
+    }
+}
+
+struct MyEffect: GeometryEffect {
+    var x: CGFloat = 0
+
+    var animatableData: CGFloat {
+        get {
+            x
+        }
+        set {
+            x = newValue
+        }
+    }
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        return ProjectionTransform(CGAffineTransform(translationX: x, y: 0))
+    }
+}
+
+struct ShowSize: View {
+    var body: some View {
+        GeometryReader { proxy in
+            Text("x = \(proxy.frame(in: .global).minX, specifier: "%.0f")")
+                .foregroundColor(.white)
+        }
+    }
+}
+
+使用.ignoredByLayout(),可以让我们有能力在某些特殊的场景下，依然能够执行动画，但view的layout并不会实时计算。

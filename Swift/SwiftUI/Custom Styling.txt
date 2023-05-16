@@ -1,0 +1,227 @@
+对于任何可交互的view来说，其有两部分组成：
+内在的逻辑
+外在的样式
+所谓的Style，就是根据内在逻辑的状态，返回一个与之相对应的外在样式。
+
+ButtonStyle，ToggleStyle或者其他的styles，本质上都是一个简单的协议，该协议中只有一个方法
+func makeBody(configuration: Self.Configuration) -> some View
+
+public struct ButtonStyleConfiguration {
+    public let label: ButtonStyleConfiguration.Label
+    public let isPressed: Bool
+}
+
+Button的configuration给我们返回了两条有用的信息:
+label：按钮的内容
+isPressed： 按钮当前的按压状态
+makeBody的目的就是让我们利用configuration提供的信息，返回一个相应的view。
+
+==========Button Custom Styles
+Button一共有两个style协议：ButtonStyle和PrimitiveButtonStyle。后边的style能够提供更多的控制能力。
+
+对于自定义ButtonStyle来说，实在是太简单了，只需要根据不同的isPressed返回不同的样式就可以了，也就是未按压显示一种样式，按压后显示另一种样式。
+
+struct MyButtonStyleExample: View {
+    var body: some View {
+        VStack {
+            Button("Tap Me!") {
+                print("button pressed!")
+            }.buttonStyle(MyButtonStyle(color: .blue))
+        }
+    }
+}
+
+struct MyButtonStyle: ButtonStyle {
+    var color: Color = .green
+
+    public func makeBody(configuration: MyButtonStyle.Configuration) -> some View {
+
+        configuration.label
+            .foregroundColor(.white)
+            .padding(15)
+            .background(RoundedRectangle(cornerRadius: 5).fill(color))
+            .compositingGroup()
+            .shadow(color: .black, radius: 3)
+            .opacity(configuration.isPressed ? 0.5 : 1.0)
+            .scaleEffect(configuration.isPressed ? 0.8 : 1.0)
+    }
+}
+
+PrimitiveButtonStyle可以让我们控制按钮事件触发的时机，在UIKit中，我们可以通过一个枚举来设置按钮点击事件的触发时机，在SwiftUI中，Button并没有直接的设置方法，因此，我们就可以通过自定义PrimitiveButtonStyle来实现这个功能。
+当我们长按按钮超过1秒后，才会触发按钮的点击事件，触发后，会显示上方的文字：
+
+struct ContentView: View {
+    @State private var text = ""
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Text(text)
+
+            Button("Tap Me!") {
+                self.text = "Action Executed!"
+            }.buttonStyle(MyPrimitiveButtonStyle(color: .red))
+        }
+    }
+}
+
+struct MyPrimitiveButtonStyle: PrimitiveButtonStyle {
+    var color: Color
+
+    func makeBody(configuration: PrimitiveButtonStyle.Configuration) -> some View {
+        MyButton(configuration: configuration, color: color)
+    }
+
+    struct MyButton: View {
+        @GestureState private var pressed = false
+
+        let configuration: PrimitiveButtonStyle.Configuration
+        let color: Color
+
+        var body: some View {
+            let longPress = LongPressGesture(minimumDuration: 1.0, maximumDistance: 0.0)
+                .updating($pressed) { value, state, _ in state = value }
+                .onEnded { _ in
+                   self.configuration.trigger()
+                 }
+
+            return configuration.label
+                .foregroundColor(.white)
+                .padding(15)
+                .background(RoundedRectangle(cornerRadius: 5).fill(color))
+                .compositingGroup()
+                .shadow(color: .black, radius: 3)
+                .opacity(pressed ? 0.5 : 1.0)
+                .scaleEffect(pressed ? 0.8 : 1.0)
+                .gesture(longPress)
+        }
+    }
+}
+
+==========Custom Toggle Style
+struct Example1: View {
+    @State private var flag = true
+
+    var body: some View {
+        VStack {
+            Toggle(isOn: $flag) {
+                HStack {
+                    Image(systemName: "arkit")
+                    Text("是否开启AR功能：")
+                }
+            }
+        }
+        .toggleStyle(MyToggleStyle1())
+    }
+}
+
+
+struct MyToggleStyle1: ToggleStyle {
+    let width: CGFloat = 50
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack {
+            configuration.label
+
+            ZStack(alignment: configuration.isOn ? .trailing : .leading) {
+                RoundedRectangle(cornerRadius: 4)
+                    .frame(width: width, height: width / 2.0)
+                    .foregroundColor(configuration.isOn ? .green : .red)
+
+                RoundedRectangle(cornerRadius: 4)
+                    .frame(width: (width / 2) - 4, height: (width / 2) - 6)
+                    .padding(4)
+                    .foregroundColor(.white)
+                    .onTapGesture {
+                        withAnimation {
+                            configuration.$isOn.wrappedValue.toggle()
+                        }
+                }
+            }
+        }
+    }
+}
+
+我给Toggle的label传了一个HStack,从显示效果来看，说明这个label，可以是任何view，也就是some View
+.toggleStyle(MyToggleStyle1())这个modifier我写在了VStack外边，大家不觉得奇怪吗？VStack里边的Toggle竟然也接收到了参数。
+
+
+这个效果：
+点击后，正向翻转180度
+再次点击，反向翻转180度，回到原始状态
+当翻转到90度的时候，需要切换图片和文字，实现该功能，用到的核心技术为GeometryEffect
+struct Example2: View {
+    @State private var flag = false
+    @State private var flipped = false
+
+    var body: some View {
+        VStack {
+            Toggle(isOn: $flag) {
+                VStack {
+                    Group {
+                        Image(systemName: flipped ? "folder.fill" : "map.fill")
+                        Text(flipped ? "地图" : "列表")
+                            .font(.caption)
+                    }
+                    .rotation3DEffect(flipped ? .degrees(180) : .degrees(0), axis: (x: 0, y: 1, z: 0))
+
+                }
+            }
+        }
+        .toggleStyle(MyToggleStyle2(flipped: $flipped))
+    }
+}
+
+struct FlipEffect: GeometryEffect {
+    @Binding var flipped: Bool
+    var angle: Double
+
+    var animatableData: Double {
+        get {
+            angle
+        }
+        set {
+            angle = newValue
+        }
+    }
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        DispatchQueue.main.async {
+            self.flipped = (self.angle >= 90 && self.angle <= 180)
+
+        }
+
+        let a = CGFloat(Angle.degrees(angle).radians)
+
+        var  transform3d = CATransform3DIdentity
+        transform3d.m34 = -1/max(size.width, size.height)
+        transform3d = CATransform3DRotate(transform3d, a, 0, 1, 0)
+        transform3d = CATransform3DTranslate(transform3d, -size.width/2.0, -size.height/2.0, 0)
+
+        let affineTransform = ProjectionTransform(CGAffineTransform(translationX: size.width/2.0, y: size.height/2.0))
+
+        return ProjectionTransform(transform3d).concatenating(affineTransform)
+    }
+}
+
+
+struct MyToggleStyle2: ToggleStyle {
+    let width: CGFloat = 50
+    let height: CGFloat = 60
+
+    @Binding var flipped: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .frame(width: width, height: height)
+            .modifier(FlipEffect(flipped: $flipped, angle: configuration.isOn ? 180 : 0))
+            .onTapGesture {
+                withAnimation {
+                    configuration.$isOn.wrappedValue.toggle()
+                }
+            }
+    }
+}
+
+GeometryEffect的本质是：在动画执行时， 会不断的调用effectValue函数，我们可以在此函数中，根据当前状态返回对应的形变信息即可。
+上边这个翻转的例子，表面看上去不像是一个Toggle，但确实是通过自定义ToggleStyle实现的，其内部的逻辑也是两种状态之间的切换，我们可以通过flag来监听到状态的改变。
+

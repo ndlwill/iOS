@@ -1,0 +1,313 @@
+/// A view that arranges its children in a vertical line.
+@available(iOS 13.0, OSX 10.15, tvOS 13.0, watchOS 6.0, *)
+@frozen public struct VStack<Content> : View where Content : View {
+
+    /// Creates an instance with the given `spacing` and Y axis `alignment`.
+    ///
+    /// - Parameters:
+    ///     - alignment: the guide that will have the same horizontal screen
+    ///       coordinate for all children.
+    ///     - spacing: the distance between adjacent children, or nil if the
+    ///       stack should choose a default distance for each pair of children.
+    @inlinable public init(alignment: HorizontalAlignment = .center, spacing: CGFloat? = nil, @ViewBuilder content: () -> Content)
+
+    /// The type of view representing the body of this view.
+    ///
+    /// When you create a custom view, Swift infers this type from your
+    /// implementation of the required `body` property.
+    public typealias Body = Never
+}
+
+VStack是一个结构体
+其初始化函数的最后一个参数为@ViewBuilder content: () -> Content，该函数与普通函数的区别在于前边有一个@ViewBuilder
+
+@available(iOS 13.0, OSX 10.15, tvOS 13.0, watchOS 6.0, *)
+@_functionBuilder public struct ViewBuilder {
+
+    /// Builds an empty view from an block containing no statements, `{ }`.
+    public static func buildBlock() -> EmptyView
+
+    /// Passes a single view written as a child view (e..g, `{ Text("Hello") }`) through
+    /// unmodified.
+    public static func buildBlock<Content>(_ content: Content) -> Content where Content : View
+}
+
+@available(iOS 13.0, OSX 10.15, tvOS 13.0, watchOS 6.0, *)
+extension ViewBuilder {
+
+// ViewBuilder为了支持闭包中的if表达式，特意扩展了一些东西
+    /// Provides support for "if" statements in multi-statement closures, producing an `Optional` view
+    /// that is visible only when the `if` condition evaluates `true`.
+    public static func buildIf<Content>(_ content: Content?) -> Content? where Content : View
+
+    /// Provides support for "if" statements in multi-statement closures, producing
+    /// ConditionalContent for the "then" branch.
+    public static func buildEither<TrueContent, FalseContent>(first: TrueContent) -> _ConditionalContent<TrueContent, FalseContent> where TrueContent : View, FalseContent : View
+
+    /// Provides support for "if-else" statements in multi-statement closures, producing
+    /// ConditionalContent for the "else" branch.
+    public static func buildEither<TrueContent, FalseContent>(second: FalseContent) -> _ConditionalContent<TrueContent, FalseContent> where TrueContent : View, FalseContent : View
+}
+
+ViewBuilder本身也是一个结构体，但是它用了@_functionBuilder修饰
+
+@_functionBuilder能够让我们对函数做一层转换，这是它最大的用处:
+@_functionBuilder struct TestBuilder {
+    static func buildBlock(_ items: String...) -> [String] {
+        items
+    }
+}
+struct ContentView: View {
+    @State private var text = "ccc"
+
+    var body: some View {
+        VStack {
+            Button("test") {
+                self.test {
+                    "a"
+                    "b"
+                    "c"
+                    "d"
+                }
+            }
+        }
+    }
+
+    func test(@TestBuilder _ content: () -> [String]) -> Void {
+        print(content())
+    }
+ }
+
+当我们点击按钮后，可以打印出：
+["a", "b", "c", "d"]
+通过@_functionBuilder，我们就可以获取函数中的变量，然后拿着这些数据做一些额外的事情。
+
+@available(iOS 13.0, OSX 10.15, tvOS 13.0, watchOS 6.0, *)
+extension ViewBuilder {
+
+    public static func buildBlock<C0, C1>(_ c0: C0, _ c1: C1) -> TupleView<(C0, C1)> where C0 : View, C1 : View
+}
+
+@available(iOS 13.0, OSX 10.15, tvOS 13.0, watchOS 6.0, *)
+extension ViewBuilder {
+
+    public static func buildBlock<C0, C1, C2>(_ c0: C0, _ c1: C1, _ c2: C2) -> TupleView<(C0, C1, C2)> where C0 : View, C1 : View, C2 : View
+}
+
+...
+
+@available(iOS 13.0, OSX 10.15, tvOS 13.0, watchOS 6.0, *)
+extension ViewBuilder {
+
+    public static func buildBlock<C0, C1, C2, C3, C4, C5, C6, C7, C8, C9>(_ c0: C0, _ c1: C1, _ c2: C2, _ c3: C3, _ c4: C4, _ c5: C5, _ c6: C6, _ c7: C7, _ c8: C8, _ c9: C9) -> TupleView<(C0, C1, C2, C3, C4, C5, C6, C7, C8, C9)> where C0 : View, C1 : View, C2 : View, C3 : View, C4 : View, C5 : View, C6 : View, C7 : View, C8 : View, C9 : View
+}
+
+ViewBuilder把我们输入的view最终转成了TupleView
+最多只能接受10个view，这也就是在SwiftUI中的容器类型最多可以放10个view的原因。
+我们如果想放更多的view，可以通过Group或者ForEach来实现
+
+
+
+struct ContentView: View {
+    @State private var hasText = false
+    @State private var show = true
+
+    var body: some View {
+        CustomView(Color.orange) {
+            Text("aaaa")
+        }
+    }
+ }
+
+struct CustomView<T: View>: View {
+    let bgColor: Color
+    var content: T
+
+    init(_ bgColor: Color, @ViewBuilder _ content: () -> T) {
+        self.bgColor = bgColor
+        self.content = content()
+    }
+
+    var body: some View {
+        self.content
+            .background(self.bgColor)
+    }
+}
+
+==============================
+
+let alert = UIAlertController(
+    title: "Delete all data?",
+    message: "All your data will be deleted!",
+    preferredStyle: .alert)
+
+let deleteAction = UIAlertAction(title: "Yes, Delete it All", style: .destructive) { (_) in
+    print("Deleting all data")
+}
+
+let moreOptionsAction = UIAlertAction(title: "Show More Options", style: .default) { (_) in
+    print("Show more options")
+}
+
+let cancelAction = UIAlertAction(title: "No, Don't Delete Anything", style: .cancel, handler: nil)
+
+alert.addAction(deleteAction)
+alert.addAction(moreOptionsAction)
+alert.addAction(cancelAction)
+
+present(alert, animated: true)
+
+使用@_functionBuilder的黑魔法后:
+
+typealias RAlertActionHandler = () -> Void
+
+protocol RAlertAction {
+    var title: String { get }
+    var style: UIAlertAction.Style { get }
+    var action: RAlertActionHandler { get }
+}
+
+struct DefaultAction: RAlertAction {
+    let title: String
+    let style: UIAlertAction.Style
+    let action: RAlertActionHandler
+
+    init(_ title: String, action: @escaping RAlertActionHandler = {}) {
+        self.title = title
+        self.style = .default
+        self.action = action
+    }
+}
+
+struct CancelAction: RAlertAction {
+    let title: String
+    let style: UIAlertAction.Style
+    let action: RAlertActionHandler
+
+    init(_ title: String, action: @escaping RAlertActionHandler = {}) {
+        self.title = title
+        self.style = .cancel
+        self.action = action
+    }
+}
+
+struct DestructiveAction: RAlertAction {
+    let title: String
+    let style: UIAlertAction.Style
+    let action: RAlertActionHandler
+
+    init(_ title: String, action: @escaping RAlertActionHandler = {}) {
+        self.title = title
+        self.style = .destructive
+        self.action = action
+    }
+}
+
+@_functionBuilder
+struct RAlertControllerBuilder {
+    static func buildBlock(_ components: RAlertAction...) -> [UIAlertAction] {
+        components.map { action in
+            UIAlertAction(title: action.title, style: action.style) { _ in
+                action.action()
+            }
+        }
+    }
+}
+
+// MARK:- UIAlertController
+extension UIAlertController {
+    convenience init(title: String,
+                     message: String,
+                     style: UIAlertController.Style = .alert,
+                     @RAlertControllerBuilder build: () -> [UIAlertAction]) {
+        let actions = build()
+        self.init(title: title, message: message, preferredStyle: style)
+        actions.forEach { self.addAction($0) }
+    }
+}
+
+这段代码，把RAlertAction转换成UIAlertAction，然后添加到UIAlertController中
+let alert = UIAlertController(
+    title: "Delete all data?",
+    message: "All your data will be deleted!") {
+        DestructiveAction("Yes, Delete it All") {
+            print("Deleting all data")
+        }
+
+        DefaultAction("Show More Options") {
+            print("showing more options")
+        }
+
+        CancelAction("No, Don't Delete Anything")
+}
+
+present(alert, animated: true)
+
+
+
+==============================自定义Modifier
+Text("Hello, World!")
+     .font(.title)
+     .foregroundColor(.white)
+     .padding()
+     .background(Color.orange)
+原地Modifier:
+上面的font和foregroundColor则为原地Modifier，对Text进行字体大小和颜色的设置后返回的依然是一个Text，原地 modifier一般来说对顺序不敏感
+
+
+Text("Hello, World!")
+     .font(.title)
+     .foregroundColor(.white)
+     .background(Color.orange)
+     .padding()
+     .background(Color.blue)
+封装类Modifier:
+padding和background则为封装类Modifier，对Text进行内边距和背景色的设置后返回的是一个封装后的Text。padding和background是定义在View extension中的，对顺序十分敏感
+
+自定义Modifier的使用:
+定义一个Struct继承自ViewModifier这个协议
+实现func body(content:Content) -> some View {}这个方法，此方法接受一个View，返回一个View，方法的实现则是上面所说的变换
+struct Title: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .font(.largeTitle)
+            .foregroundColor(.white)
+            .padding()
+            .background(Color.blue)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+}
+对输入的View进行了字体大小，前景色（字体颜色），内边距，背景色和圆角等一系列属性设置
+
+自定义Modifier的使用:
+Text("Hello, World!")
+    .modifier(Title())
+或者
+ModifiedContent(content: Text("Hello, world!"), modifier: Title())
+
+
+利用自定义Modifier创建一个新的View:
+struct Watermark: ViewModifier {
+    var text: String
+    func body(content: Content) -> some View {
+        ZStack(alignment: .bottomTrailing) {
+            content
+            Text(text)
+                .font(.caption)
+                .foregroundColor(.white)
+                .padding(5)
+                .background(Color.black)
+        }
+    }
+}
+extension View {
+    func watermarked(with text: String) -> some View {
+        self.modifier(Watermark(text: text))
+    }
+}
+Color.blue
+    .frame(width: 300, height: 200)
+    .watermarked(with: "Hacking with Swift")
+
+ViewModifiers允许我们在视图中封装和重用任何逻辑，利用自定义的Modifier能全局改变SwiftUI的控件样式
+只需要满足ViewModifier协议并实现body方法即可

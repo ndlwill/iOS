@@ -1,0 +1,135 @@
+那么SwiftUI布局的核心原理是什么呢？ 主要分3个步骤:
+父view提供一个建议的size
+子view根据自身的特性返回一个size
+父view使用子view返回的size对子view进行布局
+
+GeometryReader的主要作用就是能够获取到父view建议的尺寸
+struct ContentView: View {
+    var body: some View {
+        Example4()
+            .frame(width: 200, height: 100, alignment: .center)
+    }
+}
+
+struct Example4: View {
+    var body: some View {
+        GeometryReader { proxy in
+            HStack(spacing: 0) {
+                Text("举个例子 , \(proxy.size.width)")
+//                    .layoutPriority(1)
+
+                MyRectangle()
+            }
+            .border(Color.green, width: 1)
+        }
+
+    }
+
+    struct MyRectangle: View {
+        var body: some View {
+            Rectangle().fill(Color.green)
+        }
+    }
+}
+
+可以看到，确实获取到了父view的width，但是为什么文字自动换行了呢？是因为在HStack中，Text和MyRectangle拥有同样的布局优先级，要想让文字尽可能的展示完整，只需提升Text的布局优先级即可。
+.layoutPriority(1)
+
+==========GeometryProxy
+public struct GeometryProxy {
+    public var size: CGSize { get }
+    public subscript<T>(anchor: Anchor<T>) -> T { get }
+    public var safeAreaInsets: EdgeInsets { get }
+    public func frame(in coordinateSpace: CoordinateSpace) -> CGRect
+}
+
+size比较直观，就是返回父view建议的尺寸
+subscript可以让我们获取.leading,.top等等类似这样的数据
+safeAreaInsets可以获取安全区域的Insets
+frame(in:)要求传入一个CoordinateSpace类型的参数，也就是坐标空间，可以是.local, .global 或者 .named()，其中 .named()可以自定义坐标空间
+
+==========RoundedCornersView
+struct RoundedCornersView: View {
+    var color: Color = .black
+    var topLeading: CGFloat = 0.0
+    var topTrailing: CGFloat = 0.0
+    var bottomLeading: CGFloat = 0.0
+    var bottomTrailing: CGFloat = 0.0
+
+    var body: some View {
+        GeometryReader { geometry in
+            Path { path in
+
+                let w = geometry.size.width
+                let h = geometry.size.height
+
+                let tr = min(min(self.topTrailing, h/2), w/2)
+                let tl = min(min(self.topLeading, h/2), w/2)
+                let bl = min(min(self.bottomLeading, h/2), w/2)
+                let br = min(min(self.bottomTrailing, h/2), w/2)
+
+                path.move(to: CGPoint(x: w / 2.0, y: 0))
+                path.addLine(to: CGPoint(x: w - tr, y: 0))
+                path.addArc(center: CGPoint(x: w - tr, y: tr), radius: tr, startAngle: Angle(degrees: -90), endAngle: Angle(degrees: 0), clockwise: false)
+                path.addLine(to: CGPoint(x: w, y: h - br))
+                path.addArc(center: CGPoint(x: w - br, y: h - br), radius: br, startAngle: Angle(degrees: 0), endAngle: Angle(degrees: 90), clockwise: false)
+                path.addLine(to: CGPoint(x: bl, y: h))
+                path.addArc(center: CGPoint(x: bl, y: h - bl), radius: bl, startAngle: Angle(degrees: 90), endAngle: Angle(degrees: 180), clockwise: false)
+                path.addLine(to: CGPoint(x: 0, y: tl))
+                path.addArc(center: CGPoint(x: tl, y: tl), radius: tl, startAngle: Angle(degrees: 180), endAngle: Angle(degrees: 270), clockwise: false)
+                }
+                .fill(self.color)
+        }
+    }
+}
+
+Text("大圣，")
+    .font(.title2)
+    .padding(.all, 10)
+    .background(RoundedCornersView(color: .green,
+                                   topLeading: 0,
+                                   topTrailing: 30,
+                                   bottomLeading: 30,
+                                   bottomTrailing: 0))
+
+通过GeometryProxy，我们可以获取到父view建议的尺寸，在本例中，RoundedCornersView的父view其实是background
+
+==========滚动试图
+随着滚动的距离，动态计算图片翻转的角度
+
+定义屏幕中间位置的图片旋转角度为0
+根据view当前的center相当于屏幕的位置求出percent
+应用3D旋转，沿y轴
+struct Example2: View {
+    let img = ["1", "2", "3", "4", "5"]
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            LazyHStack(spacing: 0) {
+                ForEach(0..<img.count) { index in
+                    GeometryReader { proxy in
+                        Image(img[index])
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .rotation3DEffect(self.rotateAngle(proxy), axis: (x: 0, y: 11, z: 0))
+                    }
+                    .frame(width: 600.0 / 3, height: 600.0 / 3 * (425 / 640))
+                }
+            }
+        }
+        .frame(width: 600)
+        .coordinateSpace(name: "ScrollViewSpace")
+    }
+
+    func rotateAngle(_ proxy: GeometryProxy) -> Angle {
+        let dif = 600 * 0.5 - proxy.frame(in: .named("ScrollViewSpace")).midX
+        let pct = min(dif / proxy.size.width * 0.5, 1)
+        return .degrees(Double(30 * pct))
+    }
+}
+我们可以通过.coordinateSpace(name: "ScrollViewSpace")这种方式给某个View自定义一个坐标空间，然后通过proxy.frame(in: .named("ScrollViewSpace")).midX来获取到某个view当前的位置在指定坐标空间中的坐标。
+
+也就是说，我们需要获取Image在其父viewScrollView中的相对坐标。
+
+==========
+GeometryReader让我们能够获取到父view提供的建议的size，该数据保存在GeometryProxy，GeometryProxy提供了一个frame(in:)函数，可以让我们分别获取到该view相对于.global、.local或者.name的size。

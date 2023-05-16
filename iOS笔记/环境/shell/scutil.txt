@@ -1,0 +1,70 @@
+Invoke scutil. You will be placed at the scutil prompt.
+
+Enter open to open the session with configd.
+
+Enter list. You will see a set of keys, some of which are provided by the System Configuration framework (such as the keys in the File: domain), some of which are obtained from /Library/Preferences/SystemConfiguration/preferences.plist (the Setup: keys), and some of which are published by the configuration agents (the State: keys).
+
+Enter show State:/Network/Global/DNS to display the DNS dictionary. You should see a list of DNS servers and search domains configured on your system.
+
+Enter close, then quit.
+
+==============================
+
+https://rakhesh.com/powershell/vpn-client-over-riding-dns-on-macos/
+
+==============================Change DNS Server From Terminal on MacOSX
+macOS 的 /etc/resolv.conf 文件是由 scutil 管理的 // 不推荐对他进行操作
+Sometimes /etc/resolv.conf would be magically restored to its original configuration
+
+OS X has a daemon called configd, which magically collects configuration information, sends notifications, 
+and maintains a dynamic database of the current settings.
+The command-line tools to interface with the configuration daemon are scselect and scutil.
+scutil enables much more fine-grained control over the current network configuration.
+Unfortunately, it only really offers a command-line interface to modify the configuration database. 
+
+To retrieve the current primary network interface:
+scutil
+> open
+> get State:/Network/Global/IPv4
+> d.show
+<dictionary> {
+  PrimaryService : 7BB2FEBC-B166-11D9-AA42-000A95EED02C
+  Router : 198.32.18.254
+  PrimaryInterface : en0
+}
+> quit
+
+To retrieve the current DNS settings, 
+having retrieved the ID (that long hex string) of the primary service as shown above:
+scutil
+> open
+> get State:/Network/Service/PRIMARY_SERVICE_ID/DNS
+> d.show
+<dictionary> {
+  ServerAddresses : <array> {
+    0 : 198.35.23.2
+    1 : 198.32.56.32
+  }
+  DomainName : apple.co.uk
+}
+> quit
+
+To set the resolver configuration, with a domain of 'apple.co.uk' 
+and DNS name server IPs of 198.35.23.2 and 198.32.56.32, 
+and the primary network service ID as obtained above. 
+Root privileges are required for the modification:
+sudo scutil
+> open
+> d.init
+> d.add ServerAddresses * 198.35.23.2 198.32.56.32
+> d.add DomainName apple.co.uk
+> set State:/Network/Service/PRIMARY_SERVICE_ID/DNS
+> quit
+This last procedure will update /etc/resolv.conf for you as the change filters through the system.
+
+The only problem is this is not persistent across reboots. 
+
+
+To reset the network services as per your system preferences, or via DHCP, 
+I used scselect to change the network location. 
+This causes the entire network configuration to be re-initialised.

@@ -1,0 +1,183 @@
+extension View {
+
+    /// Returns a view whose identity is explicitly bound to the proxy
+    /// value `id`. When `id` changes the identity of the view (for
+    /// example, its state) is reset.
+    @inlinable public func id<ID>(_ id: ID) -> some View where ID : Hashable
+}
+当我们使用id()为某个view绑定了一个唯一的标识后，当该标识的值改变后，表面上看，该view就会回到初始状态，实际上，当标识改变后，系统创建了一个新的view。
+
+
+重置状态:
+struct Example1: View {
+    @State private var text = ""
+    @State private var textFieldId = 0
+
+    var body: some View {
+        VStack {
+            TextField("请输入邮箱", text: $text)
+                .id(textFieldId)
+
+            Button("重置") {
+                self.text = ""
+            }
+        }
+        .padding(.horizontal, 20)
+        .textFieldStyle(RoundedBorderTextFieldStyle())
+    }
+}
+
+我们使用self.text = ""清空了输入框中的内容，在这个例子中，我们Example1中的状态并不多，只有两个：
+@State private var text = ""
+@State private var textFieldId = 0
+
+但是，如果，状态很多呢？
+我们在清空的时候,就会写很多重复的代码，如果我们给TextField外层的VStack绑定一个标识，重置这个操作就非常简单。
+
+struct Example1: View {
+    @State private var text0 = ""
+    ...
+    @State private var textFieldId = 0
+
+    var body: some View {
+        VStack {
+            VStack {
+                TextField("text0", text: $text0)
+                ...
+                TextField("text6", text: $text6)
+            }
+            .id(textFieldId)
+
+
+            Button("重置") {
+                self.textFieldId += 1
+            }
+        }
+        ...
+    }
+}
+点击并没有任何清空效果，我们修改下代码，把这些TextField放到一个独立的View中：
+struct MyCustom: View {
+    @State private var text0 = ""
+    @State private var text1 = ""
+    @State private var text2 = ""
+    @State private var text3 = ""
+    @State private var text4 = ""
+    @State private var text5 = ""
+    @State private var text6 = ""
+
+    var body: some View {
+        VStack {
+            TextField("text0", text: $text0)
+            TextField("text1", text: $text1)
+            TextField("text2", text: $text2)
+            TextField("text3", text: $text3)
+            TextField("text4", text: $text4)
+            TextField("text5", text: $text5)
+            TextField("text6", text: $text6)
+        }
+        .padding(.horizontal, 20)
+        .textFieldStyle(RoundedBorderTextFieldStyle())
+    }
+}
+struct Example2: View {
+    @State private var textFieldId = 0
+
+    var body: some View {
+        VStack {
+            MyCustom()
+                .id(textFieldId)
+
+            Button("重置") {
+                self.textFieldId += 1
+            }
+        }
+    }
+}
+宏观上，修改id()，可以把该view重置到初始状态
+所谓的重置到初始状态，本质上是重新创建了一个新的view
+需要重置的view必须是一个独立封装的view
+第3点很重要，如果我们想通过这种方式来重置view，我们就需要把该view封装成独立的view。
+
+==========如何验证？
+可能会有认为并没有创建一个新的view，而是把当前的view的状态恢复到了初始状态？
+struct Example3: View {
+    @State private var theId = 0
+
+    var body: some View {
+        VStack(spacing: 20) {
+            MyCircle()
+                .transition(AnyTransition.opacity.combined(with: .slide))
+                .id(theId)
+                .onDisappear {
+                    print("消失了")
+                }
+
+            Text("id = \(theId)    ")
+
+            Button("Increment Id") {
+                withAnimation(.easeIn(duration: 2.0)) {
+                    self.theId += 1
+                }
+            }
+        }
+    }
+
+    struct MyCircle: View {
+        private let color: Color = [.red, .green, .blue, .purple, .orange, .pink, .yellow].randomElement()!
+
+        var body: some View {
+            return Circle()
+                .foregroundColor(color)
+                .frame(width: 180, height: 180)
+        }
+    }
+}
+修改了标识变量后，确实重新创建了一个新的view。
+
+
+==========使用案例
+从思想上来说，我们使用该技术的目的是重置自定义view的状态。
+另外一种用处：可以提升List View的性能。
+
+struct Example4: View {
+    @State private var array = (0..<500).map { _ in String.random() }
+
+    var body: some View {
+        VStack {
+            List(array, id: \.self) { item in
+                Text("\(item)")
+            }
+
+            Button("Shuffle") {
+                self.array.shuffle()
+            }
+        }
+    }
+}
+
+extension String {
+    static func random(length: Int = 20) -> String {
+        String((0..<length).map { _ in "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890".randomElement()! })
+    }
+}
+
+当点击了Shuffle按钮后，需要等5秒左右的时间才能刷新，我们只需要简单的修改代码，给List绑定一个值就可以了
+struct Example5: View {
+    @State private var theId = 0
+    @State private var array = (0..<500).map { _ in String.random() }
+
+    var body: some View {
+        VStack {
+            List(array, id: \.self) { item in
+                Text("\(item)")
+            }.id(theId)
+
+            Button("Shuffle") {
+                self.array.shuffle()
+                self.theId += 1
+            }
+        }
+    }
+}
+但在SwiftUI中，因为新建了一个view，因此List会滚动到最上边，这又是一个新的问题。

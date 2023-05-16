@@ -1,0 +1,816 @@
+struct TestWrappedLayout: View {
+    let w: CGFloat
+    var texts: [String]
+
+    var body: some View {
+        self.generateContent(in: w)
+    }
+
+    private func generateContent(in w: CGFloat) -> some View {
+        var width = CGFloat.zero
+        var height = CGFloat.zero
+
+        return ZStack(alignment: .topLeading) {
+            ForEach(self.texts, id: \.self) { t in
+                self.item(for: t)
+                    .padding([.trailing, .bottom], 4)
+                    .alignmentGuide(.leading, computeValue: { d in
+
+                        if (abs(width - d.width) > w)
+                        {
+                            width = 0
+                            height -= d.height
+                        }
+                        let result = width
+                        if t == self.texts.last! {
+                            width = 0 //last item
+                        } else {
+                            width -= d.width
+                        }
+                        return result
+                    })
+                    .alignmentGuide(.top, computeValue: {d in
+                        let result = height
+                        if t == self.texts.last! {
+                            height = 0 // last item
+                        }
+                        return result
+                    })
+            }
+        }
+    }
+
+    func item(for text: String) -> some View {
+        Text(text)
+            .padding([.leading, .trailing], 8)
+            .frame(height: 30)
+            .font(.subheadline)
+            .background(Color.orange)
+            .foregroundColor(.white)
+            .cornerRadius(15)
+            .onTapGesture {
+                print("你好啊")
+        }
+    }
+}
+
+容器container中的每个View都有它的alignment guide
+
+我们对容器内的Views使用Alignment guide。
+对齐共分为两种：水平对齐(horizontal),垂直对齐(vertical)
+
+我们把A，B，C放到了VStack中，VStack中使用的对齐方式是水平对齐，比如VStack(alignment: .center)
+alignment guide返回的值表达的是这3个view的位置关系，并不是说A的返回值为0，A就不偏移，我们需要把他们作为一个整体来看，
+通过偏移量来描述他们之间的位置关系，然后让他们3个view在VStack中整体居中
+alignment guide描述的是views之间的位置关系，系统在布局的时候，会把他们看成一个整体，然后在使用frame alignment guide对整体进行布局
+
+
+Container Alignment: 容器的对齐方式主要有2个目的，首先它定义了其内部views的隐式对齐方式，没有使用alignmentGuides()modifier的view都使用隐式对齐，然后定义了内部views中使用了alignmentGuides()的view，只有参数与容器对齐参数相同，容器才会根据返回值计算布局
+Alignment Guide：如果该值和Container Alignment的参数不匹配，则不会生效
+Implicit Alignment Value：通常来说，隐式对齐采用的值都是默认的值，系统通常会使用和对齐参数相匹配的值
+Explicit Alignment Value：显式对齐跟隐式对齐相反，是我们自己用程序明确给出的返回值
+Frame Alignment：表示容器中views的对齐方式，把views看作一个整体，整体偏左，居中，或居右
+Text Alignment：控制多行文本的对齐方式
+
+隐式和显式对齐的区别:
+每个view都有一个alignment
+当我们使用.alignmentGuide()设置对齐方式时，我们称之为显式，相反则称之为隐式
+隐式的情况下，.alignmentGuide()的返回值和它父类容器的对齐参数有关。
+
+如果我们没有为VStack, HStack 和 ZStack提供alignment参数，默认值为center。
+
+
+ViewDimensions:
+func alignmentGuide(_ g: HorizontalAlignment, computeValue: @escaping (ViewDimensions) -> CGFloat) -> some View
+func alignmentGuide(_ g: VerticalAlignment, computeValue: @escaping (ViewDimensions) -> CGFloat) -> some View
+
+public struct ViewDimensions {
+    public var width: CGFloat { get } // The view's width
+    public var height: CGFloat { get } // The view's height
+
+    public subscript(guide: HorizontalAlignment) -> CGFloat { get }
+    public subscript(guide: VerticalAlignment) -> CGFloat { get }
+    public subscript(explicit guide: HorizontalAlignment) -> CGFloat? { get }
+    public subscript(explicit guide: VerticalAlignment) -> CGFloat? { get }
+}
+通过width和height,我们很容易获得该view的宽和高，这在我们返回对齐值的时候非常有用
+subscript表明我们可以像这样访问：d[HorizontalAlignment.leading]。
+
+struct Example6: View {
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Text("Hello")
+                .alignmentGuide(HorizontalAlignment.leading, computeValue: { d in return 0 })
+                .alignmentGuide(.top, computeValue: { d in return 0 })
+                .background(Color.green)
+
+            Text("World")
+                .alignmentGuide(.top, computeValue: { d in return 100 })
+                .alignmentGuide(HorizontalAlignment.leading, computeValue: { d in return 0 })
+                .background(Color.purple)
+
+        }
+        .background(Color.orange)
+    }
+}
+由于我们给Text("World")设置了.alignmentGuide(.top, computeValue: { d in return 100 })，因此，它出现在hello的上边没什么问题
+如果把.alignmentGuide(HorizontalAlignment.leading, computeValue: { d in return 0 })改成.alignmentGuide(HorizontalAlignment.leading, computeValue: { d in return d[.top] })呢
+在设置leading对齐的时候使用了top对齐的数据
+world又向左偏移了100的距离
+类似d[HorizontalAlignment.leading]这样的参数，我们都可简写成d[.leading]
+但是center除外，原因是HorizontalAlignment和VerticalAlignment都有center。
+
+
+extension HorizontalAlignment {
+    public static let leading: HorizontalAlignment
+    public static let center: HorizontalAlignment
+    public static let trailing: HorizontalAlignment
+}
+当我们使用下标访问数据的时候，有两种方式:
+d[.trailing]
+d[explicit: .trailing]
+d[.trailing]表示获取d的隐式leading，也就是默认值，通常情况下，.leading的值为0，.center的值为width的一半，.trailing的值为width。
+
+d[explicit: .trailing]表示获取d的显式的trailing，当没有通过.alignmentGuide()指定值的时候，它返回nil
+
+extension VerticalAlignment {
+    public static let top: VerticalAlignment
+    public static let center: VerticalAlignment
+    public static let bottom: VerticalAlignment
+    public static let firstTextBaseline: VerticalAlignment
+    public static let lastTextBaseline: VerticalAlignment
+}
+firstTextBaseline表示所有text的以各自最上边的那一行的base line对齐，lastTextBaseline表示所有text的以最下边的那一行的base line对齐。
+对于某个view而言，如果它不是多行文本，则firstTextBaseline和lastTextBaseline是一样的。
+
+HStack(alignment: .firstTextBaseline) {
+            Text("床前明月光")
+                .font(.caption)
+                .frame(width: 50)
+                .background(Color.orange)
+
+            Text("疑是地上霜")
+                .font(.body)
+                .frame(width: 50)
+                .background(Color.green)
+
+            Text("举头望明月")
+                .font(.largeTitle)
+                .frame(width: 50)
+                .background(Color.blue)
+        }
+上边的代码都使用了隐式的alignment guide
+
+我们给第3个text一个显式的alignment guide会是怎么样的？
+HStack(alignment: .lastTextBaseline) {
+            Text("床前明月光")
+                .font(.caption)
+                .frame(width: 50)
+                .background(Color.orange)
+
+            Text("疑是地上霜")
+                .font(.body)
+                .frame(width: 50)
+                .background(Color.green)
+
+            Text("举头望明月")
+                .font(.largeTitle)
+                .alignmentGuide(.lastTextBaseline, computeValue: { (d) -> CGFloat in
+                    d[.firstTextBaseline]
+                })
+                .frame(width: 50)
+                .background(Color.blue)
+
+        }
+对齐描述的是容器内view之间的布局关系，由于computeValue函数的返回值都是CGFloat，因此不管是哪种对齐方式，最终都是得到一个CGFloat。
+
+
+如果我们在text中间加入一个其他的view呢？
+HStack(alignment: .firstTextBaseline) {
+            Text("床前明月光")
+                .font(.caption)
+                .frame(width: 50)
+                .background(Color.orange)
+
+            RoundedRectangle(cornerRadius: 3)
+                .foregroundColor(.green)
+                .frame(width: 50, height: 40)
+
+            Text("疑是地上霜")
+                .font(.body)
+                .frame(width: 50)
+                .background(Color.green)
+
+            Text("举头望明月")
+                .font(.largeTitle)
+                .alignmentGuide(.firstTextBaseline, computeValue: { (d) -> CGFloat in
+                    return 0
+                })
+                .frame(width: 50)
+                .background(Color.blue)
+        }
+除了text之外的其他view，都使用bottom对齐方式
+不管是lastTextBaseline还是firstTextBaseline,布局的算法都是.top + computeValue ,也就是说以它的顶部为布局的基线
+alignment 描述的是view之间的关系，把他们作为一个整体或者一组来看待
+
+
+ZStack同时需要两种对齐方式
+ZStack(alignment: Alignment(horizontal: .leading, vertical: .top)) { ... }
+本质上，它把horizontal和vertical封装在了一起，我们平时经常用的是下边这个写法，只是写法不同而已
+ZStack(alignment: .topLeading) { ... }
+
+
+
+Container Alignment:
+容器的对齐方式指的是下边这里
+VStack(alignment: .leading)
+HStack(alignment: .top)
+ZStack(alignment: .topLeading)
+
+容器中的view都能够用.alignmentGuides()modifier来显式的返回对齐值，.alignmentGuides()的第一个参数如果与Container Alignment不一样，容器在布局的时候就会忽略这个view的.alignmentGuides()
+它提供了容器中view的隐式alignment guide
+
+struct Example3: View {
+    @State private var alignment: HorizontalAlignment = .leading
+
+    var body: some View {
+        VStack {
+            Spacer()
+
+             VStack(alignment: alignment) {
+               LabelView(title: "Athos", color: .green)
+                .alignmentGuide(.leading, computeValue: { _ in 30 } )
+                   .alignmentGuide(HorizontalAlignment.center, computeValue: { _ in 30 } )
+                   .alignmentGuide(.trailing, computeValue: { _ in 90 } )
+
+               LabelView(title: "Porthos", color: .red)
+                   .alignmentGuide(.leading, computeValue: { _ in 90 } )
+                   .alignmentGuide(HorizontalAlignment.center, computeValue: { _ in 30 } )
+                   .alignmentGuide(.trailing, computeValue: { _ in 30 } )
+
+                LabelView(title: "Aramis", color: .blue) // use implicit guide
+
+             }
+
+            Spacer()
+            HStack {
+                Button("leading") { withAnimation(.easeInOut(duration: 2)) { self.alignment = .leading }}
+                Button("center") { withAnimation(.easeInOut(duration: 2)) { self.alignment = .center }}
+                Button("trailing") { withAnimation(.easeInOut(duration: 2)) { self.alignment = .trailing }}
+            }
+        }
+    }
+}
+当我们切换container alignment的参数时，它内部的view的alignment那些被忽略，那些被使用。
+
+
+Frame Alignment:
+把容器内部的view看成一组，那么Frame Alignment就非常容易理解了
+container alignment只影响容器内的布局，要让容器内的views整体左对齐或者居中，需要使用Frame Alignment.
+.frame(maxWidth: .infinity, alignment: .leading)
+关于Frame Alignment有一点需要特别注意，有时候看上去我们的设置没有生效
+原因就是，在SwiftUI中，大多数情况下View的布局政策基于收紧策略，也就是View的宽度只是自己需要的宽度，这种情况下设置frame对齐当然就没有意义了。
+
+
+==========Multiline Text Alignment():
+多行文本对齐就比较简单了
+
+
+==========Interacting with the Alignment Guides:
+https://gist.github.com/swiftui-lab/793ca53ad1f2f0d7eb07aa23b54d9cbf
+// The SwiftUI Lab
+// Website: https://swiftui-lab.com
+// Article: https://swiftui-lab.com/alignment-guides
+import SwiftUI
+
+class Model: ObservableObject {
+    @Published var minimumContainer = true
+    @Published var extendedTouchBar = false
+    @Published var twoPhases = true
+    @Published var addImplicitView = false
+    @Published var showImplicit = false
+    
+    @Published var algn: [AlignmentEnum] = [.center, .center, .center]
+    @Published var delayedAlgn: [AlignmentEnum] = [.center, .center, .center]
+    @Published var frameAlignment: Alignment = .center
+    @Published var stackAlignment: HorizontalAlignment = .leading
+    
+    func nextAlignment() -> Alignment {
+        if self.frameAlignment == .leading {
+            return .center
+        } else if self.frameAlignment == .center {
+            return .trailing
+        } else {
+            return .leading
+        }
+    }
+}
+
+extension Alignment {
+    var asString: String {
+        switch self {
+        case .leading:
+            return ".leading"
+        case .center:
+            return ".center"
+        case .trailing:
+            return ".trailing"
+        default:
+            return "unknown"
+        }
+    }
+}
+
+extension HorizontalAlignment {
+    var asString: String {
+        switch self {
+        case .leading:
+            return ".leading"
+        case .trailing:
+            return ".trailing"
+        case .center:
+            return ".center"
+        default:
+            return "unknown"
+        }
+    }
+}
+
+extension HorizontalAlignment: Hashable {
+    public func hash(into hasher: inout Hasher) {
+        switch self {
+        case .leading:
+            hasher.combine(0)
+        case .center:
+            hasher.combine(1)
+        case .trailing:
+            hasher.combine(2)
+        default:
+            hasher.combine(3)
+        }
+    }
+}
+
+extension Alignment: Hashable {
+    public func hash(into hasher: inout Hasher) {
+        switch self {
+        case .leading:
+            hasher.combine(0)
+        case .center:
+            hasher.combine(1)
+        case .trailing:
+            hasher.combine(2)
+        default:
+            hasher.combine(3)
+        }
+    }
+}
+
+struct ContentView: View {
+    
+    var body: some View {
+        Group {
+            if UIDevice.current.userInterfaceIdiom == .pad
+            {
+                GeometryReader { proxy in
+            
+                    VStack(spacing: 0) {
+                        HStack(spacing: 0) {
+                            ControlsView().frame(width: 380).layoutPriority(1).background(Color(UIColor.secondarySystemBackground))
+
+                            DisplayView(width: proxy.size.width - 380).frame(maxWidth: proxy.size.width - 380).clipShape(Rectangle())//.border(Color.green, width: 3)
+                            
+                        }.frame(height: (proxy.size.height - 300))
+
+                        VStack {
+                            CodeView().frame(height: 300)
+                        }.frame(width: proxy.size.width, alignment: .center).background(Color(UIColor.secondarySystemBackground))
+
+                        
+                    }.environmentObject(Model())
+                }
+            } else {
+                VStack(spacing: 30) {
+                    Text("I need an iPad to run!")
+                    Text("😟").scaleEffect(2)
+                }.font(.largeTitle)
+            }
+        }
+    }
+}
+
+struct ControlsView: View {
+    @EnvironmentObject var model: Model
+    
+    var body: some View {
+        
+        return Form {
+            HStack { Spacer(); Text("Settings").font(.title); Spacer() }
+            Toggle(isOn: self.$model.minimumContainer, label: { Text("Narrow Container") })
+            Toggle(isOn: self.$model.extendedTouchBar, label: { Text("Extended Bar") })
+            Toggle(isOn: self.$model.twoPhases, label: { Text("Show in Two Phases") })
+            Toggle(isOn: self.$model.addImplicitView, label: { Text("Include Implicitly View") })
+            
+            if self.model.addImplicitView {
+                Toggle(isOn: self.$model.showImplicit, label: { Text("Show Implicit Guides") })//.disabled(!self.model.addImplicitView)
+            }
+            
+            HStack {
+                Text("Frame Alignment")
+                Picker(selection: self.$model.frameAlignment.animation(), label: EmptyView()) {
+                    Text(".leading").tag(Alignment.leading)
+                    Text(".center").tag(Alignment.center)
+                    Text(".trailing").tag(Alignment.trailing)
+                }.pickerStyle(SegmentedPickerStyle())
+            }
+            
+            HStack {
+                Text("Stack Alignment")
+                Picker(selection: self.$model.stackAlignment.animation(), label: EmptyView()) {
+                    Text(".leading").tag(HorizontalAlignment.leading)
+                    Text(".center").tag(HorizontalAlignment.center)
+                    Text(".trailing").tag(HorizontalAlignment.trailing)
+                }.pickerStyle(SegmentedPickerStyle())
+            }
+        }.padding(10).background(Color(UIColor.secondarySystemBackground))
+    }
+}
+
+struct CodeView: View {
+    @EnvironmentObject var model: Model
+    
+    var body: some View {
+        VStack(alignment: .leading) {
+            
+            Text("VStack(alignment: \(self.model.stackAlignment.asString) {")
+            
+            CodeFragment(idx: 0)
+            CodeFragment(idx: 1)
+            
+            if model.addImplicitView {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 0) {
+                        Text("    SomeView()").foregroundColor(.primary)
+                        Text(".alignmentGuide(\(self.model.stackAlignment.asString), computedValue { d in ")
+                        Text("d[\(self.model.stackAlignment.asString)]").padding(5)
+                        Text(" }")
+                    }.foregroundColor(self.model.showImplicit ? .secondary : .clear)//.transition(AnyTransition.opacity.animation())
+                }
+            }
+            
+            CodeFragment(idx: 2)
+            
+            HStack(spacing: 0) {
+                Text("}.frame(alignment: ")
+                Text("\(self.model.frameAlignment.asString)").padding(5)
+                Text(")")
+            }
+            
+        }
+        .font(Font.custom("Menlo", size: 16))
+        .padding(20)
+    }
+}
+
+struct CodeFragment: View {
+    @EnvironmentObject var model: Model
+    
+    var idx: Int
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
+                Text("    SomeView()")
+                Text(".alignmentGuide(\(self.model.stackAlignment.asString), computedValue { d in ")
+                Text("\(self.model.algn[idx].asString)").padding(5).background(self.model.algn[idx] != self.model.delayedAlgn[idx] ? Color.yellow : Color.clear)
+                Text(" }")
+            }
+        }
+    }
+}
+
+struct DisplayView: View {
+    @EnvironmentObject var model: Model
+    let width: CGFloat
+    
+    var body: some View {
+        
+        VStack(alignment: self.model.stackAlignment, spacing: 20) {
+            
+            Block(algn: binding(0)).frame(width: 250)
+                .alignmentGuide(self.model.stackAlignment, computeValue: { d in self.model.delayedAlgn[0].computedValue(d) })
+            
+            Block(algn: binding(1)).frame(width: 200)
+                .alignmentGuide(self.model.stackAlignment, computeValue: { d in self.model.delayedAlgn[1].computedValue(d) })
+            
+            if model.addImplicitView {
+                RoundedRectangle(cornerRadius: 8).fill(Color.gray).frame(width: 250, height: 50)
+                    .overlay(Text("Implicitly Aligned").foregroundColor(.white))
+                    .overlay(Marker(algn: AlignmentEnum.fromHorizontalAlignment(self.model.stackAlignment)).opacity(0.5))
+            }
+            
+            Block(algn: binding(2)).frame(width: 300)
+                .alignmentGuide(self.model.stackAlignment, computeValue: { d in self.model.delayedAlgn[2].computedValue(d) })
+            
+                        
+        }.frame(width: self.model.minimumContainer ? nil : width, alignment: self.model.frameAlignment).border(Color.red)
+        
+    }
+    
+    func binding(_ idx: Int) -> Binding<AlignmentEnum> {
+        return Binding<AlignmentEnum>(get: {
+            self.model.algn[idx]
+        }, set: { v in
+            self.model.algn[idx] = v
+            
+            let delay = self.model.twoPhases ? 500 : 0
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delay)) {
+                withAnimation(.easeInOut(duration: 0.5)
+                ) {
+                    self.model.delayedAlgn[idx] = v
+                }
+            }
+        })
+    }
+    
+}
+
+struct Block: View {
+    @Binding var algn: AlignmentEnum
+    
+    let a = Animation.easeInOut(duration: 0.5)
+    
+    var body: some View {
+        let gesture = DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .onEnded({v in
+                withAnimation(self.a) {
+                    self.algn = .value(v.startLocation.x)
+                }
+            })
+        
+        return VStack(spacing: 0) {
+            HStack {
+                AlignButton(label: "L", action: { withAnimation(self.a) { self.algn = .leading } })
+                Spacer()
+                AlignButton(label: "C", action: { withAnimation(self.a) { self.algn = .center } })
+                Spacer()
+                AlignButton(label: "T", action: { withAnimation(self.a) { self.algn = .trailing } })
+            }.padding(5)
+                .padding(.bottom, 20)
+            
+        }
+        .background(RoundedRectangle(cornerRadius: 8).foregroundColor(.gray))
+        .overlay(TouchBar().gesture(gesture))
+        .overlay(Marker(algn: algn).opacity(0.5))
+    }
+}
+
+struct TouchBar: View {
+    @EnvironmentObject var model: Model
+    
+    @State private var flag = false
+    
+    var body: some View {
+        GeometryReader { proxy in
+            RoundedRectangle(cornerRadius: 8)
+                .foregroundColor(.yellow)
+                .frame(width: proxy.size.width + (self.model.extendedTouchBar ? 100 : 0), height: 20)
+                .offset(x: 0, y: proxy.size.height / 2.0 - 10)
+        }
+    }
+}
+
+
+struct AlignButton: View {
+    let label: String
+    let action: () -> ()
+    
+    var body: some View {
+        Button(action: {
+            self.action()
+        }, label: {
+            Text(label)
+                .foregroundColor(.black)
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 8).foregroundColor(.green))
+        })
+    }
+}
+
+struct Marker: View {
+    let algn: AlignmentEnum
+    
+    var body: some View {
+        GeometryReader { proxy in
+            MarkerLine().offset(x: self.algn.asNumber(width: proxy.size.width))
+        }
+    }
+}
+
+struct MarkerLine: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+                
+        p.move(to: CGPoint(x: 0, y: 0))
+        p.addLine(to: CGPoint(x: 0, y: rect.maxY))
+        p = p.strokedPath(.init(lineWidth: 4, lineCap: .round, lineJoin: .bevel, miterLimit: 1, dash: [6, 6], dashPhase: 3))
+        
+        return p
+    }
+}
+
+enum AlignmentEnum: Equatable {
+    case leading
+    case center
+    case trailing
+    case value(CGFloat)
+    
+    var asString: String {
+        switch self {
+        case .leading:
+            return "d[.leading]"
+        case .center:
+            return "d[.center]"
+        case .trailing:
+            return "d[.trailing]"
+        case .value(let v):
+            return "\(v)"
+        }
+    }
+    
+    func asNumber(width: CGFloat) -> CGFloat {
+        switch self {
+        case .leading:
+            return 0
+        case .center:
+            return width / 2.0
+        case .trailing:
+            return width
+        case .value(let v):
+            return v
+        }
+    }
+    
+    func computedValue(_ d: ViewDimensions) -> CGFloat {
+        switch self {
+        case .leading:
+            return d[.leading]
+        case .center:
+            return d.width / 2.0
+        case .trailing:
+            return d[.trailing]
+        case .value(let v):
+            return v
+        }
+    }
+    
+    static func fromHorizontalAlignment(_ a: HorizontalAlignment) -> AlignmentEnum {
+        switch a {
+        case .leading:
+            return .leading
+        case .center:
+            return .center
+        case .trailing:
+            return .trailing
+        default:
+            return .value(0)
+        }
+    }
+}
+
+
+==========Custom Alignments:
+自定义对齐的基本写法如下：
+
+extension HorizontalAlignment {
+    private enum WeirdAlignment: AlignmentID {
+        static func defaultValue(in d: ViewDimensions) -> CGFloat {
+            return d.height
+        }
+    }
+
+    static let weirdAlignment = HorizontalAlignment(WeirdAlignment.self)
+}
+
+决定是horizontal还是vertical
+提供一个隐式对齐的默认值
+
+每个view的偏移都是它自身的高度，这样的效果看上去还挺有意思。完整代码如下：
+
+struct Example4: View {
+    var body: some View {
+        VStack(alignment: .weirdAlignment, spacing: 10) {
+
+            Rectangle()
+                .fill(Color.primary)
+                .frame(width: 1)
+                .alignmentGuide(.weirdAlignment, computeValue: { d in 0 })
+
+            ColorLabel(label: "Monday", color: .red, height: 50)
+            ColorLabel(label: "Tuesday", color: .orange, height: 70)
+            ColorLabel(label: "Wednesday", color: .yellow, height: 90)
+            ColorLabel(label: "Thursday", color: .green, height: 40)
+            ColorLabel(label: "Friday", color: .blue, height: 70)
+            ColorLabel(label: "Saturday", color: .purple, height: 40)
+            ColorLabel(label: "Sunday", color: .pink, height: 40)
+
+            Rectangle()
+                .fill(Color.primary)
+                .frame(width: 1)
+                .alignmentGuide(.weirdAlignment, computeValue: { d in 0 })
+        }
+    }
+}
+
+struct ColorLabel: View {
+    let label: String
+    let color: Color
+    let height: CGFloat
+
+    var body: some View {
+        Text(label).font(.title).foregroundColor(.primary).frame(height: height).padding(.horizontal, 20)
+            .background(RoundedRectangle(cornerRadius: 8).fill(color))
+    }
+}
+
+
+----------
+extension VerticalAlignment {
+    private enum MyAlignment : AlignmentID {
+        static func defaultValue(in d: ViewDimensions) -> CGFloat {
+            return d[.bottom]
+        }
+    }
+    static let myAlignment = VerticalAlignment(MyAlignment.self)
+}
+
+struct CustomView: View {
+    @State private var selectedIdx = 1
+
+    let days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+    var body: some View {
+            HStack(alignment: .myAlignment) {
+                Image(systemName: "arrow.right.circle.fill")
+                    .alignmentGuide(.myAlignment, computeValue: { d in d[VerticalAlignment.center] })
+                    .foregroundColor(.green)
+
+                VStack(alignment: .leading) {
+                    ForEach(days.indices, id: \.self) { idx in
+                        Group {
+                            if idx == self.selectedIdx {
+                                Text(self.days[idx])
+                                    .transition(AnyTransition.identity)
+                                    .alignmentGuide(.myAlignment, computeValue: { d in d[VerticalAlignment.center] })
+                            } else {
+                                Text(self.days[idx])
+                                    .transition(AnyTransition.identity)
+                                    .onTapGesture {
+                                        withAnimation {
+                                            self.selectedIdx = idx
+                                        }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(20)
+            .font(.largeTitle)
+    }
+}
+
+
+如果要自定义ZStack的alignment:
+extension VerticalAlignment {
+    private enum MyVerticalAlignment : AlignmentID {
+        static func defaultValue(in d: ViewDimensions) -> CGFloat {
+            return d[.bottom]
+        }
+    }
+
+    static let myVerticalAlignment = VerticalAlignment(MyVerticalAlignment.self)
+}
+
+extension HorizontalAlignment {
+    private enum MyHorizontalAlignment : AlignmentID {
+        static func defaultValue(in d: ViewDimensions) -> CGFloat {
+            return d[.leading]
+        }
+    }
+
+    static let myHorizontalAlignment = HorizontalAlignment(MyHorizontalAlignment.self)
+}
+
+extension Alignment {
+    static let myAlignment = Alignment(horizontal: .myHorizontalAlignment, vertical: .myVerticalAlignment)
+}
+
+struct CustomView: View {
+    var body: some View {
+        ZStack(alignment: .myAlignment) {
+            ...
+        }
+    }
+}

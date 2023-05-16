@@ -1,0 +1,125 @@
+Swift5.0开始支持Property warppers属性包装器，顾名思义就是对属性进行包装，给属性附加一段逻辑，同时对这段逻辑操作进行了封装
+好处是能大大的增加代码的重用率
+
+struct ContentView: View {
+    @AppStorage("username") var username: String = "Anonymous"
+    var body: some View {
+        VStack {
+            Text("Welcome, \(username)!")
+            Button("Log in") {
+                username = "@twostraws"
+            }
+        }
+    }
+}
+
+利用Button来修改属性userName的值，同时@AppStorage附加在属性上的逻辑会将"@twostraws"这个value通过key为"username"保存到UserDefaults中
+并监听这个value值的改变，当value值改变时，SwiftUI会通知所有持有这个属性值的view进行刷新，故当点击Button时，Text的显示内容会从"Welcome, Anonymous !"变为"Welcome, @twostraws !"。
+
+==========自定义property warppers
+自定义一个struct结构体或者class类，并在前面用上@propertyWrapper关键字。
+必须有名为wrappedValue的属性，用来告诉swift被附加逻辑包装后的值。
+
+@propertyWrapper struct Capitalized {
+    var wrappedValue: String {
+        didSet { wrappedValue = wrappedValue.capitalized }
+    }
+    init(wrappedValue: String) {
+        self.wrappedValue = wrappedValue.capitalized
+    }
+}
+
+这里我们想自定义一个将所有String值进行首字符大写的属性包装器，用struct结构体定义了一个名为Capitalized的属性包装器，定义了一个init初始化方法和wrappedValue属性，
+并对set方法添加了属性观察，初始化方法中设置wrappedValue为首字符大写，当设置wrappedValue属性值时同样也进行首字符大写操作。
+
+struct User {
+    @Capitalized var firstName: String
+    @Capitalized var lastName: String
+}
+
+利用@Capitalized在标记firstName属性，这样涉及firstName和lastName属性的读写操作其实是操作对应的属性包装器中的wrappedValue属性
+
+当属性包装器的init方法定义为init(wrappedValue:)时，则可以直接给包装的属性赋默认值，例如@Capitalized var name = "Untitled document"。
+Swfit中的属性观察在所有属性完成初始化之前是不会触发的，所以需要显示的定义初始化方法，以便让属性初始化完后能触发属性。
+
+
+@propertyWrapper struct UserDefaultsBacked<Value> {
+    let key: String // 内部的属性
+    var storage: UserDefaults = .standard // 内部的属性
+    var wrappedValue: Value? { // 必须要实现的属性，注意这里是可选项
+        get { storage.value(forKey: key) as? Value }
+        set { storage.setValue(newValue, forKey: key) }
+    }
+}
+
+struct SettingsViewModel {
+    @UserDefaultsBacked<String>(key: "mark-as-read")  var autoMarkMessagesAsRead
+}
+    var setModelOne = SettingsViewModel() // key:mark-as-read
+    var setModelTwo = SettingsViewModel(autoMarkMessagesAsRead: UserDefaultsBacked(key: "mark-as-blue")) // key:mark-as-blue
+    // 由于没有init(wrappedValue:)初始化方法
+    // var setModelThree = SettingsViewModel(autoMarkMessagesAsRead:"Mamba")这样的是不行的
+    setModelOne.autoMarkMessagesAsRead = "8888"
+    setModelTwo.autoMarkMessagesAsRead = "9999"
+    print(setModelOne.autoMarkMessagesAsRead) //Optional("8888")
+    print(setModelTwo.autoMarkMessagesAsRead) //Optional("9999")
+
+
+
+可以返回一个定义defaultValue的属性值，当key取到的值为时返回这个默认值。
+@propertyWrapper struct UserDefaultsBacked<Value> {
+    var wrappedValue: Value { // 非可选项
+        get {
+            let value = storage.value(forKey: key) as? Value // 进行可选项绑定判断，为nil则但会defaultValue
+            return value ?? defaultValue
+        }
+        set {
+            storage.setValue(newValue, forKey: key)
+        }
+    }
+    private let key: String
+    private let defaultValue: Value // 默认值
+    private let storage: UserDefaults
+    init(wrappedValue defaultValue: Value,
+         key: String,
+         storage: UserDefaults = .standard) {
+        self.defaultValue = defaultValue
+        self.key = key
+        self.storage = storage
+    }
+}
+
+struct SettingsViewModel {
+    @UserDefaultsBacked(key: "mark-as-read") var autoMarkMessagesAsRead = true // 默认值为true
+    @UserDefaultsBacked(key: "search-page-size") var numberOfSearchResultsPerPage = 20 // 默认值为20
+}
+    var setModelOne = SettingsViewModel() // 因为没有设置值，取到的未nil， 返回默默认值
+    var setModelTwo = SettingsViewModel() // 因为没有设置值，取到的未nil， 返回默默认值
+    print(setModelOne.autoMarkMessagesAsRead) // true 由于wrappedValue是非可选，打印不需要解包
+    print(setModelTwo.numberOfSearchResultsPerPage) // 20 由于wrappedValue是非可选，打印不需要解包
+
+
+extension UserDefaultsBacked where Value: ExpressibleByNilLiteral {
+    init(key: String, storage: UserDefaults = .standard) {
+        self.init(wrappedValue: nil, key: key, storage: storage)
+    }
+}
+private protocol AnyOptional {
+    var isNil: Bool { get }
+}
+extension Optional: AnyOptional {
+    var isNil: Bool { self == nil }
+}
+@propertyWrapper struct UserDefaultsBacked<Value> {
+    var wrappedValue: Value {
+        get { ... }
+        set {
+            if let optional = newValue as? AnyOptional, optional.isNil {
+                storage.removeObject(forKey: key)
+            } else {
+                storage.setValue(newValue, forKey: key)
+            }
+        }
+    }
+    ...
+}

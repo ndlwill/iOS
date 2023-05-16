@@ -55,6 +55,14 @@
 // arc4random_uniform(x)  0~(x-1)  alpha（不透明度）:0 透明，看不见
 + (instancetype)ndl_randomColor
 {
+    /**
+     arc4random_uniform(uint32_t)会随机返回一个0到上界之间（不含上界）的整数
+     求一个1~100的随机数
+     Int(arc4random_uniform(100)) + 1
+     
+     arc4random(void)这个全局函数会生成9位数的随机整数。使用arc4random()函数求一个1~100的随机数（包括1和100）
+     Int(arc4random()%100) + 1
+     */
     CGFloat r = arc4random_uniform(256) / 255.0f;
     CGFloat g = arc4random_uniform(256) / 255.0f;
     CGFloat b = arc4random_uniform(256) / 255.0f;
