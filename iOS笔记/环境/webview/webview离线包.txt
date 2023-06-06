@@ -1,0 +1,170 @@
+离线包技术是利用了从服务器动态下载zip资源包，解压到本地，并拦截WebView网络请求直接读取本地资源进行及时响应的一种技术方案。
+
+iOS11 WKURLSchemeHandler: 负责自定义scheme的网络处理
+之所以我们不能拦截http、https的网络请求，正是由于系统的handlesURLScheme：方法进行了处理。我们可以利用runtime技术hook住系统的handlesURLScheme：方法，将该方法返回NO，这样就可以将网络请求交给我们自己的handler处理了。
+
+1.离线包的分发:
+我们可以将webview对应的资源文件，如：js、css、mp3等打包成一个zip包。
+
+2.服务器对请求接口处理:
+服务器提供一个网络请求的接口，接口返回对应xxx zip包的信息，如：对应的版本、名字、md5（用来下载后进行校验）等
+客户端在启动APP时候，将目前本地所持有的离线包信息作为请求参数，请求第一步的接口
+服务器根据客户端参数，判断客户端需要全量更新、增量更新、不用更新。并返回对应更新的地址
+
+3.客户端下载离线包:
+客户端通过第二步的接口返回值，可以使用 AFNetworking 进行下载，将 zip 格式的离线包保存至沙盒中的/Library/Caches，将zip包的md5与接口返回的md5值进行比对。
+如果md5比对通过，就使用 SSZipArchive 将离线包解压至 /Documents/hybrid-xxx 目录中。并将本地的离线包信息更新，作为下次请求的参数。
+如果比对不通过，不进行解压，移除下载的资源包。
+注意：下载完成解压的时候判断如果是全量更新，需要在解压之前将之前下载解压的资源从本地移除。如果是增量更新就直接下载解压到相应的位置。不用更新则不去下载。
+
+4.webview设置拦截:
+在webview初始化时，通过URL中的字段判断是否支持off_line来判断是否进行拦截，同时只能支持iOS11以上系统。
+//设置自定义handler来拦截请求
+if([self.m_WebUrl containsString:@"off_line"] &&
+    @available(iOS 11, *)) {
+    BBURLSchemeHandler *handler = [[BBURLSchemeHandler alloc] init];
+    [wkConfigure setURLSchemeHandler:handler forURLScheme:@"http"];
+    [wkConfigure setURLSchemeHandler:handler forURLScheme:@"https"];
+}
+
+因为之前也提到了不能直接拦截http、https的scheme。所以需要hook住handlesURLScheme：方法。我们写一个WKWebView的分类来处理
+
+@implementation WKWebView (BBSchemeHandler)
+ 
++ (void)load {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Method originalMethod1 = class_getClassMethod(self, @selector(handlesURLScheme:));
+        Method swizzledMethod1 = class_getClassMethod(self, @selector(bbhandlesURLScheme:));
+        method_exchangeImplementations(originalMethod1, swizzledMethod1);
+    });
+}
+ 
++ (BOOL)bbhandlesURLScheme:(NSString *)urlScheme {
+    if ([urlScheme isEqualToString:@"http"] || 
+        [urlScheme isEqualToString:@"https"]) {
+        return NO;  //这里让返回NO,不走系统断言，走自己的handler处理
+    } else {
+        return [self bbhandlesURLScheme:urlScheme];
+    }
+}
+@end
+
+5.WKURLSchemeHandler处理:
+将请求的task保存到本地的数组中，管理task
+通过task拿到对应的网络请求URL
+通过去掉http:// 、https:// 用之后的路径查找对应的资源文件
+找到资源文件，封装对应的response，回调给task （移除本地数组对task的管理）
+找不到对应的本地资源文件，进行网络请求
+请求完毕后，将请求的reponse和data返回给task（移除本地数组对task的管理）
+
+另外我们需要监听webview的stop回调方法，将task从管理数组中移除
+
+- (void)webView:(WKWebView *)webView startURLSchemeTask:(id <WKURLSchemeTask>)urlSchemeTask{
+        
+    // 获取系统版本 ios13才特殊处理防止post崩溃
+    NSString *versionNum = [[UIDevice currentDevice] systemVersion];
+    if ([versionNum containsString:@"13."]) {
+        SEL selector = sel_registerName("_setLoadResourcesSerially:");
+        id webViewClass = NSClassFromString(@"WebView");
+        if ([webViewClass respondsToSelector:selector]) {
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            [webViewClass performSelector:selector withObject:@NO];
+    #pragma clang diagnostic pop
+        }
+    }
+    
+    [self.hashTable addObject:urlSchemeTask];
+    
+    NSString *filePath = [self filePath:urlSchemeTask.request];
+    BOOL resourceExist = [[NSFileManager defaultManager] fileExistsAtPath:filePath];
+    if (resourceExist && filePath.length > 0) {
+        
+        NSString *mineType = [self fileMIMETypeWithCAPIAtFilePath:filePath];
+        NSData *data = [NSData dataWithContentsOfFile:filePath];
+        [self sendRequestWithUrlSchemeTask:urlSchemeTask mimeType:mineType requestData:data];
+ 
+    } else {
+        
+        [[[NSURLSession sharedSession] dataTaskWithRequest:urlSchemeTask.request completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+            
+            dispatch_async(dispatch_get_main_queue(), ^{
+                
+                if (!urlSchemeTask) {
+                    return;
+                }
+                
+                if ([self.hashTable containsObject:urlSchemeTask]) {
+                    
+                    if (error){
+                        [urlSchemeTask didFailWithError:error];
+                    } else {
+                        @try {
+                            [urlSchemeTask didReceiveResponse:response];
+                            [urlSchemeTask didReceiveData:data];
+                            [urlSchemeTask didFinish];
+                        } @catch (NSException *exception) {
+ 
+                        } @finally {
+                            
+                        }
+                    }
+                    [self.hashTable removeObject:urlSchemeTask];
+                }
+ 
+            });
+            
+        }] resume];
+    }
+}
+ 
+- (void)webView:(WKWebView *)webView stopURLSchemeTask:(id <WKURLSchemeTask>)urlSchemeTask {
+    if ([self.hashTable containsObject:urlSchemeTask]) {
+        [self.hashTable removeObject:urlSchemeTask];
+    }
+}
+ 
+ 
+- (void)sendRequestWithUrlSchemeTask:(id <WKURLSchemeTask>)urlSchemeTask
+                              mimeType:(NSString *)mimeType
+                           requestData:(NSData *)requestData  API_AVAILABLE(ios(11.0)) {
+ 
+    if ([self.hashTable containsObject:urlSchemeTask]) {
+        NSData *data = requestData ? requestData : [NSData data];
+        NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:urlSchemeTask.request.URL statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:[self s_getResponseHeaders]];
+ 
+        @try {
+            [urlSchemeTask didReceiveResponse:response];
+            [urlSchemeTask didReceiveData:data];
+            [urlSchemeTask didFinish];
+        } @catch (NSException *exception) {
+            
+        } @finally {
+            
+        }
+    }
+}
+ 
+ 
+- (NSString *)fileMIMETypeWithCAPIAtFilePath:(NSString *)path {
+ 
+    CFStringRef UTI = UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, (__bridge CFStringRef)[path pathExtension], NULL);
+    CFStringRef MIMEType = UTTypeCopyPreferredTagWithClass (UTI, kUTTagClassMIMEType);
+    CFRelease(UTI);
+    if (!MIMEType) {
+        return @"application/octet-stream";
+    }
+    return (__bridge NSString *)(MIMEType);
+ 
+}
+ 
+/// response的header
+- (NSDictionary *)s_getResponseHeaders {
+    return @{@"Access-Control-Allow-Origin":@"*",
+             @"Access-Control-Allow-Headers":@"Content-Type"
+    };
+}
+
+
+==================================================
