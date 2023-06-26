@@ -1,0 +1,219 @@
+AJAX 代表异步的 JavaScript 和 XML（Asynchronous JavaScript And XML）
+简单点说，就是使用 XMLHttpRequest 对象与服务器通信。
+它可以使用 JSON、XML、HTML 和文本文件等格式发送和接收数据。
+AJAX 最吸引人的就是它的“异步”特性，也就是说它可以在不重新刷新页面的情况下与服务器通信，交换数据，或更新页面。
+
+使用 AJAX 最主要的两个特性做下列事：
+在不重新加载页面的情况下发送请求给服务器。
+接收并使用从服务器发来的数据。
+
+
+第一步——发送 HTTP 请求:
+const httpRequest = new XMLHttpRequest();
+function handler() {
+  // 在这里处理服务器响应。
+}
+httpRequest.onreadystatechange = handler;
+或者
+httpRequest.onreadystatechange = () => {
+  // 在这里处理服务器响应。
+};
+
+httpRequest.open("GET", "http://www.example.org/some.file", true);
+httpRequest.send();
+
+open() 的第一个参数是 HTTP 请求方法——GET，POST，HEAD 以及服务器支持的其他方法。根据 HTTP 标准的要求，保证这些方法一定要是大写字母，否则其他一些浏览器（比如 FireFox）可能无法处理这个请求。
+第二个参数是你要发送请求的 URL。由于安全原因，默认不能调用第三方 URL 域名。确保你在页面中使用的是正确的域名，否则在调用 open() 方法时会有 "permission denied" 错误提示。
+一个容易犯的错误是你企图通过 domain.tld 访问网站，而不是使用 www.domain.tld。
+第三个参数是可选的，用于设置请求是否是异步的。如果设为 true（默认值），即开启异步，JavaScript 就不会在此语句阻塞，使得用户能在服务器还没有响应的情况下与页面进行交互。这就是 AJAX 中的第一个 A。
+
+send() 方法的参数可以是任何你想发送给服务器的内容，如果是 POST 请求的话。发送表单数据时应该用服务器可以解析的格式，像查询字符串：
+"name=value&anothername="+encodeURIComponent(myVar)+"&so=on"
+或者使用其他格式，类似 multipart/form-data、JSON、XML 等。
+如果你使用 POST 数据，那就需要设置请求的 MIME 类型。比如，在调用 send() 方法获取表单数据前要有下面这个：
+httpRequest.setRequestHeader(
+  "Content-Type",
+  "application/x-www-form-urlencoded"
+);
+
+第二步——处理服务器响应:
+在发送请求时，你提供的 JavaScript 函数名负责处理响应:
+httpRequest.onreadystatechange = nameOfTheFunction;
+
+这个函数应该做什么？首先，函数要检查请求的状态。如果状态的值是 XMLHttpRequest.DONE （对应的值是 4），意味着服务器响应收到了并且是没问题的，然后就可以继续执行。
+
+if (httpRequest.readyState === XMLHttpRequest.DONE) {
+  // 很好，服务器已经接收到了响应。
+} else {
+  // 还没准备好。
+}
+全部 readyState 状态值都在 XMLHTTPRequest.readyState 文档中有所记载，如下所示:
+0（未初始化）或（请求还未初始化）
+1（正在加载）或（已建立服务器链接）
+2（已加载）或（请求已接收）
+3（交互）或（正在处理请求）
+4（完成）或（请求已完成并且响应已准备好）
+
+接下来，检查 HTTP 响应的响应状态码。在下面的例子中，我们通过检查响应码 200 OK 判断 AJAX 调用有没有成功。
+if (httpRequest.status === 200) {
+  // 完美！
+} else {
+  // 请求有问题。
+  // 比如，响应可能是 404 (Not Found)
+  // 或 500 (Internal Server Error) 响应码。
+}
+
+在检查完请求状态和 HTTP 响应码后，你就可以用服务器返回的数据做任何你想做的了。你有两个方法去访问这些数据:
+httpRequest.responseText：以文本字符串的方式返回服务器响应。
+httpRequest.responseXML：以 XMLDocument 对象的形式返回服务器响应，你可以使用 JavaScript DOM 函数来遍历它。
+
+
+第三步——简单的示例:
+<button id="ajaxButton" type="button">发送请求</button>
+
+<script>
+  (() => {
+    let httpRequest;
+    document
+      .getElementById("ajaxButton")
+      .addEventListener("click", makeRequest);
+    function makeRequest() {
+      httpRequest = new XMLHttpRequest();
+      if (!httpRequest) {
+        alert("放弃了 :( 不能创建 XMLHTTP 实例");
+        return false;
+      }
+      httpRequest.onreadystatechange = alertContents;
+      httpRequest.open("GET", "test.html");
+      httpRequest.send();
+    }
+    function alertContents() {
+      if (httpRequest.readyState === XMLHttpRequest.DONE) {
+        if (httpRequest.status === 200) {
+          alert(httpRequest.responseText);
+        } else {
+          alert("请求遇到了问题。");
+        }
+      }
+    }
+  })();
+</script>
+
+如果变量 httpRequest 在全局范围内使用，它会在 makeRequest() 函数中被相互覆盖，从而导致资源竞争。为了避免这个情况，请在包含 AJAX 函数的闭包中声明 httpRequest 变量。
+在通信错误的事件中（例如服务器宕机），在访问响应状态 onreadystatechange 方法中会抛出一个 exception。为了缓和这种情况，可以使用 try...catch 把 if...else 语句包裹起来。
+
+function alertContents() {
+  try {
+    if (httpRequest.readyState === XMLHttpRequest.DONE) {
+      if (httpRequest.status === 200) {
+        alert(httpRequest.responseText);
+      } else {
+        alert("请求遇到了问题。");
+      }
+    }
+  } catch (e) {
+    alert(`遇到了 exception：${e.description}`);
+  }
+}
+
+第四步——处理 XML 响应:
+在收到 HTTP 请求的响应后我们会使用对象的 responseText 属性，包含 test.html 文件的内容。现在我们试试 responseXML 属性。
+
+我们创建一个稍后将要请求的有效的 XML 文档。文档（test.xml）包含以下内容:
+<?xml version="1.0" ?>
+<root> 我是测试文字。 </root>
+
+在 makeRequest() 函数中，我们需要把 text.html 换成我们刚创建的 XML 文件:
+httpRequest.open("GET", "test.xml");
+
+然后在 alertContents() 里，我们把 alert(httpRequest.responseText); 改为:
+const xmldoc = httpRequest.responseXML;
+const root_node = xmldoc.querySelector("root");
+alert(root_node.firstChild.data);
+这部分代码采用 responseXML 提供的 XMLDocument 对象，并使用 DOM 方法访问 XML 文档中包含的一些数据。
+
+<label>
+  你的名字：
+  <input type="text" id="ajaxTextbox" />
+</label>
+<span id="ajaxButton" style="cursor: pointer; text-decoration: underline">
+  发出请求
+</span>
+
+
+document.getElementById("ajaxButton").onclick = () => {
+  const userName = document.getElementById("ajaxTextbox").value;
+  makeRequest("test.php", userName);
+};
+
+function makeRequest(url, userName) {
+  // …
+
+  httpRequest.onreadystatechange = alertContents;
+  httpRequest.open("POST", url);
+  httpRequest.setRequestHeader(
+    "Content-Type",
+    "application/x-www-form-urlencoded"
+  );
+  httpRequest.send(`userName=${encodeURIComponent(userName)}`);
+}
+
+所以，如果用户在输入框中输入“Jane”，那服务器就会返回如下内容:
+{ "userData": "Jane", "computedString": "Hi, Jane!" }
+
+function alertContents() {
+  if (httpRequest.readyState === XMLHttpRequest.DONE) {
+    if (httpRequest.status === 200) {
+      const response = JSON.parse(httpRequest.responseText);
+      alert(response.computedString);
+    } else {
+      alert("请求出现了问题。");
+    }
+  }
+}
+
+
+test.php 文件应该包含以下内容:
+$name = $_POST['userName'] ?? 'no name';
+$computedString = "Hi, " . $name . "!";
+$array = ['userName' => $name, 'computedString' => $computedString];
+echo json_encode($array);
+
+
+简单的计时 XHR 示例:
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>XHR 时间记录</title>
+    <style></style>
+  </head>
+  <body>
+    <p id="writeData" class="data">离线</p>
+    <p id="lastStamp">还没有数据</p>
+
+    <script>
+      const fullData = document.getElementById("writeData");
+      const lastData = document.getElementById("lastStamp");
+      function fetchData() {
+        console.log("正在获取数据更新。");
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", "time-log.txt", true);
+        xhr.onload = () => {
+          updateDisplay(xhr.response);
+        };
+        xhr.send();
+      }
+      function updateDisplay(text) {
+        fullData.textContent = text;
+        const timeArray = text.split("\n");
+        // 有些文件系统总是在文本文件的末尾包括一个空行。
+        if (timeArray[timeArray.length - 1] === "") {
+          timeArray.pop();
+        }
+        lastData.textContent = timeArray[timeArray.length - 1];
+      }
+      setInterval(fetchData, 5000);
+    </script>
+  </body>
+</html>
