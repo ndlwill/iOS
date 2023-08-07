@@ -1,0 +1,191 @@
+iOS13对响应UI实例生命周期的api做了很大调整,主要来说就是就是两方面
+一方面在单场景的应用中,把App生命周期和UI生命周期分离开了
+另一方面可以在iPad OS中支持多场景,一个应用可以在屏幕上展现多个窗口,进行多任务,每个场景有独立的生命周期.
+
+
+在iOS12及以前,叫做Respond to app-based life-cycle events,响应基于应用的生命周期事件.使用UIApplicationDelegate来响应
+启动后，系统将应用置于非活动或后台状态，这取决于UI是否即将出现在屏幕上。当启动到前台时，系统自动将应用程序转换为活动状态。在此之后，状态在活动和后台之间波动，直到应用程序终止。
+这种模式下场景即App,或者说窗口即App,应用的生命周期就是场景的生命周期,应用在活跃,窗口也必须是活跃的.
+
+在iOS13及以后,叫做Respond to scene-based life-cycle events,响应基于场景的生命周期事件.使用UISceneDelegate来响应.
+UIKit会为每个场景提供独立的生命周期事件。一个场景代表了你的应用UI在设备上运行的一个实例。
+用户可以为每个应用程序创建多个场景，并分别显示和隐藏它们。
+因为每个场景都有自己的生命周期，所以每个场景都可以处于不同的执行状态。例如，一个场景可能在前景，而其他场景在背景或暂停。
+当用户或系统为你的应用程序请求一个新场景时，UIKit会创建它并将其置于unattached状态,请求的场景会迅速出现在前台屏幕上。
+系统请求的场景通常会移到后台以便处理事件。例如，系统可能会在后台启动场景来处理位置事件。
+当用户操作进入后台, UIKit移动相关的场景到后台状态，最终到暂停状态。UIKit可以在任何时候断开后台场景或暂停场景来回收其资源，将该场景返回到unattached状态。
+这种模式下生命周期不再是应用程序的生命周期,而是场景的生命周期,近似来说是窗口的生命周期,而应用的生命周期事件仍然由UIApplicationDelegate响应.
+
+
+在启用场景的App中,应用程序的启动以及生命周期还是需要UIApplicationDelegate来响应的,也就是didFinishLaunchingWithOptions等.
+除了生命周期,原本UIApplicationDelegate响应的其他事件现在也没有变化,仍然需要在UIApplicationDelegate中处理.
+比如Open Urls; 内存警告; 切换任务等.
+另外,场景的实例,场景会话UISceneSession的生命周期也是由appdelegate响应
+
+如果支持iOS12及以下,并且也使用了SceneDelegate,那么UIKit与窗口生命周期相关的事件,在iOS12及以下只响应AppDelegate,在iOS13及以上只响应SceneDelegate.
+
+
+配置场景:
+通常场景由UIKit创建,但是开发者可以配置场景.
+当用户请求一个新的场景时,UIKit创建相应的场景对象并处理它的初始设置,为了做到这一点，UIKit依赖于你提供的信息,也就是在info.plist中配置.
+在info中添加Application Scene Manifest.
+
+
+Enable Multiple Windows 是否支持多窗口,注意这项配置的key其实是UIApplicationSupportsMultipleScenes,如果需要配置多场景,可以查看这个key的资料.设置为true的时候需要额外的代码来支持,如果不需要多场景,就设置false.
+Scene Configuration 是场景配置,有两种, Application Session Role和External Display Session Role,前者是交互式场景,后者是非交互式场景,移动端(包括可以交互的扩展屏幕)使用前者.
+Configuration Name就是给这个配置取个名字
+Delegate Class Name是指定一个遵循了UISceneDelegate的类,它负责响应Scene的生命周期事件.
+并且如果是 Application Session Role的话,需要遵循UIWindowSceneDelegate,而不是UISceneDelegate.另外它最好继承自UIResponder.
+Storyboard Name 指定启动的Storyboard(需要设置一个initial ViewController),如果设置了,会从Storyboard初始化UIWindowSceneDelegate的window属性,叫做main window,并且生成rootViewController.
+如果没有指定Storyboard,则需要在func scene(_ scene:, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) 中手动配置.
+除此之外,storyboard生成的rootViewController也可以在willConnectTo中替换掉.
+
+
+场景会话和场景对象:
+场景会话UISceneSession,包含场景的配置UISceneConfiguration对象和场景的唯一标识符等.它的实例只能由UIKit创建.
+UIScene的初始化init(session:connectionOptions:),需要一个UISceneSession对象.
+因此是这样一个流程:
+1.application(_:configurationForConnecting:options:)返回UISceneConfiguration对象
+2.UIKit根据UISceneConfiguration创建一个UISceneSession实例.
+3.UIScene.init(session:connectionOptions:)初始化
+
+如果在info.plist中配置了Scene,那么application(_:configurationForConnecting:options:)不会执行,如果没有配置,需要在这个方法中创建并返回UISceneConfiguration实例.
+另外如果在info.plist中配置了Scene,也不需要主动初始化UIScene(或者UIWindowScene),在scene(_:willConnectTo:options:)中就可以获取到UIScene实例(可以转换为UIWindowScene).
+和UIApplicationDelegate一样,UIWindowSceneDelegate也有一个window属性;
+如果在info.plist的Application Scene Manifest中指定了Storyboard,UIKit会自动初始化Window.
+否则需要在scene(_:willConnectTo:options:)中手动初始化.
+另外和UIApplicationDelegate一样,UIWindowSceneDelegate也需要继承UIResponder.
+
+func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+    guard let windowScene = (scene as? UIWindowScene) else { return }
+    window = UIWindow.init(windowScene: windowScene)
+    window?.rootViewController = UIStoryboard.init(name: "Main", bundle: nil).instantiateViewController(withIdentifier: "ViewController")
+    window?.makeKeyAndVisible()
+}
+
+
+==================================================场景的生命周期:
+UIApplicationDelegate负责响应生成一个场景的请求以及销毁一个场景的通知
+创建: 场景会话由UIKit生成,当用户请求一个新的场景或者恢复一个场景的时候,比如启动应用,或者iPad中拖拽到边缘,或者在iPadOS中用代码请求新的场景等;
+此时UIApplicationDelegate调用application(_:configurationForConnecting:options:)获取配置,期间通过activityType来区分使用哪一个配置.
+
+func application(_ application: UIApplication,
+                 configurationForConnecting connectingSceneSession: UISceneSession,
+                 options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+    // It's important that each UISceneConfiguration have a unique configuration name.
+    var configurationName: String!
+
+    switch options.userActivities.first?.activityType {
+    case UserActivity.GalleryOpenInspectorActivityType:
+        configurationName = "Inspector Configuration" // Create a photo inspector window scene.
+    default:
+        configurationName = "Default Configuration" // Create a default gallery window scene.
+    }
+    
+    return UISceneConfiguration(name: configurationName, sessionRole: connectingSceneSession.role)
+}
+
+销毁: 销毁一个场景只发生在快照切换模式下,用户关闭界面的时候,比如iPhone上上滑关闭应用,iPad上滑关闭窗口.
+如果只是进入后台并不会销毁场景.
+此时UIKit会调用application(_:didDiscardSceneSessions:)来通知UIApplicationDelegate
+
+UISceneDelegate负责响应场景在生命周期内的事件:
+链接与断开:
+当场景被创建后(来自新的场景或者恢复的场景),UIKit调用scene(_:willConnectTo:options:)通知UISceneDelegate.并且发送一个通知willConnectNotification.
+断开连接有两种情况,一是场景准备被销毁了,这个时候会先断开连接,再被销毁;
+二是当UIKit打算回收一些内存时会断开不活跃的场景,iPhone进入后台,iPad某个场景没有显示在界面上时,断开的时机不是确定的,由UIKit决定.
+断开时会调用sceneDidDisconnect(_:)并发送通知didDisconnectNotification.
+因此断开的场景并不一定是被销毁了,当iPhone回到前台,场景会被重新链接.
+
+活跃与非活跃
+首先应用进入后台或回到前台时,UIKit会调用sceneWillResignActive(_:)或sceneDidBecomeActive(_:)通知UISceneDelegate;
+其次在多场景时,比如iPad上用户切换操作的场景(窗口)时,UIKit会同时调用 sceneWillResignActive和sceneDidBecomeActive,
+这两个方法带有一个UIScene的参数,把进入活跃或者失去活跃的场景传进来.
+此外还对应两个通知, didActivateNotification和willDeactivateNotification.
+
+后台与前台
+进入后台时,sceneDidEnterBackground(_:),它走在sceneWillResignActive(_:)之后,界面消失才会失去活跃;
+回到前台时,sceneWillEnterForeground(_:),它走在sceneDidBecomeActive(_:)之前,界面出现才会进入活跃.
+对应两个通知didEnterBackgroundNotification和willEnterForegroundNotification.
+
+openUrl
+与application:openURL:options:类似, 当从外部调起应用时,会调用scene:openURLContexts:
+
+保存和恢复
+iOS场景模式使用NSUserActivity来保存和恢复场景.
+在scene(_:willConnectTo:options:)中会传进来UIScene.ConnectionOptions,如果是恢复场景,其中的userActivities会有元素,
+userActivities是一个NSUserActivity对象集合,是UIScene.ConnectionOptions的一个属性.
+除此之外,session.stateRestorationActivity也是一个NSUserActivity,当恢复场景时,它也是有值的.
+
+func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+    print("SceneDelegate willConnectTo")
+
+    guard let winScene = (scene as? UIWindowScene) else { return }
+    window = UIWindow(windowScene: winScene)
+    if let activity = connectionOptions.userActivities.first ?? session.stateRestorationActivity {
+        //恢复
+    } else {
+        //初始化
+        let vc = ViewController()
+        let nc = UINavigationController(rootViewController: vc)
+        nc.restorationIdentifier = "RootNC"
+
+        self.window?.rootViewController = nc
+        window?.makeKeyAndVisible()
+    }
+}
+
+==================================================UIWindowScene:
+获取window
+场景不一定有窗口,所以UIScene没有windows的属性,子类UIWindowScene才有,并且可以有多个window.
+UIScene的delegate是UISceneDelegate类型,UIWindowSceneDelegate是继承自UISceneDelegate的.
+因此使用UIWindowScene的时候可以把delegate转换成UIWindowSceneDelegate类型.
+UIWindowSceneDelegate有一个window属性,它是main window.
+optional var window: UIWindow? { get set }
+过去给UIApplicationDelegate的window赋值,而现在给UIWindowSceneDelegate赋值,所以AppDelegate.window是nil了,
+并且UIApplication的keyWindow属性也废弃了.
+因此获取window变成了获取WindowScene -> 获取Delegate -> 获取window
+获取windowScene使用UIApplication的connectedScenes属性,它是一个集合.
+如果是多场景的话.可以通过场景获取到会话session,再从session.persistentIdentifier或者session.configuration.name来区分
+
+for scene in UIApplication.shared.connectedScenes{
+    let session = scene.session
+    if let name = session.configuration.name{
+        print(name)
+    }
+}
+
+如果是单场景的情况.main window就是windows中的唯一元素.输出三个window是同一个实例
+
+if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+    let firstWindow = windowScene.windows.first{
+    if let delegate = windowScene.delegate as? UIWindowSceneDelegate,
+        let window = delegate.window as? UIWindow{
+        print(firstWindow)
+        print(window)
+    }
+    if let key = windowScene.keyWindow{
+        print(key)
+    }
+}
+<UIWindow: 0x14cf06d70; frame = (0 0; 375 667); gestureRecognizers = <NSArray: 0x60000009cb10>; layer = <UIWindowLayer: 0x60000009ccf0>>
+<UIWindow: 0x14cf06d70; frame = (0 0; 375 667); gestureRecognizers = <NSArray: 0x60000009cb10>; layer = <UIWindowLayer: 0x60000009ccf0>>
+<UIWindow: 0x14cf06d70; frame = (0 0; 375 667); gestureRecognizers = <NSArray: 0x60000009cb10>; layer = <UIWindowLayer: 0x60000009ccf0>>     
+    
+UIScene和UISceneSession互相持有,UIWindow会弱引用它的windowScene,都可以互相获取
+//UISceneSession
+open var scene: UIScene? { get }
+
+//UIScene
+open var session: UISceneSession { get }
+
+//UIWindow
+weak open var windowScene: UIWindowScene?
+
+//UIWindowScene
+open var windows: [UIWindow] { get }
+
+UIScreen.main废弃了,UIWindow的screen属性也废弃了.现在需要通过windowScene来获取Screen
+if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene{
+      print(windowScene.screen.bounds)
+}

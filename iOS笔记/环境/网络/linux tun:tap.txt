@@ -1,0 +1,300 @@
+虚拟网卡Tun/tap驱动是一个开源项目，支持很多的类UNIX平台，OpenVPN和Vtun都是基于它实现隧道包封装
+tun/tap驱动程序实现了虚拟网卡的功能，tun表示虚拟的是点对点设备，tap表示虚拟的是以太网设备，这两种设备针对网络包实施不同的封装。
+利用tun/tap驱动，可以将tcp/ip协议栈处理好的网络分包传给任何一个使用tun/tap驱动的进程，由进程重新处理后再发到物理链路中。
+
+TUN/TAP虚拟网络设备为用户空间程序提供了网络数据包的发送和接收能力。
+###
+TUN/TAP虚拟网络设备的原理比较简单，他在Linux内核中添加了一个TUN/TAP虚拟网络设备的驱动程序和一个与之相关连的字符设备/dev/net/tun，字符设备tun作为用户空间和内核空间交换数据的接口。
+###
+当内核将数据包发送到虚拟网络设备时，数据包被保存在设备相关的一个队列中，直到用户空间程序通过打开的字符设备tun的描述符读取时，它才会被拷贝到用户空间的缓冲区中，其效果就相当于，数据包直接发送到了用户空间。通过系统调用write发送数据包时其原理与此类似。
+
+值得注意的是：一次read系统调用，有且只有一个数据包被传送到用户空间，并且当用户空间的缓冲区比较小时，数据包将被截断，剩余部分将永久地消失，write系统调用与read类似，每次只发送一个数据包。
+所以在编写此类程序的时候，请用足够大的缓冲区，直接调用系统调用read/write
+
+虚拟网卡就是没有物理设备的网卡，那么他的驱动就是需要开发人员自己编写。
+一般虚拟网卡用于实现物理网卡不愿意做的事情，例如tunnel封装（用于vpn，openvpn（ http://openvpn.sourceforge.net）和Vtun( http://vtun.sourceforge.net)）
+一般使用虚拟网卡的方式与使用物理网卡一样，在协议栈中通过回调函数call到虚拟网卡的API，经过虚拟网卡处理之后的数据包再由协议栈发送出去。
+
+#####
+tun设备驱动主要应该包括两个部分，一是虚拟网卡驱动，其实就是虚拟网卡中对skb进行封装解封装等操作；二是字符设备驱动，用于内核空间与用户空间的交互。
+#####
+http://openvpn.sourceforge.net/
+与其他netdev类似，tun这个netdev也提供open、close、read、write等API。
+在分析 TUN/TAP驱动实现前，我们先看下如何使用。
+使用tun/tap设备的示例程序(摘自openvpn开源项目 http://openvpn.sourceforge.net，tun.c文件)
+int open_tun (const char *dev, char *actual, int size)
+{
+    struct ifreq ifr;
+    int fd;
+    char *device = "/dev/net/tun";
+    if ((fd = open (device, O_RDWR)) < 0) //创建描述符
+        msg (M_ERR, "Cannot open TUN/TAP dev %s", device);
+    memset (&ifr, 0, sizeof (ifr));
+    ifr.ifr_flags = IFF_NO_PI;
+    if (!strncmp (dev, "tun", 3)) {
+        ifr.ifr_flags |= IFF_TUN;
+    }
+    else if (!strncmp (dev, "tap", 3)) {
+        ifr.ifr_flags |= IFF_TAP;
+    }
+    else {
+        msg (M_FATAL, "I don't recognize device %s as a TUN or TAP device",dev);
+    }
+    if (strlen (dev) > 3) /* unit number specified? */
+        strncpy (ifr.ifr_name, dev, IFNAMSIZ);
+    if (ioctl (fd, TUNSETIFF, (void *) &ifr) < 0) //打开虚拟网卡
+        msg (M_ERR, "Cannot ioctl TUNSETIFF %s", dev);
+    set_nonblock (fd);
+    msg (M_INFO, "TUN/TAP device %s opened", ifr.ifr_name);
+    strncpynt (actual, ifr.ifr_name, size);
+    return fd;
+}
+调用上述函数后，就可以在shell命令行下使用ifconfig 命令配置虚拟网卡了
+ifconfig devname 10.0.0.1 up
+route add -net 10.0.0.2 netmask 255.255.255.255 dev devname
+配置好虚拟网卡地址后，就可以通过生成的字符设备描述符，在程序中使用read和write函数就可以读取或者发送给虚拟的网卡数据了。
+
+tun/tap的实现:
+tun/tap设备驱动的开始也是init函数，其中主要调用了misc_register注册了一个miscdev设备。
+static int __init tun_init(void)
+{
+     /*……*/
+     ret = misc_register(&tun_miscdev);
+     /*……*/
+}
+
+tun_miscdev的定义如下:
+static struct miscdevice tun_miscdev = {
+         .minor = TUN_MINOR,
+         .name = "tun",
+         .nodename = "net/tun",
+         .fops = &tun_fops,
+}
+注册完这个设备之后将在系统中生成一个“/dev/net/tun”文件，同字符设备类似，当应用程序使用open系统调用打开这个文件时，将生成file文件对象，而其file_operations将指向tun_fops。
+static const struct file_operations tun_fops = {
+    .owner    = THIS_MODULE,
+    .llseek = no_llseek,
+    .read = do_sync_read,
+    .aio_read = tun_chr_aio_read,
+    .write = do_sync_write,
+    .aio_write = tun_chr_aio_write,
+    .poll    = tun_chr_poll,
+    .unlocked_ioctl    = tun_chr_ioctl,
+#ifdef CONFIG_COMPAT
+    .compat_ioctl = tun_chr_compat_ioctl,
+#endif
+    .open    = tun_chr_open,
+    .release = tun_chr_close,
+    .fasync = tun_chr_fasync
+};
+以应用层使用的步骤来分析内核的对应实现。应用层首先调用open打开“/dev/net/tun”，这将最终调用tun_fops的open函数，即tun_chr_open。
+static int tun_chr_open(struct inode *inode, struct file * file)
+{
+    struct tun_file *tfile;
+ 
+    DBG1(KERN_INFO, "tunX: tun_chr_open\n");
+ 
+    /*分配并初始化struct tun_file结构*/
+    tfile = (struct tun_file *)sk_alloc(&init_net, AF_UNSPEC, GFP_KERNEL,
+                     &tun_proto);
+    if (!tfile)
+        return -ENOMEM;
+    rcu_assign_pointer(tfile->tun, NULL);
+    tfile->net = get_net(current->nsproxy->net_ns);
+    tfile->flags = 0;
+ 
+    rcu_assign_pointer(tfile->socket.wq, &tfile->wq);
+    init_waitqueue_head(&tfile->wq.wait);
+ 
+    tfile->socket.file = file;
+    /*设置struct tun_file的socket成员ops*/
+    tfile->socket.ops = &tun_socket_ops;
+ 
+    sock_init_data(&tfile->socket, &tfile->sk);
+    sk_change_net(&tfile->sk, tfile->net);
+ 
+    tfile->sk.sk_write_space = tun_sock_write_space;
+    tfile->sk.sk_sndbuf = INT_MAX;
+    /*将struct tun_file作为file的私有字段，而file就是每次应用调用open打开/dev/net/tun生成的*/
+    file->private_data = tfile;
+    set_bit(SOCK_EXTERNALLY_ALLOCATED, &tfile->socket.flags);
+    INIT_LIST_HEAD(&tfile->next);
+ 
+    sock_set_flag(&tfile->sk, SOCK_ZEROCOPY);
+ 
+    return 0;
+}
+这里的struct file结构就是每次应用调用open打开/dev/net/tun生成的。
+应用程序执行完open操作后，一般会执行ioctl (fd, TUNSETIFF, (void *) &ifr) 来真正创建tap/tun设备。这将最终调用tun_ops中的tun_chr_ioctl函数。
+tun_chr_ioctl中会调用__tun_chr_ioctl。
+static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
+             unsigned long arg, int ifreq_len)
+{
+    struct tun_file *tfile = file->private_data;
+    struct tun_struct *tun;
+    void __user* argp = (void __user*)arg;
+    struct ifreq ifr;
+    kuid_t owner;
+    kgid_t group;
+    int sndbuf;
+    int vnet_hdr_sz;
+    int ret;
+ 
+    if (cmd == TUNSETIFF || cmd == TUNSETQUEUE || _IOC_TYPE(cmd) == 0x89) {
+        if (copy_from_user(&ifr, argp, ifreq_len))
+            return -EFAULT;
+    } else {
+        memset(&ifr, 0, sizeof(ifr));
+    }
+    if (cmd == TUNGETFEATURES) {
+        /* Currently this just means: "what IFF flags are valid?".
+         * This is needed because we never checked for invalid flags on
+         * TUNSETIFF. */
+        return put_user(IFF_TUN | IFF_TAP | IFF_NO_PI | IFF_ONE_QUEUE |
+                IFF_VNET_HDR | IFF_MULTI_QUEUE,
+                (unsigned int __user*)argp);
+    } else if (cmd == TUNSETQUEUE)
+        return tun_set_queue(file, &ifr);
+ 
+    ret = 0;
+    rtnl_lock();
+/*获取tun_struct结构，首次调用TUNSETIFF时为NULL*/
+    tun = __tun_get(tfile);
+    if (cmd == TUNSETIFF && !tun) {
+        ifr.ifr_name[IFNAMSIZ-1] = '\0';
+ 
+        ret = tun_set_iff(tfile->net, file, &ifr);
+ 
+        if (ret)
+            goto unlock;
+ 
+        if (copy_to_user(argp, &ifr, ifreq_len))
+            ret = -EFAULT;
+        goto unlock;
+    }
+ 
+    ret = -EBADFD;
+    if (!tun)
+        goto unlock;
+ 
+    ret = 0;
+    switch (cmd) {
+    case TUNGETIFF:
+    /*……*/
+   }
+   unlock:
+   rtnl_unlock();
+   if (tun)
+      tun_put(tun);
+   return ret;
+}
+可以看出如果cmd是TUNSETIFF，则会调用tun_set_iff函数。
+static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
+{
+    struct tun_struct *tun;
+    struct tun_file *tfile = file->private_data;
+    struct net_device *dev;
+    int err;
+ 
+    if (tfile->detached)
+        return -EINVAL;
+ 
+    dev = __dev_get_by_name(net, ifr->ifr_name);
+    if (dev) { /*首次调用dev为NULL*/
+         /*略*/
+    }
+    else {
+        char *name;
+        unsigned long flags = 0;
+        int queues = ifr->ifr_flags & IFF_MULTI_QUEUE ?
+             MAX_TAP_QUEUES : 1;
+ 
+        if (!ns_capable(net->user_ns, CAP_NET_ADMIN))
+            return -EPERM;
+ 
+        /* Set dev type */
+        if (ifr->ifr_flags & IFF_TUN) { /*tun设备*/
+            /* TUN device */
+            flags |= TUN_TUN_DEV;
+            name = "tun%d";
+        } else if (ifr->ifr_flags & IFF_TAP) { /*tap设备*/
+            /* TAP device */
+            flags |= TUN_TAP_DEV;
+            name = "tap%d";
+        } else
+            return -EINVAL;
+ 
+        if (*ifr->ifr_name)
+            name = ifr->ifr_name;
+        /*分配net_device结构，并将struct tun_struct作为其private结构*/
+        dev = alloc_netdev_mqs(sizeof(struct tun_struct), name,
+                 tun_setup, queues, queues);
+ 
+        if (!dev)
+            return -ENOMEM;
+ 
+        dev_net_set(dev, net);
+        dev->rtnl_link_ops = &tun_link_ops;
+ 
+        tun = netdev_priv(dev);
+        tun->dev = dev;
+        tun->flags = flags; /*标识设备的类型，tun或tap*/
+        tun->txflt.count = 0;
+        tun->vnet_hdr_sz = sizeof(struct virtio_net_hdr);
+ 
+        tun->filter_attached = false;
+        tun->sndbuf = tfile->socket.sk->sk_sndbuf;
+ 
+        spin_lock_init(&tun->lock);
+        /*根据设备类型是tap或tun初始化net_device结构，关键是其dev->netdev_ops 成员*/
+        tun_net_init(dev);
+ 
+        err = tun_flow_init(tun);
+        if (err < 0)
+            goto err_free_dev;
+ 
+        dev->hw_features = NETIF_F_SG | NETIF_F_FRAGLIST |
+            TUN_USER_FEATURES;
+        dev->features = dev->hw_features;
+        dev->vlan_features = dev->features;
+ 
+        INIT_LIST_HEAD(&tun->disabled);
+        /*将tun（tun_struct）和file的private，即tun_file关联*/
+        err = tun_attach(tun, file);
+        if (err < 0)
+            goto err_free_flow;
+        /*注册net_device，完成网络设备驱动程序的注册*/
+        err = register_netdevice(tun->dev);
+        if (err < 0)
+            goto err_detach;
+ 
+        if (device_create_file(&tun->dev->dev, &dev_attr_tun_flags) ||
+         device_create_file(&tun->dev->dev, &dev_attr_owner) ||
+         device_create_file(&tun->dev->dev, &dev_attr_group))
+            pr_err("Failed to create tun sysfs files\n");
+    }
+    /*……*/
+    if (netif_running(tun->dev)) /*运行网卡qdisc 队列*/
+        netif_tx_wake_all_queues(tun->dev);
+ 
+    strcpy(ifr->ifr_name, tun->dev->name);
+    return 0;
+ 
+err_detach:
+    tun_detach_all(dev);
+err_free_flow:
+    tun_flow_uninit(tun);
+    security_tun_dev_free_security(tun->security);
+err_free_dev:
+    free_netdev(dev);
+    return err;
+}
+
+==================================================
+mknod 命令:
+mknod /dev/net/tun c 10 200
+该命令主要通过制定要创建的设备文件名称/dev/net/tun，以及设备类型c字符设备，最后的10 200 表示为主设备号和次设备号。
+当我们使用该命令创建好了/dev/net/tun设备文件，当我们在用户态对该文件进行open()、write()、read()时，就会调用到/dev/net/tun设备文件对应的设备驱动的file_operations对应的.open、.write、.read回调函数。
+
+mknod 原理
+当我们输入mknod命令时，实际上会创建设备文件/dev/net/tun和所对应的inode，以及将主设备号和次设备号形成的设备号保存在inode的i_rdev中。

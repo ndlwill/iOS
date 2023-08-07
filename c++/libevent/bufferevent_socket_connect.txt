@@ -1,0 +1,31 @@
+bufferevent_socket_connect函数会调用socket函数申请一个套接字fd，然后把这个fd设置成非阻塞的
+接着就connect服务器，因为该socket fd是非阻塞的，所以不会等待，而是马上返回，连接这工作交给内核来完成。
+所以，返回后这个socket还没有真正连接上服务器。那么什么时候连接上呢？内核又是怎么通知通知用户呢？
+
+当可以往socket fd写东西了，那就说明已经连接上了。也就是说这个socket fd变成可写状态，就连接上了。
+所以，对于“非阻塞connect”比较流行的做法是：用select或者poll这类多路IO复用函数监听该socket的可写事件。当这个socket触发了可写事件，然后再对这个socket调用getsockopt函数，做进一步的判断。
+Libevent也是这样实现的:
+
+//evutil.c文件  
+//Return 1 for connected, 0 for not yet, -1 for error.  
+int  
+evutil_socket_finished_connecting(evutil_socket_t fd)  
+{  
+    int e;  
+    ev_socklen_t elen = sizeof(e);  
+  
+    //用来检测这个fd是否已经连接上了，这个fd是非阻塞的  
+    //如果e的值被设为0，那么就说明连接上了。  
+    //否则e被设置为对应的错误值。  
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (void*)&e, &elen) < 0)  
+        return -1;  
+  
+    if (e) {  
+        if (EVUTIL_ERR_CONNECT_RETRIABLE(e))//还没连接上  
+            return 0;  
+        EVUTIL_SET_SOCKET_ERROR(e);  
+        return -1;  
+    }  
+  
+    return 1;  
+} 
