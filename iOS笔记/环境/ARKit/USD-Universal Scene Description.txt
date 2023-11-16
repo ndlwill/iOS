@@ -1,0 +1,216 @@
+https://openusd.org/release/index.html
+
+https://github.com/PixarAnimationStudios/
+
+https://github.com/carlynorama/USDHelloWorld/blob/main/SETUP.md
+
+https://usdzshare.com/
+
+https://openusd.org/docs/Authoring-Variants.html
+
+Pixar: pxr
+
+在计算机图形学和三维图形领域，"Xform" 是"Transform"（变换）的缩写，指的是对象的变换操作，如平移、旋转和缩放等。Xform 是一种用于表示对象在三维空间中的位置、方向和尺寸变化的概念。
+
+.usda 是 USD 文件格式，用于描述三维场景，而 .usdz 是基于 USD 的增强现实文件格式，旨在在iOS和macOS上有效地存储和展示增强现实体验。
+
+https://www.whynotestflight.com/excuses/hello-usd-part-4-python-setup/
+如果使用python3.11，安装完USD后使用usdview就会有警告报错，原因未知
+
+brew install python@3.8
+pip3.8 install PyOpenGL
+pip3.8 install PySide6
+python3.8 USD/build_scripts/build_usd.py /opt/local/USD
+usdview /Users/youdun-ndl/Desktop/USD/OpenUSD-release/extras/usd/tutorials/convertingLayerFormats/Sphere.usda
+pip3.8 install numpy
+
+
+https://openusd.org/release/tut_usd_tutorials.html#environment-setup
+==================================================1.Creating Your First USD Stage
+from pxr import Usd, UsdGeom
+stage = Usd.Stage.CreateNew('HelloWorld.usda')
+xformPrim = UsdGeom.Xform.Define(stage, '/hello')
+spherePrim = UsdGeom.Sphere.Define(stage, '/hello/world')
+stage.GetRootLayer().Save()
+
+python3.8 extras/usd/tutorials/helloWorld/helloWorld.py
+
+usdview HelloWorld.usda
+
+==================================================2.Using Generic Prims
+from pxr import Usd
+stage = Usd.Stage.CreateNew('HelloWorldRedux.usda')
+xform = stage.DefinePrim('/hello', 'Xform')
+sphere = stage.DefinePrim('/hello/world', 'Sphere')
+stage.GetRootLayer().Save()
+
+==================================================3.Inspecting and Authoring Properties
+(1)Open the stage and get the prims defined on the stage.
+from pxr import Usd, Vt
+stage = Usd.Stage.Open('HelloWorld.usda')
+xform = stage.GetPrimAtPath('/hello')
+sphere = stage.GetPrimAtPath('/hello/world')
+
+(2)List the available property names on each prim.
+xform.GetPropertyNames()
+['proxyPrim', 'purpose', 'visibility', 'xformOpOrder']
+sphere.GetPropertyNames()
+['doubleSided', 'extent', 'orientation', 'primvars:displayColor',
+'primvars:displayOpacity', 'proxyPrim', 'purpose', 'radius',
+'visibility', 'xformOpOrder']
+
+(3)Read the extent attribute on the sphere prim.
+extentAttr = sphere.GetAttribute('extent')
+extentAttr.Get()
+Vt.Vec3fArray(2, (Gf.Vec3f(-1.0, -1.0, -1.0), Gf.Vec3f(1.0, 1.0, 1.0)))
+
+(4)Set the sphere’s radius to 2.
+radiusAttr = sphere.GetAttribute('radius')
+ >>> radiusAttr.Set(2)
+True
+extentAttr.Set(extentAttr.Get() * 2)
+True
+
+print(stage.GetRootLayer().ExportToString())
+#usda 1.0
+
+def Xform "hello"
+{
+    def Sphere "world"
+    {
+        float3[] extent = [(-2, -2, -2), (2, 2, 2)]
+        double radius = 2
+    }
+}
+
+(5)Author a displayColor on the sphere.
+from pxr import UsdGeom
+sphereSchema = UsdGeom.Sphere(sphere)
+color = sphereSchema.GetDisplayColorAttr()
+color.Set([(0,0,1)])
+True
+
+print(stage.GetRootLayer().ExportToString())
+#usda 1.0
+
+def Xform "hello"
+{
+    def Sphere "world"
+    {
+        float3[] extent = [(-2, -2, -2), (2, 2, 2)]
+        color3f[] primvars:displayColor = [(0, 0, 1)]
+        double radius = 2
+    }
+}
+
+(6)Save your edits.
+stage.GetRootLayer().Save()
+
+==================================================4.Referencing Layers
+(1)from pxr import Usd, UsdGeom
+stage = Usd.Stage.Open('HelloWorld.usda')
+hello = stage.GetPrimAtPath('/hello')
+stage.SetDefaultPrim(hello)
+UsdGeom.XformCommonAPI(hello).SetTranslate((4, 5, 6))
+print(stage.GetRootLayer().ExportToString())
+stage.GetRootLayer().Save()
+
+#usda 1.0
+(
+    defaultPrim = "hello"
+)
+
+def Xform "hello"
+{
+    double3 xformOp:translate = (4, 5, 6)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+
+    def Sphere "world"
+    {
+        float3[] extent = [(-2, -2, -2), (2, 2, 2)]
+        color3f[] primvars:displayColor = [(0, 0, 1)]
+        double radius = 2
+    }
+}
+
+(2)Now let’s create a new stage to reference in HelloWorld.usda and create an override prim to contain the reference.
+refStage = Usd.Stage.CreateNew('RefExample.usda')
+refSphere = refStage.OverridePrim('/refSphere')
+print(refStage.GetRootLayer().ExportToString())
+
+#usda 1.0
+
+over "refSphere"
+{
+}
+
+(3)Let’s reference in the stage from HelloWorld.
+refSphere.GetReferences().AddReference('./HelloWorld.usda')
+print(refStage.GetRootLayer().ExportToString())
+refStage.GetRootLayer().Save()
+
+#usda 1.0
+
+over "refSphere" (
+    prepend references = @./HelloWorld.usda@
+)
+{
+}
+
+(4)Let’s reset the transform on our over to the identity.
+refXform = UsdGeom.Xformable(refSphere)
+refXform.SetXformOpOrder([])
+print(refStage.GetRootLayer().ExportToString())
+
+over "refSphere" (
+    prepend references = @./HelloWorld.usda@
+)
+{
+    uniform token[] xformOpOrder = []
+}
+
+(5)Reference in another HelloWorld.
+refSphere2 = refStage.OverridePrim('/refSphere2')
+refSphere2.GetReferences().AddReference('./HelloWorld.usda')
+print(refStage.GetRootLayer().ExportToString())
+refStage.GetRootLayer().Save()
+
+#usda 1.0
+
+over "refSphere" (
+    prepend references = @./HelloWorld.usda@
+)
+{
+    uniform token[] xformOpOrder = []
+}
+
+over "refSphere2" (
+    prepend references = @./HelloWorld.usda@
+)
+{
+}
+
+(6)Of course, overs can be authored for the actual sphere prims underneath the reference as well. Let’s color our second sphere red.
+overSphere = UsdGeom.Sphere.Get(refStage, '/refSphere2/world')
+overSphere.GetDisplayColorAttr().Set( [(1, 0, 0)] )
+print(refStage.GetRootLayer().ExportToString())
+refStage.GetRootLayer().Save()
+
+#usda 1.0
+
+over "refSphere" (
+    prepend references = @./HelloWorld.usda@
+)
+{
+    uniform token[] xformOpOrder = []
+}
+
+over "refSphere2" (
+    prepend references = @./HelloWorld.usda@
+)
+{
+    over "world"
+    {
+        color3f[] primvars:displayColor = [(1, 0, 0)]
+    }
+}

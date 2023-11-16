@@ -1,0 +1,721 @@
+Metal
+Render advanced 3D graphics and compute data in parallel with graphics processors.
+
+The Metal framework gives your app direct access to a device’s graphics processing unit (GPU).
+With Metal, apps can leverage a GPU to quickly render complex scenes and run computational tasks in parallel.
+For example, apps in these categories use Metal to maximize their performance:
+Games that render sophisticated 2D or 3D environments
+Video processing apps, like Final Cut Pro
+Scientific research apps that analyze and process large datasets
+Fully immersive visionOS apps
+
+Metal works hand-in-hand with other frameworks that supplement its capability.
+For example, MetalFX upscales your renderings in less time than rendering them natively, and MetalKit simplifies the tasks that display your Metal content onscreen.
+The Metal Performance Shaders framework provides a large library of optimized compute and rendering shaders that take advantage of each GPU’s unique hardware.
+
+Many high-level Apple frameworks leverage the performance of Metal, including RealityKit, SceneKit, SpriteKit, and Core Image. 
+These high-level frameworks implement the GPU programming details for you.
+However, you can typically get better performance by writing your own custom Metal and shader code. 
+
+Metal Shading Language Specification:
+https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf
+
+
+==============================important
+Use the device address space to declare persistent memory that the GPU can read from and write to.
+
+pipeline state object (PSO) 
+
+----------protocol MTLDevice
+The main Metal interface to a GPU that apps use to draw graphics and run computations in parallel.
+
+----------protocol MTLFunction
+An object that represents a public shader function in a Metal library.
+
+----------protocol MTLCommandQueue
+An instance you use to create, submit, and schedule command buffers to a specific GPU device to run the commands within those buffers.
+A command queue maintains an ordered list of command buffers. You use a command queue to:
+Create command buffers, which you fill with commands for the GPU device that creates the queue
+Submit command buffers to run on that GPU
+Create a command queue from an MTLDevice instance by calling its makeCommandQueue() or makeCommandQueue(maxCommandBufferCount:) method.
+Typically, you create one or more command queues when your app launches and then keep them throughout your app’s lifetime.
+With each MTLCommandQueue instance you create, you can create MTLCommandBuffer instances for that queue by calling its makeCommandBuffer() or makeCommandBufferWithUnretainedReferences() method.
+Note
+Each command queue is thread-safe and allows you to encode commands in multiple command buffers simultaneously.
+For more information about command buffers and encoding GPU commands to them — such as rendering images and computing data in parallel — see Setting Up a Command Structure.
+
+
+----------class MTLCommandBufferDescriptor : NSObject
+A configuration that customizes the behavior for a new command buffer.
+
+
+----------struct MTLCommandBufferError
+The command buffer error codes that indicate why the GPU doesn’t finish executing a command buffer.
+
+----------protocol MTLCommandBuffer
+A container that stores a sequence of GPU commands that you encode into it.
+
+A command buffer represents a chunk of work for the GPU by storing the commands you encode to it, and any resources those commands need. You primarily use a command buffer to:
+Create command encoders and call their methods to add commands to the buffer
+Optionally reserve a place for the command buffer in its command queue by enqueuing the command buffer, even before you encode any commands into it
+Submit, or commit, the contents of the command buffer to the command queue that creates it to run on the GPU device the queue represents
+
+Create a command encoder from an MTLCommandQueue instance by calling its makeCommandBuffer() method.
+Typically, you create one or more command queues when your app launches and then keep them throughout your app’s lifetime.
+
+To add commands to an MTLCommandBuffer instance, create an encoder from one of its factory methods, including:
+An MTLRenderCommandEncoder instance by calling makeRenderCommandEncoder(descriptor:)
+An MTLComputeCommandEncoder instance by calling makeComputeCommandEncoder(dispatchType:)
+An MTLBlitCommandEncoder instance by calling makeBlitCommandEncoder() or makeBlitCommandEncoder(descriptor:)
+An MTLParallelRenderCommandEncoder instance by calling makeParallelRenderCommandEncoder(descriptor:)
+
+Note
+All encoders inherit additional methods from the MTLCommandEncoder.
+
+You can use only a single encoder at a time to add commands to a command buffer.
+To start using a different command encoder, first signal that you’re done with the current encoder by calling its endEncoding() method.
+Then create another command encoder from the command buffer and continue adding commands to the buffer with the new encoder.
+
+Repeat the process until you finish encoding commands to the command buffer and are ready to run the buffer’s contents on the GPU.
+Then submit the command buffer to the command queue that you used to create it by calling the command buffer’s commit() method.
+After an app commits a command buffer, you check its status property or block a thread by calling its waitUntilScheduled() or waitUntilCompleted() methods.
+
+You also have the option to reserve a place for the command buffer in its command queue by calling the command buffer’s enqueue() method.
+You can call this method exactly once at any time before you commit the buffer to the queue.
+If you don’t enqueue a command buffer, it implicitly enqueues itself when you commit it.
+Each command queue ensures the order that you enqueue its command buffers is the same order the queue schedules them to run on the GPU.
+
+Tip
+Establish an order of execution for multiple command buffers you encode in parallel by first calling their enqueue() methods in that order.
+For example, a multithreaded app might set the GPU’s execution order for a sequence of related subtasks by:
+Creating a command buffer for each subtask
+Enqueuing the command buffers in the proper order on a single thread
+Encoding commands to each buffer on a separate thread and then committing it
+
+----------protocol MTLCommandEncoder
+###
+An encoder that writes GPU commands into a command buffer.
+###
+Don't implement this protocol yourself; instead you call methods on a MTLCommandBuffer object to create command encoders.
+Command encoder objects are lightweight objects that you re-create every time you need to send commands to the GPU.
+There are many different kinds of command encoders, each providing a different set of commands that can be encoded into the buffer.
+A command encoder implements the MTLCommandEncoder protocol and an additional protocol specific to the kind of encoder being created.
+lists command encoders and the protocols they implement.
+Protocol    Task
+MTLRenderCommandEncoder     Graphics rendering
+MTLComputeCommandEncoder        Computation
+MTLBlitCommandEncoder       Memory management
+MTLParallelRenderCommandEncoder     Multiple graphics rendering tasks encoded in parallel.
+
+While a command encoder is active, it has the exclusive right to append commands to its command buffer.
+Once you finish encoding commands, call the endEncoding() method to finish encoding the commands.
+To write further commands into the same command buffer, create a new command encoder.
+You can call the insertDebugSignpost(_:), pushDebugGroup(_:), and popDebugGroup() methods to put debug strings into the command buffer and to push or pop string labels used to identify groups of encoded commands.
+These methods don't change the rendering or compute behavior of your app;
+the Xcode debugger uses them to organize your app’s rendering commands in a format that may provide insight into how your app works.
+
+----------protocol MTLBuffer
+A resource that stores data in a format defined by your app.
+A MTLBuffer object can be used only with the MTLDevice that created it.
+Don’t implement this protocol yourself; instead, use the following MTLDevice methods to create MTLBuffer objects:
+makeBuffer(length:options:) creates a MTLBuffer object with a new storage allocation.
+makeBuffer(bytes:length:options:) creates a MTLBuffer object by copying data from an existing storage allocation into a new allocation.
+makeBuffer(bytesNoCopy:length:options:deallocator:) creates a MTLBuffer object that reuses an existing storage allocation and does not allocate any new storage.
+
+The Metal framework doesn’t know anything about the contents of a MTLBuffer, just its size.
+You define the format of the data in the buffer and ensure that your app and your shaders know how to read and write the data.
+For example, you might create a struct in your shader that defines the data you want to store in the buffer and its memory layout.
+
+If you create a buffer with a managed resource storage mode (MTLStorageMode.managed), you must call didModifyRange(_:) to tell Metal to copy any changes to the GPU.
+
+----------protocol MTLTexture
+A resource that holds formatted image data.
+
+To copy pixel data from system memory into the texture, call replace(region:mipmapLevel:slice:withBytes:bytesPerRow:bytesPerImage:) or replace(region:mipmapLevel:withBytes:bytesPerRow:).
+To copy pixel data back to system memory, call getBytes(_:bytesPerRow:bytesPerImage:from:mipmapLevel:slice:) or getBytes(_:bytesPerRow:from:mipmapLevel:).
+
+----------
+#####
+Metal Sample Code Library:
+https://developer.apple.com/documentation/metal/metal_sample_code_library
+Discover graphics techniques and Metal features through sample code projects.
+#####
+
+==============================GPU Devices
+Start with a Metal device instance to begin working with the GPU it represents.
+
+GPU Devices and Work Submission:
+Find any available GPU, submit work to it with command buffers, suspend work, and coordinate between multiple GPUs.
+
+You can use any available GPU’s MTLDevice instance in addition to the default instance that MTLCreateSystemDefaultDevice() returns.
+For each device instance, get its MTLCommandQueue instance, and create one or more MTLCommandBuffer instances to send work to the GPU.
+
+When the system suspends your app, use the command queue to finish command buffers already in progress.
+See Preparing Your Metal App to Run in the Background for more information.
+Preparing Your Metal App to Run in the Background:
+https://developer.apple.com/documentation/metal/gpu_devices_and_work_submission/preparing_your_metal_app_to_run_in_the_background
+
+----------Locating and Inspecting a GPU Device
+Getting the Default GPU:
+Select the system’s default GPU device on which to run your Metal code.
+
+To use the Metal framework, start by getting a GPU device.
+All of the objects your app needs to interact with Metal come from a MTLDevice that you acquire at runtime.
+Some devices, such as those with iOS and tvOS have a single GPU that you can access by calling MTLCreateSystemDefaultDevice().
+
+guard let device = MTLCreateSystemDefaultDevice() else { 
+    fatalError( "Failed to get the system's default Metal device." ) 
+}
+On macOS devices that have multiple GPUs, such as a MacBook Pro, the system default is the discrete GPU.
+
+
+Detecting GPU Features and Metal Software Versions:
+Use the device object’s properties to determine how you perform tasks in Metal.
+GPUs don’t support a single common feature set.
+Instead, different GPUs support different capabilities.
+Newer, more powerful GPUs support more advanced features, letting you perform more complex tasks or perform the same task using a different technique the GPU can process more efficiently.
+
+You need to determine which Metal features that a specific device object supports and use that information to choose your app’s behavior. For example, you might:
+Create multiple rendering or compute paths, and have your app dynamically choose the best option for each GPU.
+Restrict some features to specific GPUs or implement different levels of functionality. For example, in a game, you might remove shadows or reduce the complexity of shadows on older GPUs.
+Restrict your app so that it only runs when some GPUs are available; however, you should only use this option in extreme cases.
+
+The version of Metal running on the system and the GPU you’re targeting determine which features are available.
+The MTLDevice object provides information about the software and hardware capabilities for a specific GPU.
+To see a summary of the features available in each family, see the Metal Feature Set Tables:
+Metal feature set tables (PDF)
+https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf
+
+A new version of Metal adds multiple features to device object at the same time.
+You should design your app around collections of common functionality.
+For example, on iOS, you might design two major rendering paths: one for current and future GPUs, and one for earlier GPUs.
+
+Determine GPU Feature Support
+Metal organizes GPUs into four major families:
+Use the Common family to create apps that target a range of GPUs on multiple platforms.
+Use the Apple family to create apps that target Apple GPUs.
+Use the Mac family to create apps that target GPUs on macOS systems.
+Use the Mac Catalyst family when building an iPadOS app to run on macOS.
+
+A GPU can be a member of more than one family; in most cases, a GPU supports one of the Common families and then one or more families specific to the build target.
+
+More recent GPUs have higher version numbers and support larger feature sets.
+A higher GPU version is always a superset of an earlier version in the same GPU family.
+For details on the individual families and version numbers, see MTLGPUFamily.
+
+iOS13.0
+enum MTLGPUFamily : Int, @unchecked Sendable
+Represents the functionality for families of GPUs.
+Check whether a GPU supports the features of a specific family by calling the supportsFamily(_:) method of a GPU’s MTLDevice instance.
+
+The code below shows how to test whether a GPU supports a particular GPU family:
+if #available(macOS 10.15, *) {
+    if self.device.supportsFamily(.familyMac2) {
+        // Enable features that require Mac family 2.
+    }
+}
+else {
+    // Fallback on earlier OS versions.
+}
+
+Determine Metal Version Availability
+Each new Metal release adds new features for supported GPUs.
+In addition to checking for a GPU with the correct family, ensure that the features your app needs are also there.
+Use available statements to query whether the framework supports the features you need, as shown in the code below.
+if #available(macOS 10.15, iOS 13, tvOS 13, *) {
+     // Enable newer features.
+}
+else
+{
+    // Fallback on earlier OS versions.
+}
+
+Find Variations in a GPU Family
+GPUs in the same family can vary in small ways.
+Some features aren’t supported uniformly across a family.
+Use the device object to test for the existence of these features using an API specific to each feature.
+For example, Metal’s argument buffer feature has two tiers of support; the second tier is significantly better than the first.
+The code below shows how to test for tier 2 support:
+
+if self.device.argumentBuffersSupport == .tier2
+{
+    // Enable tier 2 argument buffer support in renderer.
+}
+
+Discover Feature Availability in Earlier Operating Systems
+If the GPU Family API isn’t available, test for features using feature sets.
+A feature set combines a Metal GPU family number with a software revision number.
+For example, to test for the first release of Metal that supported Apple family 4 GPUs, use MTLFeatureSet.iOS_GPUFamily4_v1, as shown here:
+if self.device.supportsFeatureSet(.iOS_GPUFamily4_v1)
+{
+    // Enable family 4 rendering path.
+}
+Metal added new feature set enumerations in new versions of Apple operating systems to support new software features and GPU families, so there are many different enumeration values representing different collections of features.
+If a GPU supports a feature set, it supports all features provided by earlier members of the same family, and all features in earlier software revisions.
+For example, MTLFeatureSet.iOS_GPUFamily4_v2 is version 2 of family 4, so it supports the same features as version 1, as well as all features supported by families 1, 2, and 3.
+You don’t need to test for those feature sets separately.
+Test for feature sets, from newest to oldest, until you successfully find a feature set that your app and the GPU both support.
+
+
+----------Submitting Work to a GPU
+1.Setting Up a Command Structure
+Discover how Metal executes commands on a GPU.
+
+In Metal, you send commands to the GPU so it can perform work on your behalf.
+A command performs the drawing, parallel computation, and resource management work your app requires.
+
+The relationship between Metal apps and the GPU on a device is a client/server model where your app is the client and the GPU is the server.
+You make requests by sending commands to the GPU that you encapsulate in a command buffer and then add to a command queue.
+After processing the commands, the GPU notifies your app when it’s ready for more work.
+
+The order that you place commands in command buffers, then enqueue and commit command buffers, affects the perceived order in which Metal executes your commands.
+Some objects you create once and use throughout your app, and others you create specifically to execute a set of commands.
+
+(1)Create Expensive Shared Objects During Initialization
+Create objects that are expensive to allocate during initialization, not in time-critical code paths.
+Objects that you can share in your code are command queues, pipelines, buffers, and textures.
+After you initialize these objects, they’re fast to reuse.
+
+(2)Make a Command Queue
+To make a command queue, call the device’s makeCommandQueue() function.
+commandQueue = device.makeCommandQueue()
+Then use the same command queue throughout your app to hold command buffers.
+
+(3)Make One or More Pipeline Objects
+A pipeline object tells Metal how to process your commands.
+The pipeline object encapsulates functions that you write in the Metal shading language.
+To use a pipeline in your Metal workflow, follow these steps:
+Write Metal shader functions that process your data.
+Create a pipeline object that contains your shaders.
+Set the state of the render or compute pipeline.
+Make draw or compute calls.
+
+Metal doesn’t perform your draw or compute calls immediately.
+Instead, you use an encoder object to insert commands that encapsulate those calls into your command buffer.
+After you commit the command buffer, Metal sends it to the GPU and uses the active pipeline object to process the commands.
+
+(4)Issue Commands to the GPU
+To execute commands on the GPU, follow this process:
+Create a command buffer from a command queue.
+Create a command encoder using the command buffer.
+Add the commands to the command buffer using the command encoder.
+Get callbacks when the GPU schedules and executes the commands by setting completion handlers.
+Commit the command buffer.
+
+If you’re performing animation as part of a rendering loop, do this for each frame of the animation.
+You also follow this process to execute one-off image processing, or machine learning tasks.
+
+(5)Create a Command Buffer
+Create a command buffer by calling makeCommandBuffer() on the command queue.
+guard let commandBuffer = commandQueue.makeCommandBuffer() else { 
+    return 
+}
+
+For single-threaded apps, create a single command buffer containing the commands.
+
+(6)Add Commands to the Command Buffer
+When you call task-specific functions on an encoder object — like draws or compute operations — the encoder places commands corresponding to those calls in the command buffer.
+The encoder inserts the commands into the command buffer, including everything the GPU needs to process the task at runtime.
+
+a command encoder inserting commands into a command buffer when the app makes a draw call
+
+You encode actual commands with concrete subclasses of MTLCommandEncoder, depending on your task.
+For example, use MTLRenderCommandEncoder to issue render commands, and MTLComputeCommandEncoder to issue parallel computation commands.
+
+(7)Commit a Command Buffer
+To submit your commands to run on the GPU, commit the command buffer to the GPU.
+commandBuffer.commit()
+
+Committing a command buffer doesn’t run its commands immediately.
+Instead, Metal schedules the buffer’s commands to run only after you commit prior command buffers that are waiting in the queue.
+If you don’t explicitly enqueue a command buffer, Metal does that for you when you commit the buffer.
+
+You can’t reuse a buffer after you commit it, but you can receive notifications when Metal schedules and completes the commands, or you can query the buffer’s status.
+To receive callbacks during this process, use the MTLCommandBuffer addScheduledHandler(_:) and addCompletedHandler(_:) methods.
+
+As much as possible, the perceived order in which Metal executes the commands is the same as the way you order them.
+Although Metal might reorder some of your commands before processing them, this usually only occurs when there’s a performance gain and no other perceivable impact.
+
+----------Suspending Work on a GPU
+Preparing Your Metal App to Run in the Background:
+Prepare your app to move into the background by pausing future GPU use and ensuring previous work is scheduled.
+
+iOS and tvOS restrict a background app’s access to the GPU, to guarantee foreground app performance.
+If a Metal command queue tries to schedule command buffers after the app moves in the background, the system prevents those commands from executing.
+When UIKit notifies you that your app is being suspended or moved into the background, your app must restrict its use of Metal.
+
+For more information on the UIKit app life cycle, see Preparing your UI to run in the background.
+https://developer.apple.com/documentation/uikit/app_and_environment/scenes/preparing_your_ui_to_run_in_the_background
+
+Disable Code that Commits New Command Buffers
+When your app is deactivated, stop sending work to Metal. Enable that code only after your app is reactivated.
+After the system notifies your app that it’s being deactivated, you’ve some time before the system restricts your app from using Metal.
+You can schedule additional commands if that work is critical to prepare your app to be in the background state.
+Similarly, if your app was already in the middle of encoding commands, your app can typically finish the current task before disabling further work.
+For example, if your app renders frames of animation to the screen, and you receive the notification while you’re encoding commands for a new frame, you can finish encoding that frame before disabling your rendering code.
+
+Ensure All Previous Work is Scheduled for Execution
+When UIKit calls your app delegate’s applicationDidEnterBackground(_:) method, make sure Metal has scheduled all command buffers you’ve already committed before your app returns control to the system.
+On each command queue, if the last command buffer you queued isn’t already scheduled or complete, call waitUntilScheduled() to force it to be scheduled.
+If you’re in the middle of encoding a new command buffer, you can combine these steps. Finish encoding commands to render the frame and commit the command buffer, then call waitUntilScheduled().
+After your app moves into the background, if Metal sees a new command buffer from your app, it returns an error, rather than scheduling the command buffer.
+To test for this error, add a completion handler by calling the addCompletedHandler(_:) method.
+In your completion handler, confirm the command buffer is in an error state by checking the following properties:
+The status property is equal to MTLCommandBufferStatus.error
+The error property is equal to MTLCommandBufferError.Code.notPermitted
+
+==============================Command Encoders
+Send work to a GPU by issuing commands and configuring the pipeline states for those commands.
+----------1.Render Passes
+Encode a render pass to draw graphics into an image.
+
+A render pass processes and rasterizes geometry to one or more output attachments using a render pipeline.
+Render passes consist of:
+A set of input resources, such as buffers and textures
+A render pipeline that configures the GPU that does work with the input resources
+Draw commands
+Vertex shaders, the GPU core functions that process and transform a scene’s geometry
+An optional tessellation stage that adds fine details to a scene’s geometry
+Fragment shaders, the GPU core functions that produce the final color values for each pixel
+Optional outputs that can include color, depth, and stencil attachments, and their load and store operations
+
+----------2.Compute Passes
+Encode a compute pass that runs computations in parallel on the multiple cores of a GPU.
+A typical compute pass can consist of:
+One or more MTLBuffer or MTLTexture instances that store the pass’s input data
+One or more MTLBuffer or MTLTexture instances that store the pass’s output data
+One or more compute pipelines, each with one compute shader that works with the input data to produce the output data
+
+3.Blit Passes
+Encode a block information transfer pass to adjust and copy data to and from GPU resources, such as buffers and textures.
+Your app can use a block information transfer (blit) pass to manage data within, and copy data between, buffers, textures, and other Metal resources.
+Start by creating a blit command encoder by calling an MTLCommandBuffer instance’s makeBlitCommandEncoder() method.
+Then use the MTLBlitCommandEncoder instance’s methods to encode individual commands of your blit pass.
+
+You also have the option to customize a blit pass’s runtime behavior, such as sampling GPU hardware data.
+To enable these options, configure an MTLBlitPassDescriptor instance and pass it to the command buffer’s makeBlitCommandEncoder(descriptor:) method.
+For more information about sampling GPU hardware data in a blit pass, see the articles in GPU Counters and Counter Sample Buffers, including:
+https://developer.apple.com/documentation/metal/gpu_counters_and_counter_sample_buffers
+Sampling GPU Data into Counter Sample Buffers
+https://developer.apple.com/documentation/metal/gpu_counters_and_counter_sample_buffers/sampling_gpu_data_into_counter_sample_buffers
+Converting a GPU’s Counter Data into a Readable Format
+https://developer.apple.com/documentation/metal/gpu_counters_and_counter_sample_buffers/converting_a_gpu_s_counter_data_into_a_readable_format
+
+4.Indirect Command Encoding
+Store draw commands in Metal buffers and run them at a later time on the GPU, either once or repeatedly.
+
+You can use an MTLIndirectCommandBuffer instance to store draw commands and invoke them at a later time.
+Metal executes all the draw commands in an indirect command buffer each time you submit it.
+This means you can use indirect command buffers multiple times, unlike MTLCommandBuffer instances, which are all single-use.
+
+You can encode an indirect command buffer to run on either the CPU or the GPU.
+However, the GPU gives you the ability to immediately use the output of one pass as the input of a subsequent pass.
+For example, you can create an indirect command buffer with commands that conditionally draw visible items by running:
+A compute kernel that identifies visible geometry and saves it to a result buffer
+An indirect command buffer that uses the result buffer as its input to make decisions on what to draw
+
+5.Ray Tracing with Acceleration Structures
+Build a representation of your scene’s geometry using triangles and bounding volumes to quickly trace rays through the scene.
+
+Ray tracing can improve your content’s realism by more accurately modeling the behavior of light than traditional rendering.
+You can also use ray tracing to implement similar techniques that rely on line-of-sight, such as sound obstruction or visually based AI functions.
+To apply ray tracing in your app:
+Create acceleration structures that represent objects in a scene.
+Define a ray’s behavior when it collides into parts of an acceleration structure by creating either intersectors or intersection queries.
+Generate rays into the scene from a new or existing shader.
+
+
+==============================Performing Calculations on a GPU
+Use Metal to find GPUs and perform calculations on them.
+
+You’ll see how to convert a simple function written in C to Metal Shading Language (MSL) so that it can be run on a GPU.
+You’ll find a GPU, prepare the MSL function to run on it by creating a pipeline, and create data objects accessible to the GPU.
+To execute the pipeline against your data, create a command buffer, write commands into it, and commit the buffer to a command queue. 
+Metal sends the commands to the GPU to be executed.
+
+1.Write a GPU Function to Perform Calculations
+written in C:
+void add_arrays(const float* inA,
+                const float* inB,
+                float* result,
+                int length)
+{
+    for (int index = 0; index < length ; index++)
+    {
+        result[index] = inA[index] + inB[index];
+    }
+}
+
+Xcode builds all .metal files in the application target and creates a default Metal library, which it embeds in your app. 
+You’ll see how to load the default library later in this sample.
+
+written in MSL:
+kernel void add_arrays(device const float* inA,
+                       device const float* inB,
+                       device float* result,
+                       uint index [[thread_position_in_grid]])
+{
+    // the for-loop is replaced with a collection of threads, each of which
+    // calls this function.
+    result[index] = inA[index] + inB[index];
+}
+
+First, the function adds the kernel keyword, which declares that the function is:
+A public GPU function. Public functions are the only functions that your app can see. Public functions also can’t be called by other shader functions.
+A compute function (also known as a compute kernel), which performs a parallel calculation using a grid of threads.
+
+The add_arrays function declares three of its arguments with the device keyword, which says that these pointers are in the device address space. 
+MSL defines several disjoint address spaces for memory. Whenever you declare a pointer in MSL, you must supply a keyword to declare its address space. 
+Use the device address space to declare persistent memory that the GPU can read from and write to.
+
+removes the for-loop, because the function is now going to be called by multiple threads in the compute grid. 
+This sample creates a 1D grid of threads that exactly matches the array’s dimensions, so that each entry in the array is calculated by a different thread.
+
+To replace the index previously provided by the for-loop, the function takes a new index argument, 
+with another MSL keyword, thread_position_in_grid, specified using C++ attribute syntax. 
+This keyword declares that Metal should calculate a unique index for each thread and pass that index in this argument. 
+Because add_arrays uses a 1D grid, the index is defined as a scalar integer. Even though the loop was removed, 
+use the same line of code to add the two numbers together. 
+If you want to convert similar code from C or C++ to MSL, replace the loop logic with a grid in the same way.
+
+2.Find a GPU
+In your app, a MTLDevice object is a thin abstraction for a GPU; you use it to communicate with a GPU. 
+Metal creates a MTLDevice for each GPU. You get the default device object by calling MTLCreateSystemDefaultDevice(). 
+In macOS, where a Mac can have multiple GPUs, Metal chooses one of the GPUs as the default and returns that GPU’s device object. 
+In macOS, Metal provides other APIs that you can use to retrieve all of the device objects, but this sample just uses the default.
+
+id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+
+3.Initialize Metal Objects
+Metal represents other GPU-related entities, like compiled shaders, memory buffers and textures, as objects. 
+To create these GPU-specific objects, you call methods on a MTLDevice or you call methods on objects created by a MTLDevice. 
+All objects created directly or indirectly by a device object are usable only with that device object. 
+Apps that use multiple GPUs will use multiple device objects and create a similar hierarchy of Metal objects for each.
+
+The sample app uses a custom MetalAdder class to manage the objects it needs to communicate with the GPU. 
+The class’s initializer creates these objects and stores them in its properties. 
+The app creates an instance of this class, passing in the Metal device object to use to create the secondary objects. 
+The MetalAdder object keeps strong references to the Metal objects until it finishes executing.
+
+MetalAdder* adder = [[MetalAdder alloc] initWithDevice:device];
+
+In Metal, expensive initialization tasks can be run once and the results retained and used inexpensively. 
+You rarely need to run such tasks in performance-sensitive code.
+
+4.Get a Reference to the Metal Function
+The first thing the initializer does is load the function and prepare it to run on the GPU. When you build the app, 
+Xcode compiles the add_arrays function and adds it to a default Metal library that it embeds in the app. 
+You use MTLLibrary and MTLFunction objects to get information about Metal libraries and the functions contained in them. 
+To get an object representing the add_arrays function, ask the MTLDevice to create a MTLLibrary object for the default library, 
+and then ask the library for a MTLFunction object that represents the shader function.
+
+- (instancetype) initWithDevice: (id<MTLDevice>) device
+{
+    self = [super init];
+    if (self)
+    {
+        _mDevice = device;
+
+        NSError* error = nil;
+
+        // Load the shader files with a .metal file extension in the project
+
+        id<MTLLibrary> defaultLibrary = [_mDevice newDefaultLibrary];
+        if (defaultLibrary == nil)
+        {
+            NSLog(@"Failed to find the default library.");
+            return nil;
+        }
+
+        id<MTLFunction> addFunction = [defaultLibrary newFunctionWithName:@"add_arrays"];
+        if (addFunction == nil)
+        {
+            NSLog(@"Failed to find the adder function.");
+            return nil;
+        }
+    }
+}
+
+5.Prepare a Metal Pipeline
+The function object is a proxy for the MSL function, but it’s not executable code. 
+You convert the function into executable code by creating a pipeline. 
+A pipeline specifies the steps that the GPU performs to complete a specific task. 
+In Metal, a pipeline is represented by a pipeline state object. Because this sample uses a compute function, 
+the app creates a MTLComputePipelineState object.
+
+_mAddFunctionPSO = [_mDevice newComputePipelineStateWithFunction: addFunction error:&error];
+
+A compute pipeline runs a single compute function, optionally manipulating the input data before running the function, 
+and the output data afterwards.
+
+When you create a pipeline state object, the device object finishes compiling the function for this specific GPU. 
+This sample creates the pipeline state object synchronously and returns it directly to the app. 
+Because compiling does take a while, avoid creating pipeline state objects synchronously in performance-sensitive code.
+
+Note
+
+All of the objects returned by Metal in the code you’ve seen so far are returned as objects that conform to protocols. 
+Metal defines most GPU-specific objects using protocols to abstract away the underlying implementation classes, which may vary for different GPUs. 
+Metal defines GPU-independent objects using classes. 
+The reference documentation for any given Metal protocol make it clear whether you can implement that protocol in your app.
+
+6.Create a Command Queue
+To send work to the GPU, you need a command queue. Metal uses command queues to schedule commands. 
+Create a command queue by asking the MTLDevice for one.
+
+_mCommandQueue = [_mDevice newCommandQueue];
+
+7.Create Data Buffers and Load Data
+After initializing the basic Metal objects, you load data for the GPU to execute. 
+This task is less performance critical, but still useful to do early in your app’s launch.
+
+A GPU can have its own dedicated memory, or it can share memory with the operating system. 
+Metal and the operating system kernel need to perform additional work to let you store data in memory and make that data available to the GPU. 
+Metal abstracts this memory management using resource objects. (MTLResource). 
+A resource is an allocation of memory that the GPU can access when running commands. Use a MTLDevice to create resources for its GPU.
+
+The sample app creates three buffers and fills the first two with random data. The third buffer is where add_arrays will store its results.
+
+_mBufferA = [_mDevice newBufferWithLength:bufferSize options:MTLResourceStorageModeShared];
+_mBufferB = [_mDevice newBufferWithLength:bufferSize options:MTLResourceStorageModeShared];
+_mBufferResult = [_mDevice newBufferWithLength:bufferSize options:MTLResourceStorageModeShared];
+
+[self generateRandomFloatData:_mBufferA];
+[self generateRandomFloatData:_mBufferB];
+
+The resources in this sample are (MTLBuffer) objects, which are allocations of memory without a predefined format. 
+Metal manages each buffer as an opaque collection of bytes. 
+However, you specify the format when you use a buffer in a shader. 
+This means that your shaders and your app need to agree on the format of any data being passed back and forth.
+
+When you allocate a buffer, you provide a storage mode to determine some of its performance characteristics and whether the CPU or GPU can access it. 
+The sample app uses shared memory (storageModeShared), which both the CPU and GPU can access.
+
+To fill a buffer with random data, the app gets a pointer to the buffer’s memory and writes data to it on the CPU. 
+The add_arrays function declared its arguments as arrays of floating-point numbers, so you provide buffers in the same format:
+
+- (void) generateRandomFloatData: (id<MTLBuffer>) buffer
+{
+    float* dataPtr = buffer.contents;
+
+    for (unsigned long index = 0; index < arrayLength; index++)
+    {
+        dataPtr[index] = (float)rand()/(float)(RAND_MAX);
+    }
+}
+
+8.Create a Command Buffer
+Ask the command queue to create a command buffer.
+
+id<MTLCommandBuffer> commandBuffer = [_mCommandQueue commandBuffer];
+
+9.Create a Command Encoder
+To write commands into a command buffer, you use a command encoder for the specific kind of commands you want to code. 
+This sample creates a compute command encoder, which encodes a compute pass. 
+A compute pass holds a list of commands that execute compute pipelines. 
+Each compute command causes the GPU to create a grid of threads to execute on the GPU.
+
+id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoder];
+
+To encode a command, you make a series of method calls on the encoder. Some methods set state information, 
+like the pipeline state object (PSO) or the arguments to be passed to the pipeline. 
+After you make those state changes, you encode a command to execute the pipeline. 
+The encoder writes all of the state changes and command parameters into the command buffer.
+
+10.Set Pipeline State and Argument Data
+
+Set the pipeline state object of the pipeline you want the command to execute. 
+Then set data for any arguments that the pipeline needs to send into the add_arrays function. 
+For this pipeline, that means providing references to three buffers. 
+Metal automatically assigns indices for the buffer arguments in the order that the arguments appear in the function,
+starting with 0. You provide arguments using the same indices.
+
+[computeEncoder setComputePipelineState:_mAddFunctionPSO];
+[computeEncoder setBuffer:_mBufferA offset:0 atIndex:0];
+[computeEncoder setBuffer:_mBufferB offset:0 atIndex:1];
+[computeEncoder setBuffer:_mBufferResult offset:0 atIndex:2];
+
+You also specify an offset for each argument. An offset of 0 means the command will access the data from the beginning of a buffer. 
+However, you could use one buffer to store multiple arguments, specifying an offset for each argument.
+
+You don’t specify any data for the index argument because the add_arrays function defined its values as being provided by the GPU.
+
+11.Specify Thread Count and Organization
+Next, decide how many threads to create and how to organize those threads. Metal can create 1D, 2D, or 3D grids. 
+The add_arrays function uses a 1D array, so the sample creates a 1D grid of size (dataSize x 1 x 1), 
+from which Metal generates indices between 0 and dataSize-1.
+
+MTLSize gridSize = MTLSizeMake(arrayLength, 1, 1);
+
+12.Specify Threadgroup Size
+Metal subdivides the grid into smaller grids called threadgroups. 
+Each threadgroup is calculated separately. Metal can dispatch threadgroups to different processing elements on the GPU to speed up processing. 
+You also need to decide how large to make the threadgroups for your command.
+
+NSUInteger threadGroupSize = _mAddFunctionPSO.maxTotalThreadsPerThreadgroup;
+if (threadGroupSize > arrayLength)
+{
+    threadGroupSize = arrayLength;
+}
+MTLSize threadgroupSize = MTLSizeMake(threadGroupSize, 1, 1);
+
+The app asks the pipeline state object for the largest possible threadgroup and shrinks it if that size is larger than the size of the data set. 
+The maxTotalThreadsPerThreadgroup property gives the maximum number of threads allowed in the threadgroup, 
+which varies depending on the complexity of the function used to create the pipeline state object.
+
+13.Encode the Compute Command to Execute the Threads
+Finally, encode the command to dispatch the grid of threads.
+[computeEncoder dispatchThreads:gridSize
+          threadsPerThreadgroup:threadgroupSize];
+
+When the GPU executes this command, it uses the state you previously set and the command’s parameters to dispatch threads to perform the computation.
+
+You can follow the same steps using the encoder to encode multiple compute commands into the compute pass without performing any redundant steps. 
+For example, you might set the pipeline state object once, and then set arguments and encode a command for each collection of buffers to process.
+
+14.End the Compute Pass
+When you have no more commands to add to the compute pass, you end the encoding process to close out the compute pass.
+
+[computeEncoder endEncoding];
+
+15.Commit the Command Buffer to Execute Its Commands
+Run the commands in the command buffer by committing the command buffer to the queue.
+
+[commandBuffer commit];
+
+The command queue created the command buffer, so committing the buffer always places it on that queue. 
+After you commit the command buffer, Metal asynchronously prepares the commands for execution and then schedules the command buffer to execute on the GPU. 
+After the GPU executes all the commands in the command buffer, Metal marks the command buffer as complete.
+
+16.Wait for the Calculation to Complete
+Your app can do other work while the GPU is processing your commands. 
+This sample doesn’t need to do any additional work, so it simply waits until the command buffer is complete.
+
+[commandBuffer waitUntilCompleted];
+
+Alternatively, to be notified when Metal has processed all of the commands, add a completion handler to the command buffer (addCompletedHandler(_:)), 
+or check the status of a command buffer by reading its status property.
+
+17.Read the Results From the Buffer
+After the command buffer completes, the GPU’s calculations are stored in the output buffer and Metal performs any necessary steps to make sure the CPU can see them. 
+In a real app, you would read the results from the buffer and do something with them, such as displaying the results onscreen or writing them to a file. 
+Because the calculations are only used to illustrate the process of creating a Metal app, 
+the sample reads the values stored in the output buffer and tests to make sure the CPU and the GPU calculated the same results.
+
+- (void) verifyResults
+{
+    float* a = _mBufferA.contents;
+    float* b = _mBufferB.contents;
+    float* result = _mBufferResult.contents;
+
+    for (unsigned long index = 0; index < arrayLength; index++)
+    {
+        if (result[index] != (a[index] + b[index]))
+        {
+            printf("Compute ERROR: index=%lu result=%g vs %g=a+b\n",
+                   index, result[index], a[index] + b[index]);
+            assert(result[index] == (a[index] + b[index]));
+        }
+    }
+    printf("Compute results as expected\n");
+}

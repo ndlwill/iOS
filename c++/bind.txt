@@ -1,0 +1,100 @@
+bind 用来绑定函数调用的某些参数，可以将bind函数看作一个通用的函数包装器，它接受一个可调用对象，并返回函数对象。
+回的函数对象参数从前往后，可以依次编号，从1开始；然后可以把传入的参数对原来的参数进行绑定。
+
+#include < functional >
+
+
+bind函数的常见格式
+方式一：
+特点：无需可调用对象，即除了占位符就 只传递一个函数指针即可。
+auto bind_show=bind(函数指针, placeholders::_1, placeholders::_2);
+包含 一个函数指针，和任意多的占位符（和你要绑定的函数参数一样多，可以没有，则原函数为void），表示绑定这个函数。
+常用于：绑定普通函数，绑定仿函数，绑定lambda。
+
+
+方式二：
+特点：不仅要传递函数指针，还要传递一个可调用的对象。
+auto bind_func1 = bind(函数指针,可调用对象, placeholders::_1, placeholders::_2);
+包含 一个成员函数指针，一个可调用的对象，还有任意多的占位符（和你要绑定的函数参数一样多，可以没有，则原函数为void），表示绑定这个参数。
+常用于：绑定类成员函数，这是一个通常在一个类中的函数。
+bind函数绑定的函数返回值过于复杂，我们只能用auto来自动推断其绑定的函数类型。
+bind的首元素表示 一个函数指针，你把这个函数传进去，即使得bind能够绑定这个函数对象。
+bing的第二三个参数，表示占位符，简单来说，你想绑定的原始函数有几个参数，你就使用这个占位符占几个位置。实际上bind函数是可变参数，可以绑定任意多的参数。
+
+
+绑定普通函数:
+void show(int number, const string& name)
+{
+	cout << number << " : " << name << endl;
+}
+我们可以使用bind把函数进行参数绑定
+1.顺序绑定的参数
+auto bind_show1=bind(show, placeholders::_1, placeholders::_2);
+bind_show1(555, "yyyy");
+
+2.更改绑定的顺序
+auto bind_show2 = bind(show, placeholders::_2, placeholders::_1);
+bind_show2("ylh", 666);
+
+3.绑定固定参数
+auto bind_show3 = bind(show, 888, placeholders::_1);
+bind_show3("moren");
+
+4.完全绑定
+auto bind_show4 = bind(show, 666, "oooo");
+bind_show4();
+
+5.绑定成员函数
+struct Plus
+{
+	int plus(int a, int b)
+	{
+		return a + b;
+	}
+};
+
+我们有这么一个结构体，其中具有一个plus的函数，称为成员函数，我们可以把这个成员函数从结构体中分离出来。
+//绑定成员函数
+Plus a;
+auto bind_func1 = bind(&Plus::plus,Plus(), placeholders::_1, placeholders::_2);	//绑定匿名对象的成员函数，引用
+auto bind_func2 = bind(&Plus::plus, a, placeholders::_1, placeholders::_2);		//绑定成员函数的引用
+auto bind_func3 = bind(&Plus::plus,&a, placeholders::_1, placeholders::_2);		//绑定成员函数的指针
+cout << bind_func1(6, 11) << endl;
+cout << bind_func2(5, 10) << endl;
+cout << bind_func3(7, 20) << endl;
+
+第一个参数：我们要获得成员函数的指针，首先要取地址，取哪个函数的地址？ 取Plus的plus函数的地址
+第二个参数：要通过对象调用成员函数，所以我们应该传递一个对象。
+可以是临时匿名对象：Plus() ，也可以是一个显式定义的对象，注意：我们对此对象的传递行为决定我们是按指针还是按引用绑定，&表示按指针绑定，什么都不加表示按引用传递。（匿名对象也可以传取地址）。
+
+bind_func2和bind_func3的区别:
+主要的区别在于对象的传递方式。在第一种方式中，对象 a 通过值传递，而在第二种方式中，对象 a 通过指针传递。选择哪种方式取决于你的需求和对象生命周期的管理。
+如果你需要在函数对象中修改对象的状态，通常使用第二种方式，以便通过指针引用原始对象。如果你只需要对象的值，第一种方式通常足够。
+
+绑定函数对象（仿函数）:
+struct Foo
+{
+	int operator()(int a,int b)
+	{
+		return a * b;
+	}
+};
+//绑定函数对象
+Foo b;
+auto bind_FuncObject1 = bind(Foo(), placeholders::_1, placeholders::_2);	//临时对象
+auto bind_FuncObject2 = bind(b, placeholders::_1, placeholders::_2);		//显式指定对象
+
+cout << bind_FuncObject1(6, 20) << endl;
+cout << bind_FuncObject2(6, 20) << endl;
+关于仿函数，也叫做函数对象，是一个重载了括号运算符的可调用对象
+
+注意：我们绑定成员函数（上一种）和绑定函数对象（这一种）是不一样的。
+绑定成员函数，它不是一个仿函数，我们必须传入成员函数指针，然后再通过一个对象来调用函数。
+绑定函数对象：这是一个仿函数，我们可以直接传入函数指针的方式来帮顶函数。
+
+绑定lambda表达式:
+auto bind_lambda = bind([](const int& a, const int& b) {cout << a << " : " << b; }, placeholders::_1, placeholders::_2);
+bind_lambda(1, 2);
+lambda表达式可以说是就地定义仿函数闭包的“语法糖”
+
+bind提供了让我们重新绑定函数的作用，可以把函数封装起来，同时bind还提供了一种可能：即把C++的类成员函数绑定为C语言的函数，把C++语法转换为C语法。

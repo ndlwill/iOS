@@ -1,0 +1,693 @@
+https://clang.llvm.org/
+
+https://clang.llvm.org/docs/index.html#
+
+Clang: a C language family frontend for LLVM
+The Clang project provides a language front-end and tooling infrastructure for languages in the C language family (C, C++, Objective C/C++, OpenCL, CUDA, and RenderScript) for the LLVM project.
+
+LibClang:
+LibClang is a stable high level C interface to clang. When in doubt LibClang is probably the interface you want to use. Consider the other interfaces only when you have a good reason not to use LibClang.
+
+LibTooling:
+LibTooling is a C++ interface aimed at writing standalone tools, as well as integrating into services that run clang tools.
+Clang tools are a collection of specific developer tools built on top of the LibTooling infrastructure as part of the Clang project. 
+They are targeted at automating and improving core development activities of C/C++ developers.
+Examples of tools we are building or planning as part of the Clang project:
+Syntax checking (clang-check)
+Automatic fixing of compile errors (clang-fixit)
+Automatic code formatting (clang-format)
+
+==================================================Getting Started: Building and Running Clang
+从github下载完llvm项目llvm-project-main后，不知道如何构建llvm和clang的话，可以进入到llvm和clang的目录，先看下里面的readme文件，非常重要！
+
+https://clang.llvm.org/get_started.html
+
+This is a compiler front-end for the C family of languages (C, C++, Objective-C, and Objective-C++) which is built as part of the LLVM compiler infrastructure project.
+Clang is designed to be built as part of an LLVM build.
+Information on Clang:             http://clang.llvm.org/
+Building and using Clang:         http://clang.llvm.org/get_started.html
+Clang Static Analyzer:            http://clang-analyzer.llvm.org/
+Information on the LLVM project:  http://llvm.org/
+
+Clang is also provided in all major BSD or GNU/Linux distributions as part of their respective packaging systems. From Xcode 4.2, Clang is the default compiler for Mac OS X.
+
+Building Clang and Working with the Code
+On Unix-like Systems:
+If you would like to check out and build Clang, the current procedure is as follows:
+
+1. Get the required tools.
+See Getting Started with the LLVM System - Requirements. https://llvm.org/docs/GettingStarted.html#requirements
+Note also that Python is needed for running the test suite. Get it at: https://www.python.org/downloads/
+Standard build process uses CMake. Get it at: https://cmake.org/download/
+
+2. Check out the LLVM project:
+Change directory to where you want the llvm directory placed.
+git clone https://github.com/llvm/llvm-project.git
+The above command is very slow. It can be made faster by creating a shallow clone. Shallow clone saves storage and speeds up the checkout time. This is done by using the command:
+git clone --depth=1 https://github.com/llvm/llvm-project.git (using this only the latest version of llvm can be built)
+For normal users looking to just compile, this command works fine. But if someone later becomes a contributor, since they can't push code from a shallow clone, it needs to be converted into a full clone:
+cd llvm-project
+git fetch --unshallow
+
+3. Build LLVM and Clang:
+cd llvm-project
+mkdir build (in-tree build is not supported)
+cd build
+This builds both LLVM and Clang in release mode. Alternatively, if you need a debug build, switch Release to Debug. See frequently used cmake variables for more options.
+cmake -DLLVM_ENABLE_PROJECTS=clang -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" ../llvm
+make
+Note: For subsequent Clang development, you can just run make clang.
+CMake allows you to generate project files for several IDEs: Xcode, Eclipse CDT4, CodeBlocks, Qt-Creator (use the CodeBlocks generator), KDevelop3. 
+For more details see Building LLVM with CMake page.
+https://llvm.org/docs/CMake.html
+
+4. If you intend to use Clang's C++ support, you may need to tell it how to find your C++ standard library headers. 
+In general, Clang will detect the best version of libstdc++ headers available and use them - it will look both for system installations of libstdc++ as well as installations adjacent to Clang itself. 
+If your configuration fits neither of these scenarios, you can use the -DGCC_INSTALL_PREFIX cmake option to tell Clang where the gcc containing the desired libstdc++ is installed.
+
+5. Try it out (assuming you add llvm/build/bin to your path):
+clang --help
+clang file.c -fsyntax-only (check for correctness)
+clang file.c -S -emit-llvm -o - (print out unoptimized llvm code)
+clang file.c -S -emit-llvm -o - -O3
+clang file.c -S -O3 -o - (output native machine code)
+
+6. Run the testsuite:
+make check-clang
+
+
+==================================================https://clang.llvm.org/docs/UsersManual.html#terminology
+Command Line Options:
+1. Options to Control Error and Warning Messages
+
+
+==================================================Clang AST
+https://clang.llvm.org/docs/IntroductionToTheClangAST.html
+
+Clang’s AST is different from ASTs produced by some other compilers in that it closely resembles both the written C++ code and the C++ standard. 
+For example, parenthesis expressions and compile time constants are available in an unreduced form in the AST.
+
+A good way to familiarize yourself with the Clang AST is to actually look at it on some simple example code. 
+Clang has a builtin AST-dump mode, which can be enabled with the flag -ast-dump.
+
+$ cat test.cc
+int f(int x) {
+  int result = (x / 42);
+  return result;
+}
+
+# Clang by default is a frontend for many tools; -Xclang is used to pass
+# options directly to the C++ frontend.
+$ clang -Xclang -ast-dump -fsyntax-only test.cc
+TranslationUnitDecl 0x5aea0d0 <<invalid sloc>>
+... cutting out internal declarations of clang ...
+`-FunctionDecl 0x5aeab50 <test.cc:1:1, line:4:1> f 'int (int)'
+  |-ParmVarDecl 0x5aeaa90 <line:1:7, col:11> x 'int'
+  `-CompoundStmt 0x5aead88 <col:14, line:4:1>
+    |-DeclStmt 0x5aead10 <line:2:3, col:24>
+    | `-VarDecl 0x5aeac10 <col:3, col:23> result 'int'
+    |   `-ParenExpr 0x5aeacf0 <col:16, col:23> 'int'
+    |     `-BinaryOperator 0x5aeacc8 <col:17, col:21> 'int' '/'
+    |       |-ImplicitCastExpr 0x5aeacb0 <col:17> 'int' <LValueToRValue>
+    |       | `-DeclRefExpr 0x5aeac68 <col:17> 'int' lvalue ParmVar 0x5aeaa90 'x' 'int'
+    |       `-IntegerLiteral 0x5aeac90 <col:21> 'int' 42
+    `-ReturnStmt 0x5aead68 <line:3:3, col:10>
+      `-ImplicitCastExpr 0x5aead50 <col:10> 'int' <LValueToRValue>
+        `-DeclRefExpr 0x5aead28 <col:10> 'int' lvalue Var 0x5aeac10 'result' 'int'
+
+The toplevel declaration in a translation unit is always the translation unit declaration.
+In this example, our first user written declaration is the function declaration of “f”. 
+The body of “f” is a compound statement, whose child nodes are a declaration statement that declares our result variable, and the return statement.
+
+AST Context:
+All information about the AST for a translation unit is bundled up in the class ASTContext. 
+It allows traversal of the whole translation unit starting from getTranslationUnitDecl, or to access Clang’s table of identifiers for the parsed translation unit.
+
+AST Nodes:
+Clang’s AST nodes are modeled on a class hierarchy that does not have a common ancestor. 
+Instead, there are multiple larger hierarchies for basic node types like Decl and Stmt. 
+Many important AST nodes derive from Type, Decl, DeclContext or Stmt, with some classes deriving from both Decl and DeclContext.
+
+There are also a multitude of nodes in the AST that are not part of a larger hierarchy, and are only reachable from specific other nodes, like CXXBaseSpecifier.
+
+Thus, to traverse the full AST, one starts from the TranslationUnitDecl and then recursively traverses everything that can be reached from that node - this information has to be encoded for each specific node type. 
+This algorithm is encoded in the RecursiveASTVisitor.
+
+The two most basic nodes in the Clang AST are statements (Stmt) and declarations (Decl). 
+Note that expressions (Expr) are also statements in Clang’s AST.
+
+==================================================LibTooling
+For the information on how to setup Clang Tooling for LLVM see How To Setup Clang Tooling For LLVM
+
+LibTooling is a library to support writing standalone tools based on Clang. 
+This will provide a basic walkthrough of how to write a tool using LibTooling.
+
+If you ever wanted to run a FrontendAction over some sample code, for example to unit test parts of the Clang AST, runToolOnCode is what you looked for. 
+Let me give you an example:
+#include "clang/Tooling/Tooling.h"
+
+TEST(runToolOnCode, CanSyntaxCheckCode) {
+  // runToolOnCode returns whether the action was correctly run over the
+  // given code.
+  EXPECT_TRUE(runToolOnCode(std::make_unique<clang::SyntaxOnlyAction>(), "class X {};"));
+}
+
+
+==================================================How To Setup Clang Tooling For LLVM:
+Clang Tooling needs a compilation database to figure out specific build options for each file. 
+Currently it can create a compilation database from the compile_commands.json file, generated by CMake. 
+When invoking clang tools, you can either specify a path to a build directory using a command line parameter -p or let Clang Tooling find this file in your source tree. 
+In either case you need to configure your build using CMake to use clang tools.
+
+
+CMake：
+构建配置工具：CMake 是一个跨平台的构建配置工具，用于生成适用于不同编译器和操作系统的构建文件。
+生成构建系统：CMake 会生成用于构建项目的 Makefile、Visual Studio 项目文件或其他构建系统的配置文件。
+Make：
+构建工具：Make 是一个构建工具，用于执行构建过程，通常通过读取 Makefile 中的规则来构建项目。
+自动化构建：Make 可以自动化执行编译、链接和其他构建任务，以确保项目的可执行文件或库得以创建。
+
+
+clang 和 clang++ 都是 Clang 编译器家族的一部分，它们用于编译 C 和 C++ 程序，但它们之间有一些关键区别：
+语言支持：
+clang 是 Clang 编译器家族中的 C 编译器，用于编译 C 语言程序。
+clang++ 是 Clang 编译器家族中的 C++ 编译器，用于编译 C++ 语言程序。
+
+默认链接器：
+clang 通常会将生成的目标文件链接到 C 标准库（如 libc）。
+clang++ 通常会将生成的目标文件链接到 C++ 标准库（如 libstdc++ 或 libc++）。
+
+标准库支持：
+clang 针对 C 语言提供了对应的标准库支持。
+clang++ 针对 C++ 语言提供了对应的标准库支持，包括 C++ 标准模板库（STL）。
+
+语法检查：
+clang 和 clang++ 都使用 Clang 静态分析器来执行语法和语义检查，但在检查 C 和 C++ 代码时可能会有一些差异。
+
+
+make check-all 是一个常见的用于构建和测试软件项目的命令。具体含义取决于项目的 Makefile 或构建系统的设置。
+一般情况下，make check-all 做以下几件事情：
+构建项目：它将编译项目的源代码，生成可执行文件或库文件。
+运行测试：它执行项目中的测试套件，这些测试套件通常包括单元测试、集成测试和功能测试。测试用例将检查代码的不同部分，确保其行为符合预期。
+报告结果：测试运行后，make check-all 通常会生成测试报告，告诉你哪些测试通过了，哪些失败了。
+
+----------Setup Clang Tooling Using CMake and Make: ###(已验证成功)###
+First, you need to generate Makefiles for LLVM with CMake. You need to make a build directory and run CMake from it:
+mkdir llvm-project-main/build
+cd build
+// CMAKE_EXPORT_COMPILE_COMMANDS: Generate a CompilationDatabase (compile_commands.json file)
+cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=XX -DLLVM_ENABLE_PROJECTS="clang" llvm文件夹路径 // -DCMAKE_BUILD_TYPE=Release
+cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=/Users/youdun-ndl/Desktop/llvm/llvm-project-main/installation -DLLVM_ENABLE_PROJECTS="clang" /Users/youdun-ndl/Desktop/llvm/llvm-project-main/llvm
+
+If you want to use clang instead of GCC, you can add -DCMAKE_C_COMPILER=/path/to/clang -DCMAKE_CXX_COMPILER=/path/to/clang++. 
+You can also use ccmake, which provides a curses interface to configure CMake variables.
+
+As a result, the new compile_commands.json file should appear in the current directory. 
+You should link it to the LLVM source tree so that Clang Tooling is able to use it:
+ln -s $PWD/compile_commands.json llvm文件夹路径
+ln -s $PWD/compile_commands.json /Users/youdun-ndl/Desktop/llvm/llvm-project-main/llvm
+
+Now you are ready to build and test LLVM using make:
+make check-all (有问题就分别执行make和make install，已验证需要使用括号内的命令)
+
+https://clang.llvm.org/docs/HowToSetupToolingForLLVM.html
+Optionally you can use the Ninja build system instead of make.
+
+----------Using Clang Tools
+After you completed the previous steps, you are ready to run clang tools. 
+If you have a recent clang installed, you should have clang-check in $PATH. 
+###
+Try to run it on any .cpp file inside the LLVM source tree:
+###
+
+clang-check tools/clang/lib/Tooling/CompilationDatabase.cpp --ast-print
+
+Other clang-check options that can be useful when working with clang AST:
+-ast-print — Build ASTs and then pretty-print them.
+-ast-dump — Build ASTs and then debug dump them.
+-ast-dump-filter=<string> — Use with -ast-dump or -ast-print to dump/print only AST declaration nodes having a certain substring in a qualified name. Use -ast-list to list all filterable declaration node names.
+-ast-list — Build ASTs and print the list of declaration node qualified names.
+
+Examples:
+clang-check tools/clang/tools/clang-check/ClangCheck.cpp -ast-dump -ast-dump-filter ActionFactory::newASTConsumer
+Processing: tools/clang/tools/clang-check/ClangCheck.cpp.
+Dumping ::ActionFactory::newASTConsumer:
+clang::ASTConsumer *newASTConsumer() (CompoundStmt 0x44da290 </home/alexfh/local/llvm/tools/clang/tools/clang-check/ClangCheck.cpp:64:40, line:72:3>
+  (IfStmt 0x44d97c8 <line:65:5, line:66:45>
+    <<<NULL>>>
+      (ImplicitCastExpr 0x44d96d0 <line:65:9> '_Bool' <UserDefinedConversion>
+...
+
+==================================================LibClang
+The C Interface to Clang provides a relatively small API that exposes facilities for parsing source code into an abstract syntax tree (AST), 
+loading already-parsed ASTs, traversing the AST, associating physical source locations with elements within the AST, 
+and other facilities that support Clang-based development tools.
+
+All types of libclang are prefixed with CX
+
+CXIndex
+An Index that consists of a set of translation units that would typically be linked together into an executable or library.
+
+CXTranslationUnit
+A single translation unit, which resides in an index.
+
+CXCursor
+A cursor representing a pointer to some element in the abstract syntax tree of a translation unit.
+
+Code example:
+// file.cpp
+struct foo{
+  int bar;
+  int* bar_pointer;
+};
+
+#include <clang-c/Index.h>
+#include <iostream>
+
+int main(){
+  CXIndex index = clang_createIndex(0, 0); //Create index
+  CXTranslationUnit unit = clang_parseTranslationUnit(
+    index,
+    "file.cpp", nullptr, 0,
+    nullptr, 0,
+    CXTranslationUnit_None); //Parse "file.cpp"
+
+
+  if (unit == nullptr){
+    std::cerr << "Unable to parse translation unit. Quitting.\n";
+    return 0;
+  }
+  CXCursor cursor = clang_getTranslationUnitCursor(unit); //Obtain a cursor at the root of the translation unit
+}
+
+Visiting elements of an AST:
+The elements of an AST can be recursively visited with pre-order traversal with clang_visitChildren.
+clang_visitChildren(
+  cursor, //Root cursor
+  [](CXCursor current_cursor, CXCursor parent, CXClientData client_data){
+
+    CXString current_display_name = clang_getCursorDisplayName(current_cursor);
+    //Allocate a CXString representing the name of the current cursor
+
+    std::cout << "Visiting element " << clang_getCString(current_display_name) << "\n";
+    //Print the char* value of current_display_name
+
+    clang_disposeString(current_display_name);
+    //Since clang_getCursorDisplayName allocates a new CXString, it must be freed. This applies
+    //to all functions returning a CXString
+
+    return CXChildVisit_Recurse;
+
+
+  }, //CXCursorVisitor: a function pointer
+  nullptr //client_data
+  );
+
+The return value of CXCursorVisitor, the callable argument of clang_visitChildren, can return one of the three:
+CXChildVisit_Break: Terminates the cursor traversal
+CXChildVisit_Continue: Continues the cursor traversal with the next sibling of the cursor just visited, without visiting its children.
+CXChildVisit_Recurse: Recursively traverse the children of this cursor, using the same visitor and client data
+
+The expected output of that program is
+Visiting element foo
+Visiting element bar
+Visiting element bar_pointer
+
+Extracting information from a Cursor:
+
+1. Extracting the Cursor kind
+CXCursorKind clang_getCursorKind(CXCursor) Describes the kind of entity that a cursor refers to. Example values:
+CXCursor_StructDecl: A C or C++ struct.
+CXCursor_FieldDecl: A field in a struct, union, or C++ class.
+CXCursor_CallExpr: An expression that calls a function.
+
+2. Extracting the Cursor type
+CXType clang_getCursorType(CXCursor): Retrieve the type of a CXCursor (if any).
+A CXType represents a complete C++ type, including qualifiers and pointers. 
+It has a member field CXTypeKind kind and additional opaque data.
+
+Example values for CXTypeKind kind
+CXType_Invalid: Represents an invalid type (e.g., where no type is available)
+CXType_Pointer: A pointer to another type
+CXType_Int: Regular int
+CXType_Elaborated: Represents a type that was referred to using an elaborated type keyword e.g. struct S, or via a qualified name, e.g., N::M::type, or both.
+
+Any CXTypeKind can be converted to a CXString using clang_getTypeKindSpelling(CXTypeKind).
+
+A CXType holds additional necessary opaque type info, such as:
+Which struct was referred to?
+What type is the pointer pointing to?
+Qualifiers (e.g. const, volatile)?
+
+Qualifiers of a CXType can be queried with:
+clang_isConstQualifiedType(CXType) to check for const
+clang_isRestrictQualifiedType(CXType) to check for restrict
+clang_isVolatileQualifiedType(CXType) to check for volatile
+
+Code example:
+//structs.cpp
+struct A{
+  int value;
+};
+struct B{
+  int value;
+  A struct_value;
+};
+
+#include <clang-c/Index.h>
+#include <iostream>
+
+int main(){
+  CXIndex index = clang_createIndex(0, 0); //Create index
+  CXTranslationUnit unit = clang_parseTranslationUnit(
+    index,
+    "structs.cpp", nullptr, 0,
+    nullptr, 0,
+    CXTranslationUnit_None); //Parse "structs.cpp"
+
+  if (unit == nullptr){
+    std::cerr << "Unable to parse translation unit. Quitting.\n";
+    return 0;
+  }
+  CXCursor cursor = clang_getTranslationUnitCursor(unit); //Obtain a cursor at the root of the translation unit
+
+  clang_visitChildren(
+  cursor,
+  [](CXCursor current_cursor, CXCursor parent, CXClientData client_data){
+    CXType cursor_type = clang_getCursorType(current_cursor);
+
+    CXString type_kind_spelling = clang_getTypeKindSpelling(cursor_type.kind);
+    std::cout << "Type Kind: " << clang_getCString(type_kind_spelling);
+    clang_disposeString(type_kind_spelling);
+
+    if(cursor_type.kind == CXType_Pointer ||                     // If cursor_type is a pointer
+      cursor_type.kind == CXType_LValueReference ||              // or an LValue Reference (&)
+      cursor_type.kind == CXType_RValueReference){               // or an RValue Reference (&&),
+      CXType pointed_to_type = clang_getPointeeType(cursor_type);// retrieve the pointed-to type
+
+      CXString pointed_to_type_spelling = clang_getTypeSpelling(pointed_to_type);     // Spell out the entire
+      std::cout << "pointing to type: " << clang_getCString(pointed_to_type_spelling);// pointed-to type
+      clang_disposeString(pointed_to_type_spelling);
+    }
+    else if(cursor_type.kind == CXType_Record){
+      CXString type_spelling = clang_getTypeSpelling(cursor_type);
+      std::cout <<  ", namely " << clang_getCString(type_spelling);
+      clang_disposeString(type_spelling);
+    }
+    std::cout << "\n";
+    return CXChildVisit_Recurse;
+  },
+  nullptr
+  );
+
+The expected output of program is:
+
+Type Kind: Record, namely A
+Type Kind: Int
+Type Kind: Record, namely B
+Type Kind: Int
+Type Kind: Record, namely A
+Type Kind: Record, namely A
+
+Reiterating the difference between CXType and CXTypeKind: For an example
+const char* __restrict__ variable;
+Type Kind will be: CXType_Pointer spelled "Pointer"
+Type will be a complex CXType structure, spelled "const char* __restrict__
+
+----------Retrieving source locations
+CXSourceRange clang_getCursorExtent(CXCursor) returns a CXSourceRange, representing a half-open range in the source code.
+Use clang_getRangeStart(CXSourceRange) and clang_getRangeEnd(CXSourceRange) to retrieve the starting and end CXSourceLocation from a source range, respectively.
+Given a CXSourceLocation, use clang_getExpansionLocation to retrieve file, line and column of a source location.
+
+Code example
+// Again, file.cpp
+struct foo{
+  int bar;
+  int* bar_pointer;
+};
+
+clang_visitChildren(
+  cursor,
+  [](CXCursor current_cursor, CXCursor parent, CXClientData client_data){
+
+    CXType cursor_type = clang_getCursorType(current_cursor);
+    CXString cursor_spelling = clang_getCursorSpelling(current_cursor);
+    CXSourceRange cursor_range = clang_getCursorExtent(current_cursor);
+    std::cout << "Cursor " << clang_getCString(cursor_spelling);
+
+    CXFile file;
+    unsigned start_line, start_column, start_offset;
+    unsigned end_line, end_column, end_offset;
+
+    clang_getExpansionLocation(clang_getRangeStart(cursor_range), &file, &start_line, &start_column, &start_offset);
+    clang_getExpansionLocation(clang_getRangeEnd  (cursor_range), &file, &end_line  , &end_column  , &end_offset);
+    std::cout << " spanning lines " << start_line << " to " << end_line;
+    clang_disposeString(cursor_spelling);
+
+    std::cout << "\n";
+    return CXChildVisit_Recurse;
+  },
+  nullptr
+);
+
+The expected output of this program is:
+
+Cursor foo spanning lines 2 to 5
+Cursor bar spanning lines 3 to 3
+Cursor bar_pointer spanning lines 4 to 4
+
+----------Complete example code
+#include <clang-c/Index.h>
+#include <iostream>
+
+int main(){
+  CXIndex index = clang_createIndex(0, 0); //Create index
+  CXTranslationUnit unit = clang_parseTranslationUnit(
+    index,
+    "file.cpp", nullptr, 0,
+    nullptr, 0,
+    CXTranslationUnit_None); //Parse "file.cpp"
+
+  if (unit == nullptr){
+    std::cerr << "Unable to parse translation unit. Quitting.\n";
+    return 0;
+  }
+  CXCursor cursor = clang_getTranslationUnitCursor(unit); //Obtain a cursor at the root of the translation unit
+
+
+  clang_visitChildren(
+  cursor,
+  [](CXCursor current_cursor, CXCursor parent, CXClientData client_data){
+    CXType cursor_type = clang_getCursorType(current_cursor);
+
+    CXString type_kind_spelling = clang_getTypeKindSpelling(cursor_type.kind);
+    std::cout << "TypeKind: " << clang_getCString(type_kind_spelling);
+    clang_disposeString(type_kind_spelling);
+
+    if(cursor_type.kind == CXType_Pointer ||                     // If cursor_type is a pointer
+      cursor_type.kind == CXType_LValueReference ||              // or an LValue Reference (&)
+      cursor_type.kind == CXType_RValueReference){               // or an RValue Reference (&&),
+      CXType pointed_to_type = clang_getPointeeType(cursor_type);// retrieve the pointed-to type
+
+      CXString pointed_to_type_spelling = clang_getTypeSpelling(pointed_to_type);     // Spell out the entire
+      std::cout << "pointing to type: " << clang_getCString(pointed_to_type_spelling);// pointed-to type
+      clang_disposeString(pointed_to_type_spelling);
+    }
+    else if(cursor_type.kind == CXType_Record){
+      CXString type_spelling = clang_getTypeSpelling(cursor_type);
+      std::cout <<  ", namely " << clang_getCString(type_spelling);
+      clang_disposeString(type_spelling);
+    }
+    std::cout << "\n";
+    return CXChildVisit_Recurse;
+  },
+  nullptr
+  );
+
+
+  clang_visitChildren(
+  cursor,
+  [](CXCursor current_cursor, CXCursor parent, CXClientData client_data){
+
+    CXType cursor_type = clang_getCursorType(current_cursor);
+    CXString cursor_spelling = clang_getCursorSpelling(current_cursor);
+    CXSourceRange cursor_range = clang_getCursorExtent(current_cursor);
+    std::cout << "Cursor " << clang_getCString(cursor_spelling);
+
+    CXFile file;
+    unsigned start_line, start_column, start_offset;
+    unsigned end_line, end_column, end_offset;
+
+    clang_getExpansionLocation(clang_getRangeStart(cursor_range), &file, &start_line, &start_column, &start_offset);
+    clang_getExpansionLocation(clang_getRangeEnd  (cursor_range), &file, &end_line  , &end_column  , &end_offset);
+    std::cout << " spanning lines " << start_line << " to " << end_line;
+    clang_disposeString(cursor_spelling);
+
+    std::cout << "\n";
+    return CXChildVisit_Recurse;
+  },
+  nullptr
+  );
+}
+
+==================================================LibFormat
+LibFormat is a library that implements automatic source code formatting based on Clang.
+
+If you just want to use clang-format as a tool or integrated into an editor, checkout ClangFormat.
+https://clang.llvm.org/docs/ClangFormat.html
+ClangFormat describes a set of tools that are built on top of LibFormat. 
+It can support your workflow in a variety of ways including a standalone tool and editor integrations.
+Standalone Tool:
+clang-format is located in clang/tools/clang-format and can be used to format C/C++/Java/JavaScript/JSON/Objective-C/Protobuf/C# code.
+clang-format --help
+
+When the desired code formatting style is different from the available options, 
+the style can be customized using the -style="{key: value, ...}" option 
+or by putting your style configuration in the .clang-format or _clang-format file in your project’s directory and using clang-format -style=file.
+An easy way to create the .clang-format file is:
+clang-format -style=llvm -dump-config > .clang-format
+
+
+==================================================Clang-Format Style Options
+https://clang.llvm.org/docs/ClangFormatStyleOptions.html
+
+clang-format supports two ways to provide custom style options: directly specify style configuration in the -style= command line option 
+or use -style=file and put style configuration in the .clang-format or _clang-format file in the project directory.
+
+When using -style=file, clang-format for each input file will try to find the .clang-format file located in the closest parent directory of the input file. 
+When the standard input is used, the search is started from the current directory.
+
+When using -style=file:<format_file_path>, clang-format for each input file will use the format file located at <format_file_path>. 
+The path may be absolute or relative to the working directory.
+
+The .clang-format file uses YAML format:
+key1: value1
+key2: value2
+# A comment.
+...
+
+The configuration file can consist of several sections each having different Language: parameter denoting the programming language this section of the configuration is targeted at. 
+See the description of the Language option below for the list of supported languages. 
+The first section may have no language set, it will set the default style options for all languages. 
+Configuration sections for specific language will override options set in the default section.
+
+When clang-format formats a file, it auto-detects the language using the file name. 
+When formatting standard input or a file that doesn’t have the extension corresponding to its language, 
+-assume-filename= option can be used to override the file name clang-format uses to detect the language.
+
+An example of a configuration file for multiple languages:
+---
+# We'll use defaults from the LLVM style, but with 4 columns indentation.
+BasedOnStyle: LLVM
+IndentWidth: 4
+---
+Language: Cpp
+# Force pointers to the type for C++.
+DerivePointerAlignment: false
+PointerAlignment: Left
+---
+Language: JavaScript
+# Use 100 columns for JS.
+ColumnLimit: 100
+---
+Language: Proto
+# Don't format .proto files.
+DisableFormat: true
+---
+Language: CSharp
+# Use 100 columns for C#.
+ColumnLimit: 100
+...
+
+
+An easy way to get a valid .clang-format file containing all configuration options of a certain predefined style is:
+clang-format -style=llvm -dump-config > .clang-format
+When specifying configuration in the -style= option, the same configuration is applied for all input files. The format of the configuration is:
+-style='{key1: value1, key2: value2, ...}'
+
+Disabling Formatting on a Piece of Code:
+Clang-format understands also special comments that switch formatting in a delimited range. 
+The code between a comment // clang-format off or /* clang-format off */ up to a comment // clang-format on or /* clang-format on */ will not be formatted. 
+The comments themselves will be formatted (aligned) normally. 
+Also, a colon (:) and additional text may follow // clang-format off or // clang-format on to explain why clang-format is turned off or back on.
+
+int formatted_code;
+// clang-format off
+    void    unformatted_code  ;
+// clang-format on
+void formatted_code_again;
+
+
+Configuring Style in Code:
+When using clang::format::reformat(...) functions, the format is specified by supplying the clang::format::FormatStyle structure.
+
+==================================================Clang Plugins
+Clang Plugins make it possible to run extra user defined actions during a compilation.
+Clang Plugins run FrontendActions over code. See the FrontendAction tutorial on how to write a FrontendAction using the RecursiveASTVisitor. 
+
+Writing a PluginASTAction:
+The main difference from writing normal FrontendActions is that you can handle plugin command line options. 
+The PluginASTAction base class declares a ParseArgs method which you have to implement in your plugin.
+bool ParseArgs(const CompilerInstance &CI,
+               const std::vector<std::string>& args) {
+  for (unsigned i = 0, e = args.size(); i != e; ++i) {
+    if (args[i] == "-some-arg") {
+      // Handle the command line argument.
+    }
+  }
+  return true;
+}
+
+
+
+==================================================How to write RecursiveASTVisitor based ASTFrontendActions.
+learn how to create a FrontendAction that uses a RecursiveASTVisitor to find CXXRecordDecl AST nodes with a specified name.
+
+Creating a FrontendAction:
+When writing a clang based tool like a Clang Plugin or a standalone tool based on LibTooling, the common entry point is the FrontendAction. 
+FrontendAction is an interface that allows execution of user specific actions as part of the compilation. 
+To run tools over the AST clang provides the convenience interface ASTFrontendAction, which takes care of executing the action. 
+The only part left is to implement the CreateASTConsumer method that returns an ASTConsumer per translation unit.
+
+class FindNamedClassAction : public clang::ASTFrontendAction {
+public:
+  virtual std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(
+    clang::CompilerInstance &Compiler, llvm::StringRef InFile) {
+    return std::make_unique<FindNamedClassConsumer>();
+  }
+};
+
+Creating an ASTConsumer:
+ASTConsumer is an interface used to write generic actions on an AST, regardless of how the AST was produced. 
+ASTConsumer provides many different entry points, but for our use case the only one needed is HandleTranslationUnit, which is called with the ASTContext for the translation unit.
+
+class FindNamedClassConsumer : public clang::ASTConsumer {
+public:
+  virtual void HandleTranslationUnit(clang::ASTContext &Context) {
+    // Traversing the translation unit decl via a RecursiveASTVisitor
+    // will visit all nodes in the AST.
+    Visitor.TraverseDecl(Context.getTranslationUnitDecl());
+  }
+private:
+  // A RecursiveASTVisitor implementation.
+  FindNamedClassVisitor Visitor;
+};
+
+Using the RecursiveASTVisitor:
+
+
+
+==================================================Clang Transformer
+https://clang.llvm.org/docs/ClangTransformerTutorial.html
+
+how to write a source-to-source translation tool using Clang Transformer.
+
+Clang Transformer is a framework for writing C++ diagnostics and program transformations. 
+It is built on the clang toolchain and the LibTooling library, but aims to hide much of the complexity of clang’s native, low-level libraries.
+
+The core abstraction of Transformer is the rewrite rule, which specifies how to change a given program pattern into a new form. 
+Here are some examples of tasks you can achieve with Transformer:
+warn against using the name MkX for a declared function,
+change MkX to MakeX, where MkX is the name of a declared function,
+change s.size() to Size(s), where s is a string,
+collapse e.child().m() to e.m(), for any expression e and method named m.

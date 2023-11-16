@@ -1,0 +1,145 @@
+https://developer.apple.com/documentation/metalkit
+
+Build Metal apps quicker and easier using a common set of utility classes.
+
+==================================================View Management
+Display your Metal content with a view that manages much of the setup for you.
+
+iOS9.0
+A specialized view that creates, configures, and displays Metal objects.
+iOS, iPadOS, Mac Catalyst, tvOS
+class MTKView : UIView
+macOS
+class MTKView : NSView
+
+you can use to render graphics using Metal and display them onscreen.
+the view provides a MTLRenderPassDescriptor object that points at a texture for you to render new contents into.
+class MTLRenderPassDescriptor : NSObject
+A group of render targets that hold the results of a render pass.
+Optionally, an MTKView can create depth and stencil textures for you and any intermediate textures needed for antialiasing.
+The view uses a CAMetalLayer to manage the Metal drawable objects.
+class CAMetalLayer : CALayer
+A Core Animation layer that Metal can render into, typically displayed onscreen.
+The view requires a MTLDevice object to manage the Metal objects it creates for you.
+You must set the device property and, optionally, modify the view’s drawable properties before drawing.
+
+Configuring the Drawing Behavior:
+The MTKView class supports three drawing modes:
+Timed updates: The view redraws its contents based on an internal timer.
+1.In this case, which is the default behavior, both isPaused and enableSetNeedsDisplay are set to false.
+Use this mode for games and other animated content that’s regularly updated.
+2.Draw notifications: The view redraws itself when something invalidates its contents, usually because of a call to setNeedsDisplay() or some other view-related behavior. In this case, set isPaused and enableSetNeedsDisplay to true.
+Use this mode for apps with a more traditional workflow, where updates happen when data changes, but not on a regular timed interval.
+3.Explicit drawing: The view redraws its contents only when you explicitly call the draw() method.
+In this case, set isPaused to true and enableSetNeedsDisplay to false. Use this mode to create your own custom workflow.
+
+Drawing the View's Contents:
+Regardless of drawing mode, when the view needs to update its contents, it calls the draw(_:) method when that method has been overridden by a subclass, or draw(in:) on the view’s delegate if the subclass doesn’t override it.
+You should either subclass MTKView or provide a delegate, but not both.
+In your drawing method, you obtain a render pass descriptor from the view, render into it, and then present the associated drawable.
+###
+render pass descriptor
+###
+
+Obtaining a Drawable from a MetalKit View:
+Each MTKView is backed by a CAMetalLayer.
+In your renderer, implement the MTKViewDelegate protocol to interact with a MetalKit view.
+Call the MetalKit view’s currentRenderPassDescriptor property to obtain a render pass descriptor configured for the current frame:
+// BEGIN encoding your onscreen render pass.
+// Obtain a render pass descriptor generated from the drawable's texture.
+// (`currentRenderPassDescriptor` implicitly obtains the current drawable.)
+// If there's a valid render pass descriptor, use it to render to the current drawable.
+if let onscreenDescriptor = view.currentRenderPassDescriptor
+
+When you read this property, Core Animation implicitly obtains a drawable for the current frame and stores it in the currentDrawable property.
+It then configures a render pass descriptor to draw into that drawable, including any depth, stencil, and antialiasing textures as necessary.
+The view configures this render pass using the default store and load actions.
+You can adjust the descriptor further before using it to create a MTLRenderCommandEncoder.
+Obtain drawables as late as possible; preferably, immediately before encoding your onscreen render pass.
+
+Registering the Drawable's Presentation:
+After rendering the contents, you must present the drawable to update the view’s contents.
+The most convenient way to present the content is to call the present(_:) method on the command buffer.
+Then, call the commit() method to submit the command buffer to a GPU:
+if let onscreenDescriptor = view.currentRenderPassDescriptor,
+let onscreenCommandEncoder = onscreenCommandBuffer.makeRenderCommandEncoder(descriptor: onscreenDescriptor) {
+    /* Set render state and resources.
+       ...
+     */
+    /* Issue draw calls.
+       ...
+     */
+    onscreenCommandEncoder.endEncoding()
+    // END encoding your onscreen render pass.
+    
+    // Register the drawable's presentation.
+    if let currentDrawable = view.currentDrawable {
+        onscreenCommandBuffer.present(currentDrawable)
+    }
+}
+
+
+// Finalize your onscreen CPU work and commit the command buffer to a GPU.
+onscreenCommandBuffer.commit()
+
+When a command queue schedules a command buffer for execution, the drawable tracks all render or write requests on itself in that command buffer.
+The operating system doesn't present the drawable onscreen until the commands have finished executing.
+By asking the command buffer to present the drawable, you guarantee that presentation happens after the command queue has scheduled this command buffer.
+Don’t wait for the command buffer to finish executing before registering the drawable’s presentation.
+Tip
+For better performance, only retrieve the render pass descriptor when you’re ready to render the contents, and hold onto it and the related drawable object as little as possible. Release it as soon as you finish with it.
+For more information, see Keeping References to Drawables.
+https://developer.apple.com/documentation/quartzcore/cametallayer#3385893
+
+
+protocol MTKViewDelegate:
+Methods for responding to a MetalKit view's drawing and resizing events.
+You can set an object that implements the MTKViewDelegate protocol as a MTKView object’s delegate.
+Use a delegate to provide a drawing method to a MTKView object and respond to rendering events without subclassing the MTKView class.
+
+==================================================Texture Loading
+Load textures into your Metal app from a variety of sources.
+
+class MTKTextureLoader : NSObject
+An object that creates textures from existing data in common image formats.
+
+Use the MTKTextureLoader class to create a Metal texture from existing image data.
+This class supports common file formats, like PNG, JPEG, and TIFF.
+It also loads image data from KTX and PVR files, asset catalogs, Core Graphics images, and other sources.
+It infers the output texture format and pixel format from the image data.
+
+You create textures synchronously or asynchronously using MTKTextureLoader methods that return MTLTexture instances.
+Pass options to these methods that customize the image-loading and texture-creation process.
+
+First create an MTKTextureLoader instance, passing the device that it uses to create textures.
+Then use one of the texture loader’s methods to create a texture.
+The code example below synchronously creates a texture from data at a URL, using the default options:
+func loadTextureUsingMetalKit(url: URL, device: MTLDevice) throws -> MTLTexture {
+    let loader = MTKTextureLoader(device: device)
+    
+    return try loader.newTexture(URL: url, options: nil)
+}
+If you use custom data formats, or change the image data at runtime, use MTLTexture methods instead.
+For more information, see Creating and Sampling Textures.
+https://developer.apple.com/documentation/metal/textures/creating_and_sampling_textures
+
+
+==================================================Model Handling
+Handle Model I/O assets using a Metal-specific interface.
+
+class MTKMesh : NSObject
+A container for the vertex data of a Model I/O mesh, suitable for use in a Metal app.
+
+class MTKMeshBuffer : NSObject
+A buffer that backs the vertex data of a Model I/O mesh, suitable for use in a Metal app.
+
+class MTKMeshBufferAllocator : NSObject
+An interface for allocating a MetalKit buffer that backs the vertex data of a Model I/O mesh, suitable for use in a Metal app.
+
+class MTKSubmesh : NSObject
+A container for the index data of a Model I/O submesh, suitable for use in a Metal app.
+A submesh can only be initialized as part of a MTKMesh object
+Each submesh contains an index buffer with which the parent’s mesh data can be rendered.
+Actual submesh vertex data resides in the submesh’s parent mesh.
+For more information on Model I/O submeshes, see MDLSubmesh.
+https://developer.apple.com/documentation/modelio/mdlsubmesh

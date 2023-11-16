@@ -1,0 +1,120 @@
+http://www.polarhome.com/service/man/?qf=xcrun&af=0&sf=0&of=MacOSX&tf=2
+
+xcrun - Run or locate development tools and properties.
+
+xcrun 是 Command Line Tools 中的一员。它的作用类似 RubyGem 里的 bundle ，用于控制执行环境。
+###
+其作用是根据 xcode-select 设置的默认目录定位或者执行开发命令行工具，因此系统中如果安装了多个版本的Xcode，推荐使用 xcrun。
+当与 --find参数一起使用时，如 xcrun --find clang 会输出工具 clang 所在位置的绝对路径。
+在没有 --find 的情况下使用，则需要 command 的名称和将使用提供的参数执行，如 xcrun xcodebuild -list。
+###
+
+xcrun:
+-h, --help                  show this help message and exit
+--version                   show the xcrun version
+-v, --verbose               show verbose logging output
+--sdk <sdk name>            find the tool for the given SDK name
+--toolchain <name>          find the tool for the given toolchain
+-l, --log                   show commands to be executed (with --run)
+-f, --find                  only find and print the tool path
+-r, --run                   find and execute the tool (the default behavior)
+-n, --no-cache              do not use the lookup cache
+-k, --kill-cache            invalidate all existing cache entries
+--show-sdk-path             show selected SDK install path
+--show-sdk-version          show selected SDK version
+--show-sdk-build-version    show selected SDK build version
+--show-sdk-platform-path    show selected SDK platform path
+--show-sdk-platform-version show selected SDK platform version
+
+列出可用模拟器
+$ xcrun simctl list
+
+列出已安装的模拟器
+$ xcrun simctl list devices
+
+appletvsimulator的sdk路径
+xcrun --sdk appletvsimulator --show-sdk-path
+/Applications/Xcode.app/Contents/Developer/Platforms/AppleTVSimulator.platform/Developer/SDKs/AppleTVSimulator17.0.sdk
+
+
+
+https://github.com/libuv/libuv/commit/ce678caa48edbca92e364f36e09993bd7676b7a1
+
+
+==================================================xcrun xcodebuild:
+而 xcrun xcodebuild 是通过 xcrun 来查找并执行系统上安装的 Xcode 工具链中的 xcodebuild 工具。
+使用 xcrun xcodebuild 通常更安全，因为它确保了使用正确版本的 Xcode 工具链，尤其是当系统上安装了多个 Xcode 版本时。
+这种方式确保了使用了系统上已安装的 Xcode 版本，并且可以避免与其他 Xcode 安装版本之间的冲突。
+
+xcrun xcodebuild 使用的版本是通过 macOS 系统中的一组环境变量和系统设置来确定的，这些设置可以让你选择要使用的 Xcode 版本。
+1. DEVELOPER_DIR 环境变量
+export DEVELOPER_DIR=/Applications/Xcode.app
+2. xcode-select 命令
+sudo xcode-select -s /Applications/Xcode.app
+3. Xcode 偏好设置
+打开 Xcode，然后转到 "Preferences"（偏好设置），选择 "Locations"（位置）选项卡，在 "Command Line Tools"（命令行工具）下拉菜单中选择要使用的 Xcode 版本。
+
+xcrun xcodebuild -project Test.xcodeproj -scheme Debug clean build 这样就可以编译名为Test.xcodeproj的工程，使用名为Debug的构建方案进行编译，并且进行clean操作。
+
+==================================================build.sh
+PROJECT_NAME="MyProject.xcodeproj"
+TARGET_NAME="MyApp"
+SCHEME_NAME="MyApp"
+CONFIGURATION_NAME="Release"
+
+# Clean Build
+xcrun xcodebuild \
+-project "$PROJECT_NAME" \
+-scheme "$SCHEME_NAME" \
+-configuration "$CONFIGURATION_NAME" \
+clean build
+
+# Archive
+xcrun xcodebuild \
+-project "$PROJECT_NAME" \
+-scheme "$SCHEME_NAME" \
+-configuration "$CONFIGURATION_NAME" \
+-archivePath "./$TARGET_NAME.xcarchive" \
+archive
+
+# Export IPA
+xcrun xcodebuild \
+-exportArchive \
+-archivePath "./$TARGET_NAME.xcarchive" \
+-exportPath "./$TARGET_NAME.ipa" \
+-exportOptionsPlist "./exportOptions.plist"
+
+这个脚本会执行三个任务：clean build、archive和export。
+其中，clean build用于编译源码，archive用于生成.xcarchive文件，export用于将.xcarchive文件打包成.ipa文件。
+我们还需要准备好exportOptions.plist文件，这个文件中包含了打包的各种选项。
+可以进入Xcode，选择菜单中的Product -> Archive进行打包，然后在Organizer中选择已生成的.xcarchive，点击Export按钮，就可以导出这个文件了。
+
+chmod +x build.sh
+./build.sh
+
+==================================================xcrun的使用技巧
+1. 使用不同的sdk版本
+xcrun -sdk iphoneos10.3
+
+2. 路径问题
+一般情况下，可以使用相对路径和绝对路径，但是在跨平台时可能需要处理路径分隔符的问题。
+
+clang编译器
+clang：这是 LLVM 编译器套件的一部分，用于编译源代码并生成可执行文件或目标文件。
+
+-isysroot 选项用于指定编译器应该使用的系统根目录，其中包含 iOS SDK 的头文件和库
+
+xcrun -sdk iphoneos clang -arch arm64 \
+   -isysroot $SDKROOT \
+   -L$PROJ_DIR/build \
+   -F$PROJ_DIR/build -framework MyFramework \
+   -o $PROJ_DIR/build/MyApp
+
+3. 在打包和签名时，需要注意证书和描述文件的正确性。
+xcrun xcodebuild \
+  -exportArchive \
+  -archivePath ./App.xcarchive \
+  -exportPath ./App \
+  -exportOptionsPlist ./export.plist \
+  CODE_SIGN_IDENTITY="iPhone Distribution: My Company" \
+  PROVISIONING_PROFILE="123abc"
