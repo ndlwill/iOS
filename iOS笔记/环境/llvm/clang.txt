@@ -638,10 +638,262 @@ bool ParseArgs(const CompilerInstance &CI,
   return true;
 }
 
+Registering a plugin:
+A plugin is loaded from a dynamic library at runtime by the compiler.
+To register a plugin in a library, use FrontendPluginRegistry::Add<>:
+static FrontendPluginRegistry::Add<MyPlugin> X("my-plugin-name", "my plugin description");
 
+Defining pragmas:
+Plugins can also define pragmas by declaring a PragmaHandler and registering it using PragmaHandlerRegistry::Add<>:
+// Define a pragma handler for #pragma example_pragma
+class ExamplePragmaHandler : public PragmaHandler {
+public:
+  ExamplePragmaHandler() : PragmaHandler("example_pragma") { }
+  void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
+                    Token &PragmaTok) {
+    // Handle the pragma
+  }
+};
+
+static PragmaHandlerRegistry::Add<ExamplePragmaHandler> Y("example_pragma","example pragma description");
+
+Defining attributes:
+Plugins can define attributes by declaring a ParsedAttrInfo and registering it using ParsedAttrInfoRegister::Add<>:
+
+class ExampleAttrInfo : public ParsedAttrInfo {
+public:
+  ExampleAttrInfo() {
+    Spellings.push_back({ParsedAttr::AS_GNU,"example"});
+  }
+  AttrHandling handleDeclAttribute(Sema &S, Decl *D,
+                                   const ParsedAttr &Attr) const override {
+    // Handle the attribute
+    return AttributeApplied;
+  }
+};
+
+static ParsedAttrInfoRegistry::Add<ExampleAttrInfo> Z("example_attr","example attribute description");
+
+The members of ParsedAttrInfo that a plugin attribute must define are:
+Spellings, which must be populated with every Spelling of the attribute, each of which consists of an attribute syntax and how the attribute name is spelled for that syntax.
+If the syntax allows a scope then the spelling must be “scope::attr” if a scope is present or “::attr” if not.
+
+handleDeclAttribute, which is the function that applies the attribute to a declaration.
+It is responsible for checking that the attribute’s arguments are valid, and typically applies the attribute by adding an Attr to the Decl.
+It returns either AttributeApplied, to indicate that the attribute was successfully applied, or AttributeNotApplied if it wasn’t.
+
+The members of ParsedAttrInfo that may need to be defined, depending on the attribute, are:
+NumArgs and OptArgs, which set the number of required and optional arguments to the attribute.
+diagAppertainsToDecl, which checks if the attribute has been used on the right kind of declaration and issues a diagnostic if not.
+diagLangOpts, which checks if the attribute is permitted for the current language mode and issues a diagnostic if not.
+existsInTarget, which checks if the attribute is permitted for the given target.
+
+Putting it all together:
+Let’s look at an example plugin that prints top-level function names. This example is checked into the clang repository
+llvm-project-main/clang/examples/PrintFunctionNames 
+
+#include "clang/Frontend/FrontendPluginRegistry.h"
+#include "clang/AST/AST.h"
+#include "clang/AST/ASTConsumer.h"
+#include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/Frontend/CompilerInstance.h"
+#include "clang/Sema/Sema.h"
+#include "llvm/Support/raw_ostream.h"
+using namespace clang;
+
+namespace {
+
+class PrintFunctionsConsumer : public ASTConsumer {
+  CompilerInstance &Instance;
+  std::set<std::string> ParsedTemplates;
+
+public:
+  PrintFunctionsConsumer(CompilerInstance &Instance,
+                         std::set<std::string> ParsedTemplates)
+      : Instance(Instance), ParsedTemplates(ParsedTemplates) {}
+
+  bool HandleTopLevelDecl(DeclGroupRef DG) override {
+    for (DeclGroupRef::iterator i = DG.begin(), e = DG.end(); i != e; ++i) {
+      const Decl *D = *i;
+      if (const NamedDecl *ND = dyn_cast<NamedDecl>(D))
+        llvm::errs() << "top-level-decl: \"" << ND->getNameAsString() << "\"\n";
+    }
+
+    return true;
+  }
+
+  void HandleTranslationUnit(ASTContext& context) override {
+    if (!Instance.getLangOpts().DelayedTemplateParsing)
+      return;
+
+    // This demonstrates how to force instantiation of some templates in
+    // -fdelayed-template-parsing mode. (Note: Doing this unconditionally for
+    // all templates is similar to not using -fdelayed-template-parsig in the
+    // first place.)
+    // The advantage of doing this in HandleTranslationUnit() is that all
+    // codegen (when using -add-plugin) is completely finished and this can't
+    // affect the compiler output.
+    struct Visitor : public RecursiveASTVisitor<Visitor> {
+      const std::set<std::string> &ParsedTemplates;
+      Visitor(const std::set<std::string> &ParsedTemplates)
+          : ParsedTemplates(ParsedTemplates) {}
+      bool VisitFunctionDecl(FunctionDecl *FD) {
+        if (FD->isLateTemplateParsed() &&
+            ParsedTemplates.count(FD->getNameAsString()))
+          LateParsedDecls.insert(FD);
+        return true;
+      }
+
+      std::set<FunctionDecl*> LateParsedDecls;
+    } v(ParsedTemplates);
+    v.TraverseDecl(context.getTranslationUnitDecl());
+    clang::Sema &sema = Instance.getSema();
+    for (const FunctionDecl *FD : v.LateParsedDecls) {
+      clang::LateParsedTemplate &LPT =
+          *sema.LateParsedTemplateMap.find(FD)->second;
+      sema.LateTemplateParser(sema.OpaqueParser, LPT);
+      llvm::errs() << "late-parsed-decl: \"" << FD->getNameAsString() << "\"\n";
+    }   
+  }
+};
+
+class PrintFunctionNamesAction : public PluginASTAction {
+  std::set<std::string> ParsedTemplates;
+protected:
+  std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
+                                                 llvm::StringRef) override {
+    return std::make_unique<PrintFunctionsConsumer>(CI, ParsedTemplates);
+  }
+
+  bool ParseArgs(const CompilerInstance &CI,
+                 const std::vector<std::string> &args) override {
+    for (unsigned i = 0, e = args.size(); i != e; ++i) {
+      llvm::errs() << "PrintFunctionNames arg = " << args[i] << "\n";
+
+      // Example error handling.
+      DiagnosticsEngine &D = CI.getDiagnostics();
+      if (args[i] == "-an-error") {
+        unsigned DiagID = D.getCustomDiagID(DiagnosticsEngine::Error,
+                                            "invalid argument '%0'");
+        D.Report(DiagID) << args[i];
+        return false;
+      } else if (args[i] == "-parse-template") {
+        if (i + 1 >= e) {
+          D.Report(D.getCustomDiagID(DiagnosticsEngine::Error,
+                                     "missing -parse-template argument"));
+          return false;
+        }
+        ++i;
+        ParsedTemplates.insert(args[i]);
+      }
+    }
+    if (!args.empty() && args[0] == "help")
+      PrintHelp(llvm::errs());
+
+    return true;
+  }
+  void PrintHelp(llvm::raw_ostream& ros) {
+    ros << "Help for PrintFunctionNames plugin goes here\n";
+  }
+
+};
+
+}
+
+static FrontendPluginRegistry::Add<PrintFunctionNamesAction>
+X("print-fns", "print function names");
+
+Running the plugin:
+1. Using the compiler driver
+The Clang driver accepts the -fplugin option to load a plugin. 
+Clang plugins can receive arguments from the compiler driver command line via the fplugin-arg-<plugin name>-<argument> option.
+Using this method, the plugin name cannot contain dashes itself, but the argument passed to the plugin can.
+export BD=/path/to/build/directory
+make -C $BD CallSuperAttr
+clang++ -fplugin=$BD/lib/CallSuperAttr.so \
+          -fplugin-arg-call_super_plugin-help \
+          test.cpp
+If your plugin name contains dashes, either rename the plugin or used the cc1 command line options listed below.
+
+2. Using the cc1 command line
+To run a plugin, the dynamic library containing the plugin registry must be loaded via the -load command line option.
+This will load all plugins that are registered, and you can select the plugins to run by specifying the -plugin option. 
+Additional parameters for the plugins can be passed with -plugin-arg-<plugin-name>.
+
+Note that those options must reach clang’s cc1 process. There are two ways to do so:
+（1）Directly call the parsing process by using the -cc1 option; this has the downside of not configuring the default header search paths,
+so you’ll need to specify the full system path configuration on the command line.
+（2）Use clang as usual, but prefix all arguments to the cc1 process with -Xclang.
+
+For example, to run the print-function-names plugin over a source file in clang, first build the plugin, and then call clang with the plugin from the source tree
+export BD=/path/to/build/directory
+(cd $BD && make PrintFunctionNames )
+clang++ -D_GNU_SOURCE -D_DEBUG -D__STDC_CONSTANT_MACROS \
+          -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -D_GNU_SOURCE \
+          -I$BD/tools/clang/include -Itools/clang/include -I$BD/include -Iinclude \
+          tools/clang/tools/clang-check/ClangCheck.cpp -fsyntax-only \
+          -Xclang -load -Xclang $BD/lib/PrintFunctionNames.so -Xclang \
+          -plugin -Xclang print-fns
+
+3. Using the clang command line
+Using -fplugin=plugin on the clang command line passes the plugin through as an argument to -load on the cc1 command line. If the plugin class implements the getActionType method then the plugin is run automatically. 
+For example, to run the plugin automatically after the main AST action (i.e. the same as using -add-plugin):
+
+// Automatically run the plugin after the main AST action
+PluginASTAction::ActionType getActionType() override {
+  return AddAfterMainAction;
+}
+
+
+clang -load
+选项用于加载 Clang 插件
+当你想要在 Clang 中使用一个自定义的插件时，可以使用 -load 选项来指定插件的路径。插件可以修改编译过程、添加新的检查器或转换等。
+典型的用法是：-Xclang -load -Xclang /path/to/YourPlugin.so，其中 /path/to/YourPlugin.so 是插件的路径。
+
+-Xclang 是一个用于传递额外参数给 Clang 的选项
+具体来说，-Xclang 用于将后面的参数传递给 Clang 的前端（clang -cc1）。
+这种方式允许你在 Clang 的前端部分使用一些定制选项。
+-Xclang 主要用于传递那些不是标准 Clang 命令行选项的参数，因为标准选项可以直接传递给 Clang 而不需要 -Xclang。
+
+-cc1 是 Clang 的内部选项，通常不直接由用户调用。
+用于指定 Clang 的 "driver" 部分应该将命令行传递给 Clang 的前端 (clang -cc1)，而不是传递给整个编译器。
+在一些高级用例中，用户可能需要直接与 Clang 的前端交互，而不经过整个编译过程。这时可以使用 -cc1 选项。
+
+标准选项是 Clang 命令行的通用选项，它们无需额外的 -Xclang 标志。这些标准选项包括常见的编译和链接选项:
+源文件和目标文件:
+
+指定源文件：source.c 或 source.cpp
+指定目标文件：-o output.o 或 -o output
+语言选项:
+
+指定编译语言：-x c 或 -x c++
+指定 C++ 标准：-std=c++11 或 -std=c++14
+优化选项:
+
+指定优化级别：-O1、-O2、-O3 等
+警告选项:
+
+启用或禁用特定警告：-Wsomething 或 -Wno-something
+头文件搜索路径:
+
+添加头文件搜索路径：-I /path/to/include
+库搜索路径:
+
+添加库搜索路径：-L /path/to/lib
+链接库:
+
+链接静态库：-l library
+调试信息选项:
+
+生成调试信息：-g
+
+如果参数不使用 -Xclang，它将被视为整个编译器的标准选项，可能会被前端和后端都处理。
+例如，-O2 是一个优化选项，会影响整个编译流程，而不仅仅是前端。这类选项通常是标准选项，对整个编译流程都有影响。
 
 ==================================================How to write RecursiveASTVisitor based ASTFrontendActions.
+##
 learn how to create a FrontendAction that uses a RecursiveASTVisitor to find CXXRecordDecl AST nodes with a specified name.
+##
 
 Creating a FrontendAction:
 When writing a clang based tool like a Clang Plugin or a standalone tool based on LibTooling, the common entry point is the FrontendAction. 
@@ -674,8 +926,133 @@ private:
 };
 
 Using the RecursiveASTVisitor:
+Now that everything is hooked up, the next step is to implement a RecursiveASTVisitor to extract the relevant information from the AST.
 
+The RecursiveASTVisitor provides hooks of the form bool VisitNodeType(NodeType *) for most AST nodes; 
+the exception are TypeLoc nodes, which are passed by-value. We only need to implement the methods for the relevant node types.
 
+Let’s start by writing a RecursiveASTVisitor that visits all CXXRecordDecl’s.
+class FindNamedClassVisitor
+  : public RecursiveASTVisitor<FindNamedClassVisitor> {
+public:
+  bool VisitCXXRecordDecl(CXXRecordDecl *Declaration) {
+    // For debugging, dumping the AST nodes will show which nodes are already
+    // being visited.
+    Declaration->dump();
+
+    // The return value indicates whether we want the visitation to proceed.
+    // Return false to stop the traversal of the AST.
+    return true;
+  }
+};
+In the methods of our RecursiveASTVisitor we can now use the full power of the Clang AST to drill through to the parts that are interesting for us.
+For example, to find all class declaration with a certain name, we can check for a specific qualified name:
+bool VisitCXXRecordDecl(CXXRecordDecl *Declaration) {
+  if (Declaration->getQualifiedNameAsString() == "n::m::C")
+    Declaration->dump();
+  return true;
+}
+
+Accessing the SourceManager and ASTContext:
+Some of the information about the AST, like source locations and global identifier information, are not stored in the AST nodes themselves, but in the ASTContext and its associated source manager.
+To retrieve them we need to hand the ASTContext into our RecursiveASTVisitor implementation.
+The ASTContext is available from the CompilerInstance during the call to CreateASTConsumer. 
+We can thus extract it there and hand it into our freshly created FindNamedClassConsumer:
+virtual std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(
+  clang::CompilerInstance &Compiler, llvm::StringRef InFile) {
+  return std::make_unique<FindNamedClassConsumer>(&Compiler.getASTContext());
+}
+
+Now that the ASTContext is available in the RecursiveASTVisitor, we can do more interesting things with AST nodes, like looking up their source locations:
+bool VisitCXXRecordDecl(CXXRecordDecl *Declaration) {
+  if (Declaration->getQualifiedNameAsString() == "n::m::C") {
+    // getFullLoc uses the ASTContext's SourceManager to resolve the source
+    // location and break it up into its line and column parts.
+    FullSourceLoc FullLocation = Context->getFullLoc(Declaration->getBeginLoc());
+    if (FullLocation.isValid())
+      llvm::outs() << "Found declaration at "
+                   << FullLocation.getSpellingLineNumber() << ":"
+                   << FullLocation.getSpellingColumnNumber() << "\n";
+  }
+  return true;
+}
+
+Putting it all together:
+Now we can combine all of the above into a small example program
+#include "clang/AST/ASTConsumer.h"
+#include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/Frontend/CompilerInstance.h"
+#include "clang/Frontend/FrontendAction.h"
+#include "clang/Tooling/Tooling.h"
+
+using namespace clang;
+
+class FindNamedClassVisitor
+  : public RecursiveASTVisitor<FindNamedClassVisitor> {
+public:
+  explicit FindNamedClassVisitor(ASTContext *Context)
+    : Context(Context) {}
+
+  bool VisitCXXRecordDecl(CXXRecordDecl *Declaration) {
+    if (Declaration->getQualifiedNameAsString() == "n::m::C") {
+      FullSourceLoc FullLocation = Context->getFullLoc(Declaration->getBeginLoc());
+      if (FullLocation.isValid())
+        llvm::outs() << "Found declaration at "
+                     << FullLocation.getSpellingLineNumber() << ":"
+                     << FullLocation.getSpellingColumnNumber() << "\n";
+    }
+    return true;
+  }
+
+private:
+  ASTContext *Context;
+};
+
+class FindNamedClassConsumer : public clang::ASTConsumer {
+public:
+  explicit FindNamedClassConsumer(ASTContext *Context)
+    : Visitor(Context) {}
+
+  virtual void HandleTranslationUnit(clang::ASTContext &Context) {
+    Visitor.TraverseDecl(Context.getTranslationUnitDecl());
+  }
+private:
+  FindNamedClassVisitor Visitor;
+};
+
+class FindNamedClassAction : public clang::ASTFrontendAction {
+public:
+  virtual std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(
+    clang::CompilerInstance &Compiler, llvm::StringRef InFile) {
+    return std::make_unique<FindNamedClassConsumer>(&Compiler.getASTContext());
+  }
+};
+
+int main(int argc, char **argv) {
+  if (argc > 1) {
+    clang::tooling::runToolOnCode(std::make_unique<FindNamedClassAction>(), argv[1]);
+  }
+}
+
+We store this into a file called FindClassDecls.cpp and create the following CMakeLists.txt to link it:
+set(LLVM_LINK_COMPONENTS
+  Support
+  )
+
+add_clang_executable(find-class-decls FindClassDecls.cpp)
+
+target_link_libraries(find-class-decls
+  PRIVATE
+  clangAST
+  clangBasic
+  clangFrontend
+  clangSerialization
+  clangTooling
+  )
+
+When running this tool over a small code snippet it will output all declarations of a class n::m::C it found:
+$ ./bin/find-class-decls "namespace n { namespace m { class C {}; } }"
+Found declaration at 1:29
 
 ==================================================Clang Transformer
 https://clang.llvm.org/docs/ClangTransformerTutorial.html
