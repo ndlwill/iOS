@@ -1,0 +1,320 @@
+https://zhuanlan.zhihu.com/p/498910676
+
+使用协议能够让你设计一个蓝图，遵循协议的具体类型,帮助你实现某一特定的任务或者功能的方法、属性，
+特别是协议可以作为类型使用，使其具有了动态派发的能力
+
+关联类型（Associated Types）
+泛型（Generic）
+协议（Protocol）
+
+Swift协议（Protocol）中特殊的关联类型（Associated Types），它与泛型（Generic）有相似性和又有区别
+
+为了简化文字描述
+带有关联类型的协议（Protocol With Associated Types），简称为关联协议
+普通的不包含任何关联类型的协议（Plain Protocol）简称为普通协议。
+
+
+定制UITabbar和UITabBarController:
+有两种TabBarItem类型，一种是SNSTabBarItem，其中ImageView是图片类型；另一种是SNSTabBarLotItem，其中ImageView是LottieView，即动画类型
+为了通用化设计，统一属性名称和调用流程，我们考虑通过设计协议来解决这个问题。
+
+public protocol SNSTabBarItemProtocol {
+    var itemLabel:UILabel! { get }
+    associatedtype itemImageViewType:UIView
+    var itemImageView:itemImageViewType! { get }
+    
+    //创建TabBarItem内部UI元素
+    func createElements(superView: UIView, position: CGRect, backgroundImage:UIImage?)
+    
+    //.......
+}
+
+其中，使用了关键字associatedtype，定义了一个关联类型；满足实际使用中，不同类型的TabBarItem中ImageView类型的变化，同时，又对其增加的限制，要求ImageView必须是继承UIView的子类。
+另外，定义了createElement函数，它会在自定义的CustomTabBarController中被调用，不同类型item其内部实现不同，满足不同UI布局的定制需求。
+//第一种，SNSTabBarItem
+class SNSTabBarItem: UITabBarItem, SNSTabBarItemProtocol {
+    var itemLabel:UILabel!
+    var itemImageView:UIImageView! //静态图片类型
+    
+    func createElements(superView: UIView, position: CGRect, backgroundImage:UIImage? = UIImage()){
+        //......内部实现不同
+    }
+}
+//第二种，SNSTabBarLotItem
+class SNSTabBarLotItem: UITabBarItem, SNSTabBarItemProtocol {
+    var itemLabel:UILabel!
+    var itemImageView:HYLotSwitchView! //Lottie动画类型
+    
+    func createElements(superView: UIView, position: CGRect, backgroundImage:UIImage? = UIImage()){
+        //......内部实现不同
+    }
+}
+
+接下来，在自定义CustomTabBarController中创建所有item，并调用协议中定义的方法createElements
+
+// 创建自定义图标    
+func createCustomIcons(_ containers: [String: UIView]) {
+    guard let items = self.tabBar.items, !items.isEmpty,!containers.isEmpty else{
+        return
+    }
+    let barItemWidth: CGFloat = self.tabBar.bounds.size.width / CGFloat(items.count)
+
+    for item in items {   //遍历元素
+        //..........
+        if let item = item as? SNSTabBarItemProtocol {  //错误，Protocol 'SNSTabBarItemProtocol' can only be used as a generic constraint because it has Self or associated type requirements
+            item.createElements(superView: container, position: CGRect(x: CGFloat(index) * barItemWidth, y: 0, width: barItemWidth, height: self.tabBar.bounds.size.height), backgroundImage: nil)
+            //..............
+        }
+        //..........
+    }
+}
+
+代码中if let item = item as? SNSTabBarItemProtocol这里会遇到一个致命问题
+#####
+Protocol 'SNSTabBarItemProtocol' can only be used as a generic constraint because it has Self or associated type requirements，这是什么原因呢？
+带有associatedtype的关联协议只能修饰泛型，这与普通协议相比带来了明显的差异和使用限制。
+#####
+
+关联协议的限制:
+使用关联协议需要做泛型改造
+Swift官方文档关于协议作为类型（Protocols as Types）的描述
+Protocols as Types Protocols don’t actually implement any functionality themselves.
+Nonetheless, you can use protocols as a fully fledged types in your code.
+#####
+Using a protocol as a type is sometimes called an existential type, 
+which comes from the phrase “there exists a type T such that T conforms to the protocol”.
+#####
+You can use a protocol in many places where other types are allowed, including:
+As a parameter type or return type in a function, method, or initializer
+As the type of a constant, variable, or property
+As the type of items in an array, dictionary, or other container
+
+协议本身实际上并不实现任何功能，但是你可以在代码中使用协议作为完善的类型。
+这说明我们前面问题中的使用方法针对普通协议是正确的，而针对关联协议就不再正确
+从错误提示可以得到答案，Protocol 'xxx' can only be used as a generic constraint because it has Self or associated type requirements，关联协议只能修饰泛型。
+
+
+通过一个具体的例子来验证:
+protocol Proto{
+}
+var delegate:Proto
+这段代码运行正常
+
+protocol Proto{
+    associatedtype T
+}
+var delegate:Proto //Protocol 'Proto' can only be used as a generic constraint because it has Self or associated type requirements
+改为关联协议后就会出现与前面例子相似的错误
+
+那么我们来引入泛型进行修改
+protocol Proto{
+    associatedtype T
+}
+class C<T: Proto> {
+    var delegate:T
+    
+    init() {
+    }
+}
+运行正确
+从这里我们可以得到结论，每一个从前使用普通协议的的地方，现在为了使用associatedtype，需要进行改造，引入泛型，使用关联协议修饰泛型参数，就能够避免产生错误。
+
+
+使用关联协议失去了动态类型派发的能力:
+改造后class C变成一个泛型类，带有泛型T，T遵循Proto协议，然后在C内部，delegate的类型是T，也就是说原本一个普通的class类型，需要被改造成泛型class，
+很多时候这不是我们设计的本意，而存粹是为了支持使用associatedtype，不得不进行的改造。这样失去了dynamic dispatch动态类型派发的能力！
+
+比如有一个数组，其内部存储的类型是不同的，但是遵循相同的协议，这在使用普通协议时，是可行的，
+而使用带有associatedtype的关联协议就不可行了，失去了动态派发的能力，多态的能力，只能变成一个统一的类型，而不能支持不同类型 ，因此我们失去了一个重要的语言特性。
+
+
+关联协议与泛型的关系:
+关联协议，从外部看，使用associatedtype更像是提供了一个语法糖，提供有意义的名字做占位
+从内部看，建立类型的语意要求,使用typealias显示或者隐式指明具体类型
+利用associatedtype相当于定义了一个未知类型的占位符，并且这个占位符可以在协议定义的整个生命周期内使用。
+
+我们来对比两段代码:
+protocol Animal{
+    associatedtype Food
+    func eat(food:Food) 
+}
+协议Animal定义了每种动物要eat某种类型的Food，到现在为止，我们还不知道哪种动物吃哪种Food
+
+struct Animal<Food>{
+    func eat(food:Food) 
+}
+Animal结构体，支持泛型参数Food，定义每种动物eat某种类型的Food
+这种场景下，使用关联协议和使用泛型参数作用非常相似， 但是他们之间仍然不完全相同。
+
+由于目前的语言限制，协议中无法使用泛型，我们假设可以使用泛型协议，写出类似下面的代码，然后与使用关联协议的代码进行对比分析:
+//假设泛型协议成立
+protocol Animal<Food> {   
+    func eat(food:Food)
+}
+
+struct Grass {
+}
+
+struct Cow: Animal<Grass>{  //泛型参数指定具体遵循协议的类型
+    func eat(f: Grass) {
+    }
+}
+
+//使用关联协议
+protocol Animal{
+    associatedtype Food
+    func eat(food:Food) 
+}
+struct Cow:Animal{ 
+    func eat(f: Food) {
+        Self.Food  //通过类似属性的方式，直接获取到关联类型的名字
+    }
+}
+
+从外部看，我们使用泛型协议方式，只能看到遵循协议的具体类型，即Grass是一个遵循Food协议的类型
+###
+对比使用associatedtype的关联协议，我们可以通过类似属性的方式，可以直接获取到关联类型的名字，这使得某些情况下，添加参数类型的约束限制成为可能。
+还不止于此，如果有多个关联类型，或者关联类型需要被其他关联协议限制，或者同时使用多个协议，这些复杂的情况组合，就使得假设的泛型协议很难代替关联协议，
+并且泛型协议不得不把这些（原本可以通过associatedtype隐藏在内部的）信息全部暴露给外部使用者。
+###
+
+###
+另外，关联协议利用associatedtype解决的问题是面向对象的类型关系继承，来看下面例子:
+###
+protocol Food{   
+}
+
+struct Grass:Food{  
+}
+
+protocol Animal {
+    func eat(f:Food)
+}
+
+struct Cow:Animal {
+    func eat(f: Grass) {  //Type 'Cow' does not conform to protocol 'Animal'
+    }
+}
+
+首先定义了Food协议，Grass作为一种具体的食物遵循Food协议
+另外，我们通过Animal协议，规范动物需要eat食物Food，具体是哪种Food没有确定
+最后Cow作为一种具体的动物，遵循Animal协议，实现了eat方法，参数指定Grass类型，Grass遵循Food协议，但是编译器提示错误
+Cow没有遵循Animal协议，只能改为func eat(f: Food)
+###
+我们可以发现：遵循普通协议的具体类型，其内部遵循的协议类型不能捕获复杂的类型关系
+###
+
+接下来改造Animal协议为关联协议
+protocol Animal {
+    associatedtype FoodType //关联类型
+    func eat(f:FoodType)
+}
+
+struct Cow:Animal {
+    func eat(f: Grass) { //Grass遵循Food协议，OK
+    }
+}
+Cow().eat(f: Grass())
+有了associatedtype的帮助，可以完成面向对象的类型继承关系使用
+
+
+
+解决问题的方案:
+有两种方案可供参考
+1. 组合方案
+typealias Codable = Decodable & Encodable
+可以参考Codable的设计模式，采用组合方案
+
+把SNSTabBarItemProtocol协议拆分成两个协议:
+//协议只包含需要遵守的属性
+public protocol SNSTabBarItemElements{
+    var itemLabel:UILabel! { get }
+    associatedtype itemImageViewType:UIView
+    var itemImageView:itemImageViewType! { get }
+}
+//协议只包含需要遵守的方法
+public protocol SNSTabBarItemFunctions{
+    //创建TabBarItem内部UI元素
+    func createElements(superView: UIView, position: CGRect, backgroundImage:UIImage?)
+}
+//协议组合
+public protocol SNSTabBarItemProtocol: SNSTabBarItemElements & SNSTabBarItemFunctions {
+}
+
+我们修改调用处协议:
+// 创建自定义图标    
+func createCustomIcons(_ containers: [String: UIView]) {
+    //..........
+    for item in items {   //遍历元素
+        //..........
+        if let item = item as? SNSTabBarItemFunctions {  //OK，不再报错，避开了关联协议问题
+            item.createElements(superView: container, position: CGRect(x: CGFloat(index) * barItemWidth, y: 0, width: barItemWidth, height: self.tabBar.bounds.size.height), backgroundImage: nil)
+            //..............
+        }
+        //..........
+    }
+}
+
+
+原来的转换为SNSTabBarItemProtocol协议的方式，更改为使用SNSTabBarItemFunctions这个子协议，而两个具体的UITabBarItem子类仍然遵循SNSTabBarItemProtocol协议，保持不变
+这样通过组合的方式，我们绕开了关联协议只能修饰泛型的问题，把它变成了当前场景下只使用普通协议，调用协议内限定的函数；
+
+2. 为关联类型添加约束
+为关联协议中的关联类型添加约束
+它可以进一步来要求遵循的类型满足约束
+下面的代码定义了MySequence协议，MySequence协议遵循Comparable协议，其中的关联类型Element也遵循Comparable协议。
+
+protocol MySequence: Comparable {
+    associatedtype Element: Comparable
+    var storage: [Element] { get set }
+}
+
+由于对 Element 添加了协议限制，Comparable 协议需要实现的比较方法就可以给出实现
+extension MySequence {
+    static func < (lhs: Self, rhs: Self) -> Bool {
+        for (left, right) in zip(lhs.storage, rhs.storage) {
+            if left < right {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+我们也可以在关联类型约束里使用协议，用 where 从句实现更复杂的约束
+protocol MySequence: Comparable {
+    associatedtype Element: Comparable
+    associatedtype Slice: MySequence where Slice.Element == Element
+    var storage: [Element] { get set }
+}
+
+这里协议可以作为它自身的要求出现，即Slice拥有两个约束，它必须遵循 MySequence 协议，同时它的Element的类型必须是和storage数组中元素Element类型相同。
+我们也可以为关联类型添加默认值，如下面所示Element默认为Int类型：
+
+protocol MySequence: Comparable {
+    associatedtype Element: Comparable = Int
+    var storage: [Element] { get set }
+}
+
+并且可以为为默认的 Associated Type 提供方法的默认实现
+protocol MySequence4: Comparable {
+    associatedtype Element: Comparable = Int
+    var storage: [Element] { get set }
+
+    func summed() -> Element
+}
+Element 现在默认是 Int，接下来通过extension给出函数summed的默认实现
+extension MySequence {
+    func summed() -> Element {
+        return storage.reduce(0, +) as! Self.Element //Cannot convert value of type '(Int) -> Int' to expected argument type '(Int, Self.Element) throws -> Int'
+    }
+}
+
+但是此处会提示错误，无法推断出默认类型是Int，即 extension 中的 Element 只受“约束”的影响，即只受 Comparable 和 where 从句的影响，并没有接受默认值。
+所以我们需要针对extension增加限制。
+extension MySequence where Element == Int {
+    func summed() -> Element {
+        return storage.reduce(0, +)
+    }
+}
+只有满足Element类型是Int的，才能使用summed的默认实现。这样就可以保证准确。

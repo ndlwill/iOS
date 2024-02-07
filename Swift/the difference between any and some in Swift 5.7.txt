@@ -1,0 +1,143 @@
+The some keyword:
+In Swift 5.1 Apple introduced the some keyword.
+###
+This keyword was key in making SwiftUI work because the View protocol defines an associated type which means that the View protocol couldn't be used as a type.
+###
+protocol View {
+  associatedtype Body: View
+  @ViewBuilder @MainActor var body: Self.Body { get }
+}
+
+If you’d try to write var body: View instead of var body: some View you’d see the following compiler error in Swift 5.7:
+Use of protocol 'View' as a type must be written 'any View’
+Or in older versions of Swift you’d see the following:
+protocol can only be used as a generic constraint because it has Self or associated type requirements
+
+The some keyword fixes this by hiding the concrete associated type from whoever interacts with the object that has some Protocol as its type.
+
+
+The any keyword:
+In Swift 5.6, the any keyword was added to the Swift language.
+###
+While it sounds like the any keyword acts as a type erasing helper, 
+all it really does is inform the compiler that you opt-in to using an existential (a box type that conforms to a protocol) as your type.
+###
+
+Code that you would originally write as:
+func getObject() -> SomeProtocol {
+  /* ... */
+}
+Should be written as follows in Swift 5.6 and above:
+func getObject() -> any SomeProtocol {
+  /* ... */
+}
+This makes it explicit that the type you return from getObject is an existential (a box type) rather than a concrete object that was resolved at compile time. 
+Note that using any is not mandatory yet, but you should start using it. 
+Swift 6.0 will enforce any on existentials like the one that's used in the example you just saw.
+
+
+Understanding the problems that any and some solve:
+protocol Pizza {
+    var size: Int { get }
+    var name: String { get }
+}
+In Swift 5.6 you might have written the following function to receive a Pizza:
+func receivePizza(_ pizza: Pizza) {
+    print("Omnomnom, that's a nice \(pizza.name)")
+}
+
+When this function is called, the receivePizza function receives a so-called box type for Pizza.
+In order to access the pizza name, Swift has to open up that box, grab the concrete object that implements the Pizza protocol, and then access name.
+This means that there are virtually no compile time optimizations on Pizza, making the receivePizza method more expensive than we’d like.
+
+Furthermore, the following function looks pretty much the same, right?
+func receivePizza<T: Pizza>(_ pizza: T) {
+    print("Omnomnom, that's a nice \(pizza.name)")
+}
+There’s a major difference here though. 
+The Pizza protocol isn’t used as a type here. 
+It’s used as a constraint for T. 
+The compiler will be able to resolve the type of T at compile time and receivePizza will receive a concrete instance of a type rather than a box type.
+
+Because this difference isn’t always clear, the Swift team has introduced the any keyword. 
+This keyword does not add any new functionality. 
+Instead, it forces us to clearly communicate “this is an existential”:
+func receivePizza(_ pizza: any Pizza) {
+    print("Omnomnom, that's a nice \(pizza.name)")
+}
+The example that uses a generic <T: Pizza> does not need the any keyword because Pizza is used as a constraint and not as an existential.
+
+
+Now that we have a clearer picture regarding any, let’s take a closer look at some.
+In Swift, many developers have tried to write code like this:
+let someCollection: Collection
+Only to be faced by a compiler error to tell them that Collection has a Self or associated type requirement.
+In Swift 5.1 we can write some Collection to tell the compiler that anybody that accesses someCollection should not concern themselves with the specifics of the associated type and/or the Self requirement.
+They should just know that this thing conforms to Collection and that’s all.
+There's no information about the associated type, and the information about Self is not made available.
+
+This mechanism is essential to making SwiftUI’s View protocol work.
+The downside of course is that anybody that works with a some Collection, some Publisher, or some View can’t access any of the generic specializations. 
+That problem is solved by primary associated types which you can read more about right here.
+https://www.donnywals.com/what-are-primary-associated-types-in-swift-5-7/
+
+However, not all protocols have associated type requirements. 
+For example, our Pizza protocol does not have an associated type requirement but it can benefit from some in certain cases.
+func receivePizza<T: Pizza>(_ pizza: T) {
+    print("Omnomnom, that's a nice \(pizza.name)")
+}
+We defined a generic T to allow the compiler to optimize for a given concrete type of Pizza.
+The some keyword also allows the compiler to know at compile time what the underlying type for the some object will be; 
+it just hides this from the user of the object.
+This is exactly what <T: Pizza> also does. We can only access on T what is exposed by Pizza. 
+This means that we can rewrite receivePizza<T: Pizza>(_:) as follows:
+func receivePizza(_ pizza: some Pizza) {
+    print("Omnomnom, that's a nice \(pizza.name)")
+}
+We don’t need T anywhere else, so we don’t need to “create” a type to hold our pizza. 
+We can just say “this function takes some Pizza" instead of “this function takes some Pizza that we’ll call T". 
+Small difference, but much easier to write. And functionally equivalent.
+
+
+Making the decision in practice:
+class MusicPlayer {
+    var playlist: any Collection<String> = []
+
+    func play(_ playlist: some Collection<String>) {
+        self.playlist = playlist
+    }
+}
+In this code, I use some Collection<String> instead of writing func play<T: Collection<String>>(_ playlist: T) because the generic is only used in one place.
+My var playlist is an any Collection<String> and not a some Collection<String> for two reasons:
+1. There would be no way to ensure that the concrete collection that the compiler will deduce for the play method matches the concrete collection that’s deduced for var playlist; 
+this means they might not be the same which would be a problem.
+2. The compiler can’t deduce what var playlist: some Collection<String> in the first place (try it, you’ll get a compiler error)
+
+We could avoid any and write the following MusicPlayer:
+class MusicPlayer<T: Collection<String>> {
+    var playlist: T = []
+
+    func play(_ playlist: T) {
+        self.playlist = playlist
+    }
+}
+But this will force us to always use the same type of collection for T. 
+We could use a Set, an Array, or another Collection but we can never assign a Set to playlist if T was inferred to be an Array. 
+With the implementation as it was before, we can:
+class MusicPlayer {
+    var playlist: any Collection<String> = []
+
+    func play(_ playlist: some Collection<String>) {
+        self.playlist = playlist
+    }
+}
+By using any Collection<String> here we can start out with an Array but pass a Set to play, 
+it’s all good as long as the passed object is a Collection with String elements.
+
+
+In Summary:
+For now, know that some or generics should be preferred over any if it makes sense.
+You often don’t want to use a box that conforms to a protocol; you want the object that conforms to the protocol.
+
+Or sticking with our pizza analogy, any will hand the runtime a box that says Pizza and it will need to open the box to see which pizza is inside. 
+With some or generics, the runtime will know exactly which pizza it just got, and it’ll know immediately what to do with it (toss if it’s Hawaii, keep if it’s pepperoni).

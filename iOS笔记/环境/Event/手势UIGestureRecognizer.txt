@@ -1,0 +1,76 @@
+为没有继承UIControl的视图对象添加响应事件
+
+UIGestureRecognizer类包含UIResponder类中的以下方法
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;
+
+手势状态:
+typedef NS_ENUM(NSInteger, UIGestureRecognizerState) {
+    //未知状态
+    UIGestureRecognizerStatePossible,   // the recognizer has not yet recognized its gesture, but may be evaluating touch events. this is the default state
+    //首次识别状态，对于连续手势，例如长按，有这种状态
+    UIGestureRecognizerStateBegan,      // the recognizer has received touches recognized as the gesture. the action method will be called at the next turn of the run loop
+    //再次识别，当手连续手势识别之后，再次受到touch事件
+    UIGestureRecognizerStateChanged,    // the recognizer has received touches recognized as a change to the gesture. the action method will be called at the next turn of the run loop
+    //识别完成，受到touchend 消息之后
+    UIGestureRecognizerStateEnded,      // the recognizer has received touches recognized as the end of the gesture. the action method will be called at the next turn of the run loop and the recognizer will be reset to UIGestureRecognizerStatePossible
+    //取消识别
+    UIGestureRecognizerStateCancelled,  // the recognizer has received touches resulting in the cancellation of the gesture. the action method will be called at the next turn of the run loop. the recognizer will be reset to UIGestureRecognizerStatePossible
+    //识别失败
+    UIGestureRecognizerStateFailed,     // the recognizer has received a touch sequence that can not be recognized as the gesture. the action method will not be called and the recognizer will be reset to UIGestureRecognizerStatePossible
+    // Discrete Gestures – gesture recognizers that recognize a discrete event but do not report changes (for example, a tap) do not transition through the Began and Changed states and can not fail or be cancelled
+    //识别状态，与识别结束一个意思
+    UIGestureRecognizerStateRecognized = UIGestureRecognizerStateEnded // the recognizer has received touches recognized as the gesture. the action method will be called at the next turn of the run loop and the recognizer will be reset to UIGestureRecognizerStatePossible
+};
+
+1.手势的状态迁移，前提是收到Touch message，才能做状态变化处理代码。
+2.手势分为连续状态手势、不连续状态手势。连续手势有长按，慢滑等。不连续手势有单击，双击等等。
+3.当用户没有点击屏幕，所有手势都处于Possiable初始状态。
+当用户点击屏幕，手势会收到Touch Began Message， 手势的touchBegan方法会被调用，手势开始记录点击位置和时间，仍处于 Possiable状态。
+
+如果用户按住不放，间隔超过一定时间，单击手势会变化为Failed状态，并在下个一runloop变为possiable。
+
+如果时间大于长按手势设定时间，长按手势就会变化为Began状态，当用户移动手指，长按手势的touch move方法被调用，
+长按手势将自己状态设置为Changed状态，并且也会回调处理方法。最后手指离开，系统调用长按手势touchEnd方法，手势状态设置为 Recognized状态。
+
+混合手势处理:
+当给UIView添加多个UIGestureRecognizer对象时，默认只有1个生效。如果想全部都生效，让协议中的gestureRecognizer:shouldRecognizeSimultaneouslyWithGestureRecognizer:方法返回YES。
+
+同时添加单击和双击，也均允许生效。问题来了，那双击屏幕时，默认触发1次单击事件和1次双击事件。
+但这不是想要的效果，如何实现双击时，只触发双击手势呢，单击时只触发单击手势呢？
+解决方案是让协议中的gestureRecognizer:shouldRequireFailureOfGestureRecognizer:方法、
+gestureRecognizer:shouldBeRequiredToFailByGestureRecognizer:方法都返回YES。
+
+
+UIGestureRecognizerDelegate协议:
+@protocol UIGestureRecognizerDelegate <NSObject>
+@optional
+
+// 手势状态是否允许更改，默认为YES。
+// 如果实现中返回NO,那么手势最后都为失败状态。
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer;
+
+// 允许多个手势生效，默认为NO。
+// 如果实现中返回YES，同时添加单击和双击手势，双击屏幕时，同时产生1次单击事件和1次双击事件
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer;
+
+// 以下2个方法，为手势之间添加依赖，默认NO。
+// 比如单击和双击，如果双击手势识别失败，转换为识别单击手势
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRequireFailureOfGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer NS_AVAILABLE_IOS(7_0);
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer NS_AVAILABLE_IOS(7_0);
+
+// 手势是否关注UITouch、UIPress对象状态变化，和gestureRecognizerShouldBegin:效果类似，默认为YES。
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch;
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceivePress:(UIPress *)press;
+
+@end
+
+
+UITapGestureRecognizer
+UIPinchGestureRecognizer
+UIRotationGestureRecognizer
+UISwipeGestureRecognizer
+UIPanGestureRecognizer
+UILongPressGestureRecognizer

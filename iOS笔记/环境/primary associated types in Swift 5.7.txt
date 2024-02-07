@@ -1,0 +1,67 @@
+before Swift 5.1 we would always have to resort to using generics whenever we wanted to make use of a protocol with an associated type
+class MusicPlayer {
+  func play(_ playlist: Collection) { /* ... */ } 
+}
+This example doesn't compile in Swift 5.1, and it still wouldn’t today in Swift 5.7.
+The reason is that Collection has various associated types that the compiler must be able to fill in if we want to use Collection.
+For example, we need to what kind of Element our collection holds.
+
+A common workaround to use protocols with associated types in our code is to use a generic that's constrained to a protocol:
+class MusicPlayer<Playlist: Collection> {
+  func play(_ playlist: Playlist) { /* ... */ } 
+}
+Instead of using Collection as an existential (a box that holds an object that conforms to Collection) we use Collection as a constraint on a generic type that we called Playlist. 
+This means that the compiler will always know which object is used to fill in Playlist.
+
+In Swift 5.1, the some keyword was introduced which, 
+combined with Swift 5.7's capability to use the some keyword on function arguments,
+allows us to write the following:
+class MusicPlayer {
+  func play(_ playlist: some Collection) { /* ... */ } 
+}
+
+This is nice, but both the generic solution and the some solution have an important issue. 
+We don’t know what’s inside of the Collection. Could be String, could be Track, could be Album, there’s no way to know. 
+This makes func play(_ playlist: some Collection) practically useless for our MusicPlayer.
+
+
+In Swift 5.7, protocols can specify primary associated types. 
+These associated types are a lot like generics. They allow developers to specify the type for a given associated type as a generic constraint.
+For Collection, the Swift library added a primary associated type for the Element associated type.
+
+This means that you can specify the element that must be in a Collection when you pass it to a function like our func play(_ playlist: some Collection).
+let’s take a look at how a protocol defines a primary associated type:
+public protocol Collection<Element> : Sequence {
+
+  associatedtype Element
+  associatedtype Iterator = IndexingIterator<Self>
+  associatedtype SubSequence : Collection = Slice<Self> where Self.Element == Self.SubSequence.Element, Self.SubSequence == Self.SubSequence.SubSequence
+
+  // a lot of other stuff
+}
+
+Notice how the protocol has multiple associated types but only Element is written between <> on the Collection protocol.
+That’s because Element is a primary associated type.
+When working with a collection, we often don’t care what kind of Iterator it makes.
+We just want to know what’s inside of the Collection!
+
+So to specialize our playlist, we can write the following code:
+class MusicPlayer {
+  func play(_ playlist: some Collection<Track>) { /* ... */ }
+}
+Note that the above is functionally equivalent to the following if Playlist is only used in one place:
+class MusicPlayer {
+  func play<Playlist: Collection<Track>>(_ playlist: Playlist) { /* ... */ }
+}
+
+While the two snippets above are equivalent in functionallity the former option that uses some is preferred.
+The reason for this is that code with some is easier to read and reason about than having a generic that doesn't need to be a generic.
+
+Note that this also works with the any keyword. For example, if we want to store our playlist on our MusicPlayer, we could write the following code:
+class MusicPlayer {
+    var playlist: any Collection<Track> = []
+
+    func play(_ playlist: some Collection<Track>) {
+        self.playlist = playlist
+    }
+}

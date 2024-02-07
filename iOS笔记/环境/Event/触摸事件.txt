@@ -1,0 +1,59 @@
+事件传递: 是在响应链中查找hitTestView的过程，从父View到子View。
+事件转发: 是响应消息中触发的，从子View通过nextResponder在响应链中回溯。
+
+事件传递:
+1）找到设备中的Application。
+触摸屏幕时，由iOS系统的硬件进程获取，简单封装事件后暂存在系统中，利用端口实现与Application进程完成通信，将事件传递给Application进程。
+###
+当应用程序启动时，主线程的RunLoop会注册一个基于端口的source，当接收到相关事件时，主线程会被唤醒执行触摸事件。
+###
+2）通过响应链找到最终处理事件的hitTestView。
+当Application接收到新的事件时，开始寻找响应链中的hitTestView。
+将所有的显示在屏幕上的 "UIWindow对象"，按照层级结构从上到下排列成一个数组。从第一个UIWindow对象开始，先判断UIWindow是否不隐藏且可见度大于0.01且可交互，再判断点击位置在不在这个UIWindow内。
+如果不在 ，返回nil, 就换下一个UIWindow；
+如果在的话，并且UIWindow没有subView就返回自己，但如果UIWindow有subViews，就递归遍历整个subViews，直到找到hitTestView。
+如果没有找到到就不做传递。
+
+- (nullable UIView *)hitTest:(CGPoint)point withEvent:(nullable UIEvent *)event {
+  //判断该视图是否满足响应事件的条件
+    if (!self.hidden && self.alpha > 0.01 && self.isUserInteractionEnabled) {
+        //判断点击位置是否在自己区域内部
+        if ([self pointInside: point withEvent:event]) {
+            UIView *attachedView;
+            // 遍历子视图
+            for (int i = self.subviews.count - 1; i >= 0; i--) {
+                UIView *view  = self.subviews[i];
+                // 对子view递归调用本方法
+                attachedView =  [view hitTest:point withEvent:event];
+                if (attachedView)
+                    break;
+            }
+            if (attachedView)  {
+                return attachedView;
+            } else {
+                return self;
+            }
+        }
+    }
+    return nil;
+}
+
+事件转发:
+事件转发是响应消息中触发的，从子View通过nextResponder在响应链中回溯。
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(nullable UIEvent *)event {
+    //do someThiing
+  [self.nextResponser touchesBegan: touches withEvent:event];
+}
+
+
+事件响应:
+当锁定hitTestView后，当触摸状态发生变化，会不停的收到UITouch Message消息，调用hitTestView从UIResponder类继承的方法。
+// 点击刚开始，回调这个方法
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(nullable UIEvent *)event;
+// 点击之后移动，回调这个方法
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(nullable UIEvent *)event;
+// 手指移开、点击结束，回调这个方法
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(nullable UIEvent *)event;
+// 事件被手势识别，回调这个方法
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(nullable UIEvent *)event;

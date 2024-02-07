@@ -1,0 +1,149 @@
+swift build --help
+OVERVIEW: Build sources into binary products
+
+swift package --help
+OVERVIEW: Perform operations on Swift packages
+
+swift package init -help
+swift package init --type executable
+
+安装/更新依赖
+一旦我们声明了新的依赖关系，只需要求 SPM 解析新的依赖关系并安装它们，然后重新生成 Xcode 项目即可。
+swift package update
+swift package generate-xcodeproj
+
+在根目录下执行 swift build 吧，然后再执行 swift run 命令
+swift build //构建swift package
+swift run //执行swift package
+
+swift package tools-version 可以获取到编译版本
+
+swift build -c release
+
+swift build 命令是 Swift Package Manager（SPM）的一部分，主要用于构建 Swift 项目，特别是 Swift 包（Package）。它并不是用于构建传统的 iOS 项目的主要工具。
+你可以使用 Xcode 中的 Build 按钮或者通过命令行使用 xcodebuild 命令来构建 iOS 项目。
+在 Swift Package Manager（SPM）中，你可以使用 -Xswiftc 标志来传递额外的 Swift 编译器选项。
+swift build -Xswiftc -emit-library -Xswiftc -o -Xswiftc /path/to/output/libMyLibrary.dylib
+在 Swift Package Manager (SPM) 中，.framework 是一个动态库（dynamic library）的一种形式，因此你不能直接使用 -emit-library 选项来生成 .framework 文件。
+
+在 iOS 开发中，.o 文件是编译源代码（.c、.m 等）后生成的目标文件（Object File），
+而.a 文件则是静态库文件，包含了一个或多个目标文件的归档版本。如果你有一些目标文件（.o 文件）并希望将它们打包成静态库（.a 文件）
+# 使用 libtool 将多个 .o 文件打包成静态库
+libtool -static -o libMyLibrary.a file1.o file2.o
+
+# 或者，使用 ar 命令也可以
+ar rcs libMyLibrary.a file1.o file2.o
+
+==================================================
+Swift Package Manager 是 Apple 为了弥补当前 iOS 开发中缺少官方组件库管理工具的产物。
+
+Use Swift packages to bundle executable code, for example a script, as an executable product, 
+or create a package to vend shareable code as a library product.
+
+Packages that vend a library product help promote modularity in your code, 
+make it easy to share code with others, and enable other developers to add functionality to their apps.
+
+With Xcode, you can create a new Swift package, add code, resource files, and binaries, build the Swift package, and run its unit tests.
+
+https://developer.apple.com/documentation/PackageDescription/Package
+
+For example, you can add a source file to a package by dragging it into the Project navigator, or by using the File > Add Files to [packageName] menu. 
+Targets can contain Swift, Objective-C/C++, or C/C++ code, but an individual target can’t mix Swift with C-family languages. 
+For example, a Swift package can have two targets, one that contains Objective-C, Objective-C++, and C code, and a second one that contains Swift code.
+
+
+Tip:
+If you plan to publish a Swift package that doesn’t support all platforms, 
+consider mentioning the supported platforms in your README.md file. 
+In addition, think about adding support for other platforms to grow its audience.
+
+
+Build your targets and run unit tests:
+Xcode creates a scheme for each product in the package manifest. 
+Select a scheme for the package’s build-and-run destination, 
+and build it as you’d build an app target. Each source target usually has at least one corresponding test target. 
+If your package contains multiple products, Xcode creates an additional scheme with the name [packageName]-Package to build all targets and run all unit tests.
+
+
+==================================================Distributing binary frameworks as Swift packages:
+Make binaries available to other developers by creating Swift packages that include one or more XCFrameworks.
+
+Carefully consider whether you want to distribute your code in binary form because doing so comes with drawbacks.
+binary dependencies are only available for Apple platforms, which limits the audience for your Swift package.
+
+Note:
+A Swift package can contain a mix of both source files and binaries. 
+This use case is common for packages that contain source code that wraps closed-source binaries.
+
+
+==================================================Package binaries as an XCFramework bundle:
+To distribute code in binary form as a Swift package, create an XCFramework bundle, or artifact, that contains the binaries. 
+Then, make the bundle available locally or on a server:
+1.When you host the binaries on a server, create a ZIP archive with the XCFramework in its root directory and make it available publicly.
+2.If the XCFramework is available locally and included in the package’s Git repository, you don’t need to create a compressed archive and can reference the XCFramework directly.
+
+To learn more about creating an XCFramework bundle,see Creating a multiplatform binary framework bundle.
+https://developer.apple.com/documentation/xcode/creating-a-multi-platform-binary-framework-bundle
+
+
+==================================================Declare a binary target in the package manifest:
+SKIP_INSTALL=NO BUILD_LIBRARY_FOR_DISTRIBUTION=YES 需要加在 xcodebuild archive 后面，如果项目的setting没有设置的话
+xcrun xcodebuild archive -project TestIOSFrame.xcodeproj -scheme TestIOSFrame -destination "generic/platform=iOS" -archivePath "archives/TestIOSFrame-iOS" 
+xcrun xcodebuild archive -project TestIOSFrame.xcodeproj -scheme TestIOSFrame -destination "generic/platform=iOS Simulator" -archivePath "archives/TestIOSFrame-iOS-Simulator"
+xcrun xcodebuild -create-xcframework -archive /Users/youdun-ndl/Desktop/TestIOSFrame/archives/TestIOSFrame-iOS.xcarchive -framework TestIOSFrame.framework -archive /Users/youdun-ndl/Desktop/TestIOSFrame/archives/TestIOSFrame-iOS-Simulator.xcarchive -framework TestIOSFrame.framework -output "xcframeworks/TestIOSFrame.xcframework"
+
+
+To declare a remote, or URL-based, binary target, use binaryTarget(name:path:). 
+To create the required checksum, open the Terminal app, navigate to the root of the package, 
+and run swift package compute-checksum path/to/MyFramework.zip. 
+Xcode uses the checksum to verify that the hosted archive file matches the archive you declare in the manifest file. 
+When developers add the package as a binary dependency to their project, and the remote archive’s checksum doesn’t match the checksum in the package manifest, 
+Xcode displays an error.
+
+To declare a local, or path-based, binary target, use package(name:path:) and don’t generate a checksum. 
+Instead, include the .xcframework bundle in the package’s Git repository.
+
+
+// swift-tools-version:5.3
+import PackageDescription
+
+let package = Package(
+    name: "MyLibrary",
+    platforms: [
+        .macOS(.v10_14), .iOS(.v13), .tvOS(.v13)
+    ],
+    products: [
+        // Products define the executables and libraries a package produces, and make them visible to other packages.
+        .library(
+            name: "MyLibrary",
+            targets: ["MyLibrary", "SomeRemoteBinaryPackage", "SomeLocalBinaryPackage"])
+    ],
+    dependencies: [
+        // Dependencies declare other packages that this package depends on.
+    ],
+    targets: [
+        // Targets are the basic building blocks of a package. A target can define a module or a test suite.
+        // Targets can depend on other targets in this package, and on products in packages this package depends on.
+        .target(
+            name: "MyLibrary",
+            exclude: ["instructions.md"],
+            resources: [
+                .process("text.txt"),
+                .process("example.png"),
+                .copy("settings.plist")
+            ]
+        ),
+        .binaryTarget(
+            name: "SomeRemoteBinaryPackage",
+            url: "https://url/to/some/remote/binary/package.zip",
+            checksum: "The checksum of the XCFramework inside the ZIP archive."
+        ),
+        .binaryTarget(
+            name: "SomeLocalBinaryPackage",
+            path: "path/to/some.xcframework"
+        )
+        .testTarget(
+            name: "MyLibraryTests",
+            dependencies: ["MyLibrary"]),
+    ]
+)

@@ -1,0 +1,767 @@
+泛型（Generic）
+协议（Protocol）
+
+==================================================Generics
+A good example of this is the decode method on JSONDecoder
+func decode<T>(_ type: T.Type, from data: Data) throws -> T where T : Decodable {
+  // decoding logic
+}
+
+let result = try? decoder.decode(SomeType.self, from: data) // result is SomeType
+
+
+struct ProductsViewModel {
+  private var items: [Products]
+  var numberOfItems: Int { items.count }
+
+  func item(at indexPath: IndexPath) -> Products {
+    return items[indexPath.row]
+  }
+}
+
+struct FavoritesViewModel {
+  private var items: [Favorite]
+  var numberOfItems: Int { items.count }
+
+  func item(at indexPath: IndexPath) -> Favorite {
+    return items[indexPath.row]
+  }
+}
+
+struct ListViewModel<Item> {
+  private var items: [Item]
+  var numberOfItems: Int { items.count }
+
+  func item(at indexPath: IndexPath) -> Item {
+    return item[indexPath.row]
+  }
+}
+
+You can now write:
+let viewModel = ListViewModel<Favorite>()
+
+One downside of the approach is that you can now use any type of object as Item, not just Favorite and Product. 
+Let’s fix this by introducing a simple protocol and constraining ListViewModel so it only accepts valid list items as Item:
+protocol ListItem {}
+extension Favorite: ListItem {}
+extension Product: ListItem {}
+
+struct ListViewModel<Item> where Item: ListItem {
+  // implementation
+}
+
+Of course, you can decide to add certain requirements to your ListItem protocol but for our current purposes, an empty protocol and some extensions do the trick.
+Similar to how decode was constrained to only accept Decodable types for T, we have now constrained ListViewModel to only allow types that conform to ListItem as Item.
+
+Note:
+Sometimes the where is moved into the angle brackets: struct ListViewModel<Item: ListItem> the resulting code functions exactly 
+the same and there are no differences in how Swift compiles either notation.
+
+
+==================================================some
+The some keyword is new in Swift 5.1 and it’s part of a feature called opaque result types
+
+#####
+In Swift, we can use protocols to define interfaces or contracts for our objects. 
+When something conforms to a protocol, we know that it can do certain things, or has certain properties.
+
+protocol ListItemDisplayable {
+  var name: String { get }
+}
+
+struct Shoe: ListItemDisplayable {
+  let name: String
+}
+
+var listItem: ListItemDisplayable = Shoe(name: "a shoe")
+
+When using this listItem property, only the properties exposed by ListItemDisplayable are exposed to us.
+This is especially useful when you want to have an array of items that are ListItemDisplayable where the concrete types can be more than just Shoe:
+struct Shoe: ListItemDisplayable {
+  let name: String
+}
+
+struct Shorts: ListItemDisplayable {
+  let name: String
+}
+
+var mixedList: [ListItemDisplayable] = [Shoe(name: "a shoe"),
+                                        Shorts(name: "a pair of shorts")]
+
+The compiler treats our Shoe and Shorts objects as ListItemDisplayable, 
+so users of this list won't know whether they’re dealing with shoes, shorts, jeans or anything else. 
+All they know is that whatever is in the array can be displayed in a list because it conforms to ListDisplayable.
+
+#####
+Opaque result types for protocols with associated types:
+#####
+protocol ListDataSource {
+  associatedtype ListItem: ListItemDisplayable
+
+  var items: [ListItem] { get }
+  var numberOfItems: Int { get }
+  func itemAt(_ index: Int) -> ListItem
+}
+The above defines a ListDataSource that holds some list of an item that conforms to ListItemDisplayable. 
+We can use objects that conform to this protocol as data source objects for table views, or collection views which is pretty neat.
+
+We can define a view model generator object that will, depending on what kind of items we pass it, generate a ListDataSource:
+struct ShoesDataSource: ListDataSource {
+  let items: [Shoe]
+  var numberOfItems: Int { items.count }
+
+  func itemAt(_ index: Int) -> Shoe {
+    return items[index]
+  }
+}
+
+struct ViewModelGenerator {
+  func listProvider(for items: [Shoe]) -> ListDataSource {
+    return ShoesDataSource(items: items)
+  }
+}
+However, this code doesn’t compile because ListDataSource is a protocol with associated type constraints.
+We could fix this by specifying ShoesDataSource as the return type instead of ListDataSource, but this would expose an implementation detail that we want to hide from users of the ViewModelGenerator.
+Callers of listProvider(for:) only really need to know is that we’re going to return a ListDataSource from this method. We can rewrite the generator as follows to make our code compile:
+struct ViewModelGenerator {
+  func listProvider(for items: [Shoe]) -> some ListDataSource {
+    return ShoesDataSource(items: items)
+  }
+}
+By using the some keyword, the compiler can enforce a couple of things while hiding them from the caller of listProvider(for:):
+We return something that conforms to ListDataSource.
+The returned object’s associated type matches any requirements that are set by ListDataSource.
+We always return the same type from listProvider(for:).
+
+Protocols are often a problem for the compiler because they imply a certain dynamism that makes it hard for the compiler to make certain optimizations at compile time which means that we’ll take a (very small) performance hit at runtime because the runtime will need to do some type checking to make sure that what’s happening is valid.
+Because the Swift compiler can enforce the things listed above, it can make the same optimizations that it can when we would use concrete types, 
+yet we have the power of hiding the concrete type from the caller of a function or property that returns an opaque type.
+
+#####
+Opaque result types and Self requirements:
+#####
+For example, we can compare items that are returned as opaque types while we cannot do the same with protocols.
+protocol ListItemDisplayable: Equatable {
+  var name: String { get }
+}
+
+func createAnItem() -> ListItemDisplayable {
+  return Shoe(name: "a comparable shoe: \(UUID().uuidString)")
+}
+The above doesn’t compile because Equatable has a Self requirement.
+It wants to compare two instances of Self where both instances are of the same type.
+This means that we can’t use ListItemDisplayable as a regular return type, because a protocol on its own has no type information.
+We need the some keyword here so the compiler will figure out and enforce a type for ListItemDisplayable when we call createAnItem():
+func createAnItem() -> some ListItemDisplayable {
+  return Shoe(name: "a comparable shoe: \(UUID().uuidString)")
+}
+The compiler can now determine that we’ll always return Shoe from this function, which means that it knows what Self for the item that’s returned by createAnItem(), 
+which means that the item can be considered Equatable. This means that the following code can now be used to create two items and compare them:
+let left = createAnItem()
+let right = createAnItem()
+
+print(left == right)
+What’s really cool here is that both left and right hide all of their type information. 
+If you call createAnItem(), all you know is that you get a list item back. 
+And that you can compare that list item to other list items returned by the same function.
+
+
+#####
+Opaque return types as reverse generics:
+#####
+The Swift documentation on opaque result types sometimes refers to them as reverse generics which is a pretty good description.
+##
+Before opaque result types, the only way to use protocols with associated types as a return type 
+would have been to place the protocol on a generic constraint for that method.
+The downside here is that the caller of the method gets to decide the type that’s returned by a function rather than letting the function itself decide:
+##
+
+protocol ListDataSource {
+  associatedtype ListItem: ListItemDisplayable
+
+  var items: [ListItem] { get }ƒ
+  var numberOfItems: Int { get }
+  func itemAt(_ index: Int) -> ListItem
+
+  init(items: [ListItem])
+}
+
+func createViewModel<T: ListDataSource>(for list: [T.ListItem]) -> T {
+  return T.init(items: list)
+}
+
+func createOpaqueViewModel<T: ListItemDisplayable>(for list: [T]) -> some ListDataSource {
+  return GenericViewModel<T>(items: list)
+}
+
+let shoes: GenericViewModel<Shoe> = createViewModel(for: shoeList)
+let opaqueShoes = createOpaqueViewModel(for: shoeList)
+
+Both methods in the preceding code return the exact same GenericViewModel.
+The main difference here is that in the first case, the caller decides that it wants to have a GenericViewModel<Shoe> for its list of shoes, and it will get a concrete type back of type GenericViewModel<Shoe>. 
+In the example that uses some, the caller only knows that it will get some ListDataSource that holds its list of ListItemDisplayable items.
+This means that the implementation of createOpaqueViewModel can now decide what it wants to do.
+In this case, we chose to return a generic view model.
+We could also have chosen to return a different kind of view model instead, 
+all that matters is that we always return the same type from within the function body and that the returned object conforms to ListDataSource.
+
+
+A more interesting consideration to make for using some is in places where you've defined a single use generic. 
+For example, in the following situation you might be able to use some instead of a generic:
+class MusicPlayer {
+  func play<Playlist: Collection<Track>>(_ playlist: Playlist) { /* ... */ }
+}
+In this example, our play function has a generic argument Playlist that's constrained to a Collection that holds Track objects.
+We can write this constraint thanks to Swift 5.7's primary associated types.
+If we only use the Playlist generic in a single place like a function argument, we can use some instead of the generic from Swift 5.7 onward.
+Swift 5.7 allows us to use some for function arguments which is a huge improvement.
+
+Rewriting the example above with some looks as follows:
+class MusicPlayer {
+  func play(_ playlist: some Collection<Track>) { /* ... */ }
+}
+
+With Swift 5.7's ability to use some in more places than just return types I think some will become a very useful tool that will 
+help us use conrete types instead of existentials (protocols) in lots of places which should make our code more performant and robust.
+
+
+==================================================any
+https://www.donnywals.com/what-is-the-any-keyword-in-swift/
+
+
+With Swift 5.6, Apple added a new keyword to the Swift language: any.
+Once you dig deeper into what any means, you'll find that it's very different from some.
+protocol Networking {
+    func fetchPosts() async throws -> [Post]
+    // ...
+}
+
+struct PostsDataSource {
+    let networking: any Networking
+    // ...
+}
+
+#####
+Understanding what an existential is in Swift
+#####
+
+While some allows us to write code that more or less ignores, or discards, 
+a protocol’s associated type and/or Self requirement while expecting that every returned object in a function that returns some Protocol has the same concrete type, 
+the any keyword simply annotates that a given type is a so-called existential. 
+
+For example, if we look at the "old" way of writing the PostsDataSource struct that you just saw, it would look as follows:
+struct PostsDataSource {
+    let networking: Networking
+    // ...
+}
+Note that all I did is remove the any keyword.
+The Networking object that we use is an existential. 
+This means that let networking is an object that conforms to Networking.
+The compiler doesn't know which object it will be, or what that object's type is.
+All the compiler knows is that there will be an object, any object, that will be assigned to let networking when we initialize PostsDataSource, and that object conforms to Networking.
+We're essentially only sure that we'll have a box that contains a Networking object. 
+To know exactly which object was put in that box, we need to open that box at runtime, peek inside, and find the object.
+
+
+It's important to know that existentials are relatively expensive to use because the compiler and runtime can’t pre-determine how much memory should be allocated for the concrete object that will fill in the existential.
+Whenever you call a method on an existential, like the networking property in the snippet you saw earlier, the runtime will have to dynamically dispatch this call to the concrete object which is slower than a static dispatch that goes directly to a concrete type.
+
+This essentially means that a lot of us are writing code that uses protocols (existentials) that harm our performance without us really being aware of it. 
+For example, there’s nothing wrong with the old fashioned PostsDataSource you saw earlier, right?
+struct PostsDataSource {
+    let networking: Networking
+    // ...
+}
+Sadly, this code uses an existential by having a property that has Networking as its type. 
+This means that it’s not clear for the runtime how much memory should be allocated for the object that will fill in our networking property, 
+and any calls to fetchPosts will need to be dynamically dispatched.
+
+By introducing the any keyword, the language forces us to think about this.
+In Swift 5.6 annotating our let networking: Networking with any is optional; 
+However, in Swift 6 it will be required to annotate existentials with the any keyword.
+
+
+#####
+Digging deeper into the any keyword
+#####
+https://github.com/apple/swift-evolution/blob/main/proposals/0335-existential-any.md
+what the Swift team seems to want us to do, is to use generics and concrete types rather than existentials when possible.
+
+In reality, the need for the dynamism they provided is relatively rare compared to the need for generics, 
+but the language makes existential types too easy to reach for, especially by mistake. 
+The cost of using existential types should not be hidden, and programmers should explicitly opt into these semantics.
+
+So how should we be writing our PostsDataSource without depending on a concrete implementation directly? 
+And how can we do that without using an existential since clearly existentials are less than ideal?
+The easiest way would be to add a generic to our PostsDataSource and constraining it to Networkingas follows:
+protocol Networking {
+    func fetchPosts() async throws -> [Post]
+    // ...
+}
+
+struct PostsDataSource<Network: Networking> {
+    let networking: Network
+    // ...
+}
+By writing our code like this, the compiler will know up front which type will be used to fill in the Network generic.
+This means that the runtime will know up-front how much memory needs to be allocated for this object, and calls to fetchPosts can be dispatched statically rather than dynamically.
+
+When writing PostsDataSource as shown above, you don’t lose anything valuable. 
+You can still inject different concrete implementations for testing, and you can still have different instances of PostsDataSource with different networking objects even within your app.
+The difference compared to the previous approach is that the runtime can more efficiently execute your code when it know the concrete types you’re using (through generics).
+
+Alternatively, you could rewrite let networking to use some Networking instead of using a generic.
+
+The only thing we’ve lost by not using any is the ability to dynamically swap out the networking implementation at runtime 
+by assigning a new value of a different concrete type to networking (which we couldn’t do anyway because it’s defined as a let).
+
+It's interesting to note that because we have to choose between any, some, and a generic, when we define our let networking, it's easier to choose the correct option.
+We could use : any Networking wherever we'd write : Networking in Swift 5.5 and earlier, and our code would work just fine but we might be using a suboptimal existential instead of a concrete type that can benefit from compile-time optimizations and static dispatch at runtime.
+You might need the flexibility that an existential provides, but often you'll find that you don't need an existential at all.
+
+So how useful is the any keyword really? Should you be using it in Swift 5.6 already or is it better to just wait until the compiler starts enforcing any in Swift 6?
+
+In my opinion, the any keyword will provide developers with an interesting tool that forces them to think about how they write code, and more specifically, how we use types in our code.
+Given that existentials have a detrimental effect on our code’s performance I’m happy to see that we need to explicitly annotate existentials with a keyword in Swift 6 onward.
+Especially because it’s often possible to use a generic instead of an existential without losing any benefits of using protocols.
+For that reason alone it’s already worth training yourself to start using any in Swift 5.6.
+
+Using any now in Swift 5.6 will smoothen your inevitable transition to Swift 6 where the following code would actually be a compiler error:
+protocol Networking {
+    func fetchPosts() async throws -> [Post]
+    // ...
+}
+
+struct PostsDataSource {
+    // This is an error in Swift 6 because Networking is an existential
+    let networking: Networking
+    // ...
+}
+
+The above code will at least need to be written using any Networking in Swift if you really need the existential Networking.
+In most cases however, this should prompt you to reconsider using the protocol in favor of a generic or writing some Networking in order to improve runtime performance.
+
+Whether or not the performance gains from using generics over existentials is significant enough to make a difference in the average app remains to be seen.
+Being conscious of the cost of existentials in Swift is good though, and it’s definitely making me reconsider some of the code I have written.
+
+
+#####
+The any keyword in Swift 5.7
+#####
+In Swift 5.7 the any keyword is still not mandatory for all existentials but certain features aren't available to non-any protocols.
+For example, in Swift 5.7 the requirements around protocols with a Self requirement have been relaxed.
+Previously, if you wanted to use a protocol with an associated type of Self requirement as a type you would have to use some.
+This is why you have to write var body: some View in SwiftUI.
+
+In Swift 5.7 this restriction is relaxed, but you have to write any to use an existential that has an associated type or Self requirement.
+The following example is an example of this:
+
+protocol Content: Identifiable {
+    var url: URL { get }
+}
+
+func useContent(_ content: any Content) {
+    // ...
+}
+
+The code above requires us to use any Content because Content extends the Identifiable protocol which has an associated type (defined as associatedtype ID: Hashable).
+For that reason, we have to use any if we can't use some.
+
+The same is true for protocols that use a primary associated type.
+Using an existential with a primary associated type already requires the any keyword in Swift 5.7.
+
+Note that any isn't a drop in replacement for some as noted in my comparison of these two keywords. 
+When using any, you'll always opt-in to using an existential rather than a concrete type (which is what some would provide).
+
+Even though any won't be completely mandatory until Swift 6.0 it's interesting to see that Swift 5.7 already requires any for some of the new features that were made available with Swift 5.7.
+try to start using any today so you're not surprised by compiler errors once Swift 6.0 drops.
+
+
+==================================================Protocols
+Define requirements that conforming types must implement.
+
+A protocol defines a blueprint of methods, properties, and other requirements that suit a particular task or piece of functionality. 
+The protocol can then be adopted by a class, structure, or enumeration to provide an actual implementation of those requirements. 
+Any type that satisfies the requirements of a protocol is said to conform to that protocol.
+
+In addition to specifying requirements that conforming types must implement, 
+you can extend a protocol to implement some of these requirements or to implement additional functionality that conforming types can take advantage of.
+
+
+Protocol Syntax:
+You define protocols in a very similar way to classes, structures, and enumerations:
+protocol SomeProtocol {
+    // protocol definition goes here
+}
+
+struct SomeStructure: FirstProtocol, AnotherProtocol {
+    // structure definition goes here
+}
+
+If a class has a superclass, list the superclass name before any protocols it adopts, followed by a comma:
+class SomeClass: SomeSuperclass, FirstProtocol, AnotherProtocol {
+    // class definition goes here
+}
+
+Note:
+Because protocols are types, begin their names with a capital letter (such as FullyNamed and RandomNumberGenerator) to match the names of other types in Swift (such as Int, String, and Double).
+
+
+Property Requirements:
+A protocol can require any conforming type to provide an instance property or type property with a particular name and type. 
+The protocol doesn’t specify whether the property should be a stored property or a computed property — it only specifies the required property name and type. 
+The protocol also specifies whether each property must be gettable or gettable and settable.
+
+If a protocol requires a property to be gettable and settable, 
+that property requirement can’t be fulfilled by a constant stored property or a read-only computed property. 
+If the protocol only requires a property to be gettable, the requirement can be satisfied by any kind of property, 
+and it’s valid for the property to be also settable if this is useful for your own code.
+
+Property requirements are always declared as variable properties, prefixed with the var keyword. 
+Gettable and settable properties are indicated by writing { get set } after their type declaration, 
+and gettable properties are indicated by writing { get }.
+protocol SomeProtocol {
+    var mustBeSettable: Int { get set }
+    var doesNotNeedToBeSettable: Int { get }
+}
+Always prefix type property requirements with the static keyword when you define them in a protocol. 
+This rule pertains even though type property requirements can be prefixed with the class or static keyword when implemented by a class:
+protocol AnotherProtocol {
+    static var someTypeProperty: Int { get set }
+}
+
+protocol FullyNamed {
+    var fullName: String { get }
+}
+The FullyNamed protocol requires a conforming type to provide a fully qualified name.
+struct Person: FullyNamed {
+    var fullName: String
+}
+let john = Person(fullName: "John Appleseed")
+// john.fullName is "John Appleseed"
+(Swift reports an error at compile time if a protocol requirement isn’t fulfilled.)
+
+class Starship: FullyNamed {
+    var prefix: String?
+    var name: String
+    init(name: String, prefix: String? = nil) {
+        self.name = name
+        self.prefix = prefix
+    }
+    var fullName: String {
+        return (prefix != nil ? prefix! + " " : "") + name
+    }
+}
+var ncc1701 = Starship(name: "Enterprise", prefix: "USS")
+// ncc1701.fullName is "USS Enterprise"
+
+
+Method Requirements:
+These methods are written as part of the protocol’s definition in exactly the same way as for normal instance and type methods, but without curly braces or a method body.
+Variadic parameters are allowed, subject to the same rules as for normal methods.
+Default values, however, can’t be specified for method parameters within a protocol’s definition.
+
+protocol SomeProtocol {
+    static func someTypeMethod()
+}
+protocol RandomNumberGenerator {
+    func random() -> Double
+}
+class LinearCongruentialGenerator: RandomNumberGenerator {
+    var lastRandom = 42.0
+    let m = 139968.0
+    let a = 3877.0
+    let c = 29573.0
+    func random() -> Double {
+        lastRandom = ((lastRandom * a + c)
+            .truncatingRemainder(dividingBy:m))
+        return lastRandom / m
+    }
+}
+let generator = LinearCongruentialGenerator()
+print("Here's a random number: \(generator.random())")
+// Prints "Here's a random number: 0.3746499199817101"
+print("And another one: \(generator.random())")
+// Prints "And another one: 0.729023776863283"
+
+
+Mutating Method Requirements:
+It’s sometimes necessary for a method to modify (or mutate) the instance it belongs to. 
+For instance methods on value types (that is, structures and enumerations) you place the mutating keyword before a method’s func keyword to indicate that the method is allowed to modify the instance it belongs to and any properties of that instance.
+
+If you define a protocol instance method requirement that’s intended to mutate instances of any type that adopts the protocol, 
+mark the method with the mutating keyword as part of the protocol’s definition. 
+This enables structures and enumerations to adopt the protocol and satisfy that method requirement.
+
+Note:
+If you mark a protocol instance method requirement as mutating, 
+you don’t need to write the mutating keyword when writing an implementation of that method for a class. 
+The mutating keyword is only used by structures and enumerations.
+protocol Togglable {
+    mutating func toggle()
+}
+
+enum OnOffSwitch: Togglable {
+    case off, on
+    mutating func toggle() {
+        switch self {
+        case .off:
+            self = .on
+        case .on:
+            self = .off
+        }
+    }
+}
+var lightSwitch = OnOffSwitch.off
+lightSwitch.toggle()
+// lightSwitch is now equal to .on
+
+
+Initializer Requirements:
+Protocols can require specific initializers to be implemented by conforming types. 
+You write these initializers as part of the protocol’s definition in exactly the same way as for normal initializers, 
+but without curly braces or an initializer body:
+protocol SomeProtocol {
+    init(someParameter: Int)
+}
+
+
+Class Implementations of Protocol Initializer Requirements:
+You can implement a protocol initializer requirement on a conforming class as either a designated initializer or a convenience initializer.
+In both cases, you must mark the initializer implementation with the required modifier:
+class SomeClass: SomeProtocol {
+    required init(someParameter: Int) {
+        // initializer implementation goes here
+    }
+}
+The use of the required modifier ensures that you provide an explicit or inherited implementation of the initializer requirement on all subclasses of the conforming class, such that they also conform to the protocol.
+
+Note:
+You don’t need to mark protocol initializer implementations with the required modifier on classes that are marked with the final modifier, 
+because final classes can’t subclassed.
+
+If a subclass overrides a designated initializer from a superclass, and also implements a matching initializer requirement from a protocol, 
+mark the initializer implementation with both the required and override modifiers:
+
+protocol SomeProtocol {
+    init()
+}
+
+class SomeSuperClass {
+    init() {
+        // initializer implementation goes here
+    }
+}
+
+class SomeSubClass: SomeSuperClass, SomeProtocol {
+    // "required" from SomeProtocol conformance; "override" from SomeSuperClass
+    required override init() {
+        // initializer implementation goes here
+    }
+}
+
+
+Failable Initializer Requirements:
+Protocols can define failable initializer requirements for conforming types
+A failable initializer requirement can be satisfied by a failable or nonfailable initializer on a conforming type. 
+A nonfailable initializer requirement can be satisfied by a nonfailable initializer or an implicitly unwrapped failable initializer.
+
+
+Protocols as Types:
+Protocols don’t actually implement any functionality themselves. Regardless, you can use a protocol as a type in your code.
+
+The most common way to use a protocol as a type is to use a protocol as a generic constraint.
+Code with generic constraints can work with any type that conforms to the protocol, and the specific type is chosen by the code that uses the API.
+For example, when you call a function that takes an argument and that argument’s type is generic, the caller chooses the type.
+
+#####
+Code with an opaque type works with some type that conforms to the protocol.
+The underlying type is known at compile time, and the API implementation chooses that type, but that type’s identity is hidden from clients of the API.
+Using an opaque type lets you prevent implementation details of an API from leaking through the layer of abstraction — for example, 
+by hiding the specific return type from a function, and only guaranteeing that the value conforms to a given protocol.
+
+Code with a boxed protocol type works with any type, chosen at runtime, that conforms to the protocol.
+To support this runtime flexibility, Swift adds a level of indirection when necessary — known as a box, which has a performance cost.
+Because of this flexibility, Swift doesn’t know the underlying type at compile time, which means you can access only the members that are required by the protocol.
+Accessing any other APIs on the underlying type requires casting at runtime.
+#####
+
+
+----------Delegation:
+Delegation is a design pattern that enables a class or structure to hand off (or delegate) some of its responsibilities to an instance of another type.
+This design pattern is implemented by defining a protocol that encapsulates the delegated responsibilities, such that a conforming type (known as a delegate) is guaranteed to provide the functionality that has been delegated. 
+Delegation can be used to respond to a particular action, or to retrieve data from an external source without needing to know the underlying type of that source.
+
+The example below defines two protocols for use with dice-based board games:
+protocol DiceGame {
+    var dice: Dice { get }
+    func play()
+}
+protocol DiceGameDelegate: AnyObject {
+    func gameDidStart(_ game: DiceGame)
+    func game(_ game: DiceGame, didStartNewTurnWithDiceRoll diceRoll: Int)
+    func gameDidEnd(_ game: DiceGame)
+}
+The DiceGame protocol is a protocol that can be adopted by any game that involves dice.
+The DiceGameDelegate protocol can be adopted to track the progress of a DiceGame.
+To prevent strong reference cycles, delegates are declared as weak references.
+A class-only protocol is marked by its inheritance from AnyObject
+
+class SnakesAndLadders: DiceGame {
+    let finalSquare = 25
+    let dice = Dice(sides: 6, generator: LinearCongruentialGenerator())
+    var square = 0
+    var board: [Int]
+    init() {
+        board = Array(repeating: 0, count: finalSquare + 1)
+        board[03] = +08; board[06] = +11; board[09] = +09; board[10] = +02
+        board[14] = -10; board[19] = -11; board[22] = -02; board[24] = -08
+    }
+    weak var delegate: DiceGameDelegate?
+    func play() {
+        square = 0
+        delegate?.gameDidStart(self)
+        gameLoop: while square != finalSquare {
+            let diceRoll = dice.roll()
+            delegate?.game(self, didStartNewTurnWithDiceRoll: diceRoll)
+            switch square + diceRoll {
+            case finalSquare:
+                break gameLoop
+            case let newSquare where newSquare > finalSquare:
+                continue gameLoop
+            default:
+                square += diceRoll
+                square += board[square]
+            }
+        }
+        delegate?.gameDidEnd(self)
+    }
+}
+
+This next example shows a class called DiceGameTracker, which adopts the DiceGameDelegate protocol:
+class DiceGameTracker: DiceGameDelegate {
+    var numberOfTurns = 0
+    func gameDidStart(_ game: DiceGame) {
+        numberOfTurns = 0
+        if game is SnakesAndLadders {
+            print("Started a new game of Snakes and Ladders")
+        }
+        print("The game is using a \(game.dice.sides)-sided dice")
+    }
+    func game(_ game: DiceGame, didStartNewTurnWithDiceRoll diceRoll: Int) {
+        numberOfTurns += 1
+        print("Rolled a \(diceRoll)")
+    }
+    func gameDidEnd(_ game: DiceGame) {
+        print("The game lasted for \(numberOfTurns) turns")
+    }
+}
+The game parameter has a type of DiceGame, not SnakesAndLadders, and so gameDidStart(_:) can access and use only methods and properties that are implemented as part of the DiceGame protocol.
+However, the method is still able to use type casting to query the type of the underlying instance.
+
+let tracker = DiceGameTracker()
+let game = SnakesAndLadders()
+game.delegate = tracker
+game.play()
+// Started a new game of Snakes and Ladders
+// The game is using a 6-sided dice
+// Rolled a 3
+// Rolled a 5
+// Rolled a 4
+// Rolled a 5
+// The game lasted for 4 turns
+
+
+----------Adding Protocol Conformance with an Extension:
+You can extend an existing type to adopt and conform to a new protocol, even if you don’t have access to the source code for the existing type.
+Extensions can add new properties, methods, and subscripts to an existing type, and are therefore able to add any requirements that a protocol may demand
+
+Note:
+Existing instances of a type automatically adopt and conform to a protocol when that conformance is added to the instance’s type in an extension.
+
+For example, this protocol, called TextRepresentable, can be implemented by any type that has a way to be represented as text. 
+This might be a description of itself, or a text version of its current state:
+protocol TextRepresentable {
+    var textualDescription: String { get }
+}
+extension Dice: TextRepresentable {
+    var textualDescription: String {
+        return "A \(sides)-sided dice"
+    }
+}
+let d12 = Dice(sides: 12, generator: LinearCongruentialGenerator())
+print(d12.textualDescription)
+// Prints "A 12-sided dice"
+
+
+----------Conditionally Conforming to a Protocol:
+A generic type may be able to satisfy the requirements of a protocol only under certain conditions, such as when the type’s generic parameter conforms to the protocol.
+You can make a generic type conditionally conform to a protocol by listing constraints when extending the type.
+Write these constraints after the name of the protocol you’re adopting by writing a generic where clause.
+
+The following extension makes Array instances conform to the TextRepresentable protocol whenever they store elements of a type that conforms to TextRepresentable.
+extension Array: TextRepresentable where Element: TextRepresentable {
+    var textualDescription: String {
+        let itemsAsText = self.map { $0.textualDescription }
+        return "[" + itemsAsText.joined(separator: ", ") + "]"
+    }
+}
+let myDice = [d6, d12]
+print(myDice.textualDescription)
+// Prints "[A 6-sided dice, A 12-sided dice]"
+
+
+----------#####Declaring Protocol Adoption with an Extension:#####
+If a type already conforms to all of the requirements of a protocol, 
+but hasn’t yet stated that it adopts that protocol, you can make it adopt the protocol with an empty extension:
+
+struct Hamster {
+    var name: String
+    var textualDescription: String {
+        return "A hamster named \(name)"
+    }
+}
+extension Hamster: TextRepresentable {}
+
+Instances of Hamster can now be used wherever TextRepresentable is the required type:
+let simonTheHamster = Hamster(name: "Simon")
+let somethingTextRepresentable: TextRepresentable = simonTheHamster
+print(somethingTextRepresentable.textualDescription)
+// Prints "A hamster named Simon"
+
+Note:
+Types don’t automatically adopt a protocol just by satisfying its requirements. 
+They must always explicitly declare their adoption of the protocol.
+
+----------#####Adopting a Protocol Using a Synthesized Implementation:#####
+Swift can automatically provide the protocol conformance for Equatable, Hashable, and Comparable in many simple cases. 
+Using this synthesized implementation means you don’t have to write repetitive boilerplate code to implement the protocol requirements yourself.
+
+Swift provides a synthesized implementation of Equatable for the following kinds of custom types:
+Structures that have only stored properties that conform to the Equatable protocol
+Enumerations that have only associated types that conform to the Equatable protocol
+Enumerations that have no associated types
+
+To receive a synthesized implementation of ==, declare conformance to Equatable in the file that contains the original declaration, 
+without implementing an == operator yourself. The Equatable protocol provides a default implementation of !=.
+
+The example below defines a Vector3D structure for a three-dimensional position vector (x, y, z), similar to the Vector2D structure.
+Because the x, y, and z properties are all of an Equatable type, Vector3D receives synthesized implementations of the equivalence operators.
+struct Vector3D: Equatable {
+    var x = 0.0, y = 0.0, z = 0.0
+}
+
+let twoThreeFour = Vector3D(x: 2.0, y: 3.0, z: 4.0)
+let anotherTwoThreeFour = Vector3D(x: 2.0, y: 3.0, z: 4.0)
+if twoThreeFour == anotherTwoThreeFour {
+    print("These two vectors are also equivalent.")
+}
+// Prints "These two vectors are also equivalent."
+
+
+
+----------
+
+
+
+----------

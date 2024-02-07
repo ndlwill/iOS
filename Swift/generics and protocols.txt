@@ -1,0 +1,238 @@
+This data source would be able to return pretty much anything from a local cache, or if the local cache doesn't contain the requested object, 
+it would fetch the object from a server and then cache the result locally before returning it to me.
+To achieve this, I figured that I would write a generic local cache, a generic remote cache and a wrapper that would combine both caches, 
+allowing me to transparently retrieve objects without having to worry about where the object came from.
+
+
+pseudo-code:
+let localDataStore = UserDataStore()
+let remoteDataStore = UserApi()
+let dataStore = CacheBackedDataStore(localDataStore, remoteDataStore)
+
+dataStore.fetch(userID) { result in 
+  // handle result
+}
+
+pseudo-implementation for CacheBackedDataStore:
+class CacheBackedDataStore {
+  let localStore: LocalStore
+  let remoteStore: RemoteStore
+
+  func fetch(_ identifier: IdentifierType, completion: @escaping Result<T, Error>) {
+    localStore.fetchObject(identifier) { result in 
+      if let result = try? result.get() {
+         completion(.success(result))
+      } else {
+        remoteStore.fetchObject(identifier) { result in 
+          if let result = try? result.get() {
+            completion(.success(result))
+          } else {
+            // extract error and forward to the completion handler
+          }
+        }
+      }
+    }
+  }
+}
+
+
+struct CacheBackedDataSource<T> {
+  func find(_ objectID: String, completion: @escaping (Result<T?, Error>) -> Void) {
+
+  }
+}
+
+In the pseudo-code from earlier in this post, there were two properties:
+let localStore: LocalStore
+let remoteStore: RemoteStore
+
+Since the caching layer should be as generic and flexible as possible, let's define LocalStore and RemoteStore as protocols. 
+This will give us tons of flexibility, allowing any object to act as the local or remote store as long as they implement the appropriate functionality:
+protocol LocalStore {
+
+}
+
+protocol RemoteStore {
+
+}
+
+And in these protocols, we will define methods to fetch the object we need, and in the local store, we'll define a method that persists an object.
+protocol LocalStore {
+  func find(_ objectID: String, completion: @escaping (Result<T, Error>) -> Void)
+  func persist(_ object: T)
+}
+
+protocol RemoteStore {
+  func find(_ objectID: String, completion: @escaping (Result<T, Error>) -> Void)
+}
+Unfortunately, this doesn't work. Our protocols don't know what T is since they're not generic.
+
+
+#####
+Adding generics to protocols
+#####
+While we can define a generic parameter on a struct by adding it to the type declaration between <>, 
+just like we did for struct CacheBackedDataSource<T>, this is not allowed for protocols.
+If you want to have a protocol with a generic parameter, you need to declare the generic type as an associatedtype on the protocol.
+An associatedtype does not have to be implemented as a generic on objects that implement the protocol.
+For now, let's fix the local and remote store protocols so you can see associatedtype in action:
+
+protocol LocalStore {
+  associatedtype StoredObject
+
+  func find(_ objectID: String, completion: @escaping (Result<StoredObject, Error>) -> Void)
+  func persist(_ object: StoredObject)
+}
+
+protocol RemoteStore {
+  associatedtype TargetObject
+
+  func find(_ objectID: String, completion: @escaping (Result<TargetObject, Error>) -> Void)
+}
+
+Notice how we're not using a short name like T here. This is because the associated type does not necessarily have to be generic, 
+and we want the purpose of this type to be communicated a bit better than we typically do when you're defining a generic parameter on a struct.
+
+struct ArrayBackedUserStore: LocalStore {
+  func find(_ objectID: String, completion: @escaping (Result<User, Error>) -> Void) {
+
+  }
+
+  func persist(_ object: User) {
+
+  }
+}
+
+struct RemoteUserStore: RemoteStore {
+  func find(_ objectID: String, completion: @escaping (Result<User, Error>) -> Void) {
+
+  }
+}
+
+All that's needed to implement the protocol's associatedtype in this example is to use the same type in all places where the protocol uses its associated type.
+An alternative that's a bit more verbose would be to define a typealias inside of a conforming object and use the protocols associatedtype where we currently use the User object. An example of this would look like this:
+struct RemoteUserStore: RemoteStore {
+  typealias TargetObject = User
+
+  func find(_ objectID: String, completion: @escaping (Result<TargetObject, Error>) -> Void) {
+
+  }
+}
+I prefer the former way where we use User in place of TargetObject, it's just easier to read in my opinion.
+
+Since we're dealing with data that comes from a remote server in RemoteUserStore, 
+it would be quite convenient to constraint the value of TargetObject to only allow Decodable types to be used in place of TargetObject. 
+We can do this as follows:
+protocol RemoteStore {
+  associatedtype TargetObject: Decodable
+
+  func find(_ objectID: String, completion: @escaping (Result<TargetObject, Error>) -> Void)
+}
+
+
+We now have the following code prepared for the CacheBackedDataSource and the local and remote store protocols:
+struct CacheBackedDataSource<T> {
+  func find(_ objectID: String, completion: @escaping (Result<T, Error>) -> Void) {
+
+  }
+}
+
+protocol LocalStore {
+  associatedtype StoredObject
+
+  func find(_ objectID: String, completion: @escaping (Result<StoredObject, Error>) -> Void)
+  func persist(_ object: StoredObject)
+}
+
+protocol RemoteStore {
+  associatedtype TargetObject: Decodable
+
+  func find(_ objectID: String, completion: @escaping (Result<TargetObject, Error>) -> Void)
+}
+
+
+Let's add some properties for the local and remote store to the CacheBackedDataStore:
+struct CacheBackedDataSource<T> {
+  let localStore: LocalStore
+  let remoteStore: RemoteStore
+
+  func find(_ objectID: String, completion: @escaping (Result<T, Error>) -> Void) {
+
+  }
+}
+
+Unfortunately, this won't compile. The following errors are thrown by the Swift compiler:
+error: protocol 'LocalStore' can only be used as a generic constraint because it has Self or associated type requirements
+  let localStore: LocalStore
+                  ^
+
+error: protocol 'RemoteStore' can only be used as a generic constraint because it has Self or associated type requirements
+  let remoteStore: RemoteStore
+
+
+#####
+Using a protocol with associated type requirements as a generic constraint
+#####
+In order to use the local and remote store protocols as types on the CacheBackedDataSource, we need to add generic parameters to the CacheBackedDataSource, 
+and constrain these parameters so they have to implement our protocols. 
+Replace your current implementation of CacheBackedDataSource with the following:
+
+struct CacheBackedDataSource<Local: LocalStore, Remote: RemoteStore> {
+  private let localStore: Local
+  private let remoteStore: Remote
+
+  func find(_ objectID: String, completion: @escaping (Result<Local.StoredObject, Error>) -> Void) {
+
+  }
+}
+
+The declaration of CacheBackedDataSource now has two generic parameters, Local and Remote. Each has to conform to its respective protocol.
+This means that the localStore and remoteStore should not be of type LocalStore and RemoteStore.
+Instead, they should be of type Local and Remote.
+Note that Result<T, Error> has been replaced with Result<Local.StoredObject, Error>.
+The find method now uses whatever type of object the LocalStore stores as the type for its Result.
+This is really powerful because the underlying store now dictates the type of objects returned by the data source object.
+
+There's still one problem though.
+Nothing prevents us from locally storing something that's completely incompatible with the remote store.
+Luckily we can apply constraints to the generic parameters of our struct. Update the declaration of CacheBackedDataSource as follows:
+struct CacheBackedDataSource<Local: LocalStore, Remote: RemoteStore> where Local.StoredObject == Remote.TargetObject
+
+We can now only create CacheBackedDataSource objects that use the same type of object for the local and remote stores.
+func find(_ objectID: String, completion: @escaping (Result<Local.StoredObject, Error>) -> Void) {
+  localStore.find(objectID) { result in
+    do {
+      let object = try result.get()
+      completion(.success(object))
+    } catch {
+      self.remoteStore.find(objectID) { result in
+        do {
+          let object = try result.get()
+          self.localStore.persist(object)
+          completion(.success(object))
+        } catch {
+          completion(.failure(error))
+        }
+      }
+    }
+  }
+}
+
+
+The find method works by calling find on the local store.
+If the requested object is found, then the callback is invoked and the result is passed back to the caller.
+If an error occurred, for example, because the object wasn't found, the remote store is used.
+If the remote store finds the requested object, it's persisted in the local store and the result is passed back to the caller.
+If the object wasn't found or an error occurred in the remote store, we invoke the completion closure with the received error.
+
+Note that this setup is extremely flexible.
+The implementation of CacheBackedDataSource doesn't care what it's caching.
+It only knows how to use a local store with a fallback to a remote store.
+Pretty awesome, right? Let's wrap this up by creating an instance of the CacheBackedDataSource:
+let localUserStore = ArrayBackedUserStore()
+let remoteUserStore = RemoteUserStore()
+let cache = CacheBackedDataSource(localStore: localUserStore, remoteStore: remoteUserStore)
+cache.find("someObjectId") { (result: Result<User, Error>) in
+
+}
+

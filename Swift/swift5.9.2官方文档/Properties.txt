@@ -1,0 +1,423 @@
+Access stored and computed values that are part of an instance or type.
+
+Computed properties are provided by classes, structures, and enumerations. 
+Stored properties are provided only by classes and structures.
+
+Stored and computed properties are usually associated with instances of a particular type. 
+However, properties can also be associated with the type itself. Such properties are known as type properties.
+
+In addition, you can define property observers to monitor changes in a property’s value, which you can respond to with custom actions. 
+Property observers can be added to stored properties you define yourself, and also to properties that a subclass inherits from its superclass.
+
+You can also use a property wrapper to reuse code in the getter and setter of multiple properties.
+
+
+Lazy Stored Properties:
+A lazy stored property is a property whose initial value isn’t calculated until the first time it’s used. 
+Note:
+You must always declare a lazy property as a variable (with the var keyword), 
+because its initial value might not be retrieved until after instance initialization completes.
+
+Lazy properties are useful when the initial value for a property is dependent on outside factors whose values aren’t known until after an instance’s initialization is complete.
+Lazy properties are also useful when the initial value for a property requires complex or computationally expensive setup that shouldn’t be performed unless or until it’s needed.
+
+Note:
+If a property marked with the lazy modifier is accessed by multiple threads simultaneously and the property hasn’t yet been initialized, 
+there’s no guarantee that the property will be initialized only once.
+
+
+Stored Properties and Instance Variables:
+If you have experience with Objective-C, you may know that it provides two ways to store values and references as part of a class instance. 
+In addition to properties, you can use instance variables as a backing store for the values stored in a property.
+A Swift property doesn’t have a corresponding instance variable, and the backing store for a property isn’t accessed directly.
+
+
+Computed Properties:
+In addition to stored properties, classes, structures, and enumerations can define computed properties, which don’t actually store a value. 
+Instead, they provide a getter and an optional setter to retrieve and set other properties and values indirectly.
+struct Point {
+    var x = 0.0, y = 0.0
+}
+struct Size {
+    var width = 0.0, height = 0.0
+}
+struct Rect {
+    var origin = Point()
+    var size = Size()
+    var center: Point {
+        get {
+            let centerX = origin.x + (size.width / 2)
+            let centerY = origin.y + (size.height / 2)
+            return Point(x: centerX, y: centerY)
+        }
+        set(newCenter) {
+            origin.x = newCenter.x - (size.width / 2)
+            origin.y = newCenter.y - (size.height / 2)
+        }
+    }
+}
+var square = Rect(origin: Point(x: 0.0, y: 0.0),
+    size: Size(width: 10.0, height: 10.0))
+let initialSquareCenter = square.center
+// initialSquareCenter is at (5.0, 5.0)
+square.center = Point(x: 15.0, y: 15.0)
+print("square.origin is now at (\(square.origin.x), \(square.origin.y))")
+// Prints "square.origin is now at (10.0, 10.0)"
+
+If a computed property’s setter doesn’t define a name for the new value to be set, a default name of newValue is used.
+
+
+Read-Only Computed Properties:
+A computed property with a getter but no setter is known as a read-only computed property.
+A read-only computed property always returns a value, and can be accessed through dot syntax, but can’t be set to a different value.
+
+Note:
+You must declare computed properties — including read-only computed properties — as variable properties with the var keyword, because their value isn’t fixed.
+
+
+Property Observers:
+Property observers are called every time a property’s value is set, even if the new value is the same as the property’s current value.
+
+You can add property observers in the following places:
+Stored properties that you define
+Stored properties that you inherit
+Computed properties that you inherit
+
+For an inherited property, you add a property observer by overriding that property in a subclass. 
+For a computed property that you define, use the property’s setter to observe and respond to value changes, instead of trying to create an observer.
+
+You have the option to define either or both of these observers on a property:
+willSet is called just before the value is stored.
+didSet is called immediately after the new value is stored.
+
+If you implement a willSet observer, it’s passed the new property value as a constant parameter.
+You can specify a name for this parameter as part of your willSet implementation. 
+If you don’t write the parameter name and parentheses within your implementation, the parameter is made available with a default parameter name of newValue.
+
+Similarly, if you implement a didSet observer, it’s passed a constant parameter containing the old property value. 
+You can name the parameter or use the default parameter name of oldValue. 
+If you assign a value to a property within its own didSet observer, the new value that you assign replaces the one that was just set.
+
+Note:
+The willSet and didSet observers of superclass properties are called when a property is set in a subclass initializer, 
+after the superclass initializer has been called. They aren’t called while a class is setting its own properties, 
+before the superclass initializer has been called.
+class StepCounter {
+    var totalSteps: Int = 0 {
+        willSet(newTotalSteps) {
+            print("About to set totalSteps to \(newTotalSteps)")
+        }
+        didSet {
+            if totalSteps > oldValue  {
+                print("Added \(totalSteps - oldValue) steps")
+            }
+        }
+    }
+}
+let stepCounter = StepCounter()
+stepCounter.totalSteps = 200
+// About to set totalSteps to 200
+// Added 200 steps
+stepCounter.totalSteps = 360
+// About to set totalSteps to 360
+// Added 160 steps
+stepCounter.totalSteps = 896
+// About to set totalSteps to 896
+// Added 536 steps
+This is a stored property with willSet and didSet observers.
+
+Note:
+If you pass a property that has observers to a function as an in-out parameter, the willSet and didSet observers are always called. 
+This is because of the copy-in copy-out memory model for in-out parameters: The value is always written back to the property at the end of the function.
+
+
+Property Wrappers:
+A property wrapper adds a layer of separation between code that manages how a property is stored and the code that defines a property.
+For example, if you have properties that provide thread-safety checks or store their underlying data in a database, you have to write that code on every property.
+When you use a property wrapper, you write the management code once when you define the wrapper, and then reuse that management code by applying it to multiple properties.
+To define a property wrapper, you make a structure, enumeration, or class that defines a wrappedValue property. 
+In the code below, the TwelveOrLess structure ensures that the value it wraps always contains a number less than or equal to 12. If you ask it to store a larger number, it stores 12 instead.
+
+@propertyWrapper
+struct TwelveOrLess {
+    private var number = 0
+    var wrappedValue: Int {
+        get { return number }
+        set { number = min(newValue, 12) }
+    }
+}
+The setter ensures that new values are less than or equal to 12, and the getter returns the stored value.
+
+Note:
+The declaration for number in the example above marks the variable as private, 
+which ensures number is used only in the implementation of TwelveOrLess. 
+Code that’s written anywhere else accesses the value using the getter and setter for wrappedValue, and can’t use number directly.
+
+You apply a wrapper to a property by writing the wrapper’s name before the property as an attribute.
+struct SmallRectangle {
+    @TwelveOrLess var height: Int
+    @TwelveOrLess var width: Int
+}
+var rectangle = SmallRectangle()
+print(rectangle.height)
+// Prints "0"
+rectangle.height = 10
+print(rectangle.height)
+// Prints "10"
+rectangle.height = 24
+print(rectangle.height)
+// Prints "12"
+
+The height and width properties get their initial values from the definition of TwelveOrLess, which sets TwelveOrLess.number to zero.
+
+For example, here’s a version of SmallRectangle from the previous code listing that wraps its properties in the TwelveOrLess structure explicitly, 
+instead of writing @TwelveOrLess as an attribute:
+struct SmallRectangle {
+    private var _height = TwelveOrLess()
+    private var _width = TwelveOrLess()
+    var height: Int {
+        get { return _height.wrappedValue }
+        set { _height.wrappedValue = newValue }
+    }
+    var width: Int {
+        get { return _width.wrappedValue }
+        set { _width.wrappedValue = newValue }
+    }
+}
+
+
+Setting Initial Values for Wrapped Properties:
+@propertyWrapper
+struct SmallNumber {
+    private var maximum: Int
+    private var number: Int
+
+
+    var wrappedValue: Int {
+        get { return number }
+        set { number = min(newValue, maximum) }
+    }
+
+
+    init() {
+        maximum = 12
+        number = 0
+    }
+    init(wrappedValue: Int) {
+        maximum = 12
+        number = min(wrappedValue, maximum)
+    }
+    init(wrappedValue: Int, maximum: Int) {
+        self.maximum = maximum
+        number = min(wrappedValue, maximum)
+    }
+}
+
+uses the init() initializer to set up the wrapper
+struct ZeroRectangle {
+    @SmallNumber var height: Int
+    @SmallNumber var width: Int
+}
+var zeroRectangle = ZeroRectangle()
+print(zeroRectangle.height, zeroRectangle.width)
+// Prints "0 0"
+
+When you specify an initial value for the property, Swift uses the init(wrappedValue:) initializer to set up the wrapper.
+struct UnitRectangle {
+    @SmallNumber var height: Int = 1
+    @SmallNumber var width: Int = 1
+}
+var unitRectangle = UnitRectangle()
+print(unitRectangle.height, unitRectangle.width)
+// Prints "1 1"
+When you write = 1 on a property with a wrapper, that’s translated into a call to the init(wrappedValue:) initializer.
+
+When you write arguments in parentheses after the custom attribute, Swift uses the initializer that accepts those arguments to set up the wrapper.
+Swift uses the init(wrappedValue:maximum:) initializer:
+struct NarrowRectangle {
+    @SmallNumber(wrappedValue: 2, maximum: 5) var height: Int
+    @SmallNumber(wrappedValue: 3, maximum: 4) var width: Int
+}
+var narrowRectangle = NarrowRectangle()
+print(narrowRectangle.height, narrowRectangle.width)
+// Prints "2 3"
+narrowRectangle.height = 100
+narrowRectangle.width = 100
+print(narrowRectangle.height, narrowRectangle.width)
+// Prints "5 4"
+
+When you include property wrapper arguments, you can also specify an initial value using assignment. 
+Swift treats the assignment like a wrappedValue argument and uses the initializer that accepts the arguments you include. For example:
+struct MixedRectangle {
+    @SmallNumber var height: Int = 1
+    @SmallNumber(maximum: 9) var width: Int = 2
+}
+var mixedRectangle = MixedRectangle()
+print(mixedRectangle.height)
+// Prints "1"
+mixedRectangle.height = 20
+print(mixedRectangle.height)
+// Prints "12"
+
+
+Projecting a Value From a Property Wrapper:
+In addition to the wrapped value, a property wrapper can expose additional functionality by defining a projected value
+for example, a property wrapper that manages access to a database can expose a flushDatabaseConnection() method on its projected value.
+The name of the projected value is the same as the wrapped value, except it begins with a dollar sign ($).
+Because your code can’t define properties that start with $ the projected value never interferes with properties you define.
+The code below adds a projectedValue property to the SmallNumber structure to keep track of whether the property wrapper adjusted the new value for the property before storing that new value.
+
+@propertyWrapper
+struct SmallNumber {
+    private var number: Int
+    private(set) var projectedValue: Bool
+
+
+    var wrappedValue: Int {
+        get { return number }
+        set {
+            if newValue > 12 {
+                number = 12
+                projectedValue = true
+            } else {
+                number = newValue
+                projectedValue = false
+            }
+        }
+    }
+
+
+    init() {
+        self.number = 0
+        self.projectedValue = false
+    }
+}
+struct SomeStructure {
+    @SmallNumber var someNumber: Int
+}
+var someStructure = SomeStructure()
+someStructure.someNumber = 4
+print(someStructure.$someNumber)
+// Prints "false"
+someStructure.someNumber = 55
+print(someStructure.$someNumber)
+// Prints "true"
+Writing someStructure.$someNumber accesses the wrapper’s projected value.
+
+enum Size {
+    case small, large
+}
+
+
+struct SizedRectangle {
+    @SmallNumber var height: Int
+    @SmallNumber var width: Int
+
+    mutating func resize(to size: Size) -> Bool {
+        switch size {
+        case .small:
+            height = 10
+            width = 20
+        case .large:
+            height = 100
+            width = 100
+        }
+        return $height || $width
+    }
+}
+
+
+Global and Local Variables:
+However, you can also define computed variables and define observers for stored variables, in either a global or local scope.
+Computed variables calculate their value, rather than storing it, and they’re written in the same way as computed properties.
+
+Note:
+Global constants and variables are always computed lazily, in a similar manner to Lazy Stored Properties. 
+Unlike lazy stored properties, global constants and variables don’t need to be marked with the lazy modifier.
+Local constants and variables are never computed lazily.
+
+You can apply a property wrapper to a local stored variable, but not to a global variable or a computed variable.
+func someFunction() {
+    @SmallNumber var myNumber: Int = 0
+
+    myNumber = 10
+    // now myNumber is 10
+
+    myNumber = 24
+    // now myNumber is 12
+}
+
+
+Type Properties:
+Instance properties are properties that belong to an instance of a particular type. 
+Every time you create a new instance of that type, it has its own set of property values, separate from any other instance.
+
+You can also define properties that belong to the type itself, not to any one instance of that type. 
+There will only ever be one copy of these properties, no matter how many instances of that type you create. 
+These kinds of properties are called type properties.
+
+Note:
+Unlike stored instance properties, you must always give stored type properties a default value.
+This is because the type itself doesn’t have an initializer that can assign a value to a stored type property at initialization time.
+
+Stored type properties are lazily initialized on their first access. 
+They’re guaranteed to be initialized only once, even when accessed by multiple threads simultaneously, 
+and they don’t need to be marked with the lazy modifier.
+
+You define type properties with the static keyword. 
+For computed type properties for class types, you can use the class keyword instead to allow subclasses to override the superclass’s implementation.
+
+struct SomeStructure {
+    static var storedTypeProperty = "Some value."
+    static var computedTypeProperty: Int {
+        return 1
+    }
+}
+enum SomeEnumeration {
+    static var storedTypeProperty = "Some value."
+    static var computedTypeProperty: Int {
+        return 6
+    }
+}
+class SomeClass {
+    static var storedTypeProperty = "Some value."
+    static var computedTypeProperty: Int {
+        return 27
+    }
+    class var overrideableComputedTypeProperty: Int {
+        return 107
+    }
+}
+
+Note:
+The computed type property examples above are for read-only computed type properties, 
+but you can also define read-write computed type properties with the same syntax as for computed instance properties.
+
+
+Querying and Setting Type Properties:
+struct AudioChannel {
+    static let thresholdLevel = 10
+    static var maxInputLevelForAllChannels = 0
+    var currentLevel: Int = 0 {
+        didSet {
+            if currentLevel > AudioChannel.thresholdLevel {
+                // cap the new audio level to the threshold level
+                currentLevel = AudioChannel.thresholdLevel
+            }
+            if currentLevel > AudioChannel.maxInputLevelForAllChannels {
+                // store this as the new overall maximum input level
+                AudioChannel.maxInputLevelForAllChannels = currentLevel
+            }
+        }
+    }
+}
+
+Note:
+In the first of these two checks, the didSet observer sets currentLevel to a different value. This doesn’t, however, cause the observer to be called again.
+
+var rightChannel = AudioChannel()
+rightChannel.currentLevel = 11
+print(rightChannel.currentLevel)
+// Prints "10"
+print(AudioChannel.maxInputLevelForAllChannels)
+// Prints "10"
