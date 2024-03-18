@@ -34,3 +34,128 @@ Overlapping accesses appear primarily in code that uses in-out parameters in fun
 ==================================================Conflicting Access to In-Out Parameters
 A function has long-term write access to all of its in-out parameters. 
 
+One consequence of this long-term write access is that you can’t access the original variable that was passed as in-out, 
+even if scoping rules and access control would otherwise permit it — any access to the original creates a conflict. 
+For example:
+var stepSize = 1
+
+func increment(_ number: inout Int) {
+    number += stepSize
+}
+
+increment(&stepSize)
+// Error: conflicting accesses to stepSize
+
+In the code above, stepSize is a global variable, and it’s normally accessible from within increment(_:).
+However, the read access to stepSize overlaps with the write access to number.
+both number and stepSize refer to the same location in memory.
+The read and write accesses refer to the same memory and they overlap, producing a conflict.
+
+One way to solve this conflict is to make an explicit copy of stepSize:
+// Make an explicit copy.
+var copyOfStepSize = stepSize
+increment(&copyOfStepSize)
+
+// Update the original.
+stepSize = copyOfStepSize
+// stepSize is now 2
+
+When you make a copy of stepSize before calling increment(_:), it’s clear that the value of copyOfStepSize is incremented by the current step size. 
+The read access ends before the write access starts, so there isn’t a conflict.
+
+
+Another consequence of long-term write access to in-out parameters 
+is that passing a single variable as the argument for multiple in-out parameters of the same function produces a conflict. For example:
+func balance(_ x: inout Int, _ y: inout Int) {
+    let sum = x + y
+    x = sum / 2
+    y = sum - x
+}
+var playerOneScore = 42
+var playerTwoScore = 30
+balance(&playerOneScore, &playerTwoScore)  // OK
+balance(&playerOneScore, &playerOneScore)
+// Error: conflicting accesses to playerOneScore
+
+The balance(_:_:) function above modifies its two parameters to divide the total value evenly between them.
+Calling it with playerOneScore and playerTwoScore as arguments doesn’t produce a conflict — there are two write accesses that overlap in time, but they access different locations in memory.
+In contrast, passing playerOneScore as the value for both parameters produces a conflict because it tries to perform two write accesses to the same location in memory at the same time.
+
+==================================================Conflicting Access to self in Methods
+A mutating method on a structure has write access to self for the duration of the method call. 
+For example, consider a game where each player has a health amount, 
+which decreases when taking damage, and an energy amount, which decreases when using special abilities.
+
+struct Player {
+    var name: String
+    var health: Int
+    var energy: Int
+
+
+    static let maxHealth = 10
+    mutating func restoreHealth() {
+        health = Player.maxHealth
+    }
+}
+
+In the restoreHealth() method above, a write access to self starts at the beginning of the method and lasts until the method returns.
+In this case, there’s no other code inside restoreHealth() that could have an overlapping access to the properties of a Player instance.
+The shareHealth(with:) method below takes another Player instance as an in-out parameter, creating the possibility of overlapping accesses.
+extension Player {
+    mutating func shareHealth(with teammate: inout Player) {
+        balance(&teammate.health, &health)
+    }
+}
+
+var oscar = Player(name: "Oscar", health: 10, energy: 10)
+var maria = Player(name: "Maria", health: 5, energy: 10)
+oscar.shareHealth(with: &maria)  // OK
+
+In the example above, calling the shareHealth(with:) method for Oscar’s player to share health with Maria’s player doesn’t cause a conflict.
+There’s a write access to oscar during the method call because oscar is the value of self in a mutating method, and there’s a write access to maria for the same duration because maria was passed as an in-out parameter.
+they access different locations in memory. 
+Even though the two write accesses overlap in time, they don’t conflict.
+
+However, if you pass oscar as the argument to shareHealth(with:), there’s a conflict:
+oscar.shareHealth(with: &oscar)
+// Error: conflicting accesses to oscar
+The two write accesses refer to the same memory and they overlap, producing a conflict.
+
+
+==================================================Conflicting Access to Properties
+Types like structures, tuples, and enumerations are made up of individual constituent values, such as the properties of a structure or the elements of a tuple. 
+Because these are value types, mutating any piece of the value mutates the whole value, 
+meaning read or write access to one of the properties requires read or write access to the whole value. 
+For example, overlapping write accesses to the elements of a tuple produces a conflict:
+
+var playerInformation = (health: 10, energy: 20)
+balance(&playerInformation.health, &playerInformation.energy)
+// Error: conflicting access to properties of playerInformation
+
+In the example above, calling balance(_:_:) on the elements of a tuple produces a conflict because there are overlapping write accesses to playerInformation.
+Both playerInformation.health and playerInformation.energy are passed as in-out parameters, which means balance(_:_:) needs write access to them for the duration of the function call.
+In both cases, a write access to the tuple element requires a write access to the entire tuple.
+This means there are two write accesses to playerInformation with durations that overlap, causing a conflict.
+
+The code below shows that the same error appears for overlapping write accesses to the properties of a structure that’s stored in a global variable.
+
+var holly = Player(name: "Holly", health: 10, energy: 10)
+balance(&holly.health, &holly.energy)  // Error
+
+In practice, most access to the properties of a structure can overlap safely. 
+For example, if the variable holly in the example above is changed to a local variable instead of a global variable, 
+the compiler can prove that overlapping access to stored properties of the structure is safe:
+func someFunction() {
+    var oscar = Player(name: "Oscar", health: 10, energy: 10)
+    balance(&oscar.health, &oscar.energy)  // OK
+}
+In the example above, Oscar’s health and energy are passed as the two in-out parameters to balance(_:_:). 
+The compiler can prove that memory safety is preserved because the two stored properties don’t interact in any way.
+
+Swift allows this memory-safe code if the compiler can prove that the nonexclusive access to memory is still safe. 
+Specifically, it can prove that overlapping access to properties of a structure is safe if the following conditions apply:
+You’re accessing only stored properties of an instance, not computed properties or class properties.
+The structure is the value of a local variable, not a global variable.
+The structure is either not captured by any closures, or it’s captured only by nonescaping closures.
+
+If the compiler can’t prove the access is safe, it doesn’t allow the access.

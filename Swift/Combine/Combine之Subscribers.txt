@@ -1,0 +1,171 @@
+Subscribers在Combine中的角色是订阅者，专门用于接收数据。
+
+========================================assign
+class AssignViewObservableObject: ObservableObject {
+    var cancellable: AnyCancellable?
+
+    @Published var text = ""
+
+    init() {
+        let publisher = PassthroughSubject<String, Never>()
+
+        cancellable = publisher
+            .assign(to: \.text, on: self)
+
+        publisher.send("Hello, world")
+    }
+}
+public func assign<Root>(to keyPath: ReferenceWritableKeyPath<Root, Self.Output>, on object: Root) -> AnyCancellable
+
+从上边的代码可以看出，assign最核心的功能就是它第一个参数的类型是ReferenceWritableKeyPath。
+ReferenceWritableKeyPath要求该参数必须是引用类型且可写的keypath。
+
+在Swift中，keypath是一项非常强大的技术，大家都知道Swift是强类型的，只有通过keypath，我们才能访问到某个类型的属性。
+
+keypath它主要分为3种类型：
+KeyPath: 只能访问数据
+WritableKeyPath：既可以访问，又能写入数据
+ReferenceWritableKeyPath：只能访问和写入引用类型的数据
+
+struct Student {
+    let name: String
+    let age: Int
+    let score: Int
+}
+let students = [Student(name: "张三", age: 20, score: 80)]
+print(students.map { $0.name })
+print(students.map { $0.age })
+print(students.map { $0.score })
+
+我们就可以使用KeyPath的黑魔法了
+extension Sequence {
+    func map<T>(_ keyPath: KeyPath<Element, T>) -> [T] {
+        map { $0[keyPath: keyPath] }
+    }
+}
+print(students.map(\.name))
+print(students.map(\.age))
+print(students.map(\.score))
+
+KeyPath真正的强大之处在于范型能力
+
+总之一句话，assign使用了KeyPath的强大能力，但它不能接受Error。
+
+========================================sink
+public func sink(receiveValue: @escaping ((Self.Output) -> Void)) -> AnyCancellable
+public func sink(receiveCompletion: @escaping ((Subscribers.Completion<Self.Failure>) -> Void), receiveValue: @escaping ((Self.Output) -> Void)) -> AnyCancellable
+
+
+sink相对assign来说，算是一个全能的subscriber，它有两种使用方法:
+当publisher的错误类型为Never 时，可以使用简单形式，可以只传入一个receiveValue闭包，用于接收publisher发送的数据
+当publisher的错误类型为其他类型时，需使用复杂形势，需要传入两个闭包参数，receiveCompletion用于接收完成事件，包括.finished和.failure，receiveValue用于接收数据
+
+class SinkViewObservableObject: ObservableObject {
+    var cancellable: AnyCancellable?
+
+    @Published var text = ""
+
+    init() {
+        let publisher = PassthroughSubject<String, Never>()
+
+        cancellable = publisher
+            .sink(receiveValue: { value in
+                self.text = value
+            })
+
+        publisher.send("Hello, world")
+    }
+}
+
+上边的代码与下边的代码等效:
+
+class SinkViewObservableObject: ObservableObject {
+    var cancellable: AnyCancellable?
+
+    @Published var text = ""
+
+    init() {
+        let publisher = PassthroughSubject<String, Never>()
+
+        cancellable = publisher
+            .assign(to: \.text, on: self)
+
+        publisher.send("Hello, world")
+    }
+}
+
+当publisher调用了sink后，返回一个AnyCancellable类型，该协议的核心方法是
+final public func cancel()
+
+调用该方法就可以取消当前正在执行的pipline。总之，sink是我们平时开发用到最多的subscriber。
+
+"Sink" 在英语中的字面意思是 "下沉" 或 "沉淀"，在 Combine 框架中的命名也可以理解为将数据 "下沉" 到指定的闭包中进行处理。这个术语的形象描述可以是这样的:
+当一个 Publisher 发出一个值时，这个值就像一滴水落入一个容器中。而 sink 操作符就像是一个下沉的漏斗，它接收这些值并将它们 "沉淀" 到一个或多个闭包中进行处理。
+这些闭包可以视作是容器中的池子，接收到的每个值都会被 "沉淀" 到池子中，然后被相应的闭包处理。
+它负责接收 Publisher 发出的值，并将这些值 "沉淀" 到闭包中进行处理，就像水滴被漏斗接收并沉淀到池子中一样。
+
+========================================onReceive
+struct OnReceiveView: View {
+    private var timer = Timer.TimerPublisher(interval: 1.0,
+                                                    runLoop: RunLoop.main,
+                                                    mode: .common).autoconnect()
+    @State private var count = 0
+
+    var body: some View {
+        Text("\(count)")
+            .onReceive(timer) { _ in
+                self.count += 1
+            }
+            .navigationBarTitle("onReceive")
+    }
+}
+
+onReceive是用在SwiftUI内的一个subscriber，它是View协议的一个方法，也就说只要实现了View协议的都可以调用该方法：
+
+extension View {
+
+    /// Adds an action to perform when this view detects data emitted by the
+    /// given publisher.
+    ///
+    /// - Parameters:
+    ///   - publisher: The publisher to subscribe to.
+    ///   - action: The action to perform when an event is emitted by
+    ///     `publisher`. The event emitted by publisher is passed as a
+    ///     parameter to `action`.
+    ///
+    /// - Returns: A view that triggers `action` when `publisher` emits an
+    ///   event.
+    @inlinable public func onReceive<P>(_ publisher: P, perform action: @escaping (P.Output) -> Void) -> some View where P : Publisher, P.Failure == Never
+
+}
+
+
+========================================AnyCancellable
+public func assign<Root>(to keyPath: ReferenceWritableKeyPath<Root, Self.Output>, on object: Root) -> AnyCancellable
+public func sink(receiveCompletion: @escaping ((Subscribers.Completion<Self.Failure>) -> Void), receiveValue: @escaping ((Self.Output) -> Void)) -> AnyCancellable
+
+上边讲解的assign和sink，他们的返回值类型都是AnyCancellable,它允许我们调用.cancel()函数来取消当前的pipline，
+所以，通常我们都使用一个属性来指向这个返回值，以便在需要的时候取消掉pipline。
+
+class AnyCancellableViewObservableObject: ObservableObject {
+    var cancellable1: AnyCancellable
+    init() {
+        let publisher = PassthroughSubject<String, Never>()
+
+        cancellable1 = publisher
+            .sink(receiveValue: { print($0) })
+    }
+}
+
+如果在ObservableObject的实现中用到了多个pipeline,可以把他们保存到一个集合中：
+class AnyCancellableViewObservableObject: ObservableObject {
+    var cancellables: Set<AnyCancellable> = []
+
+    init() {
+        let publisher = PassthroughSubject<String, Never>()
+
+        publisher
+            .sink(receiveValue: { print($0) })
+            .store(in: &cancellables)
+    }
+}

@@ -1,5 +1,7 @@
 https://zhuanlan.zhihu.com/p/143415397
 
+https://swiftui-lab.com/swiftui-animations-part2/
+
 GeometryEffect实现了Animatable和ViewModifier这两个协议，因此说明它自身就能实现动画，同时也可以通过modifier来写代码
 
 系统中的offset就可以用其实现，代码如下：
@@ -41,10 +43,15 @@ SwiftUI并没有直接提供关键帧动画相关的modifier，但我们完全�
 只考率旋转：x只需要设置a，c，bdef都为0，y只需要设置b,d，abcef都为0
 
 func effectValue(size: CGSize) -> ProjectionTransform {
-        return ProjectionTransform(CGAffineTransform(a: 1, b: 0, c: skew, d: 1, tx: offset, ty: 0))
-    }
+    return ProjectionTransform(CGAffineTransform(a: 1, b: 0, c: skew, d: 1, tx: offset, ty: 0))
+}
 
 ==========Animation Feedback
+动画反馈的意思指的是动画在进行中，我们监听动画当前执行的参数，然后根据这些参数去做一些其他的事情。
+当卡片沿着某个轴360旋转的时候， 我们可以再effectValue中监听到动画当前旋转的角度，根据当前的这个角度我们主动的控制图片的内容，
+在本例中，当角度处于90~270之间时，显示背面的图片。一旦我们监听到旋转的角度达到90或者270的时候，我们替换显示的图片。
+
+
 struct FlipEffect: GeometryEffect {
     @Binding var flipped: Bool
     var angle: Double
@@ -77,11 +84,14 @@ struct FlipEffect: GeometryEffect {
     }
 }
 
-由于GeometryEffect实现了Animatable协议，系统会根据animatableData来动态的计算参数，这里需要计算的参数指的是angle。angle会被打散成很多不同的数字，系统会针对每一个不同的angle都调用effectValue方法。
+由于GeometryEffect实现了Animatable协议，系统会根据animatableData来动态的计算参数，这里需要计算的参数指的是angle。
+angle会被打散成很多不同的数字，系统会针对每一个不同的angle都调用effectValue方法。
 
 DispatchQueue.main.async {
-            self.flipped = (self.angle >= 90 && self.angle < 270)
-        }
+    self.flipped = (self.angle >= 90 && self.angle < 270)
+}
+
+我们根据当前的角度来决定flipped的值，因此flipped是频繁被赋值的。我们得出的结论是：系统根据动画函数计算angle，然后在effectValue中获取angle，再根据这个值处理我们自己的逻辑。
 
 angle是一个Binding的值：@Binding var flipped: Bool，它的值的改变会往上层抛出
 
@@ -126,9 +136,142 @@ struct RotatingCard: View {
 }
 
 可以看出，依赖flipped在临界点的变化，我们切换iamgeIndex,从而实现了切换显示图片的目的。
-
+这一小结的目的是让我们知道，可以在effectValue中获得动画状态。
 
 ==========Make a View Follow a Path
+让某一个view沿着某个path运动
+
+struct InfinityShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        InfinityShape.createInfinityShape(in: rect)
+    }
+
+    static func createInfinityShape(in rect: CGRect) -> Path {
+        let w = rect.width
+        let h = rect.height
+        let quarternW = w / 4.0
+        let quarternH = h / 4.0
+
+        var path = Path()
+
+        path.move(to: CGPoint(x: quarternW, y: quarternH * 3))
+        path.addCurve(to: CGPoint(x: quarternW, y: quarternH), control1: CGPoint(x: 0, y: quarternH * 3), control2: CGPoint(x: 0, y: quarternH))
+
+        path.move(to: CGPoint(x: quarternW, y: quarternH))
+        path.addCurve(to: CGPoint(x: quarternW * 3, y: quarternH * 3), control1: CGPoint(x: quarternW * 2, y: quarternH), control2: CGPoint(x: quarternW * 2, y: quarternH * 3))
+
+        path.move(to: CGPoint(x: quarternW * 3, y: quarternH * 3))
+        path.addCurve(to: CGPoint(x: quarternW * 3, y: quarternH), control1: CGPoint(x: w, y: quarternH * 3), control2: CGPoint(x: w, y: quarternH))
+
+        path.move(to: CGPoint(x: quarternW * 3, y: quarternH))
+        path.addCurve(to: CGPoint(x: quarternW, y: quarternH * 3), control1: CGPoint(x: quarternW * 2, y: quarternH), control2: CGPoint(x: quarternW * 2, y: quarternH * 3))
+
+        return path
+    }
+}
+
+/// 计算当前的点的位置
+func percentPoint(_ percent: CGFloat) -> CGPoint {
+    let pct = percent > 1 ? 0 : (percent < 0 ? 1 : percent)
+    let f = pct > 0.999 ? 0.999 : pct
+    let t = pct > 0.999 ? 1 : pct + 0.001
+    let tp = path.trimmedPath(from: f, to: t)
+    return CGPoint(x: tp.boundingRect.midX, y: tp.boundingRect.midY)
+}
+
+/// 计算两点角度
+func calculateDirection(_ pt1: CGPoint, _ pt2: CGPoint) -> CGFloat {
+    let a = pt2.x - pt1.x
+    let b = pt2.y - pt1.y
+
+    let angle = (a > 0) ? atan(b / a) : atan(b / a) - CGFloat.pi
+
+    return angle
+}
+
+在iOS中，y是越往下越大的。角度是按照顺时针算的
+P0 中心点
+以下都相对于P0来说
+P1 右上
+P2 右下
+P3 左下
+P4 左上
+
+举个例子假设atan(x) = 1.5,那么atan(-x) = -1.5
+let a = pt2.x - pt1.x
+let b = pt2.y - pt1.y
+P0 -> P1: a > 0 b < 0 atan(b/a)计算的结果是负的，正好是角1
+P0 -> P2: a > 0 b > 0 atan(b/a)计算的结果是正的，正好是角2
+P0 -> P3: a < 0 b > 0 atan(b/a)计算的结果是负的，结果是角1，这时候为了获取P0 -> P3的角度，需要再减去180度，也就是pi
+P0 -> P4: a < 0 b < 0 atan(b/a)计算的结果是正的，结果是角2，这时候为了获取P0 -> P4的角度，需要再减去180度，也就是pi
+不难发现，如果a>0,那么计算的结果正好是我们想要的角度，其他情况则需要在结果的基础上再减去180度
+
+struct FollowEffect: GeometryEffect {
+    var pct: CGFloat
+    let path: Path
+
+    var animatableData: CGFloat {
+        get {
+            pct
+        }
+        set {
+            pct = newValue
+        }
+    }
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        let pt1 = percentPoint(pct - 0.01)
+        let pt2 = percentPoint(pct)
+
+        let angle = calculateDirection(pt1, pt2)
+        let transform = CGAffineTransform(translationX: pt1.x, y: pt1.y).rotated(by: angle)
+
+        return ProjectionTransform(transform)
+    }
+
+    /// 计算两点角度
+    func calculateDirection(_ pt1: CGPoint, _ pt2: CGPoint) -> CGFloat {
+        let a = pt2.x - pt1.x
+        let b = pt2.y - pt1.y
+
+        let angle = (a > 0) ? atan(b / a) : atan(b / a) - CGFloat.pi
+
+        return angle
+    }
+
+    /// 计算当前的点的位置
+    func percentPoint(_ percent: CGFloat) -> CGPoint {
+        let pct = percent > 1 ? 0 : (percent < 0 ? 1 : percent)
+        let f = pct > 0.999 ? 0.999 : pct
+        let t = pct > 0.999 ? 1 : pct + 0.001
+        let tp = path.trimmedPath(from: f, to: t)
+        return CGPoint(x: tp.boundingRect.midX, y: tp.boundingRect.midY)
+    }
+}
+struct Example9: View {
+    @State private var flag = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                InfinityShape().stroke(Color.green, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .miter, miterLimit: 0, dash: [7, 7], dashPhase: 0))
+                    .frame(width: proxy.size.width, height: 300)
+
+                // Animate movement of Image
+                Image(systemName: "airplane").resizable().foregroundColor(Color.red)
+                    .frame(width: 50, height: 50).offset(x: -25, y: -25)
+                    .modifier(FollowEffect(pct: self.flag ? 1 : 0, path: InfinityShape.createInfinityShape(in: CGRect(x: 0, y: 0, width: proxy.size.width, height: 300))))
+                    .onAppear {
+                        withAnimation(Animation.linear(duration: 4.0).repeatForever(autoreverses: false)) {
+                            self.flag.toggle()
+                        }
+                    }
+
+                }.frame(alignment: .topLeading)
+            }
+            .padding(20)
+        }
+}
 
 
 ==========Ignored By Layout
@@ -197,3 +340,8 @@ struct ShowSize: View {
 }
 
 使用.ignoredByLayout(),可以让我们有能力在某些特殊的场景下，依然能够执行动画，但view的layout并不会实时计算。
+
+
+总结
+GeometryEffect本身已经遵守了Animatable协议，因此我们需要在自定义的effect中实现animatableData,这里边的值就是系统根据动画设置，自动计算的值，我们使用该值，
+在func effectValue(size: CGSize) -> ProjectionTransform函数中做一些必要的计算 最后返回一个ProjectionTransform,来告诉系统view的形变信息。

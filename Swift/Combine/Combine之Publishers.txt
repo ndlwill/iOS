@@ -1,0 +1,734 @@
+Publishers处于pipline的最上游，它的主要作用是发送数据
+
+
+==================================================Just
+Just可以算是最简单的publisher了，它发送数据的方式相当于透传数据，最常用的场景是配合flatMap
+
+class JustViewObservableObject: ObservableObject {
+    var cancellable: AnyCancellable?
+
+    struct Student: Decodable {
+        let name: String
+    }
+
+    let json = """
+    [{
+    "name": "小明"
+    },
+    {
+    "name": "小红"
+    },
+    {
+    "name": "李雷"
+    }]
+    """
+
+    init() {
+        let publisher = PassthroughSubject<String, Never>()
+
+        cancellable = publisher
+            .flatMap { value in
+                Just(value.data(using: .utf8)!)
+                    .decode(type: [Student].self, decoder: JSONDecoder())
+                    .catch { _ in
+                        Just([Student(name: "无名氏")])
+                    }
+            }
+            .sink(receiveCompletion: { _ in
+                print("结束了")
+            }, receiveValue: { someValue in
+                print(someValue)
+            })
+
+        publisher.send(json)
+    }
+}
+因为flatMap闭包要求的返回值必须是一个publisher，所以在上边的代码中，使用Just比较合适，它把json数据映射成模型数组。
+在上边的catch中也用到了Just，目的是当发生错误时，返回一个默认的值，值得注意的是，catch同样要求返回一个publsiher。
+
+
+==================================================Future
+final public class Future<Output, Failure> : Publisher where Failure : Error {
+
+    /// A type that represents a closure to invoke in the future, when an element or error is available.
+    ///
+    /// The promise closure receives one parameter: a `Result` that contains either a single element published by a ``Future``, or an error.
+    public typealias Promise = (Result<Output, Failure>) -> Void
+
+    /// Creates a publisher that invokes a promise closure when the publisher emits an element.
+    ///
+    /// - Parameter attemptToFulfill: A ``Future/Promise`` that the publisher invokes when the publisher emits an element or terminates with an error.
+    public init(_ attemptToFulfill: @escaping (@escaping Future<Output, Failure>.Promise) -> Void)
+
+    /// Attaches the specified subscriber to this publisher.
+    ///
+    /// Implementations of ``Publisher`` must implement this method.
+    ///
+    /// The provided implementation of ``Publisher/subscribe(_:)-4u8kn``calls this method.
+    ///
+    /// - Parameter subscriber: The subscriber to attach to this ``Publisher``, after which it can receive values.
+    final public func receive<S>(subscriber: S) where Output == S.Input, Failure == S.Failure, S : Subscriber
+}
+
+Future是一个专门处理异步函数的publisher，通过分析上边的代码，我们发现，它使用一个闭包来初始化，该闭包的返回值是一个Result<Output, Failure>类型，也就是说，
+在闭包中，我们处理异步过程，异步处理完成后，需要返回这个Result类型。
+
+
+class FutureViewObservableObject: ObservableObject {
+    var cancellable: AnyCancellable?
+
+    init() {
+        cancellable = Future<Bool, Error> { promise in
+            /// 模拟异步过程
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                return promise(.success(true))
+            }
+        }
+        .sink(receiveCompletion: {
+            print($0)
+        }, receiveValue: {
+            print($0)
+        })
+    }
+}
+
+使用DispatchQueue.main.asyncAfter模拟了一个异步的过程，本质上，这个异步过程可以是任何异步的过程，比如平时开发中的网络请求，或者某些系统的api等等。
+使用Future把现有的异步过程加入pipline中，是一个不错的实践，但需要注意一点，Future会在创建后立刻被调用，而不是等待收到订阅者的请求才调用。要验证这个问题，我们可以修改一下代码:
+cancellable = Future<Bool, Error> { promise in
+    print("diaoyuong")
+    /// 模拟异步过程
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+        return promise(.success(true))
+    }
+}
+.print()
+.sink(receiveCompletion: {
+    print($0)
+}, receiveValue: {
+    print($0)
+})
+
+diaoyuong
+receive subscription: (Future)
+request unlimited
+receive value: (true)
+true
+receive finished
+finished
+
+可以看出，闭包确实在收到请求之前就已经调用了，要解决这个问题，需要在Future外边包装一个Deferred:
+cancellable = Deferred {
+    return Future<Bool, Error> { promise in
+        /// 模拟异步过程
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            return promise(.success(true))
+        }
+    }
+}
+.sink(receiveCompletion: {
+    print($0)
+}, receiveValue: {
+    print($0)
+})
+
+
+==================================================Empty
+/// A publisher that never publishes any values, and optionally finishes immediately.
+///
+/// You can create a ”Never” publisher — one which never sends values and never finishes or fails — with the initializer `Empty(completeImmediately: false)`.
+@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
+public struct Empty<Output, Failure> : Publisher, Equatable where Failure : Error {
+
+    /// Creates an empty publisher.
+    ///
+    /// - Parameter completeImmediately: A Boolean value that indicates whether the publisher should immediately finish.
+    public init(completeImmediately: Bool = true)
+
+    /// Creates an empty publisher with the given completion behavior and output and failure types.
+    ///
+    /// Use this initializer to connect the empty publisher to subscribers or other publishers that have specific output and failure types.
+    ///
+    /// - Parameters:
+    ///   - completeImmediately: A Boolean value that indicates whether the publisher should immediately finish.
+    ///   - outputType: The output type exposed by this publisher.
+    ///   - failureType: The failure type exposed by this publisher.
+    public init(completeImmediately: Bool = true, outputType: Output.Type, failureType: Failure.Type)
+
+    /// A Boolean value that indicates whether the publisher immediately sends a completion.
+    ///
+    /// If `true`, the publisher finishes immediately after sending a subscription to the subscriber. If `false`, it never completes.
+    public let completeImmediately: Bool
+}
+
+Empty不发送任何数据，并且可以选择是否立刻终止pipline，默认情况下，当创建了该publisher后，它就会立刻终止piline。
+我们可以利用这个特性，当监听到错误后，立刻终止pipline。
+class EmptyPublisherViewObservableObject: ObservableObject {
+    var cancellable: AnyCancellable?
+
+    init() {
+        enum MyError: Error {
+            case custom
+        }
+
+        let publisher = PassthroughSubject<Int, MyError>()
+
+        cancellable = publisher
+            .catch { _ in
+                Empty<Int, MyError>()
+            }
+            .sink(receiveCompletion: {
+                print($0)
+            }, receiveValue: {
+                print($0)
+            })
+
+        publisher.send(1)
+        publisher.send(completion: Subscribers.Completion.failure(MyError.custom))
+    }
+}
+
+上边的代码使用catch监听错误，一旦错误发生，就发送一个Emptypublisher，利用它立刻结束pipline的特性来终止pipline
+它和.replaceError(with: 0)不同的地方在于后者不会终止pipline，会把错误替换成默认的值。
+
+
+==================================================Fail
+class FailViewObservableObject: ObservableObject {
+    var cancellable: AnyCancellable?
+
+    init() {
+        enum MyError: Error {
+            case custom
+        }
+
+        cancellable = Fail<Int, MyError>(error: MyError.custom)
+            .sink(receiveCompletion: {
+                print($0)
+            }, receiveValue: {
+                print($0)
+            })
+
+    }
+}
+Fail和Empty都能立刻终止pipline，但Fail使用的场景并不多
+
+
+==================================================Publishers.Sequence
+class SequenceViewObservableObject: ObservableObject {
+    var cancellable: AnyCancellable?
+
+    init() {
+        let list: Array = [1, 2, 3]
+        let set: Set = ["1", "2", "3"]
+        let dict: Dictionary = ["name": "张三", "age": "20"]
+        let str: String = "你好吗"
+
+        cancellable = list.publisher
+            .sink(receiveCompletion: {
+                print($0)
+            }, receiveValue: {
+                print($0)
+            })
+    }
+}
+
+Publishers.Sequence解决了像这种集合数据类型的数据流问题，凡是实现了Sequence协议的对象，都可以调用.publisher来自动创建一个publisher，然后就可以使用Combine中的所有功能。
+下边四种类型是最常用的:
+Array
+Set
+Dictionay
+String
+
+cancellable = "你好吗".publisher
+    .sink(receiveCompletion: {
+        print($0)
+    }, receiveValue: {
+        print($0)
+    })
+
+你
+好
+吗
+finished
+字符串本质上就是字符的集合，使用上边的代码，轻松实现字符传输。
+
+
+==================================================Record
+/// A publisher that allows for recording a series of inputs and a completion, for later playback to each subscriber.
+@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
+public struct Record<Output, Failure> : Publisher where Failure : Error {
+    /// Creates a publisher to interactively record a series of outputs and a completion.
+    ///
+    /// - Parameter record: A recording instance that can be retrieved after completion to create new record publishers to replay the recording.
+    public init(record: (inout Record<Output, Failure>.Recording) -> Void)
+
+    /// Creates a record publisher from an existing recording.
+    ///
+    /// - Parameter recording: A previously-recorded recording of published elements and a completion.
+    public init(recording: Record<Output, Failure>.Recording)
+
+    /// Creates a record publisher to publish the provided elements, followed by the provided completion value.
+    ///
+    /// - Parameters:
+    ///   - output: An array of output elements to publish.
+    ///   - completion: The completion value with which to end publishing.
+    public init(output: [Output], completion: Subscribers.Completion<Failure>)
+}
+
+Record其实是一个非常强大且有用的publisher，强大在于它可以编码和解码，就像它的名字一样，可以被保存，解析，传递。核心思想是先把数据保存起来，当收到订阅后再发送数据。
+
+从上边的代码可以看出，他有3个初始化方法:
+1. 使用record: (inout Record<Output, Failure>.Recording) -> Void闭包初始化
+let recordPublisher = Record<String, MyCustomError> { recording in
+    recording.receive("你")
+    recording.receive("好")
+    recording.receive("吗")
+    recording.receive(completion: Subscribers.Completion.finished)
+}
+
+2. 使用recording: Record<Output, Failure>.Recording初始化，也就是传入一个Recording类型的实例
+var recording = Record<String, MyCustomError>.Recording()
+recording.receive("你")
+recording.receive("好")
+recording.receive("吗")
+recording.receive(completion: Subscribers.Completion.finished)
+let recordPublisher = Record<String, MyCustomError>(recording: recording)
+
+3. 使用output: [Output], completion: Subscribers.Completion<Failure>参数初始化
+let recordPublisher = Record<String, MyCustomError>(output: ["你", "好", "吗"], completion: Subscribers.Completion.finished)
+
+上边这3种初始化方法的效果都是一样的，我个人更倾向于第1种，感觉它的可读性更好一点。
+初始化成功后，它就跟Publishers.Sequence很像了
+cancellable = recordPublisher
+            .sink(receiveCompletion: {
+                print($0)
+            }, receiveValue: {
+                print($0)
+            })
+
+重点来了，上边说过，它是支持编解码的，什么意思呢？ 就是我们可以把事先设定好的publisher模型保存起来，比如以JSON保存，在任何地方都可以从JSON解析成Record。
+
+编码的例子:
+let jsonEncoder = JSONEncoder()
+let jsonEncoded = try? jsonEncoder.encode(recordPublisher)
+if let jsonData = jsonEncoded {
+    let jsonStr = String(data: jsonData, encoding: .utf8)
+    print(jsonStr ?? "编码错误")
+}
+{"recording":{"completion":{"success":true},"output":["你","好","吗"]}}
+
+解码的例子:
+let jsonDecoder = JSONDecoder()
+let jsonDecoded = try? jsonDecoder.decode(Record<String, MyCustomError>.self, from: jsonEncoded!)
+if let record = jsonDecoded {
+    print(record)
+}
+Record<String, MyCustomError>(recording: Combine.Record<Swift.String, MCMarbleDiagramSwiftUI.MyCustomError>.Recording(state: Combine.Record<Swift.String, MCMarbleDiagramSwiftUI.MyCustomError>.Recording.State.complete, output: ["你", "好", "吗"], completion: Combine.Subscribers.Completion<MCMarbleDiagramSwiftUI.MyCustomError>.finished))
+
+
+==================================================Deferred
+/// A publisher that awaits subscription before running the supplied closure to create a publisher for the new subscriber.
+@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
+public struct Deferred<DeferredPublisher> : Publisher where DeferredPublisher : Publisher {
+reatePublisher: () -> DeferredPublisher
+
+    /// Creates a deferred publisher.
+    ///
+    /// - Parameter createPublisher: The closure to execute when calling `subscribe(_:)`.
+    public init(createPublisher: @escaping () -> DeferredPublisher)
+}
+
+简而言之，Deferred的核心思想就是当收到订阅后才创建publisher
+
+cancellable = Deferred {
+    return Future<Bool, Error> { promise in
+        /// 模拟异步过程
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            return promise(.success(true))
+        }
+    }
+}
+.sink(receiveCompletion: {
+    print($0)
+}, receiveValue: {
+    print($0)
+})
+
+Deferred和Future是黄金搭档，Future不管有没有订阅者都会立刻执行，配合Deferred就完美实现了把任何异步问题添加到pipline中。
+还有一点，对于比较耗费性能的publisher，也可以使用Deferred包装，只有当收到订阅后才会初始化。
+
+==================================================MakeConnectable
+class MakeConnectableViewObservableObject: ObservableObject {
+    var cancellable1: AnyCancellable?
+    var cancellable2: AnyCancellable?
+
+    var cancellable: Cancellable?
+
+    init() {
+        let publisher = Just("Hello, world")
+            .share()
+            .makeConnectable()
+
+        cancellable1 = publisher
+            .sink(receiveCompletion: {
+                print("Stream 1 received: \($0)")
+            }, receiveValue: {
+                print("Stream 1 received: \($0)")
+            })
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            self.cancellable2 = publisher
+                .sink(receiveCompletion: {
+                    print("Stream 2 received: \($0)")
+                }, receiveValue: {
+                    print("Stream 2 received: \($0)")
+                })
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            self.cancellable = publisher.connect()
+        }
+    }
+}
+
+按照publisher正常的生命周期，一旦收到订阅就会立刻建立连接，而在某些场景下，我们需要等待符合某个条件后再建立连接。
+上边的代码就是一个例子，由于Just调用了.share()，所以我们希望当所有的订阅都处理完成后再建立连接，这个时候，让Just变成Connectable就很有必要。
+
+很简单，publisher只需要调用.makeConnectable()就可以成为ConnectablePublisher。成为ConnectablePublisher后就可以调用下边两个方法:
+connect
+autoconnect
+
+在上边的例子中，我们等待pipline建立完成后，调用了self.cancellable = publisher.connect(),从而开启了整个pipline。
+
+这是最常用的一个示例。
+let publisher = Just("Hello, world")
+    .share()
+    .makeConnectable()
+    .autoconnect()
+如果在.makeConnectable()之后，紧接着调用了.autoconnect()就相当于publisher没做任何事情，在真实的开发中，一定不要这么写代码。
+
+
+==================================================@Published
+class PublishedViewObservableObject: ObservableObject {
+    @Published var text: String = ""
+
+    var cancellable: AnyCancellable?
+
+    init() {
+        cancellable = $text
+            .sink(receiveValue: {
+                print($0)
+            })
+
+        text = "hello, world"
+    }
+}
+@Published通常用在SwiftUI中的ObservableObject模型中，如果View依赖了该属性，当该属性改变时，View自动更新。
+
+当我们调用$text的时候，它返回了一个publisher，这是为什么呢？ 我们看看Published的定义：
+@propertyWrapper public struct Published<Value> {
+
+    /// A publisher for properties marked with the `@Published` attribute.
+    public struct Publisher : Publisher {
+
+        /// The kind of values published by this publisher.
+        public typealias Output = Value
+
+        /// The kind of errors this publisher might publish.
+        ///
+        /// Use `Never` if this `Publisher` does not publish errors.
+        public typealias Failure = Never
+
+        /// Attaches the specified subscriber to this publisher.
+        ///
+        /// Implementations of ``Publisher`` must implement this method.
+        ///
+        /// The provided implementation of ``Publisher/subscribe(_:)-4u8kn``calls this method.
+        ///
+        /// - Parameter subscriber: The subscriber to attach to this ``Publisher``, after which it can receive values.
+        public func receive<S>(subscriber: S) where Value == S.Input, S : Subscriber, S.Failure == Published<Value>.Publisher.Failure
+    }
+
+    /// The property for which this instance exposes a publisher.
+    ///
+    /// The ``Published/projectedValue`` is the property accessed with the `$` operator.
+    public var projectedValue: Published<Value>.Publisher { mutating get set }
+}
+
+Published内部有一个属性projectedValue，它就是一个publisher，我们可以用$符号访问。
+
+Published并不是SwiftUI中才能用，它是Combine的特性，因此我们可以在任何class中使用:
+class MyClass {
+    @Published var text: String = ""
+
+    var cancellable: AnyCancellable?
+
+    init() {
+        cancellable = $text
+            .sink(receiveValue: {
+                print($0)
+            })
+
+        text = "hello, MyClass"
+    }
+}
+
+
+==================================================NotificationCenter
+extension Notification.Name {
+    static let myCustomNotification = Notification.Name("myCustomNotification")
+}
+
+class NotificationCenterPublisherViewObservableObject: ObservableObject {
+    var cancellable: AnyCancellable?
+
+    init() {
+        cancellable = NotificationCenter.default
+            .publisher(for: .myCustomNotification)
+            .sink(receiveCompletion: {
+                print($0)
+            }, receiveValue: {
+                print($0)
+            })
+
+        NotificationCenter.default.post(name: .myCustomNotification, object: nil)
+    }
+}
+
+/// Prints:
+/// name = myCustomNotification, object = nil, userInfo = nil
+
+Combine也为NotificationCenter提供了publisher的能力
+
+
+==================================================Timer
+extension Timer {
+
+    /// Returns a publisher that repeatedly emits the current date on the given interval.
+    ///
+    /// - Parameters:
+    ///   - interval: The time interval on which to publish events. For example, a value of `0.5` publishes an event approximately every half-second.
+    ///   - tolerance: The allowed timing variance when emitting events. Defaults to `nil`, which allows any variance.
+    ///   - runLoop: The run loop on which the timer runs.
+    ///   - mode: The run loop mode in which to run the timer.
+    ///   - options: Scheduler options passed to the timer. Defaults to `nil`.
+    /// - Returns: A publisher that repeatedly emits the current date on the given interval.
+    public static func publish(every interval: TimeInterval, tolerance: TimeInterval? = nil, on runLoop: RunLoop, in mode: RunLoop.Mode, options: RunLoop.SchedulerOptions? = nil) -> Timer.TimerPublisher
+
+    /// A publisher that repeatedly emits the current date on a given interval.
+    final public class TimerPublisher : ConnectablePublisher {
+
+        /// The kind of values published by this publisher.
+        public typealias Output = Date
+
+        /// The kind of errors this publisher might publish.
+        ///
+        /// Use `Never` if this `Publisher` does not publish errors.
+        public typealias Failure = Never
+
+        final public let interval: TimeInterval
+
+        final public let tolerance: TimeInterval?
+
+        final public let runLoop: RunLoop
+
+        final public let mode: RunLoop.Mode
+
+        final public let options: RunLoop.SchedulerOptions?
+
+        /// Creates a publisher that repeatedly emits the current date on the given interval.
+        ///
+        /// - Parameters:
+        ///   - interval: The interval on which to publish events.
+        ///   - tolerance: The allowed timing variance when emitting events. Defaults to `nil`, which allows any variance.
+        ///   - runLoop: The run loop on which the timer runs.
+        ///   - mode: The run loop mode in which to run the timer.
+        ///   - options: Scheduler options passed to the timer. Defaults to `nil`.
+        public init(interval: TimeInterval, tolerance: TimeInterval? = nil, runLoop: RunLoop, mode: RunLoop.Mode, options: RunLoop.SchedulerOptions? = nil)
+
+        /// Connects to the publisher, allowing it to produce elements, and returns an instance with which to cancel publishing.
+        ///
+        /// - Returns: A ``Cancellable`` instance that you use to cancel publishing.
+        final public func connect() -> Cancellable
+    }
+}
+
+Timer是比较适合作为publisher的，通常来说，我们之所以使用Timer，就是需要按照固定的时间间隔来接收数据。
+
+从上边的代码可以看出，如果想为Foundation框架中的元素增加Combine功能，只需要写一个extension就可以了，
+对于Timer，为它绑定一个TimerPublisher。
+
+TimerPublisher实现了ConnectablePublisher协议，因此它可以访问.autoconnect()和.connect()。
+
+如果我们想自动开启定时器，代码是这样的:
+cancellable = Timer.publish(every: 1.0, on: .main, in: .common)
+    .autoconnect()
+    .sink(receiveCompletion: {
+        print($0)
+    }, receiveValue: {
+        print($0)
+    })
+
+如果想手动控制连接，代码是这样的:
+class TimerViewObservableObject: ObservableObject {
+    var cancellable: AnyCancellable?
+    var timerPublisher = Timer.publish(every: 1.0, on: .main, in: .common)
+    var connectable: Cancellable?
+
+    @Published var count: Int = 1
+
+    init() {
+    }
+
+    func startTimer() {
+        cancellable = timerPublisher
+            .sink(receiveCompletion: {
+                print($0)
+            }, receiveValue: { _ in
+                self.count += 1
+            })
+
+        connectable = timerPublisher
+            .connect()
+    }
+
+    func stopTimer() {
+        connectable?.cancel()
+    }
+}
+
+注意，当调用了connectable?.cancel(),就终止了该pipline，要想重新启动，需要重新开启订阅流程。
+
+
+==================================================KeyValueObservingPublisher
+class MyObjectToObserve: NSObject {
+    @objc dynamic var myDate = NSDate(timeIntervalSince1970: 0) // 1970
+    func updateDate() {
+        myDate = myDate.addingTimeInterval(Double(2 << 30)) // Adds about 68 years.
+    }
+}
+class MyObserver: NSObject {
+    @objc var objectToObserve: MyObjectToObserve
+    var observation: NSKeyValueObservation?
+
+    init(object: MyObjectToObserve) {
+        objectToObserve = object
+        super.init()
+
+        observation = observe(
+            \.objectToObserve.myDate,
+            options: [.old, .new]
+        ) { object, change in
+            print("myDate changed from: \(change.oldValue!), updated to: \(change.newValue!)")
+        }
+    }
+}
+
+Combine也为kvo增加了扩展，用法如下:
+
+final class MyKeyValueClass: NSObject {
+    @objc dynamic var name: String = ""
+    @objc dynamic var age: Int = 20
+}
+
+class KeyValueObservingPublisherViewObservableObject: ObservableObject {
+    var cancellable: AnyCancellable?
+
+    init() {
+        let keyValueClass = MyKeyValueClass()
+
+        cancellable = keyValueClass.publisher(for: \.name)
+            .sink(receiveCompletion: {
+                print($0)
+            }, receiveValue: {
+                print($0)
+            })
+
+        keyValueClass.name = "James"
+    }
+}
+在objc的类中用@objc dynamic声明属性
+使用keyValueClass.publisher(for: \.name)创建publisher
+
+
+==================================================DataTaskPublisher
+extension URLSession {
+
+    /// Returns a publisher that wraps a URL session data task for a given URL.
+    ///
+    /// The publisher publishes data when the task completes, or terminates if the task fails with an error.
+    /// - Parameter url: The URL for which to create a data task.
+    /// - Returns: A publisher that wraps a data task for the URL.
+    public func dataTaskPublisher(for url: URL) -> URLSession.DataTaskPublisher
+
+    /// Returns a publisher that wraps a URL session data task for a given URL request.
+    ///
+    /// The publisher publishes data when the task completes, or terminates if the task fails with an error.
+    /// - Parameter request: The URL request for which to create a data task.
+    /// - Returns: A publisher that wraps a data task for the URL request.
+    public func dataTaskPublisher(for request: URLRequest) -> URLSession.DataTaskPublisher
+
+    public struct DataTaskPublisher : Publisher {
+
+        /// The kind of values published by this publisher.
+        public typealias Output = (data: Data, response: URLResponse)
+
+        /// The kind of errors this publisher might publish.
+        ///
+        /// Use `Never` if this `Publisher` does not publish errors.
+        public typealias Failure = URLError
+
+        public let request: URLRequest
+
+        public let session: URLSession
+
+        public init(request: URLRequest, session: URLSession)
+    }
+}
+
+URLSession.shared.dataTaskPublisher(for url: URL)是网络请求中使用最频繁的publisher，值得注意的有以下几点：
+
+Output = (data: Data, response: URLResponse)：它的输出类型是一个元组
+Failure = URLError: 错误类型为URLError
+使用URL或URLRequest创建网络请求
+
+
+==================================================Result.Publisher
+class ResultPublisherViewViewObservableObject: ObservableObject {
+    var cancellable1: AnyCancellable?
+    var cancellable2: AnyCancellable?
+
+    init() {
+
+        enum MyError: Error {
+            case custom
+        }
+
+        let publisher = Result<Int, MyError>.Publisher(.success(1))
+            .share()
+
+        cancellable1 = publisher
+            .sink(receiveCompletion: {
+                print("Stream 1 received: \($0)")
+            }, receiveValue: {
+                print("Stream 1 received: \($0)")
+            })
+
+        cancellable2 = publisher
+            .sink(receiveCompletion: {
+                print("Stream 2 received: \($0)")
+            }, receiveValue: {
+                print("Stream 2 received: \($0)")
+            })
+    }
+}
+
+/// Prints:
+/// Stream 1 received: 1
+/// Stream 1 received: finished
+/// Stream 2 received: finished
+
+Result.Publisher主要用于发送是否成功或失败事件，如果是.success事件，则收到请求后就发送数据，然后再结束pipline, 而.faulure立即结束pipline。
+
+其实Result.Publisher和Just很像,不同之处在于:
+Result.Publisher可以发送数据+成功+失败
+Just只能发送数据

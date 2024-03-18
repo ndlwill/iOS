@@ -41,4 +41,21 @@ extension UIView {
         }
         fatalError("No suitable object found in nib file")
     }
+    
+    var associatedId: String {
+        get {
+            if let resultStr = objc_getAssociatedObject(self, AssociatedKey.from(#function)) as? String {
+                return resultStr
+            } else {
+                return ""
+            }
+        }
+        
+        set {
+            objc_setAssociatedObject(self,
+                                     AssociatedKey.from(#function),
+                                     newValue,
+                                     .OBJC_ASSOCIATION_COPY_NONATOMIC)
+        }
+    }
 }

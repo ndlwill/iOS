@@ -1,0 +1,57 @@
+在Combine中，存在两个Subjects,他们就是一种特殊的publisher。之所以称他们是特殊的，是因为他们不仅包含publisher通用的一些特性，还具有独特的地方
+
+/// A publisher that exposes a method for outside callers to publish elements.
+///
+/// A subject is a publisher that you can use to ”inject” values into a stream, by calling its ``Subject/send(_:)`` method. This can be useful for adapting existing imperative code to the Combine model.
+@available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *)
+public protocol Subject : AnyObject, Publisher {
+
+    /// Sends a value to the subscriber.
+    ///
+    /// - Parameter value: The value to send.
+    func send(_ value: Self.Output)
+
+    /// Sends a completion signal to the subscriber.
+    ///
+    /// - Parameter completion: A `Completion` instance which indicates whether publishing has finished normally or failed with an error.
+    func send(completion: Subscribers.Completion<Self.Failure>)
+
+    /// Sends a subscription to the subscriber.
+    ///
+    /// This call provides the ``Subject`` an opportunity to establish demand for any new upstream subscriptions.
+    ///
+    /// - Parameter subscription: The subscription instance through which the subscriber can request elements.
+    func send(subscription: Subscription)
+}
+
+Subject本身就是一个协议，因为它继承了Publisher协议，所以才说它是一种特殊的Publisher。它最核心的内容是提供了3个send方法:
+func send(_ value: Self.Output)该方法可以让我们在任何时候任何地方发送任何数据，这提供了非常灵活的数据发送能力。
+func send(completion: Subscribers.Completion<Self.Failure>)该方法可以让我们发送.finished或者.failure事件，用于结束该pipline。
+func send(subscription: Subscription)该方法发送一个subscription给订阅者，建议两者沟通的一个中间渠道。
+总之一句话，send是Subject的核心方法，也是核心理念。
+
+CurrentValueSubject:
+最特殊的地方有2点:
+它有一个初始值，也可以称之为最开始它当前的值就是它的初始值
+当调用send发送新的数据的时候，它更新当前的值，然后发送给订阅者
+
+其中，最有意思的一点是，当它再次收到一个新的订阅的情况下，它会给新的订阅着发送它当前的值
+
+总之一句话，CurrentValueSubject是有记忆的。
+let publisher = CurrentValueSubject<Int, Never>(5)
+
+cancellable1 = publisher
+    .sink(receiveValue: { print($0) })
+
+publisher.send(1)
+publisher.send(2)
+publisher.send(3)
+
+cancellable2 = publisher
+    .sink(receiveValue: { print($0) })
+
+
+PassthroughSubject:
+它更加简单直接，它不记忆任何状态，只传递数据。
+
+这里要说的一点是，PassthroughSubject是一个比较常用的publisher，尤其用于test，主要原因是，它能够让我们自由控制数据的发送时机。

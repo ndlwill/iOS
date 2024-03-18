@@ -1,0 +1,132 @@
+SwiftUI的设计理念是Data flow， 也就是View是由数据驱动的，我们把View依赖的这些数据称之为状态，因此，SwiftUI中的数据管理就是状态管理。
+
+如果View依赖了这些数据，当数据改变的时候，View就会刷新
+
+class MyViewModel: ObservableObject {
+    @Published var name: String = "张三"
+}
+
+struct ContentView: View {
+    @ObservedObject var dataModel: MyViewModel
+
+    var body: some View {
+        Text(dataModel.name)
+    }
+}
+
+ObservedObject:
+@propertyWrapper @frozen public struct ObservedObject<ObjectType> : DynamicProperty where ObjectType : ObservableObject {
+    @dynamicMemberLookup @frozen public struct Wrapper {
+        public subscript<Subject>(dynamicMember keyPath: ReferenceWritableKeyPath<ObjectType, Subject>) -> Binding<Subject> { get }
+    }
+
+    public init(initialValue: ObjectType)
+    public init(wrappedValue: ObjectType)
+
+    public var wrappedValue: ObjectType
+
+    public var projectedValue: ObservedObject<ObjectType>.Wrapper { get }
+}
+
+ObjectType : ObservableObject表示它的类型必须实现ObservableObject协议
+
+projectedValue: ObservedObject<ObjectType>.Wrapper，说明我们可以用$dataModel来访问这个projectedValue,它的返回值是Wrapper类型
+再看上边struct Wrapper的定义，它是一个@dynamicMemberLookup
+
+
+ObservableObject:
+public protocol ObservableObject : AnyObject {
+
+    /// The type of publisher that emits before the object has changed.
+    associatedtype ObjectWillChangePublisher : Publisher = ObservableObjectPublisher where Self.ObjectWillChangePublisher.Failure == Never
+
+    /// A publisher that emits before the object has changed.
+    var objectWillChange: Self.ObjectWillChangePublisher { get }
+}
+
+extension ObservableObject where Self.ObjectWillChangePublisher == ObservableObjectPublisher {
+
+    /// A publisher that emits before the object has changed.
+    public var objectWillChange: ObservableObjectPublisher { get }
+}
+ObservableObject继承自AnyObject，这说明了实现该协议必须是class类型，而不能是struct类型。
+
+该协议要求返回一个objectWillChange属性，该属性必须实现Publisher协议，上边代码中的ObservableObject扩展已经实现了该协议
+它返回的类型为ObservableObjectPublisher,我们再看看它的定义：
+final public class ObservableObjectPublisher : Publisher {
+
+    /// The kind of values published by this publisher.
+    public typealias Output = Void
+
+    /// The kind of errors this publisher might publish.
+    ///
+    /// Use `Never` if this `Publisher` does not publish errors.
+    public typealias Failure = Never
+
+    /// Creates an observable object publisher instance.
+    public init()
+
+    final public func receive<S>(subscriber: S) where S : Subscriber, S.Failure == ObservableObjectPublisher.Failure, S.Input == ObservableObjectPublisher.Output
+
+    final public func send()
+}
+
+可以看出ObservableObjectPublisher是一个很普通的Publisher，它是一个自定义的Publisher,对外只暴露了一个send方法，用于通知数据发生变更，这个Publisher并不会输出任何数据。
+到目前为止，我们已经知道，只要实现了ObservableObject协议，就能获得一个objectWillChange，它是一个Publisher，只要调用objectWillChange.send()就可以触发View的刷新
+
+
+
+class MyViewModel: ObservableObject {
+    @Published var name: String = "张三"
+    var age: Int = 20
+
+    func click() {
+        age = 30
+        objectWillChange.send()
+    }
+}
+如果我们用@Published来包装某个属性，那么当属性的值变化时，就会自动调用objectWillChange.send(),否则我们需要手动调用。
+
+它的projectedValue是一个Publisher，要想获取到这个projectedValue，使用$符号，因为它是一个Publisher，所有我们就可以随意使用Combine中的内容了:
+$name
+.map {
+    "姓名是： \($0)"
+}
+.sink(receiveValue: {
+    print($0)
+})
+
+
+@propertyWrapper public struct Published<Value> {
+
+    public init(wrappedValue: Value)
+
+    public init(initialValue: Value)
+
+    /// A publisher for properties marked with the `@Published` attribute.
+    public struct Publisher : Publisher {
+
+        /// The kind of values published by this publisher.
+        public typealias Output = Value
+
+        /// The kind of errors this publisher might publish.
+        ///
+        /// Use `Never` if this `Publisher` does not publish errors.
+        public typealias Failure = Never
+
+
+        public func receive<S>(subscriber: S) where Value == S.Input, S : Subscriber, S.Failure == Published<Value>.Publisher.Failure
+    }
+
+    public var projectedValue: Published<Value>.Publisher { mutating get set }
+}
+
+
+@StateObject和@ObservedObject都是用来包装实现了ObservableObject协议的属性，唯一的区别就是该属性的生命周期的管理问题。
+@StateObject的生命周期由View管理，只初始化一次，View销毁它就销毁
+@ObservedObject的生命周期由我们手动管理，通常由父传给子
+
+最核心的是ObservableObject协议，在真实的开发中，它绝对是最常用的技术，我们自定义的View Model中，
+通过组合使用一系列的pipline来操作数据，当作为Source for Truth的数据变更后，View自动进行刷新。
+
+

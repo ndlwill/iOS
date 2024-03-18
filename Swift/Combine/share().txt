@@ -1,0 +1,48 @@
+let pub1 = Timer.publish(every: 1, on: .main, in: .default)
+let c1 = pub1.connect()
+let scan = Publishers.Scan(upstream: pub1, initialResult: 0) { (a, b) -> Int in
+    a + 1
+}
+scan.sink { print("a:", $0) }.store(in:&storage)
+delay(3) {
+    scan.sink { print("b:", $0) }.store(in:&self.storage)
+}
+
+a: 1
+a: 2
+a: 3
+a: 4
+b: 1
+a: 5
+b: 2
+a: 6
+b: 3
+...
+
+So in effect we start all over again with our second subscription, because the publisher is a new copy.
+But if we promote the publisher to a class, we get completely different results:
+let pub1 = Timer.publish(every: 1, on: .main, in: .default)
+let c1 = pub1.connect()
+let scan = Publishers.Scan(upstream: pub1, initialResult: 0) { (a, b) -> Int in
+    a + 1
+}
+let scan2 = scan.share() // <--
+scan2.sink { print("a:", $0) }.store(in:&storage)
+delay(3) {
+    scan2.sink { print("b:", $0) }.store(in:&self.storage)
+}
+
+a: 1
+a: 2
+a: 3
+a: 4
+b: 4
+a: 5
+b: 5
+a: 6
+b: 6
+a: 7
+b: 7
+
+Obviously that's a very significant difference. 
+You can see the same sort of thing if your publisher is a Subject, because that's a class, not a struct.

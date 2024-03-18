@@ -1,0 +1,47 @@
+https://www.jianshu.com/p/f7736c34ca70
+
+苹果从iOS 8开始，开放了硬编码和硬解码的api，所以，从iOS 8开始，需要解码H.264视频时，推荐使用系统提供的VideoToolbox来进行硬解
+因为VideoToolbox解码时的输入是H.264数据，而通常看到的视频流或者文件都是经过复用封装之后的类似MP4格式的，
+所以在将数据交由VideoToolbox处理之前需要先进行解复用的操作来将H264数据抽取出来。目前比较通用的做法是使用FFmpeg来进行这个解复用的操作。
+
+NALU:
+NALU是Network Abstraction Layer Unit的缩写，意为网络抽象层单元。
+在视频编码中，NALU是H.264/AVC标准中定义的基本单位，用于表示压缩后的视频数据。
+每个NALU包含一个NALU头（NALU header）和一个NALU负载（NALU payload）。
+NALU头包含了一些元数据信息，如NALU的类型、优先级等，而NALU负载则是实际的视频数据，经过了压缩编码。
+NALU是视频数据传输和存储的基本单元，它可以以多种方式传输，如分组封装（Packetization）、帧封装（Frame Encapsulation）等。
+在视频流传输中，视频数据通常会被划分为一系列的NALU，然后通过网络传输到接收端进行解码和播放。
+在H.264/AVC视频编码标准中，SPS和PPS是两种特殊类型的NALU，它们分别代表了序列参数集（Sequence Parameter Set）和图像参数集（Picture Parameter Set）
+
+SPS & PPS:
+在H.264/AVC视频编码标准中，SPS和PPS是两种特殊类型的NALU，它们分别代表了序列参数集（Sequence Parameter Set）和图像参数集（Picture Parameter Set）
+SPS（Sequence Parameter Set）：SPS包含了视频序列的参数信息，如视频的分辨率、帧率、采样格式等。
+每个视频序列通常只有一个SPS，它在整个视频序列中保持不变，因此在开始播放视频时，解码器需要首先解析SPS，以了解视频的基本参数信息。
+PPS（Picture Parameter Set）：PPS包含了图像的参数信息，如图像的编码方式、帧类型等。
+与SPS类似，每个图像通常只有一个PPS，它在整个视频序列中也保持不变，但与SPS不同的是，PPS可能随着每个图像的变化而变化，因此在每个图像的NALU中都会包含对应的PPS信息。
+
+SPS和PPS通常会在视频编码的开头部分作为独立的NALU进行传输，接收端收到这些信息后，会将其存储起来供解码器使用
+在解码视频时，解码器会根据SPS和PPS的参数配置来正确地解码视频数据。
+
+H.264数据的结构:
+通常所说的H.264裸流，指的是由StartCode分割开来的一个个NALU组成的二进制序列，每个NALU一般来说就是一帧视频图像的数据（也有可能是多个NALU组成一帧图像，或者该NALU是SPS、PPS等数据）
+0x00 00 00 01四个字节为StartCode，在两个StartCode之间的内容即为一个完整的NALU。
+
+每个NALU的第一个字节包含了该NALU的类型信息，该字节的8个bit将其转为二进制数据后，解读顺序为从左往右算，如下:
+（1）第1位禁止位，值为1表示语法出错
+（2）第2~3位为参考级别
+（3）第4~8为是nal单元类型
+由此可知计算NALU类型时，只需将该字节的值与0x1F（二进制的0001 1111）相与，结果即为该NALU类型。
+其中常见的有1、5、7、8、9几种类型
+
+SPS（序列参数集Sequence Parameter Set）和 PPS（图像参数集Picture Parameter Set）是NALU类型为7、8的两种NALU，其中包含了图像编码的各种参数信息，为解码时必须的输入。
+
+VideoToolbox可接收的数据格式:
+与通常所说的H.264数据格式有区别，VideoToolbox解码时需要数据的H.264数据格式为AVC1格式，开始的4个字节不是StartCode，而是后面NALU的数据长度。
+常见的封装格式中mp4和flv格式封装的是AVC1格式的H.264， ts格式中是以StartCode为起始的H.264。
+如果原始数据是StartCode的格式，则需要将其转换为AVC1的格式才能交给VideoToolbox进行解码
+
+
+==================================================实践
+SPS和PPS的获取:
+如果是自己实现解复用来提取音视频流中H.264数据，可以通过分析H.264数据中的NALU类型来获取SPS和PPS。

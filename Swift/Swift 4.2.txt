@@ -1,0 +1,329 @@
+https://www.hackingwithswift.com/articles/77/whats-new-in-swift-4-2
+
+
+"哈希洪泛"（Hash Flooding）是一种哈希碰撞攻击的形式。哈希洪泛攻击利用哈希表的性质，通过故意构造大量具有相同哈希值的输入数据，导致哈希表中的链表长度急剧增加，从而使哈希表的性能急剧下降
+攻击者通过创建大量带有相同哈希值的输入数据，使得这些数据在哈希表中散列到同一个位置，导致该位置上的链表长度变得非常长。当查询或插入时，由于链表长度过长，哈希表的性能会急剧下降，甚至耗尽系统资源，导致系统崩溃或无法提供正常服务。
+为了防止哈希洪泛攻击，哈希函数的设计需要考虑尽可能减少哈希碰撞的可能性，并且在实现哈希表时，需要考虑采用更加健壮的数据结构和算法来处理哈希冲突，例如使用更高效的哈希函数、开放寻址法、链地址法等。
+
+Hash values are not guaranteed to be equal across different executions of your program. Do not save hash values to use during a future execution.
+因为相同的对象在不同的执行中可能产生不同的哈希值，导致你的代码出现错误。
+在同一次程序执行中，对象的哈希值是不变的，因为它是根据对象的内容计算得出的。
+但是，当你重新运行程序时，即使对象的内容没有改变，其哈希值也可能不同。
+这是因为 Swift 不保证哈希值在不同的程序执行之间是一致的。因此，你不能依赖于哈希值在不同的程序执行之间保持不变。
+
+you can force Swift to use predictable hashing for testing purposes only: set the environment variable SWIFT_DETERMINISTIC_HASHING to 1, 
+and Swift will replace its random hashing seed with a constant value.
+
+
+Swift 4.2 is the second minor release of Swift 4
+==================================================CaseIterable protocol
+a new CaseIterable protocol that automatically generates an array property of all cases in an enum.
+
+This automatic synthesis of allCases will only take place for enums that do not use associated values.
+Adding those automatically wouldn’t make sense, however if you want you can add it yourself:
+enum Car: CaseIterable {
+    static var allCases: [Car] {
+        return [.ford, .toyota, .jaguar, .bmw, .porsche(convertible: false), .porsche(convertible: true)]
+    }
+
+    case ford, toyota, jaguar, bmw
+    case porsche(convertible: Bool)
+}
+
+At this time, Swift is unable to synthesize the allCases property if any of your enum cases are marked unavailable. 
+So, if you need allCases then you’ll need to add it yourself, like this:
+enum Direction: CaseIterable {
+    static var allCases: [Direction] {
+        return [.north, .south, .east, .west]
+    }
+
+    case north, south, east, west
+
+    @available(*, unavailable)
+    case all
+}
+
+Important: You need to add CaseIterable to the original declaration of your enum rather than an extension in order for the allCases array to be synthesized. 
+This means you can’t use extensions to retroactively make existing enums conform to the protocol.
+
+
+==================================================Warning and error diagnostic directives
+The two new directives are #warning and #error: the former will force Xcode to issue a warning when building your code, 
+and the latter will issue a compile error so your code won’t build at all. 
+Both of these are useful for different reasons:
+
+#warning is mainly useful as a reminder to yourself or others that some work is incomplete. Xcode templates often use #warning to mark method stubs that you should replace with your own code.
+#error is mainly useful if you ship a library that requires other developers to provide some data. 
+For example, an authentication key for a web API – you want users to include their own key, so using #error will force them to change that code before continuing.
+
+Both of these work in the same way: #warning("Some message") and #error("Some message").
+
+Both #warning and #error work alongside the existing #if compiler directive, and will only be triggered if the condition being evaluated is true. 
+For example:
+#if os(macOS)
+#error("MyLibrary is not supported on macOS.")
+#endif
+
+==================================================Dynamic member look up
+https://github.com/apple/swift-evolution/blob/main/proposals/0195-dynamic-member-lookup.md
+
+At the core of this feature is a new attribute called @dynamicMemberLookup, which instructs Swift to call a subscript method when accessing properties.
+@dynamicMemberLookup
+struct Person {
+    subscript(dynamicMember member: String) -> String {
+        let properties = ["name": "Taylor Swift", "city": "Nashville"]
+        return properties[member, default: ""]
+    }
+}
+
+And if you want multiple different types, just implement different subscript(dynamicMember:) methods, like this:
+@dynamicMemberLookup
+struct Employee {
+    subscript(dynamicMember member: String) -> String {
+        let properties = ["name": "Taylor Swift", "city": "Nashville"]
+        return properties[member, default: ""]
+    }
+
+    subscript(dynamicMember member: String) -> Int {
+        let properties = ["age": 26, "height": 178]
+        return properties[member, default: 0]
+    }
+}
+
+That might be implicit, for example if you send the return value into a function that accepts only strings, or it might be explicit, like this:
+let employee = Employee()
+let age: Int = employee.age
+Either way, Swift must know for sure which subscript will be called.
+
+
+If you use dynamic member subscripting in a type that has also some regular properties and methods, those properties and methods will always be used in place of the dynamic member. 
+For example, we could define a Singer struct with a built-in name property alongside a dynamic member subscript:
+struct Singer {
+    public var name = "Justin Bieber"
+
+    subscript(dynamicMember member: String) -> String {
+        return "Taylor Swift"
+    }
+}
+
+let singer = Singer()
+print(singer.name)// "Justin Bieber"
+
+
+@dynamicMemberLookup plays a full part in Swift’s type system, which means you can assign them to protocols, structs, enums, and classes – even classes that are marked @objc.
+In practice, this means two things. First, you can create a class using @dynamicMemberLookup, 
+and any classes that inherit from it are also automatically @dynamicMemberLookup. So, this will print “I’m a sandwich” because HotDog inherits from Sandwich:
+@dynamicMemberLookup
+class Sandwich {
+    subscript(dynamicMember member: String) -> String {
+        return "I'm a sandwich!"
+    }
+}
+
+class HotDog: Sandwich { }
+
+let chiliDog = HotDog()
+print(chiliDog.description)
+
+
+Second, you can retroactively make other types use @dynamicMemberLookup by defining it on a protocol, adding a default implementation of subscript(dynamicMember:) using a protocol extension, 
+then making other types conform to your protocol however you want.
+For example, this creates a new Subscripting protocol, provides a default subscript(dynamicMember:) implementation that returns a message, then extends Swift’s String to use that protocol:
+@dynamicMemberLookup
+protocol Subscripting { }
+
+extension Subscripting {
+    subscript(dynamicMember member: String) -> String {
+        return "This is coming from the subscript"
+    }
+}
+
+extension String: Subscripting { }
+let str = "Hello, Swift"
+print(str.username)
+
+
+an example JSON enum that uses dynamic member lookup to create more natural syntax for navigating through JSON:
+@dynamicMemberLookup
+enum JSON {
+   case intValue(Int)
+   case stringValue(String)
+   case arrayValue(Array<JSON>)
+   case dictionaryValue(Dictionary<String, JSON>)
+
+   var stringValue: String? {
+      if case .stringValue(let str) = self {
+         return str
+      }
+      return nil
+   }
+
+   subscript(index: Int) -> JSON? {
+      if case .arrayValue(let arr) = self {
+         return index < arr.count ? arr[index] : nil
+      }
+      return nil
+   }
+
+   subscript(key: String) -> JSON? {
+      if case .dictionaryValue(let dict) = self {
+         return dict[key]
+      }
+      return nil
+   }
+
+   subscript(dynamicMember member: String) -> JSON? {
+      if case .dictionaryValue(let dict) = self {
+         return dict[member]
+      }
+      return nil
+   }
+}
+
+it’s syntactic sugar that turns a custom subscript into simple dot syntax.
+
+==================================================Enhanced conditional conformances
+Conditional conformances were introduced in Swift 4.1, and refined in Swift 4.2 to allow you to query them at runtime.
+They allow types to conform to a protocol only when certain conditions are met – hence “conditional conformance”.
+
+
+For example, you might a generic Box class that is able to wrap a value so it can be passed by reference:
+
+final class Box<T> {
+    var value: T
+
+    init(value: T) {
+        self.value = value
+    }
+}
+
+We could use that box to store User structs, like this:
+struct User: Equatable {
+    var username: String
+}
+
+let user = User(username: "twostraws")
+let box1 = Box(value: user)
+let box2 = Box(value: user)
+
+We’ve made the User struct Equatable, which means we can compare two instances of it to see if they are equal.
+What conditional conformance let us do is make Box equatable if its content is also equatable, like this:
+extension Box: Equatable where T: Equatable {
+    static func == (lhs: Box<T>, rhs: Box<T>) -> Bool {
+        return lhs.value == rhs.value
+    }
+}
+
+With that in place, we can now check two boxes for equality directly, like this:
+box1 == box2
+
+Conditional conformance was enhanced in Swift 4.2, giving the ability to query a conditional conformance at runtime. 
+Although this compiled in Swift 4.1, it would crash at runtime – a result no one wanted.
+
+--------------------------------------------------
+
+protocol Purchaseable {
+    func buy()
+}
+
+struct Book: Purchaseable {
+    func buy() {
+        print("You bought a book")
+    }
+}
+
+Then we could make Array conform to Purchaseable if all the elements inside the array were also Purchasable:
+extension Array: Purchaseable where Element: Purchaseable {
+    func buy() {
+        for item in self {
+            item.buy()
+        }
+    }
+}
+
+This worked great at compile time, but there was a problem: if you needed to query a conditional conformance at runtime, 
+your code would crash because it wasn’t supported in Swift 4.1
+
+Well, in Swift 4.2 that’s now fixed, so if you receive data of one type and want to check if it can be converted to a conditionally conformed protocol, it works great.
+let items: Any = [Book(), Book(), Book()]
+
+if let books = items as? Purchaseable {
+    books.buy()
+}
+
+In addition, support for automatic synthesis of Hashable conformance has improved greatly in Swift 4.2. 
+Several built-in types from the Swift standard library – including optionals, arrays, dictionaries, and ranges – 
+now automatically conform to the Hashable protocol when their elements conform to Hashable.
+
+For example:
+struct User: Hashable {
+    var name: String
+    var pets: [String]
+}
+Swift 4.2 can automatically synthesize Hashable conformance for that struct, but Swift 4.1 could not.
+
+
+==================================================Random number generation and shuffling
+You can generate random numbers by calling the random() method on whatever numeric type you want, providing the range you want to work with.
+let randomInt = Int.random(in: 1..<5)
+Similar methods exist for Float, Double, and CGFloat
+There’s also one for booleans, generating either true or false randomly
+
+also includes support for shuffling arrays using new shuffle() and shuffled() methods depending on whether you want in-place shuffling or not
+var albums = ["Red", "1989", "Reputation"]
+
+// shuffle in place
+albums.shuffle()
+
+// get a shuffled array back
+let shuffled = albums.shuffled()
+
+
+It also adds a new randomElement() method to arrays, which returns one random element from the array if it isn’t empty, or nil otherwise:
+if let random = albums.randomElement() {
+    print("The random album is \(random).")
+}
+
+==================================================Simpler, more secure hashing
+Swift 4.2 introduces a new Hasher struct that provides a randomly seeded, universal hash function to make this process easier:
+struct iPad: Hashable {
+    var serialNumber: String
+    var capacity: Int
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(serialNumber)
+    }
+}
+You can add more properties to your hash by calling combine() repeatedly, and the order in which you add properties affects the finished hash value.
+
+You can also use Hasher as a standalone hash generator: just provide it with whatever values you want to hash, then call finalize() to generate the final value. For example:
+let first = iPad(serialNumber: "12345", capacity: 256)
+let second = iPad(serialNumber: "54321", capacity: 512)
+
+var hasher = Hasher()
+hasher.combine(first)
+hasher.combine(second)
+let hash = hasher.finalize()
+
+Hasher uses a random seed every time it hashes an object, which means the hash value for any object is effectively guaranteed to be different between runs of your app.
+This in turn means that elements you add to a set or a dictionary are highly likely to have a different order each time you run your app.
+
+==================================================Checking sequence elements match a condition
+provides a new allSatisfy() method that checks whether all items in a sequence pass a condition.
+let scores = [85, 88, 95, 92]
+let passed = scores.allSatisfy { $0 >= 85 }
+
+==================================================In-place collection element removal
+removeAll(where:) method that performs a high-performance, in-place filter for collections.
+You give it a closure condition to run, and it will strip out all objects that match the condition.
+
+var pythons = ["John", "Michael", "Graham", "Terry", "Eric", "Terry"]
+pythons.removeAll { $0.hasPrefix("Terry") }
+
+pythons = pythons.filter { !$0.hasPrefix("Terry") }
+However, that doesn’t use memory very efficiently, it specifies what you don’t want rather than what you want, 
+and more advanced in-place solutions come with a range of complexities that are off-putting to novices.
+
+==================================================Boolean toggling
+var loggedIn = false
+loggedIn.toggle()

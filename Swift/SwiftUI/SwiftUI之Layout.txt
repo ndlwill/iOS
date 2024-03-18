@@ -1,0 +1,374 @@
+https://zhuanlan.zhihu.com/p/166119111
+
+frame
+GeometryReader
+Alignment Guide
+Preference
+Stacks
+Spacer
+layoutPriority
+
+
+==================================================布局法则
+父view为子view提供一个建议的size
+子view根据自身的特性，返回一个size
+父view根据子view返回的size为其进行布局
+
+struct ContentView: View {
+    var body: some View {
+        Text("Hello, world")
+            .border(Color.green)
+    }
+}
+
+ContentView作为Text的父view，它为Text提供一个建议的size，
+在本例中，这个size为全屏幕的尺寸，然后Text根据自身的特性，返回了它实际需要的size，
+注意：Text的特性是尽可能的只使用必要的空间，也就是说能够刚好展示完整文本的空间，
+然后ContentView根据Text返回的size在其内部对Text进行布局，在SwiftUI中，容器默认的布局方式为居中对齐。
+
+
+==================================================frame
+在UIKit中，Frame算是一种绝对布局，它的位置是相对于父view左上角的绝对坐标。但SwiftUI中，frame这个modifier的概念完全不同。
+
+struct ContentView: View {
+    var body: some View {
+        Text("Hello, world")
+            .background(Color.green)
+            .frame(width: 200, height: 50)
+    }
+}
+
+.background并不会直接去修改原来的Text，而是在Text图层的下方新建了一个新的view，在SwiftUI中中，View是廉价的。
+
+如果我们从布局的3个法则考虑这个问题，就会非常简单
+.frame起的作用就是提供一个建议的size，在本例中，frame为background提供了一个(200, 50)的size
+background还需要去问它的child，也就是Text， Text返回了一个自身需要的size，
+于是background也返回了Text的实际尺寸，这就造成了绿色背景跟文本同样大小的效果。
+
+
+struct ContentView: View {
+    var body: some View {
+        Text("Hello, world")
+            .frame(width: 200, height: 50)
+            .background(Color.green)
+    }
+}
+我们只是调整了frame和background的顺序，就实现了这个功能
+
+值得注意的是各个View不同的特性，像Text，会返回自身需要的size，
+像Shape，则会返回父view建议的size，在实际布局时，需要考虑这些不同特性的影响。
+
+SwiftUI关于frame的定义有两种，第一种是:
+func frame(width: CGFloat? = nil, height: CGFloat? = nil, alignment: Alignment = .center) -> some View
+width和height都可以为nil，如果为nil，就直接使用父view的size
+
+struct ContentView: View {
+    var body: some View {
+        HStack {
+            Text("Good job.")
+                .background(Color.orange)
+        }
+        .frame(width: 300, height: 200, alignment: .topLeading)
+        .border(Color.green)
+    }
+}
+frame中的alignment会对其内部的views做整体的对齐处理
+如果你发现，在frame中设置了alignment，但并没有起作用，主要原因是外边的容器，
+比如说HStack，VStack等他们自身的尺寸刚好等于其子views的尺寸，这种情况下的alignment效果都是一样的。
+
+frame的第二个定义如下:
+public func frame(minWidth: CGFloat? = nil, idealWidth: CGFloat? = nil, maxWidth: CGFloat? = nil, minHeight: CGFloat? = nil, idealHeight: CGFloat? = nil, maxHeight: CGFloat? = nil, alignment: Alignment = .center) -> some View
+这个函数的参数比较多，但总体分为3类:
+minWidth，idealWidth，maxWidth
+minHeight，idealHeight，maxHeight
+alignment
+
+
+idealWidth和idealHeight，按照字面意思，ideal是理想的意思，那么当我们为某个view设置了idealWidth后会怎样呢？
+struct ContentView: View {
+    var body: some View {
+        Text("Good job.")
+            .frame(idealWidth: 200, idealHeight: 100)
+            .border(Color.green)
+    }
+}
+运行后，我们发现，Text并没有使用我们给出的ideal尺寸
+实际上，这个ideal必须跟.fixedSize(horizontal: true, vertical: true)一起使用才行:
+horizontal：表示固定水平方向，也就是idealWidth
+vertical： 表示固定垂直方向，也就是idealHeight
+
+struct ContentView: View {
+    var body: some View {
+        HStack {
+            Text("horizontal")
+                .frame(idealWidth: 200, idealHeight: 100)
+                .fixedSize(horizontal: true, vertical: false)
+                .border(Color.green)
+
+            Text("vertical")
+                .frame(idealWidth: 200, idealHeight: 100)
+                .fixedSize(horizontal: false, vertical: true)
+                .border(Color.green)
+
+            Text("horizontal & vertical")
+                .frame(idealWidth: 200, idealHeight: 100)
+                .fixedSize(horizontal: true, vertical: true)
+                .border(Color.green)
+        }
+    }
+}
+这项技术，在真实的开发中很有用，我们可以直接固定死某个view的尺寸，不会因为外部条件的改变而改变。
+
+
+==================================================GeometryReader
+修改frame，就相当于修改了父view建议的size，然后，子view会非常聪明的根据这个size做一些事情，
+但是，这个size到目前为止还是隐性的，所谓的隐性表示我们不能显式的获取到这个size。
+
+如果想显式的得到这个建议的size，就需要使用GeometryReader
+
+struct ContentView: View {
+    @State private var w: CGFloat = 100
+    @State private var h: CGFloat = 100
+
+    var body: some View {
+        VStack {
+            GeometryReader { geo in
+                Text("w: \(geo.size.width, specifier: "%.1f") \n h: \(geo.size.height, specifier: "%.1f")")
+            }
+            .frame(width: w, height: h)
+            .border(Color.green)
+
+            Slider(value: self.$w, in: 10...300)
+                .padding(.horizontal, 30)
+        }
+
+    }
+}
+我们动态的改变父view的width，Text能够通过GeometryReader获取到这个size。
+这就是GeometryReader的核心功能之一：获取到父view的size。
+
+
+struct ContentView: View {
+    var body: some View {
+        HStack() {
+            Spacer()
+
+            MyProgress()
+                .frame(width: 100, height: 100)
+
+            Spacer()
+
+            MyProgress()
+                .frame(width: 150, height: 150)
+
+            Spacer()
+
+            MyProgress()
+                .frame(width: 300, height: 300)
+
+            Spacer()
+        }
+    }
+}
+struct MyProgress: View {
+    var body: some View {
+        GeometryReader { geo in
+            Circle()
+                .stroke(Color.green, lineWidth: min(geo.size.width, geo.size.height) * 0.2)
+
+        }
+    }
+}
+这个例子中，Progress的宽度需要根据父view的宽度做一个计算
+
+
+GeometryReader的另一个比较强大的功能是它的frame(in),它能够让我们获取到某个view相对某个坐标空间的bounds
+struct ContentView: View {
+    var body: some View {
+        VStack {
+            Spacer()
+
+            ForEach(0..<5) { _ in
+                GeometryReader { geo in
+                    Text("coordinateSpace: \(geo.frame(in: .named("MyVStack")).minY) global: \(geo.frame(in: .global).minY)")
+                }
+                .frame(height: 20)
+                .background(Color.green)
+            }
+
+            Spacer()
+        }
+        .frame(height: 300)
+        .border(Color.green)
+        .coordinateSpace(name: "MyVStack")
+    }
+}
+相对于.named("MyVStack")和.global,得到的minY的值是不同的
+
+
+==================================================Alignment Guide
+Container Alignment: 容器的对齐方式主要有2个目的，首先它定义了其内部views的隐式对齐方式，没有使用alignmentGuides()modifier的view都使用隐式对齐，然后定义了内部views中使用了alignmentGuides()的view，只有参数与容器对齐参数相同，容器才会根据返回值计算布局
+Alignment Guide：如果该值和Container Alignment的参数不匹配，则不会生效
+Implicit Alignment Value：通常来说，隐式对齐采用的值都是默认的值，系统通常会使用和对齐参数相匹配的值
+Explicit Alignment Value：显式对齐跟隐式对齐相反，是我们自己用程序明确给出的返回值
+Frame Alignment：表示容器中views的对齐方式，把views看作一个整体，整体偏左，居中，或居右
+Text Alignment：控制多行文本的对齐方式
+
+struct ContentView: View {
+    var body: some View {
+        Image(systemName: "cloud.bolt.fill")
+            .resizable()
+            .frame(width: 50, height: 50)
+            .padding(10)
+            .foregroundColor(.white)
+            .background(RoundedRectangle(cornerRadius: 5).foregroundColor(Color.green.opacity(0.8)))
+            .addVerifiedBadge(true)
+    }
+}
+
+extension View {
+    func addVerifiedBadge(_ isVerified: Bool) -> some View {
+        ZStack(alignment: .topTrailing) {
+            self
+
+            if isVerified {
+                Image(systemName: "circle.fill")
+                    .foregroundColor(.red)
+                    .offset(x: 10, y: -10)
+            }
+        }
+    }
+}
+在addVerifiedBadge中，我们使用offset来实现了小红点的位置偏移，同样的，我们也可以使用.alignmentGuide来实现相同的效果，
+
+使用.alignmentGuide的一个最大的优势是，我们可以获取view的维度信息，比如，上边代码中的参数d。
+总之，在alignmentGuide的一个核心思想就是设置对齐方式。
+
+
+==================================================Preference
+https://zhuanlan.zhihu.com/p/166119111
+
+上边讲解的布局思想基本上都是子view相关的，在真实开发场景中，往往一个父view需要知道其内部子view的一些信息，
+对于继承链来说，我们把这类问题归结为祖先获取子孙信息的问题。
+
+用到了Preference相关的知识，其核心思想有以下2点:
+设置PreferenceKey和自定义的PreferenceData，把子view的信息绑定到PreferenceData上
+父view根据PreferenceKey获取到所有子view的PreferenceData
+
+如何设置PreferenceKey和PreferenceData呢？下边的代码基本上都是固定用法:
+struct NumberPreferenceValue: Equatable {
+    let viewIdx: Int
+    let rect: CGRect
+}
+struct NumberPreferenceKey: PreferenceKey {
+    typealias Value = [NumberPreferenceValue]
+    static var defaultValue: [NumberPreferenceValue] = []
+    static func reduce(value: inout [NumberPreferenceValue], nextValue: () -> [NumberPreferenceValue]) {
+        value.append(contentsOf: nextValue())
+    }
+}
+
+父view如何获取到这些数据呢？通过.onPreferenceChange来获取
+var body: some View {
+    ZStack(alignment: .topLeading) {
+        ...
+
+        VStack {
+            ...
+        }
+    }
+    .onPreferenceChange(NumberPreferenceKey.self) { preferences in
+        for pre in preferences {
+            self.rects[pre.viewIdx] = pre.rect
+        }
+    }
+    .coordinateSpace(name: "ZStackSpace")
+
+Preference技术学习起来真的是非常简单，它包含了几种变种，比如anchorPreference，我们可以直接获取到子view的anchor
+Preference最最核心的思想就是父view能够获取到其内部子view绑定的信息，理解了这一点，就能够自由发挥想象了。
+
+
+==================================================Stacks
+VStack是一个纵向布局的容器，在没有其他约束条件的情况下，它的布局特性表现为：尽量满足子views的布局要求，并且自身最终的布局size取决于子views的size。
+var body: some View {
+    VStack(spacing: 10) {
+        Text("Hello, World!")
+        .background(Color.orange)
+
+        Text("Hello, World!")
+        .background(Color.red)
+    }
+    .border(Color.green)
+
+}
+
+
+HStack是一个横向布局的容器
+var body: some View {
+    HStack(spacing: 10) {
+        Text("Hello, World!")
+        .background(Color.orange)
+
+        Text("Hello, World!")
+        .background(Color.red)
+    }
+    .border(Color.green)
+}
+
+ZStack是一个按层次布局的容器，后边加入的view在前边view的上层，他的特性跟HStack和VStack相同：
+var body: some View {
+    ZStack {
+        Color.orange
+            .frame(width: 100, height: 50)
+
+        Text("Hello, World!")
+        .border(Color.red)
+    }
+    .border(Color.green)
+}
+
+
+==================================================Spacer
+Spacer需要更Stacks配合使用，Spacer的特性是尽可能的在某个方向上占据更多的空间，这里有一个方向的概念，
+比如，在VStack中使用Spacer，则会在垂直的方向上占据更多的空间，反之，在HStack中，会在横向的空间中占据更多的空间。
+var body: some View {
+    VStack {
+        Color.orange
+            .frame(width: 100, height: 50)
+
+        Text("Hello, World!")
+            .border(Color.red)
+
+        Spacer()
+    }
+    .border(Color.green)
+}
+
+
+==================================================layoutPriority
+我们以HStack为例，如果它内部有两个优先级相同的view，那么结果就是他们平分VStack的空间:
+var body: some View {
+        HStack {
+            Color.orange
+
+            Text("窗前明月光，疑是地上霜")
+                .border(Color.red)
+        }
+        .frame(width: 200, height: 100)
+        .border(Color.green)
+    }
+
+可以看出，Text并不会有更高的优先级，我们可以使用layoutPriority来修改view的优先级，比如，我们把Text的优先级设置高一点点
+var body: some View {
+        HStack {
+            Color.orange
+
+            Text("窗前明月光，疑是地上霜")
+                .border(Color.red)
+                .layoutPriority(1)
+        }
+        .frame(width: 200, height: 100)
+        .border(Color.green)
+    }
+
+由于200的宽度只能容纳下Text，因此，无法显示左边的Color，我们把Text的优先级设成了1即可，没必要设置一个很大的值，默认情况下，view的优先级都为0。
