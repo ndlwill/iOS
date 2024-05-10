@@ -32,9 +32,10 @@ such as the peripheral’s name and primary functionality.
 For instance, a digital thermostat may advertise that it provides the current temperature of a room. 
 In Bluetooth low energy, advertising is the primary way that peripherals make their presence known.
 
+###
 A central, on the other hand, can scan and listen for any peripheral device that is advertising information that it’s interested in, 
 A central can ask to connect to any peripheral that it has discovered advertising.
-
+###
 
 How the Data of a Peripheral Is Structured:
 The purpose of connecting to a peripheral is to begin exploring and interacting with the data it has to offer. 
@@ -52,17 +53,43 @@ For example, the heart rate service just described may contain one characteristi
 Centrals Explore and Interact with the Data on a Peripheral:
 After a central has successfully established a connection to a peripheral, it can discover the full range of services and characteristics the peripheral has to offer (advertising data might contain only a fraction of the available services).
 
+###
 A central can also interact with a peripheral’s service by reading or writing the value of that service’s characteristic. 
 For example, your app may request the current room temperature from a digital thermostat, or it may provide the thermostat with a value at which to set the room’s temperature.
+###
 
 
 ==================================================How Centrals, Peripherals, and Peripheral Data Are Represented:
 
+Objects on the Central Side:
+When you are using a local central to interact with a remote peripheral, 
+you are performing actions on the central side of Bluetooth low energy communication. 
+Unless you are setting up a local peripheral device—and using it to respond to requests by a central—most of your Bluetooth transactions will take place on the central side
+
+Local Centrals and Remote Peripherals
+On the central side, a local central device is represented by a CBCentralManager object. These objects are used to manage discovered or connected remote peripheral devices (represented by CBPeripheral objects), including scanning for, discovering, and connecting to advertising peripherals.
+
+A Remote Peripheral’s Data Are Represented by CBService and CBCharacteristic Objects
+When you are interacting with the data on a remote peripheral (represented by a CBPeripheral object), you are dealing with its services and characteristics. In the Core Bluetooth framework, the services of a remote peripheral are represented by CBService objects. 
+Similarly, the characteristics of a remote peripheral’s service are represented by CBCharacteristic objects. 
 
 
+Objects on the Peripheral Side:
+As of macOS 10.9 and iOS 6, Mac and iOS devices can function as Bluetooth low energy peripherals, 
+serving data to other devices, including other Mac, iPhone, and iPad devices. 
+When setting up your device to implement the peripheral role, you are performing actions on the peripheral side of Bluetooth low energy communication.
+
+Local Peripherals and Remote Centrals
+On the peripheral side, a local peripheral device is represented by a CBPeripheralManager object. These objects are used to manage published services within the local peripheral device’s database of services and characteristics and to advertise these services to remote central devices (represented by CBCentral objects). 
+Peripheral manager objects are also used to respond to read and write requests from these remote centrals.
+
+A Local Peripheral’s Data Are Represented by CBMutableService and CBMutableCharacteristic Objects
+When you are setting up and interacting with the data on a local peripheral (represented by a CBPeripheralManager object), you are dealing with mutable versions of its services and characteristics. In the Core Bluetooth framework, the services of a local peripheral are represented by CBMutableService objects. 
+Similarly, the characteristics of a local peripheral’s service are represented by CBMutableCharacteristic objects.
 
 
-==================================================
+==================================================蓝牙相关基础
+https://liuyanwei.jumppo.com/2015/07/17/ios-BLE-1.html
 
 MFI ======= make for ipad ,iphone, itouch 专们为苹果设备制作的设备
 BLE ==== buletouch low energy，蓝牙4.0设备因为低耗电，所以也叫做BLE
@@ -73,3 +100,800 @@ Description === 每个characteristic可以对应一个或多个Description用户
 MFI === 开发使用ExternalAccessory 框架
 4.0 BLE === 开发使用CoreBluetooth 框架
 
+CoreBluetooth框架的核心其实是两个东西，peripheral和central, 可以理解成外设和中心
+
+这两组api分别对应不同的业务场景，中心模式就是以你的app作为中心，连接其他的外设的场景，
+而外设模式使用手机作为外设别其他中心设备操作的场景。
+服务和特征，特征的属性(service and characteristic):
+每个设备都会有一些服务，每个服务里面都会有一些特征，特征就是具体键值对，提供数据的地方。每个特征属性分为这么几种：读，写，通知这么几种方式。
+//objcetive c特征的定义枚举
+typedef NS_OPTIONS(NSUInteger, CBCharacteristicProperties) {
+    CBCharacteristicPropertyBroadcast												= 0x01,
+    CBCharacteristicPropertyRead													= 0x02,
+    CBCharacteristicPropertyWriteWithoutResponse									= 0x04,
+    CBCharacteristicPropertyWrite													= 0x08,
+    CBCharacteristicPropertyNotify													= 0x10,
+    CBCharacteristicPropertyIndicate												= 0x20,
+    CBCharacteristicPropertyAuthenticatedSignedWrites								= 0x40,
+    CBCharacteristicPropertyExtendedProperties										= 0x80,
+    CBCharacteristicPropertyNotifyEncryptionRequired NS_ENUM_AVAILABLE(NA, 6_0)		= 0x100,
+    CBCharacteristicPropertyIndicateEncryptionRequired NS_ENUM_AVAILABLE(NA, 6_0)	= 0x200
+};
+
+蓝牙中心模式流程:
+1. 建立中心角色
+2. 扫描外设（discover）
+3. 连接外设(connect)
+4. 扫描外设中的服务和特征(discover)
+    - 4.1 获取外设的services
+    - 4.2 获取外设的Characteristics,获取Characteristics的值，获取Characteristics的Descriptor和Descriptor的值
+5. 与外设做数据交互(explore and interact)
+6. 订阅Characteristic的通知
+7. 断开连接(disconnect)
+
+蓝牙外设模式流程:
+1. 启动一个Peripheral管理对象
+2. 本地Peripheral设置服务,特性,描述，权限等等
+3. Peripheral发送广告
+4. 设置处理订阅、取消订阅、读characteristic、写characteristic的委托方法
+
+蓝牙设备状态:
+1. 待机状态（standby）：设备没有传输和发送数据，并且没有连接到任何设
+2. 广播状态（Advertiser）：周期性广播状态
+3. 扫描状态（Scanner）：主动寻找正在广播的设备
+4. 发起链接状态（Initiator）：主动向扫描设备发起连接。
+5. 主设备（Master）：作为主设备连接到其他设备。
+6. 从设备（Slave）：作为从设备连接到其他设备。
+
+蓝牙设备的五种工作状态:
+准备（standby）
+广播（advertising）
+监听扫描（Scanning)
+发起连接（Initiating）
+已连接（Connected）
+
+蓝牙和版本的使用限制:
+蓝牙2.0 === 越狱设备
+蓝牙4.0 === IOS6 以上
+MFI认证设备（Make For ipod/ipad/iphone） === 无限制
+
+GAAT : Generic Attribute Profile , GATT配置文件是一个通用规范，用于在BLE链路上发送和接收被称为“属性”的数据块。
+目前所有的BLE应用都基于GATT。
+蓝牙SIG规定了许多低功耗设备的配置文件。
+配置文件是设备如何在特定的应用程序中工作的规格说明。
+注意一个设备可以实现多个配置文件。
+例如，一个设备可能包括心率监测仪和电量检测。
+
+Characteristic: 一个characteristic包括一个单一变量和0-n个用来描述characteristic变量的descriptor，characteristic可以被认为是一个类型，类 似于类。
+
+Descriptor: Descriptor用来描述characteristic变量的属性.
+例如，一个descriptor可以规定一个可读的描述，或者一个characteristic变量可接受的范围，或者一个characteristic变量特定的测量单位。
+service是characteristic的集合。
+例如，你可能有一个叫“Heart Rate Monitor(心率监测仪)”的service，它包括了很多characteristics，如“heart rate measurement(心率测量)”等。你可以在bluetooth.org 找到一个目前支持的基于GATT的配置文件和服务列表。
+
+GATT Profil:
+http://www.race604.com/gatt-profile-intro/
+
+
+中心模式的应用场景:
+主设备（手机去扫描连接外设，发现外设服务和属性，操作服务和属性的应用。
+一般来说，外设（蓝牙设备，比如智能手环之类的东西）， 会由硬件工程师开发好，并定义好设备提供的服务，每个服务对于的特征，每个特征的属性（只读，只写，通知等等）
+
+
+https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/PerformingCommonCentralRoleTasks/PerformingCommonCentralRoleTasks.html#//apple_ref/doc/uid/TP40013257-CH3-SW1
+
+
+手机app去读写蓝牙设备:
+1. 导入CoreBluetooth头文件，建立主设备管理类，设置主设备委托
+#import <CoreBluetooth/CoreBluetooth.h>
+@interface ViewController : UIViewController<CBCentralManagerDelegate>
+
+
+@interface ViewController (){
+    //系统蓝牙设备管理对象，可以把他理解为主设备，通过他，可以去扫描和链接外设
+    CBCentralManager *manager;
+    //用于保存被发现设备
+    NSMutableArray *peripherals;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    /*
+        设置主设备的委托,CBCentralManagerDelegate
+        必须实现的：
+        - (void)centralManagerDidUpdateState:(CBCentralManager *)central;//主设备状态改变的委托，在初始化CBCentralManager的适合会打开设备，只有当设备正确打开后才能使用
+        其他选择实现的委托中比较重要的：
+        - (void)centralManager:(CBCentralManager *)central didDiscoverPeripheral:(CBPeripheral *)peripheral advertisementData:(NSDictionary *)advertisementData RSSI:(NSNumber *)RSSI; //找到外设的委托
+        - (void)centralManager:(CBCentralManager *)central didConnectPeripheral:(CBPeripheral *)peripheral;//连接外设成功的委托
+        - (void)centralManager:(CBCentralManager *)central didFailToConnectPeripheral:(CBPeripheral *)peripheral error:(NSError *)error;//外设连接失败的委托
+        - (void)centralManager:(CBCentralManager *)central didDisconnectPeripheral:(CBPeripheral *)peripheral error:(NSError *)error;//断开外设的委托
+    */
+        //初始化并设置委托和线程队列，最好一个线程的参数可以为nil，默认会就main线程
+        manager = [[CBCentralManager alloc]initWithDelegate:self queue:dispatch_get_main_queue()];
+
+2. 扫描外设（discover），扫描外设的方法我们放在centralManager成功打开的委托中，因为只有设备成功打开，才能开始扫描，否则会报错。
+-(void)centralManagerDidUpdateState:(CBCentralManager *)central{
+
+switch (central.state) {
+    case CBCentralManagerStateUnknown:
+        NSLog(@">>>CBCentralManagerStateUnknown");
+        break;
+    case CBCentralManagerStateResetting:
+        NSLog(@">>>CBCentralManagerStateResetting");
+        break;
+    case CBCentralManagerStateUnsupported:
+        NSLog(@">>>CBCentralManagerStateUnsupported");
+        break;
+    case CBCentralManagerStateUnauthorized:
+        NSLog(@">>>CBCentralManagerStateUnauthorized");
+        break;
+    case CBCentralManagerStatePoweredOff:
+        NSLog(@">>>CBCentralManagerStatePoweredOff");
+        break;
+    case CBCentralManagerStatePoweredOn:
+        NSLog(@">>>CBCentralManagerStatePoweredOn");
+        //开始扫描周围的外设
+        /*
+            第一个参数nil就是扫描周围所有的外设，扫描到外设后会进入
+                - (void)centralManager:(CBCentralManager *)central didDiscoverPeripheral:(CBPeripheral *)peripheral advertisementData:(NSDictionary *)advertisementData RSSI:(NSNumber *)RSSI;
+
+                In a real app, you typically specify an array of CBUUID objects, each of which represents the universally unique identifier (UUID) of a service that a peripheral is advertising.
+            */
+        [manager scanForPeripheralsWithServices:nil options:nil];
+
+        break;
+    default:
+        break;
+}
+
+}
+
+//扫描到设备会进入方法
+-(void)centralManager:(CBCentralManager *)central didDiscoverPeripheral:(CBPeripheral *)peripheral advertisementData:(NSDictionary *)advertisementData RSSI:(NSNumber *)RSSI{
+
+NSLog(@"当扫描到设备:%@",peripheral.name);
+//接下来可以连接设备
+
+}
+
+3. 连接外设(connect)
+//扫描到设备会进入方法
+-(void)centralManager:(CBCentralManager *)central didDiscoverPeripheral:(CBPeripheral *)peripheral advertisementData:(NSDictionary *)advertisementData RSSI:(NSNumber *)RSSI{
+
+    //接下连接我们的测试设备，如果你没有设备，可以下载一个app叫lightbule的app去模拟一个设备
+    //这里自己去设置下连接规则，我设置的是P开头的设备
+            if ([peripheral.name hasPrefix:@"P"]){
+            /*
+                一个主设备最多能连7个外设，每个外设最多只能给一个主设备连接,连接成功，失败，断开会进入各自的委托
+            - (void)centralManager:(CBCentralManager *)central didConnectPeripheral:(CBPeripheral *)peripheral;//连接外设成功的委托
+            - (void)centralManager:(CBCentralManager *)central didFailToConnectPeripheral:(CBPeripheral *)peripheral error:(NSError *)error;//外设连接失败的委托
+            - (void)centralManager:(CBCentralManager *)central didDisconnectPeripheral:(CBPeripheral *)peripheral error:(NSError *)error;//断开外设的委托
+            */
+
+            //找到的设备必须持有它，否则CBCentralManager中也不会保存peripheral，那么CBPeripheralDelegate中的方法也不会被调用！！
+            [peripherals addObject:peripheral];
+            //连接设备
+            [manager connectPeripheral:peripheral options:nil];
+        }
+
+}
+
+
+//连接到Peripherals-成功
+- (void)centralManager:(CBCentralManager *)central didConnectPeripheral:(CBPeripheral *)peripheral
+{
+    NSLog(@">>>连接到名称为（%@）的设备-成功",peripheral.name);
+}
+
+//连接到Peripherals-失败
+-(void)centralManager:(CBCentralManager *)central didFailToConnectPeripheral:(CBPeripheral *)peripheral error:(NSError *)error
+{
+    NSLog(@">>>连接到名称为（%@）的设备-失败,原因:%@",[peripheral name],[error localizedDescription]);
+}
+
+//Peripherals断开连接
+- (void)centralManager:(CBCentralManager *)central didDisconnectPeripheral:(CBPeripheral *)peripheral error:(NSError *)error{
+    NSLog(@">>>外设连接断开连接 %@: %@\n", [peripheral name], [error localizedDescription]);
+
+}
+
+在 didDiscoverPeripheral这个委托中有这一行
+//找到的设备必须持有它，否则CBCentralManager中也不会保存peripheral，那么CBPeripheralDelegate中的方法也不会被调用！！
+[peripherals addObject:peripheral];
+
+
+RSSI 是接收信号强度指示（Received Signal Strength Indication）的缩写。
+它是一种用于衡量蓝牙设备之间信号强度的指标。RSSI值通常以负数表示，单位是分贝毫瓦（dBm）。
+RSSI的值越大，表示接收到的信号强度越强，反之则越弱。通常情况下，蓝牙设备之间的通信距离和信号质量与RSSI值密切相关。以下是一些通常的RSSI值的解释：
+-30 dBm 或更高：非常强的信号，设备之间非常接近或直接相邻。
+-30 dBm 到 -70 dBm：信号强度良好，设备之间相对较近，通信质量高。
+-70 dBm 到 -90 dBm：信号强度一般，设备之间距离较远，通信质量可能有所下降。
+-90 dBm 或更低：信号强度较弱，设备之间距离较远，通信质量可能受到严重影响。
+
+4. 扫描外设中的服务和特征(discover)
+设备连接成功后，就可以扫描设备的服务了，同样是通过委托形式，扫描到结果后会进入委托方法。
+但是这个委托已经不再是主设备的委托（CBCentralManagerDelegate），而是外设的委托（CBPeripheralDelegate）,这个委托包含了主设备与外设交互的许多 回叫方法，
+包括获取services，获取characteristics，获取characteristics的值，获取characteristics的Descriptor，和Descriptor的值，写数据，读rssi，用通知的方式订阅数据等等。
+
+
+4.1 获取外设的services
+//连接到Peripherals-成功
+- (void)centralManager:(CBCentralManager *)central didConnectPeripheral:(CBPeripheral *)peripheral
+{
+    NSLog(@">>>连接到名称为（%@）的设备-成功",peripheral.name);
+    //设置的peripheral委托CBPeripheralDelegate
+    //@interface ViewController : UIViewController<CBCentralManagerDelegate,CBPeripheralDelegate>
+    [peripheral setDelegate:self];
+    //扫描外设Services，成功后会进入方法：-(void)peripheral:(CBPeripheral *)peripheral didDiscoverServices:(NSError *)error{
+    Note: In a real app, you typically do not pass in nil as the parameter, because doing so returns all the services available on a peripheral device. Because a peripheral may contain many more services than you are interested in, discovering all of them may waste battery life and be an unnecessary use of time. Instead, you typically specify the UUIDs of the services that you already know you are interested in discovering, as shown in Explore a Peripheral’s Data Wisely.
+    [peripheral discoverServices:nil];
+
+}
+
+//扫描到Services
+-(void)peripheral:(CBPeripheral *)peripheral didDiscoverServices:(NSError *)error{
+    //  NSLog(@">>>扫描到服务：%@",peripheral.services);
+    if (error)
+    {
+        NSLog(@">>>Discovered services for %@ with error: %@", peripheral.name, [error localizedDescription]);
+        return;
+    }
+
+    for (CBService *service in peripheral.services) {
+                        NSLog(@"%@",service.UUID);
+                        //扫描每个service的Characteristics，扫描到后会进入方法： -(void)peripheral:(CBPeripheral *)peripheral didDiscoverCharacteristicsForService:(CBService *)service error:(NSError *)error
+                        
+                        Note: In a real app, you typically do not pass in nil as the first parameter, because doing so returns all the characteristics of a peripheral’s service. Because a peripheral’s service may contain many more characteristics than you are interested in, discovering all of them may waste battery life and be an unnecessary use of time. Instead, you typically specify the UUIDs of the characteristics that you already know you are interested in discovering.
+
+                        [peripheral discoverCharacteristics:nil forService:service];
+                    }
+
+}
+
+4.2 获取外设的Characteristics,获取Characteristics的值，获取Characteristics的Descriptor和Descriptor的值
+//扫描到Characteristics
+-(void)peripheral:(CBPeripheral *)peripheral didDiscoverCharacteristicsForService:(CBService *)service error:(NSError *)error{
+    if (error)
+    {
+        NSLog(@"error Discovered characteristics for %@ with error: %@", service.UUID, [error localizedDescription]);
+        return;
+    }
+
+    for (CBCharacteristic *characteristic in service.characteristics)
+    {
+        NSLog(@"service:%@ 的 Characteristic: %@",service.UUID,characteristic.UUID);
+    }
+
+    //获取Characteristic的值，读到数据会进入方法：-(void)peripheral:(CBPeripheral *)peripheral didUpdateValueForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error
+
+    for (CBCharacteristic *characteristic in service.characteristics){
+        {
+            Note: Not all characteristics are readable. You can determine whether a characteristic is readable by checking if its properties attribute includes the CBCharacteristicPropertyRead constant. If you try to read a value of a characteristic that is not readable, the peripheral:didUpdateValueForCharacteristic:error: delegate method returns a suitable error.
+
+            [peripheral readValueForCharacteristic:characteristic];
+        }
+    }
+
+    //搜索Characteristic的Descriptors，读到数据会进入方法：-(void)peripheral:(CBPeripheral *)peripheral didDiscoverDescriptorsForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error
+    for (CBCharacteristic *characteristic in service.characteristics){
+        [peripheral discoverDescriptorsForCharacteristic:characteristic];
+    }
+
+
+}
+
+//获取的charateristic的值
+-(void)peripheral:(CBPeripheral *)peripheral didUpdateValueForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error{
+//打印出characteristic的UUID和值
+//!注意，value的类型是NSData，具体开发时，会根据外设协议制定的方式去解析数据
+NSLog(@"characteristic uuid:%@  value:%@",characteristic.UUID,characteristic.value);
+
+}
+
+//搜索到Characteristic的Descriptors
+-(void)peripheral:(CBPeripheral *)peripheral didDiscoverDescriptorsForCharacteristic:(CBCharacteristic *)characteristic error:(NSError *)error{
+
+//打印出Characteristic和他的Descriptors
+    NSLog(@"characteristic uuid:%@",characteristic.UUID);
+for (CBDescriptor *d in characteristic.descriptors) {
+    NSLog(@"Descriptor uuid:%@",d.UUID);
+}
+
+}
+//获取到Descriptors的值
+-(void)peripheral:(CBPeripheral *)peripheral didUpdateValueForDescriptor:(CBDescriptor *)descriptor error:(NSError *)error{
+//打印出DescriptorsUUID 和value
+//这个descriptor都是对于characteristic的描述，一般都是字符串，所以这里我们转换成字符串去解析
+NSLog(@"characteristic uuid:%@  value:%@",[NSString stringWithFormat:@"%@",descriptor.UUID],descriptor.value);
+}
+
+5. 把数据写到Characteristic中
+//写数据
+-(void)writeCharacteristic:(CBPeripheral *)peripheral
+            characteristic:(CBCharacteristic *)characteristic
+                        value:(NSData *)value{
+
+    //打印出 characteristic 的权限，可以看到有很多种，这是一个NS_OPTIONS，就是可以同时用于好几个值，常见的有read，write，notify，indicate，知知道这几个基本就够用了，前连个是读写权限，后两个都是通知，两种不同的通知方式。
+    /*
+        typedef NS_OPTIONS(NSUInteger, CBCharacteristicProperties) {
+        CBCharacteristicPropertyBroadcast												= 0x01,
+        CBCharacteristicPropertyRead													= 0x02,
+        CBCharacteristicPropertyWriteWithoutResponse									= 0x04,
+        CBCharacteristicPropertyWrite													= 0x08,
+        CBCharacteristicPropertyNotify													= 0x10,
+        CBCharacteristicPropertyIndicate												= 0x20,
+        CBCharacteristicPropertyAuthenticatedSignedWrites								= 0x40,
+        CBCharacteristicPropertyExtendedProperties										= 0x80,
+        CBCharacteristicPropertyNotifyEncryptionRequired NS_ENUM_AVAILABLE(NA, 6_0)		= 0x100,
+        CBCharacteristicPropertyIndicateEncryptionRequired NS_ENUM_AVAILABLE(NA, 6_0)	= 0x200
+        };
+
+        */
+    NSLog(@"%lu", (unsigned long)characteristic.properties);
+
+
+    //只有 characteristic.properties 有write的权限才可以写
+    if(characteristic.properties & CBCharacteristicPropertyWrite){
+        /*
+            最好一个type参数可以为CBCharacteristicWriteWithResponse或type:CBCharacteristicWriteWithResponse,区别是是否会有反馈
+        */
+        [peripheral writeValue:value forCharacteristic:characteristic type:CBCharacteristicWriteWithResponse];
+    }else{
+        NSLog(@"该字段不可写！");
+    }
+
+
+}
+
+6. 订阅Characteristic的通知
+Note: Not all characteristics offer subscription. You can determine if a characteristic offers subscription by checking if its properties attribute includes either of the CBCharacteristicPropertyNotify or CBCharacteristicPropertyIndicate constants.
+
+//设置通知
+-(void)notifyCharacteristic:(CBPeripheral *)peripheral
+            characteristic:(CBCharacteristic *)characteristic{
+    //设置通知，数据通知会进入：didUpdateValueForCharacteristic方法
+    [peripheral setNotifyValue:YES forCharacteristic:characteristic];
+
+}
+
+//取消通知
+-(void)cancelNotifyCharacteristic:(CBPeripheral *)peripheral
+                characteristic:(CBCharacteristic *)characteristic{
+
+        [peripheral setNotifyValue:NO forCharacteristic:characteristic];
+}
+
+7. 断开连接(disconnect)
+//停止扫描并断开连接
+-(void)disconnectPeripheral:(CBCentralManager *)centralManager
+                    peripheral:(CBPeripheral *)peripheral{
+    //停止扫描
+    [centralManager stopScan];
+    //断开连接
+    [centralManager cancelPeripheralConnection:peripheral];
+}
+
+
+
+
+app作为外设被连接的实现:
+1. 打开peripheralManager，设置peripheralManager的委托
+2. 创建characteristics，characteristics的description 创建service，把characteristics添加到service中，再把service添加到peripheralManager中
+3. 开启广播advertising
+4. 对central的操作进行响应
+    - 4.1 读characteristics请求
+    - 4.2 写characteristics请求
+    - 4.4 订阅和取消订阅characteristics
+
+
+1. 打开peripheralManager，设置peripheralManager的委托
+@interface BePeripheralViewController : UIViewController<CBPeripheralManagerDelegate>
+/*
+    和CBCentralManager类似，蓝牙设备打开需要一定时间，打开成功后会进入委托方法
+    - (void)peripheralManagerDidUpdateState:(CBPeripheralManager *)peripheral;
+    模拟器永远也不会得CBPeripheralManagerStatePoweredOn状态
+    */
+peripheralManager = [[CBPeripheralManager alloc]initWithDelegate:self queue:nil];
+
+
+2. 创建characteristics，characteristics的description ，创建service，把characteristics添加到service中，再把service添加到peripheralManager中
+在委托方法 - (void)peripheralManagerDidUpdateState:(CBPeripheralManager *)peripheral中，当peripheral成功打开后，才可以配置service和characteristics。
+这里创建的service和chara对象是CBMutableCharacteristic和CBMutableService。他们的区别就像NSArray和NSMutableArray区别类似。
+我们先创建characteristics和description，description是characteristics的描述，描述分很多种.常用的就是CBUUIDCharacteristicUserDescriptionString
+
+//peripheralManager状态改变
+- (void)peripheralManagerDidUpdateState:(CBPeripheralManager *)peripheral{
+    switch (peripheral.state) {
+            //在这里判断蓝牙设别的状态  当开启了则可调用  setUp方法(自定义)
+        case CBPeripheralManagerStatePoweredOn:
+            NSLog(@"powered on");
+            [info setText:[NSString stringWithFormat:@"设备名%@已经打开，可以使用center进行连接",LocalNameKey]];
+            [self setUp];
+            break;
+        case CBPeripheralManagerStatePoweredOff:
+            NSLog(@"powered off");
+            [info setText:@"powered off"];
+            break;
+
+        default:
+            break;
+    }
+}
+
+-(void)setUp{
+
+    //characteristics字段描述
+    CBUUID *CBUUIDCharacteristicUserDescriptionStringUUID = [CBUUID UUIDWithString:CBUUIDCharacteristicUserDescriptionString];
+
+    /*
+        可以通知的Characteristic
+        properties：CBCharacteristicPropertyNotify
+        permissions CBAttributePermissionsReadable
+        */
+    CBMutableCharacteristic *notiyCharacteristic = [[CBMutableCharacteristic alloc]initWithType:[CBUUID UUIDWithString:notiyCharacteristicUUID] properties:CBCharacteristicPropertyNotify value:nil permissions:CBAttributePermissionsReadable];
+
+    /*
+        可读写的characteristics
+        properties：CBCharacteristicPropertyWrite | CBCharacteristicPropertyRead
+        permissions CBAttributePermissionsReadable | CBAttributePermissionsWriteable
+        */
+    CBMutableCharacteristic *readwriteCharacteristic = [[CBMutableCharacteristic alloc]initWithType:[CBUUID UUIDWithString:readwriteCharacteristicUUID] properties:CBCharacteristicPropertyWrite | CBCharacteristicPropertyRead value:nil permissions:CBAttributePermissionsReadable | CBAttributePermissionsWriteable];
+    //设置description
+    CBMutableDescriptor *readwriteCharacteristicDescription1 = [[CBMutableDescriptor alloc]initWithType: CBUUIDCharacteristicUserDescriptionStringUUID value:@"name"];
+    [readwriteCharacteristic setDescriptors:@[readwriteCharacteristicDescription1]];
+
+
+    /*
+        只读的Characteristic
+        properties：CBCharacteristicPropertyRead
+        permissions CBAttributePermissionsReadable
+        */
+    CBMutableCharacteristic *readCharacteristic = [[CBMutableCharacteristic alloc]initWithType:[CBUUID UUIDWithString:readCharacteristicUUID] properties:CBCharacteristicPropertyRead value:nil permissions:CBAttributePermissionsReadable];
+
+
+    //service1初始化并加入两个characteristics
+    CBMutableService *service1 = [[CBMutableService alloc]initWithType:[CBUUID UUIDWithString:ServiceUUID1] primary:YES];
+    [service1 setCharacteristics:@[notiyCharacteristic,readwriteCharacteristic]];
+
+    //service2初始化并加入一个characteristics
+    CBMutableService *service2 = [[CBMutableService alloc]initWithType:[CBUUID UUIDWithString:ServiceUUID2] primary:YES];
+    [service2 setCharacteristics:@[readCharacteristic]];
+
+    //添加后就会调用代理的- (void)peripheralManager:(CBPeripheralManager *)peripheral didAddService:(CBService *)service error:(NSError *)error
+    [peripheralManager addService:service1];
+    [peripheralManager addService:service2];
+}
+
+3. 开启广播advertising
+//perihpheral添加了service
+- (void)peripheralManager:(CBPeripheralManager *)peripheral didAddService:(CBService *)service error:(NSError *)error{
+    if (error == nil) {
+        serviceNum++;
+    }
+
+    //因为我们添加了2个服务，所以想两次都添加完成后才去发送广播
+    if (serviceNum==2) {
+        //添加服务后可以在此向外界发出通告 调用完这个方法后会调用代理的
+        //(void)peripheralManagerDidStartAdvertising:(CBPeripheralManager *)peripheral error:(NSError *)error
+        [peripheralManager startAdvertising:@{
+                                              CBAdvertisementDataServiceUUIDsKey : @[[CBUUID UUIDWithString:ServiceUUID1],[CBUUID UUIDWithString:ServiceUUID2]],
+                                              CBAdvertisementDataLocalNameKey : LocalNameKey
+                                             }
+         ];
+
+    }
+
+}
+
+//peripheral开始发送advertising
+- (void)peripheralManagerDidStartAdvertising:(CBPeripheralManager *)peripheral error:(NSError *)error{
+    NSLog(@"in peripheralManagerDidStartAdvertisiong");
+}
+
+4. 对central的操作进行响应
+- 4.1 读characteristics请求
+- 4.2 写characteristics请求
+- 4.3 订阅和取消订阅characteristics
+
+//订阅characteristics
+-(void)peripheralManager:(CBPeripheralManager *)peripheral central:(CBCentral *)central didSubscribeToCharacteristic:(CBCharacteristic *)characteristic{
+    NSLog(@"订阅了 %@的数据",characteristic.UUID);
+    //每秒执行一次给主设备发送一个当前时间的秒数
+    timer = [NSTimer scheduledTimerWithTimeInterval:1 target:self selector:@selector(sendData:) userInfo:characteristic  repeats:YES];
+}
+
+//取消订阅characteristics
+-(void)peripheralManager:(CBPeripheralManager *)peripheral central:(CBCentral *)central didUnsubscribeFromCharacteristic:(CBCharacteristic *)characteristic{
+    NSLog(@"取消订阅 %@的数据",characteristic.UUID);
+    //取消回应
+    [timer invalidate];
+}
+
+//发送数据，发送当前时间的秒数
+-(BOOL)sendData:(NSTimer *)t {
+    CBMutableCharacteristic *characteristic = t.userInfo;
+    NSDateFormatter *dft = [[NSDateFormatter alloc]init];
+    [dft setDateFormat:@"ss"];
+    NSLog(@"%@",[dft stringFromDate:[NSDate date]]);
+
+    //执行回应Central通知数据
+    return  [peripheralManager updateValue:[[dft stringFromDate:[NSDate date]] dataUsingEncoding:NSUTF8StringEncoding] forCharacteristic:(CBMutableCharacteristic *)characteristic onSubscribedCentrals:nil];
+
+}
+
+
+//读characteristics请求
+- (void)peripheralManager:(CBPeripheralManager *)peripheral didReceiveReadRequest:(CBATTRequest *)request{
+    NSLog(@"didReceiveReadRequest");
+    //判断是否有读数据的权限
+    if (request.characteristic.properties & CBCharacteristicPropertyRead) {
+        NSData *data = request.characteristic.value;
+        [request setValue:data];
+        //对请求作出成功响应
+        [peripheralManager respondToRequest:request withResult:CBATTErrorSuccess];
+    }else{
+        [peripheralManager respondToRequest:request withResult:CBATTErrorWriteNotPermitted];
+    }
+}
+
+
+//写characteristics请求
+- (void)peripheralManager:(CBPeripheralManager *)peripheral didReceiveWriteRequests:(NSArray *)requests{
+    NSLog(@"didReceiveWriteRequests");
+    CBATTRequest *request = requests[0];
+
+    //判断是否有写数据的权限
+    if (request.characteristic.properties & CBCharacteristicPropertyWrite) {
+        //需要转换成CBMutableCharacteristic对象才能进行写值
+        CBMutableCharacteristic *c =(CBMutableCharacteristic *)request.characteristic;
+        c.value = request.value;
+        [peripheralManager respondToRequest:request withResult:CBATTErrorSuccess];
+    }else{
+        [peripheralManager respondToRequest:request withResult:CBATTErrorWriteNotPermitted];
+    }
+
+
+}
+
+
+==================================================
+Core Bluetooth Background Processing for iOS Apps:
+Even if your app supports one or both of the Core Bluetooth background execution modes, it can’t run forever. 
+At some point, the system may need to terminate your app to free up memory for the current foreground app—causing any active or pending connections to be lost, for instance.
+As of iOS 7, Core Bluetooth supports saving state information for central and peripheral manager objects and restoring that state at app launch time. 
+You can use this feature to support long-term actions involving Bluetooth devices.
+
+
+
+Foreground-Only Apps:
+Take Advantage of Peripheral Connection Options:
+All Bluetooth-related events that occur while a foreground-only app is in the suspended state are queued by the system and delivered to the app only when it resumes to the foreground.
+That said, Core Bluetooth provides a way to alert the user when certain central role events occur. 
+The user can then use these alerts to decide whether a particular event warrants bringing the app back to the foreground.
+
+
+
+
+Core Bluetooth Background Execution Modes:
+The bluetooth-central Background Execution Mode
+When an app that implements the central role includes the UIBackgroundModes key with the bluetooth-central value in its Info.plist file, the Core Bluetooth framework allows your app to run in the background to perform certain Bluetooth-related tasks. While your app is in the background you can still discover and connect to peripherals, and explore and interact with peripheral data. In addition, the system wakes up your app when any of the CBCentralManagerDelegate or CBPeripheralDelegate delegate methods are invoked, allowing your app to handle important central role events, such as when a connection is established or torn down, when a peripheral sends updated characteristic values, and when a central manager’s state changes.
+
+Although you can perform many Bluetooth-related tasks while your app is in the background, keep in mind that scanning for peripherals while your app is in the background operates differently than when your app is in the foreground. In particular, when your app is scanning for device while in the background:
+
+The CBCentralManagerScanOptionAllowDuplicatesKey scan option key is ignored, and multiple discoveries of an advertising peripheral are coalesced into a single discovery event.
+If all apps that are scanning for peripherals are in the background, the interval at which your central device scans for advertising packets increases. As a result, it may take longer to discover an advertising peripheral.
+These changes help minimize radio usage and improve the battery life on your iOS device.
+
+
+
+Use Background Execution Modes Wisely:
+Although declaring your app to support one or both of the Core Bluetooth background execution modes may be necessary to fulfill a particular use case, you should always perform background processing responsibly. Because performing many Bluetooth-related tasks require the active use of an iOS device’s onboard radio—and, in turn, radio usage has an adverse effect on an iOS device’s battery life—try to minimize the amount of work you do in the background. Apps woken up for any Bluetooth-related events should process them and return as quickly as possible so that the app can be suspended again.
+
+Any app that declares support for either of the Core Bluetooth background executions modes must follow a few basic guidelines:
+
+Apps should be session based and provide an interface that allows the user to decide when to start and stop the delivery of Bluetooth-related events.
+Upon being woken up, an app has around 10 seconds to complete a task. Ideally, it should complete the task as fast as possible and allow itself to be suspended again. Apps that spend too much time executing in the background can be throttled back by the system or killed.
+Apps should not use being woken up as an opportunity to perform extraneous tasks that are unrelated to why the app was woken up by the system.
+
+
+
+Performing Long-Term Actions in the Background:
+Some apps may need to use the Core Bluetooth framework to perform long-term actions in the background.
+As an example, imagine you are developing a home security app for an iOS device that communicates with a door lock (equipped with Bluetooth low energy technology).
+The app and the lock interact to automatically lock the door when the user leaves home and unlock the door when the user returns—all while the app is in the background.
+When the user leaves home, the iOS device may eventually become out of range of the lock, causing the connection to the lock to be lost.
+At this point, the app can simply call the connectPeripheral:options: method of the CBCentralManager class, and because connection requests do not time out, the iOS device will reconnect when the user returns home.
+
+Now imagine that the user is away from home for a few days. 
+If the app is terminated by the system while the user is away, 
+the app will not be able to reconnect to the lock when the user returns home, 
+and the user may not be able to unlock the door. 
+For apps like these, it is critical to be able to continue using Core Bluetooth to perform long-term actions, 
+such as monitoring active and pending connections.
+
+State Preservation and Restoration:
+Because state preservation and restoration is built in to Core Bluetooth, 
+your app can opt in to this feature to ask the system to preserve the state of your app’s central and peripheral managers and to continue performing certain Bluetooth-related tasks on their behalf, even when your app is no longer running. When one of these tasks completes, the system relaunches your app into the background and gives your app the opportunity to restore its state and to handle the event appropriately. In the case of the home security app described above, the system would monitor the connection request, 
+and re-relaunch the app to handle the centralManager:didConnectPeripheral: delegate callback when the user returned home and the connection request completed.
+
+Core Bluetooth supports state preservation and restoration for apps that implement the central role, peripheral role, or both. 
+When your app implements the central role and adds support for state preservation and restoration, 
+the system saves the state of your central manager object when the system is about to terminate your app to free up memory (if your app has multiple central managers, you can choose which ones you want the system to keep track of). In particular, for a given CBCentralManager object, the system keeps track of:
+The services the central manager was scanning for (and any scan options specified when the scan started)
+The peripherals the central manager was trying to connect to or had already connected to
+The characteristics the central manager was subscribed to
+
+Apps that implement the peripheral role can likewise take advantage of state preservation and restoration. For CBPeripheralManager objects, the system keeps track of:
+The data the peripheral manager was advertising
+The services and characteristics the peripheral manager published to the device’s database
+The centrals that were subscribed to your characteristics’ values
+When your app is relaunched into the background by the system (because a peripheral your app was scanning for is discovered, for instance), you can reinstantiate your app’s central and peripheral managers and restore their state. The following section describes in detail how to take advantage of state preservation and restoration in your app.
+
+
+--------------------------------------------------
+Adding Support for State Preservation and Restoration:
+State preservation and restoration in Core Bluetooth is an opt-in feature and requires help from your app to work. 
+You can add support for this feature in your app by following this process:
+(Required) Opt in to state preservation and restoration when you allocate and initialize a central or peripheral manager object. This step is described in Opt In to State Preservation and Restoration.
+(Required) Reinstantiate any central or peripheral manager objects after your app is relaunched by the system. This step is described in Reinstantiate Your Central and Peripheral Managers.
+(Required) Implement the appropriate restoration delegate method. This step is described in Implement the Appropriate Restoration Delegate Method.
+(Optional) Update your central and peripheral managers’ initialization process. This step is described in Update Your Initialization Process.
+
+Opt In to State Preservation and Restoration:
+To opt in to the state preservation and restoration feature, simply provide a unique restoration identifier when you allocate and initialize a central or peripheral manager. A restoration identifier is a string that identifies the central or peripheral manager to Core Bluetooth and to your app. The value of the string is significant only to your code, but the presence of this string tells Core Bluetooth that it needs to preserve the state of the tagged object. Core Bluetooth preserves the state of only those objects that have a restoration identifier.
+For example, to opt in to state preservation and restoration in an app that uses only one instance of a CBCentralManager object to implement the central role, specify the CBCentralManagerOptionRestoreIdentifierKey initialization option and provide a restoration identifier for the central manager when you allocate and initialize it.
+
+myCentralManager =
+    [[CBCentralManager alloc] initWithDelegate:self queue:nil
+        options:@{ CBCentralManagerOptionRestoreIdentifierKey:
+        @"myCentralManagerIdentifier" }];
+Although the above example does not demonstrate this, you opt in to state preservation and restoration in an app that uses peripheral manager objects in an analogous way: Specify the CBPeripheralManagerOptionRestoreIdentifierKey initialization option, and provide a restoration identifier when you allocate and initialize each peripheral manager object.
+Note: Because apps can have multiple instances of CBCentralManager and CBPeripheralManager objects, be sure each restoration identifier is unique, so that the system can properly distinguish one central (or peripheral) manager object from another.
+
+Reinstantiate Your Central and Peripheral Managers:
+When your app is relaunched into the background by the system, 
+the first thing you need to do is reinstantiate the appropriate central and peripheral managers with the same restoration identifiers as they had when they were first created. If your app uses only one central or peripheral manager, and that manager exists for the lifetime of your app, there is nothing more you need to do for this step.
+
+If your app uses more than one central or peripheral manager or if it uses a manager that isn’t around for the lifetime of your app, 
+your app needs to know which managers to reinstantiate when it is relaunched by the system. You can access a list of all the restoration identifiers for the manager objects the system was preserving for your app when it was terminated, by using the appropriate launch option keys (UIApplicationLaunchOptionsBluetoothCentralsKey or UIApplicationLaunchOptionsBluetoothPeripheralsKey) when implementing your app delegate’s application:didFinishLaunchingWithOptions: method.
+
+For example, when your app is relaunched by system, you can retrieve all the restoration identifiers for the central manager objects the system was preserving for your app, like this:
+
+- (BOOL)application:(UIApplication *)application
+didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+
+NSArray *centralManagerIdentifiers =
+    launchOptions[UIApplicationLaunchOptionsBluetoothCentralsKey];
+...
+
+After you have the list of restoration identifiers, simply loop through it and reinstantiate the appropriate central manager objects.
+Note: When your app is relaunched, the system provides restoration identifiers only for central and peripheral managers for which it was performing some Bluetooth-related task (while the app was no longer running). These launch option keys are described in more detail in UIApplicationDelegate Protocol Reference.
+
+Implement the Appropriate Restoration Delegate Method:
+After you have reinstantiated the appropriate central and peripheral managers in your app, 
+restore them by synchronizing their state with the state of the Bluetooth system. 
+To bring your app up to speed with what the system has been doing on its behalf (while it was not running), 
+you must implement the appropriate restoration delegate method. 
+For central managers, implement the centralManager:willRestoreState: delegate method; for peripheral managers, 
+implement the peripheralManager:willRestoreState: delegate method.
+
+Important: For apps that opt in to the state preservation and restoration feature of Core Bluetooth, these are the first methods (centralManager:willRestoreState: and peripheralManager:willRestoreState:) invoked when your app is relaunched into the background to complete some Bluetooth-related task. For apps that don’t opt in to state preservation (or if there is nothing to restore upon launch), the centralManagerDidUpdateState: and peripheralManagerDidUpdateState: delegate methods are invoked first instead.
+
+In both of the above delegate methods, the last parameter is a dictionary that contains information about the managers that were preserved at the time the app was terminated. For a list of the available dictionary keys, see the Central Manager State Restoration Options constants in CBCentralManagerDelegate Protocol Reference and the Peripheral_Manager_State_Restoration_Options constants in CBPeripheralManagerDelegate Protocol Reference.
+
+To restore the state of a CBCentralManager object, use the keys to the dictionary that is provided in the centralManager:willRestoreState: delegate method. 
+As an example, if your central manager object had any active or pending connections at the time your app was terminated, the system continued to monitor them on your app’s behalf. As the following shows, you can use the CBCentralManagerRestoredStatePeripheralsKey dictionary key to get of a list of all the peripherals (represented by CBPeripheral objects) the central manager was connected to or was trying to connect to:
+- (void)centralManager:(CBCentralManager *)central
+      willRestoreState:(NSDictionary *)state {
+ 
+    NSArray *peripherals =
+        state[CBCentralManagerRestoredStatePeripheralsKey];
+    ...
+
+What you do with the list of restored peripherals in the above example depends on the use case. 
+For instance, if your app keeps a list of the peripherals the central manager discovers, 
+you may want to add the restored peripherals to that list to keep references to them. As described in Connecting to a Peripheral Device After You’ve Discovered It, be sure to set a peripheral’s delegate to ensure that it receives the appropriate callbacks.
+
+You can restore the state of a CBPeripheralManager object in a similar way by using the keys to the dictionary that is provided in the peripheralManager:willRestoreState: delegate method.
+
+
+
+Update Your Initialization Process:
+After you have implemented the previous three required steps, you may want to take a look at updating your central and peripheral managers’ initialization process. 
+Although this is an optional step, it can be important in ensuring that things run smoothly in your app. 
+As an example, your app may have been terminated while it was in the middle of exploring the data of a connected peripheral. When your app is restored with this peripheral, it won’t know how far it made it the discovery process at the time it was terminated. You’ll want to make sure you’re starting from where you left off in the discovery process.
+
+For example, when initializing your app in the centralManagerDidUpdateState: delegate method, you can find out if you successfully discovered a particular service of a restored peripheral (before your app was terminated), like this:
+NSUInteger serviceUUIDIndex =
+        [peripheral.services indexOfObjectPassingTest:^BOOL(CBService *obj,
+        NSUInteger index, BOOL *stop) {
+            return [obj.UUID isEqual:myServiceUUIDString];
+        }];
+ 
+    if (serviceUUIDIndex == NSNotFound) {
+        [peripheral discoverServices:@[myServiceUUIDString]];
+        ...
+
+As the above example shows, if the system terminated your app before it finished discovering the service, begin the exploring the restored peripheral’s data at that point by calling the discoverServices:. If your app discovered the service successfully, you can then check to see whether the appropriate characteristics were discovered (and whether you already subscribed to them). 
+By updating your initialization process in this manner, you’ll ensure that you’re calling the right methods at the right time.
+
+
+
+==================================================
+#####
+Be Mindful of Radio Usage and Power Consumption:
+#####
+1. Scan for Devices Only When You Need To
+When you call the scanForPeripheralsWithServices:options: method of the CBCentralManager class to discover remote peripheral’s that are advertising services, your central device uses its radio to listen for advertising devices until you explicitly tell it to stop.
+
+Unless you need to discover more devices, stop scanning for other devices after you have found one you want to connect to. Use the stopScan method of the CBCentralManager class to stop scanning for other devices, as shown in Connecting to a Peripheral Device After You’ve Discovered It.
+
+2. Specify the CBCentralManagerScanOptionAllowDuplicatesKey Option Only When Necessary
+Remote peripheral devices may send out multiple advertising packets per second to announce their presence to listening centrals. When you are scanning for devices using the scanForPeripheralsWithServices:options: method, the default behavior of the method is to coalesce multiple discoveries of an advertising peripheral into a single discovery event—that is, the central manager calls the centralManager:didDiscoverPeripheral:advertisementData:RSSI: method of its delegate object for each new peripheral it discovers, regardless of how many advertising packets it receives. The central manager also calls this delegate method when the advertisement data of an already-discovered peripheral changes.
+
+If you want to change the default behavior, you can specify the CBCentralManagerScanOptionAllowDuplicatesKey constant as a scan option when calling the scanForPeripheralsWithServices:options: method. When you do, a discovery event is generated each time the central receives an advertising packet from the peripheral. Turning off the default behavior can be useful for certain use cases, such as initiating a connection to a peripheral based on the peripheral’s proximity (using the peripheral received signal strength indicator (RSSI) value). That said, keep in mind that specifying this scan option may have an adverse effect on battery life and app performance. Therefore, specify this scan option only when it is necessary to fulfill a particular use case.
+
+3. Explore a Peripheral’s Data Wisely
+A peripheral device may have many more services and characteristics than you may be interested in when you are developing an app to fulfill a specific use case. Discovering all of a peripheral’s services and associated characteristics can negatively affect battery life and your app’s performance. Therefore, you should look for and discover only the services and associated characteristics your app needs.
+
+For example, imagine that you are connected to a peripheral device that has many services available, but your app needs access to only two of them. You can look for and discover these two services only, by passing in an array of their service UUIDs (represented by CBUUID objects) to the discoverServices: method of the CBPeripheral class, like this:
+
+[peripheral discoverServices:@[firstServiceUUID, secondServiceUUID]];
+After you have discovered the two services you are interested in, you can similarly look for and discover only the characteristics of these services that you are interested in. Again, simply pass in an array of the UUIDs that identify the characteristics you want to discover (for each service) to the discoverCharacteristics:forService: method of the CBPeripheral class.
+
+4. Subscribe to Characteristic Values That Change Often
+As described in Retrieving the Value of a Characteristic, there are two ways you can retrieve a characteristic’s value:
+
+You can explicitly poll for a characteristic’s value by calling the readValueForCharacteristic: method each time you need the value.
+You can subscribe to the characteristic’s value by calling the setNotifyValue:forCharacteristic: method once to receive a notification from the peripheral when the value changes.
+It is best practice to subscribe to a characteristic’s value when possible, especially for characteristic values that change often. For an example of how to subscribe to a characteristic’s value, see Subscribing to a Characteristic’s Value.
+
+5. Disconnect from a Device When You Have All the Data You Need
+You can help reduce your app’s radio usage by disconnecting from a peripheral device when a connection is no longer needed. You should disconnect from a peripheral device in both of the following situations:
+
+All characteristic values that you’ve subscribed to have stopped sending notifications. (You can determine whether a characteristic’s value is notifying by accessing the characteristic’s isNotifying property.)
+You have all of the data you need from the peripheral device.
+In both cases, cancel any subscriptions you may have and then disconnect from the peripheral. You can cancel any subscription to a characteristic’s value by calling the setNotifyValue:forCharacteristic: method, setting the first parameter to NO. You can cancel a connection to a peripheral device by calling the cancelPeripheralConnection: method of the CBCentralManager class, like this:
+
+    [myCentralManager cancelPeripheralConnection:peripheral];
+Note: The cancelPeripheralConnection: method is nonblocking, and any CBPeripheral class commands that are still pending to the peripheral you’re trying to disconnect may or may not finish executing. Because other apps may still have a connection to the peripheral, canceling a local connection does not guarantee that the underlying physical link is immediately disconnected. From your app’s perspective, however, the peripheral is considered disconnected, and the central manager object calls the centralManager:didDisconnectPeripheral:error: method of its delegate object.
+
+
+#####
+Reconnecting to Peripherals:
+#####
+Using the Core Bluetooth framework, there are three ways you can reconnect to a peripheral. You can:
+Retrieve a list of known peripherals—peripherals that you’ve discovered or connected to in the past—using the retrievePeripheralsWithIdentifiers: method. If the peripheral you’re looking for is in the list, try to connect to it. This reconnection option is described in Retrieving a List of Known Peripherals.
+Retrieve a list of peripheral devices that are currently connected to the system using the retrieveConnectedPeripheralsWithServices: method. If the peripheral you’re looking for is in the list, connect it locally to your app. This reconnection option is described in Retrieving a List of Connected Peripherals.
+Scan for and discover a peripheral using the scanForPeripheralsWithServices:options: method. If you find it, connect to it. These steps are described in Discovering Peripheral Devices That Are Advertising and Connecting to a Peripheral Device After You’ve Discovered It.
+
+Depending on the use case, you may not want to have to scan for and discover the same peripheral every time you want to reconnect to it. 
+Instead, you may want to try to reconnect using the other options first. 
+one possible reconnection workflow may be to try each of these options in the order in which they’re listed above.
+
+Note: The number of reconnection options you decide to try, and the order in which you do so, may vary by the use case your app is trying to fulfill. For example, you may decide not to use the first connection option at all, or you may decide to try the first two options in parallel.
+
+
+Retrieving a List of Known Peripherals:
+The first time you discover a peripheral, the system generates an identifier (a UUID, represented by an NSUUID object) to identify the peripheral. You can then store this identifier (using, for instance, the resources of the NSUserDefaults class), and later use it to try to reconnect to the peripheral using the retrievePeripheralsWithIdentifiers: method of the CBCentralManager class. The following describes one way to use this method to reconnect to a peripheral you’ve previously connected to.
+
+When your app launches, call the retrievePeripheralsWithIdentifiers: method, passing in an array containing the identifiers of the peripherals you’ve previously discovered and connected to (and whose identifiers you have saved), like this:
+
+    knownPeripherals =
+        [myCentralManager retrievePeripheralsWithIdentifiers:savedIdentifiers];
+The central manager tries to match the identifiers you provided to the identifiers of previously discovered peripherals and returns the results as an array of CBPeripheral objects. If no matches are found, the array is empty and you should try one of the other two reconnection options. If the array is not empty, let the user select (in the UI) which peripheral to try to reconnect to.
+
+When the user selects a peripheral, try to connect to it by calling the connectPeripheral:options: method of the CBCentralManager class. If the peripheral device is still available to be connected to, the central manager calls the centralManager:didConnectPeripheral: method of its delegate object and the peripheral device is successfully reconnected.
+
+Note: A peripheral device may not be available to be connected to for a few reasons. For instance, the device may not be in the vicinity of the central. In addition, some Bluetooth low energy devices use a random device address that changes periodically. Therefore, even if the device is nearby, the address of the device may have changed since the last time it was discovered by the system, in which case the CBPeripheral object you are trying to connect to doesn’t correspond to the actual peripheral device. If you cannot reconnect to the peripheral because its address has changed, you must rediscover it using the scanForPeripheralsWithServices:options: method.
+
+For more information about random device addresses, see the Bluetooth 4.0 specification, Volume 3, Part C, Section 10.8 and Bluetooth Accessory Design Guidelines for Apple Products.
+https://developer.apple.com/accessories/Accessory-Design-Guidelines.pdf
+
+
+Retrieving a List of Connected Peripherals:
+Another way to reconnect to a peripheral is by checking to see whether the peripheral you’re looking for is already connected to the system (for instance, by another app). You can do so by calling the retrieveConnectedPeripheralsWithServices: method of the CBCentralManager class, which returns an array of CBPeripheral objects representing peripheral devices that are currently connected to the system.
+
+Because there may be more than one peripheral currently connected to the system, you can pass in an array of CBUUID objects (these object represent service UUIDs) to retrieve only peripherals that are currently connected to the system and contain any services that are identified by the UUIDs you specified. If there are no peripheral devices currently connected to the system, the array is empty and you should try one of the other two reconnection options. If the array is not empty, let the user select (in the UI) which one to try to reconnect to.
+
+Assuming that the user finds and selects the desired peripheral, connect it locally to your app by calling the connectPeripheral:options: method of the CBCentralManager class. (Even though the device is already connected to the system, you must still connect it locally to your app to begin exploring and interacting with it.) When the local connection is established, the central manager calls the centralManager:didConnectPeripheral: method of its delegate object, and the peripheral device is successfully reconnected.

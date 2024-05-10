@@ -5,6 +5,7 @@ https://www.jianshu.com/p/f7736c34ca70
 所以在将数据交由VideoToolbox处理之前需要先进行解复用的操作来将H264数据抽取出来。目前比较通用的做法是使用FFmpeg来进行这个解复用的操作。
 
 NALU:
+NALU 的全称是 "Network Abstraction Layer Unit"，它是 H.264/AVC（Advanced Video Coding，高级视频编码）和 H.265/HEVC（High Efficiency Video Coding，高效视频编码）等视频编码标准中的一个基本单元。
 NALU是Network Abstraction Layer Unit的缩写，意为网络抽象层单元。
 在视频编码中，NALU是H.264/AVC标准中定义的基本单位，用于表示压缩后的视频数据。
 每个NALU包含一个NALU头（NALU header）和一个NALU负载（NALU payload）。
@@ -41,7 +42,30 @@ VideoToolbox可接收的数据格式:
 常见的封装格式中mp4和flv格式封装的是AVC1格式的H.264， ts格式中是以StartCode为起始的H.264。
 如果原始数据是StartCode的格式，则需要将其转换为AVC1的格式才能交给VideoToolbox进行解码
 
+IDR 的全称是 "Instantaneous Decoding Refresh"，它是视频编码中的一种图像类型，用于视频序列的恢复和同步。
+在 H.264/AVC 编码中，IDR 图像是一个完整的、独立的图像，可以作为视频序列中的关键帧。
 
 ==================================================实践
-SPS和PPS的获取:
+1. SPS和PPS的获取:
 如果是自己实现解复用来提取音视频流中H.264数据，可以通过分析H.264数据中的NALU类型来获取SPS和PPS。
+但通常的做法是使用FFmpeg来实现解复用，此时调用avformat_open_input和avformat_find_stream_info函数后，可以在AVCodecContext结构中的extradata数据中获取SPS和PPS数据
+extradata为一个数据块的地址指针，extradata_size指明了其长度，其中存储的数据有两种格式：
+(1) 直接存储SPS和PPS两个NALU
+(2) 存储一个AVCDecoderConfigurationRecord格式的数据，该结构在标准文档“ISO-14496-15 AVC file format”中有详细说明
+实际使用过程中可以通过extradata中的开始几个字节来判断是其中存储的是那种类型的数据（起始数据为00 00 00 01或00 00 01的为两个NALU）
+
+2. 4字节还是3字节的StartCode
+StartCode可以是4个字节的00 00 00 01，也可以是3个字节的00 00 01， 有资料说当一帧图像被编码为多个slice（即需要有多个NALU）时，每个NALU的StartCode为3个字节，否则为4个字节。
+但实际并不是所有编码器都按照这个规定实现，所以在实际使用过程中，要对4个字节和3个字节的StartCode都进行一次判断，包括上面说的extradata中的SPS和PPS，还有实际图像的NALU。
+
+3. FFmpeg中side_data的影响
+如果使用FFmpeg对ts格式进行解复用操作，在av_read_frame读取到一帧视频数据之后，需要将数据转换为AVC1的格式，
+但如果在FFmpeg中没有对AVFormatContext结构的flags变量设置AVFMT_FLAG_KEEP_SIDE_DATA，那么获取的AVPacket结构中的data地址中，保存的将不仅仅只有原始数据，
+它还将在末尾包含一个叫做side_data的数据（其实存储的是MEPG2标准中定义的StreamID），这个数据会导致计算的NALU长度比实际要长，从而可能导致VideoToolbox无法解码。
+避免VideoToolbox解码失败的方法有两种，任选其一即可:
+设置AVFormatContext的AVFMT_FLAG_KEEP_SIDE_DATA；
+调用av_packet_split_side_data将side_data从data数据中分离。
+
+4. 分辨率的变化
+flv和ts格式的流都支持中途改变分辨率，所以在分辨率变化后需要重新初始化VideoToolbox的session，否则将会产生解码错误。
+码流的分辨率发生变化（或者说编码参数发生变化时），都会有SPS和PPS数据的更新，需要根据新的SPS和PPS信息重新建立解码session。

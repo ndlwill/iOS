@@ -1,0 +1,161 @@
+在AppKit中的事件都处于一个响应的链条中,这个链条是由一个叫做 NSResponder 的类定义的,这个响应链条其实是一个列表,它里面装满了能够响应用户事件的对象.
+当用户点击鼠标,或者按下键盘的某个键,或者触摸触控板,都会生成一个Event事件,然后在响应链条中寻找可以处理这个事件的对象对事件进行处理.
+一个对象如果可以处理事件,那么这个对象必须继承自NSResponder这个类.在AppKit中,NSApplication,NSWindow,NSView都继承自NSResponder
+
+一个NSResponder实例对象有三个组件:事件消息(鼠标,键盘,触控板等产生的),动作消息(action message: 比如NSButton 执行target 的action 方法,就属于一种action消息),和响应链条
+一个应用(NSApplication对象)维护着一组窗口(NSWindow)列表,这些窗口都属于这个App,每个窗口对象又维护着一组继承自NSView的对象,这些NSView对象通常用来绘制交互界面以及处理响应事件.
+
+###
+每个应用都拥有一个单利的NSApplication对象来管理主线程的事件循环(main runloop),以及跟踪窗口和菜单的消息,分发事件给相应的对象,建立自动释放池和接收App级别的通知消息.
+
+NSApplication对象通过run()方法来开启事件循环(event loop).这个方法在main()函数中
+
+NSApplication 对象通过调用自身的类方法初始化显示的数据环境,然后挂接到macOS系统的窗口服务(接收事件)和显示服务(显示内容)中.
+
+NSApplication 的一个重要任务就是从macOS系统的窗口服务中接收事件(Event),然后将它们派发到相应的NSResponsder对象.
+
+NSApplication 会将接收到的Event 转换为NSEvent 对象.
+
+所有的鼠标和键盘事件都会被NSApplication 派发到与之关联的某个具体的NSWindow 对象中,但有一种情况例外:如果按下的是Command(⌘)键,那么所有的NSWindow对象都有机会响应这个事件.
+
+NSApplication同时会响应(或派发)接收到的Apple Event(这个比较重要),比如应用启动或者被再次打开(reopened),这个最常用的一个使用场景是通过URL打开我们的App,前提是需要使用NSAppleEventManager类对事件进行注册!!,通常都是写在applicationWillFinishedLaunching(_:)这个方法中.
+
+一个窗口对象(NSWindow)处理窗口级别的事件(window-level events)以及将其他事件传递给窗口中的视图对象,同时一个NSWindow还允许通过它的delegate实现自定义窗口的行为方式.
+###
+
+一个事件(Event)是怎样开始传递到应用(Cocoa Application)的?
+我们以最常用的鼠标或键盘操作来说明事件传递到应用的过程.当用户按下鼠标或者键盘时:
+1.硬件设备首先检测到用户的这个操作,然后通过驱动程序将这个操作动作转换为操作数据.
+2.驱动程序将操作数据准备好之后,会调用macOS内核系统的I/O Kit,生成一个硬件级别的事件.
+3.驱动程序将这个事件发送到macOS系统的窗口服务的事件队列中.
+4.驱动程序通知macOS的窗口服务,告知其已经添加了一个事件到队列中待处理.
+5.macOS的窗口服务收到驱动程序的消息后,会寻找对应的进程(也就是应用程序).
+6.当窗口服务找到App 进程后,会将事件派发到这个应用进程的runloop 
+7.当应用进程的runloop接收到事件后,就开始了事件响应机制,从此刻后,将事件将遵循NSResponder类的处理.
+
+通常情况下,应用程序只有在前台运行的时候才会接收鼠标和键盘的事件;当应用处于后台时,即便是在运行中,一般也不会响应鼠标和键盘的事件,除非是要将这个应用唤醒到前台的事件才会得到响应
+
+
+事件循环runloop:
+每个应用都有一种明确的机制用来确保从操作系统的窗口服务中获取事件(Event).
+在Cocoa Application中,这种机制叫做runloop(一个NSRunLoop对象,它允许进程接收窗口服务的各种来源).默认情况下,OSX中每个线程都有自己的runloop.
+NSAPplication 主线程的runloop称为main runloop,主事件循环的一个显著特点是它由NSApplication对象创建的事件输入源(也就是其他对象,通常是操作系统的窗口服务,可以向它添加事件源).
+为了能从窗口服务接收事件和对接收到的事件进行处理,runloop通常包含这两个部分:端口(Mach port)和事件队列(event queue)
+
+端口(Mach port):用来从操作系统的窗口服务中获取事件(Event)
+队列(Event queue):保存这些事件,直到它们被响应处理.
+
+从另一种意义上讲,应用程序是被事件(event)驱动的:
+它从runloop的事件队列中获取一个事件(NSEvent)
+派发事件(NSEvent)到合适的对象(Object)
+事件被处理完成后,再取下一个事件(NSEvent),直到应用退出.
+
+
+事件分发(Event Dispatch):
+在主事件循环中(main event runloop),应用程序对象(NSApp)会不断的从事件队列中(event queue)获取最前面的事件,然后将它转换为NSEvent 对象后,派发到最终目标.
+NSApp是通过nextEventMatchingMask:untilDate:inMode:dequeue:这个方法从事件队列中获取到事件,当事件队列为空的时候(也就是队列中无事件),这个方法会阻塞,直到有新的事件到来才会继续.
+NSApp将事件转换为NSEvent后,第一件事就是调用sendEvent:方法进行派发.
+大部分的情况下,NSApp都会将事件派发给用户操作的那个窗口(NSWindow),这是通过调用窗口(NSWindow)的sendEvent:方法完成的.
+NSWindow窗口对象将事件以NSResponder Message消息的形式(比如mouseDown:或者keyDown:)派发到与用户操作关联的NSView对象.
+NSWindow派发事件时会根据事件类型略有不同:对于鼠标和触控板事件,NSWindow对象会将事件派发到用户鼠标点击的NSView.对于键盘(keyboard)事件,NSWindow通常会将事件派发给key Window的第一响应者 
+
+由此可见,在事件派发的过程中,会根据事件种类(AppKit中定义的NSAppKitDefined类型)的不同而进行不同的派发选择.
+有些事件只能由NSWindow或者NSApplication自身来处理,比如应用的隐藏/显示/激活状态/失去激活状态等.
+
+鼠标(或触控板)事件派发路径:
+一个NSWindow对象使用sendEvent:方法将鼠标事件派发给用户操作的视图(NSView)对象.
+那么NSWindow是怎样识别是哪个NSView在被用户操作呢?是通过调用NSView的hitTest:方法,根据这个方法的返回值(通常是显示在最顶层的View)来确定.
+NSWindow对象是将事件以一个与鼠标相关的NSResponder明确消息方式发送视图(NSView),比如mouseDown:,mouseDragged:,或者rightMouseUp:,如果是鼠标按下事件,
+NSWindow还会询问NSView是否希望成为第一响应者,以便接收键盘和action消息.
+一个NSView对象可以接收三种类型的鼠标事件:鼠标点击,鼠标拖拽和鼠标移动.
+鼠标点击事件可以根据点击方向(按下或抬起)和鼠标按钮(左键,右键,或其他)被进一步的细化分类,这些定义在了NSEventType 和 NSResponder 中.
+鼠标拖动事件和鼠标抬起事件通常都会被发送给之前鼠标按下的那个视图(NSView)对象.
+鼠标移动事件通常会派发到第一响应者.
+当用户在一个视图控件上点击鼠标按钮后,如果包含这个视图的NSWindow不是key Window,那么这个NSWindow将会变成key Window,并且丢弃本次的鼠标事件;
+也就是说如果你用鼠标点击了一个不是key Window窗口中的一个(NSButton)按钮时,这个点击动作仅仅是将这个窗口(NSWindow)对象变成key Window而已,你还需要使用鼠标再次点击这个按钮,此时这个按钮才会接收到鼠标点击的事件
+如果你要避免这种情况,可以通过重写NSView的acceptsFirstMouse: 方法,并返回YES
+NSView 通常会自动接收鼠标点击和鼠标拖拽事件,而不会主动接收鼠标移动事件.
+因为鼠标移动事件发生的太过频繁,很容易阻塞事件队列,所以默认情况下NSView不响应鼠标移动事件.
+如果一个NSView需要处理鼠标移动事件,那么需要向它的窗口对象(NSWindow)明确的声明一下,也就是调用NSWindow的 setAcceptsMouseMovedEvents:方法
+
+键盘事件派发路径:
+响应键盘输入是事件派发中最复杂的部分之一.Cocoa 应用程序会遍历每一个键盘事件来确定它属于那种类型然后以及如何处理.
+解释一下:
+1.Key equivalents(快捷键): 通常是一个或者一组键(通常是与⌘,⌥,⌃等组合),它们被绑定到应用(NSApplication)的某个菜单栏条目(menu item)或者某个NSObject 控件对象 ,当按下这个(或这组)键时,就相当于选中了菜单栏或者点击了控件对象.
+2.NSApplication接收到Key equivalents(快捷键)事件时,会先传递给key window的视图(NSView)体系中,通过给每个对象发送performKeyEquivalent:消息来确认是否有控件响应此事件(根据这个方法的返回值来确认:YES代表响应,NO则是不响应默认为NO),如果视图(NSView)体系中没有任何对象响应,那么NSApplication会将这个快捷键事件发送给menu bar(菜单栏).
+在Cocoa 的一些类中,比如 NSButton, NSMenu, NSMatrix, 和 NSSavePanel 都提供了默认的响应处理.
+3.Keyboard interface control (控制键): 键盘的控制键事件通常是用来在用户界面上控制当前焦点对象的.在key window中,NSWIndow对象负责对接收到的Keyboard interface control事件进行具体的解释.例如按下Tab键会将当前焦点从一个控件转移到下一个上面;按下Shift-Tab会按照反方向移动焦点;按下Space bar(空格)会模拟鼠标点击等等.
+这些交互的控件顺序你可以通过(Xcode中的)Interface Builder来构建也可以通过代码来控制(使用NSView的 setNextKeyView: 和 nextKeyView 方法)
+
+控制键的更详细内容:
+https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/EventOverview/HandlingKeyEvents/HandlingKeyEvents.html#//apple_ref/doc/uid/10000060i-CH7-SW9
+1.Keyboard action(命令键):这种事件通常是指预先将种操作通过按键绑定机制[Text System Defaults and Key Bindings](Text System Defaults and Key Bindings)绑定到某个具体的物理按键上,当这个按钮被按下时,执行特定的方法,比如 pageDown:, moveToBeginningOfLine: 和capitalizeWord:. NSWindow通常会将命令键的event发送到窗口内的第一响应者对象.
+2.如果是文本字符事件,那么会将按键字符插入到文本中.
+
+在应用程序处理键盘事件时,如果这个事件不是快捷键(Key equivalents)或者控制键Keyboard interface control,那么应用程序会将事件通过sendEvent:方法发送给kew window,然后窗口(key window)对象会调用第一响应者的keyDown:方法,将事件传递到整个响应链条中.
+
+
+其他事件派发:
+在应用程序中,我们可以使用NSTrackingArea类添加一个监控区域,这些事件NSWindow对象会直接派发到拥有这个区域的指定对象(通常发送 mouseEntered:和 mouseExited:消息).
+应用程序(NSApplication)生成的周期性事件(NSPeriodic)通常不会使用sendEvent:派发,它们是通过某个NSObject对象注册后(通过调用nextEventMatchingMask:untilDate:inMode:dequeue: 方法)才会得到处理.
+https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/EventOverview/EventObjectsTypes/EventObjectsTypes.html#//apple_ref/doc/uid/10000060i-CH4-SW6
+
+
+响应链:
+响应链是一种消息处理机制,它是由一组有序的响应者对象组成的链条.
+当消息进入响应链条后,由响应者对象依次判断是否能够处理该消息,当一个响应者对象不能处理此条消息时,它会将消息传递给它的继任者(也就是它的下一个响应者对象). 
+响应链具有如下特性:
+由App Kit自动创建的;
+一个App可以包含任意数量的响应链,但同一时刻仅能有一条响应链处理消息;
+可以在响应链中插入响应者:(通过NSResponder的 setNextResponder:方法);
+不同的事件消息,在响应链中会有不同的响应逻辑;
+
+
+响应消息的种类:
+响应链处理的消息大体上分为两种:Event Messages和Action Messages
+Event Messages(事件消息):
+Event Messages主要指的是由键盘/鼠标/触控板触发的NSEvent事件.几乎所有的Event Messages都由当前窗口对象(NSWindow)的响应链进行处理;事件消息的处理起始于NSWindow的第一个派发对象.
+对于键盘事件, 响应是从窗口的第一响应者开始;
+对于鼠标/触控板事件,响应是从用户操作的view开始;
+如果事件消息在最初没有响应,那么响应链将按照视图的层级结构依次传递消息,直到窗口对象(NSWindow)为止,如果当前窗口对象**(NSWindow)**是由**NSWindowController**管理的,那么这个**NSWindowController**将会成为**最终**的事件响应者;当整个响应链都没有完成对事件的处理时,响应链会调用最后响应者的noResponderFor:方法,可以根据具体的需求来重写这个方法实现相应的功能;
+
+Action Messages(行为消息):
+Action Messages主要是指一些操作指令的行为事件,比如"翻到下一页","移动到文章的最后一行",或"移动到行首(行尾)"等操作指令行为;App Kit构建处理Action Messages的响应链时,主要依据下面两种情况:
+App是否基于文档结构(如果非文档结构App,则判断window是否有NSWindowController管理);
+App是否显示key window 以及 main window;
+
+非文档应用（Non-Document-Based App）
+文档应用（Document-Based App）
+
+
+响应者:
+响应者是一个能够接收消息的对象,并且可以响应行为,响应者通常都继承自NSResponder
+
+第一响应者:
+第一响应者是指用户通过鼠标或者键盘选择的交互对象;
+它通常是整个响应链中的第一个响应者对象,NSWindow对象的最初始第一响应者是它自己,当window显示在屏幕上时,
+也可以手动设定它的第一响应者对象(使用NSWindow对象的makeFirstResponder:方法).
+当一个NSWindow对象在接收到鼠标点击(mouse-down)事件时,会自动设置鼠标所处的View为第一响应者;
+那么NSWindow对象如何确认某个对象是否能够成为第一响应者呢?答案是调用对象的acceptsFirstResponder方法获取结果;
+这个方法默认返回NO;如果某个响应者对象希望成为第一响应者,那么它需要重写这个方法,并返回YES;
+
+需要注意的一个事件是:Mouse-moved,它总是发送给第一响应者,而不是鼠标所在的视图View
+
+键盘事件**与**鼠标事件**的**起始响应者**是不一样的
+对于键盘事件，响应是从窗口的第一响应者开始
+
+键盘事件的第一响应者是当前窗口对象NSWindow,在键盘事件的整个响应链中,ViewController是被忽略的,所以ViewController中的keyDown:方法没有机会被执行;
+如果需要ViewController响应键盘事件,我们需要告知NSWindow对象,它的下一个响应者是ViewController即可
+点击键盘(功能键除外)可以看到ViewController的keyDown:方法正常输出:
+尽管使用上面的方法,我们完成了ViewController对键盘事件的响应,但是却改变了原来的响应链结构,姿势不够优雅,那么有没有不改变响应链结构,仍然可以让ViewController响应键盘事件的方法呢?
+答案:是改变第一响应者,因为键盘事件是从第一响应者开始的
+(View获取键盘事件后如果自己不响应,就会依据响应链传递给ViewController)
+我们只需要让自定义的XCResponseView实现acceptsFirstResponder方法并返回YES即可
+
+
+
+
+鼠标点击事件:
+鼠标硬件先接收到用户点击，然后交给鼠标驱动来处理。
+这个驱动是在Mac OS X内核运行的，处理完就通过I/O Kit传递给window server的事件队列。
+而window server则负责分派这些事件到对应进程的run-loop。

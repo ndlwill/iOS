@@ -2,15 +2,288 @@ https://cmake.org/cmake/help/latest/manual/cmake-packages.7.html
 
 Packages provide dependency information to CMake based buildsystems. 
 Packages are found with the find_package() command. 
+#####
 The result of using find_package() is either a set of IMPORTED targets, or a set of variables corresponding to build-relevant information.
+#####
 
 IMPORTED
 Read-only indication of whether a target is IMPORTED.
 The boolean value of this property is True for targets created with the IMPORTED option to add_executable() or add_library(). 
 It is False for targets built within the project.
 
+
+https://www.jianshu.com/p/3d90d05ed7cd
+cmake有两种方式让find_package(xxx) 能找到库，如果没有找到会报错:
+CMake Warning at CMakeLists.txt:37 (find_package):
+By not providing "FindOpenCV.cmake" in CMAKE_MODULE_PATH this project has
+asked CMake to find a package configuration file provided by "OpenCV", but
+CMake did not find one.
+
+Could not find a package configuration file provided by "OpenCV" with any of
+the following names:
+
+  OpenCVConfig.cmake
+  OpenCV-config.cmake
+
+Add the installation prefix of "OpenCV" to CMAKE_PREFIX_PATH or set "OpenCV_DIR"
+to a directory containing one of the above files.  If "OpenCV" provides a
+separate development package or SDK, be sure it has been installed.
+
+
+cmake优先会以Moudule模式寻找，即：搜索CMAKE_MODULE_PATH指定路径下的FindXXX.cmake文件，默认路径按系统平台区分如下
+可以在cmake_minimum_required下面就设置:
+set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake;${CMAKE_MODULE_PATH}")
+
+一旦找到了FindXXX.cmake, 则此库一般会提供以下变量，目的是方便调用者快速集成它:
+<NAME>_FOUND
+<NAME>_INCLUDE_DIRS or <NAME>_INCLUDES 
+<NAME>_LIBRARIES or <NAME>_LIBS
+
+如果没能找到FindXXX.cmake, 则尝试以Config模式：搜索指定路径下的XXXConfig.cmake或者XXX-config.cmake文件，搜索路径优先是cmake install的路径
+当然也支持在项目里通过CMAKE_PREFIX_PATH指定了寻找路径，或者直接通过设置XXX_DIR告知准确的查找路径。
+其实，还有一种做法是通过指定toolchain让cmake统一从toolchain里寻找。
+
+Config方式:
+这是一种基于有项目源码的方式，需要为cmake组织的项目提供完整的install脚本，当执行install时候会在install目的地的lib目录下创建share目录，
+并在share目录里自动生成XXXConfig.cmake或者xxx-config.cmake等配置文件
+
+cmake install的脚本相对比较通用，一般只要加在cmake项目的实现模块的CMakeList.txt最下面即可，如下:
+# ============================== install script ==============================
+set(HEADERS ${CMAKE_SOURCE_DIR}/include/swc_camera.h)
+set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC_HEADER "${HEADERS}")
+
+# Install the target and create export-set
+install(TARGETS ${PROJECT_NAME}
+    EXPORT ${PROJECT_NAME}Targets
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    RUNTIME DESTINATION bin
+    PUBLIC_HEADER DESTINATION include)
+
+# Generate the version file for the config file
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake
+    VERSION ${PACKAGE_VERSION}
+    COMPATIBILITY SameMajorVersion)
+
+# Exporting Targets from the Build Tree
+install(EXPORT ${PROJECT_NAME}Targets
+    DESTINATION "lib/cmake/${PROJECT_NAME}")
+
+# Create config file
+configure_package_config_file(
+    ${CMAKE_SOURCE_DIR}/Config.cmake.in ${PROJECT_NAME}Config.cmake
+    INSTALL_DESTINATION "lib/cmake/${PROJECT_NAME}")
+
+# Install config files
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}Config.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake
+    DESTINATION "lib/cmake/${PROJECT_NAME}")
+
+
+可以通过设置 CMAKE_INSTALL_PATH指定库安装的位置，
+cmake install library的命令是cmake --build ./ --target install， 在linux下配合make可以简化为make install
+
+
+Module方式:
+这是一种当第三方库仅仅提供了编译好的binary库时候, 有时候有些库编译过程非常复杂且依赖多而且非常耗时，我们也可以用这种方式，为了让find_package(xxx)找到它的方式。
+我们需要写一个对应的FindXXX.cmake，在FindXXX.cmake里会指定尝试寻找库所在的路径，一般非常主流的库cmake的modules目录会提供，
+但以下三种情况需要自己编写FindXXX.cmake:
+cmake的modules目录里提供的FindXXX.cmake描述的版本号和要用的不一致
+非大众库，如baumer或者tucsen，cmake是不可能提供FindXXX.cmake的
+
+在linux/mac系统里，大众库的FindXXX.cmake一般存在/usr/share/cmake-3.xx/Modules
+在windows系统里，大众库的FindXXX.cmake存在C:\Program Files\CMake\share\cmake-3.xx\Modules
+（1）自己编写的FindXXX.cmake放哪里
+默认find_package(xxx)会优先从cmake的Modules目录查找，意味着我们可以把自己的FindXXX.cmake放到cmake的Modules目录，但更优雅的方式是跟着项目走。
+在没有集成vcpkg的情况下，我们可以在项目根目录创建一个cmake目录，并将各种编写的FindXXX.cmake放于此处，随后需要在项目的CMakeList.txt里告知FindXXX.cmake所在目录，即：list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+当然有了vcpkg就简单多了，只要为此库创建一个独立的仓库，并将FindXXX.cmake直接放于其中，后续通过vcpkg将其install即可。
+
+（2）如何编写FindXXX.cmake
+其实，FindXXX.cmake本质不一定要写，因为FindXXX.cmake的主要目的是通过find_library和find_path指定库的头文件和binary所在路径，
+但因为很多时候第三方库往往有很多头文件很多库文件而且还分debug/release，不能像下面这种方式简单描述，
+因此有必要提供一个独立的文件来描述库是怎么寻找和定义的，这样能让库寻找和库使用完全分离解耦。
+find_path(TIFF_INCLUDE_DIR tiff.h
+    /usr/local/include
+    /usr/include)
+    
+find_library(TIFF_LIBRARY
+    NAMES tiff tiff2
+    PATHS /usr/local/lib /usr/lib)
+
+include_directories(${TIFF_INCLUDE_DIRs})
+add_executable(mytiff mytiff.c)
+target_link_libraries(myprogram ${TIFF_LIBRARY})
+
+
+
+编写FindXXX.cmake:
+一个合格完整的FindXXX.cmake包含以下3个部分:
+1.
+定义XXX_INCLUDE_DIRS和XXX_LIBRARIES: 
+find_path()每次只能获得一个头文件所在路径，对于有很多头文件的库，需要通过多次find_path找到各自路径，并将它们合并为XXX_INCLUDE_DIRS, 
+如果一个库有很多库文件，那么也需要多次find_library()找到各个库对应的路径，并将其合并为XXX_LIBRARIES；
+2.
+定义XXX_FOUND和 XXX_VERSION: 
+确认XXX_INCLUDE_DIRS和XXX_LIBRARIES都不为空，再定义XXX_FOUND和XXX_VERSION。
+至此，library已经可以被大幅简化集成，只是集成时候需要导入XXX_INCLUDE_DIRS作为库头文件，链接 XXX_LIBRARIES作为库文件，
+如果库区分Debug和Release，那么cmake还要以optimize和debug方式依赖对应的库；
+3.
+创建Target: 
+确认XXX_FOUND不为空后再创建Target，通过add_library()定义库类型(SHARED|STATIC|INTERFACE)， 
+通过set_target_properties()设置LIB的头文件路径、静态库地址、动态库地址、共享库的地址以及DLL路径。至此，库的集成简易程度已和源码库完全一样。
+
+在写FindXXX.cmake前需要分析提供的第三方库的特性，根据不同的特性将会采取不同的方式编写FindXXX.cmake:
+1.
+是否单个头文件或者单个库文件：相对来说，单个头文件和库文件的库写FindXXX.cmake会简洁很多，一个find_path和find_library就能描述所有的依赖关系；
+2.
+库文件是否区分debug和release：只有windows库才有可能区分debug和release，如果区分意味着需要让cmake能动态找到对应版本的库文件；
+3.
+windows库除了静态库是否还有动态库：在定义Target时候，需要在property里设置静态库和动态库的文件路径
+
+
+单头文件&单库文件&单dll的情况:
+# FindOpenCV
+# --------
+#
+# Find the opencv libraries
+#
+# Result Variables
+# ^^^^^^^^^^^^^^^^
+#
+# The following variables will be defined:
+#
+# ``opencv_FOUND`` True if opencv found on the local system
+#
+# ``opencv_VERSION`` Version of opencv found
+#
+# ``opencv_INCLUDE_DIRS`` Location of opencv header files
+#
+# ``opencv_LIBRARIES`` List of the opencv libraries found
+#
+
+find_package(PkgConfig)
+
+# ======================= define XXX_ROOT_DIR =======================
+if (DEFINED ENV{LOCAL_REPOSITORY})
+    set(opencv_ROOT_DIR $ENV{LOCAL_REPOSITORY})
+endif()
+
+if (DEFINED ENV{VCPKG_ROOT} AND DEFINED ENV{VCPKG_DEFAULT_TRIPLET})
+    set(opencv_ROOT_DIR $ENV{VCPKG_ROOT}/installed/$ENV{VCPKG_DEFAULT_TRIPLET})
+endif()
+
+# ======================= find header files =======================
+find_path(opencv_INCLUDE_DIR
+    NAMES opencv2/opencv.hpp
+    PATHS ${opencv_ROOT_DIR}/include /usr/local/include)
+
+# ======================= find library files =======================
+# define macro func to find libs
+macro(opencv_FIND_LIBRARY libname)
+    if(NOT opencv_${libname}_LIBRARY)
+        find_library(opencv_${libname}_LIBRARY
+            NAMES ${libname}
+            PATHS ${opencv_ROOT_DIR}/lib /usr/local/lib)
+
+        list(APPEND opencv_LIBRARY ${opencv_${libname}_LIBRARY})
+    endif()
+endmacro(opencv_FIND_LIBRARY)
+
+if(WIN32)
+    find_library(opencv_LIBRARY_DEBUG
+        NAMES opencv_world412d.lib
+        PATHS ${opencv_ROOT_DIR}/debug/lib /usr/local/lib)
+
+    find_library(opencv_LIBRARY_RELEASE
+        NAMES opencv_world412.lib
+        PATHS ${opencv_ROOT_DIR}/lib /usr/local/lib)
+
+    include(SelectLibraryConfigurations)
+    select_library_configurations(opencv)
+elseif(UNIX)
+    # call macro func to find libs
+    opencv_FIND_LIBRARY(libopencv_core.so)
+    opencv_FIND_LIBRARY(libopencv_cudaarithm.so)
+    opencv_FIND_LIBRARY(libopencv_cudafilters.so)
+    opencv_FIND_LIBRARY(libopencv_cudaimgproc.so)
+    opencv_FIND_LIBRARY(libopencv_highgui.so)
+    opencv_FIND_LIBRARY(libopencv_imgcodecs.so)
+    opencv_FIND_LIBRARY(libopencv_imgproc.so)
+endif()
+
+# ======================= find bin files =======================
+if(WIN32)
+    find_file(opencv_LIBRARY_DLL_DEBUG
+        NAMES opencv_world412d.dll
+        PATHS ${opencv_ROOT_DIR}/debug/bin)
+
+    find_file(opencv_LIBRARY_DLL_RELEASE
+        NAMES opencv_world412.dll
+        PATHS ${opencv_ROOT_DIR}/bin)
+endif()
+
+# ======================= verify dependencies =======================
+if (opencv_INCLUDE_DIR AND opencv_LIBRARY)
+    set(opencv_FOUND TRUR CACHE BOOL "")
+    set(opencv_VERSION "4.1.2" CACHE STRING "")
+
+    set(opencv_INCLUDE_DIRS ${opencv_INCLUDE_DIR} CACHE STRING "")
+    set(opencv_LIBRARIES ${opencv_LIBRARY} CACHE STRING "")
+
+    find_package_handle_standard_args(opencv
+        REQUIRED_VARS opencv_INCLUDE_DIRS opencv_LIBRARIES
+        VERSION_VAR opencv_VERSION)
+    mark_as_advanced(opencv_INCLUDE_DIRS opencv_LIBRARIES)
+endif()
+
+# ======================= create target =======================
+if (opencv_FOUND)
+    include(CMakePushCheckState)
+    cmake_push_check_state()
+
+    # set required properties
+    set(CMAKE_REQUIRED_QUIET ${opencv_FIND_QUIETLY})
+    set(CMAKE_REQUIRED_INCLUDES ${opencv_INCLUDE_DIRS})
+    set(CMAKE_REQUIRED_LIBRARIES ${opencv_LIBRARIES})
+
+    cmake_pop_check_state()
+
+    if(NOT TARGET opencv)
+        add_library(opencv SHARED IMPORTED)
+        set_target_properties(opencv PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${opencv_INCLUDE_DIRS}")
+
+        if(opencv_LIBRARY_DEBUG)
+            set_property(TARGET opencv APPEND PROPERTY IMPORTED_CONFIGURATIONS DEBUG)
+            set_target_properties(opencv PROPERTIES
+                IMPORTED_LOCATION_DEBUG "${opencv_LIBRARY_DLL_DEBUG}"
+                IMPORTED_IMPLIB_DEBUG "${opencv_LIBRARY_DEBUG}")
+        endif()
+
+        if(opencv_LIBRARY_RELEASE)
+            set_property(TARGET opencv APPEND PROPERTY IMPORTED_CONFIGURATIONS RELEASE)
+            set_target_properties(opencv PROPERTIES
+                IMPORTED_LOCATION_RELEASE "${opencv_LIBRARY_DLL_RELEASE}"
+                IMPORTED_IMPLIB_RELEASE "${opencv_LIBRARY_RELEASE}")
+        endif()
+
+        if(NOT opencv_LIBRARY_RELEASE AND NOT opencv_LIBRARY_DEBUG)
+            set_property(TARGET opencv APPEND PROPERTY IMPORTED_LOCATION "${opencv_LIBRARY}")
+        endif()
+    endif()
+endif()
+
+${opencv_ROOT_DIR}指向的库目录是动态的，如果定义了VCPKG_ROOT, 那么vcpkg就是库的寻找源；
+如果未定义VCPKG_ROOT但定义了LOCAL_REPOSITORY, 那么本地目录即为库寻找源；
+若都没有定义，那么头文件和库文件就只能从系统路径寻找了。
+不管当前是哪个平台，如：x64-windows、x86-windows、arm64-linux、x64-linux等等，${opencv_ROOT_DIR}下一般目录结构都是: include、lib以及bin。
+
+
 ==============================Using Packages
+#####
 CMake provides direct support for two forms of packages, Config-file Packages and Find-module Packages.
+#####
 Indirect support for pkg-config packages is also provided via the FindPkgConfig module. 
 In all cases, the basic form of find_package() calls is the same:
 
@@ -25,7 +298,9 @@ find_package(Qt5Gui 5.1.0 CONFIG)
 Similarly, the MODULE keyword says to use only a find-module:
 find_package(Qt4 4.7.0 MODULE REQUIRED)
 
+#####
 Specifying the type of package explicitly improves the error message shown to the user if it is not found.
+#####
 Both types of packages also support specifying components of a package, either after the REQUIRED keyword:
 find_package(Qt5 5.1.0 CONFIG REQUIRED Widgets Xml Sql)
 
@@ -44,7 +319,9 @@ and will always be NOTFOUND. Likewise, setting the CMAKE_REQUIRE_FIND_PACKAGE_<P
 ----------Config-file Packages
 A config-file package is a set of files provided by upstreams for downstreams to use.
 CMake searches in a number of locations for package configuration files, as described in the find_package() documentation.
+###
 The most simple way for a CMake user to tell cmake(1) to search in a non-standard prefix for a package is to set the CMAKE_PREFIX_PATH cache variable.
+###
 
 Config-file packages are provided by upstream vendors as part of development packages, that is, they belong with the header files and any other files provided to assist downstreams in using the package.
 A set of variables which provide package status information are also set automatically when using a config-file package. 
@@ -54,9 +331,11 @@ The <PackageName>_DIR cache variable is set to the location of the package confi
 ###
 
 ----------Find-module Packages
+###
 A find module is a file with a set of rules for finding the required pieces of a dependency, primarily header files and libraries.
 Typically, a find module is needed when the upstream is not built with CMake, or is not CMake-aware enough to otherwise provide a package configuration file.
 Unlike a package configuration file, it is not shipped with upstream, but is used by downstream to find the files by guessing locations of files with platform-specific hints.
+###
 
 Unlike the case of an upstream-provided package configuration file, no single point of reference identifies the package as being found, so the <PackageName>_FOUND variable is not automatically set by the find_package() command.
 It can still be expected to be set by convention however and should be set by the author of the Find-module. 
@@ -65,7 +344,11 @@ Similarly there is no <PackageName>_DIR variable, but each of the artifacts such
 See the cmake-developer(7) manual for more information about creating Find-module files.
 
 ==============================Package Layout
+
+###
 A config-file package consists of a Package Configuration File and optionally a Package Version File provided with the project distribution.
+###
+
 ----------Package Configuration File
 a project Foo that installs the following files:
 
@@ -83,7 +366,9 @@ with content defining IMPORTED targets, or defining variables, such as:
 set(Foo_INCLUDE_DIRS ${PREFIX}/include/foo-1.2)
 set(Foo_LIBRARIES ${PREFIX}/lib/foo-1.2/libfoo.a)
 
+###
 If another project wishes to use Foo it need only to locate the FooConfig.cmake file and load it to get all the information it needs about package content locations.
+###
 Since the package configuration file is provided by the package installation it already knows all the file locations.
 
 The find_package() command may be used to search for the package configuration file.
@@ -91,9 +376,12 @@ This command constructs a set of installation prefixes and searches under each p
 Given the name Foo, it looks for a file called FooConfig.cmake or foo-config.cmake.
 The full set of locations is specified in the find_package() command documentation. One place it looks is:
 <prefix>/lib/cmake/Foo*/
+
 where Foo* is a case-insensitive globbing expression.
 In our example the globbing expression will match <prefix>/lib/cmake/foo-1.2 and the package configuration file will be found.
-Once found, a package configuration file is immediately loaded. It, together with a package version file, contains all the information the project needs to use the package.
+
+Once found, a package configuration file is immediately loaded. 
+It, together with a package version file, contains all the information the project needs to use the package.
 
 ----------Package Version File
 When the find_package() command finds a candidate package configuration file it looks next to it for a version file.

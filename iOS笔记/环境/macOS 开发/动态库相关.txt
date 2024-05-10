@@ -1,0 +1,86 @@
+使用了第三方的动态库，出现dyld:Library not loaded
+这个问题的原因很简单，就是image not found
+
+dyld: Library not loaded: MyLibrary
+Referenced from: /path/to/my/application.app/Contents/MacOS/application
+Reason: image not found
+
+###
+Static frameworks are linked at compile time. Dynamic frameworks are linked at runtime 
+动态库是相对于静态库，静态库只在静态链接的过程中起作用，而动态库是在运行时，由动态链接器加载进来。
+###
+
+动态库几个关键信息:
+
+install_name:
+install name 是一个内嵌到动态库中的路径名，它的作用是在runtime的时候告诉链接器从哪里可以找到它
+在链接的时候，install name的路径会被拷贝到可执行文件中，动态链接器会去查可执文件中所有intall name路径，找不到的话会去找
+/usr/lib/
+/usr/local/lib
+/usr/lib/system/introspection/
+
+@executable_path:
+这是一个简单的方案来避免使用绝对路径，@executable_path就是一个可执行文件的所在路径
+例如 /usr/local/demo/bin/app 这个可执行文件，依赖了 a.dylib，a.dylib 放在/usr/local/demo/lib/a.dylib。
+在这种场景下，把a.dylib的install name  设置为@executable_path/../lib/
+@executable_path就会展开成这个路径 /usr/local/demo/bin/../lib/ 这样，随意地把demo文件夹拷到任何地方，动态链接库都能正常地加载到a.dylib这个动态库。
+
+@load_path:
+load_path 最主要的特点是相对位置，比较有代表性的是插件，你不知道插件会被安装到哪一个目录，取决于不同的应用程序。
+以上面的场景来举例。app可以加载一个~/plugin/plugin.dylib，plugin.dylib 被 /demo/bin/app使用到，同时plugin.dylib -> b.dylib的话，b.dylib的目录~/plugin/lib/ 下
+如果a.dylib 使用@executable_path(/demo/bin/)就会有问题了，这个时候应该使用@load_path/lib。动态链接器才能正确地找到b.dylib。
+
+@rpath:
+相比于之前两个能解决全部场景，但相对来说还是比较麻烦，@rpath就提供了更加灵活的方式
+如果直接指定install name 为@rpath的话，就相当于声明由使用方（应用程序）来决定从哪些目录加载自己，关键还能支持多个路径，这个多个路径都会被写入到可执行文件Mach-O格式的文件中。
+
+
+例子:
+macOS 引用第三方动态库-Graphviz
+项目中想使用graphviz中生成dot图的功能，根据官方的一些资料，这个功能集成在libcgraph.6.dylib这个动态库中。
+安装之后，这个文件在/usr/local/Cellar/graphviz/2.49.3/lib/libcgraph.6.dylib 中，头文件在/usr/local/Cellar/graphviz/2.49.3/include下面
+为了同一个项目中工作的开发同学都使用同一个版本的动态库，避免大家各自安装，导致版本不一致；要把Graphviz用到的动态库放到开发的工程目录下，
+保证多人协作使用的都是同一个动态库，那么如果只是单纯地把动态库拷贝过去，接着在xcode 的build setting配置好路径。
+当其他人拉取项目执行之后就会出现就会现dyld: Library not loaded
+
+1.分析动态库的依赖
+otool -L libcgraph.6.dylib
+otool 是一个命令行工具，用于查看macOS可执行文件或者是动态/静态库的信息
+/usr/local/Cellar/graphviz/2.49.3/lib/libcgraph.6.dylib:
+    /usr/local/opt/graphviz/lib/libcgraph.6.dylib (compatibility version 7.0.0, current version 7.0.0)
+    /usr/local/Cellar/graphviz/2.49.3/lib/libcdt.5.dylib (compatibility version 6.0.0, current version 6.0.0)
+    /usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1292.100.5)
+以上告诉我们的信息是
+libcgraph.6.dylib 的 install name 是：/usr/local/Cellar/graphviz/2.49.3/lib/libcgraph.6.dylib 
+意味着动态库的使用方（项目中的可执行文件）会从这个路径/usr/local/Cellar/graphviz/2.49.3/lib/libcgraph.6.dylib下加载这个动态库，显示，这里使用绝对路径，到其它机器（没有安装graphviz或者是版本不是2.49.3）上，就会出现dyld: Library not loaded:
+
+libcgraph.6.dylib中使用了libcdt.5.dylib和libSystem.B.dylib这两个库，因为libSystem.B.dylib是一个系统库，所有机器都有，所以，关键是关注libcdt.5.dylib
+otool -L libcdt.5.dylib
+/usr/local/Cellar/graphviz/2.49.3/lib/libcdt.5.dylib:
+	/usr/local/opt/graphviz/lib/libcdt.5.dylib (compatibility version 6.0.0, current version 6.0.0)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1311.0.0)
+到libcdt.5dylib，看依赖就已经没有再依赖其它的第三方库了，分析路径就可以到这一步结束。
+
+2. 修改动态库的依赖
+修改动态库依赖路径的时候需要考虑两个场景
+(1)日常的开发环境中
+日常开发的时候，库是放到项目下的，比如~/workspace/demo/lib/libcgraph.6.dylib
+可执行文件是在一个debug的目录下
+(2)发布之后的应用
+/usr/local/demo/bin/app
+/usr/local/demo/lib/libcgraph.6.dylib
+/usr/local/demo/lib/libcdt.5.dylib
+
+考虑上面场景，对于libcgraph.6.dylib需要多种路径来加载它，最方便的方式就是把它的install name改为 @rpath
+install_name_tool 是一个命令行工具，可用来修改可执行文件或库查找所需库的位置
+# 可以通过-id的参数，来改变第三方库的install name
+install_name_tool -id "@rpath" "libcgraph.6.dylib"
+
+libcgraph.6.dylib 相对于libcdt.5.dylib 来说就是使用者，那个原来libcgraph.6.dylib依赖的路径是/usr/local/opt/graphviz/lib/libcdt.5.dylib，
+因为会把libcdt.5.dylib放到和libcgraph.6.dylib同一个目录下，所以可以考虑采用相对路径，最好的方式就是@load_path，这里除了把libcdt.5.dylib的install name改为@load_path/之外，
+还需要改变使用者（libcgraph.6.dylib）依赖libcdt.5.dylib的路径。
+# 可以通过-id的参数，来改变第三方库的install name
+install_name_tool -id "@load_path" "libcdt.5.dylib"
+
+# 可以通过-change的参数，来设置
+install_name_tool -change "/usr/local/Cellar/graphviz/2.49.3/lib/libcdt.5.dylib" "@load_path/libcdt.5.dylib" "libcgraph.6.dylib"

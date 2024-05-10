@@ -1,0 +1,84 @@
+https://github.com/Alexiuce/macOS-dev-basic-
+
+
+Gif 动图在macOS与iOS平台上都是被广泛使用的一种图片资源;但在这两个平台上关于Gif动图的支持却是完全不同的效果: 
+NSImageView (macOS)默认支持Gif格式的图片资源,
+而UIImageView(iOS)默认是无法动画显示Gif格式的图片资源
+
+GIF  分为静态GIF和动画GIF两种，扩展名为.gif，是一种压缩位图格式，支持透明背景图像
+其实GIF是将多幅图像保存为一个图像文件，从而形成动画，最常见的就是通过一帧帧的动画串联起来的搞笑gif图，所以归根到底GIF仍然是图片文件格式
+Gif 是保存了多幅图像的一个图像文件
+
+
+ImageIO框架,它是一个图像管理框架,提供了对图像的读写,管理颜色空间,图像格式以及访问图像元数据的功能
+这个框架中提供了下面五个模块:
+ImageIO.CGImageDestination
+ImageIO.CGImageMetadata
+ImageIO.CGImageProperties
+ImageIO.CGImageSource
+ImageIO.ImageIOBase
+
+其中解析数据我们主要使用CGImageSource这个模块
+
+macOS中的NSImageView控件默认支持播放Gif图像资源,为什么我们还需要自己解析Gif呢? 
+实际需求场景如下:
+需要控制Gif的播放次数.
+需要提取Gif的某一帧图片.
+需要给Gif 添加水印效果(需要将水印加到Gif的每一帧图片上).
+获取Gif的内部图片信息.
+
+/** 1. 获取gif 资源的路径 */
+guard let gifPath = Bundle.main.pathForImageResource(NSImage.Name.init("timg.gif"))else{return}
+/** 2. 读取gif 图片资源元数据 */
+guard let gifData = NSData(contentsOfFile: gifPath) else {return}
+/** 3. 根据图片元数据生成 cfImageSourceRef (包含了gif资源的内部数据信息) */
+guard let imageSourceRef = CGImageSourceCreateWithData(gifData, nil) else {return}
+/** 4. 获取gif 中的图片个数 */
+let imageCount = CGImageSourceGetCount(imageSourceRef)
+/** 5. 创建数组,用于存放转换后的NSImage */
+var imageArray = [NSImage]();
+for  i in 0 ..< imageCount {
+    /** 6. 获取CGImage 资源  */
+    guard let cgImageRef =  CGImageSourceCreateImageAtIndex(imageSourceRef, i, nil) else {continue}
+    /** 7. 根据CGImage 创建NSImage  */
+    let image =  NSImage(cgImage: cgImageRef, size: CGSize(width: cgImageRef.width, height: cgImageRef.height))
+    /** 8. 将NSImage 添加的数组中 */
+    imageArray.append(image)
+}
+/** 显示某一帧图片 (此示例中显示为100 ,图片总数为104)*/
+imageView.image = imageArray[100];
+
+
+/ ** 懒加载定时器 */ 
+ lazy var animTimer = Timer(timeInterval: 0.1, target: self, selector: #selector(starGifAnimated), userInfo: nil, repeats: true)
+ 
+/** 添加播放记录索引 */ 
+ var playIndex = 0
+
+/** 动画执行方法 */
+@objc func starGifAnimated() {
+    imageView.image = imageArray[playIndex]
+    playIndex += 1
+    if playIndex == imageArray.count {
+        playIndex = 0
+    }
+}
+
+动画是通过设置NSTimer每个0.1秒(这个值是随便写的)来重复执行的,那么我们如何来获取一个正确的Gif播放时长呢?
+CGImageSourceCopyPropertiesAtIndex(): 获取指定帧的属性值 -> 返回一个字典;
+kCGImagePropertyGIFDictionary: // 获取gif 信息的key
+kCGImagePropertyGIFDelayTime: // 获取gif一帧时长的key
+
+
+/** 9. 获取指定帧的属性信息 */
+guard let properties =  CGImageSourceCopyPropertiesAtIndex(imageSourceRef, i, nil) as? NSDictionary else {continue}
+/** 10. 获取指定帧的gif信息字典 */
+guard let gifDictInfo = properties[kCGImagePropertyGIFDictionary] as? NSDictionary else {continue}
+/** 11. 获取一帧的时长 */
+guard let duration = gifDictInfo[kCGImagePropertyGIFDelayTime] as? NSNumber else {continue}
+/** 累加计算总时长 */
+playTotalTime += duration.doubleValue
+
+我们根据总时长和总的图片数就可以计算出NSTimer的执行间隔了.
+
+如需要实现Gif水印,则需要使用CGImageDestination将数据写回到指定路径.

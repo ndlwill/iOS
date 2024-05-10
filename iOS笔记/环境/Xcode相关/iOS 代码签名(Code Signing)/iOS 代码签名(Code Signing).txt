@@ -1,0 +1,135 @@
+https://blog.csdn.net/sadsadaadsd/article/details/53215503
+https://www.cnblogs.com/kingsleylam/p/4985571.html
+
+代码签名 Code Signing 也叫 App 签名，它是依靠 iOS 证书来进行的，它保证了 App 的合法性、完整性、真实性以及一致性（未被修改）。
+代码签名的核心是：证书、公钥、私钥。
+
+
+数字签名（digital signature）
+对指定信息使用哈希算法，得到一个固定长度的信息摘要，然后再使用私钥 （注意必须是私钥）对该摘要加密，就得到了数字签名。所谓的代码签名就是这个意思。
+
+
+数字证书（digital certificate）
+证书生产:
+开发者在申请iOS证书时，需要通过keychain生产一个CSR文件（CertificateSigningRequest），
+提交给苹果的证书认证中心进行签名[Apple Worldwide Developer Relations Certification Authority(WWDR)]，最后从苹果官网下载并安装使用。这个过程中还会产生一个私钥，证书和私钥在keychain中
+证书组成:
+###
+其中包含两大部分
+证书本身
+包含用户的公钥、用户个人信息、证书颁发机构信息、证书有效期等信息。
+证书签名
+WWDR将上述证书本身内容的使用哈希算法得到一个固定长度的信息摘要，然后使用自己的私钥对该信息摘要加密生成数字签名
+###
+CA: 证书颁发机构（Certificate Authority）
+假如上面的私钥被删除，或者没了，那么就不能对代码进行签名，也就无法使用这个证书了。
+假如私钥被别人获取了，别人更可以“代替”你来发布 App 了！
+因此一定要保存好自己的私钥，最好是导出来保存在安全地方！
+
+
+证书使用:
+iOS系统原本就持有WWDR的公钥，系统首先会对证书内容通过指定的哈希算法计算得到一个信息摘要；
+然后使用WWDR的公钥对证书中包含的数字签名解密，从而得到经过WWDR的私钥加密过的信息摘要；
+最后对比两个信息摘要，如果内容相同就说明该证书可信。
+在验证了证书是可信的以后，iOS系统就可以获取到证书中包含的开发者的公钥，并使用该公钥来判断代码签名的可用性了。
+
+
+证书存在的意义:
+###
+通过证书使用过程可以看出，证书本身只是一个中间媒介，iOS系统对证书并不关心，它其实只想要证书中包含的开发者的公钥！！
+###
+但是开发者怎么才能证明公钥是自己的呢？iOS安全系统怎么才能相信这个公钥就是这个开发者的呢？
+但是iOS安全系统对自家的WWDR是可信任的，苹果将WWDR的公钥内置在了iOS系统中。
+有了证书，iOS安全系统只需要通过WWDR的公钥就可以获取到任何一个开发者的可信任的公钥了，这就是证书存在的意义！！
+
+
+公钥（public key）:
+公钥被包含在数字证书里，数字证书又被包含在描述文件(Provisioning File)中，描述文件在应用被安装的时候会被拷贝到iOS设备中。
+iOS安全系统通过证书就能够确定开发者身份，就能够通过从证书中获取到的公钥来验证开发者用该公钥对应的私钥签名后的代码、资源文件等有没有被更改破坏，
+最终确定应用能否合法的在iOS设备上合法运行。
+
+
+私钥（private key）:
+每个证书（其实是公钥）都对应有一个私钥，私钥会被用来对代码、资源文件等签名。
+只有开发证书和描述文件是没办法正常调试的，因为没有私钥根本无法签名。
+
+
+签名相关命令:
+快捷查看系统中能用来对代码进行签名的证书
+security find-identity -v -p codesigning
+这就说明当前同时有公钥和私钥的可用证书
+
+对未签名app手动签名
+codesign -s 'iPhone Developer: Yongjun Ma (5R2CR73PQ7)' TXChatParent.app
+注: xx.app文件是xx.ipa文件修改扩展名,xx.ipa.zip解压后包含的xx.app文件。
+
+对已签名app重新签名
+为了重新设置签名，你必须带上 -f 参数，有了这个参数，
+codesign 会用你选择的签名替换掉已经存在的那一个：codesign -f -s 'iPhone Developer: Yongjun Ma (5R2CR73PQ7)' TXChatParent.app
+
+查看指定app的签名信息
+codesign 还可以为你提供有关一个可执行文件签名状态的信息，这些信息在出现不明错误时会提供巨大的帮助：codesign -vv -d /Users/apple/genPackage/IOS_Parent/Payload/TXChatParent.app
+
+验证签名文件的完整性
+检查已签名的文件是否完整可以使用如下命令：
+codesign --verify /Users/apple/genPackage/IOS_Parent/Payload/TXChatParent.app
+就像大多数 UNIX 工具一样，没有任何输出代表签名是完好的
+
+
+资源文件签名:
+iOS 和 OS X 的应用和框架则是包含了它们所需要的资源在其中的。这些资源包括图片和不同的语言文件，
+资源中也包括很重要的应用组成部分例如 XIB/NIB 文件，存档文件(archives)，
+甚至是证书文件。所以为一个程序包设置签名时，这个包中的所有资源文件也都会被设置签名。
+为了达到为所有文件设置签名的目的，签名的过程中会在程序包（即Example.app）中新建一个叫做 _CodeSignatue/CodeResources 的文件，这个文件中存储了被签名的程序包中所有文件的签名。
+你可以自己去查看这个签名列表文件，它仅仅是一个 plist 格式文件。
+
+
+授权文件（entitlements）:
+在 iOS 上你的应用能做什么依然是沙盒限制的，这些限制大多情况下都由授权文件（entitlements）来决定。
+授权机制决定了哪些系统资源在什么情况下允许被一个应用使用，简单的说它就是一个沙盒的配置列表。
+codesign -d --entitlements - /Users/apple/genPackage/IOS_Parent/Payload/TXChatParent.app
+在 Xcode 的 Capabilities 选项卡下选择一些选项之后，Xcode 就会生成这样一段 XML。 
+Xcode 会自动生成一个 .entitlements 文件，然后在需要的时候往里面添加条目。
+当构建整个应用时，这个文件也会提交给 codesign 作为应用所需要拥有哪些授权的参考。
+这些授权信息必须都在开发者中心的 App ID 中启用，并且包含在描述文件中。
+在构建应用时需要使用的授权文件可以在 Xcode build setting 中的 code signing entitlements中设置。
+
+
+描述文件（provisioning file）:
+在整个代码签名和沙盒机制中有一个组成部分将签名，授权和沙盒联系了起来，那就是描述文件 (provisioning profiles)。
+OS X 中保存目录:
+Xcode 将从开发者中心下载的全部配置文件都放在了这里：
+~/Library/MobileDevice/Provisioning\ Profiles
+文件格式:
+描述文件并不是一个普通的plist文件，它是一个根据密码讯息语法 (Cryptographic Message Syntax) 加密的文件。
+以XML格式查看该文件的命令：security cms -D -i b95d2739-7ae4-4426-8bae-c83d2777a45b.mobileprovision
+
+文件内容: 描述文件主要包含以下内容
+UUID：每一个配置文件都有它自己的 UUID 。Xcode 会用这个 UUID 来作为标识，记录你在 build settings 中选择了哪一个配置文件。
+ProvisionedDevices：记录所有可用于调试的设备ID。
+DeveloperCertificates：包含了可以##为使用这个配置文件的应用##签名的所有证书。所有的证书都是基于 Base64 编码符合 PEM (Privacy Enhanced Mail, RFC 1848) 格式的。
+Entitlements：授权文件的所有内容都会被保存在这里。
+
+ipa文件的组成:
+iOS程序最终都会以.ipa文件导出
+事实上，ipa文件只是一个zip包，可以使用如下命令解压:
+/usr/bin/unzip -q xxx.ipa -d <destination>
+解压后，得到Payload目录，下面是个子目录，其中的内容如下:
+资源文件，例如图片、html、等等。
+_CodeSignature/CodeResources。这是一个plist文件，可用文本查看，其中的内容就是是程序包中（不包括Frameworks）所有文件的签名。注意这里是所有文件。意味着你的程序一旦签名，就不能更改其中任何的东西，包括资源文件和可执行文件本身。iOS系统会检查这些签名。
+可执行文件。此文件跟资源文件一样需要签名。
+一个mobileprovision文件.打包的时候使用的，从MC上生成的。
+Frameworks。程序引用的非系统自带的Frameworks，每个Frameworks其实就是一个app，其中的结构应该和app差不多，也包含签名信息CodeResources文件
+
+
+总结:
+证书、签名、私钥、描述文件的一句话描述
+证书分两种：开发者证书、发布者证书。前者开发时使用，后者发布使用
+模拟器调试无需代码签名；真机调试需开发者证书代码签名；发布时需发布证书签名
+代码签名需要：证书+私钥，缺一不可
+真机调试时要求在设备上安装描述文件（provision profile），该文件包含信息：调试者证书，授权调试设备清单，应用ID。一个应用对应一个描述文件。
+
+团队开发中如何共用证书？共用证书需要：*.p12文件 和 *.mobileprovision
+选择 ”个人信息交换(.p12)” 文件格式，导出 .p12 文件！由于 p12 文件包含个人信息，所以必须要密码。
+如果选择 “证书(.cer)” 文件格式，则导出证书文件本身！（也可以从 Apple Developer Member Center 下载）
+如果想和别人或者其它设备共享证书时，只要把 p12 文件传给他，然后他就可以使用证书里面的私钥对代码进行签名了。

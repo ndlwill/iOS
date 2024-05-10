@@ -1,0 +1,234 @@
+https://developer.apple.com/library/archive/documentation/GraphicsImaging/Conceptual/drawingwithquartz2d/dq_context/dq_context.html#//apple_ref/doc/uid/TP30001066-CH203-BCIBHHBB
+
+A bitmap graphics context allows you to paint RGB colors, CMYK colors, or grayscale into a bitmap. 
+A bitmap is a rectangular array (or raster) of pixels, each pixel representing a point in an image. Bitmap images are also called sampled images.
+
+
+==================================================
+Graphics States:
+The graphics state parameters that are saved when you call this function are listed in
+Parameters
+Discussed in this chapter
+
+Current transformation matrix (CTM)
+Transforms
+
+Clipping area
+Paths
+
+Line: width, join, cap, dash, miter limit
+Paths
+
+Accuracy of curve estimation (flatness)
+Paths
+
+Anti-aliasing setting
+Graphics Contexts
+
+Color: fill and stroke settings
+Color and Color Spaces
+
+Alpha value (transparency)
+Color and Color Spaces
+
+Rendering intent
+Color and Color Spaces
+
+Color space: fill and stroke settings
+Color and Color Spaces
+
+Text: font, font size, character spacing, text drawing mode
+Text
+
+Blend mode
+Paths and Bitmap Images and Image Masks
+
+
+
+==================================================
+Supported Pixel Formats:
+color space (cs)
+The pixel format is specified as bits per pixel (bpp) and bits per component (bpc).
+"bpp" 是 "bits per pixel" 的缩写，表示每个像素所使用的位数。通常用于描述图像的颜色深度或位深度，即每个像素包含的位数。
+"bpc" 是 "bits per channel" 的缩写，表示每个颜色通道所使用的位数。它通常用于描述每个颜色通道的位深度，如红、绿、蓝或灰度通道。
+
+32 bpp, 8 bpc, kCGImageAlphaPremultipliedFirst
+RGBA 是一种常用的颜色表示方式，用于描述图像中每个像素的颜色信息。
+
+
+CGImageAlphaInfo:
+Storage options for alpha component data.
+A CGImageAlphaInfo constant specifies 
+(1) whether a bitmap contains an alpha channel, 
+(2) where the alpha bits are located in the image data, 
+and (3) whether the alpha value is premultiplied.
+
+You can obtain a CGImageAlphaInfo constant for an image by calling the alphaInfo function.
+
+ (You provide a CGBitmapInfo constant to the function init(width:height:bitsPerComponent:bitsPerPixel:bytesPerRow:space:bitmapInfo:provider:decode:shouldInterpolate:intent:), part of which is a CGImageAlphaInfo constant.)
+
+Alpha blending is accomplished by combining the color components of the source image with the color components of the destination image using the linear interpolation formula, 
+where “source” is one color component of one pixel of the new paint and “destination” is one color component of the background image.
+Core Graphics supports premultiplied alpha only for images. 
+You should not premultiply any other color values specified in Core Graphics.
+
+
+CGBitmapInfo:
+Component information for a bitmap image.
+
+Applications that store pixel data in memory using ARGB format must take care in how they read data. 
+If the code is not written correctly, it’s possible to misread the data which leads to colors or alpha that appear wrong. 
+The byte order constants specify the byte ordering of pixel formats. 
+To specify byte ordering, use a bitwise OR operator to combine the appropriate constant with the bitmapInfo parameter.
+
+
+在小端序的体系中，多字节数据的最低有效字节（即最右边的字节）存储在内存的最低地址处，而最高有效字节（最左边的字节）存储在内存的高地址处。
+举个例子，如果一个 32 位整数的十六进制表示为 0x12345678，在小端序的存储方式下，它在内存中的存储顺序会是 78 56 34 12，即低字节 78 存储在低地址处，高字节 12 存储在高地址处。
+
+
+==================================================Quartz 2D Coordinate Systems
+Quartz accomplishes device independence with a separate coordinate system—user space—mapping it to the coordinate system of the output device—device space—using the current transformation matrix, or CTM.
+The current transformation matrix is a particular type of matrix called an affine transform, which maps points from one coordinate space to another by applying translation, rotation, and scaling operations (calculations that move, rotate, and resize a coordinate system).
+The current transformation matrix has a secondary purpose: It allows you to transform how objects are drawn. For example, to draw a box rotated by 45 degrees, you rotate the coordinate system of the page (the CTM) before you draw the box. Quartz draws to the output device using the rotated coordinate system.
+
+Some technologies set up their graphics contexts using a different default coordinate system than the one used by Quartz. Relative to Quartz, such a coordinate system is a modified coordinate system and must be compensated for when performing some Quartz drawing operations. The most common modified coordinate system places the origin in the upper-left corner of the context and changes the y-axis to point towards the bottom of the page. 
+A few places where you might see this specific coordinate system used are the following:
+In Mac OS X, a subclass of NSView that overrides its isFlipped method to return YES.
+In iOS, a drawing context returned by an UIView.
+In iOS, a drawing context created by calling the UIGraphicsBeginImageContextWithOptions function.
+
+The reason UIKit returns Quartz drawing contexts with modified coordinate systems is that UIKit uses a different default coordinate convention; 
+it applies the transform to Quartz contexts it creates so that they match its conventions. 
+If your application wants to use the same drawing routines to draw to both a UIView object and a PDF graphics context (which is created by Quartz and uses the default coordinate system), you need to apply a transform so that the PDF graphics context receives the same modified coordinate system. 
+To do this, apply a transform that translates the origin to the upper-left corner of the PDF context and scales the y-coordinate by -1.
+
+Using a scaling transform to negate the y-coordinate alters some conventions in Quartz drawing. 
+For example, if you call CGContextDrawImage to draw an image into the context, the image is modified by the transform when it is drawn into the destination. 
+Similarly, path drawing routines accept parameters that specify whether an arc is drawn in a clockwise or counterclockwise direction in the default coordinate system. If a coordinate system is modified, the result is also modified, as if the image were reflected in a mirror. In Figure 1-5, passing the same parameters into Quartz results in a clockwise arc in the default coordinate system and a counterclockwise arc after the y-coordinate is negated by the transform.
+
+In iOS, if you use a UIImage object to wrap a CGImage object you create, you do not need to modify the CTM. The UIImage object automatically compensates for the modified coordinate system applied by UIKit.
+
+Important: The above discussion is essential to understand if you plan to write applications that directly target Quartz on iOS, but it is not sufficient. 
+On iOS 3.2 and later, when UIKit creates a drawing context for your application, 
+it also makes additional changes to the context to match the default UIKIt conventions.
+In particular, patterns and shadows, which are not affected by the CTM, are adjusted separately so that their conventions match UIKit’s coordinate system. 
+In this case, there is no equivalent mechanism to the CTM that your application can use to change a context created by Quartz to match the behavior for a context provided by UIKit; your application must recognize the what kind of context it is drawing into and adjust its behavior to match the expectations of the context.
+
+
+==================================================
+Memory Management: Object Ownership:
+There are a few simple rules to keep in mind:
+If you create or copy an object, you own it, and therefore you must release it. That is, in general, if you obtain an object from a function with the words “Create” or “Copy” in its name, you must release the object when you’re done with it. Otherwise, a memory leak results.
+If you obtain an object from a function that does not contain the words “Create” or “Copy” in its name, you do not own a reference to the object, and you must not release it. The object will be released by its owner at some point in the future.
+If you do not own an object and you need to keep it around, you must retain it and release it when you’re done with it. You use the Quartz 2D functions specific to an object to retain and release that object. For example, if you receive a reference to a CGColorspace object, you use the functions CGColorSpaceRetain and CGColorSpaceRelease to retain and release the object as needed. You can also use the Core Foundation functions CFRetain and CFRelease, but you must be careful not to pass NULL to these functions.
+
+
+==================================================Note
+iOS Note: A PDF graphics context in iOS uses the default coordinate system provided by Quartz, without applying a transform to match the UIKit coordinate system.
+If your application plans on sharing drawing code between your PDF graphics context and the graphics context provided by UIView object, 
+your application should modify the CTM of the PDF graphics context to modify the coordinate system. See Quartz 2D Coordinate Systems.
+
+Note: Bitmap graphics contexts are sometimes used for drawing offscreen. Before you decide to use a bitmap graphics context for this purpose, see Core Graphics Layer Drawing. CGLayer objects (CGLayerRef) are optimized for offscreen drawing because, whenever possible, Quartz caches layers on the video card.
+
+iOS Note: iOS applications should use the function UIGraphicsBeginImageContextWithOptions instead of using the low-level Quartz functions described here. 
+If your application creates an offscreen bitmap using Quartz, the coordinate system used by bitmap graphics context is the default Quartz coordinate system. In contrast, if your application creates an image context by calling the function UIGraphicsBeginImageContextWithOptions, UIKit applies the same transformation to the context’s coordinate system as it does to a UIView object’s graphics context. This allows your application to use the same drawing code for either without having to worry about different coordinate systems. Although your application can manually adjust the coordinate transformation matrix to achieve the correct results, in practice, there is no performance benefit to doing so.
+
+You use the function CGBitmapContextCreate to create a bitmap graphics context. This function takes the following parameters:
+data. Supply a pointer to the destination in memory where you want the drawing rendered. The size of this memory block should be at least (bytesPerRow*height) bytes.
+width. Specify the width, in pixels, of the bitmap.
+height. Specify the height, in pixels, of the bitmap.
+bitsPerComponent. Specify the number of bits to use for each component of a pixel in memory. For example, for a 32-bit pixel format and an RGB color space, you would specify a value of 8 bits per component. See Supported Pixel Formats.
+bytesPerRow. Specify the number of bytes of memory to use per row of the bitmap.
+Tip:  When you create a bitmap graphics context, you’ll get the best performance if you make sure the data and bytesPerRow are 16-byte aligned.
+colorspace. The color space to use for the bitmap context. You can provide a Gray, RGB, CMYK, or NULL color space when you create a bitmap graphics context. For detailed information on color spaces and color management principles, see Color Management Overview. For information on creating and using color spaces in Quartz, see Color and Color Spaces. For information about supported color spaces, see Color Spaces and Bitmap Layout in the Bitmap Images and Image Masks chapter.
+bitmapInfo. Bitmap layout information, expressed as a CGBitmapInfo constant, that specifies whether the bitmap should contain an alpha component, the relative location of the alpha component (if there is one) in a pixel, whether the alpha component is premultiplied, and whether the color components are integer or floating-point values. For detailed information on what these constants are, when each is used, and Quartz-supported pixel formats for bitmap graphics contexts and images, see Color Spaces and Bitmap Layout in the Bitmap Images and Image Masks chapter.
+
+Creating a bitmap graphics context:
+CGContextRef MyCreateBitmapContext (int pixelsWide,
+                            int pixelsHigh)
+{
+    CGContextRef    context = NULL;
+    CGColorSpaceRef colorSpace;
+    void *          bitmapData;
+    int             bitmapByteCount;
+    int             bitmapBytesPerRow;
+ 
+    bitmapBytesPerRow   = (pixelsWide * 4);// 1
+    bitmapByteCount     = (bitmapBytesPerRow * pixelsHigh);
+ 
+    colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceGenericRGB);// 2
+    bitmapData = calloc( bitmapByteCount, sizeof(uint8_t) );// 3
+    if (bitmapData == NULL)
+    {
+        fprintf (stderr, "Memory not allocated!");
+        return NULL;
+    }
+    context = CGBitmapContextCreate (bitmapData,// 4
+                                    pixelsWide,
+                                    pixelsHigh,
+                                    8,      // bits per component
+                                    bitmapBytesPerRow,
+                                    colorSpace,
+                                    kCGImageAlphaPremultipliedLast);
+    if (context== NULL)
+    {
+        free (bitmapData);// 5
+        fprintf (stderr, "Context not created!");
+        return NULL;
+    }
+    CGColorSpaceRelease( colorSpace );// 6
+ 
+    return context;// 7
+}
+
+Drawing to a bitmap graphics context:
+CGRect myBoundingBox;// 1
+
+myBoundingBox = CGRectMake (0, 0, myWidth, myHeight);// 2
+myBitmapContext = MyCreateBitmapContext (400, 300);// 3
+// ********** Your drawing code here ********** // 4
+CGContextSetRGBFillColor (myBitmapContext, 1, 0, 0, 1);
+CGContextFillRect (myBitmapContext, CGRectMake (0, 0, 200, 100 ));
+CGContextSetRGBFillColor (myBitmapContext, 0, 0, 1, .5);
+CGContextFillRect (myBitmapContext, CGRectMake (0, 0, 100, 200 ));
+myImage = CGBitmapContextCreateImage (myBitmapContext);// 5
+CGContextDrawImage(myContext, myBoundingBox, myImage);// 6
+char *bitmapData = CGBitmapContextGetData(myBitmapContext); // 7
+CGContextRelease (myBitmapContext);// 8
+if (bitmapData) free(bitmapData); // 9
+CGImageRelease(myImage);
+
+
+Anti-Aliasing:
+Bitmap graphics contexts support anti-aliasing, which is the process of artificially correcting the jagged (or aliased) edges you sometimes see in bitmap images when text or shapes are drawn. These jagged edges occur when the resolution of the bitmap is significantly lower than the resolution of your eyes. To make objects appear smooth in the bitmap, Quartz uses different colors for the pixels that surround the outline of the shape. By blending the colors in this way, the shape appears smooth. You can see the effect of using anti-aliasing in Figure 2-4. You can turn anti-aliasing off for a particular bitmap graphics context by calling the function CGContextSetShouldAntialias. 
+The anti-aliasing setting is part of the graphics state.
+You can control whether to allow anti-aliasing for a particular graphics context by using the function CGContextSetAllowsAntialiasing. 
+Pass true to this function to allow anti-aliasing; false not to allow it. This setting is not part of the graphics state. Quartz performs anti-aliasing when the context and the graphic state settings are set to true.
+
+
+quadratic Bézier: 二次贝塞尔曲线
+cubic Bézier: 三次贝塞尔曲线
+
+
+==================================================Transforms:
+The Quartz 2D drawing model defines two completely separate coordinate spaces: user space, which represents the document page, and device space, which represents the native resolution of a device.
+User space coordinates are floating-point numbers that are unrelated to the resolution of pixels in device space.
+When you want to print or display your document, Quartz maps user space coordinates to device space coordinates.
+Therefore, you never have to rewrite your application or write additional code to adjust the output from your application for optimum display on different devices.
+
+You can modify the default user space by operating on the current transformation matrix, or CTM.
+After you create a graphics context, the CTM is the identity matrix.
+You can use Quartz transformation functions to modify the CTM and, as a result, modify drawing in user space.
+
+1. About Quartz Transformation Functions
+Each transformation you apply updates the CTM.
+The CTM always represents the current mapping between user space and device space.
+This mapping ensures that the output from your application looks great on any display screen or printer.
+
+2. Modifying the Current Transformation Matrix:
+You manipulate the CTM to rotate, scale, or translate the page before drawing an image, 
+thereby transforming the object you are about to draw. 
+Before you transform the CTM, you need to save the graphics state so that you can restore it after drawing. 
+You can also concatenate the CTM with an affine transform.
+
+CGContextDrawImage (myContext, rect, myImage);
