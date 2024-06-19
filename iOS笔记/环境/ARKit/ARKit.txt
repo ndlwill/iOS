@@ -5,52 +5,95 @@ https://zhuanlan.zhihu.com/p/85823265
 
 https://zhuanlan.zhihu.com/p/31631790
 
-iOS11
+iOS 11.0
 
 增强现实
+#####
 Augmented reality (AR) describes user experiences that add 2D or 3D elements to the live view from a device’s sensors in a way that makes those elements appear to inhabit the real world.
 ARKit combines device motion tracking, world tracking, scene understanding, and display conveniences to simplify building an AR experience.
+#####
 
 ==================================================Verifying Device Support and User Permission
 ARKit requires iOS 11.0 or later and an iOS device with an A9 or later processor.
 Some ARKit features require later iOS versions or specific devices. 
 ARKit also uses a device camera, so you need to configure iOS privacy controls so the user can permit camera access for your app.
 
+How to handle device compatibility support depends on how your app uses ARKit:
 If the basic functionality of your app requires AR (using the back camera): Add the arkit key in the UIRequiredDeviceCapabilities section of your app's Info.plist file. Using this key makes your app available only to ARKit-compatible devices.
 If augmented reality is a secondary feature of your app: Check for whether the current device supports the AR configuration you want to use by testing the isSupported property of the appropriate ARConfiguration subclass.
 If your app uses face-tracking AR: Face tracking requires the front-facing TrueDepth camera on iPhone X. Your app remains available on other devices, so you must test the ARFaceTrackingConfiguration.isSupported property to determine face-tracking support on the current device.
 
+Tip:
 Check the isSupported property before offering AR features in your app's UI, so that users on unsupported devices aren't disappointed by trying to access those features.
 
+Handle User Consent and Privacy:
+For your app to use ARKit, the user must explicitly grant your app permission for camera access. 
 ARKit automatically asks the user for permission the first time your app runs an AR session.
-Your app's Info.plist file must include the NSCameraUsageDescription key.
+
+iOS requires your app to provide a static message to be displayed when the system asks for camera or microphone permission. 
+Your app's Info.plist file must include the NSCameraUsageDescription key. 
+For that key, provide text that explains why your app needs camera access so that the user can feel confident granting permission to your app.
+
+Note:
+If you create a new ARKit app using the Xcode template, a default camera usage description is provided for you.
+
+If your app uses ARFaceTrackingConfiguration, ARKit provides your app with personal facial information. 
+If you use ARKit face tracking features, your app must include a privacy policy describing to users how you intend to use face tracking and face data. 
+For details, see the Apple Developer Program License Agreement.
+
 
 ==================================================ARSession
+###
 The object that manages the major tasks associated with every AR experience, such as motion tracking, camera passthrough, and image analysis.
+###
+
+class ARSession : NSObject
 
 An ARSession object coordinates the major processes that ARKit performs on your behalf to create an augmented reality experience. 
 These processes include reading data from the device's motion sensing hardware, controlling the device's built-in camera, and performing image analysis on captured camera images. 
 The session synthesizes all of these results to establish a correspondence between the real-world space the device inhabits and a virtual space where you model AR content.
 
+Create a Session:
 Every AR experience requires an ARSession. If you implement a custom renderer, you instantiate the session yourself.
+let session = ARSession()
+session.delegate = self
 
-If you use one of the standard renderers (like ARView, ARSCNView, or ARSKView), the renderer creates a session object for you. When you want to interact with your app's session, you access it on your app's renderer.
+If you use one of the standard renderers (like ARView, ARSCNView, or ARSKView), the renderer creates a session object for you. 
+When you want to interact with your app's session, you access it on your app's renderer.
+let session = myView.session
 
-Run a Session
+Run a Session:
 Running a session requires a configuration. 
 Subclasses of ARConfiguration determine how ARKit tracks a device's position and motion relative to the real world, and thus it determines the kinds of AR experiences you create. 
 For example, ARWorldTrackingConfiguration enables you to augment the user's view of the world around them though the device's back camera.
 
 ==================================================ARAnchor
+###
 An object that specifies the position and orientation of an item in the physical environment.
+###
+class ARAnchor : NSObject
 
 To track the static positions and orientations of real or virtual objects relative to the camera, create anchor objects and use the add(anchor:) method to add them to your AR session.
 
-Adding an anchor to the session helps ARKit to optimize world-tracking accuracy in the area around that anchor, so that virtual objects appear to stay in place relative to the real world. 
+Tip:
+Adding an anchor to the session helps ARKit to optimize world-tracking accuracy in the area around that anchor, 
+so that virtual objects appear to stay in place relative to the real world. 
 If a virtual object moves, remove the corresponding anchor from the old position and add one at the new position.
 
-Some ARKit features automatically add special anchors to a session. World-tracking sessions can add ARPlaneAnchor, ARObjectAnchor, and ARImageAnchor objects if you enable the corresponding features; 
+#####
+Some ARKit features automatically add special anchors to a session. 
+World-tracking sessions can add ARPlaneAnchor, ARObjectAnchor, and ARImageAnchor objects if you enable the corresponding features; 
 face-tracking sessions add ARFaceAnchor objects.
+#####
+
+Subclassing Notes:
+In addition to creating your own ARAnchor instances to track the real-world positions of your virtual content, you can also subclass ARAnchor to associate custom data with anchors you create. 
+Ensure that your anchor classes behave correctly when ARKit updates frames or saves and loads anchors in an ARWorldMap:
+1. Anchor subclasses must fullfill the requirements of the ARAnchorCopying protocol. ARKit calls init(anchor:) (on a background thread) to copy instances of your anchor class from each ARFrame to the next. Your implementation of this initializer should copy the values of any custom properties your subclass adds.
+2. Anchor subclasses must also adopt the NSSecureCoding protocol. Override encode(with:) and init(coder:) to save and restore the values your subclass' custom properties when ARKit saves and loads them in a world map.
+3. Anchors are considered equal based on their identifier property.
+4. Only anchors that do not adopt ARTrackable are included when you save a world map.
+
 
 ==================================================Recording and Replaying AR Session Data
 ARKit apps use video feeds and sensor data from an iOS device to understand the world around the device.
@@ -130,27 +173,6 @@ Matrix4x4
 若仅用于空间计算，则只看矩阵的前三行即可，第一列的（1，0，0）代表X轴，第二列的（0，1，0）代表Y轴，第三列的（0，0，1）代表Z轴，第四列的（0，0，0）代表空间位置。此外，第四行永远为（0，0，0，1）。
 
 ==================================================ARKit in iOS
-1.Setup
-----------Managing Session Life Cycle and Tracking Quality
-Keep the user informed on the current session state and recover from interruptions.
-
-class ARCamera : NSObject
-Information about the camera position and imaging characteristics for a given frame.
-You get camera information from the camera property of each ARFrame ARKit delivers.
-var transform: simd_float4x4 { get }
-The position and orientation of the camera in world coordinate space.
-
-World-tracking AR sessions use a technique called visual-inertial odometry.
-This process combines motion sensor data with computer vision analysis of camera imagery to track the device's position and orientation in real-world space, also known as pose, which is expressed in the ARCamera transform property.
-For best results, world tracking needs consistent sensor data and camera imagery with visual complexity or recognizable features.
-
-When you start a session, it takes some time for ARKit to gather enough data to precisely model device pose.
-During a session, the conditions that affect world-tracking quality can change.
-Use ARSessionObserver delegate methods and ARCamera properties to follow these changes.
-
-Basic Lifecycle of an AR Session:
-
-
 ----------Previewing a Model with AR Quick Look
 Display a model or scene that the user can move, scale, and share with others.
 
@@ -243,77 +265,6 @@ RealityKit doesn’t observe the preferredIblVersion metadata, but you configure
 ----------sceneLibrary
 Metadata that partitions an asset into scene-based units.
 
---------------------------------------------------2.Views
-iOS13
-@MainActor @objc
-class ARView
-A view that enables you to display an AR experience with RealityKit.
-Use an ARView instance to display rendered 3D graphics to the user.
-A view has a single Scene instance that you access through the read-only scene property.
-To the view’s Scene instance you add one or more AnchorEntity instances that tell the view’s AR session how to tether content to something in the real world. 
-To each anchor, you attach a hierarchy of other Entity instances that make up the content of the scene.
-
-iOS11
-class ARSCNView : SCNView
-A view that blends virtual 3D content from SceneKit into your augmented reality experience.
-The ARSCNView class provides the easiest way to create augmented reality experiences that blend virtual 3D content with a device camera view of the real world.
-When you run the view's provided ARSession object:
-The view automatically renders the live video feed from the device camera as the scene background.
-The world coordinate system of the view's SceneKit scene directly responds to the AR world coordinate system established by the session configuration.
-The view automatically moves its SceneKit camera to match the real-world movement of the device.
-You don't necessarily need to use the ARAnchor class to track positions of objects you add to the scene, but by implementing ARSCNViewDelegate methods, you can add SceneKit content to any anchors that are automatically detected by ARKit.
-Because ARKit requires Metal, use only Metal features of SceneKit. For example:
-This class supports only SCNProgram instances with Metal Shading Language code.
-If you set the preferredRenderingAPI property to SCNRenderingAPI.openGLES2, the framework reverts the value to SCNRenderingAPI.metal.
-
-iOS11
-class ARSKView : SKView
-A view that blends virtual 2D content from SpriteKit into the 3D space of an augmented reality experience.
-
-iOS13
-class ARCoachingOverlayView : UIView
-A view that displays standardized onboarding instructions to direct users toward a specific goal.
-This view offers your users a standardized onboarding routine.
-You can configure this view to automatically display during session initialization and in limited tracking situations, while giving the user specific instructions that best facilitate ARKit's world tracking.
-These illustrations show overlay views with horizontal- and vertical-plane goals, indicating that the user should begin moving the device:
-These illustrations show overlay views indicating that the user should continue moving the phone or change the speed with which they move it:
-When you start your app, the coaching overlay asks the user to move the device in ways that help ARKit establish tracking.
-When you choose a specific goal like finding a plane, the view tailors its instructions accordingly.
-After the coaching overlay determines the goal has been met and no further coaching is required, it hides from the user's view.
-Supporting Automatic Coaching:
-By default, activatesAutomatically is enabled and therefore you should override coachingOverlayViewWillActivate(_:) to determine whether coaching is in progress.
-Coordinate your actions to help the user focus on these instructions, for example, by hiding any UI that's not necessary while the session reinitializes.
-Relocalizing After an Interruption:
-If relocalization is enabled (see sessionShouldAttemptRelocalization(_:)), ARKit attempts to restore your session if any interruptions degrade your app's tracking state.
-In this event, the coaching overlay presents itself and gives the user instructions to assist ARKit with relocalizing.
-During this time, the coaching overlay includes a button that lets the user indicate they'd like to start over rather than restore the session.
-ARKit notifies you when the user presses Start Over by calling your delegate's coachingOverlayViewDidRequestSessionReset(_:) function.
-Implement this callback if your app requires any custom actions to restart the AR experience.
-func coachingOverlayViewDidRequestSessionReset(_ coachingOverlayView: ARCoachingOverlayView) {    
-
-
-    // Reset the session.
-    let configuration = ARWorldTrackingConfiguration()
-    configuration.planeDetection = [.horizontal, .vertical]
-    session.run(configuration, options: [.resetTracking])
-
-
-    // Custom actions to restart the AR experience. 
-    // ...
-}
-If you do not implement coachingOverlayViewDidRequestSessionReset(_:), the coaching overlay responds to the Start Over button by resetting tracking, which also removes any existing anchors.
-For more information about relocalization, see Managing Session Life Cycle and Tracking Quality.
-https://developer.apple.com/documentation/arkit/arkit_in_ios/managing_session_life_cycle_and_tracking_quality
-
-
-class SCNView : UIView
-A view for displaying 3D SceneKit content.
-
-class SKView : UIView
-A view subclass that renders a SpriteKit scene.
-
-class ARSession : NSObject
-The object that manages the major tasks associated with every AR experience, such as motion tracking, camera passthrough, and image analysis.
 
 --------------------------------------------------3.Virtual Content
 ----------Content Anchors
@@ -390,3 +341,5 @@ If you create a virtual object that you intend to place on a real-world flat sur
 
 class SCNMaterial : NSObject
 A set of shading attributes that define the appearance of a geometry's surface when rendered.
+
+

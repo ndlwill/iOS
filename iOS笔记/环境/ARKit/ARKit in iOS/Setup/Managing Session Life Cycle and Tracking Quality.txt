@@ -1,0 +1,88 @@
+Managing Session Life Cycle and Tracking Quality
+Keep the user informed on the current session state and recover from interruptions.
+
+World-tracking AR sessions use a technique called visual-inertial odometry.
+Visual-Inertial Odometry（视觉惯性里程计，简称 VIO）是一种结合了视觉和惯性传感器数据来估计设备在三维空间中运动状态的方法。它主要用于机器人、自主车辆和增强现实（AR）等领域，以提供精确的定位和运动跟踪。
+基本原理:
+VIO 的工作原理是通过结合摄像头（视觉传感器）和惯性测量单元（Inertial Measurement Unit，IMU，如加速度计和陀螺仪）提供的数据信息来估计设备的位置和姿态（即位置和方向）。
+
+
+World-tracking AR sessions use a technique called visual-inertial odometry. 
+This process combines motion sensor data with computer vision analysis of camera imagery to track the device's position and orientation in real-world space, also known as pose, which is expressed in the ARCamera transform property. 
+For best results, world tracking needs consistent sensor data and camera imagery with visual complexity or recognizable features.
+
+When you start a session, it takes some time for ARKit to gather enough data to precisely model device pose. 
+During a session, the conditions that affect world-tracking quality can change. 
+Use ARSessionObserver delegate methods and ARCamera properties to follow these changes.
+
+
+Basic Lifecycle of an AR Session:
+Immediately after you run a new session, the tracking state for provided frames is ARCamera.TrackingState.notAvailable, indicating that ARKit has not yet gathered enough information to estimate the device’s pose.
+
+A few frames later, the tracking state changes to ARCamera.TrackingState.limited(_:), indicating that a device pose is available but its accuracy is uncertain. A limited state always includes a reason for reduced tracking quality; in this case, the session is still ARCamera.TrackingState.Reason.initializing.
+
+After a short time, the tracking state changes to ARCamera.TrackingState.normal, indicating that the device pose is accurate and all ARKit features are available.
+
+
+
+Provide Feedback for Tracking Quality Changes:
+When tracking quality is ARCamera.TrackingState.limited(_:), features that depend on ARKit mapping the user's local environment are not available:
+Plane detection does not add or update plane anchors
+Hit-testing methods provide no results
+
+A session can enter a ARCamera.TrackingState.limited(_:) tracking state at any time, based on changes in the user's local environment or the user moving the device. 
+For example, if the user points the device at a blank wall, or the lights in the room go out, tracking quality may be reduced due to ARCamera.TrackingState.Reason.insufficientFeatures.
+
+Use the associated ARCamera.TrackingState.Reason value to provide feedback that guides the user to resolving the situation so that the tracking state can return to ARCamera.TrackingState.normal.
+
+
+
+Recover from Session Interruptions:
+ARKit can't track device pose without a running ARSession. 
+By default, if your session is interrupted (for example, by switching to another app), any virtual content in that session is likely out of place relative to the real-world environment.
+
+You can use relocalization to try to recover from an interruption. 
+If you return true from the sessionShouldAttemptRelocalization(_:) method, 
+ARKit attempts to reconcile its knowledge of the user's environment from before the interruption with current camera and sensor data.
+During this process, the tracking state is ARCamera.TrackingState.limited(_:) (with ARCamera.TrackingState.Reason.relocalizing as the reason).
+If successful, the tracking state returns to ARCamera.TrackingState.normal after a short time.
+
+For relocalization to succeed, the device must be returned to a position and orientation near where it was when the session was interrupted. If these conditions never occur (for example, if the device has moved to an entirely different environment), 
+the session remains in the ARCamera.TrackingState.Reason.relocalizing state indefinitely.
+
+Important:
+When your app is in the ARCamera.TrackingState.Reason.relocalizing state, 
+offer the user a way to reset the session (with run(_:options:) and resetTracking) in case relocalization never succeeds.
+
+
+
+Create a Persistent AR Experience:
+In iOS 12.0 and later, the ARWorldMap class stores the information that ARKit uses to resume a session. 
+By saving a world map to a file, you can use the same relocalization process either to recover from a brief interruption or to resume from an earlier session, 
+even if your app has relaunched. World maps include anchors, so you can also replace virtual content to match an earlier session.
+
+Important:
+The reliability of using ARWorldMap to resume a session strongly depends on the real-world environment. 
+For example, it's easy to successfully relocalize to a map recorded indoors under consistent artificial lighting, or to a map captured only moments beforehand. 
+Success is less likely when lighting conditions or features of the local environment have changed over time.
+
+To allow the user to come back to the same AR session after leaving your app, you might save the world map explicitly upon a user action, 
+or automatically in applicationDidEnterBackground(_:). Save the world map only if your AR session has state worth saving—for example, 
+if the user has placed virtual objects whose positions you want to remember, 
+and the session is in the ARFrame.WorldMappingStatus.mapped state (or has been in that state at least once during the session).
+
+To relocalize to a saved world map, use the initialWorldMap property when running a session. 
+Like when resuming from an interruption, the session starts in the ARCamera.TrackingState.limited(_:) (ARCamera.TrackingState.Reason.relocalizing) tracking state. 
+If ARKit can reconcile the world map with the current environment, the tracking state becomes ARCamera.TrackingState.normal after a short time, indicating that the session matches the recorded world map.
+
+Tip:
+For relocalization to succeed, the device needs to visit areas of the local environment that it passed through before creating the map—you might assist the user with this task by saving a screenshot with the world map and displaying it as a placement guide when attempting to relocalize.
+
+A session resumed from a world map includes all anchors saved in that world map. If you use the name property to identify virtual objects you've placed anchors for, you can refer to the anchors in the resumed session to recreate that virtual content. 
+To ensure that such content is placed correctly, display it only after the session's tracking state changes to ARCamera.TrackingState.normal.
+
+If ARKit cannot reconcile the recorded world map with the current environment (for example, if the device is in an entirely different place from where the world map was recorded), 
+the session remains in the ARCamera.TrackingState.Reason.relocalizing state indefinitely. 
+Provide users with a way to restart the session in case they can't resume it. 
+To give up on world map relocalization, call run(_:options:) on the session again, with the resetTracking option and a configuration whose initialWorldMap is nil.
+

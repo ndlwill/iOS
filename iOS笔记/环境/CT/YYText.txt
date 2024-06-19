@@ -1,0 +1,38 @@
+https://www.jianshu.com/p/b9ac1b5d8f01
+
+// CoreText
+https://developer.apple.com/library/archive/documentation/StringsTextFonts/Conceptual/CoreText_Programming/Introduction/Introduction.html#//apple_ref/doc/uid/TP40005533-CH1-SW1
+
+YYText 是业界知名富文本框架，基于 CoreText 做了大量基础设施并且实现了两个上层视图组件：YYLabel 和 YYTextView。
+
+YYText 核心思路：在异步线程创建图形上下文，然后利用 CoreText 绘制富文本，利用 CoreGraphics 绘制图片、阴影、边框等，最后将绘制完成的位图放到主线程显示。
+
+YYTextRunDelegate:
+在富文本中插入 key 为kCTRunDelegateAttributeName 的CTRunDelegateRef实例可以定制一段区域的大小，通常使用这个方式来预留出一段空白，后面可以填充图片来达到图文混排的效果。
+使用CTRunDelegateCreate()创建一个CTRunDelegateRef
+
+YYTextLine:
+创建一个富文本，可以拿到CTLineRef和CTRunRef以及一些结构数据 (比如ascent descent等)
+
+框架每一个CTRunDelegateRef都对应了一个YYTextAttachment，它表示一个附件（图片、UIView、CALayer）
+基本原理就是用CTRunDelegateRef占位，用YYTextAttachment填充
+
+YYTextContainer:
+创建CTFrameRef使用CTFramesetterCreateFrame(...)方法，这个方法需要一个CGPathRef参数
+CoreText 是支持镂空效果的，就是由这个 exclusion path 控制。
+
+YYTextLayout 核心计算类:
+主要的作用是计算各种数据，为后面的绘制做准备。
+
+由于 UIKit 和 CoreText 坐标系的差别，最终得到的矩阵要先做一个坐标系翻转：
+rect = CGRectApplyAffineTransform(rect, CGAffineTransformMakeScale(1, -1));
+cgPath = CGPathCreateWithRect(rect, NULL);
+或者
+CGAffineTransform trans = CGAffineTransformMakeScale(1, -1);
+CGMutablePathRef transPath = CGPathCreateMutableCopyByTransformingPath(path, &trans);
+都是沿着 x 轴翻转坐标系 180°
+
+可能有人有疑问，UIKit 转换为 CoreText 坐标系不是除了翻转 180°，还要移动一个绘制区域高度么？确实这里少做了一个操作，
+那是因为框架是使用CTRunDraw(...)遍历绘制 run，在绘制 run 之前会用CGContextSetTextPosition(...)指定位置（这个位置是 line 相对于绘制区域计算的），所以这个地方的 y 坐标是否正确已经没有意义了。
+
+初始化 CTFramesetterRef 和 CTFrameRef

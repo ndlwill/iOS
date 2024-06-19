@@ -1,0 +1,558 @@
+Core Text
+Create text layouts, optimize font handling, and access font metrics and glyph data.
+
+Note:
+All individual functions in Core Text are thread-safe. 
+Font objects (CTFont, CTFontDescriptor, and associated objects) can be used simultaneously by multiple operations, work queues, or threads. 
+However, the layout objects (CTTypesetter, CTFramesetter, CTRun, CTLine, CTFrame, and associated objects) should be used in a single operation, work queue, or thread.
+
+Core Text generates glyphs (from character codes and font data) and positions them relative to each other in glyph runs.
+It breaks glyph runs into lines, and it assembles lines into multiline frames (such as paragraphs).
+Core Text also provides glyph- and layout-related data, such as glyph locations and measurement of lines and frames.
+
+==================================================Core Text Overview:
+Core Text works directly with Core Graphics (CG), also known as Quartz, which is the high-speed graphics rendering engine that handles two-dimensional imaging at the lowest level in OS X and iOS.
+
+The Quartz framework acts upon glyphs and their positions. 
+Core Text is aware of how characters map to fonts, and it factors in information about styles, font metrics, and other attributes before it calls into Quartz to render text.
+Quartz is the only way to get glyphs drawn at a fundamental level, and, because Core Text provides all data in a form directly usable by Quartz, the result is high-performance text rendering.
+
+Multithreading: Core Text functions may be invoked from multiple threads simultaneously provided that the client is not mutating any parameters such as attributed strings that are shared between threads.
+
+For example, you must have a Quartz graphic context to render Core Text–generated glyphs, and you get a graphic context differently on each platform.
+
+The graphic context returned by the UIView function UIGraphicsGetCurrentContext is flipped relative to an unmodified Quartz graphic context (that is, the origin of the context returned by UIView is at the top-left corner), 
+so you must re-flip the graphic context in iOS but not in OS X.
+
+
+
+Core Text Objects Are C-Language Opaque Types:
+Core Text Opaque Types:
+The Core Text layout engine often works with attributed strings (CFAttributedStringRef) and graphics paths (CGPathRef).
+An attributed-string object encapsulates a string backing the displayed text and includes properties (or “attributes”) that define stylistic aspects of the characters in the string—for example, font and color.
+The typesetting mechanism in Core Text uses the information in the attributed string to perform character-to-glyph conversion.
+
+The graphics path defines the shape of a frame of text. In OS X v10.7 and iOS 3.2 and later, the path can be non-rectangular.
+
+The CFAttributedString reference type, CFAttributedStringRef, is toll-free bridged with its Foundation counterpart, NSAttributedString. This means that the Core Foundation type is interchangeable in function or method calls with the bridged Foundation object. Therefore, in a method where you see an NSAttributedString * parameter, you can pass in a CFAttributedStringRef, and in a function where you see a CFAttributedStringRef parameter, you can pass in an NSAttributedString instance. 
+(You may need to cast one type to the other to suppress compiler warnings.) This also applies to concrete subclasses of NSAttributedString.
+
+The attributes are key-value pairs that define style characteristics of the characters in the string, 
+which are grouped in ranges that share the same attributes. The attributes themselves are passed into attributed strings, 
+and retrieved from them, using CFDictionary objects. To apply a style to a glyph run (CTRun object), 
+create a CFDictionary object to hold the attributes you want to apply, then create an attributed string, 
+passing the dictionary as a parameter. Or, you can apply attributes to an already existing CFMutableAttributedString object. 
+Although CFDictionaryRef and NSDictionary are toll-free bridged, the individual attribute objects stored in the dictionary may not be.
+
+Core Text objects at runtime form a hierarchy. At the top of this hierarchy is the framesetter object (CTFramesetterRef). 
+With an attributed string and a graphics path as input, a framesetter generates one or more frames of text (CTFrameRef). Each CTFrame object represents a paragraph.
+
+To generate frames, the framesetter calls a typesetter object (CTTypesetterRef). 
+As it lays text out in a frame, the framesetter applies paragraph styles to it, including such attributes as alignment, tab stops, line spacing, indentation, and line-breaking mode. 
+The typesetter converts the characters in the attributed string to glyphs and fits those glyphs into the lines that fill a text frame.
+
+Each CTFrame object contains the paragraph’s line (CTLine) objects. Each line object represents a line of text. A CTFrame object may contain just a single long CTLine object or it might contain a set of lines. 
+Line objects are created by the typesetter during a framesetting operation and, like frames, can draw themselves directly into a graphics context.
+
+Each CTLine object contains an array of glyph run (CTRun) objects. 
+A glyph run is a set of consecutive glyphs that share the same attributes and direction. 
+The typesetter creates glyph runs as it produces lines from character strings, attributes, and font objects. 
+This means that a line is constructed of one or more glyphs runs. 
+Glyph runs can draw themselves into a graphic context, if desired, although most clients have no need to interact directly with glyph runs.
+
+
+Font Objects:
+Fonts provide assistance in laying out glyphs relative to one another and are used to establish the current font when drawing in a graphics context. 
+The Core Text font opaque type, CTFont, is a specific font instance that encapsulates a lot of information. 
+Its reference type, CTFontRef, is toll-free bridged with UIFont in iOS and NSFont in OS X. 
+When you create a CTFont object, you typically specify (or use a default) point size and transformation matrix, 
+which gives the font instance specific characteristics. 
+You can then query the font object for many kinds of information about the font at that particular point size, such as character-to-glyph mapping, encodings, font metric data, and glyph data, among other things. Font metrics are parameters such as ascent, descent, leading, cap height, x-height, and so on. Glyph data includes parameters such as bounding rectangles and glyph advances.
+
+Core Text font objects are immutable, so they can be used simultaneously by multiple operations, work queues, or threads. 
+There are many ways to create font objects. The preferred method is from a font descriptor using CTFontCreateWithFontDescriptor. You can also use a number of conversion APIs, depending on what you have to start with. For example, you can use the PostScript name of the typeface (CTFontCreateWithName) or a Core Graphics font reference (CTFontCreateWithGraphicsFont). 
+There’s also CTFontCreateUIFontForLanguage, which creates a reference for the user-interface font for the application in the localization you’re using.
+
+Core Text font references provide a sophisticated, automatic font-substitution mechanism called font cascading, 
+which picks an appropriate font to substitute for a missing font while taking font traits into account. 
+Font cascading is based on cascade lists, which are arrays of ordered font descriptors. 
+There is a system default cascade list (which is polymorphic, based on the user's language setting and current font) and a font cascade list that is specified at font creation time. Using the information in the font descriptors, the cascading mechanism can match fonts according to style as well as matching characters. The CTFontCreateForString function uses cascade lists to pick an appropriate font to encode a given string. To specify and retrieve font cascade lists, use the kCTFontCascadeListAttribute property.
+
+
+"Font cascading"（字体层叠）是指在网页或文档中，当指定的字体不可用时，系统会根据预定义的字体族（font family）列表依次寻找可用的备用字体来进行替换的过程。
+
+字体族（font family）通常指的是一组字体，这些字体在外观上类似，但可能具有不同的字形、字重或风格。
+比如，在指定字体族为"Helvetica, Arial, sans-serif"时，如果系统中有"Helvetica"字体，则会使用它；
+如果没有，则尝试使用"Arial"字体；如果再没有，则尝试使用系统默认的无衬线字体（sans-serif）。
+
+字体层叠确保了即使某些特定字体不可用，文本依然能够以一种合适的方式呈现给用户，从而保证了良好的可读性和用户体验。
+
+
+Font Descriptors:
+Font descriptors, represented by the CTFontDescriptor opaque type, provide a mechanism for describing a font completely from a dictionary of attributes, 
+and an easy-to-use font-matching facility for building new fonts. You can make a font object from a font descriptor, 
+you can get a descriptor from a font object, and you can change a descriptor and use it to make a new font object. 
+You can partially describe a font by creating a font descriptor with, for example, just a family name or weight, 
+and then can find all the fonts on the system that match the given trait. 
+The CTFontDescriptorRef type is toll-free bridged to UIFontDescriptor in iOS and NSFontDescriptor in OS X.
+
+Instead of dealing with a complex transformation matrix, you can instead create a dictionary of font attributes that include such properties as PostScript name, font family and style, and traits (for example, bold or italic) as a CTFontDescriptor object.
+You can use the font descriptor to create a CTFont object. Font descriptors can be serialized and stored in a document to provide persistence for fonts.
+
+You can think of font descriptors as queries into the font system. 
+You can create a font descriptor with an incomplete specification, that is, with one or just a few values in the attribute dictionary, 
+and the system will choose the most appropriate font from those available. 
+For example, if you make a query using a descriptor for the name of family with the standard faces (normal, bold, italic, bold italic), 
+not specifying any traits would match all faces in the family, but if you specify a traits dictionary with a kCTFontTraitsAttribute of kCTFontTraitBold, 
+the results are further narrowed from the whole family to its members satisfying the bold trait. 
+The system can give you a complete list of font descriptors matching your query via CTFontDescriptorCreateMatchingFontDescriptors.
+
+In iOS 6.0 and later, apps can download on demand available fonts that are not installed using the CTFontDescriptorMatchFontDescriptorsWithProgressHandler function. 
+Fonts downloaded this way are not installed permanently, and the system may remove them under certain circumstances. 
+
+
+==================================================Common Text Layout Operations
+1. Laying Out a Paragraph
+One of the most common operations in typesetting is laying out a multiline paragraph within an arbitrarily sized rectangular area. Core Text makes this operation easy, requiring only a few lines of Core Text–specific code. To lay out the paragraph, you need a graphics context to draw into, a rectangular path to provide the area where the text is laid out, and an attributed string. Most of the code in this example is required to create and initialize the context, path, and string. After that is done, Core Text requires only three lines of code to do the layout.
+This code could reside in the drawRect: method of a UIView subclass (an NSView subclass in OS X).
+
+Typesetting a simple paragraph:
+// Initialize a graphics context in iOS.
+CGContextRef context = UIGraphicsGetCurrentContext();
+ 
+// Flip the context coordinates, in iOS only.
+CGContextTranslateCTM(context, 0, self.bounds.size.height);
+CGContextScaleCTM(context, 1.0, -1.0);
+ 
+// Initializing a graphic context in OS X is different:
+// CGContextRef context =
+//     (CGContextRef)[[NSGraphicsContext currentContext] graphicsPort];
+ 
+// Set the text matrix.
+CGContextSetTextMatrix(context, CGAffineTransformIdentity);
+ 
+// Create a path which bounds the area where you will be drawing text.
+// The path need not be rectangular.
+CGMutablePathRef path = CGPathCreateMutable();
+ 
+// In this simple example, initialize a rectangular path.
+CGRect bounds = CGRectMake(10.0, 10.0, 200.0, 200.0);
+CGPathAddRect(path, NULL, bounds );
+ 
+// Initialize a string.
+CFStringRef textString = CFSTR("Hello, World! I know nothing in the world that has as much power as a word. Sometimes I write one, and I look at it, until it begins to shine.");
+ 
+// Create a mutable attributed string with a max length of 0.
+// The max length is a hint as to how much internal storage to reserve.
+// 0 means no hint.
+CFMutableAttributedStringRef attrString =
+         CFAttributedStringCreateMutable(kCFAllocatorDefault, 0);
+ 
+// Copy the textString into the newly created attrString
+CFAttributedStringReplaceString (attrString, CFRangeMake(0, 0),
+         textString);
+ 
+// Create a color that will be added as an attribute to the attrString.
+CGColorSpaceRef rgbColorSpace = CGColorSpaceCreateDeviceRGB();
+CGFloat components[] = { 1.0, 0.0, 0.0, 0.8 };
+CGColorRef red = CGColorCreate(rgbColorSpace, components);
+CGColorSpaceRelease(rgbColorSpace);
+ 
+// Set the color of the first 12 chars to red.
+CFAttributedStringSetAttribute(attrString, CFRangeMake(0, 12),
+         kCTForegroundColorAttributeName, red);
+ 
+// Create the framesetter with the attributed string.
+CTFramesetterRef framesetter =
+         CTFramesetterCreateWithAttributedString(attrString);
+CFRelease(attrString);
+ 
+// Create a frame.
+CTFrameRef frame = CTFramesetterCreateFrame(framesetter,
+          CFRangeMake(0, 0), path, NULL);
+ 
+// Draw the specified frame in the given context.
+CTFrameDraw(frame, context);
+ 
+// Release the objects we used.
+CFRelease(frame);
+CFRelease(path);
+CFRelease(framesetter);
+
+
+2. Simple Text Label
+Another common typesetting operation is drawing a single line of text to use as a label for a user-interface element. In Core Text this requires only two lines of code: one to create the line object with a CFAttributedString and another to draw the line into a graphic context.
+
+CFStringRef string; CTFontRef font; CGContextRef context;
+// Initialize the string, font, and context
+ 
+CFStringRef keys[] = { kCTFontAttributeName };
+CFTypeRef values[] = { font };
+ 
+CFDictionaryRef attributes =
+    CFDictionaryCreate(kCFAllocatorDefault, (const void**)&keys,
+        (const void**)&values, sizeof(keys) / sizeof(keys[0]),
+        &kCFTypeDictionaryKeyCallBacks,
+        &kCFTypeDictionaryValueCallBacks);
+ 
+CFAttributedStringRef attrString =
+    CFAttributedStringCreate(kCFAllocatorDefault, string, attributes);
+CFRelease(string);
+CFRelease(attributes);
+ 
+CTLineRef line = CTLineCreateWithAttributedString(attrString);
+ 
+// Set text position and draw the line into the graphics context
+CGContextSetTextPosition(context, 10.0, 10.0);
+CTLineDraw(line, context);
+CFRelease(line);
+
+
+3. Columnar Layout
+Laying out text in multiple columns is another common typesetting operation. Strictly speaking, Core Text itself only lays out one column at a time and does not calculate the column sizes or locations. You do those operations before calling Core Text to lay out the text within the path area you’ve calculated.
+In this sample, Core Text, in addition to laying out the text in each column, also provides the subrange within the text string for each column.
+
+Dividing a view into columns:
+- (CFArrayRef)createColumnsWithColumnCount:(int)columnCount
+{
+    int column;
+ 
+    CGRect* columnRects = (CGRect*)calloc(columnCount, sizeof(*columnRects));
+    // Set the first column to cover the entire view.
+    columnRects[0] = self.bounds;
+ 
+    // Divide the columns equally across the frame's width.
+    CGFloat columnWidth = CGRectGetWidth(self.bounds) / columnCount;
+    for (column = 0; column < columnCount - 1; column++) {
+        CGRectDivide(columnRects[column], &columnRects[column],
+                     &columnRects[column + 1], columnWidth, CGRectMinXEdge);
+    }
+ 
+   // Inset all columns by a few pixels of margin.
+    for (column = 0; column < columnCount; column++) {
+        columnRects[column] = CGRectInset(columnRects[column], 8.0, 15.0);
+    }
+ 
+    // Create an array of layout paths, one for each column.
+    CFMutableArrayRef array =
+                     CFArrayCreateMutable(kCFAllocatorDefault,
+                                  columnCount, &kCFTypeArrayCallBacks);
+ 
+    for (column = 0; column < columnCount; column++) {
+        CGMutablePathRef path = CGPathCreateMutable();
+        CGPathAddRect(path, NULL, columnRects[column]);
+        CFArrayInsertValueAtIndex(array, column, path);
+        CFRelease(path);
+    }
+    free(columnRects);
+    return array;
+}
+
+Performing columnar text layout:
+
+// Override drawRect: to draw the attributed string into columns.
+// (In OS X, the drawRect: method of NSView takes an NSRect parameter,
+//  but that parameter is not used in this listing.)
+- (void)drawRect:(CGRect)rect
+{
+    // Initialize a graphics context in iOS.
+    CGContextRef context = UIGraphicsGetCurrentContext();
+ 
+    // Flip the context coordinates in iOS only.
+    CGContextTranslateCTM(context, 0, self.bounds.size.height);
+    CGContextScaleCTM(context, 1.0, -1.0);
+ 
+    // Initializing a graphic context in OS X is different:
+    // CGContextRef context =
+    //     (CGContextRef)[[NSGraphicsContext currentContext] graphicsPort];
+ 
+    // Set the text matrix.
+    CGContextSetTextMatrix(context, CGAffineTransformIdentity);
+ 
+    // Create the framesetter with the attributed string.
+    CTFramesetterRef framesetter = CTFramesetterCreateWithAttributedString(
+                                      (CFAttributedStringRef)self.attributedString);
+ 
+    // Call createColumnsWithColumnCount function to create an array of
+    // three paths (columns).
+    CFArrayRef columnPaths = [self createColumnsWithColumnCount:3];
+ 
+    CFIndex pathCount = CFArrayGetCount(columnPaths);
+    CFIndex startIndex = 0;
+    int column;
+ 
+    // Create a frame for each column (path).
+    for (column = 0; column < pathCount; column++) {
+        // Get the path for this column.
+        CGPathRef path = (CGPathRef)CFArrayGetValueAtIndex(columnPaths, column);
+ 
+        // Create a frame for this column and draw it.
+        CTFrameRef frame = CTFramesetterCreateFrame(
+                             framesetter, CFRangeMake(startIndex, 0), path, NULL);
+        CTFrameDraw(frame, context);
+ 
+        // Start the next frame at the first character not visible in this frame.
+        CFRange frameRange = CTFrameGetVisibleStringRange(frame);
+        startIndex += frameRange.length;
+        CFRelease(frame);
+ 
+    }
+    CFRelease(columnPaths);
+    CFRelease(framesetter);
+ 
+}
+
+
+4. Manual Line Breaking
+In Core Text, you usually don't need to do manual line breaking unless you have a special hyphenation process or a similar requirement. 
+A framesetter performs line breaking automatically. 
+Alternatively, Core Text enables you to specify exactly where you want each line of text to break. 
+shows how to create a typesetter, an object used by the framesetter, and use the typesetter directly to find appropriate line breaks and create a typeset line manually. 
+This sample also shows how to center a line before drawing.
+
+Performing manual line breaking:
+
+double width; CGContextRef context; CGPoint textPosition; CFAttributedStringRef attrString;
+// Initialize those variables.
+ 
+// Create a typesetter using the attributed string.
+CTTypesetterRef typesetter = CTTypesetterCreateWithAttributedString(attrString);
+ 
+// Find a break for line from the beginning of the string to the given width.
+CFIndex start = 0;
+CFIndex count = CTTypesetterSuggestLineBreak(typesetter, start, width);
+ 
+// Use the returned character count (to the break) to create the line.
+CTLineRef line = CTTypesetterCreateLine(typesetter, CFRangeMake(start, count));
+ 
+// Get the offset needed to center the line.
+float flush = 0.5; // centered
+double penOffset = CTLineGetPenOffsetForFlush(line, flush, width);
+ 
+// Move the given text drawing position by the calculated offset and draw the line.
+CGContextSetTextPosition(context, textPosition.x + penOffset, textPosition.y);
+CTLineDraw(line, context);
+ 
+// Move the index beyond the line break.
+start += count;
+
+
+5. Applying a Paragraph Style
+NSAttributedString* applyParaStyle(
+                CFStringRef fontName , CGFloat pointSize,
+                NSString *plainText, CGFloat lineSpaceInc){
+ 
+    // Create the font so we can determine its height.
+    CTFontRef font = CTFontCreateWithName(fontName, pointSize, NULL);
+ 
+    // Set the lineSpacing.
+    CGFloat lineSpacing = (CTFontGetLeading(font) + lineSpaceInc) * 2;
+ 
+    // Create the paragraph style settings.
+    CTParagraphStyleSetting setting;
+ 
+    setting.spec = kCTParagraphStyleSpecifierLineSpacing;
+    setting.valueSize = sizeof(CGFloat);
+    setting.value = &lineSpacing;
+ 
+    CTParagraphStyleRef paragraphStyle = CTParagraphStyleCreate(&setting, 1);
+ 
+    // Add the paragraph style to the dictionary.
+    NSDictionary *attributes = [NSDictionary dictionaryWithObjectsAndKeys:
+                               (__bridge id)font, (id)kCTFontNameAttribute,
+                               (__bridge id)paragraphStyle,
+                               (id)kCTParagraphStyleAttributeName, nil];
+    CFRelease(font);
+    CFRelease(paragraphStyle);
+ 
+    // Apply the paragraph style to the string to created the attributed string.
+    NSAttributedString* attrString = [[NSAttributedString alloc]
+                               initWithString:(NSString*)plainText
+                               attributes:attributes];
+ 
+    return attrString;
+}
+the styled string is used to create a framesetter. The code uses the framesetter to create a frame and draws the frame.
+
+Drawing the styled paragraph:
+- (void)drawRect:(CGRect)rect {
+    // Initialize a graphics context in iOS.
+    CGContextRef context = UIGraphicsGetCurrentContext();
+ 
+    // Flip the context coordinates in iOS only.
+    CGContextTranslateCTM(context, 0, self.bounds.size.height);
+    CGContextScaleCTM(context, 1.0, -1.0);
+ 
+    // Set the text matrix.
+    CGContextSetTextMatrix(context, CGAffineTransformIdentity);
+ 
+    CFStringRef fontName = CFSTR("Didot Italic");
+    CGFloat pointSize = 24.0;
+ 
+    CFStringRef string = CFSTR("Hello, World! I know nothing in the world that has
+                                   as much power as a word. Sometimes I write one,
+                                   and I look at it, until it begins to shine.");
+ 
+    // Apply the paragraph style.
+    NSAttributedString* attrString = applyParaStyle(fontName, pointSize, string, 50.0);
+ 
+    // Put the attributed string with applied paragraph style into a framesetter.
+    CTFramesetterRef framesetter =
+             CTFramesetterCreateWithAttributedString((CFAttributedStringRef)attrString);
+ 
+    // Create a path to fill the View.
+    CGPathRef path = CGPathCreateWithRect(rect, NULL);
+ 
+    // Create a frame in which to draw.
+    CTFrameRef frame = CTFramesetterCreateFrame(
+                                    framesetter, CFRangeMake(0, 0), path, NULL);
+ 
+    // Draw the frame.
+    CTFrameDraw(frame, context);
+    CFRelease(frame);
+    CGPathRelease(path);
+    CFRelease(framesetter);
+}
+
+
+6. Displaying Text in a Nonrectangular Region
+The hard part of displaying text in a nonrectangular region is to describe the non-rectangular path.
+The AddSquashedDonutPath function returns a donut-shaped path. Once you have the path, simply call the usual Core Text functions to apply attributes and draw.
+
+
+Displaying text in a nonrectangular path:
+ 
+// Create a path in the shape of a donut.
+static void AddSquashedDonutPath(CGMutablePathRef path,
+              const CGAffineTransform *m, CGRect rect)
+{
+    CGFloat width = CGRectGetWidth(rect);
+    CGFloat height = CGRectGetHeight(rect);
+ 
+    CGFloat radiusH = width / 3.0;
+    CGFloat radiusV = height / 3.0;
+ 
+    CGPathMoveToPoint( path, m, rect.origin.x, rect.origin.y + height - radiusV);
+    CGPathAddQuadCurveToPoint( path, m, rect.origin.x, rect.origin.y + height,
+                               rect.origin.x + radiusH, rect.origin.y + height);
+    CGPathAddLineToPoint( path, m, rect.origin.x + width - radiusH,
+                               rect.origin.y + height);
+    CGPathAddQuadCurveToPoint( path, m, rect.origin.x + width,
+                               rect.origin.y + height,
+                               rect.origin.x + width,
+                               rect.origin.y + height - radiusV);
+    CGPathAddLineToPoint( path, m, rect.origin.x + width,
+                               rect.origin.y + radiusV);
+    CGPathAddQuadCurveToPoint( path, m, rect.origin.x + width, rect.origin.y,
+                               rect.origin.x + width - radiusH, rect.origin.y);
+    CGPathAddLineToPoint( path, m, rect.origin.x + radiusH, rect.origin.y);
+    CGPathAddQuadCurveToPoint( path, m, rect.origin.x, rect.origin.y,
+                               rect.origin.x, rect.origin.y + radiusV);
+    CGPathCloseSubpath( path);
+ 
+    CGPathAddEllipseInRect( path, m,
+                            CGRectMake( rect.origin.x + width / 2.0 - width / 5.0,
+                            rect.origin.y + height / 2.0 - height / 5.0,
+                            width / 5.0 * 2.0, height / 5.0 * 2.0));
+}
+ 
+// Generate the path outside of the drawRect call so the path is calculated only once.
+- (NSArray *)paths
+{
+    CGMutablePathRef path = CGPathCreateMutable();
+    CGRect bounds = self.bounds;
+    bounds = CGRectInset(bounds, 10.0, 10.0);
+    AddSquashedDonutPath(path, NULL, bounds);
+ 
+    NSMutableArray *result =
+              [NSMutableArray arrayWithObject:CFBridgingRelease(path)];
+    return result;
+}
+ 
+- (void)drawRect:(CGRect)rect
+{
+    [super drawRect:rect];
+ 
+    // Initialize a graphics context in iOS.
+    CGContextRef context = UIGraphicsGetCurrentContext();
+ 
+    // Flip the context coordinates in iOS only.
+    CGContextTranslateCTM(context, 0, self.bounds.size.height);
+    CGContextScaleCTM(context, 1.0, -1.0);
+ 
+    // Set the text matrix.
+    CGContextSetTextMatrix(context, CGAffineTransformIdentity);
+ 
+    // Initialize an attributed string.
+    CFStringRef textString = CFSTR("Hello, World! I know nothing in the world that
+    has as much power as a word. Sometimes I write one, and I look at it,
+    until it begins to shine.");
+ 
+    // Create a mutable attributed string.
+     CFMutableAttributedStringRef attrString =
+                CFAttributedStringCreateMutable(kCFAllocatorDefault, 0);
+ 
+    // Copy the textString into the newly created attrString.
+    CFAttributedStringReplaceString (attrString, CFRangeMake(0, 0), textString);
+ 
+    // Create a color that will be added as an attribute to the attrString.
+    CGColorSpaceRef rgbColorSpace = CGColorSpaceCreateDeviceRGB();
+    CGFloat components[] = { 1.0, 0.0, 0.0, 0.8 };
+    CGColorRef red = CGColorCreate(rgbColorSpace, components);
+    CGColorSpaceRelease(rgbColorSpace);
+ 
+    // Set the color of the first 13 chars to red.
+    CFAttributedStringSetAttribute(attrString, CFRangeMake(0, 13),
+                                     kCTForegroundColorAttributeName, red);
+ 
+    // Create the framesetter with the attributed string.
+    CTFramesetterRef framesetter = CTFramesetterCreateWithAttributedString(attrString);
+ 
+    // Create the array of paths in which to draw the text.
+    NSArray *paths = [self paths];
+ 
+    CFIndex startIndex = 0;
+ 
+    // In OS X, use NSColor instead of UIColor.
+    #define GREEN_COLOR [UIColor greenColor]
+    #define YELLOW_COLOR [UIColor yellowColor]
+    #define BLACK_COLOR [UIColor blackColor]
+ 
+    // For each path in the array of paths...
+    for (id object in paths) {
+        CGPathRef path = (__bridge CGPathRef)object;
+ 
+        // Set the background of the path to yellow.
+        CGContextSetFillColorWithColor(context, [YELLOW_COLOR CGColor]);
+ 
+        CGContextAddPath(context, path);
+        CGContextFillPath(context);
+ 
+        CGContextDrawPath(context, kCGPathStroke);
+ 
+        // Create a frame for this path and draw the text.
+        CTFrameRef frame = CTFramesetterCreateFrame(framesetter,
+                                         CFRangeMake(startIndex, 0), path, NULL);
+        CTFrameDraw(frame, context);
+ 
+        // Start the next frame at the first character not visible in this frame.
+        CFRange frameRange = CTFrameGetVisibleStringRange(frame);
+        startIndex += frameRange.length;
+        CFRelease(frame);
+}
+ 
+CFRelease(attrString);
+CFRelease(framesetter);
+}
+
+Common Font Operations:
+https://developer.apple.com/library/archive/documentation/StringsTextFonts/Conceptual/CoreText_Programming/FontOperations/FontOperations.html#//apple_ref/doc/uid/TP40005533-CH4-SW1
+
+==================================================
+typesetting: 排版
+
+CTTypesetter:
+A typesetter which performs line layout.
+
+The CTFont opaque type represents a Core Text font object.
+"opaque type"（不透明类型）指的是一个数据类型，其内部的实现细节对用户是不可见的、不透明的。这意味着用户无法直接访问或操作这种类型的内部数据结构。相反，用户只能通过提供的 API 方法来操作这种类型的对象。

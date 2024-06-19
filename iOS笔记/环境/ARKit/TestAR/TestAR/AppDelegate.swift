@@ -8,6 +8,13 @@
 import UIKit
 import ARKit
 
+// MARK: - Vision
+/**
+ https://www.kodeco.com/32611432-vision-framework-tutorial-for-ios-contour-detection
+ 
+ https://www.jianshu.com/p/cb7177c3e77c
+ */
+
 // MARK: - extent
 /**
  "extent" 是指代物体在局部空间中的包围盒或边界框。

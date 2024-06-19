@@ -1,0 +1,767 @@
+==================================================1. 离屏渲染
+屏幕上最终显示的数据有两种加载流程:
+正常渲染加载流程
+离屏渲染加载流程
+他们之间的区别就是离屏渲染比正常渲染多了一个离屏缓冲区
+
+正常渲染流程:
+APP中的数据经过CPU计算和GPU渲染后，将结果存放在帧缓冲区，利用视频控制器从帧缓冲区中取出，并显示到屏幕上。
+在GPU的渲染流程中，显示到屏幕上的图像是遵循大画家算法按照由远及近的顺序，依次将结果存储到帧缓冲区
+视屏控制器从帧缓冲区中读取一帧数据，将其显示到屏幕上后，会立即丢弃这帧数据，不会做任何保留，这样做的目的是可以节省空间，且在屏幕上是各自显示各自的，互相不影响。
+
+离屏渲染流程:
+当App需要进行额外的渲染和合并时，例如按钮设置圆角，我们是需要对UIButton这个控件中的所有图层都进行圆角+裁剪，
+然后再将合并后的结果存入帧缓存区，再从帧缓存中取出交由屏幕显示，这时，在正常的渲染流程中，我们是无法做到对所有图层进行圆角裁剪的，因为它是用一个丢一个。
+所以我们需要提前将处理好的结果放入离屏缓冲区，最后将几个图层进行叠加合并，存放到站缓冲区，最后屏幕上就是我们想实现的效果。
+
+离屏缓存区就是一个临时的缓冲区，用来存放在后续操作使用，但目前并不使用的数据。
+
+离屏渲染再给我们带来方便的同时，也带来了严重的性能问题。
+由于离屏渲染中的离屏缓冲区，是额外开辟的一个存储空间，当它将数据转存到Frame Buffer时，也是需要耗费时间的，所以在转存的过程中，仍有掉帧的可能。
+
+离屏缓冲区的空间并不是无限大的， 它是又上限的，最大只能是屏幕的2.5倍
+
+那为什么我们明知有性能问题时，还是要使用离屏渲染呢？
+可以处理一些特殊的效果，这种效果并不能一次就完成，需要使用离屏缓冲区来保存中间状态，不得不使用离屏渲染，这种情况下的离屏渲染是系统自动触发的，
+例如经常使用的圆角、阴影、高斯模糊、光栅化等
+可以提升渲染的效率，如果一个效果是多次实现的，可以提前渲染，保存到离屏缓冲区，以达到复用的目的。这种情况是需要开发者手动触发的。
+
+光栅化:
+When the value of this property is YES, the layer is rendered as a bitmap in its local coordinate space and then composited to the destination with any other content.
+当我们开启光栅化时，会将layer渲染成位图保存在缓存中，这样在下次使用时，就可以直接复用，提高效率。
+针对光栅化的使用，有以下几个建议:
+如果layer不能被复用，则没有必要开启光栅化
+如果layer不是静态，需要被频繁修改（例如动画过程中），此时开启光栅化反而影响效率
+离屏渲染缓存内容有时间限制，如果100ms内没有被使用，那么就会丢弃，无法进行复用
+离屏渲染的缓存空间有限，是屏幕的2.5倍，超过2.5倍屏幕像素大小的话也会失效，无法实现复用
+
+
+CALayer的构成
+它是由backgroundColor、contents、borderWidth&borderColor构成的
+圆角中离屏渲染的触发时机:
+官方文档告诉我们，设置cornerRadius只会对CALayer中的backgroundColor 和 boder设置圆角，不会设置contents的圆角，
+如果contents需要设置圆角，需要同时将maskToBounds / clipsToBounds设置为true。
+
+圆角设置不生效: 必须要设置masksToBounds为 true
+// 根本原因是没有对contents设置圆角，而按钮设置的image是放在contents里面的，所以看到的界面上的就是image没有进行圆角裁剪。
+let btn0 = UIButton(type: .custom)
+btn0.frame = CGRect(x: 100, y: 60, width: 100, height: 100)
+//设置圆角
+btn0.layer.cornerRadius = 50
+//设置border宽度和颜色
+btn0.layer.borderWidth = 2
+btn0.layer.borderColor = UIColor.red.cgColor
+self.view.addSubview(btn0)
+//设置背景图片
+btn0.setImage(UIImage(named: "mouse"), for: .normal)
+
+圆角设置中什么时候会离屏渲染触发?
+(1)仅设置背景颜色+border
+let btn01 = UIButton(type: .custom)
+btn01.frame = CGRect(x: 100, y: 200, width: 100, height: 100)
+//设置圆角
+btn01.layer.cornerRadius = 50
+//设置border宽度和颜色
+btn01.layer.borderWidth = 4
+btn01.layer.borderColor = UIColor.red.cgColor
+self.view.addSubview(btn01)
+//设置背景颜色
+btn01.backgroundColor = UIColor.green
+在这种情况下，无论是使用默认的maskToBounds / clipsToBounds（false），还是将其修改为true，都不会触发离屏渲染，
+究其根本原因是 contents中没有需要圆角处理的layer。
+
+(2)按钮设置背景图片+boder
+let btn0 = UIButton(type: .custom)
+btn0.frame = CGRect(x: 100, y: 60, width: 100, height: 100)
+//设置圆角
+btn0.layer.cornerRadius = 50
+//设置border宽度和颜色
+btn0.layer.borderWidth = 2
+btn0.layer.borderColor = UIColor.red.cgColor
+self.view.addSubview(btn0)
+//设置背景图片
+btn0.setImage(UIImage(named: "mouse"), for: .normal)
+使用默认的maskToBounds / clipsToBounds（false）
+这种情况就是最开始我们讲到的圆角设置不生效的情况
+maskToBounds / clipsToBounds 修改为true
+此时触发了离屏渲染
+是因为圆角的设置是需要对所有layer都进行裁剪的，而maskToBounds裁剪是应用到所有layer上的。
+如果从正常渲染的角度来说，一个个layer是用完即扔的。而现在我们的圆角设置需要3个layer叠加合并的，
+所以将先处理好的layer保存在离屏缓冲区，等到最后一个layer处理完，合并进行圆角+裁剪，所以才会触发离屏渲染
+
+
+当只设置backgroundColor、border，而contents中没有子视图时，无论maskToBounds / clipsToBounds是true还是false，都不会触发离屏渲染,但是这种情况在UIImageView中并不适用
+当UIImageView中只设置图片+maskToBounds / clipsToBounds是不会触发离屏渲染
+苹果对UIImageView优化我想也只是将image直接画在了contents上面这样不设置背景色其实只需要渲染一个layer,所以不需要用到离屏缓冲区
+如果此时再加上背景色，就会触发离屏渲染。
+综合来说，离屏渲染是否触发，在于我们是否需要使用离屏缓冲区
+
+
+==================================================2. 屏幕卡顿的原因
+主要有以下三种原因:
+(1)CPU和GPU在渲染的流水线中耗时过长，导致从缓存区获取位图显示时，下一帧的数据还没有准备好，获取的仍是上一帧的数据，产生掉帧现象，掉帧就会导致屏幕卡顿
+(2)苹果官方针对屏幕撕裂问题，目前一直使用的方案是垂直同步+双缓存区，可以从根本上防止和解决屏幕撕裂，但是同时也导致了新的问题掉帧。
+虽然我们采用了双缓存区，但是我们并不能解决CPU和GPU处理图形图像的速度问题，导致屏幕在接收到垂直信号时，数据尚未准备好，缓存区仍是上一帧的数据，因此导致掉帧
+(3)在垂直同步+双缓存区的方案上，再次进行优化，将双缓存区，改为三缓存区，这样其实也并不能从根本上解决掉帧的问题，只是比双缓存区掉帧的概率小了很多，仍有掉帧的可能性，对于用户而言，可能是无感知的。
+
+==================================================3. UIView和CALayer的关系
+UIView基于UIKit框架，可以处理用户触摸事件，并管理子视图
+CALayer基于CoreAnimation，而CoreAnimation是基于QuartzCode的。所以CALayer只负责显示，不能处理用户的触摸事件
+从父类来说，CALayer继承的是NSObject，而UIView是直接继承自UIResponder的，所以UIVIew相比CALayer而言，只是多了事件处理功能，
+从底层来说，UIView属于UIKit的组件，而UIKit的组件到最后都会被分解成layer，存储到图层树中
+在应用层面来说，需要与用户交互时，使用UIView，不需要交互时，使用两者都可以
+
+==================================================4. 自定义类的 alloc & init & new
+(1)
+//alloc源码分析-第一步
++ (id)alloc {
+    return _objc_rootAlloc(self);
+}
+
+(2)
+//alloc源码分析-第二步
+id
+_objc_rootAlloc(Class cls)
+{
+    return callAlloc(cls, false/*checkNil*/, true/*allocWithZone*/);
+}
+
+(3)
+static ALWAYS_INLINE id
+callAlloc(Class cls, bool checkNil, bool allocWithZone=false)// alloc 源码 第三步
+{
+#if __OBJC2__ //有可用的编译器优化
+    /*
+     参考链接：https://www.jianshu.com/p/536824702ab6
+     */
+    
+    // checkNil 为false，!cls 也为false ，所以slowpath 为 false，假值判断不会走到if里面，即不会返回nil
+    if (slowpath(checkNil && !cls)) return nil;
+    
+    //判断一个类是否有自定义的 +allocWithZone 实现，没有则走到if里面的实现
+    if (fastpath(!cls->ISA()->hasCustomAWZ())) {
+        return _objc_rootAllocWithZone(cls, nil);
+    }
+#endif
+
+    // No shortcuts available. // 没有可用的编译器优化
+    if (allocWithZone) {
+        return ((id(*)(id, SEL, struct _NSZone *))objc_msgSend)(cls, @selector(allocWithZone:), nil);
+    }
+    return ((id(*)(id, SEL))objc_msgSend)(cls, @selector(alloc));
+}
+
+slowpath & fastpath
+其中关于slowpath和fastpath这里需要简要说明下，这两个都是objc源码中定义的宏
+//x很可能为真， fastpath 可以简称为 真值判断
+#define fastpath(x) (__builtin_expect(bool(x), 1)) 
+//x很可能为假，slowpath 可以简称为 假值判断
+#define slowpath(x) (__builtin_expect(bool(x), 0)) 
+
+其中的__builtin_expect指令是由gcc引入的，
+1、目的：编译器可以对代码进行优化，以减少指令跳转带来的性能下降。即性能优化
+2、作用：允许程序员将最有可能执行的分支告诉编译器。
+3、指令的写法为：__builtin_expect(EXP, N)。表示 EXP==N的概率很大。
+4、fastpath定义中__builtin_expect((x),1)表示 x 的值为真的可能性更大；即 执行if 里面语句的机会更大
+5、slowpath定义中的__builtin_expect((x),0)表示 x 的值为假的可能性更大。即执行 else 里面语句的机会更大
+6、在日常的开发中，也可以通过设置来优化编译器，达到性能优化的目的，设置的路径为：Build Setting --> Optimization Level --> Debug --> 将None 改为 fastest 或者 smallest
+
+cls->ISA()->hasCustomAWZ()
+其中fastpath中的 cls->ISA()->hasCustomAWZ() 表示判断一个类是否有自定义的 +allocWithZone 实现，这里通过断点调试，是没有自定义的实现，所以会执行到 if 里面的代码，即走到_objc_rootAllocWithZone
+
+(4)
+id
+_objc_rootAllocWithZone(Class cls, malloc_zone_t *zone __unused)// alloc 源码 第四步
+{
+    // allocWithZone under __OBJC2__ ignores the zone parameter
+    //zone 参数不再使用 类创建实例内存空间
+    return _class_createInstanceFromZone(cls, 0, nil,
+                                         OBJECT_CONSTRUCT_CALL_BADALLOC);
+}
+
+(5)
+static ALWAYS_INLINE id
+_class_createInstanceFromZone(Class cls, size_t extraBytes, void *zone,
+                              int construct_flags = OBJECT_CONSTRUCT_NONE,
+                              bool cxxConstruct = true,
+                              size_t *outAllocatedSize = nil)// alloc 源码 第五步
+{
+    ASSERT(cls->isRealized()); //检查是否已经实现
+
+    // Read class's info bits all at once for performance
+    //一次性读取类的位信息以提高性能
+    bool hasCxxCtor = cxxConstruct && cls->hasCxxCtor();
+    bool hasCxxDtor = cls->hasCxxDtor();
+    bool fast = cls->canAllocNonpointer();
+    size_t size;
+
+    //计算需要开辟的内存大小，传入的extraBytes 为 0
+    size = cls->instanceSize(extraBytes);
+    if (outAllocatedSize) *outAllocatedSize = size;
+
+    id obj;
+    if (zone) {
+        obj = (id)malloc_zone_calloc((malloc_zone_t *)zone, 1, size);
+    } else {
+        //申请内存
+        obj = (id)calloc(1, size);
+    }
+    if (slowpath(!obj)) {
+        if (construct_flags & OBJECT_CONSTRUCT_CALL_BADALLOC) {
+            return _objc_callBadAllocHandler(cls);
+        }
+        return nil;
+    }
+
+    if (!zone && fast) {
+        //将 cls类 与 obj指针（即isa） 关联
+        obj->initInstanceIsa(cls, hasCxxDtor);
+    } else {
+        // Use raw pointer isa on the assumption that they might be
+        // doing something weird with the zone or RR.
+        obj->initIsa(cls);
+    }
+
+    if (fastpath(!hasCxxCtor)) {
+        return obj;
+    }
+
+    construct_flags |= OBJECT_CONSTRUCT_FREE_ONFAILURE;
+    return object_cxxConstructFromClass(obj, cls, construct_flags);
+}
+
+这部分是alloc源码的核心操作
+该方法的实现主要分为三部分:
+cls->instanceSize：计算需要开辟的内存空间大小
+calloc：申请内存，返回地址指针
+obj->initInstanceIsa：将 类 与 isa 关联
+
+
+size_t instanceSize(size_t extraBytes) const {
+    //编译器快速计算内存大小
+    if (fastpath(cache.hasFastInstanceSize(extraBytes))) {
+        return cache.fastInstanceSize(extraBytes);
+    }
+    
+    // 计算类中所有属性的大小 + 额外的字节数0
+    size_t size = alignedInstanceSize() + extraBytes;
+    // CF requires all objects be at least 16 bytes.
+    //如果size 小于 16，最小取16
+    if (size < 16) size = 16;
+    return size;
+}
+
+size_t fastInstanceSize(size_t extra) const
+{
+    ASSERT(hasFastInstanceSize(extra));
+
+    //Gcc的内建函数 __builtin_constant_p 用于判断一个值是否为编译时常数，如果参数EXP 的值是常数，函数返回 1，否则返回 0
+    if (__builtin_constant_p(extra) && extra == 0) {
+        return _flags & FAST_CACHE_ALLOC_MASK16;
+    } else {
+        size_t size = _flags & FAST_CACHE_ALLOC_MASK;
+        // remove the FAST_CACHE_ALLOC_DELTA16 that was added
+        // by setFastInstanceSize
+        //删除由setFastInstanceSize添加的FAST_CACHE_ALLOC_DELTA16 8个字节
+        return align16(size + extra - FAST_CACHE_ALLOC_DELTA16);
+    }
+}
+
+//16字节对齐算法
+static inline size_t align16(size_t x) {
+    return (x + size_t(15)) & ~size_t(15);
+}
+
+
+内存字节对齐的原则，主要有以下三点:
+数据成员对齐规则：struct 或者 union 的数据成员，第一个数据成员放在offset为0的地方，以后每个数据成员存储的起始位置要从该成员大小或者成员的子成员大小（只要该成员有子成员，比如数据、结构体等）的整数倍开始（例如int在32位机中是4字节，则要从4的整数倍地址开始存储）
+数据成员为结构体：如果一个结构里有某些结构体成员，则结构体成员要从其内部最大元素大小的整数倍地址开始存储（例如：struct a里面存有struct b，b里面有char、int、double等元素，则b应该从8的整数倍开始存储）
+结构体的整体对齐规则：结构体的总大小，即sizeof的结果，必须是其内部做大成员的整数倍，不足的要补齐
+
+
+为什么需要16字节对齐:
+通常内存是由一个个字节组成的，cpu在存取数据时，并不是以字节为单位存储，而是以块为单位存取，块的大小为内存存取力度。频繁存取字节未对齐的数据，会极大降低cpu的性能，所以可以通过减少存取次数来降低cpu的开销
+16字节对齐，是由于在一个对象中，第一个属性isa占8字节，当然一个对象肯定还有其他属性，当无属性时，会预留8字节，即16字节对齐，如果不预留，相当于这个对象的isa和其他对象的isa紧挨着，容易造成访问混乱
+16字节对齐后，可以加快CPU读取速度，同时使访问更安全，不会产生访问混乱的情况
+
+
+字节对齐-总结:
+在字节对齐算法中，对齐的主要是对象，而对象的本质则是一个 struct objc_object的结构体，
+结构体在内存中是连续存放的，所以可以利用这点对结构体进行强转。
+苹果早期是8字节对齐，现在是16字节对齐
+
+
+calloc：申请内存，返回地址指针:
+通过instanceSize计算的内存大小，向内存中申请 大小 为 size的内存，并赋值给obj，因此 obj是指向内存地址的指针
+obj = (id)calloc(1, size);
+一般一个对象的打印的格式都是类似于这样的<LGPerson: 0x01111111f>（是一个指针）.为什么这里只有地址？
+主要是因为objc 地址 还没有与传入 的 cls进行关联，
+同时印证了 alloc的根本作用就是 开辟内存
+
+
+obj->initInstanceIsa：类与isa关联:
+经过calloc可知，内存已经申请好了，类也已经传入进来了，接下来就需要将 类与 地址指针 即isa指针进行关联
+主要过程就是初始化一个isa指针，并将isa指针指向申请的内存地址，在将指针与cls类进行 关联
+在执行完initInstanceIsa后，在通过po obj可以得出一个对象指针
+
+总结:
+通过对alloc源码的分析，可以得知alloc的主要目的就是开辟内存，而且开辟的内存需要使用16字节对齐算法，现在开辟的内存的大小基本上都是16的整数倍
+开辟内存的核心步骤有3步：计算 -- 申请 -- 关联
+
+
+init 源码:
+init的源码实现有以下两种
+(1)类方法 init
++ (id)init {
+    return (id)self;
+}
+这里能使用id强转的原因，主要还是因为 内存字节对齐后，可以使用类型强转为你所需的类型
+
+(2)实例方法 init
+- (id)init {
+    return _objc_rootInit(self);
+}
+
+id
+_objc_rootInit(id obj)
+{
+    // In practice, it will be hard to rely on this function.
+    // Many classes do not properly chain -init calls.
+    return obj;
+}
+
+
+new 源码:
+new函数中直接调用了callAlloc函数（即alloc中分析的函数），且调用了init函数，所以可以得出new 其实就等价于 [alloc init]的结论
++ (id)new {
+    return [callAlloc(self, false/*checkNil*/) init];
+}
+但是一般开发中并不建议使用new，主要是因为有时会重写init方法做一些自定义的操作，例如 initWithXXX，会在这个方法中调用[super init]，用new初始化可能会无法走到自定义的initWithXXX部分。
+
+例如，在CJLPerson中有两个初始化方法，一个是重写的父类的init，一个是自定义的initWithXXX方法:
+总结:
+如果子类没有重写父类的init，new会调用父类的init方法
+如果子类重写了父类的init，new会调用子类重写的init方法
+如果使用 alloc + 自定义的init，可以帮助我们自定义初始化操作，例如传入一些子类所需参数等，最终也会走到父类的init，相比new而言，扩展性更好，更灵活。
+
+
+==================================================5. 内存对齐原理
+获取内存大小的三种方式分别是:
+sizeof
+class_getInstanceSize
+malloc_size
+
+sizeof:
+1、sizeof是一个操作符，不是函数
+2、我们一般用sizeof计算内存大小时，传入的主要对象是数据类型，这个在编译器的编译阶段(即编译时)就会确定大小而不是在运行时确定。
+3、sizeof最终得到的结果是该数据类型占用空间的大小
+
+class_getInstanceSize:
+是runtime提供的api，用于获取类的实例对象所占用的内存大小，并返回具体的字节数，其本质就是获取实例对象中成员变量的内存大小
+
+malloc_size:
+这个函数是获取系统实际分配的内存大小
+
+#import <Foundation/Foundation.h>
+#import "LGPerson.h"
+#import <objc/runtime.h>
+#import <malloc/malloc.h>
+
+int main(int argc, const char * argv[]) {
+    @autoreleasepool {
+        NSObject *objc = [[NSObject alloc] init];
+        NSLog(@"objc对象类型占用的内存大小：%lu",sizeof(objc));// 8
+        NSLog(@"objc对象实际占用的内存大小：%lu",class_getInstanceSize([objc class]));// 8
+        NSLog(@"objc对象实际分配的内存大小：%lu",malloc_size((__bridge const void*)(objc)));// 16
+    }
+    return 0;
+}
+
+总结:
+sizeof：计算类型占用的内存大小，其中可以放 基本数据类型、对象、指针
+对于类似于int这样的基本数据而言，sizeof获取的就是数据类型占用的内存大小，不同的数据类型所占用的内存大小是不一样的
+而对于类似于NSObject定义的实例对象而言，其对象类型的本质就是一个结构体（即 struct objc_object）的指针，所以sizeof(objc)打印的是对象objc的指针大小，我们知道一个指针的内存大小是8，所以sizeof(objc) 打印是 8。注意：这里的8字节与isa指针一点关系都没有！！！）
+对于指针而言，sizeof打印的就是8，因为一个指针的内存大小是8，
+###
+在64位处理器架构中，指针是64位长，即8字节。
+###
+
+class_getInstanceSize：计算对象实际占用的内存大小，这个需要依据类的属性而变化，如果自定义类没有自定义属性，仅仅只是继承自NSObject，则类的实例对象实际占用的内存大小是8，可以简单理解为8字节对齐
+
+malloc_size：计算对象实际分配的内存大小，这个是由系统完成的，可以从上面的打印结果看出，实际分配的和实际占用的内存大小并不相等。16字节对齐算法来解释这个问题
+
+//1、定义两个结构体
+struct Mystruct1{
+    char a;     //1字节
+    double b;   //8字节
+    int c;      //4字节
+    short d;    //2字节
+}Mystruct1;
+
+struct Mystruct2{
+    double b;   //8字节
+    int c;      //4字节
+    short d;    //2字节
+    char a;     //1字节
+}Mystruct2;
+
+//计算 结构体占用的内存大小
+NSLog(@"%lu-%lu",sizeof(Mystruct1),sizeof(Mystruct2));// 24-16
+
+内存对齐规则:
+每个特定平台上的编译器都有自己的默认“对齐系数”(也叫对齐模数)。程序员可以通过预编译命令#pragma pack(n)，n=1,2,4,8,16来改变这一系数，其中的n就是你要指定的“对齐系数”。
+在ios中，Xcode默认为#pragma pack(8)，即8字节对齐
+【原则一】 数据成员的对齐规则可以理解为min(m, n) 的公式, 其中 m表示当前成员的开始位置, n表示当前成员所需要的位数。如果满足条件 m 整除 n （即 m % n == 0）, n 从 m 位置开始存储, 反之继续检查 m+1 能否整除 n, 直到可以整除, 从而就确定了当前成员的开始位置。
+【原则二】数据成员为结构体：当结构体嵌套了结构体时，作为数据成员的结构体的自身长度作为外部结构体的最大成员的内存大小，比如结构体a嵌套结构体b，b中有char、int、double等，则b的自身长度为8
+【原则三】最后结构体的内存大小必须是结构体中最大成员内存大小的整数倍，不足的需要补齐。
+
+
+结构体嵌套结构体:
+//1、结构体嵌套结构体
+struct Mystruct3{
+    double b;   //8字节
+    int c;      //4字节
+    short d;    //2字节
+    char a;     //1字节
+    struct Mystruct2 str; 
+}Mystruct3;
+
+//2、打印 Mystruct3 的内存大小
+NSLog(@"Mystruct3内存大小：%lu", sizeof(Mystruct3));// 32
+NSLog(@"Mystruct3中结构体成员内存大小：%lu", sizeof(Mystruct3.str));// 16
+
+
+struct Mystruct4{
+    int a;              //4字节 min（0，4）--- （0，1，2，3）
+    struct Mystruct5{   //从4开始，存储开始位置必须是最大的整数倍（最大成员为8），min（4，8）不符合 4，5，6，7，8 -- min（8，8）满足，从8开始存储
+        double b;       //8字节 min(8,8)  --- (8,9,10,11,12,13,14,15)
+        short c;         //1字节,从16开始，min（16，1） -- （16，17）
+    }Mystruct5;
+}Mystruct4;// 24
+
+
+内存优化（属性重排）:
+MyStruct1 通过内存字节对齐原则，增加了9个字节，而MyStruct2通过内存字节对齐原则，通过4+2+1的组合，只需要补齐一个字节即可满足字节对齐规则，这里得出一个结论结构体内存大小与结构体成员内存大小的顺序有关
+如果是结构体中数据成员是根据内存从小到大的顺序定义的，根据内存对齐规则来计算结构体内存大小，需要增加有较大的内存padding即内存占位符，才能满足内存对齐规则，比较浪费内存
+如果是结构体中数据成员是根据内存从大到小的顺序定义的，根据内存对齐规则来计算结构体内存大小，我们只需要补齐少量内存padding即可满足堆存对齐规则，这种方式就是苹果中采用的，利用空间换时间，将类中的属性进行重排，来达到优化内存的目的
+
+
+x：代表检查内存（"examine memory"）。
+8：表示要显示的内存单元的数量。在这个例子中，表示显示8个内存单元。
+g：表示内存单元的大小。在LLDB中，g代表8字节（64位）整数（也称为"giant" word）。
+x：表示以十六进制格式显示内存内容。
+x/8gx ptr
+假设 ptr 指向的内存地址为 0x1000，该命令的输出可能如下:
+0x0000000100001000: 0x0000000100002000 0x0000000100003000
+0x0000000100001010: 0x0000000100004000 0x0000000100005000
+0x0000000100001020: 0x0000000100006000 0x0000000100007000
+0x0000000100001030: 0x0000000100008000 0x0000000100009000
+
+@interface CJLPerson : NSObject
+
+@property (nonatomic, copy) NSString *name;
+@property (nonatomic, copy) NSString *nickName;
+@property (nonatomic, assign) int age;
+@property (nonatomic, assign) long height;
+
+@property (nonatomic) char c1;
+@property (nonatomic) char c2;
+@end
+
+@implementation CJLPerson
+
+@end
+
+int main(int argc, char * argv[]) {
+    @autoreleasepool {
+        CJLPerson *person = [CJLPerson alloc];
+        person.name      = @"CJL";
+        person.nickName  = @"C";
+        person.age       = 18;
+        person.c1        = 'a';
+        person.c2        = 'b';
+
+        NSLog(@"%@",person);
+    }
+    return 0;
+}
+1、char类型的数据读取出来是以ASCII码的形式显示
+2、地址为0x0000000000000000,表示person中还有属性未赋值
+
+总结下苹果中的内存对齐思想:
+大部分的内存都是通过固定的内存块进行读取，
+尽管我们在内存中采用了内存对齐的方式，但并不是所有的内存都可以进行浪费的，苹果会自动对属性进行重排，以此来优化内存
+
+字节对齐到底采用多少字节对齐？
+既提到了8字节对齐，也提及了16字节对齐，那我们到底采用哪种字节对齐呢？
+我们可以通过objc4中class_getInstanceSize的源码来进行分析
+/** 
+ * Returns the size of instances of a class.
+ * 
+ * @param cls A class object.
+ * 
+ * @return The size in bytes of instances of the class \e cls, or \c 0 if \e cls is \c Nil.
+ */
+OBJC_EXPORT size_t
+class_getInstanceSize(Class _Nullable cls) 
+    OBJC_AVAILABLE(10.5, 2.0, 9.0, 1.0, 2.0);
+
+size_t class_getInstanceSize(Class cls)
+{
+    if (!cls) return 0;
+    return cls->alignedInstanceSize();
+}
+
+// Class's ivar size rounded up to a pointer-size boundary.
+uint32_t alignedInstanceSize() const {
+    return word_align(unalignedInstanceSize());
+}
+
+static inline uint32_t word_align(uint32_t x) {
+    //x+7 & (~7) --> 8字节对齐
+    return (x + WORD_MASK) & ~WORD_MASK;
+}
+
+//其中 WORD_MASK 为
+#   define WORD_MASK 7UL
+
+7UL 是一个常量表达式，其中每个字符都有特定的意义:
+7: 这是一个整数常量，表示十进制数7。
+U: 表示这个整数常量是无符号整数（unsigned）。
+L: 表示这个整数常量是长整数（long）。
+
+对于一个对象来说，其真正的对齐方式 是 8字节对齐，8字节对齐已经足够满足对象的需求了
+apple系统为了防止一切的容错，采用的是16字节对齐的内存，主要是因为采用8字节对齐时，两个对象的内存会紧挨着，显得比较紧凑，而16字节比较宽松，利于苹果以后的扩展。
+总结:
+class_getInstanceSize：是采用8字节对齐，参照的对象的属性内存大小
+malloc_size：采用16字节对齐，参照的整个对象的内存大小，对象实际分配的内存大小必须是16的整数倍
+
+
+内存对齐算法:
+目前已知的16字节内存对齐算法有两种
+alloc源码分析中的align16
+malloc源码分析中的segregated_size_to_fit
+
+align16： 16字节对齐算法
+static inline size_t align16(size_t x) {
+    return (x + size_t(15)) & ~size_t(15);
+}
+
+segregated_size_to_fit： 16字节对齐算法
+#define SHIFT_NANO_QUANTUM      4
+#define NANO_REGIME_QUANTA_SIZE (1 << SHIFT_NANO_QUANTUM)   // 16
+
+static MALLOC_INLINE size_t
+segregated_size_to_fit(nanozone_t *nanozone, size_t size, size_t *pKey)
+{
+    size_t k, slot_bytes;
+
+    if (0 == size) {
+        size = NANO_REGIME_QUANTA_SIZE; // Historical behavior
+    }
+    k = (size + NANO_REGIME_QUANTA_SIZE - 1) >> SHIFT_NANO_QUANTUM; // round up and shift for number of quanta
+    slot_bytes = k << SHIFT_NANO_QUANTUM;                           // multiply by power of two quanta size
+    *pKey = k - 1;                                                  // Zero-based!
+
+    return slot_bytes;
+}
+算法原理：k + 15 >> 4 << 4 ，其中 右移4 + 左移4相当于将后4位抹零，跟 k/16 * 16一样 ，是16字节对齐算法，小于16就成0了
+
+
+==================================================6. NSObject 的 alloc 源码
+NSObject中的alloc是与自定义类的alloc的源码流程的区别，以及为什么NSObject中的alloc不走源码工程。
+
+通过汇编可以发现NSObject并没有走 alloc 源码，而是走的objc_alloc
+然后打开objc_alloc的断点，发现会进入objc_alloc的源码实现，此时查看 cls 是 NSObject
+
+探索 NSObject 为什么走 objc_alloc？
+NSObject 与 LGPerson的区别:
+NSObject 是iOS中的基类，所有自定义的类都需要继承自NSObject
+LGPerson 是继承自NSObject类的，重写了NSObject中的alloc方法
+
+根据汇编的显示，可以看出，NSObject 和 LGPerson 都调用了objc_alloc，所以这里就有两个疑问：
+为什么NSObject 调用alloc方法 会走到 objc_alloc 源码？
+为什么LGPerson中的alloc 会走两次？即调用了alloc，进入源码，然后还要走到 objc_alloc？
+
+LGPerson中alloc 走两次 的 Why？
+发现LGPerson 第一次的alloc会走到 objc_alloc --> callAlloc方法中最下方的objc_msgSend
+继续执行代码，发现会走到 alloc --> callAlloc --> _objc_rootAllocWithZOne
+
+bt 第二次走到callAlloc方法中的调用堆栈情况
+
+LGPerson走两次的原因是首先需要去查找sel，以及对应的imp的关系，当前需要查找的是 alloc 的方法编号，但是为什么会找到objc_alloc？
+这个就需要问系统了，肯定是系统在底层做了一些操作。
+
+
+NSObject中alloc 走到 objc_alloc 的 why？
+这部分需要通过 LLVM源码（即llvm-project） 来分析
+(1)在llvm源码中搜索objc_alloc
+(2)搜索shouldUseRuntimeFunctionForCombinedAllocInit，表示版本控制
+(3)搜索tryEmitSpecializedAllocInit，非常著名的特殊消息发送,在这里也没有找到 objc_alloc
+(4)还可以通过omf_alloc:找到tryGenerateSpecializedMessageSend，表示尝试生成特殊消息发送
+然后在这个case中可以找到调用alloc，其中的关键代码是EmitObjCAlloc
+(5)跳转至EmitObjCAlloc的定义可以看到alloc 的处理是调用了 objc_alloc
+由此可以得出 NSObject中的alloc 会走到 objc_alloc，其实这部分是由系统级别的消息处理逻辑，所以NSObject的初始化是由系统完成的
+
+
+==================================================7. malloc 源码分析
+alloc有3个核心操作，其中一个就是calloc，即申请内存
+
+objc4中分析calloc 源码:
+首先从alloc进入objc的源码，找到obj = (id)calloc(1, size);操作，涉及的方法顺序是alloc --> _objc_rootAlloc --> callAlloc --> _objc_rootAllocWithZone --> _class_createInstanceFromZone
+这里calloc的探索需要切换到 libmalloc源码中
+
+(1)
+进入calloc的源码实现，其中的关键代码在于 malloc_zone_calloc
+其中default_zone是一个默认的zone，目的就是引导程序进入一个创建真正zone的流程
+进入malloc_zone_calloc的源码实现，关键代码是 zone->calloc, 这个关键代码的目的就是申请一个指针，并将指针地址返回
+(2)
+在进入zone->calloc的源码，发现是一个calloc的声明，到此，源码就无法继续跟进了
+
+想要继续跟进源码，可以通过以下方式:
+在 malloc_zone_calloc中的关键代码，即ptr = zone->calloc(zone, num_items, size);处，加一个断点，然后运行
+断点断在 ptr位置，想要进入zone->calloc源码实现，有两种方式:
+(1)按住control + step into，进入calloc的源码实现
+(2)通过lldb命令p zone->callocde查找源码实现，通过打印得知zone->calloc的源码实现在default_zone_calloc方法，然后全局搜索default_zone_calloc方法，找到具体实现
+
+
+==================================================8. isa与类关联的原理
+clang是一个由Apple主导编写，基于LLVM的C/C++/OC的编译器
+主要是用于底层编译，将一些文件``输出成c++文件，例如main.m 输出成main.cpp，其目的是为了更好的观察底层的一些结构 及 实现的逻辑，方便理解底层原理。
+
+OC对象的本质是什么？
+@interface LGPerson : NSObject
+@property (nonatomic, copy) NSString *name;
+@end
+
+@implementation LGPerson
+@end
+
+利用clang将main.m编译成 main.cpp,有以下几种编译命令，这里使用的是第一种:
+//1、将 main.m 编译成 main.cpp
+clang -rewrite-objc main.m -o main.cpp
+
+//2、将 ViewController.m 编译成  ViewController.cpp
+clang -rewrite-objc -fobjc-arc -fobjc-runtime=ios-13.0.0 -isysroot / /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator13.7.sdk ViewController.m
+
+//以下两种方式是通过指定架构模式的命令行，使用xcode工具 xcrun
+//3、模拟器文件编译
+- xcrun -sdk iphonesimulator clang -arch arm64 -rewrite-objc main.m -o main-arm64.cpp 
+
+//4、真机文件编译
+- xcrun -sdk iphoneos clang -arch arm64 -rewrite-objc main.m -o main- arm64.cpp 
+
+发现LGPerson在底层会被编译成 struct 结构体
+
+//NSObject的定义
+@interface NSObject <NSObject> {
+    Class isa  OBJC_ISA_AVAILABILITY;
+}
+
+//NSObject 的底层编译
+struct NSObject_IMPL {
+    Class isa;
+};
+
+//LGPerson的底层编译
+struct LGPerson_IMPL {
+    struct NSObject_IMPL NSObject_IVARS; // 等效于 Class isa;
+    NSString *_name;
+};
+LGPerson_IMPL中的第一个属性 其实就是 isa，是继承自NSObject，属于伪继承，伪继承的方式是直接将NSObject结构体定义为LGPerson中的第一个属性，意味着LGPerson 拥有 NSObject中的所有成员变量。
+LGPerson中的第一个属性 NSObject_IVARS 等效于 NSObject中的 isa
+
+提及过alloc方法的核心之一的initInstanceIsa方法，通过查看这个方法的源码实现，我们发现，在初始化isa指针时，是通过isa_t类型初始化的
+而在NSObject定义中isa的类型是Class，其根本原因是由于isa 对外反馈的是类信息，为了让开发人员更加清晰明确，需要在isa返回时做了一个类型强制转换，类似于swift中的 as 的强转。
+
+总结:
+OC对象的本质 其实就是 结构体
+LGPerson中的isa是继承自NSObject中的isa
+
+
+objc_setProperty 源码:
+除了LGPersong的底层定义，我们发现还有属性 name 对应的 set 和 get方法
+其中set方法的实现依赖于runtime中的objc_setProperty。
+在objc4-781中全局搜索objc_setProperty，找到objc_setProperty的源码实现
+进入reallySetProperty的源码实现，其方法的原理就是新值retain，旧值release
+
+总结:
+通过对objc_setProperty的底层源码探索，有以下几点说明：
+objc_setProperty方法的目的适用于关联 上层的set方法 以及 底层的set方法，其本质就是一个接口
+这么设计的原因是，上层的set方法有很多，如果直接调用底层set方法中，会产生很多的临时变量，当你想查找一个sel时，会非常麻烦
+基于上述原因，苹果采用了适配器设计模式（即将底层接口适配为客户端需要的接口），对外提供一个接口，供上层的set方法使用，对内调用底层的set方法，使其相互不受影响，即无论上层怎么变，下层都是不变的，或者下层的变化也无法影响上层，主要是达到上下层接口隔离的目的
+
+
+cls 与 类 的关联原理:
+探索initInstanceIsa是如何将cls与isa关联的
+需要先了解什么是联合体，为什么isa的类型isa_t是使用联合体定义
+
+构造数据类型的方式有以下两种:
+结构体（struct）
+联合体（union，也称为共用体）
+
+结构体:
+结构体是指把不同的数据组合成一个整体，其变量是共存的，变量不管是否使用，都会分配内存。
+缺点：所有属性都分配内存，比较浪费内存，假设有4个int成员，一共分配了16字节的内存，但是在使用时，你只使用了4字节，剩余的12字节就是属于内存的浪费
+优点：存储容量较大，包容性强，且成员之间不会相互影响
+
+联合体:
+联合体也是由不同的数据类型组成，但其变量是互斥的，所有的成员共占一段内存。而且共用体采用了内存覆盖技术，同一时刻只能保存一个成员的值，如果对新的成员赋值，就会将原来成员的值覆盖掉
+缺点：包容性弱
+优点：所有成员共用一段内存，使内存的使用更为精细灵活，同时也节省了内存空间
+
+两者的区别:
+内存占用情况
+结构体的各个成员会占用不同的内存，互相之间没有影响
+共用体的所有成员占用同一段内存，修改一个成员会影响其余所有成员
+内存分配大小
+结构体内存 >= 所有成员占用的内存总和（成员之间可能会有缝隙）
+共用体占用的内存等于最大的成员占用的内存
+
+isa的类型 isa_t
+以下是isa指针的类型isa_t的定义，从定义中可以看出是通过联合体（union）定义的。
+union isa_t { //联合体
+    isa_t() { }
+    isa_t(uintptr_t value) : bits(value) { }
+    //提供了cls 和 bits ，两者是互斥关系
+    Class cls;
+    uintptr_t bits;
+#if defined(ISA_BITFIELD)
+    struct {
+        ISA_BITFIELD;  // defined in isa.h
+    };
+#endif
+};
+
+isa_t类型使用联合体的原因也是基于内存优化的考虑，这里的内存优化是指在isa指针中通过char + 位域（即二进制中每一位均可表示不同的信息）的原理实现。
+通常来说，isa指针占用的内存大小是8字节，即64位，已经足够存储很多的信息了，这样可以极大的节省内存，以提高性能
+
+从isa_t的定义中可以看出:
+提供了两个成员，cls 和 bits，由联合体的定义所知，这两个成员是互斥的，也就意味着，当初始化isa指针时，有两种初始化方式
+通过cls初始化，bits无默认值
+通过bits初始化，cls有默认值
+还提供了一个结构体定义的位域，用于存储类信息及其他信息，结构体的成员ISA_BITFIELD，这是一个宏定义，有两个版本 __arm64__（对应ios 移动端） 和 __x86_64__（对应macOS）
+它们的一些宏定义:
+nonpointer有两个值，表示自定义的类等，占1位
+0：纯isa指针
+1：不只是类对象地址，isa中包含了类信息、对象的引用计数等
+has_assoc表示关联对象标志位，占1位
+0：没有关联对象
+1：存在关联对象
+has_cxx_dtor 表示该对象是否有C++/OC的析构器（类似于dealloc），占1位
+如果有析构函数，则需要做析构逻辑
+如果没有，则可以更快的释放对象
+shiftcls表示存储类的指针的值（类的地址）， 即类信息
+arm64中占 33位，开启指针优化的情况下，在arm64架构中有33位用来存储类指针
+x86_64中占 44位
+magic 用于调试器判断当前对象是真的对象 还是 没有初始化的空间，占6位
+weakly_refrenced是 指对象是否被指向 或者 曾经指向一个ARC的弱变量
+没有弱引用的对象可以更快释放
+deallocating 标志对象是是否正在释放内存
+has_sidetable_rc表示 当对象引用计数大于10时，则需要借用该变量存储进位
+extra_rc（额外的引用计数） ,表示该对象的引用计数值，实际上是引用计数值减1:
+如果对象的引用计数为10，那么extra_rc为9（这个仅为举例说明），实际上iPhone 真机上的 extra_rc 是使用 19位来存储引用计数的
+
+
+
+==================================================9.

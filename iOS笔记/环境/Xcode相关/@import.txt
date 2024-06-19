@@ -1,0 +1,184 @@
+@import
+It's a new feature called Modules or "semantic import".
+
+@import 是 iOS 7 之后的新特性语法，这种方式叫 Modules(模块导入) 或者 “semantic import(语义导入)” ，是一种更好的头部预处理的执行方式，
+这 iOS 7 之后你能通过 @import 语法来导入任何的framework，Modules 是一种将所有可执行的 framework 打包在一起，只有在需要时才能导入到源代码中，这种方式比起传统的 #import 更安全和更高效。
+
+#import <SomeLibrary/SomeFile.h>
+要将此库作为模块导入，代码将改为：
+@import SomeLibrary;
+这有助于将代码将 SomeLibrary 框架自动链接到项目中。
+
+模块还允许您仅将您真正需要的组件包含在项目中。例如，如果要在 AwesomeLibrary 框架中使用 AwesomeObject 组件，通常您必须导入所有内容才能使用一个。
+但是，使用模块可以导入要使用的特定对象:
+@import AwesomeLibrary.AwesomeObject;
+
+实际开发中上可能并不需要使用 @import 关键字。如果你选择使用”modules”(Xcode5 以后中默认开启)
+所有的 #import 和 #include 指令都会自动映射使用 @import。
+
+
+
+
+
+在Xcode5以后，我们就可以不用再去Linked Frameworks and Libraries中去显式的添加frameword了
+Xcode5以后有三个新东西modules、AutoLinking和@import
+原本我们之前导入头文件都是使用#import，这个就是和include的作用差不多就是相当于把头文件的内容复制过来，然后把本身的#import的头文件那句话给替换掉。
+但是#import比#include进步的一点就是能减少重复引用了，比如说你在A.h文件中#import C.h，B.h中也#import C.h，然后你在D.h文件中#import A.h #import B.h，是不会有关于C.h文件重复引用的问题的。具体的方法是通过#ifndef也就是条件编译来实现。
+
+在苹果没有推出Modules的时候，我们如果写的程序比较复杂的话，我们#import了很多相同的头文件，这样会很麻烦，而且编译速度慢，所以苹果有一个pch文件可以帮助我们解决，但是放在pch的头文件，虽然提高编译速度，在整个工程中都能访问，这样终归不好。
+pch文件其实就是采用了预编译处理，当在Build Setting中的Precompile Prefix Header为YES，把一些公用的头文件放入预编译头文件中预先进行编译，然后在真正编译工程时再将预先编译好的产物加入到所有还没编译的文件中去，以此来加快编译速度。
+
+一个完整的编译过程如下所示
+1.预处理（Pre-process）：把宏替换，删除注释，展开头文件，产生 .i 文件
+2.编译（Compliling）：把之前的 .i 文件转换成汇编语言，产生 .s文件
+3.汇编（Asembly）：把汇编语言文件转换为机器码文件，产生 .o 文件
+4.链接（Link）：对.o文件中的对于其他的库的引用的地方进行引用，生成最后的可执行文件（同时也包括多个 .o 文件进行 link）
+
+所以苹果推出了Modules，Modules相当于将框架进行了封装，然后加入在实际编译之时加入了一个用来存放已编译添加过的Modules列表。
+如果在编译的文件中引用到某个Modules的话，将首先在这个列表内查找，找到的话说明已经被加载过则直接使用已有的，如果没有找到，则把引用的头文件编译后加入到这个表中。
+这样被引用到的Modules只会被编译一次，而且在开发的时候也不存在整个工程都能去访问了。又可以提高编译速度。
+
+在Xcode5之后，是默认开启了modules的，我们如果使用#import，Xcode会帮我们自动映射成@import，所以我们可以不用手动的去导入框架了。
+这其中其实就是@import通过AutoLinking，Xcode的编译器LLVM会在编译阶段将所涉及到的框架自动帮你写到link里，不需要在build phases里手动添加了。
+
+
+当你使用 Modules 引入时，预处理器并不会像 “#include”那样重复拷贝粘贴。
+而是巧妙地通过一个列表来存放已经编译处理过的 Modules 列表，而声明的引入会首先在这个表内查找，如果没有找到会去编译添加进来。
+所以 Modules 的引入只会被处理一次，可以解决前面提到的引用泛滥问题。
+
+自 Xcode5以来，build settings 都默认开启了 “-fmodules”，一般来讲你的代码里面都可以使用 Modules 来引入其他库。
+其实 modules 是一种头文件编译后的 map，所以 Modules 始终都能保证你所引入的定义是存在的、有意义的。（其实 Modules 是一种从 precompile headers 演变过来的技术）
+
+modules 和 headers 通过一个 map 来进行一种关系映射，这个 map 文件就叫做 modulemap. 这个文件从语义上描述了你的函数库物理结构。
+
+举个例子，用 std 这个 module 来描述 C 的标准库。
+那么 C 标准库里面的那些头文件：stdio.h, stdlib.h, math.h 都可以映射到 std 这个 module 里面，他们就组成了几个 子模块（submodule）: std.io, std.lib, std.math。
+通过这样一个映射关系，C 的标准库就可以构建出一个独立的 module。所以通常地，一个库就只有一个 module.modulemap 文件用于描述它的所有头文件映射。
+
+
+
+Using C Libraries from Swift:
+https://spin.atomicobject.com/c-libraries-swift/
+
+For a Swift project I’m working on, I need access to the CommonCrypto library so I can access HMAC functions. 
+Apple has provided ready access to many system libraries within Swift, but CommonCrypto isn’t yet one of them.
+Getting Library Access:
+Before we can use the libraries, we need to inform the Swift compiler about them
+There are two main ways to do this.
+
+1.The Objective-C bridging header
+The easiest way to gain access to a library is to use the Objective-C bridging header. 
+Since Objective-C is a superset of C, the bridging header also works to give you access to pure C libraries. 
+If your Swift project doesn’t already have a bridging header, creating one is dead easy.
+The bridging header will be named ProjectName-Bridging-Header.h (where ProjectName is the name of your project); open it up and add imports for the C libraries you want to use.
+
+2.Module maps
+As convenient as the bridging header is, it has one key limitation—you can’t use it inside a framework project.  The alternative is to use a module.
+To do this, create a directory in your project directory named after the library you want to use.
+naming it CommonCrypto
+Inside the directory, create a module.map file that encapsulates library settings. For CommonCrypto, module.map looks like this:
+module CommonCrypto [system] {
+    header "/usr/include/CommonCrypto/CommonCrypto.h"
+    export *
+}
+Now add the new module to Import Paths under Swift Compiler – Search Paths in your project settings. 
+Use ${SRCROOT} in the module path (e.g. ${SRCROOT}/CommonCrypto) to insure that the project works no matter where it’s checked out.
+This makes it possible to just import CommonCrypto in your Swift files.
+Note that consumers of any frameworks you build using this technique are also going to have to add the module to their Swift search paths.
+
+
+
+Modules:
+https://www.stephenw.cc/2017/08/23/llvm-modules/
+构建 modules 的关键— modulemap 文件的语法:
+module std [system] [extern_c] {
+  module assert {
+    textual header "assert.h"
+    header "bits/assert-decls.h"
+    export *
+  }
+ 
+  module complex {
+    header "complex.h"
+    export *
+  }
+ 
+  module ctype {
+    header "ctype.h"
+    export *
+  }
+ 
+  module errno {
+    header "errno.h"
+    header "sys/errno.h"
+    export *
+  }
+ 
+  module fenv {
+    header "fenv.h"
+    export *
+  }
+ 
+  // ...more headers follow...
+}
+这种东西你可能在用 Swift Package Manager 时碰到过。modulemap 文件的语法其实用了 C99的词法处理的简化版，但仍然具有相同的标识符、单词、字符串字面量和单行/多行注释等规则。
+它的保留字如下：
+config_macros export     private
+conflict      framework  requires
+exclude       header     textual
+explicit      link       umbrella
+extern        module     use
+（带有 opt 后缀的成员表示都是可选的）
+
+module 可以是声明一个模块
+explicit 关键字只适用于子模块，表示只有导入语法指定导入这个子模块时才能导入，而不会因为导入整个模块而一并导入。
+framework 关键字表示一个模块的组织形式是 Darwin 的 framework ，这时候 modulemap 文件是直接包含在framework 里面的。
+关于 attribute 选项有好几个关键字可以用:
+system 关键字表示的是这个模块是一个系统库，然后具体的头文件映射会在系统库路径寻找。
+extern_c 关键字表示这个模块包含 C 代码，并且想在 C++中作为模块使用，实际上和我们使用 extern “C”的效果是一样的。
+
+Modules 的 module-member 组成:
+module-member:
+  requires-declaration
+  header-declaration
+  umbrella-dir-declaration
+  submodule-declaration
+  export-declaration
+  use-declaration
+  link-declaration
+  config-macros-declaration
+  conflict-declaration
+header 声明：这个比较简单，就是表明有哪些 header 组成这个 module。
+不过除了最普通的声明，还有 exclude header，表明把哪个 header 排除在外。
+更常见的是umbrella header，它表明这个 header 包含了当前目录下的所有的其他头文件（包括子目录中的），这种形式我们在 framework 的对外声明头中很常见。
+在 header 声明中有两个例外的关键字：private 和 textual。
+private 顾名思义就是这个 header 不向外部暴露为模块，但内部的子模块之间可以互相引用。
+textual 就比较难解释了，必须举个例子：我们常用的 assert 其实不是一个具有实际意义的函数，它只是一个宏，用于预处理期替代某处的 assert 宏引用。假如它被 module 预编译了岂不是很尴尬，所以 textual 关键字还会让这些头文件保持预编译期和 include 关键字同样的处理效果。
+export 声明：这个比较简单，就是说这个模块会重新导出任何自己导入的其他模块。举个例子:
+module MyLib {
+  module Base {
+    header "Base.h"
+  }
+ 
+  module Derived {
+    header "Derived.h"
+    export Base
+  }
+}
+很清晰的就是你在引入 MyLib.Derived时，也能一并引入 MyLib.Base 了。不过我们有时候并不清楚自己写一个模块代码时到底引入了多少个其他模块，所以可以简单地 export * 进行全部导出。
+header 和 export 就是两个常用的模块组成关键字
+
+详细阅读 Clang文档:
+https://clang.llvm.org/docs/Modules.html
+
+
+
+
+Modules 和 Swift:
+如果仅仅只是为了提升头文件预处理速度还没必要这么大费周章地搞 Modules 这个东西，我的猜测是 Swift 这个项目开始设计时便考虑了和 C/C++/ObjC 的交互问题，使用 Modules 便可以方便桥接了。
+
+Swift 的 Modules和 我们上面讲的稍微有点不一样，它并不存在 modulemap 这个东西，而是直接编译生成的一个 .swiftmodule 文件。
+Apple 官方对于 Swift 的模块系统也有一点解释，就是说 Xcode 中的每一个 target 都对应着一个 Swift Module。
+modulemap 最终预编译后产生的是一个二进制的缓存，Swift Modules 也一样，.swiftmodule 文件里面存放的就是一些序列化后的 AST （可能还有些 SIL）。
+因为 Swift 并没有头文件引入机制，所以 Swift 和 C/C++/ObjC 交互时，通过这种 Modules 机制，从二进制层面上交互会非常便捷。
+最终进行编译链接便能确定互相调用函数或对象的相对或绝对地址和内存布局了。
