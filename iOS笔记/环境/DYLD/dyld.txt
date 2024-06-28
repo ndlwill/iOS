@@ -1,0 +1,120 @@
+dyld全名 The dynamic link editor
+是苹果的动态链接器
+是苹果操作系统的一个重要组成部分
+在应用被编译打包成可执行文件之后（即Mach-O），将其交由dyld负责链接，加载程序
+dyld贯穿了App启动的过程，包含加载依赖库、主程序，如果我们需要进行性能优化、启动优化等，不可避免的需要和dyld打交道
+
+
+dyld 2（2004-2017）
+常见的一些特性，例如ASLR、Code Sign、share cache等技术，都是在dyld 2中引入的
+通过多种方式增加安全性:
+增加 codeSigning代码签名
+ASLR（Address space layout randomization）地址空间配置随机加载：每次加载库时，可能位于不同的地址
+bound checking边界检查：mach-o文件中增加了Header的边界检查功能，从而避免恶意二进制数据的注入
+增强了性能:
+可以消除Prebinding，用share cache共享代码代替
+
+
+share cache 共享代码:
+share cache是一个单文件，包含大多数系统dylib，由于这些dylib合并成了一个文件，所以可以进行优化。
+重新调整所有文本段（_TEXT）和数据段（_DATA），并重写整个符号表，以此来减小文件的大小，从而在每个进程中仅挂载少量的区域。允许我们打包二进制数据段，从而节省大量的RAM
+还可以预生成数据结构，用来供dyld和Ob-C在运行时使用。从而不必在程序启动时做这些事情，这也会节约更多的RAM和时间
+
+
+dyld 2 工作流程:
+dyld 2是纯粹的in-process，即在程序进程内执行的，也就意味着只有当应用程序被启动时，dyld 2才能开始执行任务
+
+1、dyld的初始化，主要代码在dyldbootstrap::start，接着执行dyld::_main，dyld::_main代码较多，是dyld加载的核心部分；
+2、检查并准备环境，例如获取二进制路径、检查环境配置，解析主二进制的image header等信息
+3、实例化主二进制的image loader，校验主二进制和dyld的版本是否匹配
+4、检查share cache是否已经map，如果没有则需要先执行map share cache操作
+5、检查DYLD_INSERT_LIBRARIES，如果有则加载插入的动态库（即实例化image loader）
+6、执行link操作，会先递归加载依赖的所有动态库（会对依赖库进行排序，被依赖的总是在前面），同时在这阶段将执行符号绑定，以及rebase，binding操作；
+7、执行初始化方法，OC的+load和C的constructor方法都会在这个阶段执行；
+8、读取Mach-o的LC_MAIN段获取程序的入口地址，调用main函数
+简化版
+① 解析 mach-o 文件，找到其依赖的库，并且递归的找到所有依赖的库，形成一张动态库的依赖图。iOS 上的大部分 app 都依赖几百个动态链接库（大部分是系统的动态库），所以这个步骤包含了较大的工作量。
+② 匹配 mach-o 文件到自身的地址空间
+③ 进行符号查找（perform symbol lookups）
+④ rebase和binding：由于 app 需要让地址空间配置随机加载，所以所有的指针都需要加上一个基地址
+⑤ 运行初始化程序，之后运行 main() 函数
+
+
+dyld 3（2017-至今）:
+在iOS 13系统中，iOS全面采用新的dyld 3来替代之前的dyld 2，因为dyld 3完全兼容dyld 2
+dyld 2 向 dyld 3 的一些改变，主要是将安全敏感的部分 和 占用大量资源的部分移动到上层，然后将一个closure写入磁盘进行缓存，然后我们在程序进程中使用closure。
+
+dyld 3的工作流程主要分为3部分:
+第一部分：out-of-process ：mach-o parser
+第一部分主要在App进程之外做以下工作:
+解析所有搜索路径@rpath、环境变量，因为它们会影响启动速度
+分析 mach-o二进制数据
+执行符号查找
+利用这些结果创建launch clourse
+
+第二部分：in-process ：engine
+进程内的引擎，这部分常驻在内存中，且在dyld 3不再需要分析mach-o文件头或者执行符号查找就可以启动应用，因为分析mach-o和执行符号查找都是耗时操作，所以极大的提高了程序启动速度。
+第二部分主要在App进程中做以下工作:
+检查launch closure是否正确
+映射到dylib中，再跳转main函数
+
+第三部分：launch closure ：cache
+启动闭包launch closure缓存服务。其中大多数程序启动都会使用缓存，而不需要调用进程外 mach-o分析器和编译器。
+且launch closure比mach-o更简单，因为launch closure是内存映射文件，不需要用复杂的方法进行分析，我们可以进行简单的校验，目的是为了提高速度
+系统应用的launch closure直接加入到共享缓存 share cache
+对于第三方应用，我们将在应用安装或者更新期间构建launch closure，因为此时 system library已发生更改
+默认情况下，在iOS，tvOS和watchOS上，这些操作都将在运行之前为您预先构建。
+在macOS上，由于可以侧向加载应用程序(这里应该是指非App Store安装的应用)，因此如果需要，in-process engine可以在首次启动时RPC(Remote Procedure Call)到out to the daemon，然后，它就可以使用缓存的closure了。
+所以综上所述,dyld 3 把很多耗时的查找、计算和 I/O 操作都预先处理好了，使得启动速度有了很大的提升。
+
+启动闭包（launch closure）
+这是一个新引入的概念，指的是 app 在启动期间所需要的所有信息。比如这个 app 使用了哪些动态链接库，其中各个符号的偏移量，代码签名在哪里等等。
+
+
+dyld 3符号缺失问题:
+dyld 2中默认采取的是lazy symbol的符号加载方式
+dyld 3中，在app启动之前，符号解析的结果已经在launch closure内了，所以lazy symbol就不再需要了。
+如果此时，如果有符号缺失的情况，dyld 2 和 dyld 3的表现是不同的
+dyld 2中，首次调用缺失符号时App会crash
+在dyld 3中，缺失符号会导致App一启动就会crash
+
+总结:
+dyld 2工作流程
+解析mach-o头部
+查找依赖库
+映射mach-o文件，放入地址空间中
+执行符号查找
+使用ASLR进行rebase和bind绑定
+运行所有初始化器
+执行main函数
+
+dyld 3工作流程
+进程外：将dyld 2中的mach-o头部解析、符号查找移到了进程外执行，且将其执行结果放入启动闭包，存储到磁盘中
+进程内：验证启动闭包正确性，并映射dylib，执行main函数
+启动闭包缓存服务
+
+
+
+==================================================
+
+dyld 是动态链接器（dynamic linker），负责在应用程序启动和运行时动态地加载和链接动态库（dynamic libraries），并解析这些库中的符号。
+符号（symbols）可以是变量、函数、方法、类等的名称，它们需要在运行时被解析为具体的内存地址，以便程序可以正确执行。
+
+符号查找的过程
+符号查找（symbol lookup）是 dyld 在加载动态库时需要完成的重要任务之一。这个过程包括以下步骤：
+1.加载动态库:
+当应用程序启动时，dyld 会根据应用程序的依赖关系加载所需的动态库。这些库通常是 .dylib 文件或框架（framework）。
+2.解析符号:
+dyld 会解析每个动态库中的符号表，以确定这些符号在内存中的位置。
+符号表是一个包含所有导出符号（exported symbols）的列表，每个符号都有一个对应的内存地址。
+3.符号重定位:
+如果一个动态库引用了另一个库中的符号，dyld 需要找到该符号的内存地址并进行重定位（relocation）。
+例如，如果库 A 中的函数调用了库 B 中的函数，dyld 必须确保库 A 中的调用指向库 B 中函数的实际地址。
+4.符号绑定:
+dyld 将符号绑定（binding）到它们的实际内存地址。这意味着所有对这些符号的引用将被解析为具体的地址。
+这个过程可以在应用程序启动时完成，也可以在运行时动态完成（称为延迟绑定或惰性绑定）。
+
+Lazy Binding:
+在懒绑定中，符号只有在第一次被使用时才会被解析。这种方法可以减少启动时间，但会在第一次调用某个符号时引入一些延迟。
+Eager Binding:
+在急切绑定中，符号在应用程序启动时就被解析。这样可以避免运行时的延迟，但会增加启动时间。

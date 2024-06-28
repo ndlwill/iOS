@@ -81,8 +81,222 @@ Mach-O文件是Mach Object文件格式的缩写，它是用于可执行文件、
 查看Mach-O文件，可以通过以下两种方式:
 (1)otool 是苹果提供的一个命令行工具，用于查看和分析 macOS 和 iOS 应用程序的二进制文件（如可执行文件和库）。它可以显示文件的各种详细信息，包括但不限于文件头、段、节、符号表、动态库依赖关系等。
 otool -l Mach-O文件名
+
+查看Mach-O的Header信息：otool -f 12-macho
+
 (2)MachOView工具
 将Mach-O可执行文件拖动到MachOView工具打开
 
 Mach-O文件格式:
 对于 OS X 和 iOS 来说，Mach-O是其可执行文件的格式，主要包括以下几种文件类型
+Executable：可执行文件
+Dylib：动态链接库
+Bundle：无法被链接的动态库，只能在运行时使用dlopen加载
+Image：指的是Executable、Dylib和Bundle的一种
+Framework：包含Dylib、资源文件和头文件的集合
+
+
+一个完成的Mach-O文件主要分为三大部分:
+Header Mach-O头部：主要是Mach-O的cpu架构，文件类型以及加载命令等信息
+Load Commands 加载命令：描述了文件中数据的具体组织结构，不同的数据类型使用不同的加载命令表示
+Data 数据：数据中的每个段（segment）的数据都保存在这里，段的概念与ELF文件中段的概念类似。每个段都有一个或多个部分，它们放置了具体的数据与代码，主要包含代码，数据，例如符号表，动态符号表等等
+
+
+Header:
+Header 包含该二进制文件的一般信息
+使得可以快速确认一些信息，比如当前文件用于32位还是64位，对应的处理器是什么、文件类型是什么
+Mach-O的Header包含了整个Mach-O文件的关键信息，使得CPU能快速知道Mac-O的基本信息，其在Mach.h（路径同前文的fat.h一致）针对32位和64位架构的cpu，分别使用了mach_header和mach_header_64结构体来描述Mach-O头部。
+mach_header是连接器加载时最先读取的内容，决定了一些基础架构、系统类型、指令条数等信息，
+这里查看64位架构的mach_header_64结构体定义，相比于32位架构的mach_header，只是多了一个reserved保留字段，
+
+/*
+ - magic：0xfeedface(32位) 0xfeedfacf(64位)，系统内核用来判断是否是mach-o格式
+ - cputype：CPU类型，比如ARM
+ - cpusubtype：CPU的具体类型，例如arm64、armv7
+ - filetype：由于可执行文件、目标文件、静态库和动态库等都是mach-o格式，所以需要filetype来说明mach-o文件是属于哪种文件
+ - ncmds：sizeofcmds：LoadCommands加载命令的条数（加载命令紧跟header之后）
+ - sizeofcmds：LoadCommands加载命令的大小
+ - flags：标志位标识二进制文件支持的功能，主要是和系统加载、链接有关
+ - reserved：保留字段
+ */
+struct mach_header_64 {
+    uint32_t    magic;      /* mach magic number identifier */
+    cpu_type_t  cputype;    /* cpu specifier */
+    cpu_subtype_t   cpusubtype; /* machine specifier */
+    uint32_t    filetype;   /* type of file */
+    uint32_t    ncmds;      /* number of load commands */
+    uint32_t    sizeofcmds; /* the size of all the load commands */
+    uint32_t    flags;      /* flags */
+    uint32_t    reserved;   /* reserved */
+};
+
+其中filetype主要记录Mach-O的文件类型，常用的有以下几种
+#define MH_OBJECT   0x1     /* 目标文件*/
+#define MH_EXECUTE  0x2     /* 可执行文件*/
+#define MH_DYLIB    0x6     /* 动态库*/
+#define MH_DYLINKER 0x7     /* 动态链接器*/
+#define MH_DSYM     0xa     /* 存储二进制文件符号信息，用于debug分析*/
+
+
+Load Commands:
+Load commands（加载命令） 一张包含很多内容的表
+
+在Mach-O文件中，Load Commands主要是用于加载指令，其大小和数目在Header中已经被提供，其在Mach.h中的定义如下
+/*
+ load_command用于加载指令
+ - cmd 加载命令的类型
+ - cmdsize 加载命令的大小
+ */
+struct load_command {
+    uint32_t cmd;       /* type of load command */
+    uint32_t cmdsize;   /* total size of command in bytes */
+};
+我们在MachOView中查看Load Commands，其中记录了很多信息，例如动态链接器的位置、程序的入口、依赖库的信息、代码的位置、符号表的位置等等
+
+其中LC_SEGMENT_64的类型segment_command_64定义如下:
+/*
+ segment_command 段加载命令
+ - cmd：表示加载命令类型，
+ - cmdsize：表示加载命令大小（还包括了紧跟其后的nsects个section的大小）
+ - segname：16个字节的段名字
+ - vmaddr：段的虚拟内存起始地址
+ - vmsize：段的虚拟内存大小
+ - fileoff：段在文件中的偏移量
+ - filesize：段在文件中的大小
+ - maxprot：段页面所需要的最高内存保护（4 = r，2 = w，1 = x）
+ - initprot：段页面初始的内存保护
+ - nsects：段中section数量
+ - flags：其他杂项标志位
+ 
+ - 从fileoff（偏移）处，取filesize字节的二进制数据，放到内存的vmaddr处的vmsize字节。（fileoff处到filesize字节的二进制数据，就是“段”）
+ - 每一个段的权限相同（或者说，编译时候，编译器把相同权限的数据放在一起，成为段），其权限根据initprot初始化。initprot指定了如何通过读/写/执行位初始化页面的保护级别
+ - 段的保护设置可以动态改变，但是不能超过maxprot中指定的值（在iOS中，+x和+w是互斥的）
+ */
+struct segment_command_64 { /* for 64-bit architectures */
+    uint32_t    cmd;        /* LC_SEGMENT_64 */
+    uint32_t    cmdsize;    /* includes sizeof section_64 structs */
+    char        segname[16];    /* segment name */
+    uint64_t    vmaddr;     /* memory address of this segment */
+    uint64_t    vmsize;     /* memory size of this segment */
+    uint64_t    fileoff;    /* file offset of this segment */
+    uint64_t    filesize;   /* amount to map from the file */
+    vm_prot_t   maxprot;    /* maximum VM protection */
+    vm_prot_t   initprot;   /* initial VM protection */
+    uint32_t    nsects;     /* number of sections in segment */
+    uint32_t    flags;      /* flags */
+};
+
+
+Data:
+Data(数据) 通常是对象文件中最大的部分
+包含Segement的具体数据，首先是分段，然后段中分节
+
+Load Commands后就是Data区域，这个区域存储了具体的只读、可读写代码，例如方法、符号表、字符表、代码数据、连接器所需的数据（重定向、符号绑定等）。
+主要是存储具体的数据。其中大多数的Mach-O文件均包含以下三个段:
+__TEXT 代码段：只读，包括函数，和只读的字符串
+__DATA 数据段：读写，包括可读写的全局变量等
+__LINKEDIT： __LINKEDIT包含了方法和变量的元数据（位置，偏移量），以及代码签名等信息。
+
+在Data区中，Section占了很大的比例，Section在Mach.h中是以结构体section_64（在arm64架构下）表示，其定义如下:
+/*
+ Section节在MachO中集中体现在TEXT和DATA两段里.
+ - sectname：当前section的名称
+ - segname：section所在的segment名称
+ - addr：内存中起始位置
+ - size：section大小
+ - offset：section的文件偏移
+ - align：字节大小对齐
+ - reloff：重定位入口的文件偏移
+ - nreloc：重定位入口数量
+ - flags：标志，section的类型和属性
+ - reserved1：保留（用于偏移量或索引）
+ - reserved2：保留（用于count或sizeof）
+ - reserved3：保留
+ */
+
+struct section_64 { /* for 64-bit architectures */
+    char        sectname[16];   /* name of this section */
+    char        segname[16];    /* segment this section goes in */
+    uint64_t    addr;       /* memory address of this section */
+    uint64_t    size;       /* size in bytes of this section */
+    uint32_t    offset;     /* file offset of this section */
+    uint32_t    align;      /* section alignment (power of 2) */
+    uint32_t    reloff;     /* file offset of relocation entries */
+    uint32_t    nreloc;     /* number of relocation entries */
+    uint32_t    flags;      /* flags (section type and attributes)*/
+    uint32_t    reserved1;  /* reserved (for offset or index) */
+    uint32_t    reserved2;  /* reserved (for count or sizeof) */
+    uint32_t    reserved3;  /* reserved */
+};
+
+Section在MachOView中可以看出，主要集中体现在TEXT和DATA两段里
+
+其中常见的section:
+section - __TEXT	说明
+__TEXT.__text	主程序代码
+__TEXT.__cstring	C语言字符串
+__TEXT.__const	const 关键字修饰的常量
+__TEXT.__stubs	用于 Stub 的占位代码，很多地方称之为桩代码
+__TEXT.__stubs_helper	当 Stub 无法找到真正的符号地址后的最终指向
+__TEXT.__objc_methname	Objective-C 方法名称
+__TEXT.__objc_methtype	Objective-C 方法类型
+__TEXT.__objc_classname	Objective-C 类名称
+
+section - __DATA	说明
+__DATA.__data	初始化过的可变数据
+__DATA.__la_symbol_ptr	lazy binding 的指针表，表中的指针一开始都指向 __stub_helper
+__DATA.nl_symbol_ptr	非 lazy binding 的指针表，每个表项中的指针都指向一个在装载过程中，被动态链机器搜索完成的符号
+__DATA.__const	没有初始化过的常量
+__DATA.__cfstring	程序中使用的 Core Foundation 字符串（CFStringRefs）
+__DATA.__bss	BSS，存放为初始化的全局变量，即常说的静态内存分配
+__DATA.__common	没有初始化过的符号声明
+__DATA.__objc_classlist	Objective-C 类列表
+__DATA.__objc_protolist	Objective-C 原型
+__DATA.__objc_imginfo	Objective-C 镜像信息
+__DATA.__objc_selfrefs	Objective-C self 引用
+__DATA.__objc_protorefs	Objective-C 原型引用
+__DATA.__objc_superrefs	Objective-C 超类引用
+
+
+MachOView
+Load Commands:
+VM Addr: 虚拟内存地址
+VM Size: 虚拟内存大小，在运行时刻，在内存中的大小
+File offset: 数据在文件中偏移量
+File size: 数据在文件中的大小
+
+Section中分为两大类：__TEXT（代码）、__DATA（数据）
+
+LoadCommands	说明
+LC_SEGMENT_64	将文件中（32位或64位）的段映射到进程地址空间中，主要分为__TEXT、__DATA、LINKEDIT几大块
+LC_DYLD_INFO_ONLY	动态链接相关信息
+LC_SYMTAB	符号地址
+DYSYMTAB	动态符号表地址
+LC_LOAD_DYLINKER	使用谁加载，我们使用dyld
+LC_UUID	Mach-O文件的唯一识别标识 UUID
+LC_VERSION_MIN_MACOSX	支持最低的操作系统版本
+LC_SOURCE_VERSION	源代码版本
+LC_MAIN	设置程序主线程的入口地址和栈大小
+LC_ENCRYPTION_INFO_64	加密信息
+LC_LOAD_DYLIB	依赖库的路径，包含三方库
+LC_FUNCTION_STARTS	函数起始地址表
+LC_CODE_SIGNATURE	代码签名
+
+
+LC_DYLD_INFO_ONLY动态链接信息
+Rebase:
+(1)代码段放入Mach-O文件，在编译时期，会生成一个偏移地址
+(2)在运行时期，mach-o文件放入虚拟内存，其内存也是随机变化的（由系统分配 - ASLR）
+(3)所以之前的代码段在mach-O中偏移值就不能使用了，需要通过ASLR + Rebase Info Offset重定向，主要改变的是汇编代码
+
+
+Data:
+如果我们想快速定位代码段，需要通过LC_SEGMENT_64(__TEXT)中的VM Adress
+
+查看 代码段的起始位置
+也可以通过objdump命令来查看:objdump --macho -d 12-macho
+
+查看stub、stub_helper：主要是用于符号绑定
+
+查看外部符号表（即 调用外部函数，只有在运行时才绑定），有两个：懒加载、非懒加载
+这里是先绑定专门用来绑定外部的函数，在用这个函数去绑定其他函数

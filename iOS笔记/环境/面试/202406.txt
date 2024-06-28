@@ -763,5 +763,224 @@ extra_rc（额外的引用计数） ,表示该对象的引用计数值，实际�
 如果对象的引用计数为10，那么extra_rc为9（这个仅为举例说明），实际上iPhone 真机上的 extra_rc 是使用 19位来存储引用计数的
 
 
+原理:
+通过alloc --> _objc_rootAlloc --> callAlloc --> _objc_rootAllocWithZone --> _class_createInstanceFromZone方法路径，查找到initInstanceIsa
 
-==================================================9.
+inline void 
+objc_object::initInstanceIsa(Class cls, bool hasCxxDtor)
+{
+    ASSERT(!cls->instancesRequireRawIsa());
+    ASSERT(hasCxxDtor == cls->hasCxxDtor());
+    //初始化isa
+    initIsa(cls, true, hasCxxDtor); 
+}
+进入initIsa方法的源码实现，主要是初始化isa指针
+该方法的逻辑主要分为两部分
+通过 cls 初始化 isa
+通过 bits 初始化 isa
+
+苹果引入了优化过的 isa 指针，即 non-pointer isa（非指针 isa），该指针不仅仅用于存储类的地址，还包含其他信息。
+纯 isa 指针:
+一个纯 isa 指针指的是这个指针只存储了对象的类的内存地址，没有包含其他信息。在这种情况下，isa 指针完全是一个指向类对象的指针。
+Non-pointer isa:
+为了优化内存和性能，苹果在 64 位架构上引入了 non-pointer isa，即在 isa 指针中嵌入了额外的标志位和数据。这种设计利用了 64 位指针中的一些位来存储其他信息，而不仅仅是类的地址。
+
+Non-pointer isa 的结构
+在 64 位架构下，isa 指针包含如下字段：
+class pointer: 存储对象的类的地址。
+extra_rc: 引用计数的额外部分，用于优化 retain/release 操作。
+has_cxx_dtor: 标志对象是否有 C++ 析构函数。
+shiftcls: 存储实际的类指针（经过偏移）。
+magic: 用于调试和识别对象是否已被释放。
+weakly_referenced: 标志对象是否曾经被弱引用。
+deallocating: 标志对象是否正在被析构。
+has_assoc: 标志对象是否有关联引用（associated references）。
+has_sidetable_rc: 标志对象是否有旁路引用计数（sidetable refcounts）。
+
+验证 isa指针 位域（0-64）:
+通过main中的LGPerson 断点 --> initInstanceIsa --> initIsa --> 走到else中的 isa初始化
+执行lldb命令：p newisa，得到newisa的详细信息
+继续往下执行，走到newisa.bits = ISA_MAGIC_VALUE;下一行，表示为isa的bits成员赋值，重新执行lldb命令p newisa
+
+isa指针中有这些位域（目前是处于macOS，所以使用的是x86_64）:
+其中magic是59是由于将isa指针地址转换为二进制，从47（因为前面有4个位域，共占用47位，地址是从0开始）位开始读取6位，再转换为十进制
+
+
+isa 与 类 的关联:
+cls 与 isa 关联原理就是isa指针中的shiftcls位域中存储了类信息
+其中initInstanceIsa的过程是将 calloc 指针 和当前的 类cls 关联起来，有以下几种验证方式:
+【方式一】通过initIsa方法中的newisa.shiftcls = (uintptr_t)cls >> 3;验证
+【方式二】通过isa指针地址与ISA_MSAK 的值 & 来验证
+【方式三】通过runtime的方法object_getClass验证
+【方式四】通过位运算验证
+
+
+方式一：通过 initIsa 方法
+运行至newisa.shiftcls = (uintptr_t)cls >> 3;前一步，其中 shiftcls存储当前类的值信息
+shiftcls赋值的逻辑是将 LGPerson进行编码后，右移3位
+执行lldb命令p (uintptr_t)cls，结果为(uintptr_t) $2 = 4294975720
+再右移三位，将得到536871965存储到newisa的shiftcls中
+p (uintptr_t)cls >> 3，或者（通过上一步的结果$2，执行lldb命令p $2 >> 3）
+继续执行程序到isa = newisa;部分，此时执行p newisa
+
+与bits赋值结果的对比，bits的位域中有两处变化
+cls 由默认值，变成了LGPerson，将isa与cls完美关联
+shiftcls由0变成了536871965
+
+为什么在shiftcls赋值时需要类型强转？
+因为内存的存储不能存储字符串，机器码只能识别 0 、1这两种数字，所以需要将其转换为uintptr_t数据类型，这样shiftcls中存储的类信息才能被机器码理解， 其中uintptr_t是long
+
+为什么需要右移3位？
+主要是由于shiftcls处于isa指针地址的中间部分，前面还有3个位域，为了不影响前面的3个位域的数据，需要右移将其抹零。
+
+
+方式二：通过 isa & ISA_MSAK
+在方式一后，继续执行，回到_class_createInstanceFromZone方法，此时cls 与 isa已经关联完成，执行po objc
+执行x/4gx obj,得到isa指针的地址0x001d8001000020e9
+将isa指针地址 & ISA_MASK （处于macOS，使用x86_64中的宏定义），即 po 0x001d8001000020e9 & 0x00007ffffffffff8 ，得出LGPerson
+arm64中，ISA_MASK 宏定义的值为0x0000000ffffffff8ULL
+x86_64中，ISA_MASK 宏定义的值为0x00007ffffffffff8ULL
+
+
+方式三：通过 object_getClass
+通过查看object_getClass的源码实现，同样可以验证isa与类关联的原理
+有以下几步：
+main中导入#import <objc/runtime.h>
+通过runtime的api，即object_getClass函数获取类信息
+点击进入object_getClass 底层实现
+进入getIsa的源码实现
+点击ISA()，进入源码，可以看到如果是indexed类型，执行if流程，反之 执行的是else流程
+在else流程中，拿到isa的bits这个位，再 & ISA_MASK，这与方式二中的原理是一致的，获得当前的类信息
+从这里也可以得出 cls 与 isa 已经完美关联
+
+
+方式四：通过位运算
+回到_class_createInstanceFromZone方法。通过x/4gx obj 得到obj的存储信息，当前类的信息存储在isa指针中，且isa中的shiftcls此时占44位（因为处于macOS环境）
+想要读取中间的44位 类信息，就需要经过位运算 ，将右边3位，和左边除去44位以外的部分都抹零，其相对位置是不变的。
+其中shiftcls即为需要读取的类信息
+
+将isa地址右移3位：p/x 0x001d8001000020e9 >> 3 ，得到0x0003b0002000041d
+在将得到的0x0003b0002000041d``左移20位：p/x 0x0003b0002000041d << 20 ,得到0x0002000041d00000
+为什么是左移20位？因为先右移了3位，相当于向右偏移了3位，而左边需要抹零的位数有17位，所以一共需要移动20位
+将得到的0x0002000041d00000 再右移17位：p/x 0x0002000041d00000 >> 17 得到新的0x00000001000020e8
+获取cls的地址 与 上面的进行验证 ：p/x cls 也得出0x00000001000020e8，所以由此可以证明 cls 与 isa 是关联的
+
+
+==================================================9.类 & 类结构
+类的分析 主要是分析 isa的走向 以及 继承关系
+
+@interface CJLPerson : NSObject
+{
+    NSString *hobby;
+}
+@property (nonatomic, copy) NSString *cjl_name;
+- (void)sayHello;
++ (void)sayBye;
+@end
+
+@implementation CJLPerson
+- (void)sayHello
+{}
++ (void)sayBye
+{}
+@end
+
+@interface CJLTeacher : CJLPerson
+@end
+
+@implementation CJLTeacher
+@end
+
+int main(int argc, const char * argv[]) {
+    @autoreleasepool {
+        //ISA_MASK  0x00007ffffffffff8ULL
+        CJLPerson *person = [CJLPerson alloc];
+        CJLTeacher *teacher = [CJLTeacher alloc];
+        NSLog(@"Hello, World! %@ - %@",person,teacher);  
+    }
+    return 0;
+}
+
+
+元类的说明:
+在Apple中，我们简称CJLPerson类的类为 元类
+
+对象的isa 是指向类，类的其实也是一个对象，可以称为类对象，其isa的位域指向苹果定义的元类
+元类是系统给的，其定义和创建都是由编译器完成，在这个过程中，类的归属来自于元类
+元类 是类对象 的类，每个类都有一个独一无二的元类用来存储 类方法的相关信息。
+元类本身是没有名称的，由于与类相关联，所以使用了同类名一样的名称
+
+元类的走向，也就是isa的走位：对象 --> 类 --> 元类 --> NSobject, NSObject 指向自身
+
+总结:
+对象 的 isa 指向 类（也可称为类对象）
+类 的 isa 指向 元类
+元类 的 isa 指向 根元类，即NSObject
+根元类 的 isa 指向 它自己
+
+
+NSObject到底有几个？
+有以下两种验证方式
+【方式一】lldb命令验证
+【方式二】代码验证
+
+【方式一】lldb命令验证
+来验证这两个NSObject是否是同一个
+最后NSObject类的元类 也是NSObject，与上面的CJLPerson中的根元类（NSObject）的元类，是同一个，所以可以得出一个结论：内存中只存在存在一份根元类NSObject，根元类的元类是指向它自己
+
+【方式二】代码验证
+//MARK:--- 分析类对象内存 存在个数
+void testClassNum(){
+    Class class1 = [CJLPerson class];
+    Class class2 = [CJLPerson alloc].class;
+    Class class3 = object_getClass([CJLPerson alloc]);
+    NSLog(@"\n%p-\n%p-\n%p-\n%p", class1, class2, class3);
+}
+打印的地址都是同一个，所以NSObject只有一份，即NSObject（根元类）在内存中永远只存在一份
+
+
+isa的走向有以下几点说明:
+实例对象（Instance of Subclass）的 isa 指向 类（class）
+类对象（class） isa 指向 元类（Meta class）
+元类（Meta class）的isa 指向 根元类（Root metal class）
+根元类（Root metal class） 的isa 指向它自己本身，形成闭环，这里的根元类就是NSObject
+
+superclass（即继承关系）的走向也有以下几点说明:
+类 之间 的继承关系：
+类（subClass） 继承自 父类（superClass）
+父类（superClass） 继承自 根类（RootClass），此时的根类是指NSObject
+根类 继承自 nil，所以根类即NSObject
+元类也存在继承，元类之间的继承关系如下:
+子类的元类（metal SubClass） 继承自 父类的元类（metal SuperClass）
+父类的元类（metal SuperClass） 继承自 根元类（Root metal Class
+根元类（Root metal Class） 继承于 根类（Root class），此时的根类是指NSObject
+
+【注意】实例对象之间没有继承关系，类之间有继承关系
+
+isa 走位链（两条）
+teacher的isa走位链：teacher(子类对象) --> CJLTeacher （子类）--> CJLTeacher（子元类） --> NSObject（根元类） --> NSObject（跟根元类，即自己）
+person的isa走位图：person(父类对象) --> CJLPerson （父类）--> CJLPerson（父元类） --> NSObject（根元类） --> NSObject（跟根元类，即自己）
+
+superclass走位链（两条）
+类的继承关系链：CJLTeacher（子类） --> CJLPerson(父类) --> NSObject（根类）--> nil
+元类的继承关系链：CJLTeacher（子元类） --> CJLPerson(父元类) --> NSObject（根元类）--> NSObject（根类）--> nil
+
+
+
+objc_class & objc_object:
+为什么 对象 和 类都有isa属性呢？这里就不得不提到两个结构体类型：objc_class & objc_object
+使用clang编译过main.m文件，从编译后的c++文件中可以看到如下c++源码
+NSObject的底层编译是NSObject_IMPL结构体，
+其中 Class是isa指针的类型，是由objc_class定义的类型，
+而objc_class是一个结构体。在iOS中，所有的Class都是以 objc_class 为模板创建的
+
+struct NSObject_IMPL {
+    Class isa;
+};
+typedef struct objc_class *Class;
+
+在objc4源码中搜索objc_class的定义，源码中对其的定义有两个版本
+旧版 位于 runtime.h中，已经被废除
+新版 位于objc-runtime-new.h
+从新版的定义中，可以看到 objc_class 结构体类型是继承自 objc_object的
+
