@@ -1,0 +1,154 @@
+https://www.jianshu.com/p/db765ff4e36a
+
+创建一个project，在ViewController中重写了load方法，在main文件中加了一个C++方法，即cFunc
+
+运行程序,通过结果可以看出其顺序是 load --> C++方法 --> main
+
+编译过程,主要分为以下几步:
+源文件：载入.h、.m、.cpp等文件
+预处理：替换宏，删除注释，展开头文件，产生.i文件
+编译：将.i文件转换为汇编语言，产生.s文件
+汇编：将汇编文件转换为机器码文件，产生.o文件
+链接：对.o文件中引用其他库的地方进行引用，生成最后的可执行文件
+
+静态库 和 动态库:
+静态库：在链接阶段，会将汇编生成的目标程序与引用的库一起链接打包到可执行文件当中。此时的静态库就不会在改变了，因为它是编译时被直接拷贝一份，复制到目标程序里的
+好处：编译完成后，库文件实际上就没有作用了，目标程序没有外部依赖，直接就可以运行
+缺点：由于静态库会有两份，所以会导致目标程序的体积增大，对内存、性能、速度消耗很大
+
+动态库：程序编译时并不会链接到目标程序中，目标程序只会存储指向动态库的引用，在程序运行时才被载入
+优势：
+减少打包之后app的大小：因为不需要拷贝至目标程序中，所以不会影响目标程序的体积，与静态库相比，减少了app的体积大小
+共享内存，节约资源：同一份库可以被多个程序使用
+通过更新动态库，达到更新程序的目的：由于运行时才载入的特性，可以随时对库进行替换，而不需要重新编译代码
+缺点：动态载入会带来一部分性能损失，使用动态库也会使得程序依赖于外部环境，如果环境缺少了动态库，或者库的版本不正确，就会导致程序无法运行
+
+
+dyld加载流程分析:
+dyld（the dynamic link editor）是苹果的动态链接器，是苹果操作系统的重要组成部分，在app被编译打包成可执行文件格式的Mach-O文件后，交由dyld负责连接，加载程序
+
+app启动的起始点:
+在load方法处加一个断点，通过bt堆栈信息查看app启动是从哪里开始的
+是从dyld中的_dyld_start开始的。（dyld源码: https://github.com/apple-oss-distributions/dyld/tags）
+在dyld-750.6源码中查找_dyld_start,查找arm64架构发现，是由汇编实现
+通过汇编注释发现会调用dyldbootstrap::start(app_mh, argc, argv, dyld_mh, &startGlue)方法，是一个C++方法（以arm64架构为例）
+
+源码中搜索dyldbootstrap找到命名作用空间，再在这个文件中查找start方法，其核心是返回值的调用了dyld::_main函数
+其中macho_header是Mach-O的头部，而dyld加载的文件就是Mach-O类型的，即Mach-O类型是可执行文件类型，由四部分组成：Mach-O头部、Load Command、section、Other Data，可以通过MachOView查看可执行文件信息
+
+dyld::_main函数源码分析:
+【第一步：环境变量配置】：根据环境变量设置相应的值以及获取当前运行架构
+【第二步：共享缓存】：检查是否开启了共享缓存，以及共享缓存是否映射到共享区域，例如UIKit、CoreFoundation等
+【第三步：主程序的初始化】：调用instantiateFromLoadedImage函数实例化了一个ImageLoader对象
+【第四步：插入动态库】：遍历DYLD_INSERT_LIBRARIES环境变量，调用loadInsertedDylib加载
+【第五步：link 主程序】
+【第六步：link 动态库】
+【第七步：弱符号（Weak Symbols）绑定】
+【第八步：执行初始化方法】
+【第九步：寻找主程序入口即main函数】：从Load Command读取LC_MAIN入口，如果没有，就读取LC_UNIXTHREAD，这样就来到了日常开发中熟悉的main函数了
+
+
+主要分析下【第三步】、【第八步】、【第九步】
+
+第三步:主程序初始化:
+sMainExecutable表示主程序变量，查看其赋值，是通过instantiateFromLoadedImage方法初始化 (加载可执行文件，并生成一个ImageLoader实例对象)
+
+进入instantiateFromLoadedImage源码，其中创建一个ImageLoader实例对象，通过instantiateMainExecutable方法创建
+
+进入instantiateMainExecutable源码，其作用是为主可执行文件创建映像，返回一个ImageLoader类型的image对象，即主程序。
+其中sniffLoadCommands函数时获取Mach-O类型文件的Load Command的相关信息，并对其进行各种校验
+
+第八步：执行初始化方法
+进入initializeMainExecutable源码,主要是循环遍历，都会执行runInitializers方法
+
+全局搜索runInitializers，其核心代码是processInitializers函数的调用
+
+进入processInitializers函数的源码实现，其中对镜像列表调用recursiveInitialization函数进行递归实例化
+
+全局搜索recursiveInitialization(cons函数,其源码实现
+在这里，需要分成两部分探索，一部分是notifySingle函数，一部分是doInitialization函数
+
+notifySingle 函数:
+全局搜索notifySingle函数,其重点是(*sNotifyObjCInit)(image->getRealPath(), image->machHeader());这句
+全局搜索sNotifyObjCInit，发现没有找到实现，有赋值操作
+搜索registerObjCNotifiers在哪里调用了，发现在_dyld_objc_notify_register进行了调用
+注意：_dyld_objc_notify_register的函数需要在libobjc源码中搜索
+
+在objc4-781源码中搜索_dyld_objc_notify_register，发现在_objc_init源码中调用了该方法，并传入了参数
+所以sNotifyObjCInit的赋值的就是objc中的load_images，而load_images会调用所有的+load方法。
+所以综上所述，notifySingle是一个回调函数
+
+load函数加载:
+进入load_images的源码看看其实现，以此来证明load_images中调用了所有的load函数
+
+通过objc源码中_objc_init源码实现，进入load_images的源码实现
+
+进入call_load_methods源码实现，可以发现其核心是通过do-while循环调用+load方法
+进入call_class_loads源码实现，了解到这里调用的load方法证实我们前文提及的类的load方法
+所以，load_images调用了所有的load函数
+
+【总结】load的源码链为:
+_dyld_start --> dyldbootstrap::start --> dyld::_main --> dyld::initializeMainExecutable --> ImageLoader::runInitializers --> ImageLoader::processInitializers --> ImageLoader::recursiveInitialization --> dyld::notifySingle(是一个回调处理) --> sNotifyObjCInit --> load_images(libobjc.A.dylib)
+
+
+doInitialization 函数:
+进入doInitialization函数的源码实现
+这里也需要分成两部分，一部分是doImageInit函数，一部分是doModInitFunctions函数
+
+进入doImageInit源码实现，其核心主要是for循环加载方法（load command）的调用，这里需要注意的一点是，libSystem的初始化必须先运行
+
+进入doModInitFunctions源码实现，这个方法中加载了所有Cxx文件
+可以通过测试程序的堆栈信息来验证,在C++方法处加一个断点
+
+走到这里，还是没有找到_objc_init的调用？
+我们还可以通过_objc_init加一个符号断点来查看调用_objc_init前的堆栈信息
+在libsystem中查找libSystem_initializer，查看其中的实现
+dyld也是一个库
+
+根据前面的堆栈信息，我们发现走的是libSystem_initializer中会调用libdispatch_init函数，而这个函数的源码是在libdispatch开源库中的，在libdispatch中搜索libdispatch_init
+
+进入_os_object_init源码实现，其源码实现调用了_objc_init函数
+
+结合上面的分析，从初始化_objc_init注册的_dyld_objc_notify_register的参数2，即load_images，到sNotifySingle --> sNotifyObjCInie=参数2 到sNotifyObjcInit()调用，形成了一个闭环
+
+所以可以简单的理解为sNotifySingle这里是添加通知即addObserver，_objc_init中调用_dyld_objc_notify_register相当于发送通知，即push，而sNotifyObjcInit相当于通知的处理函数，即selector
+
+【总结】:
+_objc_init的源码链：_dyld_start --> dyldbootstrap::start --> dyld::_main --> dyld::initializeMainExecutable --> ImageLoader::runInitializers --> ImageLoader::processInitializers --> ImageLoader::recursiveInitialization --> doInitialization -->libSystem_initializer（libSystem.B.dylib） --> _os_object_init（libdispatch.dylib） --> _objc_init(libobjc.A.dylib)
+
+
+第九步：寻找主入口函数
+汇编调试，可以看到显示来到+[ViewController load]方法
+继续执行，来到cFunc的C++函数
+点击stepover,继续往下，跑完了整个流程，会回到_dyld_start,然后调用main()函数,通过汇编完成main的参数赋值等操作
+注意：main是写定的函数，写入内存，读取到dyld，如果修改了main函数的名称，会报错
+
+
+==================================================弱符号
+
+dyld（动态链接器）负责加载和链接应用程序和动态库
+弱符号（Weak Symbols）是链接器和动态链接器中的一个概念，允许应用程序或库在链接时对符号的存在进行弱引用。
+
+一个符号（通常是函数或变量）在链接器中的定义可以是强符号（Strong Symbol）或弱符号（Weak Symbol）。它们的主要区别在于处理符号解析冲突的方式：
+强符号（Strong Symbol）：当链接器遇到多个定义相同的强符号时，会报错，因为强符号必须是唯一的。
+弱符号（Weak Symbol）：弱符号允许有多个定义，当链接器遇到多个弱符号时，会选择其中一个，而不报错。如果一个弱符号和一个强符号定义冲突，链接器会优先选择强符号。
+
+弱符号的用途：
+可选功能：允许动态库或应用程序在不确定某些功能是否存在时进行编译和链接。例如，某些 API 可能在不同版本的操作系统中存在或不存在，通过使用弱符号，可以在运行时动态检查并调用这些 API
+库的可扩展性：使库可以提供默认实现，同时允许用户提供自己的实现，优先使用用户的实现。
+向后兼容性：允许新的库或应用程序在旧版本中运行，而无需强制要求所有符号都存在。
+
+Objective-C 中使用 __attribute__((weak_import))
+
+extern void myFunction(void) __attribute__((weak_import));
+
+int main() {
+    if (myFunction) {// myFunction != NULL
+        myFunction();
+    } else {
+        NSLog(@"myFunction is not available");
+    }
+    return 0;
+}
+
+在动态链接过程中，dyld 会检查是否存在定义弱符号的符号。如果不存在，dyld 不会报错，而是将该符号的地址设为 NULL。这样，程序可以在运行时检查符号是否存在并决定如何处理。

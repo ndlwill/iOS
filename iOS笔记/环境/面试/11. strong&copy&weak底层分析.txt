@@ -1,0 +1,78 @@
+在clang编译的cpp文件中可以发现 strong & copy & weak 修饰的属性在编译的底层代码中是有区别的
+
+在LGPerson中我们定义了两个 NSString 属性，分别用copy和strong修饰
+用clang将main.m文件编译成main.cpp,然后发现copy 和strong修饰的属性的set方法是有区别的
+
+为什么copy修饰的属性使用了objc_setProperty，而strong修饰的没有？
+
+在LLVM中搜索objc_setProperty
+找到getOptimizedSetPropertyFn方法中
+
+针对不同的修饰符，返回的那么是不同的
+如果是atomic & copy修饰，name为objc_setProperty_atomic_copy
+如果是atomic 且没有copy修饰，name为 objc_setProperty_atomic
+如果是nonatomic & copy 修饰，name为 objc_setProperty_nonatomic_copy
+其他剩余的组合，即nonatomic、nonatomic & strong、nonatomic & weak等，name为objc_setProperty_nonatomic
+上述的几个name分别对应objc-781源码
+然后通过汇编调试发现，最终都会走到objc_storeStrong
+
+源码中搜索objc_storeStrong，有如下源码，主要也是retain新值，release旧值
+void
+objc_storeStrong(id *location, id obj)
+{
+    id prev = *location;
+    if (obj == prev) {
+        return;
+    }
+    objc_retain(obj);//retain新值
+    *location = obj;
+    objc_release(prev);//release旧值
+}
+
+llvm编译源码中搜索objc_storeStrong，找到EmitARCStoreStrongCall方法
+发现copy 和 strong修饰的属性执行的策略是不一致的
+llvm中搜索EmitARCStoreStrongCall方法，在GenerateCopyHelperFunction方法有调用，然后在这里发现了strong 和 weak的不同处理
+如果是weak修饰，执行EmitARCCopyWeak方法，如下所示，weak在底层的调用是 objc_initWeak
+如果是strong修饰，执行EmitARCStoreStrongCall方法
+
+
+结论:
+copy和strong修饰的属性在底层编译的不一致，主要还是llvm中对其进行了不同的处理的结果。copy的赋值是通过objc_setProperty，而strong的赋值时通过self + 内存平移（即将指针通过平移移至name所在的位置，然后赋值），然后还原成 strong类型
+strong & copy 在底层调用objc_storeStrong，本质是新值retain，旧值release
+weak 在底层调用objc_initWeak
+
+
+Type Encoding & Property Type String:
+Type Encodings
+https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtTypeEncodings.html#//apple_ref/doc/uid/TP40008048-CH100-SW1
+Property Type String
+https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtPropertyIntrospection.html#//apple_ref/doc/uid/TP40008048-CH101-SW1
+
+
+clang中的方法签名:
+Type encoding:
+clang中编译后，方法列表的这些字符的含义是什么
+以@16@0:8为例
+@16表示返回字符串占用16个字节 -- 第二个@ 占8字节， sel 占8字节
+
+第一个@ 表示 返回值
+16 表示 总共占用的字节数16字节
+
+第二个@：表示第一个参数
+id -- @ 统配类型
+typedef struct objc_object *id
+
+0 -- 从0开始 0-8
+： -- 代表sel，方法编号
+8 -- 8-16
+
+而v24@0：8@16中的 v -- void 无返回值
+
+
+clang编译后的属性的attribute:
+clang编译输出了属性的attribute ，同样也可以通过property_getAttributes方法获取
+T 表示 type
+@ 表示 变量类型
+C 表示 copy
+N 表示 nonatomic
+V 表示 variable 变量，即下划线变量 _nickName

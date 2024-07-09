@@ -3,3 +3,300 @@
 
 
 objc_object 与 对象的关系?
+所有的对象 都是以 objc_object为模板继承过来的
+所有的对象 是 来自 NSObject（OC） ，但是真正到底层的 是一个objc_object（C/C++）的结构体类型
+objc_object 与 对象的关系 是 继承关系
+
+
+什么是 属性 & 成员变量 & 实例变量 ？
+属性(property)：在OC中是通过@property开头定义，且是带下划线成员变量 + setter + getter方法的变量
+成员变量(ivar)：在OC的类中{}中定义的，且没有下划线的变量
+实例变量：通过当前对象类型，具备实例化的变量，是一种特殊的成员变量，例如 NSObject、UILabel、UIButton等
+
+
+成员变量 和 实例变量什么区别？
+实例变量（即成员变量中的对象变量 就是 实例变量）：以实例对象实例化来的，是一种特殊的成员变量
+NSString 是常量类型， 因为不能添加属性，如果定义在类中的{}中，是成员变量
+成员变量中 除去基本数据类型、NSString，其他都是 实例变量（即可以添加属性的成员变量），实例变量主要是判断是不是对象
+
+
+元类 中为什么会有 类对象 的 类方法？
+我们知道了实例方法 存储在类中，类方法存储在元类中
+@interface LGPerson : NSObject
+- (void)sayHello;
++ (void)sayHappy;
+
+@end
+
+@implementation LGPerson
+
+- (void)sayHello{
+    NSLog(@"LGPerson say : Hello!!!");
+}
+
++ (void)sayHappy{
+    NSLog(@"LGPerson say : Happy!!!");
+}
+
+@end
+
+
+int main(int argc, const char * argv[]) {
+    @autoreleasepool {
+        LGPerson *person = [LGPerson alloc];
+        Class pClass     = object_getClass(person);
+        lgObjc_copyMethodList(pClass);
+
+        lgInstanceMethod_classToMetaclass(pClass);
+        lgClassMethod_classToMetaclass(pClass);
+        NSLog(@"Hello, World!");
+    }
+    return 0;
+}
+
+
+void lgObjc_copyMethodList(Class pClass){
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(pClass, &count);
+    for (unsigned int i=0; i < count; i++) {
+        Method const method = methods[i];
+        //获取方法名
+        NSString *key = NSStringFromSelector(method_getName(method));
+        
+        LGLog(@"Method, name: %@", key);
+    }
+    free(methods);
+}
+
+
+void lgInstanceMethod_classToMetaclass(Class pClass){
+    
+    const char *className = class_getName(pClass);
+    Class metaClass = objc_getMetaClass(className);
+    
+    Method method1 = class_getInstanceMethod(pClass, @selector(sayHello));
+    Method method2 = class_getInstanceMethod(metaClass, @selector(sayHello));
+
+    Method method3 = class_getInstanceMethod(pClass, @selector(sayHappy));
+
+    /*
+    传入的是LGPerson元类,需要去获取selName = sayHappy的实例方法
+    首先在LGPerson元类中查找,发现有sayHappy的实例方法，主要是因为类对象的类方法存储在元类中，类方法在元类中是实例方法
+    然后返回查找到的实例方法,表示找到了指定的实例方法
+    */
+    Method method4 = class_getInstanceMethod(metaClass, @selector(sayHappy));
+    
+    LGLog(@"%s - %p-%p-%p-%p",__func__,method1,method2,method3,method4);
+}
+
+
+void lgClassMethod_classToMetaclass(Class pClass){
+    
+    const char *className = class_getName(pClass);
+    Class metaClass = objc_getMetaClass(className);
+    
+    Method method1 = class_getClassMethod(pClass, @selector(sayHello));
+    Method method2 = class_getClassMethod(metaClass, @selector(sayHello));
+
+    Method method3 = class_getClassMethod(pClass, @selector(sayHappy));
+    // 元类 为什么有 sayHappy 类方法 0 1
+    //
+    Method method4 = class_getClassMethod(metaClass, @selector(sayHappy));
+    
+    LGLog(@"%s-%p-%p-%p-%p",__func__,method1,method2,method3,method4);
+}
+
+
+void lgIMP_classToMetaclass(Class pClass){
+    
+    const char *className = class_getName(pClass);
+    Class metaClass = objc_getMetaClass(className);
+
+    // - (void)sayHello;
+    // + (void)sayHappy;
+
+    // LGPerson类中可以查找到sayHello的具体实现
+    IMP imp1 = class_getMethodImplementation(pClass, @selector(sayHello));
+    // 根据类方法存储在元类中可知，sayHello是一个实例方法，并不存储在元类中，也没有其任何实现，所以进行了消息转发
+    IMP imp2 = class_getMethodImplementation(metaClass, @selector(sayHello));
+
+    // 根据LGPerson文件，sayHappy是一个类方法，并不存储在类中，也没有其任何实现，所以进行了消息转发
+    IMP imp3 = class_getMethodImplementation(pClass, @selector(sayHappy));
+    // 根据类方法存储在元类文件，可以在元类中查找到sayHappy的具体实现，所以返回一个imp函数指针的地址
+    IMP imp4 = class_getMethodImplementation(metaClass, @selector(sayHappy));
+
+    NSLog(@"%p-%p-%p-%p",imp1,imp2,imp3,imp4);
+    NSLog(@"%s",__func__);
+}
+
+lgObjc_copyMethodList函数 分析:
+主要是获取LGPerson类中的方法列表，从实例方法存储在类中，类方法存储在元类中可以得知，LGPerson的方法列表打印结果只有sayHello方法
+
+lgInstanceMethod_classToMetaclass函数 分析:
+先了解class_getInstanceMethod这个方法,如果在传入的类或者类的父类中没有找到指定的实例方法，则返回NULL
+传入的pclass 是类LGPerson，通过objc_getMetaClass获取的LGPerson的元类 是元类LGPerson
+
+lgClassMethod_classToMetaclass函数 分析:
+先了解class_getClassMethod这个方法，主要是用于获取类方法,如果在传入的类或者类的父类中没有找到指定的类方法，则返回NULL
+再来看该方法的源码实现:
+可以得出class_getClassMethod的实现是获取类的类方法，其本质就是获取元类的实例方法，最终还是会走到class_getInstanceMethod
+但是在这里需要注意的一点是：在getMeta源码中，如果判断出cls是元类，那么就不会再继续往下递归查找，会直接返回this，其目的是为了防止元类的无限递归查找
+
+lgIMP_classToMetaclass函数 分析:
+class_getMethodImplementation 主要是返回方法的具体实现
+其大致含义就是：该函数在向类实例发送消息时会被调用，并返回一个指向方法实现函数的指针。这个函数会比method_getImplementation(class_getInstanceMethod(cls, name))更快。
+返回的函数指针可能是一个指向runtime内部的函数，而不一定是方法的实际实现。如果类实例无法响应selector，则返回的函数指针将是运行时消息转发机制的一部分
+
+IMP class_getMethodImplementation(Class cls, SEL sel)
+{
+    IMP imp;
+
+    if (!cls  ||  !sel) return nil;
+
+    //查找方法实现
+    imp = lookUpImpOrNil(nil, sel, cls, LOOKUP_INITIALIZE | LOOKUP_RESOLVER);
+
+    //如果没有找到，则进行消息转发
+    if (!imp) {
+        return _objc_msgForward;
+    }
+
+    return imp;
+}
+
+总结:
+class_getInstanceMethod：获取实例方法，如果指定的类或其父类不包含带有指定选择器的实例方法，则为NULL
+class_getClassMethod：获取类方法，如果指定的类或其父类不包含具有指定选择器的类方法，则为NULL。
+class_getMethodImplementation：获取方法的具体实现，如果未查找到，则进行消息转发
+
+
+
+iskindOfClass & isMemberOfClass 的理解?
+
+iskindOfClass & isMemberOfClass 类方法调用
+//-----使用 iskindOfClass & isMemberOfClass 类方法
+BOOL re1 = [(id)[NSObject class] isKindOfClass:[NSObject class]];       //
+BOOL re2 = [(id)[NSObject class] isMemberOfClass:[NSObject class]];     //
+BOOL re3 = [(id)[LGPerson class] isKindOfClass:[LGPerson class]];       //
+BOOL re4 = [(id)[LGPerson class] isMemberOfClass:[LGPerson class]];     //
+NSLog(@" re1 :%hhd\n re2 :%hhd\n re3 :%hhd\n re4 :%hhd\n",re1,re2,re3,re4);// 1 0 0 0
+
+iskindOfClass & isMemberOfClass 实例方法调用
+//------iskindOfClass & isMemberOfClass 实例方法
+BOOL re5 = [(id)[NSObject alloc] isKindOfClass:[NSObject class]];       //
+BOOL re6 = [(id)[NSObject alloc] isMemberOfClass:[NSObject class]];     //
+BOOL re7 = [(id)[LGPerson alloc] isKindOfClass:[LGPerson class]];       //
+BOOL re8 = [(id)[LGPerson alloc] isMemberOfClass:[LGPerson class]];     //
+NSLog(@" re5 :%hhd\n re6 :%hhd\n re7 :%hhd\n re8 :%hhd\n",re5,re6,re7,re8);// 1 1 1 1
+
+
+isKindOfClass 源码解析（实例方法 & 类方法）
+//--isKindOfClass---类方法、对象方法
+//+ isKindOfClass：第一次比较是 获取类的元类 与 传入类对比，再次之后的对比是获取上次结果的父类 与 传入 类进行对比
++ (BOOL)isKindOfClass:(Class)cls {
+    // 获取类的元类 vs 传入类
+    // 根元类 vs 传入类
+    // 根类 vs 传入类
+    // 举例：LGPerson vs 元类 (根元类) (NSObject)
+    for (Class tcls = self->ISA(); tcls; tcls = tcls->superclass) {
+        if (tcls == cls) return YES;
+    }
+    return NO;
+}
+
+//- isKindOfClass：第一次是获取对象类 与 传入类对比，如果不相等，后续对比是继续获取上次 类的父类 与传入类进行对比
+- (BOOL)isKindOfClass:(Class)cls {
+/*
+获取对象的类 vs 传入的类 
+父类 vs 传入的类
+根类 vs 传入的类
+nil vs 传入的类
+*/
+    for (Class tcls = [self class]; tcls; tcls = tcls->superclass) {
+        if (tcls == cls) return YES;
+    }
+    return NO;
+}
+
+
+isMemberOfClass 源码解析:
+//-----类方法
+//+ isMemberOfClass : 获取类的元类，与 传入类对比
++ (BOOL)isMemberOfClass:(Class)cls {
+    return self->ISA() == cls;
+}
+//-----实例方法
+//- isMemberOfClass : 获取对象的类，与 传入类对比
+- (BOOL)isMemberOfClass:(Class)cls {
+    return [self class] == cls;
+}
+
+
+源码分析总结:
+isKindOfClass
+类方法：元类（isa） --> 根元类（父类） --> 根类（父类） --> nil（父类） 与 传入类的对比
+实例方法：对象的类 --> 父类 --> 根类 --> nil 与 传入类的对比
+
+isMemberOfClass
+类方法： 类的元类 与 传入类 对比
+实例方法：对象的父类 与 传入类 对比
+
+然后通过断点调试，isMemberOfClass 的类方法 和 实例方法的流程是正常的，会走到上面分析的源码
+而isKindOfClass根本不会走到上面分析的源码中（！！！注意这里，这是一个坑点），而是会走到下面这个源码中，
+其类方法和实例方法都是走到objc_opt_isKindOfClass方法源码中
+
+objc_opt_isKindOfClass方法源码如下:
+// Calls [obj isKindOfClass]
+BOOL
+objc_opt_isKindOfClass(id obj, Class otherClass)
+{
+#if __OBJC2__
+    if (slowpath(!obj)) return NO;
+    //获取isa，
+    //如果obj 是对象，则isa是类，
+    //如果obj是类，则isa是元类
+    Class cls = obj->getIsa(); 
+    if (fastpath(!cls->hasCustomCore())) {
+        // 如果obj 是对象，则在类的继承链进行对比，
+        // 如果obj是类，则在元类的isa中进行对比
+        for (Class tcls = cls; tcls; tcls = tcls->superclass) { 
+            if (tcls == otherClass) return YES;
+        }
+        return NO;
+    }
+#endif
+    return ((BOOL(*)(id, SEL, Class))objc_msgSend)(obj, @selector(isKindOfClass:), otherClass);
+}
+主要是因为在llvm中编译时对其进行了优化处理
+
+
+使用类方法结果解析:
+re1 :1 ，是 NSObject 与 NSObject 的对比，使用 +isKindOfClass
+NSObject（传入类，即根类） vs NSObject的元类即根元类-- 不相等
+NSObject（传入类，即根类） vs 根元类的父类即根类 -- 相等，返回1
+
+re2 :0 ，是 NSObject 与 NSObject 的对比，使用 +isMemberOfClass
+NSObject根类（传入类） vs NSObject的元类即根元类 -- 不相等
+
+re3 :0 ，是 LGPerson 与 LGPerson 的对比，使用 +isisKindOfClass
+LGPerson（传入类） vs LGPerson的元类即元类LGPerson -- 不相等
+LGPerson（传入类） vs 元类LGPerson的父类即根元类 -- 不相等
+LGPerson（传入类） vs 根元类的父类即根类 -- 不相等
+LGPerson（传入类） vs 根类的父类即 nil -- 不相等
+
+re4 :0 ，是 LGPerson 与 LGPerson 的对比，使用 +isMemberOfClass
+LGPerson（传入类） vs 元类 -- 不相等
+
+
+使用实例方法结果解析:
+re5 :1 ，是 NSObject对象 与 NSObject 的对比，使用 -isKindOfClass
+NSObject（传入类，即根类） vs 对象的isa即NSObject根类 -- 相等
+
+re6 :1 ，是 NSObject对象 与 NSObject 的对比，使用 -isMemberOfClass
+NSObject（传入类，即根类） vs 对象的类即NSObject根类 -- 相等
+
+re7 :1 ，是 LGPerson对象 与 LGPerson 的对比，使用 -isKindOfClass
+LGPerson（传入类） vs 对象的isa即LGPerson -- 相等
+
+re8 :1 ，是 LGPerson对象 与 LGPerson 的对比，使用 -isMemberOfClass
+LGPerson（传入类） vs 对象的类即LGPerson -- 相等

@@ -2,5 +2,263 @@ https://zhuanlan.zhihu.com/p/340281483
 
 https://www.jianshu.com/p/2344e2f5f99f
 
+###
+https://heckj.github.io/swiftui-notes/index_zh-CN.html#aboutthisbook
+###
+
 Combine和RxSwift的操作符对比:
 https://github.com/CombineCommunity/rxswift-to-combine-cheatsheet
+
+
+==================================================MVVM
+https://medium.com/@mshcheglov/mvvm-design-pattern-with-combine-framework-on-ios-5ff911011b0b
+
+The View defines the layout, appearance and structure of the UI. The view informs the ViewModel about user interactions and observables state changes exposed by the viewModel.
+
+The ViewModel is responsible for wrapping the model and providing state to the UI components. It also defines actions, that can be used by the view to pass events to the model. However, it shouldn’t have access to the view.
+
+The Model defines core types and implements application business logic. It is completely independent of the view and view-model and reusable in many across the application.
+
+// TMDB
+https://www.themoviedb.org/
+
+
+We’ll create an iOS application that uses TMDb API to search a movie and show the details.
+
+https://en.wikipedia.org/wiki/SOLID
+I’ll follow the SOLID design principles and keep the focus on having clean, maintainable and testable code.
+
+What are SOLID Design Principles?
+The Single Responsibility Principle (SRP)
+The Open-Closed Principle (OCP)
+The Liskov Substitution Principle (LSP)
+The Interface Segregation Principle (ISP)
+The Dependency Inversion Principle (DIP)
+
+
+Model:
+the model layer consists of the model objects and use cases that encapsulate the data and behavior of the application.
+The use cases are typically utilized in conjunction with services that contain data access and caching.
+
+The use cases: 用例
+
+protocol MoviesUseCaseType {
+
+    // Runs movies search with a query string
+    func searchMovies(with name: String) -> AnyPublisher<Result<[Movie], Error>, Never>
+
+    // Fetches details for movie with specified id
+    func movieDetails(with id: Int) -> AnyPublisher<Result<Movie, Error>, Never>
+
+    // Loads image for the given movie
+    func loadImage(for movie: Movie, size: ImageSize) -> AnyPublisher<UIImage?, Never>
+}
+All of them return a type-erasing publisher
+
+
+final class MoviesUseCase {
+
+    private let networkService: NetworkServiceType
+    private let imageLoaderService: ImageLoaderServiceType
+
+    init(networkService: NetworkServiceType, imageLoaderService: ImageLoaderServiceType) {
+        self.networkService = networkService
+        self.imageLoaderService = imageLoaderService
+    }
+}
+The MoviesUseCase class consumes network and image loader service via initializer.
+Those are responsible for fetching data via network and image loading and caching.
+The searchMovies function could be implemented as following using Combine framework:
+
+extension MoviesUseCase: MoviesUseCaseType {
+    func searchMovies(with name: String) -> AnyPublisher<Result<[Movie], Error>, Never> {
+        return networkService
+            .load(Resource<Movies>.movies(query: name)) ➊
+            .map({ (result: Result<Movies, NetworkError>) -> Result<[Movie], Error> in ➋
+                switch result {
+                case .success(let movies): return .success(movies.items)
+                case .failure(let error): return .failure(error)
+                }
+            })
+            .subscribe(on: Scheduler.backgroundWorkScheduler) ➌
+            .receive(on: Scheduler.mainScheduler) ➍
+            .eraseToAnyPublisher() ➎
+    }
+}
+➊ load creates a publisher that delivers the results of performing URL session data tasks. It returns down the pipeline Result<Movies, NetworkError> object.
+➋ The map operator is used to transform the result object.
+➌ Performs the work on the background queue.
+➍ Switches to receive the result on the main queue.
+➎ eraseToAnyPublisher does type erasure on the chain of operators so the searchMovies(with:) function returns an object of type AnyPublisher<Result<[Movie], Error>, Never>.
+
+
+ViewModel:
+declare viewModel for the search screen.
+It should be a nice idea to expose @Published properties in the viewModel and observe changes from the view.
+A better solution would be defining a ViewModel, that transforms the input to the output:
+
+protocol MoviesSearchViewModelType {
+    func transform(input: MoviesSearchViewModelInput) -> MoviesSearchViewModelOuput
+}
+
+Where MoviesSearchViewModelInput is a struct that defines UI events to be used by the viewModel:
+struct MoviesSearchViewModelInput {
+    // called when a screen becomes visible
+    let appear: AnyPublisher<Void, Never>
+    // triggered when a search query is updated
+    let search: AnyPublisher<String, Never>
+    // called when a user selected an item from the list
+    let selection: AnyPublisher<Int, Never>
+}
+
+And MoviesSearchViewModelOuput defines the view’s state via the type-erasing publisher:
+
+typealias MoviesSearchViewModelOuput = AnyPublisher<MoviesSearchState, Never>
+
+enum MoviesSearchState {
+    case idle
+    case loading
+    case success([MovieViewModel])
+    case noResults
+    case failure(Error)
+}
+
+It should be pointed out that you could have more complex output type in a real project. 
+It can be declared as a struct then.
+
+Next, we have to declare the MoviesSearchViewModel class.
+It is initialized with MoviesUseCaseType and MoviesSearchNavigator objects, that define movies search business rules and screens navigation respectively.
+
+final class MoviesSearchViewModel: MoviesSearchViewModelType {
+
+    private weak var navigator: MoviesSearchNavigator?
+    private let useCase: MoviesUseCaseType
+    private var cancellables: [AnyCancellable] = []
+
+    init(useCase: MoviesUseCaseType, navigator: MoviesSearchNavigator) {
+        self.useCase = useCase
+        self.navigator = navigator
+    }
+}
+
+
+We’re now ready to implement the transform function. 
+This is the most important and probably complex part of our project:
+extension MoviesSearchViewModel: MoviesSearchViewModelType {
+    func transform(input: MoviesSearchViewModelInput) -> MoviesSearchViewModelOuput {
+        cancellables.forEach { $0.cancel() } ➊
+        cancellables.removeAll()
+
+        input.selection
+            .sink(receiveValue: { [unowned self] movieId in self.navigator?.showDetails(forMovie: movieId) })
+            .store(in: &cancellables) ➋
+
+        let searchInput = input.search
+            .debounce(for: .milliseconds(300), scheduler: Scheduler.mainScheduler)
+            .removeDuplicates() ➌
+        let movies = searchInput
+            .filter({ !$0.isEmpty })
+            .flatMapLatest({[unowned self] query in self.useCase.searchMovies(with: query) })
+            .map({ result -> MoviesSearchState in
+                switch result {
+                    case .success([]): return .noResults
+                    case .success(let movies): return .success(self.viewModels(from: movies))
+                    case .failure(let error): return .failure(error)
+                }
+            })
+            .eraseToAnyPublisher() ➍
+
+        let initialState: MoviesSearchViewModelOuput = .just(.idle)
+        let emptySearchString: MoviesSearchViewModelOuput = searchInput.filter({ $0.isEmpty }).map({ _ in .idle }).eraseToAnyPublisher()
+        let idle: MoviesSearchViewModelOuput = Publishers.Merge(initialState, emptySearchString).eraseToAnyPublisher() ➎
+
+        return Publishers.Merge(idle, movies).removeDuplicates().eraseToAnyPublisher() ➏
+    }
+}
+
+➊ Cancels current subscriptions.
+➋ Adds a subscriber to show the details screen when a user taps on a movie from the list.
+➌ Debounces search events and removes duplicates to create the searchInput object.
+➍ The creation of the movies publisher, that starts search on user input and emits MoviesSearchState objects eventually.
+➎ Defines idle state publisher, that emits value immediately(default state) and when the search string is empty.
+➏ Merges idle and movies state publishers. Calls eraseToAnyPublisher that does type erasure on the chain of operators so the transform(input:) function returns an object of type AnyPublisher<MoviesSearchState, Never>.
+
+
+View:
+Using the above setup we can implement the MoviesSearchViewController. 
+It consumes a MoviesSearchViewModelType instance via initializer and binds one on viewDidLoad:
+class MoviesSearchViewController : UIViewController {
+    init(viewModel: MoviesSearchViewModelType) {
+        self.viewModel = viewModel
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        configureUI()
+        bind(to: viewModel)
+    }
+}
+
+Next, we need a way to declare UI events. 
+This could be achieved with PassthroughSubject type, that provides a convenient way to adapt existing imperative code to the Combine model:
+
+extension MoviesSearchViewController {
+
+    private let selection = PassthroughSubject<Int, Never>()
+    private let search = PassthroughSubject<String, Never>()
+    private let appear = PassthroughSubject<Void, Never>()
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        appear.send(())
+    }
+}
+
+extension MoviesSearchViewController: UISearchBarDelegate {
+    func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
+        search.send(searchText)
+    }
+}
+
+extension MoviesSearchViewController: UITableViewDelegate {
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        let snapshot = dataSource.snapshot()
+        selection.send(snapshot.itemIdentifiers[indexPath.row].id)
+    }
+}
+
+We can use these events to declare the bind function which is called from viewDidLoad. 
+It establishes a binding with the viewModel, subscribes on the output(state) changes and renders one when changed:
+
+extension MoviesSearchViewController {
+    private func bind(to viewModel: MoviesSearchViewModelType) {
+        cancellables.forEach { $0.cancel() }
+        cancellables.removeAll()
+        let input = MoviesSearchViewModelInput(appear: appear.eraseToAnyPublisher()
+                                               search: search.eraseToAnyPublisher(),
+                                               selection: selection.eraseToAnyPublisher())
+
+        let output = viewModel.transform(input: input)
+
+        output.sink(receiveValue: {[unowned self] state in
+            self.render(state)
+        }).store(in: &cancellables)
+    }
+}
+
+
+==================================================
+https://betterprogramming.pub/uikit-mvvm-combine-912c80c02262
+
+
+==================================================debounce
+cancellable = subject
+    .debounce(for: .seconds(0.5), scheduler: RunLoop.main)
+    .sink { index in
+        print("Received index \(index)")
+    }
+
+debounce 运算符会在每次收到新事件后等待指定的时间间隔（这里是 0.5 秒）。
+如果在这段时间内没有新事件到来，它就会发送最后一次事件。如果在这段时间内有新事件到来，它会取消之前的等待并重新开始计时。

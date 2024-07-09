@@ -1,0 +1,279 @@
+分析了快速查找流程，如果快速查不到，则需要进入慢速查找流程
+
+objc_msgSend 慢速查找流程分析:
+
+慢速查找-汇编部分:
+在快速查找流程中，如果没有找到方法实现，无论是走到CheckMiss还是JumpMiss，最终都会走到__objc_msgSend_uncached汇编函数
+
+在objc-msg-arm64.s文件中查找__objc_msgSend_uncached的汇编实现，其中的核心是MethodTableLookup（即查询方法列表），其源码如下
+STATIC_ENTRY __objc_msgSend_uncached
+UNWIND __objc_msgSend_uncached, FrameWithNoSaves
+
+// THIS IS NOT A CALLABLE C FUNCTION
+// Out-of-band p16 is the class to search
+    
+MethodTableLookup // 开始查询方法列表
+TailCallFunctionPointer x17
+
+END_ENTRY __objc_msgSend_uncached
+
+
+搜索MethodTableLookup的汇编实现，其中的核心是_lookUpImpOrForward，汇编源码实现如下:
+.macro MethodTableLookup
+    
+    // push frame
+    SignLR
+    stp fp, lr, [sp, #-16]!
+    mov fp, sp
+
+    // save parameter registers: x0..x8, q0..q7
+    sub sp, sp, #(10*8 + 8*16)
+    stp q0, q1, [sp, #(0*16)]
+    stp q2, q3, [sp, #(2*16)]
+    stp q4, q5, [sp, #(4*16)]
+    stp q6, q7, [sp, #(6*16)]
+    stp x0, x1, [sp, #(8*16+0*8)]
+    stp x2, x3, [sp, #(8*16+2*8)]
+    stp x4, x5, [sp, #(8*16+4*8)]
+    stp x6, x7, [sp, #(8*16+6*8)]
+    str x8,     [sp, #(8*16+8*8)]
+
+    // lookUpImpOrForward(obj, sel, cls, LOOKUP_INITIALIZE | LOOKUP_RESOLVER)
+    // receiver and selector already in x0 and x1
+    mov x2, x16
+    mov x3, #3
+    bl  _lookUpImpOrForward //核心源码
+
+    // IMP in x0
+    mov x17, x0
+    
+    // restore registers and return
+    ldp q0, q1, [sp, #(0*16)]
+    ldp q2, q3, [sp, #(2*16)]
+    ldp q4, q5, [sp, #(4*16)]
+    ldp q6, q7, [sp, #(6*16)]
+    ldp x0, x1, [sp, #(8*16+0*8)]
+    ldp x2, x3, [sp, #(8*16+2*8)]
+    ldp x4, x5, [sp, #(8*16+4*8)]
+    ldp x6, x7, [sp, #(8*16+6*8)]
+    ldr x8,     [sp, #(8*16+8*8)]
+
+    mov sp, fp
+    ldp fp, lr, [sp], #16
+    AuthenticateLR
+
+.endmacro
+
+
+上述汇编的过程，可以通过汇编调试来验证:
+在main中，例如[person sayHello]对象方法调用处加一个断点，并且开启汇编调试【Debug -- Debug worlflow -- 勾选Always show Disassembly】，运行程序
+汇编中objc_msgSend加一个断点，执行断住，按住control + stepinto，进入objc_msgSend的汇编
+在_objc_msgSend_uncached加一个断点，执行断住，按住control + stepinto，进入汇编
+从上可以看出最后走到的就是lookUpImpOrForward，此时并不是汇编实现
+
+注：
+1、C/C++中调用 汇编 ，去查找汇编时，C/C++调用的方法需要多加一个下划线
+2、汇编 中调用 C/C++方法时，去查找C/C++方法，需要将汇编调用的方法去掉一个下划线
+
+
+慢速查找-C/C++部分:
+根据汇编部分的提示，全局续搜索lookUpImpOrForward，最后在objc-runtime-new.mm文件中找到了源码实现，这是一个c实现的函数
+IMP lookUpImpOrForward(id inst, SEL sel, Class cls, int behavior)
+{
+    // 定义的消息转发
+    const IMP forward_imp = (IMP)_objc_msgForward_impcache; 
+    IMP imp = nil;
+    Class curClass;
+
+    runtimeLock.assertUnlocked();
+
+    // 快速查找，如果找到则直接返回imp
+    //目的：防止多线程操作时，刚好调用函数，此时缓存进来了
+    if (fastpath(behavior & LOOKUP_CACHE)) { 
+        imp = cache_getImp(cls, sel);
+        if (imp) goto done_nolock;
+    }
+    
+    //加锁，目的是保证读取的线程安全
+    runtimeLock.lock();
+    
+    //判断是否是一个已知的类：判断当前类是否是已经被认可的类，即已经加载的类
+    checkIsKnownClass(cls); 
+    
+    //判断类是否实现，如果没有，需要先实现，此时的目的是为了确定父类链，方法后续的循环
+    if (slowpath(!cls->isRealized())) { 
+        cls = realizeClassMaybeSwiftAndLeaveLocked(cls, runtimeLock);
+    }
+
+    //判断类是否初始化，如果没有，需要先初始化
+    if (slowpath((behavior & LOOKUP_INITIALIZE) && !cls->isInitialized())) { 
+        cls = initializeAndLeaveLocked(cls, inst, runtimeLock);
+    }
+
+    runtimeLock.assertLocked();
+    curClass = cls;
+
+    //----查找类的缓存
+    
+    // unreasonableClassCount -- 表示类的迭代的上限
+    //（猜测这里递归的原因是attempts在第一次循环时作了减一操作，然后再次循环时,仍在上限的范围内，所以可以继续递归）
+    for (unsigned attempts = unreasonableClassCount();;) { 
+        //---当前类方法列表（采用二分查找算法），如果找到，则返回，将方法缓存到cache中
+        Method meth = getMethodNoSuper_nolock(curClass, sel);
+        if (meth) {
+            imp = meth->imp;
+            goto done;
+        }
+        //当前类 = 当前类的父类，并判断父类是否为nil
+        if (slowpath((curClass = curClass->superclass) == nil)) {
+            //--未找到方法实现，方法解析器也不行，使用转发
+            imp = forward_imp;
+            break;
+        }
+
+        // 如果父类链中存在循环，则停止
+        if (slowpath(--attempts == 0)) {
+            _objc_fatal("Memory corruption in class list.");
+        }
+
+        // --父类缓存
+        imp = cache_getImp(curClass, sel);
+        if (slowpath(imp == forward_imp)) { 
+            // 如果在父类中找到了forward，则停止查找，且不缓存，首先调用此类的方法解析器
+            break;
+        }
+        if (fastpath(imp)) {
+            //如果在父类中，找到了此方法，将其存储到cache中
+            goto done;
+        }
+    }
+
+    //没有找到方法实现，尝试一次方法解析
+
+    if (slowpath(behavior & LOOKUP_RESOLVER)) {
+        //动态方法决议的控制条件，表示流程只走一次
+        behavior ^= LOOKUP_RESOLVER; 
+        return resolveMethod_locked(inst, sel, cls, behavior);
+    }
+
+ done:
+    //存储到缓存
+    log_and_fill_cache(cls, imp, sel, inst, curClass); 
+    //解锁
+    runtimeLock.unlock();
+ done_nolock:
+    if (slowpath((behavior & LOOKUP_NIL) && imp == forward_imp)) {
+        return nil;
+    }
+    return imp;
+}
+
+
+慢速查找流程:
+【第一步】cache缓存中进行查找，即快速查找，找到则直接返回imp，反之，则进入【第二步】
+【第二步】判断cls
+是否是已知类，如果不是，则报错
+类是否实现，如果没有，则需要先实现，确定其父类链，此时实例化的目的是为了确定父类链、ro、以及rw等，方法后续数据的读取以及查找的循环
+是否初始化，如果没有，则初始化
+【第三步】for循环，按照类继承链 或者 元类继承链的顺序查找
+当前cls的方法列表中使用二分查找算法查找方法，如果找到，则进入cache写入流程，并返回imp，如果没有找到，则返回nil
+当前cls被赋值为父类，如果父类等于nil，则imp = 消息转发，并终止递归，进入【第四步】
+如果父类链中存在循环，则报错，终止循环
+父类缓存中查找方法:
+如果未找到，则直接返回nil，继续循环查找
+如果找到，则直接返回imp，执行cache写入流程
+【第四步】判断是否执行过动态方法解析
+如果没有，执行动态方法解析
+如果执行过一次动态方法解析，则走到消息转发流程
+
+
+getMethodNoSuper_nolock方法：二分查找方法列表
+二分查找核心的源码实现如下
+ALWAYS_INLINE static method_t *
+findMethodInSortedMethodList(SEL key, const method_list_t *list)
+{
+    ASSERT(list);
+
+    const method_t * const first = &list->first;
+    const method_t *base = first;
+    const method_t *probe;
+    uintptr_t keyValue = (uintptr_t)key; //key 等于 say666
+    uint32_t count;
+    //base相当于low，count是max，probe是middle，这就是二分
+    for (count = list->count; count != 0; count >>= 1) {
+        //从首地址+下标 --> 移动到中间位置（count >> 1 右移1位即 count/2 = 4）
+        probe = base + (count >> 1); 
+        
+        uintptr_t probeValue = (uintptr_t)probe->name;
+        
+        //如果查找的key的keyvalue等于中间位置（probe）的probeValue，则直接返回中间位置
+        if (keyValue == probeValue) { 
+            // -- while 平移 -- 排除分类重名方法
+            while (probe > first && keyValue == (uintptr_t)probe[-1].name) {
+                //排除分类重名方法（方法的存储是先存储类方法，在存储分类---按照先进后出的原则，分类方法最先出，而我们要取的类方法，所以需要先排除分类方法）
+                //如果是两个分类，就看谁先进行加载
+                probe--;
+            }
+            return (method_t *)probe;
+        }
+        
+        //如果keyValue 大于 probeValue，就往probe即中间位置的右边查找
+        if (keyValue > probeValue) { 
+            base = probe + 1;
+            count--;
+        }
+    }
+    
+    return nil;
+}
+
+从第一次查找开始，每次都取中间位置，与想查找的key的value值作比较，如果相等，则需要排除分类方法
+然后将查询到的位置的方法实现返回，如果不相等，则需要继续二分查找，如果循环至count = 0还是没有找到，则直接返回nil
+
+
+cache_getImp方法：父类缓存查找
+cache_getImp方法是通过汇编_cache_getImp实现，传入的$0 是 GETIMP
+如果父类缓存中找到了方法实现，则跳转至CacheHit即命中，则直接返回imp
+如果在父类缓存中，没有找到方法实现，则跳转至CheckMiss 或者 JumpMiss，通过判断$0 跳转至LGetImpMiss，直接返回nil
+
+
+总结:
+对于对象方法（即实例方法），即在类中查找，其慢速查找的父类链是：类--父类--根类--nil
+对于类方法，即在元类中查找，其慢速查找的父类链是：元类--根元类--根类--nil
+如果快速查找、慢速查找也没有找到方法实现，则尝试动态方法决议
+如果动态方法决议仍然没有找到，则进行消息转发
+
+
+
+常见方法未实现报错源码:
+如果在快速查找、慢速查找、方法解析流程中，均没有找到实现，则使用消息转发:
+其中_objc_msgForward_impcache是汇编实现，会跳转至__objc_msgForward，其核心是__objc_forward_handler
+STATIC_ENTRY __objc_msgForward_impcache
+
+// No stret specialization.
+b   __objc_msgForward
+
+END_ENTRY __objc_msgForward_impcache
+
+ENTRY __objc_msgForward
+
+adrp    x17, __objc_forward_handler@PAGE
+ldr p17, [x17, __objc_forward_handler@PAGEOFF]
+TailCallFunctionPointer x17
+    
+END_ENTRY __objc_msgForward
+
+
+汇编实现中查找__objc_forward_handler，并没有找到，在源码中去掉一个下划线进行全局搜索_objc_forward_handler
+有如下实现，本质是调用的objc_defaultForwardHandler方法
+// Default forward handler halts the process.
+__attribute__((noreturn, cold)) void
+objc_defaultForwardHandler(id self, SEL sel)
+{
+    _objc_fatal("%c[%s %s]: unrecognized selector sent to instance %p "
+                "(no message forward handler is installed)", 
+                class_isMetaClass(object_getClass(self)) ? '+' : '-', 
+                object_getClassName(self), sel_getName(sel), self);
+}
+void *_objc_forward_handler = (void*)objc_defaultForwardHandler;
+这就是我们在日常开发中最常见的错误：没有实现函数，运行程序，崩溃时报的错误提示。

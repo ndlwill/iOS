@@ -966,7 +966,6 @@ superclass走位链（两条）
 元类的继承关系链：CJLTeacher（子元类） --> CJLPerson(父元类) --> NSObject（根元类）--> NSObject（根类）--> nil
 
 
-
 objc_class & objc_object:
 为什么 对象 和 类都有isa属性呢？这里就不得不提到两个结构体类型：objc_class & objc_object
 使用clang编译过main.m文件，从编译后的c++文件中可以看到如下c++源码
@@ -984,3 +983,171 @@ typedef struct objc_class *Class;
 新版 位于objc-runtime-new.h
 从新版的定义中，可以看到 objc_class 结构体类型是继承自 objc_object的
 
+在objc4源码中搜索objc_object (或者 objc_object {,这个类型也有两个版本
+一个位于 objc.h，没有被废除，从编译的main.cpp中可以看到，使用的这个版本的objc_object
+一个位于 objc-privat.h
+
+以下是编译后的main.cpp中的objc_object的定义
+struct objc_object {
+    Class _Nonnull isa __attribute__((deprecated));
+};
+
+
+【问题】objc_class 与 objc_object 有什么关系？
+结构体类型objc_class 继承自objc_object类型，其中objc_object也是一个结构体，且有一个isa属性，所以objc_class也拥有了isa属性
+mian.cpp底层编译文件中，NSObject中的isa在底层是由Class 定义的，其中class的底层编码来自 objc_class类型，所以NSObject也拥有了isa属性
+NSObject 是一个类，用它初始化一个实例对象objc，objc 满足 objc_object 的特性（即有isa属性），主要是因为isa 是由 NSObject 从objc_class继承过来的，而objc_class继承自objc_object，objc_object 有isa属性。所以对象都有一个 isa，isa表示指向，来自于当前的objc_object
+objc_object（结构体） 是 当前的 根对象，所有的对象都有这样一个特性 objc_object，即拥有isa属性
+
+
+总结:
+所有的对象 + 类 + 元类 都有isa属性
+所有的对象都是由objc_object继承来的
+万物皆对象，万物皆来源于objc_object，有以下两点结论:
+所有以 objc_object为模板 创建的对象，都有isa属性
+所有以objc_class为模板，创建的类，都有isa属性
+在结构层面可以通俗的理解为上层OC 与 底层的对接:
+下层是通过 结构体 定义的 模板，例如objc_class、objc_object
+上层 是通过底层的模板创建的 一些类型，例如CJLPerson
+
+
+类结构分析:
+主要是分析类信息中存储了哪些内容
+
+分析类结构之前,先了解内存偏移:
+对象指针:
+//对象
+CJLPerson *p1 = [CJLPerson alloc]; // p1 是指针
+CJLPerson *p2 = [CJLPerson alloc];
+NSLog(@"%d -- %p", p1, &p1);
+NSLog(@"%d -- %p", p2, &p2);
+p1、p2 是指针，p1 是 指向 [CJLPerson alloc]创建的空间地址，即内存地址
+&p1、&p2是 指向 p1、p2对象指针的地址，这个指针 就是 二级指针
+
+数组指针:
+//数组指针
+int c[4] = {1, 2, 3, 4};
+int *d = c;
+NSLog(@"%p -- %p - %p", &c, &c[0], &c[1]);
+NSLog(@"%p -- %p - %p", d, d+1, d+2);
+&c 和 &c[0] 都是取 首地址，即数组名等于首地址
+&c 与 &c[1] 相差4个字节，地址之间相差的字节数，主要取决于存储的数据类型
+可以通过 首地址+偏移量取出数组中的其他元素，其中偏移量是数组的下标，内存中首地址实际移动的字节数 等于 偏移量 * 数据类型字节数
+
+
+探索类信息中都有哪些内容:
+事先我们并不清楚类的结构是什么样的，但是我们可以通过类得到一个首地址，然后通过地址平移去获取里面所有的值
+objc_class 的新版定义（objc4-781版本）如下，有以下几个属性
+struct objc_class : objc_object {
+    // Class ISA; //8字节
+    Class superclass; //Class 类型 8字节
+    cache_t cache;             // formerly cache pointer and vtable
+    class_data_bits_t bits;    // class_rw_t * plus custom rr/alloc flags
+    
+    //....方法部分省略
+}
+
+isa属性：继承自objc_object的isa，占 8字节
+superclass 属性：Class类型，Class是由objc_object定义的，是一个指针，占8字节
+cache属性：简单从类型class_data_bits_t目前无法得知，而class_data_bits_t是一个结构体类型，结构体的内存大小需要根据内部的属性来确定，而结构体指针才是8字节
+bits属性：只有首地址经过上面3个属性的内存大小总和的平移，才能获取到bits
+
+
+计算 cache 类的内存大小:
+进入cache类cache_t的定义（只贴出了结构体中非static修饰的属性，主要是因为static类型的属性 不存在结构体的内存中），有如下几个属性
+struct cache_t {
+#if CACHE_MASK_STORAGE == CACHE_MASK_STORAGE_OUTLINED
+    explicit_atomic<struct bucket_t *> _buckets; // 是一个结构体指针类型，占8字节
+    explicit_atomic<mask_t> _mask; //是mask_t 类型，而 mask_t 是 unsigned int 的别名，占4字节
+#elif CACHE_MASK_STORAGE == CACHE_MASK_STORAGE_HIGH_16
+    explicit_atomic<uintptr_t> _maskAndBuckets; //是指针，占8字节
+    mask_t _mask_unused; //是mask_t 类型，而 mask_t 是 uint32_t 类型定义的别名，占4字节
+    
+#if __LP64__
+    uint16_t _flags;  //是uint16_t类型，uint16_t是 unsigned short 的别名，占 2个字节
+#endif
+    uint16_t _occupied; //是uint16_t类型，uint16_t是 unsigned short 的别名，占 2个字节
+
+总结：所以最后计算出cache类的内存大小 = 12 + 2 + 2 = 16字节
+
+
+获取bits:
+所以有上述计算可知，想要获取bits的中的内容，只需通过类的首地址平移32字节即可
+
+
+获取类的首地址有两种方式:
+通过p/x CJLPerson.class直接获取首地址
+通过x/4gx CJLPerson.class，打印内存信息获取
+
+其中的data()获取数据，是由objc_class提供的方法
+
+bits中存储的信息，其类型是class_rw_t，也是一个结构体类型
+通过查看class_rw_t定义的源码发现，结构体中有提供相应的方法去获取 属性列表、方法列表等
+
+属性列表，即 property_list:
+propertoes方法是由class_rw_t提供的,方法中返回的实际类型为property_array_t
+由于list的类型是property_list_t，是一个指针，所以通过 p *$10获取内存中的信息，同时也证明bits中存储了 property_list，即属性列表
+
+###
+由此可得出property_list 中只有属性，没有成员变量，属性与成员变量的区别就是有没有set、get方法，如果有，则是属性，如果没有，则是成员变量。
+###
+
+
+方法列表，即methods_list:
+//CJLPerson.h
+@property (nonatomic, copy) NSString *cjl_name;
+- (void)sayHello;
++ (void)sayBye;
+@end
+
+//CJLPerson.m
+@implementation CJLPerson
+- (void)sayHello
+{}
++ (void)sayBye
+{}
+@end
+
+通过 p $4.methods() 获得具体的方法列表的list结构，其中methods也是class_rw_t提供的方法
+通过打印的count = 4可知，存储了4个方法,可以通过p $7.get(i)内存偏移的方式获取单个方法,i 的范围是0-3
+
+
+【问题】探索成员变量的存储:
+通过查看objc_class中bits属性中存储数据的类class_rw_t的定义发现，除了methods、properties、protocols方法，还有一个ro方法，其返回类型是class_ro_t
+通过查看其定义，发现其中有一个ivars属性，我们可以做如下猜测：是否成员变量就存储在这个ivar_list_t类型的ivars属性中呢？
+
+class_ro_t结构体中的属性如下所示，想要获取ivars，需要ro的首地址平移48字节
+
+struct class_ro_t {
+    uint32_t flags;     //4
+    uint32_t instanceStart;//4
+    uint32_t instanceSize;//4
+#ifdef __LP64__
+    uint32_t reserved;  //4
+#endif
+
+    const uint8_t * ivarLayout; //8
+    
+    const char * name; // 8
+    method_list_t * baseMethodList; // 8
+    protocol_list_t * baseProtocols; // 8
+    const ivar_list_t * ivars;
+
+    const uint8_t * weakIvarLayout;
+    property_list_t *baseProperties;
+    
+    //方法省略
+}
+
+获取的ivars属性，其中的count 为2，通过打印发现 成员列表中除了有hobby，还有name，所以可以得出以下一些结论:
+通过{}定义的成员变量，会存储在类的bits属性中，通过bits --> data() -->ro() --> ivars获取成员变量列表，除了包括成员变量，还包括属性定义的成员变量
+通过@property定义的属性，也会存储在bits属性中，通过bits --> data() --> properties() --> list获取属性列表，其中只包含属性
+
+
+【问题】探索类方法的存储:
+methods list 中只有 实例方法，没有类方法
+类对象的isa指向就是元类，元类是用来存储类的相关信息的，所以我们猜测：是否类方法存储在元类的bits中呢？可以通过lldb命令来验证我们的猜测。
+
+可以得出以下结论:
+类的实例方法存储在类的bits属性中，通过bits --> methods() --> list获取实例方法列表，例如CJLPersong类的实例方法sayHello 就存储在 CJLPerson类的bits属性中，类中的方法列表除了包括实例方法，还包括属性的set方法 和 get方法
+类的类方法存储在元类的bits属性中，通过元类bits --> methods() --> list获取类方法列表，例如CJLPerson中的类方法sayBye 就存储在CJLPerson类的元类（名称也是CJLPerson）的bits属性中
