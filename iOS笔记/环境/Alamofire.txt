@@ -1,0 +1,197 @@
+https://httpbin.org/
+
+we will be using httpbin.org to simulate our http calls.
+
+
+Simple Request:
+AF.request("https://httpbin.org/get").response { response in
+    debugPrint(response)
+}
+
+// POST
+AF.request("https://httpbin.org/post", method: .post)
+// PUT
+AF.request("https://httpbin.org/put", method: .put)
+// DELETE
+AF.request("https://httpbin.org/delete", method: .delete)
+
+
+Request with Parameters:
+let parameters = ["category": "Movies", "genre": "Action"]
+
+AF.request("https://httpbin.org/get", parameters: parameters).response { response in
+debugPrint(response)
+} 
+//this is equivalent to https://httpbin.org/get?category=Movies&genre=Action
+
+
+HTTP Headers:
+let headers: HTTPHeaders = [
+    .authorization(username: "test@email.com", password: "testpassword"),
+    .accept("application/json")
+]
+
+AF.request("https://httpbin.org/headers", headers: headers).responseJSON { response in
+    debugPrint(response)
+}
+
+
+let headers: HTTPHeaders = [
+    .authorization(username: "test@email.com", password: "testpassword"),
+    .accept("application/json")
+]
+
+let parameters = ["category": "Movies", "genre": "Action"]
+
+AF.request("https://httpbin.org/headers", headers: headers, parameters: parameters).responseJSON { response in
+    debugPrint(response)
+}
+
+
+Handling Authorization:
+// Normal way to authenticate using the .authenticate with username and password
+let user = "test@email.com"
+let password = "testpassword"
+
+AF.request("https://httpbin.org/basic-auth/\(user)/\(password)")
+.authenticate(username: user, password: password)
+.responseJSON { response in
+    debugPrint(response)
+}
+
+// Authentication using URLCredential
+
+let credential = URLCredential(user: user, password: password, persistence: .forSession)
+
+AF.request("https://httpbin.org/basic-auth/\(user)/\(password)")
+.authenticate(with: credential)
+.responseJSON { response in
+debugPrint(response)
+}
+
+
+Response Handling:
+Basic Response
+This basic response does not evaluate any of the response data it just forwards information directly from URLSessionDelegate. 
+Think of it as the Alamofire equivalent of cURL to execute a request.
+
+AF.request("https://httpbin.org/get").response { response in
+    debugPrint("Response: \(response)")
+}
+
+JSON Response
+The responseJSON handler uses a JSONResponseSerializer to convert the Data returned by the server into an Any type using the specified JSONSerialization.ReadingOptions.
+AF.request("https://httpbin.org/get").responseJSON { response in
+    debugPrint("Response: \(response)")
+}
+
+Data Response
+The responseData handler uses a DataResponseSerializer to extract and validate the Data returned by the server.
+AF.request("https://httpbin.org/get").responseData { response in
+    debugPrint("Response: \(response)")
+}
+
+String Response
+The responseString handler uses a StringResponseSerializer to convert the Data returned by the server into a String with the specified encoding.
+AF.request("https://httpbin.org/get").responseString { response in
+    debugPrint("Response: \(response)")
+}
+
+Decodable Response
+The responseDecodable handler uses a DecodableResponseSerializer to convert the Data returned by the server into the passed Decodable type using the specified DataDecoder
+struct HTTPBinResponse: Decodable { let url: String }
+
+AF.request("https://httpbin.org/get").responseDecodable(of: HTTPBinResponse.self) { response in
+            debugPrint("Response: \(response)")
+}
+
+
+File Download/Handling:
+Fetch in Memory
+Basic fetching of an image by memory, it is not saved and will require loading again if being fetched again. 
+AF.download("https://httpbin.org/image/png").responseData { response in
+if let data = response.value {
+    self.imageView.image = UIImage(data: data)
+}
+}
+
+
+Download locally:
+Alamofire supports downloading of file to make it easier to access, think of it as a copy for faster loading like a cache:
+let destination: DownloadRequest.Destination = { _, _ in
+    let documentsURL = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
+        let fileURL = documentsURL.appendingPathComponent("image.png")
+
+        return (fileURL, [.removePreviousFile, .createIntermediateDirectories])
+}
+
+AF.download("https://httpbin.org/image/png", to: destination).response { response in
+    debugPrint(response)
+
+    if response.error == nil, let imagePath = response.fileURL?.path {
+        let image = UIImage(contentsOfFile: imagePath)
+    }
+}
+
+
+Uploading Data/Files:
+Uploading data is somewhat easy, you just need to specify what kind of Data you are sending and let alamofire do the rest, it works the same as a POST.
+
+let data = Data("data".utf8)
+
+AF.upload(data, to: "https://httpbin.org/post").responseJSON { response in
+    debugPrint(response)
+}
+
+It is also possible to send a multipart form data like so:
+AF.upload(multipartFormData: { multipartFormData in
+    multipartFormData.append(Data("one".utf8), withName: "one")
+    multipartFormData.append(Data("two".utf8), withName: "two")
+}, to: "https://httpbin.org/post")
+    .responseJSON { response in
+        debugPrint(response)
+}
+
+You can also upload files via Alamofire by simply specifying the file name and it’s extension:
+let fileURL = Bundle.main.url(forResource: "video", withExtension: "mp4")!
+
+AF.upload(fileURL, to: "https://httpbin.org/post").responseJSON { response in
+    debugPrint(response)
+}
+
+
+Upload/Download Progress:
+We now know that Alamofire supports both downloading and uploading of files, but how do we track the progress of our upload/download as it happens? There is an option for that, just simply add a .downloadProgress or .uploadProgress just before your response like so:
+
+// For downloadProgress
+
+let destination: DownloadRequest.Destination = { _, _ in
+    let documentsURL = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
+        let fileURL = documentsURL.appendingPathComponent("image.png")
+
+        return (fileURL, [.removePreviousFile, .createIntermediateDirectories])
+}
+
+AF.download("https://httpbin.org/image/png", to: destination)
+.downloadProgress { progress in
+        print("Download Progress: \(progress.fractionCompleted)")
+}
+.response { response in
+    debugPrint(response)
+
+    if response.error == nil, let imagePath = response.fileURL?.path {
+        let image = UIImage(contentsOfFile: imagePath)
+    }
+}
+
+// For uploadProgress
+
+let fileURL = Bundle.main.url(forResource: "video", withExtension: "mp4")!
+
+AF.upload(fileURL, to: "https://httpbin.org/post")
+.uploadProgress { progress in
+        print("Upload Progress: \(progress.fractionCompleted)")
+}
+.responseJSON { response in
+    debugPrint(response.response)
+}

@@ -1,0 +1,930 @@
+self.timer = [NSTimer timerWithTimeInterval:1 target:self selector:@selector(fireHome) userInfo:nil repeats:YES];
+[[NSRunLoop currentRunLoop] addTimer:self.timer forMode:NSRunLoopCommonModes];
+Runloop对timer的强持有
+
+
+NSLog(@"%ld",CFGetRetainCount((__bridge CFTypeRef)self));// 8
+__weak typeof(self) weakSelf = self;
+NSLog(@"%ld",CFGetRetainCount((__bridge CFTypeRef)self));// 8
+
+weakSelf会对引用计数进行+1操作吗？
+weakSelf没有对内存进行+1操作
+
+#####
+weakSelf 和 self 的指针地址相同吗，是指向同一片内存吗？
+po weakSelf
+po self
+po &weakSelf
+po &self
+从打印结果可以看出，当前self取地址 和 weakSelf取地址的值是不一样的。
+意味着有两个指针地址，指向的是同一片内存空间，即weakSelf 和 self 的内存地址是不一样，都指向同一片内存空间的
+#####
+
+
+此时timer捕获的是<LGTimerViewController: 0x7f890741f5b0>，是一个对象，所以无法通过weakSelf来解决强持有。
+即引用链关系为：NSRunLoop -> timer -> weakSelf（<LGTimerViewController: 0x7f890741f5b0>）。所以RunLoop对整个 对象的空间有强持有，runloop没停，timer 和 weakSelf是无法释放的
+在Block原理中提及的block的循环引用，与timer的是有区别的。
+通过block底层原理的方法__Block_object_assign可知，block捕获的是 对象的指针地址，即weakself 是 临时变量的指针地址，跟self没有关系，因为weakSelf是新的地址空间。
+所以此时的weakSelf相当于中间值。其引用关系链为self -> block -> weakSelf（临时变量的指针地址），可以通过地址拿到指针
+
+
+区别下block和timer循环引用的模型
+timer模型：self -> timer -> weakSelf -> self,当前的timer捕获的是B界面的内存，即vc对象的内存，即weakSelf表示的是vc对象
+Block模型：self -> block -> weakSelf -> self，当前的block捕获的是指针地址，即weakSelf表示的是指向self的临时变量的指针地址
+
+解决 强引用:
+思路一：pop时在其他方法中销毁timer
+didMoveToParentViewController
+
+思路二：中介者模式，即不使用self，依赖于其他对象
+//**********1、定义其他对象**********
+@property (nonatomic, strong) id            target;
+
+//**********1、修改target**********
+self.target = [[NSObject alloc] init];
+class_addMethod([NSObject class], @selector(fireHome), (IMP)fireHomeObjc, "v@:");
+self.timer = [NSTimer scheduledTimerWithTimeInterval:1 target:self.target selector:@selector(fireHome) userInfo:nil repeats:YES];
+
+//**********3、imp**********
+void fireHomeObjc(id obj){
+    NSLog(@"%s -- %@",__func__,obj);
+}
+
+思路三：自定义封装timer
+这种方式是根据思路二的原理
+
+思路四：利用NSProxy虚基类的子类
+即使用NSProxy作为中间代理、中间者
+
+
+==================================================AutoReleasePool 自动释放池
+https://www.jianshu.com/u/5c9dfddcd1dd
+
+自动释放池实际上是一个由 AutoreleasePoolPage 组成的双向链表结构, 一个自动释放池中有一个或多个 AutoreleasePoolPage 节点
+
+
+自动释放池是OC中的一种内存自动回收机制，它可以将加入AutoreleasePool中的变量release的时机延迟，简单来说，就是当创建一个对象，在正常情况下，变量会在超出其作用域的时立即release。
+如果将对象加入到了自动释放池中，这个对象并不会立即释放，会等到runloop休眠/超出autoreleasepool作用域{}之后才会被释放。
+
+1、从程序启动到加载完成，主线程对应的runloop会处于休眠状态，等待用户交互来唤醒runloop
+2、用户的每一次交互都会启动一次runloop，用于处理用户的所有点击、触摸事件等
+3、runloop在监听到交互事件后，就会创建自动释放池，并将所有延迟释放的对象添加到自动释放池中
+4、在一次完整的runloop结束之前，会向自动释放池中所有对象发送release消息，然后销毁自动释放池
+
+
+
+Clang分析:
+先通过clang来分析:
+int main(int argc, const char * argv[]) {
+    @autoreleasepool {
+    }
+}
+
+struct __AtAutoreleasePool {
+    //构造函数
+    __AtAutoreleasePool() {
+            atautoreleasepoolobj = objc_autoreleasePoolPush();
+    }
+    //析构函数
+    ~__AtAutoreleasePool() {
+            objc_autoreleasePoolPop(atautoreleasepoolobj);
+     }
+      void * atautoreleasepoolobj;
+};
+
+int main(int argc, const char * argv[]) {
+   { 
+        //是一个结构体
+         __AtAutoreleasePool __autoreleasepool; 
+    }
+    return 0;
+}
+自动释放池其本质也是一个对象
+@autoreleasepool {}
+//等价于
+{__AtAutoreleasePool __autoreleasepool; }
+
+__AtAutoreleasePool是一个结构体，有构造函数 + 析构函数，结构体定义的对象在作用域结束后，会自动调用析构函数
+其中{} 是 作用域 ，优点是结构清晰，可读性强，可以及时创建销毁
+
+该自动释放池从 objc_autoreleasePoolPush() 开始, 期间的 autorelease 类型的对象都会加入到这个自动释放池中, 最后在 objc_autoreleasePoolPop() 调用时, 释放掉池中所有的 autorelease 对象.
+
+
+struct CJLTest{
+    CJLTest
+(){
+        printf("1123 - %s\n", __func__);
+    }
+    ~CJLTest(){
+        printf("5667 - %s\n", __func__);
+    }
+};
+
+int main(int argc, const char * argv[]) {
+    {
+        CJLTest test;
+    }
+}
+
+//**********运行结果**********
+1123 - CJLTest
+5667 - ~CJLTest
+在CJLTest创建对象时，会自动调用构造函数，在出了{}作用域后，会自动调用析构函数
+
+
+汇编分析:
+通过调试结果发现，证明了我们clang分析的结果
+
+总结:
+autoreleasepool其本质是一个结构体对象，一个自动释放池对象就是页，是栈结构存储，符合先进后出的原则即可
+页的栈底是一个56字节大小的空占位符，一页总大小为4096字节
+只有第一页有哨兵对象，最多存储504个对象，从第二页开始最多存储505个对象
+autoreleasepool在加入要释放的对象时，底层调用的是objc_autoreleasePoolPush方法
+autoreleasepool在调用析构函数释放时，内部的实现是调用objc_autoreleasePoolPop方法
+
+
+
+宏定义和静态常量:
+#   define EMPTY_POOL_PLACEHOLDER ((id*)1) //pool 中没有对象存入
+#   define POOL_BOUNDARY nil //哨兵对象, 用来标识释放边界
+static pthread_key_t const key = AUTORELEASE_POOL_KEY; //键值对中的key, 值为 AutoreleasePoolPage * 类型指针
+static uint8_t const SCRIBBLE = 0xA3; //释放后的位置会置为 0xA3A3A3A3
+static size_t const SIZE = PAGE_MAX_SIZE; //每个 page 的大小, 4096 个字节(Page 对象本身占 56 个字节)
+static size_t const COUNT = SIZE / sizeof(id); //page 中能存放的对象个数
+
+成员变量:
+magic_t const magic; //用于校验 AutoreleasePoolPage 的结构
+id *next; //下一个对象要插入的位置
+pthread_t const thread; //所属线程句柄
+AutoreleasePoolPage * const parent; //双向链表的上一个节点
+AutoreleasePoolPage *child; //双向链表的下一个节点
+uint32_t const depth; //链表深度
+uint32_t hiwat; //AutoreleasePool 中存储对象个数的最大值
+
+
+宏定义和静态常量:
+EMPTY_POOL_PLACEHOLDER
+根据注释以及代码分析, 可以大致得出这个宏定义用作 pool 中没有 add 入对象时的标记. 
+当一个自动释放池被创建但是没有加入任何 Autorelease 对象时, 会让这个自动释放池的句柄等于 EMPTY_POOL_PLACEHOLDER, 并不为其分配内存.
+
+POOL_BOUNDARY 会在建立新的自动释放池时作为第一个对象加入到池中, 被称为哨兵对象
+@autoreleasepool {} 是在作用域的开始使用 push() 方法来创建自动释放池, 在作用域结束时, 使用 pop() 方法来销毁自动释放池
+在嵌套结构中 push() 方法不一定会创建新的 page 节点, 如果当前节点未满则会直接插入一个哨兵对象, 如果当前节点已满则创建一个新的 page 节点并且插入一个哨兵对象
+push() 函数的返回值就是这个哨兵对象的地址(哨兵对象的值是 nil, 但哨兵对象的地址不为 nil)
+然后在 pop() 方法调用时, 传入这个哨兵对象的地址, 对这个地址之后的 Autorelease 对象发送 release 方法.
+
+SCRIBBLE 的值为 0xA3. 在 pop() 方法被执行时, 会给对应的哨兵对象之后的所有对象都发送 release 消息, 
+同时从 page 节点中移除这些对象, 移除的方法就是使用 memset() 函数给原来存储对象地址的地方, 
+存入SCRIBBLE(memset() 会为 8 个字节的地址都存入 0xA3, 即为 0xA3A3A3A3A3A3A3A3).
+
+SIZE = PAGE_MAX_SIZE, 宏定义 PAGE_MAX_SIZE 的最终值为 4096(单位是字节), 这个静态常量表示一个 AutoreleasePoolPage 中用于存储对象指针的内存大小.
+
+COUNT 即每个 page 节点能存储的 Autorelease 对象个数, 在 64 位操作系统下, 4096 个字节可以存储 8 字节的指针共 512 个, 即一个 page 节点能存储 512 个对象. page 对象本身占 56 个字节, 所以实际能存储 Autorelease 对象个数为 505 个.
+COUNT 在代码中并没有实际用途, 只是配合 depth 和 hiwat 在调试输出时使用.
+
+成员变量:
+magic
+
+next
+指向 page 中下一个将要存放 Autorelease 对象的地址, 
+通常通过 *next++ = obj 来实现对象的存入和 next 指针的累加, 用 *--next 来取出要 release 的对象和实现 next 的递减.
+
+thread
+当前 page 节点所属的线程句柄
+
+parent 和 child
+parent 是双向链表结构中指向上一个节点的指针, child 是双向链表中指向下一个节点的指针.
+
+depth 和 hiwat
+depth 是链表的深度(即总共的节点数), hiwat 是对应的自动释放池中存储对象个数的最大值(比如曾经存储过100个, 现在只剩50个, hiwat 就是 100)
+为了调试时输出 AutoreleasePool 信息
+
+
+底层分析:
+在objc源码中，对AutoreleasePool的解释如下
+Autorelease pool implementation
+- A thread's autorelease pool is a stack of pointers. 
+线程的自动释放池是指针的堆栈
+
+- Each pointer is either an object to release, or POOL_BOUNDARY which is an autorelease pool boundary.
+每个指针都是要释放的对象，或者是POOL_BOUNDARY，它是自动释放池的边界。
+
+- A pool token is a pointer to the POOL_BOUNDARY for that pool. When the pool is popped, every object hotter than the sentinel is released.
+池令牌是指向该池的POOL_BOUNDARY的指针。弹出池后，将释放比哨点更热的每个对象。
+
+- The stack is divided into a doubly-linked list of pages. Pages are added and deleted as necessary. 
+堆栈分为两个双向链接的页面列表。根据需要添加和删除页面。
+
+- Thread-local storage points to the hot page, where newly autoreleased objects are stored. 
+线程本地存储指向热页面，该页面存储新自动释放的对象。
+
+1、自动释放池 是一个 关于指针的栈结构
+2、其中的指针是指要释放的对象或者 pool_boundary 哨兵（现在经常被称为 边界）
+3、自动释放池是一个页的结构（虚拟内存中提及过） ，而且这个页是一个双向链表（表示有父节点 和 子节点，在类中提及过，即类的继承链）
+4、自动释放池和线程有关系
+
+
+AutoreleasePoolPage:
+//***********push方法***********
+void *
+objc_autoreleasePoolPush(void)
+{
+    return AutoreleasePoolPage::push();
+}
+
+//***********pop方法***********
+void
+objc_autoreleasePoolPop(void *ctxt)
+{
+    AutoreleasePoolPage::pop(ctxt);
+}
+
+
+
+//************宏定义************
+#define PAGE_MIN_SIZE           PAGE_SIZE
+#define PAGE_SIZE               I386_PGBYTES
+#define I386_PGBYTES            4096            /* bytes per 80386 page */
+
+//************类定义************
+class AutoreleasePoolPage : private AutoreleasePoolPageData
+{
+    friend struct thread_data_t;
+
+public:
+    //页的大小
+    static size_t const SIZE =
+#if PROTECT_AUTORELEASEPOOL
+        PAGE_MAX_SIZE;  // must be multiple of vm page size
+#else
+        PAGE_MIN_SIZE;  // size and alignment, power of 2
+#endif
+
+private:
+    
+    ...
+    
+    //构造函数
+    AutoreleasePoolPage(AutoreleasePoolPage *newParent) :
+        AutoreleasePoolPageData(begin(),//开始存储的位置
+                                objc_thread_self(),//传的是当前线程，当前线程时通过tls获取的
+                                newParent,
+                                newParent ? 1+newParent->depth : 0,//如果是第一页深度为0，往后是前一个的深度+1
+                                newParent ? newParent->hiwat : 0)
+    {...}
+    
+    //析构函数
+    ~AutoreleasePoolPage() {...}
+    
+    ...
+    
+    //页的开始位置
+    id * begin() {...}
+    
+    //页的结束位置
+    id * end() {...}
+   
+    //页是否为空
+    bool empty() {...}
+    
+    //页是否满了
+    bool full() {...}
+   
+    //页的存储是否少于一半
+    bool lessThanHalfFull() {...}
+     
+     //添加释放对象
+    id *add(id obj){...}
+    
+    //释放所有对象
+    void releaseAll() {...}
+    
+    //释放到stop位置之前的所有对象
+    void releaseUntil(id *stop) {...}
+    
+    //杀掉
+    void kill() {...}
+    
+    //释放本地线程存储空间
+    static void tls_dealloc(void *p) {...}
+    
+    //获取AutoreleasePoolPage
+    static AutoreleasePoolPage *pageForPointer(const void *p) {...}
+    static AutoreleasePoolPage *pageForPointer(uintptr_t p)  {...}
+    
+    //是否有空池占位符
+    static inline bool haveEmptyPoolPlaceholder() {...}
+    
+    //设置空池占位符
+    static inline id* setEmptyPoolPlaceholder(){...}
+    
+    //获取当前操作页
+    static inline AutoreleasePoolPage *hotPage(){...}
+    
+    //设置当前操作页
+    static inline void setHotPage(AutoreleasePoolPage *page) {...}
+    
+    //获取coldPage
+    static inline AutoreleasePoolPage *coldPage() {...}
+    
+    //快速释放
+    static inline id *autoreleaseFast(id obj){...}
+   
+   //添加自动释放对象，当页满的时候调用这个方法
+    static __attribute__((noinline))
+    id *autoreleaseFullPage(id obj, AutoreleasePoolPage *page) {...}
+    
+    //添加自动释放对象，当没页的时候使用这个方法
+    static __attribute__((noinline))
+    id *autoreleaseNoPage(id obj){...}
+   
+   //创建新页
+    static __attribute__((noinline))
+    id *autoreleaseNewPage(id obj) {...}
+    
+public:
+    //自动释放
+    static inline id autorelease(id obj){...}
+   
+    //入栈
+    static inline void *push() {...}
+    
+    //兼容老的 SDK 出栈方法
+    __attribute__((noinline, cold))
+    static void badPop(void *token){...}
+    
+    //出栈页面
+    template<bool allowDebug>
+    static void
+    popPage(void *token, AutoreleasePoolPage *page, id *stop){...}
+    __attribute__((noinline, cold))
+    static void
+    popPageDebug(void *token, AutoreleasePoolPage *page, id *stop){...}
+    
+    //出栈
+    static inline void
+    pop(void *token){...}
+    
+    static void init(){...}
+    
+    //打印
+    __attribute__((noinline, cold))
+    void print(){...}
+    
+    //打印所有
+    __attribute__((noinline, cold))
+    static void printAll(){...}
+    
+    //打印Hiwat
+    __attribute__((noinline, cold))
+    static void printHiwat(){...}
+
+
+AutoreleasePoolPage是继承自AutoreleasePoolPageData,且该类的属性也是来自父类，以下是AutoreleasePoolPageData的定义，
+
+自动释放池除了是一个页，还是一个双向链表结构
+class AutoreleasePoolPage;
+struct AutoreleasePoolPageData
+{
+    //用来校验AutoreleasePoolPage的结构是否完整
+    magic_t const magic;//16个字节
+    //指向最新添加的autoreleased对象的下一个位置，初始化时指向begin()
+    __unsafe_unretained id *next;//8字节
+    //指向当前线程
+    pthread_t const thread;//8字节
+    //指向父节点，第一个结点的parent值为nil
+    AutoreleasePoolPage * const parent;//8字节
+    //指向子节点，最后一个结点的child值为nil
+    AutoreleasePoolPage *child;//8字节
+    //表示深度，从0开始，往后递增1
+    uint32_t const depth;//4字节
+    //表示high water mark 最大入栈数量标记
+    uint32_t hiwat;//4字节
+
+    //初始化
+    AutoreleasePoolPageData(__unsafe_unretained id* _next, pthread_t _thread, AutoreleasePoolPage* _parent, uint32_t _depth, uint32_t _hiwat)
+        : magic(), next(_next), thread(_thread),
+          parent(_parent), child(nil),
+          depth(_depth), hiwat(_hiwat)
+    {
+    }
+};
+
+其中AutoreleasePoolPageData结构体的内存大小为56字节:
+属性magic 的类型是magic_t结构体，所占内存大小为m[4];所占内存（即4*4=16字节）
+属性next（指针）、thread（对象）、parent（对象）、child（对象）均占8字节（即4*8=32字节）
+属性depth、hiwat类型为uint32_t，实际类型是unsigned int类型，均占4字节（即2*4=8字节）
+
+
+--------------------------------------------------objc_autoreleasePoolPush 源码分析:
+//入栈
+static inline void *push() 
+{
+    id *dest;
+    //判断是否有pool
+    // DebugPoolAllocation 是用在调试模式下的, 调试模式下会直接生成新的 page 节点
+    if (slowpath(DebugPoolAllocation)) {
+        // Each autorelease pool starts on a new pool page.自动释放池从新池页面开始
+        //如果没有，则创建
+        dest = autoreleaseNewPage(POOL_BOUNDARY);
+    } else {
+        //压栈一个POOL_BOUNDARY，即压栈哨兵
+        dest = autoreleaseFast(POOL_BOUNDARY);
+    }
+    ASSERT(dest == EMPTY_POOL_PLACEHOLDER || *dest == POOL_BOUNDARY);
+    return dest;
+}
+
+进入push源码实现:
+判断是否为有 pool
+如果没有，则通过autoreleaseNewPage方法创建
+如果有，则通过autoreleaseFast压栈哨兵对象
+
+
+1、创建页 autoreleaseNewPage
+进入objc_autoreleasePoolPush -> push -> autoreleaseNewPage源码实现，主要是通过hotPage`获取当前页，判断当前页是否存在
+如果存在，则通过autoreleaseFullPage方法压栈对象
+如果不存在，则通过autoreleaseNoPage方法创建页
+
+//创建新页
+static __attribute__((noinline))
+id *autoreleaseNewPage(id obj)
+{
+    //获取当前操作页
+    AutoreleasePoolPage *page = hotPage();
+    //如果存在，则压栈对象
+    if (page) return autoreleaseFullPage(obj, page);
+    //如果不存在，则创建页
+    else return autoreleaseNoPage(obj);
+}
+
+//******** hotPage方法 ********
+//获取当前操作页
+static inline AutoreleasePoolPage *hotPage() 
+{
+    //获取当前页
+    AutoreleasePoolPage *result = (AutoreleasePoolPage *)
+        tls_get_direct(key);
+    //如果是一个空池，则返回nil，否则，返回当前线程的自动释放池
+    if ((id *)result == EMPTY_POOL_PLACEHOLDER) return nil;
+    if (result) result->fastcheck();
+    return result;
+}
+
+
+//******** autoreleaseNoPage方法 ********
+static __attribute__((noinline))
+id *autoreleaseNoPage(id obj)
+{
+    // "No page" could mean no pool has been pushed
+    // or an empty placeholder pool has been pushed and has no contents yet
+    ASSERT(!hotPage());
+
+    bool pushExtraBoundary = false;
+    //判断是否是空占位符，如果是，则压栈哨兵标识符置为YES
+    if (haveEmptyPoolPlaceholder()) {
+        // We are pushing a second pool over the empty placeholder pool
+        // or pushing the first object into the empty placeholder pool.
+        // Before doing that, push a pool boundary on behalf of the pool 
+        // that is currently represented by the empty placeholder.
+        pushExtraBoundary = true;
+    }
+    //如果对象不是哨兵对象，且没有Pool，则报错
+    else if (obj != POOL_BOUNDARY  &&  DebugMissingPools) {
+        // We are pushing an object with no pool in place, 
+        // and no-pool debugging was requested by environment.
+        _objc_inform("MISSING POOLS: (%p) Object %p of class %s "
+                     "autoreleased with no pool in place - "
+                     "just leaking - break on "
+                     "objc_autoreleaseNoPool() to debug", 
+                     objc_thread_self(), (void*)obj, object_getClassName(obj));
+        objc_autoreleaseNoPool(obj);
+        return nil;
+    }
+    //如果对象是哨兵对象，且没有申请自动释放池内存，则设置一个空占位符存储在tls中，其目的是为了节省内存
+    else if (obj == POOL_BOUNDARY  &&  !DebugPoolAllocation) {//如果传入参数为哨兵
+        // We are pushing a pool with no pool in place,
+        // and alloc-per-pool debugging was not requested.
+        // Install and return the empty pool placeholder.
+        return setEmptyPoolPlaceholder();//设置空的占位符
+    }
+
+    // We are pushing an object or a non-placeholder'd pool.
+
+    // Install the first page.
+    //初始化第一页
+    AutoreleasePoolPage *page = new AutoreleasePoolPage(nil);
+    //设置page为当前聚焦页
+    setHotPage(page);
+    
+    // Push a boundary on behalf of the previously-placeholder'd pool.
+    //压栈哨兵的标识符为YES，则压栈哨兵对象
+    if (pushExtraBoundary) {
+        //压栈哨兵
+        page->add(POOL_BOUNDARY);
+    }
+    
+    // Push the requested object or pool.
+    //压栈对象
+    return page->add(obj);
+}
+
+其中autoreleaseNoPage方法中发现当前线程的自动释放池是通过AutoreleasePoolPage创建的，
+其定义中有构造方法，而构造方法的实现是通过父类AutoreleasePoolPageData的初始化方法
+//**********AutoreleasePoolPage构造方法**********
+    AutoreleasePoolPage(AutoreleasePoolPage *newParent) :
+        AutoreleasePoolPageData(begin(),//开始存储的位置
+                                objc_thread_self(),//传的是当前线程，当前线程时通过tls获取的
+                                newParent,
+                                newParent ? 1+newParent->depth : 0,//如果是第一页深度为0，往后是前一个的深度+1
+                                newParent ? newParent->hiwat : 0)
+{ 
+    if (parent) {
+        parent->check();
+        ASSERT(!parent->child);
+        parent->unprotect();
+        //this 表示 新建页面，将当前页面的子节点 赋值为新建页面
+        parent->child = this;
+        parent->protect();
+    }
+    protect();
+}
+
+//**********AutoreleasePoolPageData初始化方法**********
+AutoreleasePoolPageData(__unsafe_unretained id* _next, pthread_t _thread, AutoreleasePoolPage* _parent, uint32_t _depth, uint32_t _hiwat)
+        : magic(), next(_next), thread(_thread),
+          parent(_parent), child(nil),
+          depth(_depth), hiwat(_hiwat)
+    {
+    }
+
+其中AutoreleasePoolPageData方法传入的参数含义为:
+begin()表示压栈的位置（即下一个要释放对象的压栈地址）。
+可以通过源码调试begin，发现其具体实现等于页首地址+56，其中的56就是结构体AutoreleasePoolPageData的内存大小
+//********begin()********
+//页的开始位置
+id * begin() {
+    //等于 首地址+56（AutoreleasePoolPage类所占内存大小）
+    return (id *) ((uint8_t *)this+sizeof(*this));
+}
+
+objc_thread_self() 表示的是当前线程，而当前线程时通过tls获取的
+__attribute__((const))
+static inline pthread_t objc_thread_self()
+{
+    //通过tls获取当前线程
+    return (pthread_t)tls_get_direct(_PTHREAD_TSD_SLOT_PTHREAD_SELF);
+}
+tls_get_direct() 函数内部结合线程ID和 AUTORELEASE_POOL_KEY(43) 两个信息最终找出该线程对应的 hotPage.
+
+newParent表示父节点
+
+后续两个参数是通过父节点的深度、最大入栈个数计算depth以及hiwat
+
+
+
+查看自动释放池内存结构:
+由于在ARC模式下，是无法手动调用autorelease，所以将Demo切换至MRC模式（Build Settings -> Objectice-C Automatic Reference Counting设置为NO）
+//************打印自动释放池结构************
+extern void _objc_autoreleasePoolPrint(void);
+
+//************运行代码************
+int main(int argc, const char * argv[]) {
+    @autoreleasepool {
+        //循环创建对象，并加入自动释放池
+        for (int i = 0; i < 5; i++) {
+             NSObject *objc = [[NSObject alloc] autorelease];
+        }
+        //调用
+        _objc_autoreleasePoolPrint();
+    }
+}
+
+发现是6个，但是我们压栈的对象其实只有5个，其中的POOL表示哨兵，即边界，其目的是为了防止越界
+查看自动释放池的内存结构，发现，页的首地址与哨兵对象相差0x38，转换成十进制刚好是56，也就是 AutoreleasePoolPage自己本身的内存大小
+
+将上述的测试代码的数据改为505，其内存结构如下，发现第一页满了，存储了504个要释放的对象，第二页只存储了一个
+在将数据改为505+506，来验证第二页是否也是存储504个对象
+通过运行发现，第一页存储504，第二页存储505，第三页存储2个
+
+所以通过上述测试，可以得出以下结论:
+第一页可以存放504个对象，且只有第一页有哨兵，当一页压栈满了，就会开辟新的一页
+第二页开始，最多可以存放505个对象
+一页的大小等于 505 * 8 = 4040
+这个结论同样可以通过AutoreleasePoolPage中的SIZE来得到印证，从其定义中我们可以得出，一页的大小是4096字节
+而在其构造函数中对象的压栈位置，是从首地址+56开始的，所以可以一页中实际可以存储4096-56 = 4040字节
+转换成对象是4040 / 8 = 505个,即一页最多可以存储505个对象，其中第一页有哨兵对象只能存储504个
+
+
+面试题：哨兵在一个自动释放池有几个？
+只有一个哨兵对象，且哨兵在第一页
+第一页最多可以存504个对象，第二页开始最多存 505个
+
+
+
+2、压栈对象 autoreleaseFast:
+进入autoreleaseFast源码，主要有以下几步:
+    获取当前操作页，并判断页是否存在以及是否满了
+    如果页存在，且未满，则通过add方法压栈对象
+    如果页存在，且满了，则通过autoreleaseFullPage方法安排新的页面
+    如果页不存在，则通过autoreleaseNoPage方法创建新页
+
+static inline id *autoreleaseFast(id obj)
+{
+    //获取当前操作页
+    AutoreleasePoolPage *page = hotPage();
+    //判断页是否满了
+    if (page && !page->full()) {
+        //如果未满，则压栈
+        return page->add(obj);
+    } else if (page) {
+        //如果满了，则安排新的页面
+        return autoreleaseFullPage(obj, page);
+    } else {
+        //页不存在，则新建页
+        return autoreleaseNoPage(obj);
+    }
+}
+
+
+autoreleaseFullPage 方法:
+这个方法主要是用于判断当前页是否已经存储满了，如果当前页已经满了，通过do-while循环查找子节点对应的页，如果不存在，则新建页，并压栈对象
+
+//添加自动释放对象，当页满的时候调用这个方法
+static __attribute__((noinline))
+id *autoreleaseFullPage(id obj, AutoreleasePoolPage *page)
+{
+    // The hot page is full. 
+    // Step to the next non-full page, adding a new page if necessary.
+    // Then add the object to that page.
+    ASSERT(page == hotPage());
+    ASSERT(page->full()  ||  DebugPoolAllocation);
+    
+    //do-while遍历循环查找界面是否满了
+    do {
+        //如果子页面存在，则将页面替换为子页面
+        if (page->child) page = page->child;
+        //如果子页面不存在，则新建页面
+        else page = new AutoreleasePoolPage(page);
+    } while (page->full());
+
+    //设置为当前操作页面
+    setHotPage(page);
+    //对象压栈
+    return page->add(obj);
+}
+从AutoreleasePoolPage初始化方法中可以看出，主要是通过操作child对象，将当前页的child指向新建页面，由此可以得出页是通过双向链表连接
+
+
+add 方法:
+这个方法主要是添加释放对象，其底层是实现是通过next指针存储释放对象，并将next指针递增，表示下一个释放对象存储的位置。
+从这里可以看出页是通过栈结构存储
+
+
+
+3、autorelease 底层分析:
+们通过autorelease方法，在MRC模式下，将对象压栈到自动释放池，下面来分析其底层实现
+
+查看autorelease方法源码:
+如果不是对象 或者 是小对象，则直接返回
+如果是对象，则调用对象的autorelease进行释放
+__attribute__((aligned(16), flatten, noinline))
+id
+objc_autorelease(id obj)
+{
+    //如果不是对象，则直接返回
+    if (!obj) return obj;
+    //如果是小对象，也直接返回
+    if (obj->isTaggedPointer()) return obj;
+    return obj->autorelease();
+}
+
+
+进入对象的autorelease实现
+👇
+inline id 
+objc_object::autorelease()
+{
+    ASSERT(!isTaggedPointer());
+    //判断是否是自定义类
+    if (fastpath(!ISA()->hasCustomRR())) {
+        return rootAutorelease();
+    }
+
+    return ((id(*)(objc_object *, SEL))objc_msgSend)(this, @selector(autorelease));
+}
+👇
+inline id 
+objc_object::rootAutorelease()
+{
+    //如果是小对象，直接返回
+    if (isTaggedPointer()) return (id)this;
+    if (prepareOptimizedReturn(ReturnAtPlus1)) return (id)this;
+
+    return rootAutorelease2();
+}
+👇
+__attribute__((noinline,used))
+id 
+objc_object::rootAutorelease2()
+{
+    ASSERT(!isTaggedPointer());
+    return AutoreleasePoolPage::autorelease((id)this);
+}
+👇
+static inline id autorelease(id obj)
+{
+    ASSERT(obj);
+    ASSERT(!obj->isTaggedPointer());
+    //autoreleaseFast 压栈操作
+    id *dest __unused = autoreleaseFast(obj);
+    ASSERT(!dest  ||  dest == EMPTY_POOL_PLACEHOLDER  ||  *dest == obj);
+    return obj;
+}
+无论是压栈哨兵对象，还是普通对象，都会来到autoreleaseFast方法，只是区别标识不同而以
+
+
+objc_autoreleasePoolPop 源码分析:
+在objc_autoreleasePoolPop方法中有个参数，在clang分析时，发现传入的参数是push压栈后返回的哨兵对象，即ctxt，其目的是避免出栈混乱，防止将别的对象出栈
+
+进入pop源码实现，主要由以下几步:
+空页面的处理，并根据token获取page
+容错处理
+通过popPage出栈页
+
+//出栈
+static inline void
+pop(void *token)
+{
+    AutoreleasePoolPage *page;
+    id *stop;
+   //判断对象是否是空占位符
+    if (token == (void*)EMPTY_POOL_PLACEHOLDER) {
+        //如果当是空占位符
+        // Popping the top-level placeholder pool.
+        //获取当前页
+        page = hotPage();
+        if (!page) {
+            // Pool was never used. Clear the placeholder.
+            //如果当前页不存在，则清除空占位符
+            return setHotPage(nil);
+        }
+        // Pool was used. Pop its contents normally.
+        // Pool pages remain allocated for re-use as usual.
+        //如果当前页存在，则将当前页设置为coldPage,token设置为coldPage的开始位置
+        page = coldPage();
+        token = page->begin();
+    } else {
+        //获取token所在的页
+        page = pageForPointer(token);
+    }
+    
+    stop = (id *)token;
+    //判断最后一个位置，是否是哨兵
+    if (*stop != POOL_BOUNDARY) {
+        //最后一个位置不是哨兵，即最后一个位置是一个对象
+        if (stop == page->begin()  &&  !page->parent) {
+            //如果是第一个位置，且没有父节点，什么也不做
+            // Start of coldest page may correctly not be POOL_BOUNDARY:
+            // 1. top-level pool is popped, leaving the cold page in place
+            // 2. an object is autoreleased with no pool
+        } else {
+            //如果是第一个位置，且有父节点，则出现了混乱
+            // Error. For bincompat purposes this is not 
+            // fatal in executables built with old SDKs.
+            return badPop(token);
+        }
+    }
+
+    if (slowpath(PrintPoolHiwat || DebugPoolAllocation || DebugMissingPools)) {
+        return popPageDebug(token, page, stop);
+    }
+    //出栈页
+    return popPage<false>(token, page, stop);
+}
+
+进入popPage源码，其中传入的allowDebug为false，则通过releaseUntil出栈当前页stop位置之前的所有对象，即向栈中的对象发送release消息，直到遇到传入的哨兵对象
+
+//出栈页面
+template<bool allowDebug>
+    static void
+    popPage(void *token, AutoreleasePoolPage *page, id *stop)
+{
+    if (allowDebug && PrintPoolHiwat) printHiwat();
+    //出栈当前操作页面对象
+    page->releaseUntil(stop);
+
+    // memory: delete empty children 删除空子项
+    if (allowDebug && DebugPoolAllocation  &&  page->empty()) {
+        // special case: delete everything during page-per-pool debugging
+        //调试期间删除每个特殊情况下的所有池
+        //获取当前页面的父节点
+        AutoreleasePoolPage *parent = page->parent;
+        //将当前页面杀掉
+        page->kill();
+        //设置操作页面为父节点页面
+        setHotPage(parent);
+    }
+    else if (allowDebug && DebugMissingPools  &&  page->empty()  &&  !page->parent) {
+        // special case: delete everything for pop(top)
+        // when debugging missing autorelease pools
+        //特殊情况：调试丢失的自动释放池时删除pop（top）的所有内容
+        page->kill();
+        setHotPage(nil);
+    }
+    else if (page->child) {
+        // hysteresis: keep one empty child if page is more than half full 如果页面已满一半以上，则保留一个空子级
+        if (page->lessThanHalfFull()) {
+            page->child->kill();
+        }
+        else if (page->child->child) {
+            page->child->child->kill();
+        }
+    }
+}
+
+进入releaseUntil实现，主要是通过循环遍历，判断对象是否等于stop，其目的是释放stop之前的所有的对象，
+首先通过获取page的next释放对象（即page的最后一个对象），并对next进行递减，获取上一个对象
+判断是否是哨兵对象，如果不是则自动调用objc_release释放
+//释放到stop位置之前的所有对象
+void releaseUntil(id *stop) 
+{
+    // Not recursive: we don't want to blow out the stack  不是递归的：我们不想破坏堆栈
+    // if a thread accumulates a stupendous amount of garbage
+    //判断下一个对象是否等于stop，如果不等于，则进入while循环
+    while (this->next != stop) {
+        // Restart from hotPage() every time, in case -release 
+        // autoreleased more objects 每次从hotPage（）重新启动，以防-release自动释放更多对象
+        //获取当前操作页面，即hot页面
+        AutoreleasePoolPage *page = hotPage();
+
+        // fixme I think this `while` can be `if`, but I can't prove it
+        //如果当前页是空的
+        while (page->empty()) {
+            //将page赋值为父节点页
+            page = page->parent;
+            //并设置当前页为父节点页
+            setHotPage(page);
+        }
+
+        page->unprotect();
+        //next进行--操作，即出栈
+        id obj = *--page->next;
+        //将页索引位置置为SCRIBBLE，表示已经被释放
+        memset((void*)page->next, SCRIBBLE, sizeof(*page->next));
+        page->protect();
+
+        if (obj != POOL_BOUNDARY) {
+            //释放
+            objc_release(obj);
+        }
+    }
+    //设置当前页
+    setHotPage(this);
+
+#if DEBUG
+    // we expect any children to be completely empty
+    for (AutoreleasePoolPage *page = child; page; page = page->child) {
+        ASSERT(page->empty());
+    }
+#endif
+}
+
+进入kill实现，主要是销毁当前页，将当前页赋值为父节点页，并将父节点页的child对象指针置为nil
+//销毁
+void kill() 
+{
+    // Not recursive: we don't want to blow out the stack 
+    // if a thread accumulates a stupendous amount of garbage
+    AutoreleasePoolPage *page = this;
+    //获取最后一个页
+    while (page->child) page = page->child;
+
+    AutoreleasePoolPage *deathptr;
+    do {
+        deathptr = page;
+        //子节点 变成 父节点
+        page = page->parent;
+        if (page) {
+            page->unprotect();
+            //子节点为nil
+            page->child = nil;
+            page->protect();
+        }
+        delete deathptr;
+    } while (deathptr != this);
+}
+
+
+针对自动释放池的push和pop，总结如下:
+在自动释放池的压栈（即push）操作中
+    当没有pool，即只有空占位符（存储在tls中）时，则创建页，压栈哨兵对象
+    在页中压栈普通对象主要是通过next指针递增进行的，
+    当页满了时，需要设置页的child对象为新建页
+在自动释放池的出栈（即pop）操作中
+    在页中出栈普通对象主要是通过next指针递减进行的，
+    当页空了时，需要赋值页的parent对象为当前页
+
+
+
+==================================================

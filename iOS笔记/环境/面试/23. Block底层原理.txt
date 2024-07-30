@@ -1,0 +1,438 @@
+block 类型:
+block主要有三种类型
+__NSGlobalBlock__：全局block，存储在全局区
+
+void(^block)(void) = ^{
+    NSLog(@"CJL");
+};
+NSLog(@"%@", block);
+
+此时的block无参也无返回值，属于全局block
+
+
+__NSMallocBlock__：堆区block，因为block既是函数，也是对象
+
+int a = 10;
+void(^block)(void) = ^{
+    NSLog(@"CJL - %d", a);
+};
+NSLog(@"%@", block);
+
+int a = 10;
+NSLog(@"%@", ^{
+    NSLog(@"CJL - %d", a);
+});
+
+此时的block会访问外界变量，即底层拷贝a，所以是堆区block
+
+
+__NSStackBlock__：栈区block
+
+int a = 10;
+NSLog(@"%@", [^{
+    NSLog(@"CJL - %d", a);
+} class]);
+
+int a = 10;
+void(^__weak block)(void) = ^{
+    NSLog(@"CJL - %d", a);
+};
+NSLog(@"%@", block);
+
+可以通过__weak不进行强持有，block就还是栈区block
+
+
+总结:
+block直接存储在全局区
+如果block访问外界变量，并进行block相应拷贝，即copy
+如果此时的block是强引用，则block存储在堆区，即堆区block
+如果此时的block通过__weak变成了弱引用，则block存储在栈区，即栈区block
+
+
+Block循环引用:
+正常释放：是指A持有B的引用，当A调用dealloc方法，给B发送release信号，B收到release信号，如果此时B的retainCount（即引用计数）为0时，则调用B的dealloc方法
+循环引用：A、B相互持有，所以导致A无法调用dealloc方法给B发送release信号，而B也无法接收到release信号。所以A、B此时都无法释放
+
+
+解决循环引用:
+//代码一
+NSString *name = @"CJL";
+self.block = ^(void){
+    NSLog(@"%@",self.name);
+};
+self.block();
+
+//代码二
+UIView animateWithDuration:1 animations:^{
+    NSLog(@"%@",self.name);
+};
+
+代码一发生了循环引用，因为在block内部使用了外部变量name，导致block持有了self，而self原本是持有block的，所以导致了self和block的相互持有。
+代码二无循环引用，虽然也使用了外部变量，但是self并没有持有animation的bblock，仅仅只有animation持有self，不构成相互持有
+
+解决循环引用常见的方式有以下几种:
+【方式一】weak-strong
+【方式二】__block修饰对象（需要注意的是在block内部需要置空对象，而且block必须调用）
+【方式三】传递对象self作为block的参数，提供给block内部使用
+【方式四】使用NSProxy
+
+方式一：weak-stong
+如果block内部并未嵌套block，直接使用__weak修饰self即可
+
+typedef void(^CJLBlock)(void);
+
+@property(nonatomic, copy) CJLBlock cjlBlock;
+
+__weak typeof(self) weakSelf = self;
+self.cjlBlock = ^(void){
+     NSLog(@"%@",weakSelf.name);
+}
+
+此时的weakSelf 和 self 指向同一片内存空间，且使用__weak不会导致self的引用计数发生变化，可以通过打印weakSelf和self的指针地址，以及self的引用计数来验证
+
+如果block内部嵌套block，需要同时使用__weak 和 __strong
+__weak typeof(self) weakSelf = self;
+self.cjlBlock = ^(void){
+    __strong typeof(weakSelf) strongSelf = weakSelf;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSLog(@"%@",strongSelf.name);
+    });
+};
+self.cjlBlock();
+
+其中strongSelf是一个临时变量，在cjlBlock的作用域内，即内部block执行完就释放strongSelf
+这种方式属于打破self对block的强引用，依赖于中介者模式，属于自动置为nil，即自动释放
+
+
+方式二：__block修饰变量
+这种方式同样依赖于中介者模式，属于手动释放，是通过__block修饰对象，主要是因为__block修饰的对象是可以改变的
+__block ViewController *vc = self;
+self.cjlBlock = ^(void){
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSLog(@"%@",vc.name);
+        vc = nil;//手动释放
+    });
+};
+self.cjlBlock();
+需要注意的是这里的block必须调用，如果不调用block，vc就不会置空，那么依旧是循环引用，self和block都不会被释放
+
+
+方式三：对象self作为参数
+主要是将对象self作为参数，提供给block内部使用，不会有引用计数问题
+typedef void(^CJLBlock)(ViewController *);
+
+@property(nonatomic, copy) CJLBlock cjlBlock;
+
+self.cjlBlock = ^(ViewController *vc){
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSLog(@"%@",vc.name);
+    });
+};
+self.cjlBlock(self);
+
+
+NSProxy 虚拟类:
+OC是只能单继承的语言，但是它是基于运行时的机制，所以可以通过NSProxy来实现 伪多继承，填补了多继承的空白
+NSProxy 和 NSObject是同级的一个类，也可以说是一个虚拟类，只是实现了NSObject的协议
+NSProxy 其实是一个消息重定向封装的一个抽象类，类似一个代理人，中间件，可以通过继承它，并重写下面两个方法来实现消息转发到另一个实例
+
+- (void)forwardInvocation:(NSInvocation *)invocation;
+- (nullable NSMethodSignature *)methodSignatureForSelector:(SEL)sel
+
+NSProxy的使用场景主要有两种:
+实现多继承功能
+解决了NSTimer&CADisplayLink创建时对self强引用问题，参考YYKit的YYWeakProxy。
+
+循环引用解决原理:
+主要是通过自定义的NSProxy类的对象来代替self，并使用方法实现消息转发
+自定义一个NSProxy的子类CJLProxy
+@interface CJLProxy : NSProxy
+
+- (id)transformObjc:(NSObject *)objc;
+
++ (instancetype)proxyWithObjc:(id)objc;
+
+@end
+
+@interface CJLProxy ()
+
+@property(nonatomic, weak, readonly) NSObject *objc;
+
+@end
+
+@implementation CJLProxy
+
+- (id)transformObjc:(NSObject *)objc{
+   _objc = objc;
+    return self;
+}
+
++ (instancetype)proxyWithObjc:(id)objc{
+    return  [[self alloc] transformObjc:objc];
+}
+
+
+
+//2.有了方法签名之后就会调用方法实现
+- (void)forwardInvocation:(NSInvocation *)invocation{
+    SEL sel = [invocation selector];
+    if ([self.objc respondsToSelector:sel]) {
+        [invocation invokeWithTarget:self.objc];
+    }
+}
+
+//1、查询该方法的方法签名
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)sel{
+    NSMethodSignature *signature;
+    if (self.objc) {
+        signature = [self.objc methodSignatureForSelector:sel];
+    }else{
+        signature = [super methodSignatureForSelector:sel];
+    }
+    return signature;
+}
+
+- (BOOL)respondsToSelector:(SEL)aSelector{
+    return [self.objc respondsToSelector:aSelector];
+}
+
+@end
+
+
+//********Cat类********
+@interface Cat : NSObject
+@end
+
+@implementation Cat
+- (void)eat{
+   NSLog(@"猫吃鱼");
+}
+@end
+
+//********Dog类********
+@interface Dog : NSObject
+@end
+
+@implementation Dog
+- (void)shut{
+    NSLog(@"狗叫");
+}
+@end
+通过CJLProxy实现多继承功能
+
+- (void)cjl_proxyTest{
+    Dog *dog = [[Dog alloc] init];
+    Cat *cat = [[Cat alloc] init];
+    CJLProxy *proxy = [CJLProxy alloc];
+    
+    [proxy transformObjc:cat];
+    [proxy performSelector:@selector(eat)];
+    
+    [proxy transformObjc:dog];
+    [proxy performSelector:@selector(shut)];
+}
+
+
+通过CJLProxy解决定时器中self的强引用问题
+self.timer = [NSTimer timerWithTimeInterval:1 target:[CJLProxy proxyWithObjc:self] selector:@selector(print) userInfo:nil repeats:YES];
+[[NSRunLoop currentRunLoop] addTimer:self.timer forMode:NSRunLoopCommonModes];
+
+
+总结:
+循环应用的解决方式从根本上来说就两种，以self -> block -> self为例
+
+(1)打破self 对 block的强引用，可以block属性修饰符使用weak，但是这样会导致block还每创建完就释放了，所以从这里打破强引用行不通
+(2)打破block对self的强引用，主要就是self的作用域和block作用域的通讯，通讯有代理、传值、通知、传参等几种方式，用于解决循环，常见的解决方式如下：
+weak-strong
+__block(block内对象置空，且调用block)
+将对象self作为block的参数
+通过NSProxy的子类代替self
+
+
+Block 底层分析:
+主要是通过clang、断点调试等方式分析Block底层
+#include "stdio.h"
+
+int main(){
+
+    void(^block)(void) = ^{
+        printf("CJL");
+    };
+    return 0;
+}
+
+通过xcrun -sdk iphonesimulator clang -arch x86_64 -rewrite-objc block.c，将block.c 编译成 block.cpp
+
+int main(){
+    void(*block)(void) = ((void (*)())&__main_block_impl_0((void *)__main_block_func_0, &__main_block_desc_0_DATA));
+
+     ((void (*)(__block_impl *))((__block_impl *)block)->FuncPtr)((__block_impl *)block);
+    return 0;
+}
+
+static void __main_block_func_0(struct __main_block_impl_0 *__cself) {
+        printf("CJL");
+}
+
+//******简化******
+void(*block)(void) = __main_block_impl_0(__main_block_func_0, &__main_block_desc_0_DATA));//构造函数
+
+block->FuncPtr(block);//block调用执行
+
+相当于block等于__main_block_impl_0，是一个函数
+查看__main_block_impl_0，是一个结构体，同时可以说明block是一个__main_block_impl_0类型的对象
+//**block代码块的结构体类型**
+struct __main_block_impl_0 {
+  struct __block_impl impl;
+  struct __main_block_desc_0* Desc;
+  __main_block_impl_0(void *fp, struct __main_block_desc_0 *desc, int flags=0) {
+    impl.isa = &_NSConcreteStackBlock;
+    impl.Flags = flags;
+    impl.FuncPtr = fp;
+    Desc = desc;
+  }
+};
+
+//**block的结构体类型**
+struct __block_impl {
+  void *isa;
+  int Flags;
+  int Reserved;
+  void *FuncPtr;
+};
+
+总结：block的本质是对象、函数、结构体，由于block函数没有名称，也被称为匿名函数
+
+
+
+
+block是如何获取外界变量的:
+int main(){
+    int a = 11;
+    void(^block)(void) = ^{
+        printf("CJL - %d", a);
+    };
+    
+     block();
+    return 0;
+}
+
+struct __main_block_impl_0 {
+  struct __block_impl impl;
+  struct __main_block_desc_0* Desc;
+  int a;//编译时就自动生成了相应的变量
+  __main_block_impl_0(void *fp, struct __main_block_desc_0 *desc, int _a, int flags=0) : a(_a) {
+    impl.isa = &_NSConcreteStackBlock;//block的isa默认是stackBlock
+    impl.Flags = flags;
+    impl.FuncPtr = fp;
+    Desc = desc;
+  }
+};
+static void __main_block_func_0(struct __main_block_impl_0 *__cself) {
+  int a = __cself->a; // bound by copy 值拷贝，即 a = 10，此时的a与传入的__cself的a并不是同一个
+
+        printf("CJL - %d", a);
+}
+    
+int main(){
+
+    int a = 11;
+    void(*block)(void) = __main_block_impl_0(__main_block_func_0, &__main_block_desc_0_DATA, a));
+
+     block)->FuncPtr(block);
+    return 0;
+}
+__main_block_func_0中的a是值拷贝
+
+
+
+
+
+__block的原理:
+int main(){
+
+    __block int a = 11;
+    void(^block)(void) = ^{
+        a++;
+        printf("CJL - %d", a);
+    };
+    
+     block();
+    return 0;
+}
+
+底层编译为如下:
+main中的a是通过外界变量封装的对象
+__main_block_impl_0中，将对象a的地址&a给构造函数
+在__main_block_func_0内部对a的处理是指针拷贝，此时创建的对象a与传入对象的a指向同一片内存空间
+struct __Block_byref_a_0 {//__block修饰的外界变量的结构体
+  void *__isa;
+__Block_byref_a_0 *__forwarding;
+ int __flags;
+ int __size;
+ int a;
+};
+
+struct __main_block_impl_0 {//block的结构体类型
+  struct __block_impl impl;
+  struct __main_block_desc_0* Desc;
+  __Block_byref_a_0 *a; // by ref
+  __main_block_impl_0(void *fp, struct __main_block_desc_0 *desc, __Block_byref_a_0 *_a, int flags=0) : a(_a->__forwarding) {//构造方法
+    impl.isa = &_NSConcreteStackBlock;
+    impl.Flags = flags;
+    impl.FuncPtr = fp;
+    Desc = desc;
+  }
+};
+static void __main_block_func_0(struct __main_block_impl_0 *__cself) {//block内部实现
+  __Block_byref_a_0 *a = __cself->a; // bound by ref 指针拷贝，此时的对象a 与 __cself对象的a 指向同一片地址空间
+        //等同于 外界的 a++
+        (a->__forwarding->a)++;
+        printf("CJL - %d", (a->__forwarding->a));
+    }
+static void __main_block_copy_0(struct __main_block_impl_0*dst, struct __main_block_impl_0*src) {_Block_object_assign((void*)&dst->a, (void*)src->a, 8/*BLOCK_FIELD_IS_BYREF*/);}
+
+static void __main_block_dispose_0(struct __main_block_impl_0*src) {_Block_object_dispose((void*)src->a, 8/*BLOCK_FIELD_IS_BYREF*/);}
+
+int main(){
+    //__Block_byref_a_0 是结构体，a 等于 结构体的赋值，即将外界变量a 封装成对象
+    //&a 是外界变量a的地址
+    __attribute__((__blocks__(byref))) __Block_byref_a_0 a = {(void*)0,(__Block_byref_a_0 *)&a, 0, sizeof(__Block_byref_a_0), 11};
+    //__main_block_impl_0中的第三个参数&a，是封装的对象a的地址
+    void(*block)(void) = __main_block_impl_0(__main_block_func_0, &__main_block_desc_0_DATA, (__Block_byref_a_0 *)&a, 570425344));
+
+     ((void (*)(__block_impl *))((__block_impl *)block)->FuncPtr)((__block_impl *)block);
+    return 0;
+}
+总结：
+外界变量会生成__Block_byref_a_0结构体
+结构体用来保存原始变量的指针和值
+将变量生成的结构体对象的指针地址 传递给block，然后在block内部就可以对外界变量进行操作了
+
+
+
+
+block底层真正类型:
+分析运行时的block
+加objc_retainBlock 符号断点，发现会走到_Block_copy
+加_Block_copy符号断点，运行断住，在libsystem_blocks.dylib源码中
+通过查看_Block_copy的源码实现，发现block在底层的真正类型是Block_layout
+
+// CJL注释:Block 结构体
+struct Block_layout {
+    //指向表明block类型的类
+    void *isa;//8字节
+    //用来作标识符的，类似于isa中的位域,按bit位表示一些block的附加信息
+    volatile int32_t flags; // contains ref count 4字节
+    //保留信息，可以理解预留位置，用于存储block内部变量信息
+    int32_t reserved;//4字节
+    //函数指针，指向具体的block实现的调用地址
+    BlockInvokeFunction invoke;
+    //block的附加信息
+    struct Block_descriptor_1 *descriptor;
+    // imported variables
+};
+
+isa：指向表明block类型的类
+flags：标识符，按bit位表示一些block的附加信息，类似于isa中的位域，其中flags的种类有以下几种，主要重点关注BLOCK_HAS_COPY_DISPOSE 和 BLOCK_HAS_SIGNATURE。
+BLOCK_HAS_COPY_DISPOSE 决定是否有 Block_descriptor_2。BLOCK_HAS_SIGNATURE 决定是否有 Block_descriptor_3

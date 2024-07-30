@@ -1,0 +1,292 @@
+类扩展 与 分类 的区别:
+category 类别、分类:
+专门用来给类添加新的方法
+不能给类添加成员属性，添加了成员属性，也无法取到
+注意：其实可以通过runtime 给分类添加属性，即属性关联，重写setter、getter方法
+分类中用@property 定义变量，只会生成变量的setter、getter方法的声明，不能生成方法实现 和 带下划线的成员变量
+
+extension 类扩展:
+可以说成是特殊的分类 ，也可称作 匿名分类
+可以给类添加成员属性，但是是私有变量
+可以给类添加方法，也是私有方法
+
+
+类扩展 底层原理:
+类的扩展有两种创建方式
+直接在类中书写：永远在声明之后，在实现之前（需要在.m文件中书写）
+通过 command+N 新建 -> Objective-C File -> 选择Extension
+
+
+类扩展的的本质:
+1. 通过clang底层编译
+通过clang -rewrite-objc main.mm -o main.cpp命令生成cpp文件，打开cpp文件，搜索ext_name属性
+
+查看 LGTeacher 类拓展的方法，在编译过程中，方法就直接添加到了 methodlist中，作为类的一部分，即编译时期直接添加到本类里面
+
+2. 通过源码调试
+运行objc源码程序，在readClass中断住，查看kc_ro
+
+总结:
+类的扩展 在编译器 会作为类的一部分，和类一起编译进来
+类的扩展只是声明，依赖于当前的主类，没有.m文件，可以理解为一个·h文件
+
+
+分类关联对象 底层原理:
+其底层原理的实现，主要分为两部分：
+通过objc_setAssociatedObject设值流程
+通过objc_getAssociatedObject取值流程
+
+==================================================关联对象-设值流程:
+在分类LG中重写属性cate_name的set、get方法，通过runtime的属性关联方法实现
+运行程序，断点断在main中cate_name赋值处
+继续往下运行，断在分类的setCate_name方法中
+
+其中objc_setAssociatedObject方法有四个参数，分别表示：
+参数1：要关联的对象，即给谁添加关联属性
+参数2：标识符，方便下次查找
+参数3：value
+参数4：属性的策略，即nonatomic、atomic、assign等
+
+进入objc_setAssociatedObject源码实现
+这种设计模式属于是接口模式，对外的接口不变，内部的逻辑变化不影响外部的调用， 类似于set方法的底层源码实现
+
+ChainedHookFunction是一个函数指针
+进入SetAssocHook，其底层实现是_base_objc_setAssociatedObject，类型是ChainedHookFunction
+可以理解为SetAssocHook.get()等价于_base_objc_setAssociatedObject
+
+void
+objc_setAssociatedObject(id object, const void *key, id value, objc_AssociationPolicy policy)
+{
+    SetAssocHook.get()(object, key, value, policy);//接口模式，对外接口始终不变
+}
+等价于
+void
+objc_setAssociatedObject(id object, const void *key, id value, objc_AssociationPolicy policy)
+{
+    _base_objc_setAssociatedObject(object, key, value, policy);//接口模式，对外接口始终不变
+}
+
+进入_base_objc_setAssociatedObject源码实现：_base_objc_setAssociatedObject -> _object_set_associative_reference
+
+进入_object_set_associative_reference源码实现
+关于关联对象 底层原理的探索 主要是看value存到了哪里， 以及如何取出value
+
+void
+_object_set_associative_reference(id object, const void *key, id value, uintptr_t policy)
+{
+    // This code used to work when nil was passed for object and key. Some code
+    // probably relies on that to not crash. Check and handle it explicitly.
+    // rdar://problem/44094390
+    if (!object && !value) return;
+
+    if (object->getIsa()->forbidsAssociatedObjects())
+        _objc_fatal("objc_setAssociatedObject called on instance (%p) of class %s which does not allow associated objects", object, object_getClassName(object));
+    //object封装成一个数组结构类型，类型为DisguisedPtr
+    DisguisedPtr<objc_object> disguised{(objc_object *)object};//相当于包装了一下 对象object,便于使用
+    // 包装一下 policy - value
+    ObjcAssociation association{policy, value};
+
+    // retain the new value (if any) outside the lock.
+    association.acquireValue();//根据策略类型进行处理
+    //局部作用域空间
+    {
+        //初始化manager变量，相当于自动调用AssociationsManager的析构函数进行初始化
+        AssociationsManager manager;//并不是全场唯一，构造函数中加锁只是为了避免重复创建，在这里是可以初始化多个AssociationsManager变量的
+    
+        AssociationsHashMap &associations(manager.get());//AssociationsHashMap 全场唯一
+
+        if (value) {
+            auto refs_result = associations.try_emplace(disguised, ObjectAssociationMap{});//返回的结果是一个类对
+            if (refs_result.second) {//判断第二个存不存在，即bool值是否为true
+                /* it's the first association we make 第一次建立关联*/
+                object->setHasAssociatedObjects();//nonpointerIsa ，标记位true
+            }
+
+            /* establish or replace the association 建立或者替换关联*/
+            auto &refs = refs_result.first->second; //得到一个空的桶子，找到引用对象类型,即第一个元素的second值
+            auto result = refs.try_emplace(key, std::move(association));//查找当前的key是否有association关联对象
+            if (!result.second) {//如果结果不存在
+                association.swap(result.first->second);
+            }
+        } else {//如果传的是空值，则移除关联，相当于移除
+            auto refs_it = associations.find(disguised);
+            if (refs_it != associations.end()) {
+                auto &refs = refs_it->second;
+                auto it = refs.find(key);
+                if (it != refs.end()) {
+                    association.swap(it->second);
+                    refs.erase(it);
+                    if (refs.size() == 0) {
+                        associations.erase(refs_it);
+
+                    }
+                }
+            }
+        }
+    }
+
+    // release the old value (outside of the lock).
+    association.releaseHeldValue();//释放
+}
+
+通过源码可知，主要分为以下几部分:
+1：创建一个 AssociationsManager 管理类
+2：获取唯一的全局静态哈希Map：AssociationsHashMap
+3：判断是否插入的关联值value是否存在
+3.1：存在走第4步
+3.2：不存在就走 : 关联对象-插入空流程
+4：通过try_emplace方法，并创建一个空的 ObjectAssociationMap 去取查询的键值对
+5：如果发现没有这个 key 就插入一个 空的 BucketT进去并返回true
+6：通过setHasAssociatedObjects方法标记对象存在关联对象即置isa指针的has_assoc属性为true
+7：用当前 policy 和 value 组成了一个 ObjcAssociation 替换原来 BucketT 中的空
+8：标记一下 ObjectAssociationMap 的第一次为 false
+
+
+设置流程 源码调试:
+定义AssociationsManager类型的变量，相当于自动调用AssociationsManager的构造函数进行初始化
+加锁lock，并不代表 唯一，只是为了避免多线程重复创建，其实在外面是可以定义多个AssociationsManager manager;的
+
+定义AssociationsHashMap类型的哈希map，这个全场唯一的
+通过_mapStorage.get()生成哈希map，其中_mapStorage是一个静态变量，所以 哈希map 永远是通过静态变量获取出来的，所以是全场唯一的
+通过调试，可以查看 目前的数据结构
+p disguised :其中的value是object
+p association
+p manager
+p associations :目前的associations为0x0
+
+走到局部作用域的if判断，此时的 value是有值的
+如果传入的value是空值，走到局部作用域的else流程，通过源码可知，相当于移除关联
+继续往下执行，查看 refs_result
+associations调用try_emplace方法，传入一个对象disguised 和 一个空的关联mapObjectAssociationMap{}
+//pair -- 表示有键值对
+(std::__1::pair<
+ objc::DenseMapIterator<DisguisedPtr<objc_object>,
+ 
+ objc::DenseMap<const void *, objc::ObjcAssociation, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<const void *>, objc::detail::DenseMapPair<const void *, objc::ObjcAssociation> >,
+ 
+ objc::DenseMapValueInfo<objc::DenseMap<const void *, objc::ObjcAssociation, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<const void *>, objc::detail::DenseMapPair<const void *, objc::ObjcAssociation> > >,
+ 
+ objc::DenseMapInfo<DisguisedPtr<objc_object> >,
+ 
+ objc::detail::DenseMapPair<DisguisedPtr<objc_object>, objc::DenseMap<const void *, objc::ObjcAssociation, objc::DenseMapValueInfo<objc::ObjcAssociation>, objc::DenseMapInfo<const void *>, objc::detail::DenseMapPair<const void *, objc::ObjcAssociation> > >,
+ 
+ false>,
+ 
+ bool>)
+
+//可以简写为
+
+(std::__1::pair<
+ 
+ objc
+ 
+bool>)
+
+进入try_emplace方法的源码实现:
+有两个返回，都是通过std::make_pair生成相应的键值对
+通过LookupBucketFor方法查找桶子，如果map中已经存在，则直接返回，其中make_pair的第二个参数bool值为false
+如果没有找到，则通过InsertIntoBucket插入map，其中make_pair的第二个参数bool值为true
+
+进入LookupBucketFor源码，有两个同名方法，其中第二个方法属于重载函数，区别于第一个的是第二个参数没有const修饰
+通过调试可知，外部的调用是调用的第二个重载函数，而第二个LookupBucketFor方法，内部的实现是调用第一个LookupBucketFor方法
+
+查看LookupBucketFor方法源码实现
+
+断点运行至try_emplace方法中的获取bucket部分TheBucket = InsertIntoBucket(TheBucket, Key, std::forward<Ts>(Args)...);
+p TheBucket
+其中TheBucket的类型与 refs_result中属性的类型是一致
+
+进入if (refs_result.second)的if流程，通过setHasAssociatedObjects将 nonpointerIsa 的has_assoc标记为 true
+
+继续往下执行，查看refs
+p refs,执行try_emplace前查看
+p refs,执行try_emplace后查看
+
+第一次执行try_emplace插入的是一个空桶，还没有值，第二次执行try_emplace才插入值，即往空桶中插入ObjectAssociationMap（value，policy），返回true
+
+p result.second ,返回的true，到此就将属性与value关联上了
+
+
+
+AssociationsHashMap 哈希map结构:
+AssociationsManager可以有多个，通过AssociationsManagerLock锁可以得到一个AssociationsHashMap类型的map
+map中有很多的关联对象map，类型是ObjectAssociationMap，其中key为DisguisedPtr<objc_object>，例如LGPerson会对应一个ObjectAssociationMap，LGTeacher也会对应一个ObjectAssociationMap
+typedef DenseMap<DisguisedPtr<objc_object>, ObjectAssociationMap> AssociationsHashMap;
+ObjectAssociationMap哈希表中有很多key-value键值对，其中key的类型为const void *，其实这个key从底层这个方法_object_set_associative_reference(id object, const void *key, id value, uintptr_t policy)的参数就可以看出，key是我们关联属性时设置的字符串，value的类型为ObjcAssociation
+typedef DenseMap<const void *, ObjcAssociation> ObjectAssociationMap;
+其中ObjcAssociation是用于包装policy和value的一个类
+
+
+对象插入空流程:
+根据源码可知，主要是局部作用域中的else流程，其实这个流程可以通俗的理解为当传入的value为nil时，则移除关联，主要分为以下几步：
+1、根据 DisguisedPtr 找到 AssociationsHashMap 中的 iterator 迭代查询器
+2、清理迭代器
+3、其实如果插入空置 相当于清除
+
+
+==================================================关联对象-取值流程:
+main中 打印person.cate_name的值，断点来到分类中重写的属性get方法
+进入objc_getAssociatedObject源码实现
+_object_get_associative_reference方法
+
+
+id
+_object_get_associative_reference(id object, const void *key)
+{
+    ObjcAssociation association{};//创建空的关联对象
+
+    {
+        AssociationsManager manager;//创建一个AssociationsManager管理类
+        AssociationsHashMap &associations(manager.get());//获取全局唯一的静态哈希map
+        AssociationsHashMap::iterator i = associations.find((objc_object *)object);//找到迭代器，即获取buckets
+        if (i != associations.end()) {//如果这个迭代查询器不是最后一个 获取
+            ObjectAssociationMap &refs = i->second; //找到ObjectAssociationMap的迭代查询器获取一个经过属性修饰符修饰的value
+            ObjectAssociationMap::iterator j = refs.find(key);//根据key查找ObjectAssociationMap，即获取bucket
+            if (j != refs.end()) {
+                association = j->second;//获取ObjcAssociation
+                association.retainReturnedValue();
+            }
+        }
+    }
+
+    return association.autoreleaseReturnedValue();//返回value
+}
+
+
+通过源码可知，主要分为以下几部分
+1：创建一个 AssociationsManager 管理类
+2：获取唯一的全局静态哈希Map：AssociationsHashMap
+3：通过find方法根据 DisguisedPtr 找到 AssociationsHashMap 中的 iterator 迭代查询器
+4：如果这个迭代查询器不是最后一个 获取 : ObjectAssociationMap (policy和value)
+5：通过find方法找到ObjectAssociationMap的迭代查询器获取一个经过属性修饰符修饰的value
+6：返回 value
+
+
+调试取值流程:
+进入_object_get_associative_reference源码实现
+进入find方法：根据关联对象迭代查找AssociationsHashMap，即buckets
+再次通过find方法，在buckets中查找与key配对的bucket
+find方法查询之后，j的打印，此时的value 为KC
+
+总的来说，关联对象主要就是两层哈希map的处理，即存取时都是两层处理，类似于二维数组
+
+
+AssociationsHashMap 唯一性验证:
+验证AssociationsHashMap 的唯一性，而AssociationsManager不唯一
+去掉AssociationsManager中的加锁
+在_object_set_associative_reference方法中再次定义一遍manager 和 associations
+可以看出两个association的地址是一样的，验证了其唯一性
+
+加锁的目的：保证对象的安全性，防止冲突
+
+AssociationsManager manager;
+
+等价于
+
+AssociationsManager();
+
+lock();
+
+...
+
+unlock();//作用域之后unlock

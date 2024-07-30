@@ -1,0 +1,840 @@
+#####
+retain、retainCount、release、dealloc的底层源码分析
+#####
+
+iOS中的内存管理方案，大致可以分为两类：MRC（手动内存管理）和ARC（自动内存管理）
+
+MRC:
+在MRC时代，系统是通过对象的引用计数来判断一个是否销毁，有以下规则
+对象被创建时引用计数都为1
+当对象被其他指针引用时，需要手动调用[objc retain]，使对象的引用计数+1
+当指针变量不再使用对象时，需要手动调用[objc release]来释放对象，使对象的引用计数-1
+当一个对象的引用计数为0时，系统就会销毁这个对象
+所以，在MRC模式下，必须遵守：谁创建，谁释放，谁引用，谁管理
+
+ARC:
+ARC模式是在WWDC2011和iOS5引入的自动管理机制，即自动引用计数。是编译器的一种特性。
+其规则与MRC一致，区别在于，ARC模式下不需要手动retain、release、autorelease。编译器会在适当的位置插入release和autorelease。
+
+
+内存布局:
+内存的五大区。其实除了内存区，还有内核区和保留区
+内核区：系统用来进行内核处理操作的区域
+保留区：预留给系统处理nil等
+
+为什么五大区的最后内存地址是从0x00400000开始的。其主要原因是0x00000000表示nil，不能直接用nil表示一个段，所以单独给了一段内存用于处理nil等情况
+
+
+全局变量和局部变量在内存中是否有区别？如果有，是什么区别？
+有区别
+全局变量保存在内存的全局存储区（即bss+data段），占用静态的存储单元
+局部变量保存在栈中，只有在所在函数被调用时才动态的为变量分配存储单元
+
+
+Block中可以修改全局变量，全局静态变量，局部静态变量，局部变量吗？
+可以修改全局变量，全局静态变量，因为全局变量 和 静态全局变量是全局的，作用域很广
+可以修改局部静态变量，不可以修改局部变量
+局部静态变量（static修饰的） 和 局部变量，被block从外面捕获，成为 __main_block_impl_0这个结构体的成员变量
+局部变量是以值方式传递到block的构造函数中的，只会捕获block中会用到的变量，由于只捕获了变量的值，并非内存地址，所以在block内部不能改变局部变量的值
+局部静态变量是以指针形式，被block捕获的，由于捕获的是指针，所以可以修改局部静态变量的值
+ARC环境下，一旦使用__block修饰并在block中修改，就会触发copy，block就会从栈区copy到堆区，此时的block是堆区block
+ARC模式下，Block中引用id类型的数据，无论有没有__block修饰，都会retain，对于基础数据类型，没有__block就无法修改变量值；如果有__block修饰，也是在底层修改__Block_byref_a_0结构体，将其内部的forwarding指针指向copy后的地址，来达到值的修改
+
+
+
+内存管理方案:
+除了前文提及的MRC和ARC，还有以下三种
+Tagged Pointer：专门用来处理小对象，例如NSNumber、NSDate、小NSString等
+Nonpointer_isa：非指针类型的isa，主要是用来优化64位地址
+SideTables：散列表，在散列表中主要有两个表，分别是引用计数表、弱引用表
+
+
+//*********代码1*********
+- (void)taggedPointerDemo {
+  self.queue = dispatch_queue_create("com.cjl.cn", DISPATCH_QUEUE_CONCURRENT);
+    
+    for (int i = 0; i<10000; i++) {
+        dispatch_async(self.queue, ^{
+            self.nameStr = [NSString stringWithFormat:@"CJL"];  // alloc 堆 iOS优化 - taggedpointer
+             NSLog(@"%@",self.nameStr);
+        });
+    }
+}
+
+//*********代码2*********
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event{
+    NSLog(@"来了");
+    for (int i = 0; i<10000; i++) {
+        dispatch_async(self.queue, ^{
+            self.nameStr = [NSString stringWithFormat:@"CJL_越努力，越幸运！！！"];
+            NSLog(@"%@",self.nameStr);
+        });
+    }
+}
+发现taggedPointerDemo单独运行没有问题，当触发touchesBegan方法后。程序会崩溃，崩溃的原因是多条线程同时对一个对象进行释放，导致了 过渡释放所以崩溃。
+其根本原因是因为nameStr在底层的类型不一致导致的，我们可以通过调试看出
+
+taggedPointerDemo方法中的nameStr类型是 NSTaggedPointerString，存储在常量区。因为nameStr在alloc分配时在堆区，由于较小，所以经过xcode中iOS的优化，成了NSTaggedPointerString类型，存储在常量区
+touchesBegan方法中的nameStr类型是 NSCFString类型，存储在堆上
+
+
+NSString的内存管理:
+我们可以通过NSString初始化的两种方式，来测试NSString的内存管理
+通过 WithString + @""方式初始化
+通过 WithFormat方式初始化
+#define KLog(_c) NSLog(@"%@ -- %p -- %@",_c,_c,[_c class]);
+
+- (void)testNSString{
+    //初始化方式一：通过 WithString + @""方式
+    NSString *s1 = @"1";
+    NSString *s2 = [[NSString alloc] initWithString:@"222"];
+    NSString *s3 = [NSString stringWithString:@"33"];
+    
+    KLog(s1);// __NSCFConstantString
+    KLog(s2);// __NSCFConstantString
+    KLog(s3);// __NSCFConstantString
+    
+    //初始化方式二：通过 WithFormat
+    //字符串长度在9以内
+    NSString *s4 = [NSString stringWithFormat:@"123456789"];
+    NSString *s5 = [[NSString alloc] initWithFormat:@"123456789"];
+    
+    //字符串长度大于9
+    NSString *s6 = [NSString stringWithFormat:@"1234567890"];
+    NSString *s7 = [[NSString alloc] initWithFormat:@"1234567890"];
+    
+    KLog(s4);// NSTaggedPointerString
+    KLog(s5);// NSTaggedPointerString
+    KLog(s6);// __NSCFString
+    KLog(s7);// __NSCFString
+}
+
+从上面可以总结出，NSString的内存管理主要分为3种
+__NSCFConstantString：字符串常量，是一种编译时常量，retainCount值很大，对其操作，不会引起引用计数变化，存储在字符串常量区
+__NSCFString：是在运行时创建的NSString子类，创建后引用计数会加1，存储在堆上
+NSTaggedPointerString：标签指针，是苹果在64位环境下对NSString、NSNumber等对象做的优化。对于NSString对象来说
+当字符串是由数字、英文字母组合且长度小于等于9时，会自动成为NSTaggedPointerString类型，存储在常量区
+当有中文或者其他特殊符号时，会直接成为__NSCFString类型，存储在堆区
+
+
+Tagged Pointer 小对象:
+探索小对象的引用计数处理，所以我们需要进入objc源码中查看retain、release源码 中对 Tagged Pointer小对象的处理
+
+小对象的引用计数处理分析:
+查看setProperty -> reallySetProperty源码，其中是对新值retain，旧值release
+进入objc_retain、objc_release源码,在这里都判断是否是小对象，如果是小对象，则不会进行retain或者release，会直接返回。因此可以得出一个结论：如果对象是小对象，不会进行retain 和 release
+
+小对象的地址分析:
+继续以NSString为例，对于NSString来说
+一般的NSString对象指针，都是string值 + 指针地址，两者是分开的
+对于Tagged Pointer指针，其指针+值，都能在小对象中体现。
+所以Tagged Pointer 既包含指针，也包含值
+
+其中的_read_images源码有一个方法对小对象进行了处理，即initializeTaggedPointerObfuscator方法
+进入_read_images -> initializeTaggedPointerObfuscator源码实现
+static void
+initializeTaggedPointerObfuscator(void)
+{
+    
+    if (sdkIsOlderThan(10_14, 12_0, 12_0, 5_0, 3_0) ||
+        // Set the obfuscator to zero for apps linked against older SDKs,
+        // in case they're relying on the tagged pointer representation.
+        DisableTaggedPointerObfuscation) {
+        objc_debug_taggedpointer_obfuscator = 0;
+    }
+    //在iOS14之后，对小对象进行了混淆，通过与操作+_OBJC_TAG_MASK混淆
+    else {
+        // Pull random data into the variable, then shift away all non-payload bits.
+        arc4random_buf(&objc_debug_taggedpointer_obfuscator,
+                       sizeof(objc_debug_taggedpointer_obfuscator));
+        objc_debug_taggedpointer_obfuscator &= ~_OBJC_TAG_MASK;
+    }
+}
+在iOS14之后，Tagged Pointer采用了混淆处理
+我们可以在源码中通过objc_debug_taggedpointer_obfuscator查找taggedPointer的编码和解码，来查看底层是如何混淆处理的
+
+//编码
+static inline void * _Nonnull
+_objc_encodeTaggedPointer(uintptr_t ptr)
+{
+    return (void *)(objc_debug_taggedpointer_obfuscator ^ ptr);
+}
+//编码
+static inline uintptr_t
+_objc_decodeTaggedPointer(const void * _Nullable ptr)
+{
+    return (uintptr_t)ptr ^ objc_debug_taggedpointer_obfuscator;
+}
+
+通过实现，我们可以得知，在编码和解码部分，经过了两层异或，其目的是得到小对象自己，例如以 1010 0001为例，假设mask为 0101 1000
+    1010 0001 
+   ^0101 1000 mask（编码）
+    1111 1001
+   ^0101 1000 mask（解码）
+    1010 0001
+
+[NSString stringWithFormat:@"b"];
+所以在外界，为了获取小对象的真实地址，我们可以将解码的源码拷贝到外面，将NSString混淆部分进行解码
+得到 0xa000000000000621
+观察解码后的小对象地址，其中的62表示b的ASCII码
+
+到这里，我们验证了小对象指针地址中确实存储了值，那么小对象地址高位其中的0xa、0xb又是什么含义呢？
+//NSString
+0xa000000000000621
+
+//NSNumber
+0xb000000000000012
+0xb000000000000025
+
+需要去源码中查看_objc_isTaggedPointer源码，主要是通过保留最高位的值（即64位的值），判断是否等于_OBJC_TAG_MASK（即2^63）,来判断是否是小对象
+static inline bool 
+_objc_isTaggedPointer(const void * _Nullable ptr)
+{
+    //等价于 ptr & 1左移63，即2^63，相当于除了64位，其他位都为0，即只是保留了最高位的值
+    return ((uintptr_t)ptr & _OBJC_TAG_MASK) == _OBJC_TAG_MASK;
+}
+
+所以0xa、0xb主要是用于判断是否是小对象taggedpointer，即判断条件，判断第64位上是否为1（taggedpointer指针地址即表示指针地址，也表示值）
+0xa 转换成二进制为 1 010（64为为1，63~61后三位表示 tagType类型 - 2），表示NSString类型
+0xb 转换为二进制为 1 011（64为为1，63~61后三位表示 tagType类型 - 3），表示NSNumber类型，这里需要注意一点，如果NSNumber的值是-1，其地址中的值是用补码表示的
+这里可以通过_objc_makeTaggedPointer方法的参数tag类型objc_tag_index_t进入其枚举，其中 2表示NSString，3表示NSNumber
+我们可以定义一个NSDate对象，来验证其tagType是否为6
+
+
+Tagged Pointer 总结:
+Tagged Pointer小对象类型（用于存储NSNumber、NSDate、小NSString），小对象指针不再是简单的地址，而是地址 + 值，即真正的值，所以，实际上它不再是一个对象了，它只是一个披着对象皮的普通变量而以。所以可以直接进行读取。优点是占用空间小 节省内存
+Tagged Pointer小对象 不会进入retain 和 release，而是直接返回了，意味着不需要ARC进行管理，所以可以直接被系统自主的释放和回收
+Tagged Pointer的内存并不存储在堆中，而是在常量区中，也不需要malloc和free，所以可以直接读取，相比存储在堆区的数据读取，效率上快了3倍左右。创建的效率相比堆区快了近100倍左右
+所以，综合来说，taggedPointer的内存管理方案，比常规的内存管理，要快很多
+Tagged Pointer的64位地址中，前4位代表类型，后4位主要适用于系统做一些处理，中间56位用于存储值
+优化内存建议：对于NSString来说，当字符串较小时，建议直接通过@""初始化，因为存储在常量区，可以直接进行读取。会比WithFormat初始化方式更加快速
+
+
+
+SideTables 散列表:
+当引用计数存储到一定值时，并不会再存储到Nonpointer_isa的位域的extra_rc中，而是会存储到SideTables 散列表中
+
+
+探索引用计数retain的底层实现
+retain 源码分析:
+ALWAYS_INLINE id 
+objc_object::rootRetain(bool tryRetain, bool handleOverflow)
+{
+    if (isTaggedPointer()) return (id)this;
+
+    bool sideTableLocked = false;
+    bool transcribeToSideTable = false;
+    //为什么有isa？因为需要对引用计数+1，即retain+1，而引用计数存储在isa的bits中，需要进行新旧isa的替换
+    isa_t oldisa;
+    isa_t newisa;
+    //重点
+    do {
+        transcribeToSideTable = false;
+        oldisa = LoadExclusive(&isa.bits);
+        newisa = oldisa;
+        //判断是否为nonpointer isa
+        if (slowpath(!newisa.nonpointer)) {
+            //如果不是 nonpointer isa，直接操作散列表sidetable
+            ClearExclusive(&isa.bits);
+            if (rawISA()->isMetaClass()) return (id)this;
+            if (!tryRetain && sideTableLocked) sidetable_unlock();
+            if (tryRetain) return sidetable_tryRetain() ? (id)this : nil;
+            else return sidetable_retain();
+        }
+        // don't check newisa.fast_rr; we already called any RR overrides
+        //dealloc源码
+        if (slowpath(tryRetain && newisa.deallocating)) {
+            ClearExclusive(&isa.bits);
+            if (!tryRetain && sideTableLocked) sidetable_unlock();
+            return nil;
+        }
+        
+        
+        uintptr_t carry;
+        //执行引用计数+1操作，即对bits中的 1ULL<<45（arm64） 即extra_rc，用于该对象存储引用计数值
+        newisa.bits = addc(newisa.bits, RC_ONE, 0, &carry);  // extra_rc++
+        //判断extra_rc是否满了，carry是标识符
+        if (slowpath(carry)) {
+            // newisa.extra_rc++ overflowed
+            if (!handleOverflow) {
+                ClearExclusive(&isa.bits);
+                return rootRetain_overflow(tryRetain);
+            }
+            // Leave half of the retain counts inline and 
+            // prepare to copy the other half to the side table.
+            if (!tryRetain && !sideTableLocked) sidetable_lock();
+            sideTableLocked = true;
+            transcribeToSideTable = true;
+            //如果extra_rc满了，则直接将满状态的一半拿出来存到extra_rc
+            newisa.extra_rc = RC_HALF;
+            //给一个标识符为YES，表示需要存储到散列表
+            newisa.has_sidetable_rc = true;
+        }
+    } while (slowpath(!StoreExclusive(&isa.bits, oldisa.bits, newisa.bits)));
+
+    if (slowpath(transcribeToSideTable)) {
+        // Copy the other half of the retain counts to the side table.
+        //将另一半存在散列表的rc_half中，即满状态下是8位，一半就是1左移7位，即除以2
+        //这么操作的目的在于提高性能，因为如果都存在散列表中，当需要release-1时，需要去访问散列表，每次都需要开解锁，比较消耗性能。extra_rc存储一半的话，可以直接操作extra_rc即可，不需要操作散列表。性能会提高很多
+        sidetable_addExtraRC_nolock(RC_HALF);
+    }
+
+    if (slowpath(!tryRetain && sideTableLocked)) sidetable_unlock();
+    return (id)this;
+}
+
+进入objc_retain -> retain -> rootRetain源码实现，主要有以下几部分逻辑：
+【第一步】判断是否为Nonpointer_isa
+【第二步】操作引用计数
+1、如果不是Nonpointer_isa，则直接操作SideTables散列表，此时的散列表并不是只有一张，而是有很多张
+2、判断是否正在释放，如果正在释放，则执行dealloc流程
+3、执行extra_rc+1，即引用计数+1操作，并给一个引用计数的状态标识carry，用于表示extra_rc是否满了
+4、如果carray的状态表示extra_rc的引用计数满了，此时需要操作散列表，即 将满状态的一半拿出来存到extra_rc，另一半存在 散列表的rc_half。
+这么做的原因是因为如果都存储在散列表，每次对散列表操作都需要开解锁，操作耗时，消耗性能大，这么对半分操作的目的在于提高性能
+
+
+问题1：散列表为什么在内存有多张？最多能够多少张？
+如果散列表只有一张表，意味着全局所有的对象都会存储在一张表中，都会进行开锁解锁（锁是锁整个表的读写）。当开锁时，由于所有数据都在一张表，则意味着数据不安全
+如果每个对象都开一个表，会耗费性能，所以也不能有无数个表
+散列表的类型是SideTable，有如下定义
+struct SideTable {
+    spinlock_t slock;//开/解锁
+    RefcountMap refcnts;//引用计数表
+    weak_table_t weak_table;//弱引用表
+    
+    ....
+}
+
+通过查看sidetable_unlock方法定位SideTables，其内部是通过SideTablesMap的get方法获取。而SideTablesMap是通过StripedMap<SideTable>定义的
+void 
+objc_object::sidetable_unlock()
+{
+    //SideTables散列表并不只是一张，而是很多张，与关联对象表类似
+    SideTable& table = SideTables()[this];
+    table.unlock();
+}
+
+static StripedMap<SideTable>& SideTables() {
+    return SideTablesMap.get();
+}
+
+static objc::ExplicitInit<StripedMap<SideTable>> SideTablesMap;
+从而进入StripedMap的定义，从这里可以看出，同一时间，真机中散列表最多只能有8张
+
+
+问题2：为什么在用散列表，而不用数组、链表？
+数组：特点在于查询方便（即通过下标访问），增删比较麻烦（类似于之前讲过的methodList，通过memcopy、memmove增删，非常麻烦），所以数据的特性是读取快，存储不方便
+链表：特点在于增删方便，查询慢（需要从头节点开始遍历查询），所以链表的特性是存储快，读取慢
+散列表的本质就是一张哈希表，哈希表集合了数组和链表的长处，增删改查都比较方便，例如拉链哈希表（锁的tls的存储结构就是拉链形式的）
+
+可以从SideTables -> StripedMap -> indexForPointer中验证是通过哈希函数计算哈希下标 以及sideTables为什么可以使用[]的原因
+
+总结：retain 完整回答:
+retain在底层首先会判断是否是 Nonpointer isa，如果不是，则直接操作散列表 进行+1操作
+如果是Nonpointer isa，还需要判断是否正在释放，如果正在释放，则执行dealloc流程，释放弱引用表和引用计数表，最后free释放对象内存
+如果不是正在释放，则对Nonpointer isa进行常规的引用计数+1.
+这里需要注意一点的是，extra_rc在真机上只有8位用于存储引用计数的值，当存储满了时，需要借助散列表用于存储。
+需要将满了的extra_rc对半分，一半（即2^7）存储在散列表中。
+另一半还是存储在extra_rc中，用于常规的引用计数的+1或者-1操作，然后再返回
+
+
+
+release 源码分析:
+通过setProperty -> reallySetProperty -> objc_release -> release -> rootRelease
+进入rootRelease源码，其操作与retain 相反
+判断是否是Nonpointer isa，如果不是，则直接对散列表进行-1操作
+如果是Nonpointer isa，则对extra_rc中的引用计数值进行-1操作，并存储此时的extra_rc状态到carry中
+如果此时的状态carray为0，则走到underflow流程
+underflow流程有以下几步:
+判断散列表中是否存储了一半的引用计数
+如果是，则从散列表中取出存储的一半引用计数，进行-1操作，然后存储到extra_rc中
+如果此时extra_rc没有值，散列表中也是空的，则直接进行析构，即dealloc操作，属于自动触发
+
+ALWAYS_INLINE bool 
+objc_object::rootRelease(bool performDealloc, bool handleUnderflow)
+{
+    if (isTaggedPointer()) return false;
+
+    bool sideTableLocked = false;
+
+    isa_t oldisa;
+    isa_t newisa;
+
+ retry:
+    do {
+        oldisa = LoadExclusive(&isa.bits);
+        newisa = oldisa;
+        //判断是否是Nonpointer isa
+        if (slowpath(!newisa.nonpointer)) {
+            //如果不是，则直接操作散列表-1
+            ClearExclusive(&isa.bits);
+            if (rawISA()->isMetaClass()) return false;
+            if (sideTableLocked) sidetable_unlock();
+            return sidetable_release(performDealloc);
+        }
+        // don't check newisa.fast_rr; we already called any RR overrides
+        uintptr_t carry;
+        //进行引用计数-1操作，即extra_rc-1
+        newisa.bits = subc(newisa.bits, RC_ONE, 0, &carry);  // extra_rc--
+        //如果此时extra_rc的值为0了，则走到underflow
+        if (slowpath(carry)) {
+            // don't ClearExclusive()
+            goto underflow;
+        }
+    } while (slowpath(!StoreReleaseExclusive(&isa.bits, 
+                                             oldisa.bits, newisa.bits)));
+
+    if (slowpath(sideTableLocked)) sidetable_unlock();
+    return false;
+
+ underflow:
+    // newisa.extra_rc-- underflowed: borrow from side table or deallocate
+
+    // abandon newisa to undo the decrement
+    newisa = oldisa;
+    //判断散列表中是否存储了一半的引用计数
+    if (slowpath(newisa.has_sidetable_rc)) {
+        if (!handleUnderflow) {
+            ClearExclusive(&isa.bits);
+            return rootRelease_underflow(performDealloc);
+        }
+
+        // Transfer retain count from side table to inline storage.
+
+        if (!sideTableLocked) {
+            ClearExclusive(&isa.bits);
+            sidetable_lock();
+            sideTableLocked = true;
+            // Need to start over to avoid a race against 
+            // the nonpointer -> raw pointer transition.
+            goto retry;
+        }
+
+        // Try to remove some retain counts from the side table.
+        //从散列表中取出存储的一半引用计数
+        size_t borrowed = sidetable_subExtraRC_nolock(RC_HALF);
+
+        // To avoid races, has_sidetable_rc must remain set 
+        // even if the side table count is now zero.
+
+        if (borrowed > 0) {
+            // Side table retain count decreased.
+            // Try to add them to the inline count.
+            //进行-1操作，然后存储到extra_rc中
+            newisa.extra_rc = borrowed - 1;  // redo the original decrement too
+            bool stored = StoreReleaseExclusive(&isa.bits, 
+                                                oldisa.bits, newisa.bits);
+            if (!stored) {
+                // Inline update failed. 
+                // Try it again right now. This prevents livelock on LL/SC 
+                // architectures where the side table access itself may have 
+                // dropped the reservation.
+                isa_t oldisa2 = LoadExclusive(&isa.bits);
+                isa_t newisa2 = oldisa2;
+                if (newisa2.nonpointer) {
+                    uintptr_t overflow;
+                    newisa2.bits = 
+                        addc(newisa2.bits, RC_ONE * (borrowed-1), 0, &overflow);
+                    if (!overflow) {
+                        stored = StoreReleaseExclusive(&isa.bits, oldisa2.bits, 
+                                                       newisa2.bits);
+                    }
+                }
+            }
+
+            if (!stored) {
+                // Inline update failed.
+                // Put the retains back in the side table.
+                sidetable_addExtraRC_nolock(borrowed);
+                goto retry;
+            }
+
+            // Decrement successful after borrowing from side table.
+            // This decrement cannot be the deallocating decrement - the side 
+            // table lock and has_sidetable_rc bit ensure that if everyone 
+            // else tried to -release while we worked, the last one would block.
+            sidetable_unlock();
+            return false;
+        }
+        else {
+            // Side table is empty after all. Fall-through to the dealloc path.
+        }
+    }
+    //此时extra_rc中值为0，散列表中也是空的，则直接进行析构，即自动触发dealloc流程
+    // Really deallocate.
+    //触发dealloc的时机
+    if (slowpath(newisa.deallocating)) {
+        ClearExclusive(&isa.bits);
+        if (sideTableLocked) sidetable_unlock();
+        return overrelease_error();
+        // does not actually return
+    }
+    newisa.deallocating = true;
+    if (!StoreExclusive(&isa.bits, oldisa.bits, newisa.bits)) goto retry;
+
+    if (slowpath(sideTableLocked)) sidetable_unlock();
+
+    __c11_atomic_thread_fence(__ATOMIC_ACQUIRE);
+
+    if (performDealloc) {
+        //发送一个dealloc消息
+        ((void(*)(objc_object *, SEL))objc_msgSend)(this, @selector(dealloc));
+    }
+    return true;
+}
+
+
+
+dealloc 源码分析:
+在retain和release的底层实现中，都提及了dealloc析构函数，下面来分析dealloc的底层的实现
+
+进入dealloc -> _objc_rootDealloc -> rootDealloc源码实现，主要有两件事：
+根据条件判断是否有isa、cxx、关联对象、弱引用表、引用计数表，如果没有，则直接free释放内存
+如果有，则进入object_dispose方法
+
+inline void
+objc_object::rootDealloc()
+{
+    //对象要释放，需要做哪些事情？
+    //1、isa - cxx - 关联对象 - 弱引用表 - 引用计数表
+    //2、free
+    if (isTaggedPointer()) return;  // fixme necessary?
+
+    //如果没有这些，则直接free
+    if (fastpath(isa.nonpointer  &&  
+                 !isa.weakly_referenced  &&  
+                 !isa.has_assoc  &&  
+                 !isa.has_cxx_dtor  &&  
+                 !isa.has_sidetable_rc))
+    {
+        assert(!sidetable_present());
+        free(this);
+    } 
+    else {
+        //如果有
+        object_dispose((id)this);
+    }
+}
+
+进入object_dispose源码，其目的有以下几个:
+销毁实例，主要有以下操作
+    调用c++析构函数
+    删除关联引用
+    释放散列表
+    清空弱引用表
+free释放内存
+
+id 
+object_dispose(id obj)
+{
+    if (!obj) return nil;
+    //销毁实例而不会释放内存
+    objc_destructInstance(obj);
+    //释放内存
+    free(obj);
+
+    return nil;
+}
+👇
+void *objc_destructInstance(id obj) 
+{
+    if (obj) {
+        // Read all of the flags at once for performance.
+        bool cxx = obj->hasCxxDtor();
+        bool assoc = obj->hasAssociatedObjects();
+
+        // This order is important.
+        //调用C ++析构函数
+        if (cxx) object_cxxDestruct(obj);
+        //删除关联引用
+        if (assoc) _object_remove_assocations(obj);
+        //释放
+        obj->clearDeallocating();
+    }
+
+    return obj;
+}
+👇
+inline void 
+objc_object::clearDeallocating()
+{
+    //判断是否为nonpointer isa
+    if (slowpath(!isa.nonpointer)) {
+        // Slow path for raw pointer isa.
+        //如果不是，则直接释放散列表
+        sidetable_clearDeallocating();
+    }
+    //如果是，清空弱引用表 + 散列表
+    else if (slowpath(isa.weakly_referenced  ||  isa.has_sidetable_rc)) {
+        // Slow path for non-pointer isa with weak refs and/or side table data.
+        clearDeallocating_slow();
+    }
+
+    assert(!sidetable_present());
+}
+👇
+NEVER_INLINE void
+objc_object::clearDeallocating_slow()
+{
+    ASSERT(isa.nonpointer  &&  (isa.weakly_referenced || isa.has_sidetable_rc));
+
+    SideTable& table = SideTables()[this];
+    table.lock();
+    if (isa.weakly_referenced) {
+        //清空弱引用表
+        weak_clear_no_lock(&table.weak_table, (id)this);
+    }
+    if (isa.has_sidetable_rc) {
+        //清空引用计数
+        table.refcnts.erase(this);
+    }
+    table.unlock();
+}
+
+
+
+retainCount 源码分析:
+面试题：alloc创建的对象的引用计数为多少？
+NSObject *objc = [NSObject alloc];
+NSLog(@"%ld",CFGetRetainCount((__bridge CFTypeRef)objc));// 1
+
+进入retainCount -> _objc_rootRetainCount -> rootRetainCount源码
+- (NSUInteger)retainCount {
+    return _objc_rootRetainCount(self);
+}
+👇
+uintptr_t
+_objc_rootRetainCount(id obj)
+{
+    ASSERT(obj);
+
+    return obj->rootRetainCount();
+}
+👇
+inline uintptr_t 
+objc_object::rootRetainCount()
+{
+    if (isTaggedPointer()) return (uintptr_t)this;
+
+    sidetable_lock();
+    isa_t bits = LoadExclusive(&isa.bits);
+    ClearExclusive(&isa.bits);
+    //如果是nonpointer isa，才有引用计数的下层处理
+    if (bits.nonpointer) {
+        //alloc创建的对象引用计数为0，包括sideTable,所以对于alloc来说，是 0+1=1，这也是为什么通过retaincount获取的引用计数为1的原因
+        uintptr_t rc = 1 + bits.extra_rc;
+        if (bits.has_sidetable_rc) {
+            rc += sidetable_getExtraRC_nolock();
+        }
+        sidetable_unlock();
+        return rc;
+    }
+    //如果不是，则正常返回
+    sidetable_unlock();
+    return sidetable_retainCount();
+}
+
+我们可以通过源码断点调试，来查看此时的extra_rc的值
+
+答案：
+综上所述，alloc创建的对象实际的引用计数为0，其引用计数打印结果为1，是因为在底层rootRetainCount方法中，引用计数默认+1了
+但是这里只有对引用计数的读取操作，是没有写入操作的
+简单来说就是：为了防止alloc创建的对象被释放（引用计数为0会被释放），所以在编译阶段，程序底层默认进行了+1操作。实际上在extra_rc中的引用计数仍然为0
+
+总结:
+alloc创建的对象没有retain和release
+alloc创建对象的引用计数为0，会在编译时期，程序默认加1，所以读取引用计数时为1
+
+
+==================================================简单的哈希表实现
+// 链地址法
+class HashTable<Key: Hashable, Value> {
+    private var buckets: [Bucket?]
+    private let capacity: Int
+    
+    init(capacity: Int) {
+        self.capacity = capacity
+        self.buckets = Array<Bucket?>(repeating: nil, count: capacity)
+    }
+    
+    func insert(key: Key, value: Value) {
+        let index = self.index(for: key)
+        let newBucket = Bucket(key: key, value: value)
+        
+        if let existingBucket = buckets[index] {
+            var bucket = existingBucket
+            while bucket.next != nil {
+                bucket = bucket.next!
+            }
+            bucket.next = newBucket
+        } else {
+            buckets[index] = newBucket
+        }
+    }
+    
+    func value(for key: Key) -> Value? {
+        let index = self.index(for: key)
+        var bucket = buckets[index]
+        
+        while bucket != nil {
+            if bucket!.key == key {
+                return bucket!.value
+            }
+            bucket = bucket!.next
+        }
+        
+        return nil
+    }
+    
+    private func index(for key: Key) -> Int {
+        return abs(key.hashValue) % capacity
+    }
+    
+    private class Bucket {
+        let key: Key
+        var value: Value
+        var next: Bucket?
+        
+        init(key: Key, value: Value, next: Bucket? = nil) {
+            self.key = key
+            self.value = value
+            self.next = next
+        }
+    }
+}
+
+// 使用示例
+let hashTable = HashTable<String, Int>(capacity: 10)
+hashTable.insert(key: "one", value: 1)
+hashTable.insert(key: "two", value: 2)
+hashTable.insert(key: "three", value: 3)
+
+if let value = hashTable.value(for: "two") {
+    print("Value for 'two': \(value)")
+} else {
+    print("'two' not found")
+}
+
+其中 Key 是哈希表的键，Value 是值。我们使用链地址法来处理冲突，每个桶（Bucket）是一个链表节点。
+
+
+
+// 常见的探测方法包括线性探测（Linear Probing）、二次探测（Quadratic Probing）和双重散列（Double Hashing）。
+// 开放地址法（Open Addressing） 
+// 以下是使用线性探测的哈希表
+class OpenAddressingHashTable<Key: Hashable, Value> {
+    private var buckets: [Bucket?]
+    private let capacity: Int
+    
+    init(capacity: Int) {
+        self.capacity = capacity
+        self.buckets = Array<Bucket?>(repeating: nil, count: capacity)
+    }
+    
+    func insert(key: Key, value: Value) {
+        var index = self.index(for: key)
+        
+        while let bucket = buckets[index], bucket.key != key {
+            index = (index + 1) % capacity
+        }
+        
+        buckets[index] = Bucket(key: key, value: value)
+    }
+    
+    func value(for key: Key) -> Value? {
+        var index = self.index(for: key)
+        
+        while let bucket = buckets[index] {
+            if bucket.key == key {
+                return bucket.value
+            }
+            index = (index + 1) % capacity
+        }
+        
+        return nil
+    }
+    
+    private func index(for key: Key) -> Int {
+        return abs(key.hashValue) % capacity
+    }
+    
+    private class Bucket {
+        let key: Key
+        var value: Value
+        
+        init(key: Key, value: Value) {
+            self.key = key
+            self.value = value
+        }
+    }
+}
+
+// 使用示例
+let hashTable = OpenAddressingHashTable<String, Int>(capacity: 10)
+hashTable.insert(key: "one", value: 1)
+hashTable.insert(key: "two", value: 2)
+hashTable.insert(key: "three", value: 3)
+
+if let value = hashTable.value(for: "two") {
+    print("Value for 'two': \(value)")
+} else {
+    print("'two' not found")
+}
+
+每个数组元素是一个直接存储键值对的桶（Bucket）。
+当发生冲突时，线性探测会依次检查下一个位置，直到找到空位置或者匹配的键。这个方法通过将冲突处理逻辑内嵌在哈希表内部，避免了链表的额外内存开销，但在大量冲突时可能导致性能下降。
+
+
+==================================================StripedMap是一种用于实现线程安全的哈希表的设计模式。
+它的核心思想是将哈希表划分为多个独立的部分（或“条纹”），每个部分都由一个独立的锁来保护。
+这样可以提高并发访问的效率，因为对不同部分的访问可以并行进行，从而减少锁竞争。
+
+StripedMap的工作原理如下：
+分区（Striping）：将整个哈希表划分为多个小的子表（segments），每个子表由一个独立的锁保护。哈希表的大小和锁的数量可以根据具体情况进行调整。
+哈希映射：在进行插入、删除或查找操作时，首先计算出目标键的哈希值，然后将其映射到对应的子表中。每个子表的索引通常是通过对哈希值进行取模运算得到的。
+锁定粒度：由于每个子表都有自己的锁，只有在访问同一个子表时才会出现锁竞争。这样可以显著提高并发访问的效率，因为同时访问不同子表的操作可以并行进行，而不会相互阻塞。
+
+
+import Foundation
+
+class StripedMap<Key: Hashable, Value> {
+    private var buckets: [Dictionary<Key, Value>]
+    private var locks: [NSLock]
+    private let bucketCount: Int
+    
+    init(bucketCount: Int) {
+        self.bucketCount = bucketCount
+        self.buckets = Array(repeating: Dictionary<Key, Value>(), count: bucketCount)
+        self.locks = Array(repeating: NSLock(), count: bucketCount)
+    }
+    
+    private func getBucketIndex(for key: Key) -> Int {
+        return abs(key.hashValue) % bucketCount
+    }
+    
+    func put(key: Key, value: Value) {
+        let index = getBucketIndex(for: key)
+        locks[index].lock()
+        defer { locks[index].unlock() }
+        buckets[index][key] = value
+    }
+    
+    func get(key: Key) -> Value? {
+        let index = getBucketIndex(for: key)
+        locks[index].lock()
+        defer { locks[index].unlock() }
+        return buckets[index][key]
+    }
+    
+    func remove(key: Key) {
+        let index = getBucketIndex(for: key)
+        locks[index].lock()
+        defer { locks[index].unlock() }
+        buckets[index].removeValue(forKey: key)
+    }
+}
+
+bucketCount 决定了哈希表被划分成多少个子表（或条纹）。
+每个子表（buckets中的一个元素）都有一个独立的锁（locks中的一个元素）。
+put、get 和 remove 操作都首先计算目标键的哈希值并映射到相应的子表，然后使用相应的锁来保护操作的原子性。
+StripedMap 是一种提高并发性能的有效方法，特别适用于读写频繁且并发访问的场景。

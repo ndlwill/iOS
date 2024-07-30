@@ -1,0 +1,1479 @@
+理解类的相关信息是如何加载到内存的，其中重点关注map_images和load_images
+
+map_images：主要是管理文件中和动态库中的所有符号，即class、protocol、selector、category等
+load_images：加载执行load方法
+其中代码通过编译，读取到Mach-O可执行文件中，再从Mach-O中读取到内存
+
+
+map_images：加载镜像文件到内存
+首先需要说明为什么map_images有&，而load_images没有
+map_images是 引用类型，外界变了，跟着变。
+load_images是 值类型，不传递值
+
+map_images方法的主要作用是将Mach-O中的类信息加载到内存
+void
+map_images(unsigned count, const char * const paths[],
+           const struct mach_header * const mhdrs[])
+{
+    mutex_locker_t lock(runtimeLock);
+    return map_images_nolock(count, paths, mhdrs);
+}
+
+进入 map_images_nolock 源码，其关键代码是_read_images
+void
+map_images_nolock(unsigned mhCount, const char * const mhPaths[],
+                  const struct mach_header * const mhdrs[])
+{
+    //...省略
+
+    // Find all images with Objective-C metadata.查找所有带有Objective-C元数据的映像
+    hCount = 0;
+
+    // Count classes. Size various table based on the total.计算类的个数
+    int totalClasses = 0;
+    int unoptimizedTotalClasses = 0;
+    //代码块：作用域，进行局部处理，即局部处理一些事件
+    {
+        //...省略
+    }
+    
+    //...省略
+
+    if (hCount > 0) {
+        //加载镜像文件
+        _read_images(hList, hCount, totalClasses, unoptimizedTotalClasses);
+    }
+
+    firstTime = NO;
+    
+    // Call image load funcs after everything is set up.一切设置完成后，调用镜像加载功能。
+    for (auto func : loadImageFuncs) {
+        for (uint32_t i = 0; i < mhCount; i++) {
+            func(mhdrs[i]);
+        }
+    }
+}
+
+_read_images主要是主要是加载类信息，即类、分类、协议等，进入_read_images源码实现，主要分为以下几部分：
+1、条件控制进行的一次加载
+2、修复预编译阶段的@selector的混乱问题
+3、错误混乱的类处理
+4、修复重映射一些没有被镜像文件加载进来的类
+5、修复一些消息
+6、当类里面有协议时：readProtocol 读取协议
+7、修复没有被加载的协议
+8、分类处理
+9、类的加载处理
+10、没有被处理的类，优化那些被侵犯的类
+
+
+1、条件控制进行的一次加载
+在doneOnce流程中通过NXCreateMapTable 创建表，存放类信息，
+即创建一张类的哈希表``gdb_objc_realized_classes，其目的是为了类查找方便、快捷
+if (!doneOnce) {
+     
+    //...省略
+    
+    // namedClasses
+    // Preoptimized classes don't go in this table.
+    // 4/3 is NXMapTable's load factor
+    int namedClassesSize = 
+        (isPreoptimized() ? unoptimizedTotalClasses : totalClasses) * 4 / 3;
+//创建表（哈希表key-value），目的是查找快
+    gdb_objc_realized_classes =
+        NXCreateMapTable(NXStrValueMapPrototype, namedClassesSize);
+
+    ts.log("IMAGE TIMES: first time tasks");
+}
+
+查看gdb_objc_realized_classes的注释说明，这个哈希表用于存储不在共享缓存且已命名类，无论类是否实现，其容量是类数量的4/3
+// This is a misnomer: gdb_objc_realized_classes is actually a list of 
+// named classes not in the dyld shared cache, whether realized or not.
+//gdb_objc_realized_classes实际上是不在dyld共享缓存中的已命名类的列表，无论是否实现
+NXMapTable *gdb_objc_realized_classes;  // exported for debuggers in objc-gdb.h
+
+
+2、修复预编译阶段的@selector的混乱问题
+主要是通过通过_getObjc2SelectorRefs拿到Mach_O中的静态段__objc_selrefs，遍历列表调用sel_registerNameNoLock将SEL添加到namedSelectors哈希表中
+
+// Fix up @selector references 修复@selector引用
+//sel 不是简单的字符串，而是带地址的字符串
+static size_t UnfixedSelectors;
+{
+    mutex_locker_t lock(selLock);
+    for (EACH_HEADER) {
+        if (hi->hasPreoptimizedSelectors()) continue;
+
+        bool isBundle = hi->isBundle();
+        //通过_getObjc2SelectorRefs拿到Mach-O中的静态段__objc_selrefs
+        SEL *sels = _getObjc2SelectorRefs(hi, &count);
+        UnfixedSelectors += count;
+        for (i = 0; i < count; i++) { //列表遍历
+            const char *name = sel_cname(sels[i]);
+            //注册sel操作，即将sel添加到
+            SEL sel = sel_registerNameNoLock(name, isBundle);
+            if (sels[i] != sel) {//当sel与sels[i]地址不一致时，需要调整为一致的
+                sels[i] = sel;
+            }
+        }
+    }
+}
+
+其中_getObjc2SelectorRefs的源码如下，表示获取Mach-O中的静态段__objc_selrefs，后续通过_getObjc2开头的Mach-O静态段获取，都对应不同的section name
+后续通过_getObjc2开头的Mach-O静态段获取，都对应不同的section name
+
+//      function name                 content type     section name
+GETSECT(_getObjc2SelectorRefs,        SEL,             "__objc_selrefs"); 
+GETSECT(_getObjc2MessageRefs,         message_ref_t,   "__objc_msgrefs"); 
+GETSECT(_getObjc2ClassRefs,           Class,           "__objc_classrefs");
+GETSECT(_getObjc2SuperRefs,           Class,           "__objc_superrefs");
+GETSECT(_getObjc2ClassList,           classref_t const,      "__objc_classlist");
+GETSECT(_getObjc2NonlazyClassList,    classref_t const,      "__objc_nlclslist");
+GETSECT(_getObjc2CategoryList,        category_t * const,    "__objc_catlist");
+GETSECT(_getObjc2CategoryList2,       category_t * const,    "__objc_catlist2");
+GETSECT(_getObjc2NonlazyCategoryList, category_t * const,    "__objc_nlcatlist");
+GETSECT(_getObjc2ProtocolList,        protocol_t * const,    "__objc_protolist");
+GETSECT(_getObjc2ProtocolRefs,        protocol_t *,    "__objc_protorefs");
+GETSECT(getLibobjcInitializers,       UnsignedInitializer, "__objc_init_func");
+
+sel_registerNameNoLock源码路径如下：sel_registerNameNoLock -> __sel_registerName,如下所示，其关键代码是auto it = namedSelectors.get().insert(name);，即将sel插入namedSelectors哈希表
+
+SEL sel_registerNameNoLock(const char *name, bool copy) {
+    return __sel_registerName(name, 0, copy);  // NO lock, maybe copy
+}
+
+static SEL __sel_registerName(const char *name, bool shouldLock, bool copy) 
+{
+    SEL result = 0;
+
+    if (shouldLock) selLock.assertUnlocked();
+    else selLock.assertLocked();
+
+    if (!name) return (SEL)0;
+
+    result = search_builtins(name);
+    if (result) return result;
+    
+    conditional_mutex_locker_t lock(selLock, shouldLock);
+    auto it = namedSelectors.get().insert(name);//sel插入表
+    if (it.second) {
+        // No match. Insert.
+        *it.first = (const char *)sel_alloc(name, copy);
+    }
+    return (SEL)*it.first;
+}
+
+其中selector --> sel并不是简单的字符串，是带地址的字符串
+sels[i]与sel字符串一致，但是地址不一致，所以需要调整为一致的。即fix up
+
+
+3、错误混乱的类处理
+主要是从Mach-O中取出所有类，在遍历进行处理
+//3、错误混乱的类处理
+// Discover classes. Fix up unresolved future classes. Mark bundle classes.
+bool hasDyldRoots = dyld_shared_cache_some_image_overridden();
+//读取类：readClass
+for (EACH_HEADER) {
+    if (! mustReadClasses(hi, hasDyldRoots)) {
+        // Image is sufficiently optimized that we need not call readClass()
+        continue;
+    }
+    //从编译后的类列表中取出所有类，即从Mach-O中获取静态段__objc_classlist，是一个classref_t类型的指针
+    classref_t const *classlist = _getObjc2ClassList(hi, &count);
+
+    bool headerIsBundle = hi->isBundle();
+    bool headerIsPreoptimized = hi->hasPreoptimizedClasses();
+
+    for (i = 0; i < count; i++) {
+        Class cls = (Class)classlist[i];//此时获取的cls只是一个地址
+        Class newCls = readClass(cls, headerIsBundle, headerIsPreoptimized); //读取类，经过这步后，cls获取的值才是一个名字
+        //经过调试，并未执行if里面的流程
+        //初始化所有懒加载的类需要的内存空间，但是懒加载类的数据现在是没有加载到的，连类都没有初始化
+        if (newCls != cls  &&  newCls) {
+            // Class was moved but not deleted. Currently this occurs 
+            // only when the new class resolved a future class.
+            // Non-lazily realize the class below.
+            //将懒加载的类添加到数组中
+            resolvedFutureClasses = (Class *)
+                realloc(resolvedFutureClasses, 
+                        (resolvedFutureClassCount+1) * sizeof(Class));
+            resolvedFutureClasses[resolvedFutureClassCount++] = newCls;
+        }
+    }
+}
+ts.log("IMAGE TIMES: discover classes");
+
+通过代码调试，知道了在未执行readClass方法前，cls只是一个地址
+在执行后，cls是一个类的名称
+所以到这步为止，类的信息目前仅存储了地址+名称
+
+
+4、修复重映射一些没有被镜像文件加载进来的类
+主要是将未映射的Class 和Super Class进行重映射，其中
+_getObjc2ClassRefs是获取Mach-O中的静态段__objc_classrefs即类的引用
+_getObjc2SuperRefs是获取Mach-O中的静态段__objc_superrefs即父类的引用
+通过注释可以得知，被remapClassRef的类都是懒加载的类，所以最初经过调试时，这部分代码是没有执行的
+//4、修复重映射一些没有被镜像文件加载进来的类
+// Fix up remapped classes 修正重新映射的类
+// Class list and nonlazy class list remain unremapped.类列表和非惰性类列表保持未映射
+// Class refs and super refs are remapped for message dispatching.类引用和超级引用将重新映射以进行消息分发
+//经过调试，并未执行if里面的流程
+//将未映射的Class 和 Super Class重映射，被remap的类都是懒加载的类
+if (!noClassesRemapped()) {
+    for (EACH_HEADER) {
+        Class *classrefs = _getObjc2ClassRefs(hi, &count);//Mach-O的静态段 __objc_classrefs
+        for (i = 0; i < count; i++) {
+            remapClassRef(&classrefs[i]);
+        }
+        // fixme why doesn't test future1 catch the absence of this?
+        classrefs = _getObjc2SuperRefs(hi, &count);//Mach_O中的静态段 __objc_superrefs
+        for (i = 0; i < count; i++) {
+            remapClassRef(&classrefs[i]);
+        }
+    }
+}
+
+ts.log("IMAGE TIMES: remap classes");
+
+
+5、修复一些消息
+主要是通过_getObjc2MessageRefs 获取Mach-O的静态段 __objc_msgrefs，并遍历通过fixupMessageRef将函数指针进行注册，并fix为新的函数指针
+#if SUPPORT_FIXUP
+//5、修复一些消息
+    // Fix up old objc_msgSend_fixup call sites
+    for (EACH_HEADER) {
+        // _getObjc2MessageRefs 获取Mach-O的静态段 __objc_msgrefs
+        message_ref_t *refs = _getObjc2MessageRefs(hi, &count);
+        if (count == 0) continue;
+
+        if (PrintVtables) {
+            _objc_inform("VTABLES: repairing %zu unsupported vtable dispatch "
+                         "call sites in %s", count, hi->fname());
+        }
+        //经过调试，并未执行for里面的流程
+        //遍历将函数指针进行注册，并fix为新的函数指针
+        for (i = 0; i < count; i++) {
+            fixupMessageRef(refs+i);
+        }
+    }
+
+    ts.log("IMAGE TIMES: fix up objc_msgSend_fixup");
+#endif
+
+
+6、当类里面有协议时：readProtocol 读取协议
+//6、当类里面有协议时：readProtocol 读取协议
+// Discover protocols. Fix up protocol refs. 发现协议。修正协议参考
+//遍历所有协议列表，并且将协议列表加载到Protocol的哈希表中
+for (EACH_HEADER) {
+    extern objc_class OBJC_CLASS_$_Protocol;
+    //cls = Protocol类，所有协议和对象的结构体都类似，isa都对应Protocol类
+    Class cls = (Class)&OBJC_CLASS_$_Protocol;
+    ASSERT(cls);
+    //获取protocol哈希表 -- protocol_map
+    NXMapTable *protocol_map = protocols();
+    bool isPreoptimized = hi->hasPreoptimizedProtocols();
+
+    // Skip reading protocols if this is an image from the shared cache
+    // and we support roots
+    // Note, after launch we do need to walk the protocol as the protocol
+    // in the shared cache is marked with isCanonical() and that may not
+    // be true if some non-shared cache binary was chosen as the canonical
+    // definition
+    if (launchTime && isPreoptimized && cacheSupportsProtocolRoots) {
+        if (PrintProtocols) {
+            _objc_inform("PROTOCOLS: Skipping reading protocols in image: %s",
+                         hi->fname());
+        }
+        continue;
+    }
+
+    bool isBundle = hi->isBundle();
+    //通过_getObjc2ProtocolList 获取到Mach-O中的静态段__objc_protolist协议列表，
+    //即从编译器中读取并初始化protocol
+    protocol_t * const *protolist = _getObjc2ProtocolList(hi, &count);
+    for (i = 0; i < count; i++) {
+        //通过添加protocol到protocol_map哈希表中
+        readProtocol(protolist[i], cls, protocol_map, 
+                     isPreoptimized, isBundle);
+    }
+}
+
+ts.log("IMAGE TIMES: discover protocols");
+
+通过NXMapTable *protocol_map = protocols();创建protocol哈希表，表的名称为protocol_map
+/***********************************************************************
+* protocols
+* Returns the protocol name => protocol map for protocols.
+* Locking: runtimeLock must read- or write-locked by the caller
+**********************************************************************/
+static NXMapTable *protocols(void)
+{
+    static NXMapTable *protocol_map = nil;
+    
+    runtimeLock.assertLocked();
+
+    INIT_ONCE_PTR(protocol_map, 
+                  NXCreateMapTable(NXStrValueMapPrototype, 16), 
+                  NXFreeMapTable(v) );
+
+    return protocol_map;
+}
+
+通过_getObjc2ProtocolList 获取到Mach-O中的静态段__objc_protolist协议列表，即从编译器中读取并初始化protocol
+protocol_t * const *protolist = _getObjc2ProtocolList(hi, &count);
+
+循环遍历协议列表，通过readProtocol方法将协议添加到protocol_map哈希表中
+readProtocol(protolist[i], cls, protocol_map, 
+                         isPreoptimized, isBundle);
+
+
+7、修复没有被加载的协议
+主要是通过 _getObjc2ProtocolRefs 获取到Mach-O的静态段 __objc_protorefs（与6中的__objc_protolist并不是同一个东西），然后遍历需要修复的协议，通过remapProtocolRef比较当前协议和协议列表中的同一个内存地址的协议是否相同，如果不同则替换
+
+//7、修复没有被加载的协议
+// Fix up @protocol references
+// Preoptimized images may have the right 
+// answer already but we don't know for sure.
+for (EACH_HEADER) {
+    // At launch time, we know preoptimized image refs are pointing at the
+    // shared cache definition of a protocol.  We can skip the check on
+    // launch, but have to visit @protocol refs for shared cache images
+    // loaded later.
+    if (launchTime && cacheSupportsProtocolRoots && hi->isPreoptimized())
+        continue;
+    //_getObjc2ProtocolRefs 获取到Mach-O的静态段 __objc_protorefs
+    protocol_t **protolist = _getObjc2ProtocolRefs(hi, &count);
+    for (i = 0; i < count; i++) {//遍历
+        //比较当前协议和协议列表中的同一个内存地址的协议是否相同，如果不同则替换
+        remapProtocolRef(&protolist[i]);//经过代码调试，并未执行
+    }
+}
+
+ts.log("IMAGE TIMES: fix up @protocol references");
+
+/***********************************************************************
+* remapProtocolRef
+* Fix up a protocol ref, in case the protocol referenced has been reallocated.
+* Locking: runtimeLock must be read- or write-locked by the caller
+**********************************************************************/
+static size_t UnfixedProtocolReferences;
+static void remapProtocolRef(protocol_t **protoref)
+{
+    runtimeLock.assertLocked();
+    //获取协议列表中统一内存地址的协议
+    protocol_t *newproto = remapProtocol((protocol_ref_t)*protoref);
+    if (*protoref != newproto) {//如果当前协议 与 同一内存地址协议不同，则替换
+        *protoref = newproto;
+        UnfixedProtocolReferences++;
+    }
+}
+
+
+8、分类处理
+主要是处理分类，需要在分类初始化并将数据加载到类后才执行，对于运行时出现的分类，将分类的发现推迟推迟到对_dyld_objc_notify_register的调用完成后的第一个load_images调用为止
+//8、分类处理
+// Discover categories. Only do this after the initial category 发现分类
+// attachment has been done. For categories present at startup,
+// discovery is deferred until the first load_images call after
+// the call to _dyld_objc_notify_register completes. rdar://problem/53119145
+if (didInitialAttachCategories) {
+    for (EACH_HEADER) {
+        load_categories_nolock(hi);
+    }
+}
+
+ts.log("IMAGE TIMES: discover categories");
+
+
+9、类的加载处理
+主要是实现类的加载处理，实现非懒加载类
+通过_getObjc2NonlazyClassList获取Mach-O的静态段__objc_nlclslist非懒加载类表
+
+通过addClassTableEntry将非懒加载类插入类表，存储到内存，如果已经添加就不会载添加，需要确保整个结构都被添加
+
+通过realizeClassWithoutSwift实现当前的类，因为前面3中的readClass读取到内存的仅仅只有地址+名称，类的data数据并没有加载出来
+
+// Realize non-lazy classes (for +load methods and static instances) 初始化非懒加载类，进行rw、ro等操作：realizeClassWithoutSwift
+//懒加载类 -- 别人不动我，我就不动
+//实现非懒加载的类，对于load方法和静态实例变量
+for (EACH_HEADER) {
+    //通过_getObjc2NonlazyClassList获取Mach-O的静态段__objc_nlclslist非懒加载类表
+    classref_t const *classlist = 
+        _getObjc2NonlazyClassList(hi, &count);
+    for (i = 0; i < count; i++) {
+        Class cls = remapClass(classlist[i]);
+        
+        const char *mangledName  = cls->mangledName();
+            const char *LGPersonName = "LGPerson";
+        
+            if (strcmp(mangledName, LGPersonName) == 0) {
+                auto kc_ro = (const class_ro_t *)cls->data();
+                printf("_getObjc2NonlazyClassList: 这个是我要研究的 %s \n",LGPersonName);
+            }
+        
+        if (!cls) continue;
+
+        addClassTableEntry(cls);//插入表，但是前面已经插入过了，所以不会重新插入
+
+        if (cls->isSwiftStable()) {
+            if (cls->swiftMetadataInitializer()) {
+                _objc_fatal("Swift class %s with a metadata initializer "
+                            "is not allowed to be non-lazy",
+                            cls->nameForLogging());
+            }
+            // fixme also disallow relocatable classes
+            // We can't disallow all Swift classes because of
+            // classes like Swift.__EmptyArrayStorage
+        }
+        //实现当前的类，因为前面readClass读取到内存的仅仅只有地址+名称，类的data数据并没有加载出来
+        //实现所有非懒加载的类(实例化类对象的一些信息，例如rw)
+        realizeClassWithoutSwift(cls, nil);
+    }
+}
+
+ts.log("IMAGE TIMES: realize non-lazy classes");
+
+
+10、没有被处理的类，优化那些被侵犯的类
+// Realize newly-resolved future classes, in case CF manipulates them
+if (resolvedFutureClasses) {
+    for (i = 0; i < resolvedFutureClassCount; i++) {
+        Class cls = resolvedFutureClasses[i];
+        if (cls->isSwiftStable()) {
+            _objc_fatal("Swift class is not allowed to be future");
+        }
+        //实现类
+        realizeClassWithoutSwift(cls, nil);
+        cls->setInstancesRequireRawIsaRecursively(false/*inherited*/);
+    }
+    free(resolvedFutureClasses);
+}
+
+ts.log("IMAGE TIMES: realize future classes");
+
+if (DebugNonFragileIvars) {
+    //实现所有类
+    realizeAllClasses();
+}
+重点关注的是3中的readClass以及9中realizeClassWithoutSwift两个方法
+
+
+
+readClass：读取类
+readClass主要是读取类，在未调用该方法前，cls只是一个地址，执行该方法后，cls是类的名称，其源码实现如下，关键代码是addNamedClass和addClassTableEntry
+/***********************************************************************
+* readClass
+* Read a class and metaclass as written by a compiler. 读取编译器编写的类和元类
+* Returns the new class pointer. This could be:  返回新的类指针，可能是：
+* - cls
+* - nil  (cls has a missing weak-linked superclass)
+* - something else (space for this class was reserved by a future class)
+*
+* Note that all work performed by this function is preflighted by 
+* mustReadClasses(). Do not change this function without updating that one.
+*
+* Locking: runtimeLock acquired by map_images or objc_readClassPair
+**********************************************************************/
+Class readClass(Class cls, bool headerIsBundle, bool headerIsPreoptimized)
+{
+    const char *mangledName = cls->mangledName();//名字
+    
+    // **CJL写的** ----如果想进入自定义，自己加一个判断
+    const char *LGPersonName = "LGPerson";
+    if (strcmp(mangledName, LGPersonName) == 0) {
+        auto kc_ro = (const class_ro_t *)cls->data();
+        printf("%s -- 研究重点--%s\n", __func__,mangledName);
+    }
+    //当前类的父类中若有丢失的weak-linked类，则返回nil
+    if (missingWeakSuperclass(cls)) {
+        // No superclass (probably weak-linked). 
+        // Disavow any knowledge of this subclass.
+        if (PrintConnecting) {
+            _objc_inform("CLASS: IGNORING class '%s' with "
+                         "missing weak-linked superclass", 
+                         cls->nameForLogging());
+        }
+        addRemappedClass(cls, nil);
+        cls->superclass = nil;
+        return nil;
+    }
+    
+    cls->fixupBackwardDeployingStableSwift();
+//判断是不是后期要处理的类
+    //正常情况下，不会走到popFutureNamedClass，因为这是专门针对未来待处理的类的操作
+    //通过断点调试，不会走到if流程里面，因此也不会对ro、rw进行操作
+    Class replacing = nil;
+    if (Class newCls = popFutureNamedClass(mangledName)) {
+        // This name was previously allocated as a future class.
+        // Copy objc_class to future class's struct.
+        // Preserve future's rw data block.
+        
+        if (newCls->isAnySwift()) {
+            _objc_fatal("Can't complete future class request for '%s' "
+                        "because the real class is too big.", 
+                        cls->nameForLogging());
+        }
+        //读取class的data，设置ro、rw
+        //经过调试，并不会走到这里
+        class_rw_t *rw = newCls->data();
+        const class_ro_t *old_ro = rw->ro();
+        memcpy(newCls, cls, sizeof(objc_class));
+        rw->set_ro((class_ro_t *)newCls->data());
+        newCls->setData(rw);
+        freeIfMutable((char *)old_ro->name);
+        free((void *)old_ro);
+        
+        addRemappedClass(cls, newCls);
+        
+        replacing = cls;
+        cls = newCls;
+    }
+    //判断是否类是否已经加载到内存
+    if (headerIsPreoptimized  &&  !replacing) {
+        // class list built in shared cache
+        // fixme strict assert doesn't work because of duplicates
+        // ASSERT(cls == getClass(name));
+        ASSERT(getClassExceptSomeSwift(mangledName));
+    } else {
+        addNamedClass(cls, mangledName, replacing);//加载共享缓存中的类
+        addClassTableEntry(cls);//插入表，即相当于从mach-O文件 读取到 内存 中
+    }
+
+    // for future reference: shared cache never contains MH_BUNDLEs
+    if (headerIsBundle) {
+        cls->data()->flags |= RO_FROM_BUNDLE;
+        cls->ISA()->data()->flags |= RO_FROM_BUNDLE;
+    }
+    
+    return cls;
+}
+
+
+通过源码实现，主要分为以下几步：
+通过mangledName获取类的名字，其中mangledName方法的源码实现如下
+const char *mangledName() { 
+    // fixme can't assert locks here
+    ASSERT(this);
+
+    if (isRealized()  ||  isFuture()) { //这个初始化判断在lookupImp也有类似的
+        return data()->ro()->name;//如果已经实例化，则从ro中获取name
+    } else {
+        return ((const class_ro_t *)data())->name;//反之，从mach-O的数据data中获取name
+    }
+}
+当前类的父类中若有丢失的weak-linked类，则返回nil
+判断是不是后期需要处理的类，在正常情况下，不会走到popFutureNamedClass，因为这是专门针对未来待处理的类的操作，也可以通过断点调试，可知不会走到if流程里面，因此也不会对ro、rw进行操作
+data是mach-O的数据，并不在class的内存中
+ro的赋值是从mach-O中的data强转赋值的
+rw里的ro是从ro复制过去的
+
+通过addNamedClass将当前类添加到已经创建好的gdb_objc_realized_classes哈希表，该表用于存放所有类
+
+通过addClassTableEntry，将初始化的类添加到allocatedClasses表，是在_objc_init中的runtime_init就创建了allocatedClasses表
+/***********************************************************************
+* addClassTableEntry 将一个类添加到所有类的表中
+* Add a class to the table of all classes. If addMeta is true,
+* automatically adds the metaclass of the class as well.
+* Locking: runtimeLock must be held by the caller.
+**********************************************************************/
+static void
+addClassTableEntry(Class cls, bool addMeta = true)
+{
+    runtimeLock.assertLocked();
+
+    // This class is allowed to be a known class via the shared cache or via
+    // data segments, but it is not allowed to be in the dynamic table already.
+    auto &set = objc::allocatedClasses.get();//开辟的类的表，在objc_init中的runtime_init就创建了表
+
+    ASSERT(set.find(cls) == set.end());
+
+    if (!isKnownClass(cls))
+        set.insert(cls);
+    if (addMeta)
+        //添加到allocatedClasses哈希表
+        addClassTableEntry(cls->ISA(), false);
+}
+
+
+总结:
+readClass的主要作用就是将Mach-O中的类读取到内存，即插入表中，但是目前的类仅有两个信息：地址以及名称，而mach-O的其中的data数据还未读取出来
+
+
+
+realizeClassWithoutSwift：实现类
+realizeClassWithoutSwift方法中有ro、rw的相关操作，这个方法在消息流程的慢速查找中有所提及,方法路径为：慢速查找(lookUpImpOrForward) -- realizeClassMaybeSwiftAndLeaveLocked -- realizeClassMaybeSwiftMaybeRelock -- realizeClassWithoutSwift（实现类）
+realizeClassWithoutSwift方法主要作用是实现类，将类的data数据加载到内存中，主要有以下几部分操作：
+【第一步】读取data数据，并设置ro、rw
+【第二步】递归调用realizeClassWithoutSwift完善继承链
+【第三步】通过methodizeClass方法化类
+
+第一步：读取data数据
+读取class的data数据，并将其强转为ro，以及rw初始化和ro拷贝一份到rw中的ro
+ro 表示 readOnly，即只读，其在编译时就已经确定了内存，包含类名称、方法、协议和实例变量的信息，由于是只读的，所以属于Clean Memory，而Clean Memory是指加载后不会发生更改的内存
+rw 表示 readWrite，即可读可写，由于其动态性，可能会往类中添加属性、方法、添加协议.其实在rw中只有10%的类真正的更改了它们的方法，所以有了rwe，即类的额外信息。
+对于那些确实需要额外信息的类，可以分配rwe扩展记录中的一个，并将其滑入类中供其使用。其中rw就属于dirty memory，而 dirty memory是指在进程运行时会发生更改的内存，类结构一经使用就会变成 ditry memory，因为运行时会向它写入新数据，例如 创建一个新的方法缓存，并从类中指向它
+
+// fixme verify class is not in an un-dlopened part of the shared cache?
+//读取class的data()，以及ro/rw创建
+auto ro = (const class_ro_t *)cls->data(); //读取类结构的bits属性、//ro -- clean memory，在编译时就已经确定了内存
+auto isMeta = ro->flags & RO_META; //判断元类
+if (ro->flags & RO_FUTURE) {
+    // This was a future class. rw data is already allocated.
+    rw = cls->data(); //dirty memory 进行赋值
+    ro = cls->data()->ro();
+    ASSERT(!isMeta);
+    cls->changeInfo(RW_REALIZED|RW_REALIZING, RW_FUTURE);
+} else { //此时将数据读取进来了，也赋值完毕了
+    // Normal class. Allocate writeable class data.
+    rw = objc::zalloc<class_rw_t>(); //申请开辟zalloc -- rw
+    rw->set_ro(ro);//rw中的ro设置为临时变量ro
+    rw->flags = RW_REALIZED|RW_REALIZING|isMeta;
+    cls->setData(rw);//将cls的data赋值为rw形式
+}
+
+【第二步】递归调用 realizeClassWithoutSwift 完善 继承链
+递归调用realizeClassWithoutSwift完善继承链,并设置当前类、父类、元类的rw
+递归调用 realizeClassWithoutSwift设置父类、元类
+设置父类和元类的isa指向
+通过addSubclass 和 addRootClass设置父子的双向链表指向关系，即父类中可以找到子类，子类中可以找到父类
+
+ // Realize superclass and metaclass, if they aren't already.
+    // This needs to be done after RW_REALIZED is set above, for root classes.
+    // This needs to be done after class index is chosen, for root metaclasses.
+    // This assumes that none of those classes have Swift contents,
+    //   or that Swift's initializers have already been called.
+    //   fixme that assumption will be wrong if we add support
+    //   for ObjC subclasses of Swift classes. --
+    //递归调用realizeClassWithoutSwift完善继承链,并处理当前类的父类、元类
+    //递归实现 设置当前类、父类、元类的 rw，主要目的是确定继承链 （类继承链、元类继承链）
+    //实现元类、父类
+    //当isa找到根元类之后，根元类的isa是指向自己的，不会返回nil从而导致死循环——remapClass中对类在表中进行查找的操作，如果表中已有该类，则返回一个空值；如果没有则返回当前类，这样保证了类只加载一次并结束递归
+    supercls = realizeClassWithoutSwift(remapClass(cls->superclass), nil);
+    metacls = realizeClassWithoutSwift(remapClass(cls->ISA()), nil);
+    
+...
+
+// Update superclass and metaclass in case of remapping -- class 是 双向链表结构 即父子关系都确认了
+// 将父类和元类给我们的类 分别是isa和父类的对应值
+cls->superclass = supercls;
+cls->initClassIsa(metacls);
+
+...
+
+// Connect this class to its superclass's subclass lists
+//双向链表指向关系 父类中可以找到子类 子类中也可以找到父类
+//通过addSubclass把当前类放到父类的子类列表中去
+if (supercls) {
+    addSubclass(supercls, cls);
+} else {
+    addRootClass(cls);
+}
+
+realizeClassWithoutSwift递归调用时，isa找到根元类之后，根元类的isa是指向自己，并不会返回nil，所以有以下递归终止条件，其目的是保证类只加载一次
+
+在realizeClassWithoutSwift中
+如果类不存在，则返回nil
+如果类已经实现，则直接返回cls
+
+static Class realizeClassWithoutSwift(Class cls, Class previously)
+{
+    runtimeLock.assertLocked();
+    
+    //如果类不存在，则返回nil
+    if (!cls) return nil;
+    如果类已经实现，则直接返回cls
+    if (cls->isRealized()) return cls;
+    ASSERT(cls == remapClass(cls));
+    
+    ...
+}
+
+在remapClass方法中，如果cls不存在，则直接返回nil
+/***********************************************************************
+* remapClass
+* Returns the live class pointer for cls, which may be pointing to 
+* a class struct that has been reallocated.
+* Returns nil if cls is ignored because of weak linking.
+* Locking: runtimeLock must be read- or write-locked by the caller
+**********************************************************************/
+static Class remapClass(Class cls)
+{
+    runtimeLock.assertLocked();
+
+    if (!cls) return nil;//如果cls不存在，则返回nil
+
+    auto *map = remappedClasses(NO);
+    if (!map)
+        return cls;
+    
+    auto iterator = map->find(cls);
+    if (iterator == map->end())
+        return cls;
+    return std::get<1>(*iterator);
+}
+
+
+【第三步】通过 methodizeClass 方法化类
+通过methodizeClass方法，从ro中读取方法列表（包括分类中的方法）、属性列表、协议列表赋值给rw，并返回cls
+// Attach categories 附加类别 -- 疑问：ro中也有方法列表 rw中也有方法列表，下面这个方法可以说明
+//将ro数据写入到rw
+methodizeClass(cls, previously);
+
+return cls;
+
+
+methodizeClass：方法化类
+主要分为几部分：
+将属性列表、方法列表、协议列表等贴到rwe中
+附加分类中的方法
+
+static void methodizeClass(Class cls, Class previously)
+{
+    runtimeLock.assertLocked();
+
+    bool isMeta = cls->isMetaClass();
+    auto rw = cls->data(); // 初始化一个rw
+    auto ro = rw->ro();
+    auto rwe = rw->ext();
+    
+    ...
+
+    // Install methods and properties that the class implements itself.
+    //将属性列表、方法列表、协议列表等贴到rw中
+    // 将ro中的方法列表加入到rw中
+    method_list_t *list = ro->baseMethods();//获取ro的baseMethods
+    if (list) {
+        prepareMethodLists(cls, &list, 1, YES, isBundleClass(cls));//methods进行排序
+        if (rwe) rwe->methods.attachLists(&list, 1);//对rwe进行处理
+    }
+    // 加入属性
+    property_list_t *proplist = ro->baseProperties;
+    if (rwe && proplist) {
+        rwe->properties.attachLists(&proplist, 1);
+    }
+    // 加入协议
+    protocol_list_t *protolist = ro->baseProtocols;
+    if (rwe && protolist) {
+        rwe->protocols.attachLists(&protolist, 1);
+    }
+
+    // Root classes get bonus method implementations if they don't have 
+    // them already. These apply before category replacements.
+    if (cls->isRootMetaclass()) {
+        // root metaclass
+        addMethod(cls, @selector(initialize), (IMP)&objc_noop_imp, "", NO);
+    }
+
+    // Attach categories.
+    // 加入分类中的方法
+    if (previously) {
+        if (isMeta) {
+            objc::unattachedCategories.attachToClass(cls, previously,
+                                                     ATTACH_METACLASS);
+        } else {
+            // When a class relocates, categories with class methods
+            // may be registered on the class itself rather than on
+            // the metaclass. Tell attachToClass to look for those.
+            objc::unattachedCategories.attachToClass(cls, previously,
+                                                     ATTACH_CLASS_AND_METACLASS);
+        }
+    }
+    objc::unattachedCategories.attachToClass(cls, cls,
+                                             isMeta ? ATTACH_METACLASS : ATTACH_CLASS);
+
+    ....
+}
+
+方法列表加入rwe的逻辑如下：
+获取ro的baseMethods
+通过prepareMethodLists方法排序
+对rwe进行处理即通过attachLists插入
+
+
+慢速查找流程中，方法的查找算法是通过二分查找算法，说明sel-imp是有排序的,那么是如何排序的呢？
+进入prepareMethodLists的源码实现,其内部是通过fixupMethodList方法排序
+static void 
+prepareMethodLists(Class cls, method_list_t **addedLists, int addedCount,
+                   bool baseMethods, bool methodsFromBundle)
+{
+    ...
+
+    // Add method lists to array.
+    // Reallocate un-fixed method lists.
+    // The new methods are PREPENDED to the method list array.
+
+    for (int i = 0; i < addedCount; i++) {
+        method_list_t *mlist = addedLists[i];
+        ASSERT(mlist);
+
+        // Fixup selectors if necessary
+        if (!mlist->isFixedUp()) {
+            fixupMethodList(mlist, methodsFromBundle, true/*sort*/);//排序
+        }
+    }
+    
+    ...
+}
+
+进入fixupMethodList源码实现，是根据selector address排序
+static void 
+fixupMethodList(method_list_t *mlist, bool bundleCopy, bool sort)
+{
+    runtimeLock.assertLocked();
+    ASSERT(!mlist->isFixedUp());
+
+    // fixme lock less in attachMethodLists ?
+    // dyld3 may have already uniqued, but not sorted, the list
+    if (!mlist->isUniqued()) {
+        mutex_locker_t lock(selLock);
+    
+        // Unique selectors in list.
+        for (auto& meth : *mlist) {
+            const char *name = sel_cname(meth.name);
+            meth.name = sel_registerNameNoLock(name, bundleCopy);
+        }
+    }
+
+    // Sort by selector address.根据sel地址排序
+    if (sort) {
+        method_t::SortBySELAddress sorter;
+        std::stable_sort(mlist->begin(), mlist->end(), sorter);
+    }
+    
+    // Mark method list as uniqued and sorted
+    mlist->setFixedUp();
+}
+
+
+验证方法排序:
+读取 ro中的 methodlist
+进入prepareMethodLists方法，将ro中的baseMethods进行排序
+进入fixupMethodList源码实现，（sel 根据selAdress 排序）
+所以总结如下：methodizeClass方法中实现类中方法（协议等）的序列化
+
+
+attachToClass方法:
+在methodlist方法主要是将分类添加到主类中，其源码实现如下
+void attachToClass(Class cls, Class previously, int flags)
+{
+    runtimeLock.assertLocked();
+    ASSERT((flags & ATTACH_CLASS) ||
+           (flags & ATTACH_METACLASS) ||
+           (flags & ATTACH_CLASS_AND_METACLASS));
+
+    
+    const char *mangledName  = cls->mangledName();
+    const char *LGPersonName = "LGPerson";
+
+    if (strcmp(mangledName, LGPersonName) == 0) {
+        bool kc_isMeta = cls->isMetaClass();
+        auto kc_rw = cls->data();
+        auto kc_ro = kc_rw->ro();
+        if (!kc_isMeta) {
+            printf("%s: 这个是我要研究的 %s \n",__func__,LGPersonName);
+        }
+    }
+    
+    
+    auto &map = get();
+    auto it = map.find(previously);//找到一个分类进来一次，即一个个加载分类，不要混乱
+
+    if (it != map.end()) {//这里会走进来：当主类没有实现load，分类开始加载，迫使主类加载，会走到if流程里面
+        category_list &list = it->second;
+        if (flags & ATTACH_CLASS_AND_METACLASS) {//判断是否是元类
+            int otherFlags = flags & ~ATTACH_CLASS_AND_METACLASS;
+            attachCategories(cls, list.array(), list.count(), otherFlags | ATTACH_CLASS);//实例方法
+            attachCategories(cls->ISA(), list.array(), list.count(), otherFlags | ATTACH_METACLASS);//类方法
+        } else {
+            //如果不是元类，则只走一次 attachCategories
+            attachCategories(cls, list.array(), list.count(), flags);
+        }
+        map.erase(it);
+    }
+}
+
+
+因为attachToClass中的外部循环是找到一个分类就会进到attachCategories一次，即找一个就循环一次
+
+
+attachCategories方法:
+在attachCategories 方法中准备分类的数据，其源码实现如下
+static void
+attachCategories(Class cls, const locstamped_category_t *cats_list, uint32_t cats_count,
+                 int flags)
+{
+    if (slowpath(PrintReplacedMethods)) {
+        printReplacements(cls, cats_list, cats_count);
+    }
+    if (slowpath(PrintConnecting)) {
+        _objc_inform("CLASS: attaching %d categories to%s class '%s'%s",
+                     cats_count, (flags & ATTACH_EXISTING) ? " existing" : "",
+                     cls->nameForLogging(), (flags & ATTACH_METACLASS) ? " (meta)" : "");
+    }
+
+    /*
+     * Only a few classes have more than 64 categories during launch.
+     * This uses a little stack, and avoids malloc.
+     *
+     * Categories must be added in the proper order, which is back
+     * to front. To do that with the chunking, we iterate cats_list
+     * from front to back, build up the local buffers backwards,
+     * and call attachLists on the chunks. attachLists prepends the
+     * lists, so the final result is in the expected order.
+     */
+    constexpr uint32_t ATTACH_BUFSIZ = 64;
+    method_list_t   *mlists[ATTACH_BUFSIZ];
+    property_list_t *proplists[ATTACH_BUFSIZ];
+    protocol_list_t *protolists[ATTACH_BUFSIZ];
+
+    uint32_t mcount = 0;
+    uint32_t propcount = 0;
+    uint32_t protocount = 0;
+    bool fromBundle = NO;
+    bool isMeta = (flags & ATTACH_METACLASS);
+    /*
+     rwe的创建，
+     那么为什么要在这里进行`rwe的初始化`？因为我们现在要做一件事：往`本类`中`添加属性、方法、协议`等
+     */
+    auto rwe = cls->data()->extAllocIfNeeded();
+        
+    //mlists 是一个二维数组
+    for (uint32_t i = 0; i < cats_count; i++) {
+        auto& entry = cats_list[i];
+
+        method_list_t *mlist = entry.cat->methodsForMeta(isMeta);
+        if (mlist) {
+            if (mcount == ATTACH_BUFSIZ) {//mcount = 0，ATTACH_BUFSIZ= 64，不会走到if里面的流程
+                prepareMethodLists(cls, mlists, mcount, NO, fromBundle);//准备排序
+                rwe->methods.attachLists(mlists, mcount);
+                mcount = 0;
+            }
+            mlists[ATTACH_BUFSIZ - ++mcount] = mlist;
+            fromBundle |= entry.hi->isBundle();
+        }
+
+        property_list_t *proplist =
+            entry.cat->propertiesForMeta(isMeta, entry.hi);
+        if (proplist) {
+            if (propcount == ATTACH_BUFSIZ) {
+                rwe->properties.attachLists(proplists, propcount);
+                propcount = 0;
+            }
+            proplists[ATTACH_BUFSIZ - ++propcount] = proplist;
+        }
+
+        protocol_list_t *protolist = entry.cat->protocolsForMeta(isMeta);
+        if (protolist) {
+            if (protocount == ATTACH_BUFSIZ) {
+                rwe->protocols.attachLists(protolists, protocount);
+                protocount = 0;
+            }
+            protolists[ATTACH_BUFSIZ - ++protocount] = protolist;
+        }
+    }
+
+    if (mcount > 0) {
+        prepareMethodLists(cls, mlists + ATTACH_BUFSIZ - mcount, mcount, NO, fromBundle);//排序
+        rwe->methods.attachLists(mlists + ATTACH_BUFSIZ - mcount, mcount);//mlists + ATTACH_BUFSIZ - mcount 为内存平移
+        if (flags & ATTACH_EXISTING) flushCaches(cls);
+    }
+
+    rwe->properties.attachLists(proplists + ATTACH_BUFSIZ - propcount, propcount);
+
+    rwe->protocols.attachLists(protolists + ATTACH_BUFSIZ - protocount, protocount);
+}
+
+在auto rwe = cls->data()->extAllocIfNeeded();是进行rwe的创建,那么为什么要在这里进行rwe的初始化？？因为我们现在要做一件事：往本类中添加属性、方法、协议等,即对原来的 clean memory要进行处理了
+
+进入extAllocIfNeeded方法的源码实现，判断rwe是否存在，如果存在则直接获取，如果不存在则开辟
+进入extAlloc源码实现，即对rwe 0-1的过程，在此过程中，就将本类的data数据加载进去了
+
+class_rw_ext_t *extAllocIfNeeded() {
+    auto v = get_ro_or_rwe();
+    if (fastpath(v.is<class_rw_ext_t *>())) { //判断rwe是否存在
+        return v.get<class_rw_ext_t *>();//如果存在，则直接获取
+    } else {
+        return extAlloc(v.get<const class_ro_t *>());//如果不存在则进行开辟
+    }
+}
+
+👇//extAlloc源码实现
+class_rw_ext_t *
+class_rw_t::extAlloc(const class_ro_t *ro, bool deepCopy)
+{
+    runtimeLock.assertLocked();
+    //此时只有rw，需要对rwe进行数据添加，即0-1的过程
+    auto rwe = objc::zalloc<class_rw_ext_t>();//创建
+    
+    rwe->version = (ro->flags & RO_META) ? 7 : 0;
+
+    method_list_t *list = ro->baseMethods();
+    if (list) {
+        if (deepCopy) list = list->duplicate();
+        rwe->methods.attachLists(&list, 1);
+    }
+
+    // See comments in objc_duplicateClass
+    // property lists and protocol lists historically
+    // have not been deep-copied
+    //
+    // This is probably wrong and ought to be fixed some day
+    property_list_t *proplist = ro->baseProperties;
+    if (proplist) {
+        rwe->properties.attachLists(&proplist, 1);
+    }
+
+    protocol_list_t *protolist = ro->baseProtocols;
+    if (protolist) {
+        rwe->protocols.attachLists(&protolist, 1);
+    }
+
+    set_ro_or_rwe(rwe, ro);
+    return rwe;
+}
+
+其中关键代码是rwe->methods.attachLists(mlists + ATTACH_BUFSIZ - mcount, mcount);即存入mlists的末尾，mlists的数据来源前面的for循环
+
+在调试运行时，发现category_t中的name编译时是LGPerson，运行时是LGA即分类的名字
+
+代码mlists[ATTACH_BUFSIZ - ++mcount] = mlist;，经过调试发现此时的mcount等于1，即可以理解为 倒序插入,64的原因是允许容纳64个（最多64个分类）
+
+总结:本类 中 需要添加属性、方法等，所以需要初始化rwe,
+rwe的初始化主要涉及：分类、addMethod、addProperty、addprotocol ， 即对原始类进行修改或者处理时，才会进行rwe的初始化
+
+
+
+attachLists方法：插入
+其中方法、属性继承于entsize_list_tt，协议则是类似entsize_list_tt实现，都是二维数组
+
+struct method_list_t : entsize_list_tt<method_t, method_list_t, 0x3> 
+
+struct property_list_t : entsize_list_tt<property_t, property_list_t, 0> 
+
+struct protocol_list_t {
+    // count is pointer-sized by accident.
+    uintptr_t count;
+    protocol_ref_t list[0]; // variable-size
+
+    size_t byteSize() const {
+        return sizeof(*this) + count*sizeof(list[0]);
+    }
+
+    protocol_list_t *duplicate() const {
+        return (protocol_list_t *)memdup(this, this->byteSize());
+    }
+    ...
+}
+
+
+进入attachLists方法的源码实现:
+void attachLists(List* const * addedLists, uint32_t addedCount) {
+    if (addedCount == 0) return;
+
+    if (hasArray()) {
+        // many lists -> many lists
+        //计算数组中旧lists的大小
+        uint32_t oldCount = array()->count;
+        //计算新的容量大小 = 旧数据大小+新数据大小
+        uint32_t newCount = oldCount + addedCount;
+        //根据新的容量大小，开辟一个数组，类型是 array_t，通过array()获取
+        setArray((array_t *)realloc(array(), array_t::byteSize(newCount)));
+        //设置数组大小
+        array()->count = newCount;
+        //旧的数据从 addedCount 数组下标开始 存放旧的lists，大小为 旧数据大小 * 单个旧list大小
+        memmove(array()->lists + addedCount, array()->lists, 
+                oldCount * sizeof(array()->lists[0]));
+        //新数据从数组 首位置开始存储，存放新的lists，大小为 新数据大小 * 单个list大小
+        memcpy(
+               array()->lists, addedLists, 
+               addedCount * sizeof(array()->lists[0]));
+    }
+    else if (!list  &&  addedCount == 1) {
+        // 0 lists -> 1 list
+        list = addedLists[0];//将list加入mlists的第一个元素，此时的list是一个一维数组
+    } 
+    else {
+        // 1 list -> many lists 有了一个list，有往里加很多list
+        //新的list就是分类，来自LRU的算法思维，即最近最少使用
+        //获取旧的list
+        List* oldList = list;
+        uint32_t oldCount = oldList ? 1 : 0;
+        //计算容量和 = 旧list个数+新lists的个数
+        uint32_t newCount = oldCount + addedCount;
+        //开辟一个容量和大小的集合，类型是 array_t，即创建一个数组，放到array中，通过array()获取
+        setArray((array_t *)malloc(array_t::byteSize(newCount)));
+        //设置数组的大小
+        array()->count = newCount;
+        //判断old是否存在，old肯定是存在的，将旧的list放入到数组的末尾
+        if (oldList) array()->lists[addedCount] = oldList;
+        // memcpy（开始位置，放什么，放多大） 是内存平移，从数组起始位置存入新的list
+        //其中array()->lists 表示首位元素位置
+        memcpy(array()->lists, addedLists, 
+               addedCount * sizeof(array()->lists[0]));
+    }
+}
+
+插入表主要分为三种情况：
+【情况1：多对多】如果当前调用attachLists的list_array_tt二维数组中有多个一维数组
+计算数组中旧lists的大小
+
+计算新的容量大小 = 旧数据大小+新数据大小
+
+根据新的容量大小，开辟一个数组，类型是 array_t，通过array()获取
+
+设置数组大小
+
+旧的数据从 addedCount 数组下标开始 存放旧的lists，大小为 旧数据大小 * 单个旧list大小，即整段平移，可以简单理解为原来的数据移动到后面，即指针偏移
+
+新数据从数组 首位置开始存储，存放新的lists，大小为 新数据大小 * 单个list大小，可以简单理解为越晚加进来，越在前面，越在前面，调用时则优先调用
+
+【情况2：0对一】如果调用attachLists的list_array_tt二维数组为空且新增大小数目为 1
+直接赋值addedList的第一个list
+
+【情况3：一对多】如果当前调用attachLists的list_array_tt二维数组只有一个一维数组
+获取旧的list
+
+计算容量和 = 旧list个数+新lists的个数
+
+开辟一个容量和大小的集合，类型是 array_t，即创建一个数组，放到array中，通过array()获取
+
+设置数组的大小
+
+判断old是否存在，old肯定是存在的，将旧的list放入到数组的末尾
+
+memcpy（开始位置，放什么，放多大） 是内存平移，从数组起始位置开始存入新的list，其中array()->lists 表示首位元素位置
+
+
+针对情况3，这里的lists是指分类
+这是日常开发中，为什么子类实现父类方法会把父类方法覆盖的原因
+同理，对于同名方法，分类方法覆盖类方法的原因
+这个操作来自一个算法思维 LRU即最近最少使用，加这个newlist的目的是由于要使用这个newlist中的方法，这个newlist对于用户的价值要高，即优先调用
+会来到1对多的原因 ，主要是有分类的添加，即旧的元素在后面，新的元素在前面 ，究其根本原因主要是优先调用category，这也是分类的意义所在
+
+
+memmove和memcpy的区别
+在不知道需要平移的内存大小时，需要memmove进行内存平移，保证安全
+memcpy从原内存地址的起始位置开始拷贝若干个字节到目标内存地址中，速度快
+
+
+==================================================rwe 数据加载:
+rwe -- 本类的数据加载
+rwe数据0-1的过程，即添加类的方法列表
+
+attachCategories -> extAllocIfNeeded -> extAlloc
+attachCategories方法中auto rwe = cls->data()->extAllocIfNeeded()。这里的作用是 开辟rwe
+在attachLists方法中的if (hasArray()) {处设置断点，并运行断住，继续往下执行，会走到 else-if流程，即0对1 -- LGPerson本类的方法列表的添加 会走 0对1流程
+p addedLists ，此时是一个list指针的地址，给了mlists的第一个元素, 类型是method_list_t *const *
+总结:
+所以 0对1是一种一维赋值，函数路径为：
+map_images -> _read_images -> readClass -> realizeClassWithoutSwift -> methodizeClass -> prepareMethodLists -> fixupMethodList -> attachToClass -> load_categories_nolock -> attachCategories -> extAllocIfNeeded -> extAlloc -> attachLists
+
+
+method_list_t *list = ro->baseMethods();
+list[0]:
+list 是一个指向 method_list_t 的指针。
+list[0] 表示指针 list 所指向的 method_list_t 结构体。
+换句话说，list[0] 是 method_list_t 数组的第一个元素，实际上就是 *list。
+(&list)[0]:
+&list 是一个指向 method_list_t* 的指针（指针的指针）。
+(&list)[0] 表示 &list 所指向的内容，即 list 本身。
+
+method_list_t methodList1;
+method_list_t *list = &methodList1;
+
+// list[0] 是指向 methodList1 的第一个元素，即 methodList1 本身
+method_list_t firstList = list[0]; // 等同于 methodList1
+
+// &list 是一个指向 list 的指针，(&list)[0] 就是 list 本身
+method_list_t *sameList = (&list)[0]; // 等同于 list
+
+// 进一步验证 sameList 和 list 是同一个指针
+if (sameList == list) {
+    printf("sameList and list are the same.\n");
+}
+
+--------------------------------------------------
+
+method_list_t methodList1;
+method_list_t *list = &methodList1;
+
+// &list 是一个指向 list 的指针
+method_list_t **listPtr = &list;
+
+// (&list)[0] 等同于 *(&list)
+method_list_t *sameList1 = (&list)[0];
+method_list_t *sameList2 = *(&list);
+
+// 进一步验证 sameList1 和 sameList2 是否等同于 list
+if (sameList1 == list && sameList2 == list) {
+    printf("sameList1, sameList2, and list are the same.\n");
+}
+
+
+
+rwe -- LGA分类数据加载
+走到method_list_t *mlist = entry.cat->methodsForMeta(isMeta);
+p mlist
+p *$10 ，此时的mlist是 分类LGA 的
+在if (mcount > 0) {部分加断点，继续往下执行
+往下执行一步，此时的mlists 为集合的集合
+
+其中mlists + ATTACH_BUFSIZ - mcount为内存平移
+p mlists + ATTACH_BUFSIZ - mcount , 因为mcount = 1， ATTACH_BUFSIZ = 64，从首位平移到63位，即最后一个元素
+mlists最后一个元素的内容为 本类的方法列表
+进入attachLists方法， 在if (hasArray()) {处加断点，继续执行，由于已经有了一个list，所以 会走到 1对多的流程
+执行到最后，输出当前的array 即 p array()
+这个list_array_tt<method_t, method_list_t>表示 array中会放很多的 method_list_t，method_list_t中会放很多method_t
+总结:如果本类只有一个分类，则会走到情况3，即1对多的情况
+
+
+
+rwe -- LGB分类数据加载
+如果再加一个分类LGB，走到第三种情况，即多对多
+再次走到attachCategories -- if (mcount > 0) {，进入attachLists，走到 多对多的情况
+查看当前 array 的形式 即 p array()
+第一个里面存储的LGB的方法列表
+
+
+总结:
+综上所述，attachLists方法主要是将类 和 分类 的数据加载到rwe中
+首先加载本类的data数据，此时的rwe没有数据为空，走0对1流程
+当加入一个分类时，此时的rwe仅有一个list，即本类的list，走1对多流程
+再加入一个分类时，此时的rwe中有两个list，即本类+分类的list，走多对多流程
+
+
+
+懒加载类 和 非懒加载类:
+在验证方法排序的基础上，继续在rwe加断点，此时为NULL
+继续往下一步步执行，rwe仍为NULL，不会走if里面的流程
+在这里，尽管方法处理完毕，但是并没有从rw中存储到rwe中，那么问题来了，到目前为止，从data -> ro -> rw -> 看到了rwe,即realizeClassWithoutSwift（ro、rw操作）-> methodizeClass，但是并没有走if里面的流程，为什么？
+究其根本原因是_read_images方法中的第九步 实现非懒加载类，那么我们是如何将 懒加载类 变成 非懒加载类的呢?
+主要是在运行objc源码前，我们在LGPerson中实现了一个+load方法，反之，如果去掉+load方法，是懒加载类，不会走到第九步的for循环中
+所以，综上所述，懒加载类和 非懒加载类的区别 就是 是否实现了+load方法
+实现+load，则是非懒加载类，
+反之，是懒加载类
+
+为什么实现load方法就会变成非懒加载类？
+主要是因为load会提前加载（load方法会在load_images 调用，前提是类存在）
+
+懒加载类在什么时候加载？
+在调用方法的时候加载
+
+
+
+调试验证 懒加载类加载的时机:
+通过代码调试来验证:
+注释掉LGPerson中的+load方法,并在main中实例化person处加一个断点
+在_read_images的第九步 for循环加一个断点 -- readClass -- main的断点处
+继续往下执行，走到 realizeClassWithoutSwift -- methodizeClass -- prepareMethodLists -- [person kc_instanceMethod1]
+
+堆栈信息验证:
+也可以通过bt 堆栈信息查看.其本质是因为 走到realizeClassWithoutSwift，其本质是调用alloc，即消息的发送
+
+
+总结:
+readClass主要是读取类，即此时的类仅有地址+名称，还没有data数据
+realizeClassWithoutSwift主要是实现类，即将类的data数据读取到内存中
+    methodizeClass方法中实现类中方法（协议等）的`序列化
+    attachCategories方法中实现类以及分类的数据加载
+
+
+==================================================
+上面理解了类是如何从Mach-O加载到内存中
+来解释下分类是如何加载到类中的，以及分类和类搭配使用的情况
+
+在main中定义LGperson的分类LG
+
+探索分类的本质，有以下三种方式
+【方式一】通过clang
+【方式二】通过Xcode文档搜索Category
+【方式三】通过objc源码搜索 category_t
+
+
+方式一：通过clang
+【方式一】clang -rewrite-objc main.m -o main.cpp 查看底层编译，即 main.cpp
+其中分类的 类型是_category_t
+分类的倒数第二个0，表示的是没有协议，所以赋值为0
+
+搜索struct _category_t
+其中有两个method_list_t，分别表示实例方法 和 类方法
+搜索_CATEGORY_INSTANCE_METHODS_LGPerson_，找到其底层实现
+其中有3个方法，格式为：sel+签名+地址，是method_t结构体的属性即key
+搜索method_t，其中对应关系如下:
+name 对应 sel
+type 对应 方法签名
+imp 对应 函数地址
+
+同时，我们发现了一个问题：查看看_prop_list_t，明明分类中定义了属性，但是在底层编译中并没有看到属性
+这是因为分类中定义的属性没有相应的set、get方法，我们可以通过关联对象来设置
+
+
+方式二：通过Xcode文档搜索 Category
+
+
+方式三：通过objc源码搜索 category_t
+可以通过objc源码搜索category_t类型
+
+
+总结:
+综上所述，分类的本质 是一个_category_t类型
+有两个属性：name（类的名称） 和 cls（类对象）
+有两个 method_list_t类型的方法列表，表示分类中实现的实例方法+类方法
+一个protocol_list_t类型的协议列表，表示分类中实现的协议
+一个prop_list_t类型的属性列表，表示分类中定义的属性，一般在分类中添加的属性都是通过关联对象来实现
+需要注意的是，分类中的属性是没有set、get方法
+
+
+
+分类的加载:
+创建LGPerson的两个分类：LGA、LGB
+分类的加载顺序是：LGA -> LGB的顺序加载到类中，即越晚加进来，越在前面
+
+###
+其中查看methodizeClass的源码实现，可以发现类的数据和 分类的数据是分开处理的，主要是因为在编译阶段，就已经确定好了方法的归属位置（即实例方法存储在类中，类方法存储在元类中），
+而分类是后面才加进来的
+###
+
+其中分类需要通过attatchToClass添加到类，然后才能在外界进行使用
+分类的加载主要分为3步：
+分类数据加载时机：根据类和分类是否实现load方法来区分不同的时机
+attachCategories准备分类数据
+attachLists将分类数据添加到主类中
+
+
+
+
+分类的加载时机:
+==================================================以主类LGPerson + 分类LGA、LGB 均实现+load方法为例
+
+什么时候调用attachCategories的,有两个方法中调用
+load_categories_nolock方法中
+addToClass方法中，这里经过调试发现，从来不会进到if流程中，除非加载两次，一般的类一般只会加载一次
+不加任何断点，运行objc代码，可以得出以下打印日志，通过日志可以发现addToClass方法的下一步就是load_categories_nolock方法就是加载分类数据
+
+全局搜索load_categories_nolock的调用，有两次调用
+一次在loadAllCategories方法中
+一次在_read_images方法中
+但是经过调试发现，是不会走_read_images方法中的if流程的，而是走的loadAllCategories方法中的
+
+全局搜索查看loadAllCategories的调用，发现是在load_images时调用的
+
+
+通过堆栈信息分析:
+在attachCategories中加自定义逻辑的断点，bt查看堆栈信息
+
+所以综上所述，该情况下的分类的数据加载时机的反推路径为：attachCategories -> load_categories_nolock -> loadAllCategories -> load_images
+
+而我们的分类加载正常的流程的路径为：realizeClassWithoutSwift -> methodizeClass -> attachToClass ->attachCategories
+
+
+
+==================================================再来看一种情况：主类+分类LGA实现+load，分类LGB不实现+load方法
+断点定在attachCategories中加自定义逻辑部分，一步步往下执行
+p entry.cat// LGA
+继续往下执行，会再次来到 attachCategories方法中
+p entry.cat// LGB
+
+总结：只要有一个分类是非懒加载分类，那么所有的分类都会被标记位非懒加载分类，意思就是加载一次 已经开辟了rwe，就不会再次懒加载，重新去处理 LGPerson
+
+
+分类和类的搭配使用:
+通过上面的两个例子，我们可以大致将类 和 分类 是否实现+load的情况分为4种
+
+类+分类			
+                  分类实现+load	            分类未实现+load	
+类实现+load	       非懒加载类+非懒加载分类	    非懒加载类+懒加载分类	
+类未实现+load	    懒加载类+非懒加载分类	    懒加载类+懒加载分类
+
+【情况1】非懒加载类 + 非懒加载分类
+【情况2】非懒加载类 + 懒加载分类
+【情况3】懒加载类 + 懒加载分类
+【情况4】懒加载类 + 非懒加载分类
+
+
+非懒加载类 与 非懒加载分类:
+即主类实现了+load方法，分类同样实现了+load方法，在前文分类的加载时机时，我们已经分析过这种情况，所以可以直接得出结论，这种情况下
+类的数据加载是通过_getObjc2NonlazyClassList加载，即ro、rw的操作，对rwe赋值初始化，是在extAlloc方法中
+分类的数据加载是通过load_images加载到类中的
+
+其调用路径为:
+map_images -> map_images_nolock -> _read_images -> readClass -> _getObjc2NonlazyClassList -> realizeClassWithoutSwift -> methodizeClass -> attachToClass ,此时的mlists是一维数组，然后走到load_images部分
+
+load_images --> loadAllCategories -> load_categories_nolock -> load_categories_nolock -> attachCategories -> attachLists，此时的mlists是二维数组
+
+
+非懒加载类 与 懒加载分类:
+即主类实现了+load方法，分类未实现+load方法
+打开realizeClassWithoutSwift中的自定义断点，看一下ro
+方法的顺序是 LGB—LGA-LGPerson类，此时分类已经 加载进来了，但是还没有排序，说明在没有进行非懒加载时，通过cls->data读取Mach-O数据时，数据就已经编译进来了，不需要运行时添加进去
+来到methodizeClass方法中断点部分
+p list
+来到prepareMethodLists的for循环部分
+来到fixupMethodList方法中的if (sort) {部分
+其中SortBySELAddress的源码实现如下：根据名字的地址进行排序
+走到mlist->setFixedUp();，在读取list
+p mlist
+通过打印发现，仅对同名方法进行了排序，而分类中的其他方法是不需要排序的，其你imp地址是有序的（从小到大） -- fixupMethodList中的排序只针对 name 地址进行排序
+
+总结：非懒加载类 与 懒加载分类的数据加载，有如下结论：
+类 和 分类的加载是在read_images就加载数据了
+其中data数据在编译时期就已经完成了
+
+
+懒加载类 与 懒加载分类:
+即主类和分类均未实现+load方法
+其中realizeClassMaybeSwiftMaybeRelock是消息流程中慢速查找中有的函数，即在第一次调用消息时才有的函数
+在readClass断住,然后读取kc_ro，即读取整个data
+此时的baseMethodList的count还是16，说明也是从data中读取出来的，所以不需要经过一层缓慢的load_images加载进来
+总结：懒加载类 与 懒加载分类的数据加载是在消息第一次调用时加载
+
+
+懒加载类 与 非懒加载分类:
+即主类未实现+load方法， 分类实现了+load方法
+在打印的日志中没有看到load_categories_nolock方法，查看attachCategories -- extAlloc -- attachToClass -- attachCategories，在attachToClass中加断点
+在readClass方法中断住，查看kc_ro
+其中baseMethodList的count是8个，打印看看：对象方法3个+属性的setget方法共4个+1个cxx方法 ，即 现在只有主类的数据
+
+为了调试分类的数据加载， 继续往下执行，bt查看堆栈：load_images -> loadAllCategories -> load_categories_nolock
+总结：懒加载类 + 非懒加载分类的数据加载，只要分类实现了load，会迫使主类提前加载,即 主类 强行转换为 非懒加载类样式
+
+
+
+总结:
+类和分类搭配使用，其数据的加载时机总结如下：
+【情况1】非懒加载类 + 非懒加载分类，其数据的加载在load_images方法中，首先对类进行加载，然后把分类的信息贴到类中
+【情况2】非懒加载类 + 懒加载分类，其数据加载在read_image就加载数据，数据来自data，data在编译时期就已经完成，即data中除了类的数据，还有分类的数据，与类绑定在一起
+【情况3】懒加载类 + 懒加载分类 ，其数据加载推迟到 第一次消息时，数据同样来自data，data在编译时期就已经完成
+【情况4】懒加载类 + 非懒加载分类 ，只要分类实现了load，会迫使主类提前加载，即在_read_images中不会对类做实现操作，需要在load_images方法中触发类的数据加载，即rwe初始化，同时加载分类数据
+
+
+
+==================================================load_images原理分析
+load_images方法的主要作用是加载镜像文件，其中最重要的有两个方法：prepare_load_methods（加载） 和 call_load_methods（调用）
+
+进入prepare_load_methods源码:
+进入_getObjc2NonlazyClassList -> schedule_class_load源码,这里主要是根据类的继承链递归调用获取load，直到cls不存在才结束递归，目的是为了确保父类的load优先加载
+
+进入add_class_to_loadable_list，主要是将load方法和cls类名一起加到loadable_classes表中
+
+进入getLoadMethod，主要是获取方法的sel为load的方法
+
+_getObjc2NonlazyCategoryList -> realizeClassWithoutSwift -> add_category_to_loadable_list ,主要是将非懒加载分类的load方法加入表中
+
+进入add_category_to_loadable_list实现,获取所有的非懒加载分类中的load方法，将分类名+load加入表loadable_categories
+
+
+进入call_load_methods源码，主要有3部分操作:
+反复调用类的+load，直到不再有
+调用一次分类的+load
+如果有类或更多未尝试的分类，则运行更多的+load
+
+进入call_class_loads，主要是加载类的load方法
+其中load方法中有两个隐藏参数，第一个为id 即self，第二个为sel，即cmd
+
+call_category_loads，主要是加载一次分类的load方法
+
+原理主要分为两步:
+从所有的非懒加载类和分类中的+load分别添加到表中
+调用类和分类的+load方法

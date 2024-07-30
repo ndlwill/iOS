@@ -1151,3 +1151,197 @@ methods list 中只有 实例方法，没有类方法
 可以得出以下结论:
 类的实例方法存储在类的bits属性中，通过bits --> methods() --> list获取实例方法列表，例如CJLPersong类的实例方法sayHello 就存储在 CJLPerson类的bits属性中，类中的方法列表除了包括实例方法，还包括属性的set方法 和 get方法
 类的类方法存储在元类的bits属性中，通过元类bits --> methods() --> list获取类方法列表，例如CJLPerson中的类方法sayBye 就存储在CJLPerson类的元类（名称也是CJLPerson）的bits属性中
+
+
+==================================================OC底层面试
+（1）Runtime Asssociate方法关联的对象，需要在dealloc中释放?
+当我们对象释放时，会调用dealloc
+1、C++函数释放 ：objc_cxxDestruct
+2、移除关联属性：_object_remove_assocations
+3、将弱引用自动设置nil：weak_clear_no_lock(&table.weak_table, (id)this);
+4、引用计数处理：table.refcnts.erase(this）
+5、销毁对象：free(obj)
+所以，关联对象不需要我们手动移除，会在对象析构即dealloc时释放
+
+
+dealloc 源码:
+dealloc的源码查找路径为：dealloc -> _objc_rootDealloc -> rootDealloc -> object_dispose（释放对象）-> objc_destructInstance -> _object_remove_assocations
+
+在objc源码中搜索dealloc的源码实现
+进入_objc_rootDealloc源码实现，主要是对对象进行析构
+进入rootDealloc源码实现，发现其中有关联属性时设置bool值，当有这些条件时，需要进入else流程
+进入object_dispose源码实现，主要是销毁实例对象
+进入objc_destructInstance源码实现，在这里有移除关联属性的方法
+进入_object_remove_assocations源码，关联属性的移除，主要是从全局哈希map中找到相关对象的迭代器，然后将迭代器中关联属性，从头到尾的移除
+
+
+（2）方法的调用顺序
+类的方法 和 分类方法 重名，如果调用，是什么情况？
+
+如果同名方法是普通方法，包括initialize -- 先调用分类方法
+    因为分类的方法是在类realize之后 attach进去的，插在类的方法的前面，所以优先调用分类的方法（注意：不是分类覆盖主类！！）
+    initialize方法什么时候调用？ initialize方法也是主动调用，即第一次消息时调用，为了不影响整个load，可以将需要提前加载的数据写到initialize中
+如果同名方法是load方法 -- 先 主类load，后分类load（分类之间，看编译的顺序）
+
+
+(3)Runtime是什么？
+runtime是由C和C++汇编实现的一套API，为OC语言加入了 面向对象、以及运行时的功能
+平时编写的OC代码，在程序运行的过程中，其实最终会转换成runtime的C语言代码， runtime是OC的幕后工作者
+运行时是指将数据类型的确定由编译时 推迟到了 运行时
+
+extension 和 category 的区别:
+category 类别、分类
+专门用来给类添加新的方法
+不能给类添加成员属性，添加了成员属性，也无法取到
+注意：其实可以通过runtime 给分类添加属性，即属性关联，重写setter、getter方法
+分类中用@property 定义变量，只会生成变量的setter、getter方法的声明，不能生成方法实现 和 带下划线的成员变量
+
+extension 类扩展
+可以说成是特殊的分类 ，也可称作 匿名分类
+可以给类添加成员属性，但是是私有变量
+可以给类添加方法，也是私有方法
+
+
+(4)方法的本质，sel是什么？IMP是什么？两者之间的关系又是什么？
+方法的本质：发送消息，消息会有以下几个流程
+快速查找（objc_msgSend） - cache_t缓存消息中查找
+慢速查找 - 递归自己|父类 - lookUpImpOrForward
+查找不到消息：动态方法解析 - resolveInstanceMethod
+消息快速转发 - forwardingTargetForSelector
+消息慢速转发 - methodSignatureForSelector & forwardInvocation
+
+
+sel是方法编号 - 在read_images期间就编译进了内存
+imp是函数实现指针 ，找imp就是找函数的过程
+
+
+(5)能否向编译后得到的类中增加实例变量？能否向运行时创建的类中添加实例变量
+1、不能向编译后的得到的类中增加实例变量
+2、只要类没有注册到内存还是可以添加的
+3、可以添加属性+方法
+【原因】：编译好的实例变量存储的位置是ro，一旦编译完成，内存结构就完全确定了
+
+
+(6)[self class]和[super class]的区别以及原理分析
+[self class]就是发送消息 objc_msgSend，消息接收者是self，方法编号 class
+###
+[super class] 本质就是objc_msgSendSuper，消息的接收者还是 self，方法编号 class，
+在运行时，底层调用的是_objc_msgSendSuper2
+###
+只是 objc_msgSendSuper2 会更快，直接跳过self的查找
+
+进入[self class]中的class源码
+- (Class)class {
+    return object_getClass(self);
+}
+
+Class object_getClass(id obj)
+{
+    if (obj) return obj->getIsa();
+    else return Nil;
+}
+
+其底层是获取对象的isa，当前的对象是LGTeacher，其isa是同名的LGTeacher，所以[self class]打印的是LGTeacher
+
+[super class]中，其中super 是语法的 关键字，可以通过clang 看super的本质
+其中第一个参数是消息接收者，是一个__rw_objc_super结构
+底层源码中搜索__rw_objc_super，是一个中间结构体
+
+objc中搜索objc_msgSendSuper，查看其隐藏参数
+搜索struct objc_super
+通过clang的底层编译代码可知，当前消息的接收者 等于 self，而self 等于 LGTeacher，所以 [super class]进入class方法源码后，其中的self是init后的实例对象，实例对象的isa指向的是本类，即消息接收者是LGTeacher本类
+
+再来看[super class]在运行时是否如上一步的底层编码所示
+打开汇编调试，调试结果如下
+搜索objc_msgSendSuper2，从注释得知，是从 类开始查找，而不是父类
+查看objc_msgSendSuper2的汇编源码，是从superclass中的cache中查找方法
+
+ENTRY _objc_msgSendSuper2
+UNWIND _objc_msgSendSuper2, NoFrame
+
+ldp p0, p16, [x0]       // p0 = real receiver, p16 = class 取出receiver 和 class
+ldr p16, [x16, #SUPERCLASS] // p16 = class->superclass
+CacheLookup NORMAL, _objc_msgSendSuper2//cache中查找--快速查找
+
+END_ENTRY _objc_msgSendSuper2
+
+所以，最完整的回答如下:
+[self class]方法调用的本质是 发送消息，调用class的消息流程，拿到元类的类型，在这里是因为类已经加载到内存，所以在读取时是一个字符串类型，这个字符串类型是在map_images的readClass时已经加入表中，所以打印为LGTeacher
+[super class]打印的是LGTeacher，原因是当前的super是一个关键字，在这里只调用objc_msgSendSuper2，其实他的消息接收者和[self class]是一模一样的，所以返回的是LGTeacher
+
+
+(7)内存平移
+Class cls = [LGPerson class];
+void  *kc = &cls;  //
+[(__bridge id)kc saySomething];
+LGPerson中有一个属性 kc_name 和一个实例方法saySomething，通过上面代码这种方式，能否调用实例方法？为什么？
+
+我们在日常开发中的调用方式是下面这种
+LGPerson *person = [LGPerson alloc];
+[person saySomething];
+
+通过运行发现，是可以执行的
+person的 isa指向类LGPerson 即person的首地址 指向 LGPerson的首地址，我们可以通过LGPerson的内存平移找到cache，在cache中查找方法
+[(__bridge id)kc saySomething]中的kc是来自于LGPerson 这个类，然后有一个指针kc，将其指向LGPerson的首地址
+所以，person是指向LGPerson类的结构，kc也是指向LGPerson类的结构，然后都是在LGPerson中的methodList中查找方法
+
+
+栈是一个先进后出的结构，参数传入就是一个不断压栈的过程，
+其中隐藏参数会压入栈，且每个函数都会有两个隐藏参数(id self，sel _cmd)
+隐藏参数压栈的过程，其地址是递减的，而栈是从高地址->低地址 分配的，即在栈中，参数会从前往后一直压
+
+viewDidLoad {
+struct kc_struct {
+    NSNumber *num1;
+    NSNumber *num2;
+} kc_struct;
+struct kc_struct kcs = {@(10), @(20)};
+LGPerson *person3 = [LGPerson alloc];
+
+Class cls = [LGPerson class];
+void  *kc = &cls;  //
+
+}
+
+p &person3 0x00007ffee83a8088
+p *(NSNumber **)0x00007ffee83a8090
+p *(NSNumber **)0x00007ffee83a8098
+可以得出 20先加入，再加入10，因此结构体内部的压栈情况是 低地址->高地址，递增的，栈中结构体内部的成员是反向压入栈，即低地址->高地址，是递增的，
+
+super通过clang查看底层的编译，是objc_msgSendSuper，其第一个参数是一个结构体__rw_objc_super（self，class_getSuperclass），那么结构体中的属性是如何压栈的？
+所以到目前为止，栈中从高地址到低地址的顺序的：self - _cmd - (id)class_getSuperclass(objc_getClass("ViewController")) - self - cls - kc - person
+
+self和_cmd是viewDidLoad方法的两个隐藏参数，是高地址->低地址正向压栈的
+class_getSuperClass 和 self为objc_msgSendSuper2中的结构体成员，是从最后一个成员变量，即低地址->高地址反向压栈的
+
+
+哪些东西在栈里 哪些在堆里:
+alloc的对象 都在堆中
+指针、对象 在栈中，例如person指向的空间在堆中，person所在的空间在栈中
+临时变量在栈中
+属性值 在堆，属性随对象是在栈中
+
+
+堆是从小到大，即低地址->高地址
+栈是从大到小，即从高地址->低地址分配
+函数隐藏参数会从前往后一直压，即 从高地址->低地址 开始入栈，
+结构体内部的成员是从低地址->高地址
+一般情况下，内存地址有如下规则
+0x60 开头表示在 堆中
+0x70 开头的地址表示在 栈中
+0x10 开头的地址表示在全局区域中
+
+
+Person *p = [[Person alloc] init];
+NSLog(@"%@ %p %p", p, p, &p);
+<Person: 0x600000010320> 0x600000010320 0x16b4af918
+%@: 打印 Person 对象的描述，假设 Person 类没有覆盖 description 方法，默认实现会打印对象的类名和内存地址，例如 <Person: 0x600003bcc800>。
+%p (第一个): 打印指向 Person 对象的指针的地址
+%p (第二个): 打印指向指针 p 自身的指针的地址
+
+
+(8)Runtime是如何实现weak的，为什么可以自动置nil
+1、通过SideTable 找到我们的 weak_table
+2、weak_table 根据 referent找到或者创建 weak_entry_t
+3、然后append_referrer（entry，referrer）将我的新弱引用的对象加进去entry
+4、最后 weak_entry_insert，把entry加入到我们的weak_table

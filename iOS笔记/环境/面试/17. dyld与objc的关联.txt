@@ -1,0 +1,351 @@
+_objc_init 源码解析:
+看下libObjc中的_objc_init方法源码
+
+void _objc_init(void)
+{
+    static bool initialized = false;
+    if (initialized) return;
+    initialized = true;
+    
+    // fixme defer initialization until an objc-using image is found?
+    //读取影响运行时的环境变量，如果需要，还可以打开环境变量帮助 export OBJC_HELP = 1
+    environ_init();
+    //关于线程key的绑定，例如线程数据的析构函数
+    tls_init();
+    //运行C++静态构造函数，在dyld调用我们的静态构造函数之前，libc会调用_objc_init(),因此我们必须自己做
+    static_init();
+    //runtime运行时环境初始化，里面主要是unattachedCategories、allocatedClasses -- 分类初始化
+    runtime_init();
+    //初始化libobjc的异常处理系统
+    exception_init();
+    //缓存条件初始化
+    cache_init();
+    //启动回调机制，通常这不会做什么，因为所有的初始化都是惰性的，但是对于某些进程，我们会迫不及待地加载trampolines dylib
+    _imp_implementationWithBlock_init();
+
+    /*
+     _dyld_objc_notify_register -- dyld 注册的地方
+     - 仅供objc运行时使用
+     - 注册处理程序，以便在映射、取消映射 和初始化objc镜像文件时使用，dyld将使用包含objc_image_info的镜像文件数组，回调 mapped 函数
+     
+     map_images:dyld将image镜像文件加载进内存时，会触发该函数
+     load_images：dyld初始化image会触发该函数
+     unmap_image：dyld将image移除时会触发该函数
+     */
+    _dyld_objc_notify_register(&map_images, load_images, unmap_image);
+
+#if __OBJC2__
+    didCallDyldNotifyRegister = true;
+#endif
+}
+
+
+主要分为以下几部分:
+environ_init：初始化一系列环境变量，并读取影响运行时的环境变量
+tls_init：关于线程key的绑定
+static_init：运行C++静态构造函数（只会运行系统级别的构造函数），在dyld调用静态析构函数之前，libc会调用_objc_init
+runtime_init：runtime运行时环境初始化，里面操作是unattachedCategories、allocatedClasses（表的初始化）
+exception_init：初始化libObjc的异常处理系统
+cache_init： cache缓存初始化
+_imp_implementationWithBlock_init ：启动回调机制，通常这不会做什么，因为所有的初始化都是惰性的，但是对于某些进程，我们会迫不及待地加载trampolines dylib
+_dyld_objc_notify_register： dyld的注册
+
+
+1、environ_init方法：环境变量初始化
+void environ_init(void) 
+{
+    //...省略部分逻辑
+if (PrintHelp  ||  PrintOptions) {
+        //...省略部分逻辑
+        for (size_t i = 0; i < sizeof(Settings)/sizeof(Settings[0]); i++) {
+            const option_t *opt = &Settings[i];            
+            if (PrintHelp) _objc_inform("%s: %s", opt->env, opt->help);
+            if (PrintOptions && *opt->var) _objc_inform("%s is set", opt->env);
+        }
+    }
+}
+
+有以下两种方式可以打印所有的环境变量:
+将for循环单独拿出来，去除所有条件，打印环境变量
+通过终端命令export OBJC_hrlp = 1,打印环境变量
+
+这些环境变量，均可以通过target -- Edit Scheme -- Run --Arguments -- Environment Variables配置，其中常用的环境变量主要有以下几个
+DYLD_PRINT_STATISTICS：设置 DYLD_PRINT_STATISTICS 为YES，控制台就会打印 App 的加载时长，包括整体加载时长和动态库加载时长，即main函数之前的启动时间（查看pre-main耗时），可以通过设置了解其耗时部分，并对其进行启动优化。
+
+OBJC_DISABLE_NONPOINTER_ISA：杜绝生成相应的nonpointer isa（nonpointer isa指针地址 末尾为1 ），生成的都是普通的isa
+所以OBJC_DISABLE_NONPOINTER_ISA可以控制isa优化开关，从而优化整个内存结构
+
+非指针引用（Non-pointer references）:
+在某些情况下，数据可以直接嵌入到引用中，而不是通过指针引用堆上的内存。
+
+OBJC_PRINT_LOAD_METHODS：打印 Class 及 Category 的 + (void)load 方法的调用信息
+在LGPerson类中重写+load函数查看效果
+OBJC_PRINT_LOAD_METHODS可以监控所有的+load方法，从而处理启动优化
+
+NSDoubleLocalizedStrings：项目做国际化本地化(Localized)的时候是一个挺耗时的工作，想要检测国际化翻译好的语言文字UI会变成什么样子，可以指定这个启动项。可以设置 NSDoubleLocalizedStrings 为YES。
+
+NSShowNonLocalizedStrings：在完成国际化的时候，偶尔会有一些字符串没有做本地化，这时就可以设置NSShowNonLocalizedStrings 为YES，所有没有被本地化的字符串全都会变成大写。
+
+
+2、tls_init：线程key的绑定
+主要是本地线程池的初始化以及析构
+
+void tls_init(void)
+{
+#if SUPPORT_DIRECT_THREAD_KEYS//本地线程池，用来进行处理
+    pthread_key_init_np(TLS_DIRECT_KEY, &_objc_pthread_destroyspecific);//初始init
+#else
+    _objc_pthread_key = tls_create(&_objc_pthread_destroyspecific);//析构
+#endif
+}
+
+
+3、static_init：运行系统级别的C++静态构造函数
+主要是运行系统级别的C++静态构造函数，在dyld调用我们的静态构造函数之前，libc调用_objc_init方法，即系统级别的C++构造函数 先于 自定义的C++构造函数 运行
+static void static_init()
+{
+    size_t count;
+    auto inits = getLibobjcInitializers(&_mh_dylib_header, &count);
+    for (size_t i = 0; i < count; i++) {
+        inits[i]();
+    }
+}
+
+
+4、runtime_init：运行时环境初始化
+主要是运行时的初始化，主要分为两部分：分类初始化、类的表初始化
+void runtime_init(void)
+{
+    objc::unattachedCategories.init(32);
+    objc::allocatedClasses.init(); //初始化 -- 开辟的类的表
+}
+
+
+5、exception_init：初始化libobjc的异常处理系统
+主要是初始化libobjc的异常处理系统，注册异常处理的回调，从而监控异常的处理
+void exception_init(void)
+{
+    old_terminate = std::set_terminate(&_objc_terminate);
+}
+
+当有crash（crash是指系统发生的不允许的一些指令，然后系统给的一些信号）发生时，会来到_objc_terminate方法，走到uncaught_handler扔出异常
+
+/***********************************************************************
+* _objc_terminate
+* Custom std::terminate handler.
+*
+* The uncaught exception callback is implemented as a std::terminate handler. 
+* 1. Check if there's an active exception
+* 2. If so, check if it's an Objective-C exception
+* 3. If so, call our registered callback with the object.
+* 4. Finally, call the previous terminate handler.
+**********************************************************************/
+static void (*old_terminate)(void) = nil;
+static void _objc_terminate(void)
+{
+    if (PrintExceptions) {
+        _objc_inform("EXCEPTIONS: terminating");
+    }
+
+    if (! __cxa_current_exception_type()) {
+        // No current exception.
+        (*old_terminate)();
+    }
+    else {
+        // There is a current exception. Check if it's an objc exception.
+        @try {
+            __cxa_rethrow();
+        } @catch (id e) {
+            // It's an objc object. Call Foundation's handler, if any.
+            (*uncaught_handler)((id)e);//扔出异常
+            (*old_terminate)();
+        } @catch (...) {
+            // It's not an objc object. Continue to C++ terminate.
+            (*old_terminate)();
+        }
+    }
+}
+
+搜索uncaught_handler，在app层会传入一个函数用于处理异常，以便于调用函数，然后回到原有的app层中，如下所示，其中fn即为传入的函数，即 uncaught_handler 等于 fn
+
+objc_uncaught_exception_handler 
+objc_setUncaughtExceptionHandler(objc_uncaught_exception_handler fn)
+{
+//    fn为设置的异常句柄 传入的函数，为外界给的
+    objc_uncaught_exception_handler result = uncaught_handler;
+    uncaught_handler = fn; //赋值
+    return result;
+}
+
+crash分类
+
+crash的主要原因是收到了未处理的信号，主要来源于三个地方:
+kernel 内核
+其他进行
+App本身
+
+所以相对应的，crash也分为了3种：
+Mach异常：是指最底层的内核级异常。用户态的开发者可以直接通过Mach API设置thread，task，host的异常端口，来捕获Mach异常。
+Unix信号：又称BSD 信号，如果开发者没有捕获Mach异常，则会被host层的方法ux_exception()将异常转换为对应的UNIX信号，并通过方法threadsignal()将信号投递到出错线程。可以通过方法signal(x, SignalHandler)来捕获single。
+NSException 应用级异常：它是未被捕获的Objective-C异常，导致程序向自身发送了SIGABRT信号而崩溃，对于未捕获的Objective-C异常，是可以通过try catch来捕获的，或者通过NSSetUncaughtExceptionHandler()机制来捕获。
+
+针对应用级异常，可以通过注册异常捕获的函数，即NSSetUncaughtExceptionHandler机制,实现线程保活, 收集上传崩溃日志
+
+应用级crash拦截:
+所以在开发中，会针对crash进行拦截处理，即app代码中给一个异常句柄NSSetUncaughtExceptionHandler，传入一个函数给系统，当异常发生后，调用函数（函数中可以线程保活、收集并上传崩溃日志），然后回到原有的app层中，其本质就是一个回调函数
+上述方式只适合收集应用级异常，我们要做的就是用自定义的函数替代该ExceptionHandler即可
+
+
+6、cache_init：缓存初始化
+void cache_init()
+{
+#if HAVE_TASK_RESTARTABLE_RANGES
+    mach_msg_type_number_t count = 0;
+    kern_return_t kr;
+
+    while (objc_restartableRanges[count].location) {
+        count++;
+    }
+    //为当前任务注册一组可重新启动的缓存
+    kr = task_restartable_ranges_register(mach_task_self(),
+                                          objc_restartableRanges, count);
+    if (kr == KERN_SUCCESS) return;
+    _objc_fatal("task_restartable_ranges_register failed (result 0x%x: %s)",
+                kr, mach_error_string(kr));
+#endif // HAVE_TASK_RESTARTABLE_RANGES
+}
+
+
+7、_imp_implementationWithBlock_init：启动回调机制
+该方法主要是启动回调机制，通常这不会做什么，因为所有的初始化都是惰性的，但是对于某些进程，我们会迫不及待地加载libobjc-trampolines.dylib
+
+void
+_imp_implementationWithBlock_init(void)
+{
+#if TARGET_OS_OSX
+    // Eagerly load libobjc-trampolines.dylib in certain processes. Some
+    // programs (most notably QtWebEngineProcess used by older versions of
+    // embedded Chromium) enable a highly restrictive sandbox profile which
+    // blocks access to that dylib. If anything calls
+    // imp_implementationWithBlock (as AppKit has started doing) then we'll
+    // crash trying to load it. Loading it here sets it up before the sandbox
+    // profile is enabled and blocks it.
+    // 在某些进程中渴望加载libobjc-trampolines.dylib。一些程序（最著名的是嵌入式Chromium的较早版本使用的QtWebEngineProcess）启用了严格限制的沙箱配置文件，从而阻止了对该dylib的访问。如果有任何调用imp_implementationWithBlock的操作（如AppKit开始执行的操作），那么我们将在尝试加载它时崩溃。将其加载到此处可在启用沙箱配置文件之前对其进行设置并阻止它。
+    // This fixes EA Origin (rdar://problem/50813789)
+    // and Steam (rdar://problem/55286131)
+    if (__progname &&
+        (strcmp(__progname, "QtWebEngineProcess") == 0 ||
+         strcmp(__progname, "Steam Helper") == 0)) {
+        Trampolines.Initialize();
+    }
+#endif
+}
+
+
+8、_dyld_objc_notify_register：dyld注册
+//
+// Note: only for use by objc runtime
+// Register handlers to be called when objc images are mapped, unmapped, and initialized.
+// Dyld will call back the "mapped" function with an array of images that contain an objc-image-info section.
+// Those images that are dylibs will have the ref-counts automatically bumped, so objc will no longer need to
+// call dlopen() on them to keep them from being unloaded.  During the call to _dyld_objc_notify_register(),
+// dyld will call the "mapped" function with already loaded objc images.  During any later dlopen() call,
+// dyld will also call the "mapped" function.  Dyld will call the "init" function when dyld would be called
+// initializers in that image.  This is when objc calls any +load methods in that image.
+//
+void _dyld_objc_notify_register(_dyld_objc_notify_mapped    mapped,
+                                _dyld_objc_notify_init      init,
+                                _dyld_objc_notify_unmapped  unmapped);
+
+
+从注释中，可以得出：
+仅供objc运行时使用
+注册处理程序，以便在映射、取消映射和初始化objc图像时调用
+dyld将会通过一个包含objc-image-info的镜像文件的数组回调mapped函数
+
+方法中的三个参数分别表示的含义如下:
+map_images：dyld将image（镜像文件）加载进内存时，会触发该函数
+load_image：dyld初始化image会触发该函数
+unmap_image：dyld将image移除时，会触发该函数
+
+
+
+dyld与Objc的关联:
+其方法的源码实现与调用如下
+===> dyld源码--具体实现
+void _dyld_objc_notify_register(_dyld_objc_notify_mapped    mapped,
+                                _dyld_objc_notify_init      init,
+                                _dyld_objc_notify_unmapped  unmapped)
+{
+    dyld::registerObjCNotifiers(mapped, init, unmapped);
+}
+
+===> libobjc源码中--调用
+_dyld_objc_notify_register(&map_images, load_images, unmap_image);
+
+
+从上可以得出:
+mapped 等价于 map_images
+init 等价于 load_images
+unmapped 等价于 unmap_image
+
+我们知道了load_images是在notifySingle方法中，通过sNotifyObjCInit调用的
+
+然后通过查找sNotifyObjCInit，最终找到了_dyld_objc_notify_register --> registerObjCNotifiers,在该方法中将_dyld_objc_notify_register传入的参数赋值给了3个回调方法
+所以 有以下等价关系
+sNotifyObjCMapped == mapped == map_images
+sNotifyObjCInit == init == load_images
+sNotifyObjCUnmapped == unmapped == unmap_image
+
+map_images调用时机:
+dyld中全局搜索 sNotifyObjcMapped ：registerObjCNotifiers -- notifyBatchPartial -- sNotifyObjCMapped
+全局搜索notifyBatchPartial，在registerObjCNotifiers方法中调用
+所以有以下结论：map_images是先于load_images调用，即先map_images ，再load_images
+
+
+dyld与Objc关联:
+在dyld中注册回调函数，可以理解为 添加观察者
+在objc中dyld注册，可以理解为发送通知
+触发回调，可以理解为执行通知selector
+
+
+环境变量汇总:
+环境变量名	说明
+OBJC_PRINT_OPTIONS	输出OBJC已设置的选项
+OBJC_PRINT_IMAGES	输出已load的image信息
+OBJC_PRINT_LOAD_METHODS	打印 Class 及 Category 的 + (void)load 方法的调用信息
+OBJC_PRINT_INITIALIZE_METHODS	打印 Class 的 + (void)initialize 的调用信息
+OBJC_PRINT_RESOLVED_METHODS	打印通过 +resolveClassMethod: 或 +resolveInstanceMethod: 生成的类方法
+OBJC_PRINT_CLASS_SETUP	打印 Class 及 Category 的设置过程
+OBJC_PRINT_PROTOCOL_SETUP	打印 Protocol 的设置过程
+OBJC_PRINT_IVAR_SETUP	打印 Ivar 的设置过程
+OBJC_PRINT_VTABLE_SETUP	打印 vtable 的设置过程
+OBJC_PRINT_VTABLE_IMAGES	打印 vtable 被覆盖的方法
+OBJC_PRINT_CACHE_SETUP	打印方法缓存的设置过程
+OBJC_PRINT_FUTURE_CLASSES	打印从 CFType 无缝转换到 NSObject 将要使用的类（如 CFArrayRef 到 NSArray * ）
+OBJC_PRINT_GC	打印一些垃圾回收操作
+OBJC_PRINT_PREOPTIMIZATION	打印 dyld 共享缓存优化前的问候语
+OBJC_PRINT_CXX_CTORS	打印类实例中的 C++ 对象的构造与析构调用
+OBJC_PRINT_EXCEPTIONS	打印异常处理
+OBJC_PRINT_EXCEPTION_THROW	打印所有异常抛出时的 Backtrace
+OBJC_PRINT_ALT_HANDLERS	打印 alt 操作异常处理
+OBJC_PRINT_REPLACED_METHODS	打印被 Category 替换的方法
+OBJC_PRINT_DEPRECATION_WARNINGS	打印所有过时的方法调用
+OBJC_PRINT_POOL_HIGHWATER	打印 autoreleasepool 高水位警告
+OBJC_PRINT_CUSTOM_RR	打印含有未优化的自定义 retain/release 方法的类
+OBJC_PRINT_CUSTOM_AWZ	打印含有未优化的自定义 allocWithZone 方法的类
+OBJC_PRINT_RAW_ISA	打印需要访问原始 isa 指针的类
+OBJC_DEBUG_UNLOAD	卸载有不良行为的 Bundle 时打印警告
+OBJC_DEBUG_FRAGILE_SUPERCLASSES	当子类可能被对父类的修改破坏时打印警告
+OBJC_DEBUG_FINALIZERS	警告实现了 -dealloc 却没有实现 -finalize 的类
+OBJC_DEBUG_NIL_SYNC	警告 @synchronized(nil) 调用，这种情况不会加锁
+OBJC_DEBUG_NONFRAGILE_IVARS	打印突发地重新布置 non-fragile ivars 的行为
+OBJC_DEBUG_ALT_HANDLERS	记录更多的 alt 操作错误信息
+OBJC_DEBUG_MISSING_POOLS	警告没有 pool 的情况下使用 autorelease，可能内存泄漏
+OBJC_DEBUG_DUPLICATE_CLASSES	当出现类重名时停机
+OBJC_USE_INTERNAL_ZONE	在一个专用的 malloc 区分配运行时数据
+OBJC_DISABLE_GC	强行关闭自动垃圾回收，即使可执行文件需要垃圾回收
+OBJC_DISABLE_VTABLES	关闭 vtable 分发
+OBJC_DISABLE_PREOPTIMIZATION	关闭 dyld 共享缓存优化前的问候语
+OBJC_DISABLE_TAGGED_POINTERS	关闭 NSNumber 等的 tagged pointer 优化
+OBJC_DISABLE_NONPOINTER_ISA	关闭 non-pointer isa 字段的访问

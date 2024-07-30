@@ -1,0 +1,228 @@
+Task local values are, like the name suggests, values that are scoped to a certain task.
+These values are only available within the context they're scoped to, and they are really only supposed to be used in a handful of use cases.
+
+
+Understanding what task local values are:
+Task local values are a way to associate some state with a Swift Concurrency Task, or rather a specific context within a Task.
+We can create a scope for a task local value to live in, even if we're already in a task (or a child task). 
+
+
+When you create a new Task in Swift Concurrency, either through Task.init (formerly async), or Task.detached (formerly detach), 
+this task will have a priority property and an isCancelled property. We can read these values by obtaining and inspecting the current task:
+withUnsafeCurrentTask { task in
+    print(task?.isCancelled)
+    print(task?.priority)
+}
+
+
+The withUnsafeCurrentTask checks if the context we're currently in runs as part of a Task instance, 
+and if it does, the "current" task (the task that we're part of) is provided to the closure.
+We can then read the isCancelled property to check if the current task is cancelled, allowing is to act accordingly.
+
+You can imagine that writing this code everywhere would be tedious, so the Swift team provided a more convenient way to check if the current task is cancelled:
+Task.isCancelled. This static member on Task will obtain the current task for us,
+and it will return that task's cancellation status (or false if no current task exists). Here's what that static variable looks like:
+extension Task {
+    static var isCancelled: Bool {
+        return withUnsafeCurrentTask { task in
+            return task?.isCancelled ?? false
+        }
+    }
+}
+
+This static isCancelled property is not quite the same as a task local value, but it's close enough to proceed with understanding what they are. 
+###
+Remember that Task.isCancelled is a regular static property that returns a different value depending on which task it's accessed from.
+###
+
+With task local values, we can achieve a similar feature that allows us to associate metadata about a task with a task.
+We can do this by annotating a static property with the @TaskLocal property wrapper. 
+This property wrapper will make sure that the given static property's value is only assigned within the scope of a given task.
+
+enum Transaction {
+    @TaskLocal static var id: UUID? = nil
+}
+
+This enum has a task local id that can be used to identify a transaction in our system.
+
+My task local value has a default value of nil. 
+This default value is the value that I'll get when I try to read the transaction id from a task that does not explicitly have its Transaction.id set.
+Note that after I assign a default value to my id, I can not change it:
+Transaction.id = UUID() // Cannot assign to property: 'id' is a get-only property
+
+To assign a task local value, we need to call a method on $id as follows:
+await Transaction.$id.withValue(UUID()) {
+    print(Transaction.id)
+}
+
+The withValue(_:operation:) method creates a scope where Transaction.id will have the provided value as its value.
+This works very similar to how Task.isCancelled is implemented.
+The value that's returned when accessing Transaction.id is determined by checking the context that we're currently in.
+If we're not in a context where the value was explicitly set we'll receive the default value that we assigned in the declaration. In this case that would be nil.
+
+The value that's assigned to Transaction.id when creating a scope is only valid during that scope.
+
+You can temporarily override this value within the scope with a nested call to withValue(_:operation:):
+await Transaction.$id.withValue(UUID()) {
+    print(Transaction.id) // original value
+
+    await Transaction.$id.withValue(UUID()) {
+        print(Transaction.id) // new value
+    }
+
+    print(Transaction.id) // original value
+}
+Outside of the nested closure, 
+the value for Transaction.id returns it's "orginal" value because the assigned value is scoped to the closure that you pass to withValue.
+
+The way Swift Concurrency scopes this makes sure that you can't accidentally assign an expensive object to a task local value and forget to deallocate it when it's no longer needed. 
+In other words, the scoping of withValue(_:operation:) makes sure that our task local value does not escape its scope.
+
+
+If we start a new task from within a context created through withValue(_:operation:) this task will not inherit the task local values that were present in the context:
+await Transaction.$id.withValue(UUID()) {
+    print(Transaction.id) // assiged value
+
+    Task {
+        print(Transaction.id) // nil
+    }
+
+    Task.detached {
+        print(Transaction.id) // nil
+    }
+}
+
+If you want task local values to be copied into a detached task you'll need to explicitly copy this value:
+await Transaction.$id.withValue(UUID()) {
+    let transaction = Transaction.id
+    Task {
+        print(transaction) // the task local UUID
+    }
+}
+
+
+You can also use this copied value as a new task local for the detached task:
+await Transaction.$id.withValue(UUID()) {
+    let transaction = Transaction.id
+    Task {
+        await Transaction.$id.withValue(transaction) {
+            print(Transaction.id) // the task local UUID from the outer scope
+        }
+    }
+}
+Note that this allows multiple sources to read this value concurrently. 
+For this reason task local values have to be save to use concurrently. 
+This is enforced by the requirement that task local values are Sendable.
+
+
+
+Understanding how task local values can be used:
+When you have an async function that depends on specific state to do its job, pass it to the function explicitly.
+So what are task local value for then?
+
+Well, they are intended to associate specific metadata with a given task. 
+This means that task local values will mostly be useful if you want to debug your code, 
+or if you want to be able to group a bunch of asynchronously produced logs together through something like a transaction ID.
+
+Imagine that you have some object that can fetch user data. 
+This object depends on a data provider, 
+and the data provider relies on an Authorizer and Networking object to make authorized network requests.
+
+We might have many concurrent calls in progress, 
+and when you attempt to debug something in this flow, your logs might looks a little like this:
+
+UserApi.fetchProfile() called
+UserApi.fetchProfile() called
+RemoteDataSource.loadProfile() called
+RemoteDataSource.loadProfile() called
+UserApi.fetchProfile() called
+Authorizer.authorize(_ request: URLRequest) called
+RemoteDataSource.loadProfile() called
+Authorizer.authorize(_ request: URLRequest) called
+Authorizer.accessToken() called
+Authorizer.refreshToken(_ token: Token?) called
+Authorizer.authorize(_ request: URLRequest) called
+Authorizer.accessToken() called
+Networking.load<T: Decodable>(_ request: URLRequest) called
+Authorizer.accessToken() called
+Networking.load<T: Decodable>(_ request: URLRequest) called
+Networking.load<T: Decodable>(_ request: URLRequest) called
+
+
+With this output it's impossible to see what the order of events is exactly. 
+We don't know if the first loadProfile call lines up with the first load call, 
+or whether it triggered the call to refreshToken.
+
+Without task local values you might pass a UUID to every function, and pass the UUID down to the next functions so you can retrace your steps.
+With task local values, you can associate a transaction ID with your task using the Transaction.id from before so it propogates throughout your function calls automatically.
+Let's see what this looks like:
+
+class UserApi {
+    let dataSource: RemoteDataSource
+
+    init(dataSource: RemoteDataSource) {
+        self.dataSource = dataSource
+    }
+
+    func fetchProfile() async throws -> Profile {        
+        return try await Transaction.$id.withValue(UUID()) {
+            if let transactionID = Transaction.id {
+                print("\(transactionID) UserApi.fetchprofile() called")
+            }
+            return try await dataSource.loadUserProfile()
+        }
+    }
+}
+
+To print useful information, we check if Transaction.id is set. In this case we've set it with withValue(_:operation:) on the line before but we still unwrap it properly.
+Next, I simply prefix my old print statement with the transaction ID.
+
+###
+In the loadUserProfile function, I can also access the transaction ID because it runs as part of the same task:
+###
+func loadProfile() async throws -> Profile {
+    if let transactionID = Transaction.id {
+        print("\(transactionID): RemoteDataSource.loadRandomNumber() called")
+    }
+
+    let request = try await authorizer.authorize(URLRequest(url: endpoint))
+    return try await network.load(request)
+}
+
+This logic can be written in all of the subsequent function calls too. So we'd add this same code to the authorize, accessToken, refreshToken, and load methods. 
+When we run the code with all of this in place, here's what the same output from earlier would look like:
+3F0A1FD9-D55D-4015-A7D0-8B054A1CF7A9: UserApi.fetchProfile() called
+98365B1C-4176-44DA-806A-2D2BCB787111: UserApi.fetchProfile() called
+3F0A1FD9-D55D-4015-A7D0-8B054A1CF7A9: RemoteDataSource.loadProfile() called
+98365B1C-4176-44DA-806A-2D2BCB787111: RemoteDataSource.loadProfile() called
+F02A7024-0B84-454C-9E23-E3DA0F8E3558: UserApi.fetchProfile() called
+3F0A1FD9-D55D-4015-A7D0-8B054A1CF7A9: Authorizer.authorize(_ request: URLRequest) called
+F02A7024-0B84-454C-9E23-E3DA0F8E3558: RemoteDataSource.loadProfile() called
+98365B1C-4176-44DA-806A-2D2BCB787111: Authorizer.authorize(_ request: URLRequest) called
+3F0A1FD9-D55D-4015-A7D0-8B054A1CF7A9: Authorizer.accessToken() called
+3F0A1FD9-D55D-4015-A7D0-8B054A1CF7A9: Authorizer.refreshToken(_ token: Token?) called
+F02A7024-0B84-454C-9E23-E3DA0F8E3558: Authorizer.authorize(_ request: URLRequest) called
+98365B1C-4176-44DA-806A-2D2BCB787111: Authorizer.accessToken() called
+3F0A1FD9-D55D-4015-A7D0-8B054A1CF7A9: Networking.load<T: Decodable>(_ request: URLRequest) called
+F02A7024-0B84-454C-9E23-E3DA0F8E3558: Authorizer.accessToken() called
+98365B1C-4176-44DA-806A-2D2BCB787111: Networking.load<T: Decodable>(_ request: URLRequest) called
+F02A7024-0B84-454C-9E23-E3DA0F8E3558: Networking.load<T: Decodable>(_ request: URLRequest) called
+
+Now that every sequence of method calls is associated with a transaction id, the logs that are produced by this program are far more useful than they were before.
+
+This is a really good use of task local values because we're not using them to pass around important state. 
+Instead, we use this for logging and retracing our steps. 
+###
+The transaction ID really is metadata rather than state. 
+###
+This is exactly what the Swift team has intended task local values for. 
+They're a container for task metadata.
+
+
+In Summary:
+While task local values will most likely not be a heavily used feature for most people, 
+I'm sure some developers will make heavy use of it for debugging, logging, and other purposes.
+Manually passing a transaction ID around really feels like busywork, 
+and being able to associate a transaction ID with an entire chain of method calls that occur withing the scope of the operation passed to withValue(_:operation:) is a breath of fresh air.
+
+If you every find yourself needing to untangle a bunch of concurrently active tasks, task local values might just be the tool you need to help you out.

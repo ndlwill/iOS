@@ -1,0 +1,696 @@
+https://developer.apple.com/documentation/swift/task
+
+Task
+A unit of asynchronous work.
+iOS 13.0
+
+@frozen
+struct Task<Success, Failure> where Success : Sendable, Failure : Error
+
+A task runs regardless of whether you keep a reference to it. 
+However, if you discard the reference to a task, you give up the ability to wait for that task’s result or cancel the task.
+
+To support operations on the current task, which can be either a detached task or child task, 
+Task also exposes class methods like yield(). 
+Because these methods are asynchronous, they’re always invoked as part of an existing task.
+
+Only code that’s running as part of the task can interact with that task. To interact with the current task, you call one of the static methods on Task.
+
+
+Task Cancellation:
+Likewise, it’s the responsibility of the code running as part of the task to check for cancellation whenever stopping is appropriate.
+In a long-task that includes multiple pieces, you might need to check for cancellation at several points, and handle cancellation differently at each point.
+If you only need to throw an error to stop the work, call the Task.checkCancellation() function to check for cancellation.
+Other responses to cancellation include returning the work completed so far, returning an empty result, or returning nil.
+
+Cancellation is a purely Boolean state;
+there’s no way to include additional information like the reason for cancellation.
+
+
+Task closure lifetime:
+Tasks are initialized by passing a closure containing the code that will be executed by a given task.
+
+After this code has run to completion, the task has completed, resulting in either a failure or result value, this closure is eagerly released.
+
+Retaining a task object doesn’t indefinitely retain the closure, because any references that a task holds are released after the task completes. 
+Consequently, tasks rarely need to capture weak references to values.
+
+For example, in the following snippet of code it is not necessary to capture the actor as weak, 
+because as the task completes it’ll let go of the actor reference, 
+breaking the reference cycle between the Task and the actor holding it.
+
+struct Work: Sendable {}
+
+actor Worker {
+    var work: Task<Void, Never>?
+    var result: Work?
+
+
+    deinit {
+        assert(work != nil)
+        // even though the task is still retained,
+        // once it completes it no longer causes a reference cycle with the actor
+
+
+        print("deinit actor")
+    }
+
+
+    func start() {
+        work = Task {
+            print("start task work")
+            try? await Task.sleep(for: .seconds(3))
+            self.result = Work() // we captured self
+            print("completed task work")
+            // but as the task completes, this reference is released
+        }
+        // we keep a strong reference to the task
+    }
+}
+
+And using it like this:
+await Actor().start()
+
+start task work
+completed task work
+deinit actor
+
+Note that there is nothing, other than the Task’s use of self retaining the actor, 
+And that the start method immediately returns, without waiting for the unstructured Task to finish.
+So once the task is completed and its closure is destroyed, 
+the strong reference to the “self” of the actor is also released allowing the actor to deinitialize as expected.
+
+an unstructured task doesn't have a parent task.
+
+
+#####
+官方文档:
+Tasks are arranged in a hierarchy. Each task in a given task group has the same parent task, and each task can have child tasks. 
+Because of the explicit relationship between tasks and task groups, this approach is called structured concurrency.
+
+Unstructured Concurrency:
+Unlike tasks that are part of a task group, an unstructured task doesn’t have a parent task. 
+To create an unstructured task that runs on the current actor, call the Task.init(priority:operation:) initializer. 
+To create an unstructured task that’s not part of the current actor, known more specifically as a detached task, call the Task.detached(priority:operation:) class method. 
+Both of these operations return a task that you can interact with — for example, to wait for its result or to cancel it.
+
+let newPhoto = // ... some photo data ...
+let handle = Task {
+    return await add(newPhoto, toGalleryNamed: "Spring Adventures")
+}
+let result = await handle.value
+
+#####
+
+
+==================================================TaskGroup
+Which problem does TaskGroup solve?
+
+Consider the following example.
+
+Let's say that you fetched a list of ids from your server. 
+These ids represent the ids of movies that your user has marked as a favorite. 
+By returning ids instead of full-blown movie objects, your user can save a lot of data, assuming that clients can (and will) cache movie objects locally. 
+This allows you to either look up a movie in your local cache, or to fetch the movie from the server if needed.
+
+func getFavoriteIds(for user: User) async -> [UUID] {
+    return await network.fetchUserFavorites(for: user)
+}
+
+func fetchFavorites(user: User) async -> [Movie] {
+    // fetch Ids for favorites from a remote source
+    let ids = await getFavoriteIds(for: user)
+
+    // perform work to obtain `[Movie]`
+}
+
+Now that we have an array of UUID, we need to somehow convert this array to Movie objects. 
+In this case, I don't care about the order of the ids and the resulting movies matching. 
+And I don't want to fetch movies one by one because that might take a while.
+
+I'd like to fetch as many movies at the same time as I possibly can.
+This sentence above is essentially the key to knowing when we should use a task group.
+
+In this case, I want to run a variable number of tasks concurrently, and every task produces the same type of output. 
+This use case is exactly what task groups are good at. They allow you to spawn as many tasks as you want, and all of these tasks will run concurrently. 
+One constraint is that every task must produce the same output. 
+In this case, that's not a problem. We want to convert from UUID to Movie every time, which means that our task will always produce the same output.
+
+Task groups can either be throwing or non-throwing.
+
+await withTaskGroup(of: Movie.self) { group in
+
+}
+The withTaskGroup function is a global function in Swift that takes two arguments. 
+The first argument specifies the type of result that your tasks produce.
+If your tasks don't have any output, you would write Void.self here since that would be the return type for each individual task.
+In this case, it's Movie.self because all tasks will produce a Movie instance.
+
+If the tasks in a task group can throw errors, you should use withThrowingTaskGroup instead of withTaskGroup.
+
+The second argument is a closure in which we'll schedule and handle all of our tasks.
+This closure receives an instance of TaskGroup<Output> as its only argument. 
+The Output generic will correspond with your task output. So in this case the actual type would be TaskGroup<Movie>.
+
+func fetchFavorites(user: User) async -> [Movie] {
+    // fetch Ids for favorites from a remote source
+    let ids = await getFavoriteIds(for: user)
+
+    // load all movies concurrently
+    return await withTaskGroup(of: Movie.self) { group in
+        var movies = [Movie]()
+
+        // obtain movies
+
+        return movies
+    }
+}
+Let's add some tasks to our task group so we can fetch movies.
+
+Adding tasks to a TaskGroup:
+The TaskGroup object that is passed to our closure is used to schedule tasks in the group, and also to obtain the results of these tasks if needed.
+func getMovie(withId id: UUID) async -> Movie {
+    return await network.fetchMovie(withId: id)
+}
+
+To call this function from within a new task in the task group, we need to call addTask on the TaskGroup as follows:
+func fetchFavorites(user: User) async -> [Movie] {
+    // fetch Ids for favorites from a remote source
+    let ids = await getFavoriteIds(for: user)
+
+    // load all movies concurrently
+    return await withTaskGroup(of: Movie.self) { group in
+        var movies = [Movie]()
+
+        // adding tasks to the group and fetching movies
+        for id in ids {
+            group.addTask {
+                return await self.getMovie(withId: id)
+            }
+        }
+
+        return movies
+    }
+}
+
+Note that I don't need to capture self weakly in the closure I pass to addTask.
+The reason for this is that the task I created can never outlive the scope, this means that no retain cycles are created here.
+
+You might notice that while I add a bunch of tasks to the group, I never actually await or return the output of my tasks. 
+To do this, we need to iterate asynchronously over the task group and obtain the results of its tasks. 
+The TaskGroup object conforms to AsyncSequence which means that we can iterate over it using for await as follows:
+func fetchFavorites(user: User) async -> [Movie] {
+    // fetch Ids for favorites from a remote source
+    let ids = await getFavoriteIds(for: user)
+
+    // load all favorites concurrently
+    return await withTaskGroup(of: Movie.self) { group in
+        var movies = [Movie]()
+        movies.reserveCapacity(ids.count)
+
+        // adding tasks to the group and fetching movies
+        for id in ids {
+            group.addTask {
+                return await self.getMovie(withId: id)
+            }
+        }
+
+        // grab movies as their tasks complete, and append them to the `movies` array
+        for await movie in group {
+            movies.append(movie)
+        }
+
+        return movies
+    }
+}
+
+By using for await movie in group the task group will provide us with movies as soon as they are obtained.
+Note that the results will be gathered in completion order. In other words, whichever movie is fully fetched first, will be returned first.
+
+Whenever a task completes, the group provides us with the task output, and we can append this output to the movies array. 
+Once all tasks are completed and we have appended all output to the movies array, we return this array from our task group closure.
+
+Note that we don't return from the closure that's provided to withTaskGroup until all tasks have completed due to the asynchronous for loop. This loop doesn't complete until all tasks in the group complete, and all output has been provided to us. 
+Of course, we could exit our loop early with a break just like you can in a normal loop.
+
+Let's consider two additional situations, in which we'll have to deal with errors thrown by the tasks that were added to the group:
+One of the tasks throws an error
+The task group is cancelled
+
+
+TaskGroups and throwing tasks:
+func getMovie(withId id: UUID) async throws -> Movie {
+    return try await network.fetchMovie(withId: id)
+}
+
+func fetchFavorites(user: User) async throws -> [Movie] {
+    // fetch ids for favorites from a remote source
+    let ids = await getFavoriteIds(for: user)
+
+    // load all favorites concurrently
+    return try await withThrowingTaskGroup(of: Movie.self) { group in
+        var movies = [Movie]()
+        movies.reserveCapacity(ids.count)
+
+        // adding tasks to the group and fetching movies
+        for id in ids {
+            group.addTask {
+                return try await self.getMovie(withId: id)
+            }
+        }
+
+        // grab movies as their tasks complete, and append them to the `movies` array
+        for try await movie in group {
+            movies.append(movie)
+        }
+
+        return movies
+    }
+}
+
+In this example, I'm fetching movies by calling try await self.getMovie(withId: id). 
+This means that the getMovie operation might throw an error. When it does, it's not a big deal per se. 
+A task can fail without impacting any of the other tasks in the task group. 
+This means that failing to load one of the movie does not necessarily impact the other tasks in my task group. 
+However, because I iterate over the fetched movies using for try await movie in group, a single failure does impact other tasks in my group.
+
+As we iterate over the group's results, a failed task also counts as a result. 
+However, when the group's next() function is called internally to obtain the next result, 
+it will throw the error that was thrown by the failing task so we can inspect and handle it if needed. 
+In a for loop, I can only write try await which means that when the group throws an error from its next() function, 
+this error is thrown out from the withThrowingTaskGroup closure since we don't handle (or ignore) it.
+
+When an error is thrown from the closure provided to withThrowingTaskGroup, the task group will fail with that error.
+Before this error is thrown, the task group will mark any unfinished tasks as cancelled to allow them to stop executing work as soon as possible in order to comply with Swift Concurrency's cooperative cancellation.
+Once all tasks have completed (either by finishing their work or throwing an error), the task group will throw its error and complete.
+
+In the example we're working with here, we can prevent a single failure from cancelling all in progress work. 
+The solution would be to make sure the closure I pass to addTask doesn't throw. 
+I could handle the errors thrown by getMovie and return some kind of default movie which probably isn't the best solution, 
+or I could return nil. If returning nil is reasonable for your use case, 
+you could also write try? await self.getMovie(withId: id) to ignore the error and return nil instead of handling the error in a do {} catch {} block.
+
+Depending on how the tasks you add to your task group were written, cancelling one of your tasks might have a similar effect. 
+In Swift Concurrency, it's perfectly acceptable to throw an error from a task when it's cancelled. 
+This means that if your task throws a cancellation error, 
+it could propagate through your task group in the exact same way that other thrown errors propagate through your task group if it ends up being thrown out of your withThrowingTaskGroup closure.
+
+The bottom line here is that individual tasks throwing errors do not impact the task group and its enclosing task per se. 
+It's only when this error ends up being thrown from your withThrowingTaskGroup closure that all unfinished tasks get cancelled, 
+and the original error is thrown from the task group's task once all child tasks have finished.
+
+
+Understanding the lifecycle of tasks in a TaskGroup:
+When you add tasks in a task group, you enter into a very important (explicit) contract. 
+Swift's concurrency mechanisms are structured (pun intended) around the concept of Structured Concurrency. 
+Async lets as well as task group child tasks both adhere to this idea.
+
+###
+The core idea behind structured concurrency is that a task cannot outlive the scope of its parent task. 
+And similarily, no TaskGroup child task may outlive the scope of the withTaskGroup closure. 
+This is achieved by implicitly awaiting on all tasks to complete before returning from the closure you pass to withTaskGroup.
+###
+
+Once the task that manages the group throws an error, the scope of the task group has completed. 
+If we still have running tasks at that time, the tasks would outlive their group which isn't allowed. For that reason, 
+the task group will first wait for all of its tasks to either complete or throw a cancellation error before throwing its own error and exitting its scope.
+
+
+I've awaited the results of all child tasks explicitly by iterating over the group. 
+This means that by the time we hit return movies all tasks are done already and no extra waiting is needed.
+However, we don't have to await the output of our tasks in all cases. 
+Let's say we have a bunch of tasks that don't return anything. We'd only write the following:
+print("Before task group")
+await withTaskGroup(of: Void.self) { group in
+    for item in list {
+        group.addTask {
+            await doSomething()
+            print("Task completed")
+        }
+    }
+    print("For loop completed")
+}
+print("After task group")
+
+the task group's child tasks are always implicitly awaited before exitting the closure in which they were created in order to comply with the requirements of structured concurrency. 
+This means that even if we don't await the result of our tasks, the tasks are guaranteed to be completed when we exit the withTaskGroup closure.
+
+When I run the code above, the output would look a bit like this:
+print("Before task group")
+print("For loop completed")
+print("Task completed")
+print("Task completed")
+print("Task completed")
+print("After task group")
+
+The task group is not allowed to complete before all of the tasks it manages have also completed.
+
+
+==================================================async let
+https://www.donnywals.com/how-to-use-async-let-in-swift/
+
+Knowing when to use async let:
+the Swift core team gave us a convenient tool to concurrently run a predetermined number of tasks and awaiting their results only when we actually need them.
+This allows you to perform work as soon as possible, but not await it if you don't need it right away.
+
+
+Imagine that you're implementing a bootstrapping sequence for a movies app. When this sequence is kicked off, you want to do a bunch of stuff. For example:
+Fetch movies from a server
+Asynchronously fetch the current user
+Load user's favorites
+Load user's profile
+Load user's movie tickets
+
+Without async let, and without task groups, you might write something like this:
+func bootstrapSequence() async throws {
+    let movies = await loadMovies() // will cache movies as well
+    if let user = await currentUser() {
+        let favorites = try await updateFavorites(user: user)
+        let profiles = await updateUserProfile(user: user)
+        let tickets = await updateUserTickets(user: user)
+    }
+
+    // use properties or ignore their output as needed
+}
+“bootstrapping sequence”（引导序列）指的是系统启动或初始化过程中一系列预定的步骤或过程，用于加载和初始化操作系统或应用程序，以便系统可以正常运行。
+
+###
+This code will work fine, but there's a bit of an optimization problem here. The steps in our sequence are run serially rather than concurrently.
+Notice that the movies and user tasks can run concurrently. They don't depend on each other in any way.
+The other three tasks depend on both movies and user. Or rather, they depend on user but it would be nice if movies are loaded too.
+###
+
+
+loadMovies() -> [Movie] will load movies a list of movies from a remote source and cache them locally.
+currentUser() -> User will check if a user exists locally or attempts to fetch the user from the server. User object is a bare-bones container of user info.
+updateFavorites(user:) -> [Movie] loads a list of movie ids that the user marked as favorite from the server, and associates them with a Movie object. If the Movie is not cached it will be fetched from a server.
+updateUserProfile(user:) -> UserProfile fetches and caches the user's profile information from a server (contains a lot more info than the object returned by currentUser)
+updateUserTickets(user:) -> [Ticket] updates the user's movie tickets in the local store. Tickets are associated with Movie objects from the local cache. If a specific movie doesn't exist locally it's fetched from the server.
+
+we want to do as many of these things concurrently as possible.
+This means that we can divide the sequence into two steps, or sections:
+Load movies and current user object
+Update favorites, profile, and tickets
+
+
+Using async let in your code:
+###
+async let allows us to run tasks concurrenly without suspending the calling context to await the task's output so we can only await their results when we need them.
+###
+
+Imagine that you're writing a function where you want to load some information from the network to update a local record, 
+and while that happens you want to see if a local record exists so you know whether you'll need to create a new record. 
+The network code will run asynchronously using async let so we can fetch the most up to date information from the server while checking our local store at the same time:
+func fetchUserProfile(user: User) async -> UserProfile {
+    // start fetching profile from server immediately
+    async let remoteProfile = network.fetchUserProfile(user: user)
+
+    // fetch (or create) and await local profile
+    let localProfile = await localStore.fetchUserProfile(user: user)
+
+    // update local profile with remote profile
+    await localProfile.update(with: remoteProfile)
+    await localStore.persist(localProfile)
+
+    return localProfile
+}
+Once we've obtained a local profile, we call await localProfile.update(with: remoteProfile). 
+At this point, we want to wait for the profile that we loaded from the network and use it to update and persist the local version.
+
+The network call might have already completed by the time we use await to wait for its result, but it could also still be in-flight. 
+The nice part is that the network call runs concurrent with the rest of fetchUserProfile and we don't suspend fetchUserProfile until we don't have any other choice. 
+In other words, we were able to do two things concurrently in fetchUserProfile (perform network call, and find the cached user profile) by using async let.
+
+func bootstrapSequence() async throws {
+    async let moviesTask = loadMovies()
+    async let userTask = currentUser()
+
+    let (_, currentUser) = await (moviesTask, userTask)
+
+    // we'll implement the rest of the sequence soon
+}
+In this code, I create two tasks with the async let syntax.
+This essentially tells Swift to start running the function call that follows it immediately, without awaiting their results.
+
+
+As you saw earlier, it's possible to use the output of an async let task inline by writing await before the expression that uses the task's output. 
+For example, I could write the following to use the output of currentUser() without assigning the output to an intermediate property:
+async let user = currentUser()
+let tickets = await updateUserTickets(user: user)
+The code above would await the value of user (which would be the output of currentUser()), and then run and await updateUserTickets(user:). 
+
+
+Once the user and movies are loaded, we can concurrently run the second part of the sequence:
+func bootstrapSequence() async throws {
+    async let moviesTask = loadMovies()
+    async let userTask = currentUser()
+
+    let (_, currentUser) = await (moviesTask, userTask)
+
+    guard let user = currentUser else {
+        return
+    }
+
+    async let favoritesTask = updateFavorites(user: user)
+    async let profilesTask = updateUserProfile(user: user)
+    async let ticketsTask = updateUserTickets(user: user)
+
+    let (favorites, profile, tickets) = try await (favoritesTask, profileTask, ticketsTask)
+
+    // use the loaded data as needed
+}
+I had to write try await. That's because updateFavorites can throw.
+I applied the try to the entire expression because I think it reads a bit nicer and it makes it easier to change other tasks to be throwing later. 
+It would have been equally valid for me to write the following:
+let (favorites, profile, tickets) = await (try favoritesTask, profileTask, ticketsTask)
+
+You defined tasks with async let, they begin doing their work as soon as they are created, 
+and you must use await whenever you want to use the async let task's value.
+
+
+Understanding how async let works:
+###
+When you create an async let, you spawn a new Swift Concurrency task behind the scenes. 
+This task will run as a child of the task that's currently running (ever async scope in Swift Concurrency is part of a task).
+This new task will inherit things like task local values, and it will run on the same actor as the actor that you spawned the task from.
+
+When you normally await an async function's output, this is all done as part of the same task. 
+Since async let will run concurrently with the function that you used it in, it'll be run in a new task. 
+This means that, similar to how you spawn tasks in a task group, you spawn a new task every time you write async let.
+###
+
+func bootstrapSequence() async throws {
+    async let moviesTask = loadMovies()
+    async let userTask = currentUser()
+
+    let (_, currentUser) = await (moviesTask, userTask)
+
+    guard let user = currentUser else {
+        return
+    }
+
+    async let favoritesTask = updateFavorites(user: user)
+    async let profilesTask = updateUserProfile(user: user)
+    async let ticketsTask = updateUserTickets(user: user)
+
+    // we don't await any of the async let's above
+}
+Since we don't await the results of our async let tasks, the bootstrapSequence function will exit after the last async let task is started. 
+When this happens, our tasks will go out of scope, 
+and they get marked as cancelled which means that we should stop performing any work as soon as we can to respect Swift Concurrency's cooperative cancellation paradigm.
+
+In other words, you should not use an async let as a means to run code asynchronously after your function has exitted its scope.
+
+You can't write async var to have an asynchronous variable. 
+The reason is that your created property will be bound to a task, and its value doesn't become available until it's awaited and the task produces a result. 
+
+
+In Summary:
+You learned that async let is a feature that helps you run unrelated asynchronous function calls concurrently as their own tasks. 
+
+You learned that an async let creates a child task of your current task under the hood, and you learned that this task is cancelled whwnever the function it's created in goes out of scope. 
+To avoid this, you should always await the results of your async let tasks.
+
+async let is an incredibly useful feature for scenarios where you want to run several tasks concurrently before doing something else.
+
+
+
+==================================================structured concurrency
+Swift Concurrency heavily relies on a concept called Structured Concurrency to describe the relationship between parent and child tasks.
+
+Understanding the concept of structured concurrency:
+The concepts behind Swift’s structured concurrency are neither new nor unique. 
+Sure, Swift implements some things in its own unique way but the core idea of structured concurrency can be dated back all the way to the sixties in the form of the fork join model.
+
+The fork join model describes how a program that performs multiple pieces of work in parallel (fork) will wait for all work to complete, 
+receiving the results from each piece of work (join) before continuing to the next piece of work.
+Swift Concurrency is heavily based on this model
+
+When any of the child tasks spawned in structured concurrency fails with an error, 
+the parent task can decide to handle that error and allow other child tasks to resume and complete. 
+Alternatively, a parent task can decide to cancel all child tasks and make the error the joined result of all child tasks.
+In either scenario, the parent task cannot complete while the child tasks are still running.
+
+Structured concurrency’s main focus is describing how parent and child tasks relate to each other, 
+and how a parent task can not complete when one or more of its child tasks are still running.
+
+
+Structured concurrency in action:
+In its simplest and most basic form structured concurrency in Swift means that you start a task, 
+perform some work, await some async calls, and eventually your task completes. This could look as follows:
+func parseFiles() async throws -> [ParsedFile] {
+  var parsedFiles = [ParsedFile]()
+
+  for file in list {
+    let result = try await parseFile(file)
+    parsedFiles.append(result)
+  }
+
+  return parsedFiles
+}
+The execution for our function above is linear. We iterate over a list of files, 
+we await an asynchronous function for each file in the list, and we return a list of parsed files. 
+We only work on a single file at a time and at no point does this function fork out into any parallel work.
+
+We know that at some point our parseFiles() function was called as part of a Task.
+This task could be part of a group of child tasks, it could be task that was created with SwiftUI’s task view modifier, it could be a task that was created with Task.detached.
+And it also doesn’t really matter because regardless of the task that this function was called from, this function will always run the same.
+
+Since async let has the most lightweight syntax of the two, 
+I will illustrate structured concurrency using async let rather than through a TaskGroup. 
+Note that both techniques spawn child tasks which means that they both adhere to the rules from structured concurrency even though there are differences in the problems that TaskGroup and async let solve.
+
+We could write a function that spawns three child tasks, and then one of the three child tasks spawns two child tasks of its own.
+
+The key information you’re looking for is how we can kick off lots of work while Swift makes sure that all work we kick off is completed before we return from our buildDataStructure function.
+func buildDataStructure() async -> DataStructure {
+  async let configurationsTask = loadConfigurations()
+  async let restoredStateTask = loadState()
+  async let userDataTask = fetchUserData()
+
+  let config = await configurationsTask
+  let state = await restoredStateTask
+  let data = await userDataTask
+
+  return DataStructure(config, state, data)
+}
+
+func loadConfigurations() async -> [Configuration] {
+  async let localConfigTask = configProvider.local()
+  async let remoteConfigTask = configProvider.remote()
+
+  let (localConfig, remoteConfig) = await (localConfigTask, remoteConfigTask)
+
+  return localConfig.apply(remoteConfig)
+}
+
+All tasks we create with async let are awaited before the function that we created them in returns. 
+But what happens when we forget to await one of these tasks?
+For example, what if we write the following code?
+
+func buildDataStructure() async -> DataStructure? {
+  async let configurationsTask = loadConfigurations()
+  async let restoredStateTask = loadState()
+  async let userDataTask = fetchUserData()
+
+  return nil
+}
+The code above will compile perfectly fine. 
+You would see a warning about some unused properties but all in all your code will compile and it will run just fine.
+
+###
+The three async let properties that are created each represent a child task and as you know each child task must complete before their parent task can complete.
+###
+In this case, that guarantee will be made by the buildDataStructure function. 
+As soon as that function returns it will cancel any running child tasks.
+Each child task must then wrap up what they’re doing and honor this request for cancellation. 
+Swift will never abruptly stop executing a task due to cancellation; cancellation is always cooperative in Swift.
+
+Because cancellation is cooperative Swift will not only cancel the running child tasks, 
+it will also implicitly await them. In other words, because we don’t know whether cancellation will be honored immediately, 
+the parent task will implicitly await the child tasks to make sure that all child tasks are completed before resuming.
+
+
+How unstructured and detached tasks relate to structured concurrency:
+Unstructured concurrency allows us to create tasks that are created as stand alone islands of concurrency.
+They do not have a parent task, and they can outlive the task that they were created from. Hence the term unstructured.
+When you create an unstructured task, certain attributes from the source task are carried over.
+For example, if your source task is main actor bound then any unstructured tasks created from that task will also be main actor bound.
+
+Similarly if you create an unstructured task from a task that has task local values, these values are inherited by your unstructured task. 
+The same is true for task priorities.
+
+However, because an unstructured task can outlive the task that it got created from, 
+an unstructured task will not be cancelled or completed when the source task is cancelled or completed.
+
+An unstructured task is created using the default Task initializer:
+func spawnUnstructured() async {
+  Task {
+    print("this is printed from an unstructured task")
+  }
+}
+We can also create detached tasks.
+These tasks are both unstructured as well as completely detached from the context that they were created from.
+They do not inherit any task local values, they do not inherit actor, and they do not inherit priority.
+
+
+In Summary:
+You saw that structured concurrency is based on a model called the fork join model which describes how tasks can spawn other tasks that run in parallel and how all spawned tasks must complete before the parent task can complete.
+This model is really powerful and it provides a lot of clarity and safety around the way Swift Concurrency deals with parent / child tasks that are created with either a task group or an async let.
+I explained that both unstructured and detached tasks are never child tasks of the context that they were created in, but that unstructured tasks do inherit some context from the context they were created in.
+All in all the most important thing to understand about structured concurrency is that it provide clear and rigid rules around the relationship between parent and child tasks.
+In particular it describes how all child tasks must complete before a parent task can complete.
+
+
+
+==================================================actor
+actor BankAccount {
+    private var balance: Double = 0.0
+
+    func deposit(amount: Double) {
+        balance += amount
+    }
+
+    func withdraw(amount: Double) -> Bool {
+        if balance >= amount {
+            balance -= amount
+            return true
+        } else {
+            return false
+        }
+    }
+
+    func getBalance() -> Double {
+        return balance
+    }
+}
+
+let account = BankAccount()
+
+1. 定义和使用：
+actor 是一个可以管理其内部状态的对象，并确保对其状态的访问是线程安全的。
+actor视为一个能够并发执行的类，但它会自动处理数据同步问题。
+
+2. 内部状态的保护：
+actor 确保其内部状态只能通过其方法访问，并且这些方法会按照顺序执行，避免同时访问同一个状态。这样，开发者不需要担心线程安全问题。
+
+3. 异步方法调用：
+actor的方法默认是异步的，这意味着你通常需要使用await关键字来调用这些方法。
+Task {
+    await account.deposit(amount: 100.0)
+    let success = await account.withdraw(amount: 50.0)
+    let balance = await account.getBalance()
+    print("Balance: \(balance)")
+}
+
+4. 避免数据竞争：
+由于actor自动处理了同步访问，所以它能够有效避免数据竞争（Data Race），使得并发编程更加安全和可靠。
+
+
+Actor的工作原理
+内部隔离：每个actor实例都拥有自己的执行上下文，这使得它能够在并发环境中保护其内部状态不被外部直接访问。
+任务队列：actor会维护一个任务队列，确保其方法按顺序执行，从而保证线程安全。
+
+与其他并发模型的比较
+与类的区别：actor与类类似，但它增加了并发保护，使得对其内部状态的访问自动是线程安全的。
+与锁的区别：与手动使用锁（如NSLock）不同，actor提供了一种更高级别的并发控制，使代码更简洁、易于维护和理解。

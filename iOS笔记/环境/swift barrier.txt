@@ -1,0 +1,135 @@
+A dispatch barrier is a group of functions executing in a serial queue. 
+It helps us synchronise executing one or more tasks in a dispatch queue. 
+Use barriers when you need a queue to be delayed.
+
+A dispatch barrier allows us to create a synchronization point within a concurrent dispatch queue. 
+In normal operation, the queue acts just like a normal concurrent queue. 
+But when the barrier is executing, it acts as a serial queue. After the barrier finishes, the queue goes back to being a normal concurrent queue.
+
+It allows you to make a thread-unsafe object to thread-safe. 
+It creates a synchronization point for a code block executing in a concurrent dispatch queue. 
+Dispatch barriers are a group of functions acting as a serial queue style objects when working with concurrent queues. 
+Using GCD’s barrier API ensures that the submitted block is the only item executed on the specified queue for that particular time. 
+This means that all items submitted to the queue prior to the dispatch barrier must complete before the block will execute. When the block’s turn arrives, the barrier executes the block and ensures that the queue does not execute any other blocks during that time. Once finished, the queue returns to its default implementation. GCD provides both synchronous and asynchronous barrier functions. 
+The diagram below illustrates the effect of barrier functions on various asynchronous blocks:
+
+
+private let concurrentQueue = DispatchQueue(label: “com.dispatchBarrier”, attributes: .concurrent)
+concurrentQueue.async {
+for value in 1…5 {
+print(“ TASK I — async \(value)”)
+}
+}
+concurrentQueue.async {
+for value in 6…10 {
+print(“TASK II — sync \(value)”)
+}
+}
+for value in 11…15 {
+concurrentQueue.async(flags: .barrier) {
+print(“TASK III — barrier \(value)”)
+}
+}
+concurrentQueue.async{
+for value in 16…20 {
+print(“TASK VI — async \(value)”)
+}
+}
+
+The output of the above block of code;
+
+TASK I — async 1
+TASK I — async 2
+TASK I — async 3
+TASK II — sync 6
+TASK I — async 4
+TASK I — async 5
+TASK II — sync 7
+TASK II — sync 8
+TASK II — sync 9
+TASK II — sync 10
+TASK III — barrier 11
+TASK III — barrier 12
+TASK III — barrier 13
+TASK III — barrier 14
+TASK III — barrier 15
+TASK VI — async 16
+TASK VI — async 17
+TASK VI — async 18
+TASK VI — async 19
+TASK VI — async 20
+
+When the barrier is executing, it essentially acts as a serial queue. That is, the barrier is the only thing executing. 
+After the barrier finishes, the queue goes back to being a normal concurrent queue. 
+Here’s when you would and wouldn’t use barrier functions:
+
+Custom Serial Queue: A bad choice here; barriers won’t do anything helpful since a serial queue executes one operation at a time anyway.
+Global Concurrent Queue: Use caution here; this probably isn’t the best idea since other systems might be using the queues and you don’t want to monopolize them for your own purposes.
+Custom Concurrent Queue: This is a great choice for atomic or critical areas of code. Anything you’re setting or instantiating that needs to be thread-safe is a great candidate for a barrier.
+
+As you can see in the output, the execution of tasks 1 and 2 started. 
+When we add a new task as a barrier, it stops the execution of others. 
+After finishing the execution of task 3, then task 4 continues to execute.
+
+==================================================
+标准库提供的 Dictionary 并不是线程安全的。多个线程同时读写同一个字典实例可能会导致竞争条件和数据损坏。
+
+import Foundation
+
+class ThreadSafeDictionary<Key: Hashable, Value> {
+    private var dictionary = [Key: Value]()
+    private let queue = DispatchQueue(label: "com.example.ThreadSafeDictionaryQueue", attributes: .concurrent)
+
+    func setValue(_ value: Value, forKey key: Key) {
+        queue.async(flags: .barrier) {
+            self.dictionary[key] = value
+        }
+    }
+
+    func value(forKey key: Key) -> Value? {
+        var result: Value?
+        queue.sync {
+            result = self.dictionary[key]
+        }
+        return result
+    }
+
+    func removeValue(forKey key: Key) {
+        queue.async(flags: .barrier) {
+            self.dictionary.removeValue(forKey: key)
+        }
+    }
+
+    func getAllValues() -> [Key: Value] {
+        var result: [Key: Value] = [:]
+        queue.sync {
+            result = self.dictionary
+        }
+        return result
+    }
+
+    // 其他 Dictionary 方法的线程安全封装...
+}
+
+写操作：
+使用 queue.async(flags: .barrier) 来执行写操作。barrier 标志确保写操作是线程安全的，即在写操作完成之前，其他并发的读或写操作会被阻塞。
+读操作：
+使用 queue.sync 来执行读操作，以确保读取操作也是线程安全的。
+
+
+let threadSafeDict = ThreadSafeDictionary<String, Int>()
+
+// 写操作
+threadSafeDict.setValue(42, forKey: "Answer")
+
+// 读操作
+if let answer = threadSafeDict.value(forKey: "Answer") {
+    print("The answer is \(answer).")  // 输出 "The answer is 42."
+}
+
+// 移除操作
+threadSafeDict.removeValue(forKey: "Answer")
+
+// 获取所有值
+let allValues = threadSafeDict.getAllValues()
+print("All values: \(allValues)")

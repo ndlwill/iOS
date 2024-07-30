@@ -5,8 +5,325 @@
 如果这两个建议都没有做任何操作，就会报我们日常开发中常见的方法未实现的崩溃报错
 
 
-定义LGPerson类，其中say666实例方法 和 sayNB类方法均没有实现,有个sayNB的实例方法和实现
+定义LGPerson类，有几个实例方法，包括sayMaster,其中say666实例方法 和 sayNB类方法均没有实现,有个sayNB的实例方法和实现
 main中 分别调用LGPerson的实例方法say666 和类方法sayNB，运行程序，均会报错，提示方法未实现
 
 
 如何在崩溃前，如何操作，可以防止方法未实现的崩溃:
+根据苹果的两个建议，我们一共有三次挽救的机会:
+【第一次机会】动态方法决议
+消息转发流程
+【第二次机会】快速转发
+【第三次机会】慢速转发
+
+
+【第一次机会】动态方法决议:
+在慢速查找流程未找到方法实现时，首先会尝试一次动态方法决议，其源码实现如下:
+static NEVER_INLINE IMP
+resolveMethod_locked(id inst, SEL sel, Class cls, int behavior)
+{
+    runtimeLock.assertLocked();
+    ASSERT(cls->isRealized());
+
+    runtimeLock.unlock();
+    //对象 -- 类
+    if (! cls->isMetaClass()) { //类不是元类，调用对象的解析方法
+        // try [cls resolveInstanceMethod:sel]
+        resolveInstanceMethod(inst, sel, cls);
+    } 
+    else {//如果是元类，调用类的解析方法， 类 -- 元类
+        // try [nonMetaClass resolveClassMethod:sel]
+        // and [cls resolveInstanceMethod:sel]
+        resolveClassMethod(inst, sel, cls);
+        //为什么要有这行代码？ -- 类方法在元类中是对象方法，所以还是需要查询元类中对象方法的动态方法决议
+        if (!lookUpImpOrNil(inst, sel, cls)) { //如果没有找到或者为空，在元类的对象方法解析方法中查找
+            resolveInstanceMethod(inst, sel, cls);
+        }
+    }
+
+    // chances are that calling the resolver have populated the cache
+    // so attempt using it
+    //如果方法解析中将其实现指向其他方法，则继续走方法查找流程
+    return lookUpImpOrForward(inst, sel, cls, behavior | LOOKUP_CACHE);
+}
+
+主要分为以下几步:
+如果是类，执行实例方法的动态方法决议resolveInstanceMethod
+如果是元类，执行类方法的动态方法决议resolveClassMethod，如果在元类中没有找到或者为空，则在元类的实例方法的动态方法决议resolveInstanceMethod中查找，
+主要是因为类方法在元类中是实例方法，所以还需要查找元类中实例方法的动态方法决议
+如果动态方法决议中，将其实现指向了其他方法，则继续查找指定的imp，即继续慢速查找lookUpImpOrForward流程
+
+
+实例方法:
+针对实例方法调用，在快速-慢速查找均没有找到实例方法的实现时，我们有一次挽救的机会，即尝试一次动态方法决议，由于是实例方法，所以会走到resolveInstanceMethod方法，其源码如下
+
+static void resolveInstanceMethod(id inst, SEL sel, Class cls)
+{
+    runtimeLock.assertUnlocked();
+    ASSERT(cls->isRealized());
+    SEL resolve_sel = @selector(resolveInstanceMethod:);
+    
+    // look的是 resolveInstanceMethod --相当于是发送消息前的容错处理
+    if (!lookUpImpOrNil(cls, resolve_sel, cls->ISA())) {
+        // Resolver not implemented.
+        return;
+    }
+
+    BOOL (*msg)(Class, SEL, SEL) = (typeof(msg))objc_msgSend;
+    bool resolved = msg(cls, resolve_sel, sel); //发送resolve_sel消息
+
+    // Cache the result (good or bad) so the resolver doesn't fire next time.
+    // +resolveInstanceMethod adds to self a.k.a. cls
+    //查找say666
+    IMP imp = lookUpImpOrNil(inst, sel, cls);
+
+    if (resolved  &&  PrintResolving) {
+        if (imp) {
+            _objc_inform("RESOLVE: method %c[%s %s] "
+                         "dynamically resolved to %p", 
+                         cls->isMetaClass() ? '+' : '-', 
+                         cls->nameForLogging(), sel_getName(sel), imp);
+        }
+        else {
+            // Method resolver didn't add anything?
+            _objc_inform("RESOLVE: +[%s resolveInstanceMethod:%s] returned YES"
+                         ", but no new implementation of %c[%s %s] was found",
+                         cls->nameForLogging(), sel_getName(sel), 
+                         cls->isMetaClass() ? '+' : '-', 
+                         cls->nameForLogging(), sel_getName(sel));
+        }
+    }
+}
+
+主要分为以下几个步骤:
+在发送resolveInstanceMethod消息前，需要查找cls类中是否有该方法的实现，即通过lookUpImpOrNil方法又会进入lookUpImpOrForward慢速查找流程查找resolveInstanceMethod方法
+如果没有，则直接返回
+如果有，则发送resolveInstanceMethod消息
+再次慢速查找实例方法的实现，即通过lookUpImpOrNil方法又会进入lookUpImpOrForward慢速查找流程查找实例方法
+
+崩溃修改:
+所以，针对实例方法say666未实现的报错崩溃，可以通过在类中重写``resolveInstanceMethod类方法，并将其指向其他方法的实现，即在LGPerson中重写resolveInstanceMethod类方法，将实例方法say666的实现指向sayMaster方法实现
++ (BOOL)resolveInstanceMethod:(SEL)sel{
+    if (sel == @selector(say666)) {
+        NSLog(@"%@ 来了", NSStringFromSelector(sel));
+        //获取sayMaster方法的imp
+        IMP imp = class_getMethodImplementation(self, @selector(sayMaster));
+        //获取sayMaster的实例方法
+        Method sayMethod  = class_getInstanceMethod(self, @selector(sayMaster));
+        //获取sayMaster的丰富签名
+        const char *type = method_getTypeEncoding(sayMethod);
+        //将sel的实现指向sayMaster
+        return class_addMethod(self, sel, imp, type);
+    }
+    
+    return [super resolveInstanceMethod:sel];
+}
+从结果中可以发现，resolveInstanceMethod动态决议方法中“来了”打印了两次，这是为什么呢？
+
+【第一次动态决议】第一次的“来了”是在查找say666方法时会进入动态方法决议
+【第二次动态决议】第二次“来了”是在慢速转发流程中调用了CoreFoundation框架中的NSObject(NSObject) methodSignatureForSelector:后，会再次进入动态决议
+
+
+类方法:
+针对类方法，与实例方法类似，同样可以通过重写resolveClassMethod类方法来解决前文的崩溃问题，即在LGPerson类中重写该方法，并将sayNB类方法的实现指向类方法lgClassMethod
+
++ (BOOL)resolveClassMethod:(SEL)sel{
+    
+    if (sel == @selector(sayNB)) {
+        NSLog(@"%@ 来了", NSStringFromSelector(sel));
+        
+        IMP imp = class_getMethodImplementation(objc_getMetaClass("LGPerson"), @selector(lgClassMethod));
+        Method lgClassMethod  = class_getInstanceMethod(objc_getMetaClass("LGPerson"), @selector(lgClassMethod));
+        const char *type = method_getTypeEncoding(lgClassMethod);
+        return class_addMethod(objc_getMetaClass("LGPerson"), sel, imp, type);
+    }
+    
+    return [super resolveClassMethod:sel];
+}
+resolveClassMethod类方法的重写需要注意一点，传入的cls不再是类，而是元类，可以通过objc_getMetaClass方法获取类的元类，原因是因为类方法在元类中是实例方法
+
+
+优化:
+上面的这种方式是单独在每个类中重写，有没有更好的，一劳永逸的方法呢？其实通过方法慢速查找流程可以发现其查找路径有两条
+实例方法：类 -- 父类 -- 根类 -- nil
+类方法：元类 -- 根元类 -- 根类 -- nil
+
+它们的共同点是如果前面没找到，都会来到根类即NSObject中查找，所以我们是否可以将上述的两个方法统一整合在一起呢？
+答案是可以的，可以通过NSObject添加分类的方式来实现统一处理，而且由于类方法的查找，在其继承链，查找的也是实例方法，
+所以可以将实例方法 和 类方法的统一处理放在resolveInstanceMethod方法中
+
++ (BOOL)resolveInstanceMethod:(SEL)sel{
+    if (sel == @selector(say666)) {
+        NSLog(@"%@ 来了", NSStringFromSelector(sel));
+        
+        IMP imp = class_getMethodImplementation(self, @selector(sayMaster));
+        Method sayMethod  = class_getInstanceMethod(self, @selector(sayMaster));
+        const char *type = method_getTypeEncoding(sayMethod);
+        return class_addMethod(self, sel, imp, type);
+    }else if (sel == @selector(sayNB)) {
+        NSLog(@"%@ 来了", NSStringFromSelector(sel));
+        
+        IMP imp = class_getMethodImplementation(objc_getMetaClass("LGPerson"), @selector(lgClassMethod));
+        Method lgClassMethod  = class_getInstanceMethod(objc_getMetaClass("LGPerson"), @selector(lgClassMethod));
+        const char *type = method_getTypeEncoding(lgClassMethod);
+        return class_addMethod(objc_getMetaClass("LGPerson"), sel, imp, type);
+    }
+    return NO;
+}
+
+当然，上面这种写法还是会有其他的问题，比如系统方法也会被更改，针对这一点，是可以优化的，即我们可以针对自定义类中方法统一方法名的前缀，根据前缀来判断是否是自定义方法，然后统一处理自定义方法
+
+
+消息转发流程:
+如果快速+慢速没有找到方法实现，动态方法决议也不行，就使用消息转发
+但是，我们找遍了源码也没有发现消息转发的相关源码
+可以通过以下方式来了解，方法调用崩溃前都走了哪些方法
+通过instrumentObjcMessageSends方式打印发送消息的日志
+通过hopper/IDA反编译
+
+
+通过instrumentObjcMessageSends:
+通过lookUpImpOrForward --> log_and_fill_cache --> logMessageSend,在logMessageSend源码下方找到instrumentObjcMessageSends的源码实现，所以，在main中调用
+instrumentObjcMessageSends打印方法调用的日志信息，有以下两点准备工作
+1、打开 objcMsgLogEnabled 开关，即调用instrumentObjcMessageSends方法时，传入YES
+2、在main中通过extern 声明instrumentObjcMessageSends方法
+
+extern void instrumentObjcMessageSends(BOOL flag);
+
+int main(int argc, const char * argv[]) {
+    @autoreleasepool {
+
+        LGPerson *person = [LGPerson alloc];
+        instrumentObjcMessageSends(YES);
+        [person sayHello];
+        instrumentObjcMessageSends(NO);
+        NSLog(@"Hello, World!");
+    }
+    return 0;
+}
+
+通过logMessageSend源码，了解到消息发送打印信息存储在/tmp/msgSends 目录
+
+运行代码，并前往/tmp/msgSends 目录，发现有msgSends开头的日志文件，打开发现在崩溃前，执行了以下方法
+两次动态方法决议：resolveInstanceMethod方法
+两次消息快速转发：forwardingTargetForSelector方法
+两次消息慢速转发：methodSignatureForSelector + resolveInvocation
+
+
+通过hopper/IDA反编译:
+Hopper和IDA是一个可以帮助我们静态分析可视性文件的工具，可以将可执行文件反汇编成伪代码、控制流程图等
+
+运行程序崩溃，查看堆栈信息
+发现___forwarding___来自CoreFoundation
+通过image list，读取整个镜像文件,然后搜索CoreFoundation，查看其可执行文件的路径
+通过文件路径，找到CoreFoundation的可执行文件
+打开hopper，选择Try the Demo，然后将上一步的可执行文件拖入hopper进行反汇编，选择x86(64 bits)
+通过左侧的搜索框搜索__forwarding_prep_0___，然后选择伪代码
+__forwarding_prep_0___的汇编伪代码，跳转至___forwarding___
+___forwarding___的伪代码实现，首先是查看是否实现forwardingTargetForSelector方法，如果没有响应，跳转至loc_6459b即快速转发没有响应，进入慢速转发流程
+其下方判断是否响应methodSignatureForSelector方法
+如果没有响应，跳转至loc_6490b，则直接报错
+如果获取methodSignatureForSelector的方法签名为nil，也是直接报错
+如果methodSignatureForSelector返回值不为空，则在forwardInvocation方法中对invocation进行处理
+
+所以，通过上面两种查找方式可以验证，消息转发的方法有3个
+【快速转发】forwardingTargetForSelector
+【慢速转发】
+methodSignatureForSelector
+forwardInvocation
+
+
+消息转发的处理主要分为两部分:
+【快速转发】当慢速查找，以及动态方法决议均没有找到实现时，进行消息转发，首先是进行快速消息转发，即走到forwardingTargetForSelector方法
+如果返回消息接收者，在消息接收者中还是没有找到，则进入另一个方法的查找流程
+如果返回nil，则进入慢速消息转发
+【慢速转发】执行到methodSignatureForSelector方法
+如果返回的方法签名为nil，则直接崩溃报错
+如果返回的方法签名不为nil，走到forwardInvocation方法中，对invocation事务进行处理，如果不处理也不会报错
+
+
+【第二次机会】快速转发:
+如果动态方法决议也没有找到实现，则需要在LGPerson中重写forwardingTargetForSelector方法，将LGPerson的实例方法的接收者指定为LGStudent的对象（LGStudent类中有say666的具体实现）
+
+- (id)forwardingTargetForSelector:(SEL)aSelector{
+    NSLog(@"%s - %@",__func__,NSStringFromSelector(aSelector));
+
+//     runtime + aSelector + addMethod + imp
+    //将消息的接收者指定为LGStudent，在LGStudent中查找say666的实现
+    return [LGStudent alloc];
+}
+
+也可以直接不指定消息接收者，直接调用父类的该方法，如果还是没有找到，则直接报错
+
+
+【第三次机会】慢速转发:
+针对第二次机会即快速转发中还是没有找到，则进入最后的一次挽救机会，即在LGPerson中重写methodSignatureForSelector，如下所示
+
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector{
+    NSLog(@"%s - %@",__func__,NSStringFromSelector(aSelector));
+    return [NSMethodSignature signatureWithObjCTypes:"v@:"];
+}
+
+- (void)forwardInvocation:(NSInvocation *)anInvocation{
+    NSLog(@"%s - %@",__func__,anInvocation);
+}
+
+打印结果如下，发现forwardInvocation方法中不对invocation进行处理，也不会崩溃报错
+
+也可以处理invocation事务，如下所示，修改invocation的target为[LGStudent alloc]，调用 [anInvocation invoke] 触发 即LGPerson类的say666实例方法的调用会调用LGStudent的say666方法
+
+- (void)forwardInvocation:(NSInvocation *)anInvocation{
+    NSLog(@"%s - %@",__func__,anInvocation);
+    anInvocation.target = [LGStudent alloc];
+    [anInvocation invoke];
+}
+由上述可知，无论在forwardInvocation方法中是否处理invocation事务，程序都不会崩溃。
+
+
+总结:
+objc_msgSend发送消息的流程就分析完成了，在这里简单总结下
+【快速查找流程】首先，在类的缓存cache中查找指定方法的实现
+【慢速查找流程】如果缓存中没有找到，则在类的方法列表中查找，如果还是没找到，则去父类链的缓存和方法列表中查找
+【动态方法决议】如果慢速查找还是没有找到时，第一次补救机会就是尝试一次动态方法决议，即重写resolveInstanceMethod/resolveClassMethod 方法
+【消息转发】如果动态方法决议还是没有找到，则进行消息转发，消息转发中有两次补救机会：快速转发+慢速转发
+如果转发之后也没有，则程序直接报错崩溃unrecognized selector sent to instance
+
+
+动态方法决议为什么执行两次？
+在慢速查找流程中，我们了解到resolveInstanceMethod方法的执行是通过lookUpImpOrForward --> resolveMethod_locked --> resolveInstanceMethod来到resolveInstanceMethod源码，在源码中通过发送resolve_sel消息触发
+
+所以可以在resolveInstanceMethod方法中IMP imp = lookUpImpOrNil(inst, sel, cls);处加一个断点，通过bt打印堆栈信息来看到底发生了什么
+
+在resolveInstanceMethod方法中IMP imp = lookUpImpOrNil(inst, sel, cls);处加一个断点，运行程序，直到第一次“来了”，通过bt查看第一次动态方法决议的堆栈信息，此时的sel是say666
+
+继续往下执行，直到第二次“来了”打印，查看堆栈信息，在第二次中，我们可以看到是通过CoreFoundation的-[NSObject(NSObject) methodSignatureForSelector:]方法，然后通过class_getInstanceMethod再次进入动态方法决议
+
+通过上一步的堆栈信息，我们需要去看看CoreFoundation中到底做了什么？通过Hopper反汇编CoreFoundation的可执行文件，查看methodSignatureForSelector方法的伪代码
+通过methodSignatureForSelector伪代码进入___methodDescriptionForSelector的实现
+进入 ___methodDescriptionForSelector的伪代码实现，结合汇编的堆栈打印，可以看到，在___methodDescriptionForSelector这个方法中调用了objc4-781的class_getInstanceMethod
+
+在objc中的源码中搜索class_getInstanceMethod
+这一点可以通过代码调试来验证，如下所示，在class_getInstanceMethod方法处加一个断点，在执行了methodSignatureForSelector方法后，返回了签名，说明方法签名是生效的，
+苹果在走到invocation之前，给了开发者一次机会再去查询，所以走到class_getInstanceMethod这里，又去走了一遍方法查询say666,然后会再次走到动态方法决议
+所以，上述的分析也印证了前文中resolveInstanceMethod方法执行了两次的原因
+
+
+==================================================
+也可以通过代码来推导在哪里再次调用了动态方法决议
+
+#####
+LGPerson中重写resolveInstanceMethod方法，并加上class_addMethod操作即赋值IMP，此时resolveInstanceMethod会走两次吗？
+【结论】：通过运行发现，如果赋值了IMP，动态方法决议只会走一次，说明不是在这里走第二次动态方法决议
+已验证
+#####
+
+去掉resolveInstanceMethod方法中的赋值IMP，在LGPerson类中重写forwardingTargetForSelector方法，并指定返回值为[LGStudent alloc]，重新运行，
+如果resolveInstanceMethod打印了两次，说明是在forwardingTargetForSelector方法之前执行了 动态方法决议，反之，在forwardingTargetForSelector方法之后
+
+【结论】：发现resolveInstanceMethod中的打印还是只打印了一次，第二次动态方法决议 在forwardingTargetForSelector方法后
+
+在LGPerson中重写 methodSignatureForSelector 和 forwardInvocation，运行
+
+【结论】：第二次动态方法决议在 methodSignatureForSelector 和 forwardInvocation方法之间
+
+经过上面的论证，在methodSignatureForSelector 和 forwardInvocation方法之间还有一次动态方法决议，即苹果再次给的一个机会

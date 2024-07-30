@@ -1,0 +1,333 @@
+method-swizzling的含义是方法交换，其主要作用是在运行时将一个方法的实现替换成另一个方法的实现，这就是我们常说的iOS黑魔法，
+
+在OC中就是利用method-swizzling实现AOP，其中AOP(Aspect Oriented Programming，面向切面编程)是一种编程的思想，区别于OOP（面向对象编程）
+OOP和AOP都是一种编程的思想
+OOP编程思想更加倾向于对业务模块的封装，划分出更加清晰的逻辑单元；
+而AOP是面向切面进行提取封装，提取各个模块中的公共部分，提高模块的复用率，降低业务之间的耦合性。
+
+每个类都维护着一个方法列表，即methodList，methodList中有不同的方法即Method，每个方法中包含了方法的sel和IMP，方法交换就是将sel和imp原本的对应断开，并将sel和新的IMP生成对应关系
+
+
+method-swizzling涉及的相关API:
+通过sel获取方法Method
+class_getInstanceMethod：获取实例方法
+class_getClassMethod：获取类方法
+
+method_getImplementation：获取一个方法的实现
+method_setImplementation：设置一个方法的实现
+method_getTypeEncoding：获取方法实现的编码类型
+class_addMethod：添加方法实现
+class_replaceMethod：用一个方法的实现，替换另一个方法的实现，即aIMP 指向 bIMP，但是bIMP不一定指向aIMP
+method_exchangeImplementations：交换两个方法的实现，即 aIMP -> bIMP, bIMP -> aIMP
+
+
+坑点1：method-swizzling使用过程中的一次性问题
+所谓的一次性就是：mehod-swizzling写在load方法中，而load方法会主动调用多次，这样会导致方法的重复交换，使方法sel的指向又恢复成原来的imp的问题
+
+解决方案:
+可以通过单例设计原则，使方法交换只执行一次，在OC中可以通过dispatch_once实现单例
++ (void)load{
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        [LGRuntimeTool lg_bestMethodSwizzlingWithClass:self oriSEL:@selector(helloword) swizzledSEL:@selector(lg_studentInstanceMethod)];
+    });
+}
+
+
+坑点2：子类没有实现，父类实现了
+LGPerson中实现了personInstanceMethod，而LGStudent继承自LGPerson，没有实现personInstanceMethod，运行下面这段代码会出现什么问题？
+//*********LGPerson类*********
+@interface LGPerson : NSObject
+- (void)personInstanceMethod;
+@end
+
+@implementation LGPerson
+- (void)personInstanceMethod{
+    NSLog(@"person对象方法:%s",__func__);  
+}
+@end
+
+//*********LGStudent类*********
+@interface LGStudent : LGPerson
+- (void)helloword;
++ (void)sayHello;
+@end
+
+@implementation LGStudent
+@end
+
+//*********调用*********
+- (void)viewDidLoad {
+    [super viewDidLoad];
+
+    // 黑魔法坑点二: 子类没有实现 - 父类实现
+    LGStudent *s = [[LGStudent alloc] init];
+    [s personInstanceMethod];
+    
+    LGPerson *p = [[LGPerson alloc] init];
+    [p personInstanceMethod];
+}
+
+方法交换代码如下，是通过LGStudent的分类LG实现
+
+@implementation LGStudent (LG)
+
++ (void)load{
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        [LGRuntimeTool lg_methodSwizzlingWithClass:self oriSEL:@selector(personInstanceMethod) swizzledSEL:@selector(lg_studentInstanceMethod)];
+    });
+}
+
+// personInstanceMethod 我需要父类的这个方法的一些东西
+// 给你加一个personInstanceMethod 方法
+// imp
+
+- (void)lg_studentInstanceMethod{
+    ////是否会产生递归？--不会产生递归，原因是lg_studentInstanceMethod 会走 oriIMP，即personInstanceMethod的实现中去
+    [self lg_studentInstanceMethod];
+    NSLog(@"LGStudent分类添加的lg对象方法:%s",__func__);
+}
+
+@end
+
+下面是封装好的method-swizzling方法
+@implementation LGRuntimeTool
++ (void)lg_methodSwizzlingWithClass:(Class)cls oriSEL:(SEL)oriSEL swizzledSEL:(SEL)swizzledSEL{
+    
+    if (!cls) NSLog(@"传入的交换类不能为空");
+
+    Method oriMethod = class_getInstanceMethod(cls, oriSEL);
+    Method swiMethod = class_getInstanceMethod(cls, swizzledSEL);
+    method_exchangeImplementations(oriMethod, swiMethod);
+}
+
+通过实际代码的调试，发现会在p调用personInstanceMethod方法时崩溃
+[s personInstanceMethod];中不报错是因为 student中的imp交换成了lg_studentInstanceMethod，而LGStudent中有这个方法（在LG分类中），所以不会报错
+
+崩溃的点在于[p personInstanceMethod];，其本质原因：LGStudent的分类LG中进行了方法交换，将person中imp 交换成了 LGStudent中的lg_studentInstanceMethod
+然后需要去 LGPerson中的找lg_studentInstanceMethod，但是LGPerson中没有lg_studentInstanceMethod方法，即相关的imp找不到，所以就崩溃了
+
+优化：避免imp找不到
+通过class_addMethod尝试添加你要交换的方法
+如果添加成功，即类中没有这个方法，则通过class_replaceMethod进行替换，其内部会调用class_addMethod进行添加
+如果添加不成功，即类中有这个方法，则通过method_exchangeImplementations进行交换
+
++ (void)lg_betterMethodSwizzlingWithClass:(Class)cls oriSEL:(SEL)oriSEL swizzledSEL:(SEL)swizzledSEL{
+    
+    if (!cls) NSLog(@"传入的交换类不能为空");
+    
+    Method oriMethod = class_getInstanceMethod(cls, oriSEL);
+    Method swiMethod = class_getInstanceMethod(cls, swizzledSEL);
+   
+    // 一般交换方法: 交换自己有的方法 -- 走下面 因为自己有意味添加方法失败
+    // 交换自己没有实现的方法:
+    //   首先第一步:会先尝试给自己添加要交换的方法 :personInstanceMethod (SEL) -> swiMethod(IMP)
+    //   然后再将父类的IMP给swizzle  personInstanceMethod(imp) -> swizzledSEL 
+
+    BOOL success = class_addMethod(cls, oriSEL, method_getImplementation(swiMethod), method_getTypeEncoding(oriMethod));
+
+    if (success) {// 自己没有 - 交换 - 没有父类进行处理 (重写一个)
+        class_replaceMethod(cls, swizzledSEL, method_getImplementation(oriMethod), method_getTypeEncoding(oriMethod));
+    }else{ // 自己有
+        method_exchangeImplementations(oriMethod, swiMethod);
+    }   
+}
+
+下面是class_replaceMethod、class_addMethod和method_exchangeImplementations的源码实现
+其中class_replaceMethod和class_addMethod中都调用了addMethod方法，区别在于bool值的判断，下面是addMethod的源码实现
+
+
+
+坑点3：子类没有实现，父类也没有实现
+在调用personInstanceMethod方法时，父类LGPerson中只有声明，没有实现，子类LGStudent中既没有声明，也没有实现
+
+//*********LGPerson类*********
+@interface LGPerson : NSObject
+- (void)personInstanceMethod;
+@end
+
+@implementation LGPerson
+@end
+
+//*********LGStudent类*********
+@interface LGStudent : LGPerson
+- (void)helloword;
++ (void)sayHello;
+@end
+
+@implementation LGStudent
+@end
+
+//*********调用*********
+- (void)viewDidLoad {
+    [super viewDidLoad];
+
+    // 黑魔法坑点二: 子类没有实现 - 父类实现
+    LGStudent *s = [[LGStudent alloc] init];
+    [s personInstanceMethod];
+    
+    LGPerson *p = [[LGPerson alloc] init];
+    [p personInstanceMethod];
+}
+
+经过调试，发现运行代码会崩溃
+原因是 栈溢出，递归死循环了，那么为什么会发生递归呢？
+主要是因为 personInstanceMethod没有实现，然后在方法交换时，始终都找不到oriMethod，然后交换了寂寞，即交换失败
+当我们调用personInstanceMethod（oriMethod）时，也就是oriMethod会进入LG中lg_studentInstanceMethod方法，
+然后这个方法中又调用了lg_studentInstanceMethod，此时的lg_studentInstanceMethod并没有指向oriMethod ，然后导致了自己调自己，即递归死循环
+
+
+优化：避免递归死循环
+如果oriMethod为空，为了避免方法交换没有意义，而被废弃，需要做一些事情
+通过class_addMethod给oriSEL添加swiMethod方法
+通过method_setImplementation将swiMethod的IMP指向不做任何事的空实现
+
++ (void)lg_bestMethodSwizzlingWithClass:(Class)cls oriSEL:(SEL)oriSEL swizzledSEL:(SEL)swizzledSEL{
+    
+    if (!cls) NSLog(@"传入的交换类不能为空");
+    
+    Method oriMethod = class_getInstanceMethod(cls, oriSEL);
+    Method swiMethod = class_getInstanceMethod(cls, swizzledSEL);
+    
+    if (!oriMethod) {
+        // 在oriMethod为nil时，替换后将swizzledSEL复制一个不做任何事的空实现,代码如下:
+        class_addMethod(cls, oriSEL, method_getImplementation(swiMethod), method_getTypeEncoding(swiMethod));
+        method_setImplementation(swiMethod, imp_implementationWithBlock(^(id self, SEL _cmd){ }));
+    }
+    
+    // 一般交换方法: 交换自己有的方法 -- 走下面 因为自己有意味添加方法失败
+    // 交换自己没有实现的方法:
+    //   首先第一步:会先尝试给自己添加要交换的方法 :personInstanceMethod (SEL) -> swiMethod(IMP)
+    //   然后再将父类的IMP给swizzle  personInstanceMethod(imp) -> swizzledSEL
+    //oriSEL:personInstanceMethod
+
+    BOOL didAddMethod = class_addMethod(cls, oriSEL, method_getImplementation(swiMethod), method_getTypeEncoding(swiMethod));
+    if (didAddMethod) {
+        class_replaceMethod(cls, swizzledSEL, method_getImplementation(oriMethod), method_getTypeEncoding(oriMethod));
+    }else{
+        method_exchangeImplementations(oriMethod, swiMethod);
+    }
+    
+}
+
+
+method-swizzling - 类方法
+类方法和实例方法的method-swizzling的原理是类似的，唯一的区别是类方法存在元类中，所以可以做如下操作
+LGStudent中只有类方法sayHello的声明，没有实现
+
+@interface LGStudent : LGPerson
+- (void)helloword;
++ (void)sayHello;
+@end
+
+@implementation LGStudent
+
+@end
+
+在LGStudent的分类的load方法中实现类方法的方法交换
+
++ (void)load{
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+         [LGRuntimeTool lg_bestClassMethodSwizzlingWithClass:self oriSEL:@selector(sayHello) swizzledSEL:@selector(lg_studentClassMethod)];
+    });
+}
++ (void)lg_studentClassMethod{
+    NSLog(@"LGStudent分类添加的lg类方法:%s",__func__);
+   [[self class] lg_studentClassMethod];
+}
+
+封装的类方法的方法交换如下
+需要通过class_getClassMethod方法获取类方法
+在调用class_addMethod和class_replaceMethod方法添加和替换时，需要传入的类是元类，元类可以通过object_getClass方法获取类的元类
+
+//封装的method-swizzling方法
++ (void)lg_bestClassMethodSwizzlingWithClass:(Class)cls oriSEL:(SEL)oriSEL swizzledSEL:(SEL)swizzledSEL{
+    
+    if (!cls) NSLog(@"传入的交换类不能为空");
+
+    Method oriMethod = class_getClassMethod([cls class], oriSEL);
+    Method swiMethod = class_getClassMethod([cls class], swizzledSEL);
+    
+    if (!oriMethod) { // 避免动作没有意义
+        // 在oriMethod为nil时，替换后将swizzledSEL复制一个不做任何事的空实现,代码如下:
+        class_addMethod(object_getClass(cls), oriSEL, method_getImplementation(swiMethod), method_getTypeEncoding(swiMethod));
+        method_setImplementation(swiMethod, imp_implementationWithBlock(^(id self, SEL _cmd){
+            NSLog(@"来了一个空的 imp");
+        }));
+    }
+    
+    // 一般交换方法: 交换自己有的方法 -- 走下面 因为自己有意味添加方法失败
+    // 交换自己没有实现的方法:
+    //   首先第一步:会先尝试给自己添加要交换的方法 :personInstanceMethod (SEL) -> swiMethod(IMP)
+    //   然后再将父类的IMP给swizzle  personInstanceMethod(imp) -> swizzledSEL
+    //oriSEL:personInstanceMethod
+
+    BOOL didAddMethod = class_addMethod(object_getClass(cls), oriSEL, method_getImplementation(swiMethod), method_getTypeEncoding(swiMethod));
+    
+    if (didAddMethod) {
+        class_replaceMethod(object_getClass(cls), swizzledSEL, method_getImplementation(oriMethod), method_getTypeEncoding(oriMethod));
+    }else{
+        method_exchangeImplementations(oriMethod, swiMethod);
+    }
+    
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    [LGStudent sayHello];
+}
+
+
+method-swizzling的应用:
+method-swizzling最常用的应用是防止数组、字典等越界崩溃
+在iOS中NSNumber、NSArray、NSDictionary等这些类都是类簇，一个NSArray的实现可能由多个类组成。所以如果想对NSArray进行Swizzling，必须获取到其“真身”进行Swizzling，直接对NSArray进行操作是无效的。
+
+类名	真身
+NSArray	__NSArrayI
+NSMutableArray	__NSArrayM
+NSDictionary	__NSDictionaryI
+NSMutableDictionary	__NSDictionaryM
+
+@implementation NSArray (CJLArray)
+//如果下面代码不起作用，造成这个问题的原因大多都是其调用了super load方法。在下面的load方法中，不应该调用父类的load方法。这样会导致方法交换无效
++ (void)load{
+    Method fromMethod = class_getInstanceMethod(objc_getClass("__NSArrayI"), @selector(objectAtIndex:));
+    Method toMethod = class_getInstanceMethod(objc_getClass("__NSArrayI"), @selector(cjl_objectAtIndex:));
+    
+    method_exchangeImplementations(fromMethod, toMethod);
+}
+
+//如果下面代码不起作用，造成这个问题的原因大多都是其调用了super load方法。在下面的load方法中，不应该调用父类的load方法。这样会导致方法交换无效
+- (id)cjl_objectAtIndex:(NSUInteger)index{
+    //判断下标是否越界，如果越界就进入异常拦截
+    if (self.count-1 < index) {
+        // 这里做一下异常处理，不然都不知道出错了。
+#ifdef DEBUG  // 调试阶段
+        return [self cjl_objectAtIndex:index];
+#else // 发布阶段
+        @try {
+            return [self cjl_objectAtIndex:index];
+        } @catch (NSException *exception) {
+            // 在崩溃后会打印崩溃信息，方便我们调试。
+            NSLog(@"---------- %s Crash Because Method %s  ----------\n", class_getName(self.class), __func__);
+            NSLog(@"%@", [exception callStackSymbols]);
+            return nil;
+        } @finally {
+            
+        }
+#endif
+    }else{ // 如果没有问题，则正常进行方法调用
+        return [self cjl_objectAtIndex:index];
+    }
+}
+
+@end
+
+
+NSArray *array = @[@"1", @"2", @"3"];
+[array objectAtIndex:3];
+打印结果如下，会输出崩溃的日志，但是实际并不会崩溃
+

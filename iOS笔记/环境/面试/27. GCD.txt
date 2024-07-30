@@ -1,0 +1,769 @@
+GCD 之 函数与队列
+
+GCD全称是Grand Central Dispatch
+纯C语言，提供例如非常强大的函数
+
+GCD是苹果公司为多核的并行运算提出的解决方案
+GCD会自动利用更多的CPU内核（比如双核、四核）
+GCD会自动管理线程的生命周期（创建线程、调度任务、销毁线程）
+
+GCD就是：将任务添加到队列，并指定任务执行的函数
+
+GCD的核心 主要是由 任务 + 队列 + 函数 构成
+//创建任务
+dispatch_block_t block = ^{
+    NSLog(@"hello GCD");
+};
+
+//创建串行队列
+dispatch_queue_t queue = dispatch_queue_create("com.CJL.Queue", NULL);
+
+//将任务添加到队列，并指定函数执行
+dispatch_async(queue, block);
+
+使用dispatch_block_t创建任务
+使用dispatch_queue_t创建队列
+将任务添加到队列，并指定执行任务的函数dispatch_async
+
+在使用dispatch_block_t创建任务时，主要有以下两点说明:
+任务使用block封装
+任务的block没有参数也没有返回值
+
+
+
+
+函数与队列:
+函数:
+在GCD中执行任务的方式有两种，同步执行和异步执行，分别对应 同步函数dispatch_sync 和 异步函数dispatch_async
+
+同步执行，对应同步函数dispatch_sync
+必须等待当前语句执行完毕，才会执行下一条语句
+不会开启线程，即不具备开启新线程的能力
+在当前线程中执行block任务
+
+异步执行，对应异步函数dispatch_async
+不用等待当前语句执行完毕，就可以执行下一条语句
+会开启线程执行block任务，即具备开启新线程的能力（但并不一定开启新线程，这个与任务所指定的队列类型有关）
+异步 是 多线程 的代名词
+
+两种执行方式的主要区别有两点:
+是否等待队列的任务执行完毕
+是否具备开启新线程的能力
+
+队列:
+串行队列 和 并发队列
+多线程中所说的队列（Dispatch Queue）是指执行任务的等待队列，即用来存放任务的队列。
+队列是一种特殊的线性表，遵循先进先出（FIFO）原则，即新任务总是被插入到队尾，而任务的读取从队首开始读取。每读取一个任务，则动队列中释放一个任务
+在GCD中，队列主要分为串行队列（Serial Dispatch Queue） 和并发队列（Concurrent Dispatch Queue）两种
+
+串行队列：每次只有一个任务被执行，等待上一个任务执行完毕再执行下一个，即只开启一个线程（通俗理解：同一时刻只调度一个任务执行）
+使用dispatch_queue_create("xxx", DISPATCH_QUEUE_SERIAL);创建串行队列
+其中的DISPATCH_QUEUE_SERIAL也可以使用NULL表示，这两种均表示 默认的串行队列
+
+并发队列：一次可以并发执行多个任务，即开启多个线程，并同时执行任务（通俗理解：同一时刻可以调度多个任务执行）
+使用dispatch_queue_create("xxx", DISPATCH_QUEUE_CONCURRENT);创建并发队列
+注意：并发队列的并发功能只有在异步函数下才有效
+
+
+主队列 和 全局并发队列
+在GCD中，针对这两种队列，分别提供了主队列（Main Dispatch Queue）和全局并发队列（Global Dispatch Queue）
+
+主队列（Main Dispatch Queue）：GCD中提供的特殊的串行队列
+专门用来在主线程上调度任务的串行队列，依赖于主线程、主Runloop，在main函数调用之前自动创建
+不会开启线程
+如果当前主线程正在有任务执行，那么无论主队列中当前被添加了什么任务，都不会被调度
+使用dispatch_get_main_queue()获得主队列
+通常在返回主线程 更新UI时使用
+
+全局并发队列（Global Dispatch Queue）：GCD提供的默认的并发队列
+为了方便程序员的使用，苹果提供了全局队列
+在使用多线程开发时，如果对队列没有特殊需求，在执行异步任务时，可以直接使用全局队列
+使用dispatch_get_global_queue获取全局并发队列，最简单的是dispatch_get_global_queue(0, 0)
+第一个参数表示队列优先级，默认优先级为DISPATCH_QUEUE_PRIORITY_DEFAULT=0，在ios9之后，已经被服务质量（quality-of-service）取代
+第二个参数使用0
+
+//全局并发队列的获取方法
+dispatch_queue_t globalQueue = dispatch_get_global_queue(0, 0);
+
+//优先级从高到低（对应的服务质量）依次为
+- DISPATCH_QUEUE_PRIORITY_HIGH       -- QOS_CLASS_USER_INITIATED
+- DISPATCH_QUEUE_PRIORITY_DEFAULT    -- QOS_CLASS_DEFAULT
+- DISPATCH_QUEUE_PRIORITY_LOW        -- QOS_CLASS_UTILITY
+- DISPATCH_QUEUE_PRIORITY_BACKGROUND -- QOS_CLASS_BACKGROUND
+
+
+函数与队列的不同组合:
+串行队列 + 同步函数:
+【任务按顺序执行】：任务一个接一个的在当前线程执行，不会开辟新线程
+
+串行队列 + 异步函数
+【任务按顺序执行】：任务一个接一个的执行，会开辟新线程
+
+并发队列 + 同步函数
+【任务按顺序执行】：任务一个接一个的执行，不开辟线程
+
+并发队列 + 异步函数
+【任务乱序执行】：任务执行无顺序，会开辟新线程
+
+主队列 + 同步函数
+【造成死锁】：任务相互等待，造成死锁
+
+造成死锁的原因分析如下：
+主队列有两个任务，顺序为：NSLog任务 - 同步block
+执行NSLog任务后，执行同步Block，会将任务1（即i=1时）加入到主队列，主队列顺序为：NSLog任务 - 同步block - 任务1
+任务1的执行需要等待同步block执行完毕才会执行，而同步block的执行需要等待任务1执行完毕，所以就造成了任务互相等待的情况，即造成死锁崩溃
+
+死锁现象
+主线程因为你同步函数的原因等着先执行任务
+主队列等着主线程的任务执行完毕再执行自己的任务
+主队列和主线程相互等待会造成死锁
+
+主队列 + 异步函数
+【任务按顺序执行】：任务一个接一个的执行，不开辟线程
+
+全局并发队列 + 同步函数
+【任务按顺序执行】：任务一个接一个的执行，不开辟新线程
+
+全局并发队列 + 异步函数
+【任务乱序执行】：任务乱序执行，会开辟新线程
+
+
+
+【面试题 - 1】异步函数+并行队列
+- (void)interview01{
+    //并行队列
+    dispatch_queue_t queue = dispatch_queue_create("com.CJL.Queue", DISPATCH_QUEUE_CONCURRENT);
+    NSLog(@"1");
+    // 耗时
+    dispatch_async(queue, ^{
+        NSLog(@"2");
+        dispatch_async(queue, ^{
+            NSLog(@"3");
+        });
+        NSLog(@"4");
+    });
+    NSLog(@"5");
+}
+----------打印结果-----------
+输出顺序为：1 5 2 4 3
+异步函数并不会阻塞主队列，会开辟新线程执行异步任务
+
+主线程的任务队列为：任务1、异步block1、任务5，其中异步block1会比较耗费性能，任务1和任务5的任务复杂度是相同的，所以任务1和任务5优先于异步block1执行
+异步block1中，任务队列为：任务2、异步block2、任务4，其中block2相对比较耗费性能，任务2和任务4是复杂度一样，所以任务2和任务4优先于block2执行
+最后执行block2中的任务3
+在极端情况下，可能出现 任务2先于任务1和任务5执行，原因是出现了当前主线程卡顿或者 延迟的情况
+
+【修改1】：将并行队列 改成 串行队列，对结果没有任何影响，顺序仍然是 1 5 2 4 3
+【修改2】：在任务5之前，休眠2s，即sleep(2)，执行的顺序为：1 2 4 3 5,原因是因为I/O的打印，相比于休眠2s，复杂度更简单，所以异步block1 会先于任务5执行。当然如果主队列堵塞，会出现其他的执行顺序
+
+
+
+【面试题 - 2】异步函数嵌套同步函数 + 并发队列
+- (void)interview02{
+    //并发队列
+    dispatch_queue_t queue = dispatch_queue_create("com.CJL.Queue", DISPATCH_QUEUE_CONCURRENT);
+    NSLog(@"1");
+    //异步函数
+    dispatch_async(queue, ^{
+        NSLog(@"2");
+        //同步函数
+        dispatch_sync(queue, ^{
+            NSLog(@"3");
+        });
+        NSLog(@"4");
+    });
+    NSLog(@"5");
+}
+
+----------打印结果-----------
+输出顺序为：1 5 2 3 4
+
+任务1 和 任务5的分析同前面一致，执行顺序为 任务1 任务5 异步block
+在异步block中，首先执行任务2，然后走到同步block，由于同步函数会阻塞主线程，所以任务4需要等待任务3执行完成后，才能执行，所以异步block中的执行顺序是：任务2 任务3 任务4
+
+
+【面试题 - 3】异步函数嵌套同步函数 + 串行队列（即同步队列）
+- (void)interview03{
+    // 同步队列
+    dispatch_queue_t queue = dispatch_queue_create("com.CJL.Queue", NULL);
+    NSLog(@"1");
+    // 异步函数
+    dispatch_async(queue, ^{
+        NSLog(@"2");
+        // 同步函数
+        dispatch_sync(queue, ^{
+            NSLog(@"3");
+        });
+        NSLog(@"4");
+    });
+    NSLog(@"5");
+}
+
+----------打印结果-----------
+输出顺序为：1 5 2 死锁崩溃
+
+首先执行任务1，接下来是异步block，并不会阻塞主线程，相比任务5而言，复杂度更高，所以优先执行任务5，在执行异步block
+在异步block中，先执行任务2，接下来是同步block，同步函数会阻塞线程，所以执行任务4需要等待任务3执行完成，而任务3的执行，需要等待异步block执行完成，相当于任务3等待任务4完成
+所以就造成了任务4等待任务3，任务3等待任务4，即互相等待的局面，就会造成死锁，这里有个重点是关键的堆栈 slow
+
+去掉任务4，执行顺序是什么？
+还是会死锁，因为任务3等待的是异步block执行完毕，而异步block等待任务3
+
+
+
+【面试题 - 4 - 新浪】 异步函数 + 同步函数 + 并发队列
+下面代码的执行顺序是什么？（答案是 AC）
+A: 1230789
+B: 1237890
+C: 3120798
+D: 2137890
+
+- (void)interview04{
+    //并发队列
+    dispatch_queue_t queue = dispatch_queue_create("com.CJL.Queue", DISPATCH_QUEUE_CONCURRENT);
+
+    dispatch_async(queue, ^{ // 耗时
+        NSLog(@"1");
+    });
+    dispatch_async(queue, ^{
+        NSLog(@"2");
+    });
+    
+    // 同步
+    dispatch_sync(queue, ^{
+        NSLog(@"3");
+    });
+    
+    NSLog(@"0");
+
+    dispatch_async(queue, ^{
+        NSLog(@"7");
+    });
+    dispatch_async(queue, ^{
+        NSLog(@"8");
+    });
+    dispatch_async(queue, ^{
+        NSLog(@"9");
+    });
+}
+
+----------打印结果-----------
+输出顺序为：（1 2 3 无序）0（7 8 9 无序），可以确定的是 0 一定在3之后，在789之前
+
+任务1 和 任务2由于是异步函数+并发队列，会开启线程，所以没有固定顺序
+任务7、任务8、任务9同理，会开启线程，所以没有固定顺序
+任务3是同步函数+并发队列，同步函数会阻塞主线程，但是也只会阻塞0，所以，可以确定的是 0一定在3之后，在789之前
+
+
+
+【面试题 - 5 - 美团】下面代码中，队列的类型有几种？
+//串行队列 - Serial Dispatch Queue
+dispatch_queue_t serialQueue = dispatch_queue_create("com.CJL.Queue", NULL);
+    
+//并发队列 - Concurrent Dispatch Queue
+dispatch_queue_t concurrentQueue = dispatch_queue_create("com.CJL.Queue", DISPATCH_QUEUE_CONCURRENT);
+    
+//主队列 - Main Dispatch Queue
+dispatch_queue_t mainQueue = dispatch_get_main_queue();
+    
+//全局并发队列 - Global Dispatch Queue
+dispatch_queue_t globalQueue = dispatch_get_global_queue(0, 0);
+
+队列总共有两种： 并发队列 和 串行队列
+串行队列：serialQueue、mainQueue
+并发队列：concurrentQueue、globalQueue
+
+
+
+
+dispatch_apply:
+- (void)cjl_testApply{
+    /*
+     dispatch_apply将指定的Block追加到指定的队列中重复执行，并等到全部的处理执行结束——相当于线程安全的for循环
+
+     应用场景：用来拉取网络数据后提前算出各个控件的大小，防止绘制时计算，提高表单滑动流畅性
+     - 添加到串行队列中——按序执行
+     - 添加到主队列中——死锁
+     - 添加到并发队列中——乱序执行
+     - 添加到全局队列中——乱序执行
+     */
+    
+    dispatch_queue_t queue = dispatch_queue_create("CJL", DISPATCH_QUEUE_SERIAL);
+    NSLog(@"dispatch_apply前");
+    /**
+         param1：重复次数
+         param2：追加的队列
+         param3：执行任务
+         */
+    dispatch_apply(10, queue, ^(size_t index) {
+        NSLog(@"dispatch_apply 的线程 %zu - %@", index, [NSThread currentThread]);
+    });
+    NSLog(@"dispatch_apply后");
+}
+
+
+dispatch_group_t:
+【方式一】使用dispatch_group_async + dispatch_group_notify
+
+- (void)cjl_testGroup1{
+    /*
+     dispatch_group_t：调度组将任务分组执行，能监听任务组完成，并设置等待时间
+
+     应用场景：多个接口请求之后刷新页面
+     */
+    
+    dispatch_group_t group = dispatch_group_create();
+    dispatch_queue_t queue = dispatch_get_global_queue(0, 0);
+    
+    dispatch_group_async(group, queue, ^{
+        // 子线程
+        NSLog(@"请求一完成");
+    });
+    
+    dispatch_group_async(group, queue, ^{
+        NSLog(@"请求二完成");
+    });
+    
+    dispatch_group_notify(group, dispatch_get_main_queue(), ^{
+        NSLog(@"刷新页面");
+    });
+}
+
+【方式二】使用dispatch_group_enter + dispatch_group_leave + dispatch_group_notify
+- (void)cjl_testGroup2{
+    /*
+     dispatch_group_enter和dispatch_group_leave成对出现，使进出组的逻辑更加清晰
+     */
+    dispatch_group_t group = dispatch_group_create();
+    dispatch_queue_t queue = dispatch_get_global_queue(0, 0);
+    
+    dispatch_group_enter(group);
+    dispatch_async(queue, ^{
+        NSLog(@"请求一完成");
+        dispatch_group_leave(group);
+    });
+    
+    dispatch_group_enter(group);
+    dispatch_async(queue, ^{
+        NSLog(@"请求二完成");
+        dispatch_group_leave(group);
+    });
+    
+    dispatch_group_notify(group, dispatch_get_main_queue(), ^{
+        NSLog(@"刷新界面");
+    });
+}
+
+在方式二的基础上增加超时dispatch_group_wait
+- (void)cjl_testGroup3{
+    /*
+     long dispatch_group_wait(dispatch_group_t group, dispatch_time_t timeout)
+
+     group：需要等待的调度组
+     timeout：等待的超时时间（即等多久）
+        - 设置为DISPATCH_TIME_NOW意味着不等待直接判定调度组是否执行完毕
+        - 设置为DISPATCH_TIME_FOREVER则会阻塞当前调度组，直到调度组执行完毕
+
+
+     返回值：为long类型
+        - 返回值为0——在指定时间内调度组完成了任务
+        - 返回值不为0——在指定时间内调度组没有按时完成任务
+
+     */
+    dispatch_group_t group = dispatch_group_create();
+    dispatch_queue_t queue = dispatch_get_global_queue(0, 0);
+    
+    dispatch_group_enter(group);
+    dispatch_async(queue, ^{
+        NSLog(@"请求一完成");
+        dispatch_group_leave(group);
+    });
+    
+    dispatch_group_enter(group);
+    dispatch_async(queue, ^{
+        NSLog(@"请求二完成");
+        dispatch_group_leave(group);
+    });
+    
+//    long timeout = dispatch_group_wait(group, DISPATCH_TIME_NOW);
+//    long timeout = dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
+    long timeout = dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, 1 *NSEC_PER_SEC));
+    NSLog(@"timeout = %ld", timeout);
+    if (timeout == 0) {
+        NSLog(@"按时完成任务");
+    }else{
+        NSLog(@"超时");
+    }
+    
+    dispatch_group_notify(group, dispatch_get_main_queue(), ^{
+        NSLog(@"刷新界面");
+    });
+}
+
+
+
+dispatch_barrier_sync & dispatch_barrier_async:
+栅栏函数，主要有两种使用场景：串行队列、并发队列
+- (void)cjl_testBarrier{
+    /*
+     dispatch_barrier_sync & dispatch_barrier_async
+     
+     应用场景：同步锁
+     
+     等栅栏前追加到队列中的任务执行完毕后，再将栅栏后的任务追加到队列中。
+     简而言之，就是先执行栅栏前任务，再执行栅栏任务，最后执行栅栏后任务
+     
+     - dispatch_barrier_async：前面的任务执行完毕才会来到这里
+     - dispatch_barrier_sync：作用相同，但是这个会堵塞线程，影响后面的任务执行
+    
+     - dispatch_barrier_async可以控制队列中任务的执行顺序，
+     - 而dispatch_barrier_sync不仅阻塞了队列的执行，也阻塞了线程的执行（尽量少用）
+     */
+    
+    [self cjl_testBarrier1];
+    [self cjl_testBarrier2];
+}
+- (void)cjl_testBarrier1{
+    //串行队列使用栅栏函数
+    
+    dispatch_queue_t queue = dispatch_queue_create("CJL", DISPATCH_QUEUE_SERIAL);
+    
+    NSLog(@"开始 - %@", [NSThread currentThread]);
+    dispatch_async(queue, ^{
+        sleep(2);
+        NSLog(@"延迟2s的任务1 - %@", [NSThread currentThread]);
+    });
+    NSLog(@"第一次结束 - %@", [NSThread currentThread]);
+    
+    //栅栏函数的作用是将队列中的任务进行分组，所以我们只要关注任务1、任务2
+    dispatch_barrier_async(queue, ^{
+        NSLog(@"------------栅栏任务------------%@", [NSThread currentThread]);
+    });
+    NSLog(@"栅栏结束 - %@", [NSThread currentThread]);
+    
+    dispatch_async(queue, ^{
+        sleep(2);
+        NSLog(@"延迟2s的任务2 - %@", [NSThread currentThread]);
+    });
+    NSLog(@"第二次结束 - %@", [NSThread currentThread]);
+}
+- (void)cjl_testBarrier2{
+    //并发队列使用栅栏函数
+    
+    dispatch_queue_t queue = dispatch_queue_create("CJL", DISPATCH_QUEUE_CONCURRENT);
+    
+    NSLog(@"开始 - %@", [NSThread currentThread]);
+    dispatch_async(queue, ^{
+        sleep(2);
+        NSLog(@"延迟2s的任务1 - %@", [NSThread currentThread]);
+    });
+    NSLog(@"第一次结束 - %@", [NSThread currentThread]);
+    
+    //由于并发队列异步执行任务是乱序执行完毕的，所以使用栅栏函数可以很好的控制队列内任务执行的顺序
+    dispatch_barrier_async(queue, ^{
+        NSLog(@"------------栅栏任务------------%@", [NSThread currentThread]);
+    });
+    NSLog(@"栅栏结束 - %@", [NSThread currentThread]);
+    
+    dispatch_async(queue, ^{
+        sleep(2);
+        NSLog(@"延迟2s的任务2 - %@", [NSThread currentThread]);
+    });
+    NSLog(@"第二次结束 - %@", [NSThread currentThread]);
+}
+
+
+dispatch_semaphore_t:
+信号量主要用作同步锁，用于控制GCD最大并发数
+
+- (void)cjl_testSemaphore{
+    /*
+     应用场景：同步当锁, 控制GCD最大并发数
+
+     - dispatch_semaphore_create()：创建信号量
+     - dispatch_semaphore_wait()：等待信号量，信号量减1。当信号量< 0时会阻塞当前线程，根据传入的等待时间决定接下来的操作——如果永久等待将等到信号（signal）才执行下去
+     - dispatch_semaphore_signal()：释放信号量，信号量加1。当信号量>= 0 会执行wait之后的代码
+
+     */
+    dispatch_queue_t queue = dispatch_queue_create("CJL", DISPATCH_QUEUE_CONCURRENT);
+    
+    for (int i = 0; i < 10; i++) {
+        dispatch_async(queue, ^{
+            NSLog(@"当前 - %d， 线程 - %@", i, [NSThread currentThread]);
+        });
+    }
+    
+    //利用信号量来改写
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    
+    for (int i = 0; i < 10; i++) {
+        dispatch_async(queue, ^{
+            NSLog(@"当前 - %d， 线程 - %@", i, [NSThread currentThread]);
+            
+            dispatch_semaphore_signal(sem);
+        });
+        dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    }
+}
+
+
+dispatch_source_t:
+dispatch_source_t主要用于计时操作，其原因是因为它创建的timer不依赖于RunLoop，且计时精准度比NSTimer高
+
+- (void)cjl_testSource{
+    /*
+     dispatch_source
+     
+     应用场景：GCDTimer
+     在iOS开发中一般使用NSTimer来处理定时逻辑，但NSTimer是依赖Runloop的，而Runloop可以运行在不同的模式下。如果NSTimer添加在一种模式下，当Runloop运行在其他模式下的时候，定时器就挂机了；又如果Runloop在阻塞状态，NSTimer触发时间就会推迟到下一个Runloop周期。因此NSTimer在计时上会有误差，并不是特别精确，而GCD定时器不依赖Runloop，计时精度要高很多
+     
+     dispatch_source是一种基本的数据类型，可以用来监听一些底层的系统事件
+        - Timer Dispatch Source：定时器事件源，用来生成周期性的通知或回调
+        - Signal Dispatch Source：监听信号事件源，当有UNIX信号发生时会通知
+        - Descriptor Dispatch Source：监听文件或socket事件源，当文件或socket数据发生变化时会通知
+        - Process Dispatch Source：监听进程事件源，与进程相关的事件通知
+        - Mach port Dispatch Source：监听Mach端口事件源
+        - Custom Dispatch Source：监听自定义事件源
+
+     主要使用的API：
+        - dispatch_source_create: 创建事件源
+        - dispatch_source_set_event_handler: 设置数据源回调
+        - dispatch_source_merge_data: 设置事件源数据
+        - dispatch_source_get_data： 获取事件源数据
+        - dispatch_resume: 继续
+        - dispatch_suspend: 挂起
+        - dispatch_cancle: 取消
+     */
+    
+    //1.创建队列
+    dispatch_queue_t queue = dispatch_get_global_queue(0, 0);
+    //2.创建timer
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+    //3.设置timer首次执行时间，间隔，精确度
+    dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, 2.0*NSEC_PER_SEC, 0.1*NSEC_PER_SEC);
+    //4.设置timer事件回调
+    dispatch_source_set_event_handler(timer, ^{
+        NSLog(@"GCDTimer");
+    });
+    //5.默认是挂起状态，需要手动激活
+    dispatch_resume(timer);
+    
+}
+
+
+NSOperation:
+NSOperation是基于GCD之上的更高一层封装，NSOperation需要配合NSOperationQueue来实现多线程。
+
+NSOperatino实现多线程的步骤如下：
+1、创建任务：先将需要执行的操作封装到NSOperation对象中。
+2、创建队列：创建NSOperationQueue。
+3、将任务加入到队列中：将NSOperation对象添加到NSOperationQueue中。
+
+//基本使用
+- (void)cjl_testBaseNSOperation{
+    //处理事务
+    NSInvocationOperation *op =  [[NSInvocationOperation alloc] initWithTarget:self selector:@selector(handleInvocation::) object:@"CJL"];
+    //创建队列
+    NSOperationQueue *queue = [[NSOperationQueue alloc] init];
+    //操作加入队列
+    [queue addOperation:op];
+    
+}
+- (void)handleInvocation:(id)operation{
+    NSLog(@"%@ - %@", operation, [NSThread currentThread]);
+}
+
+NSOperation是个抽象类，实际运用时中需要使用它的子类，有三种方式：
+1、使用子类NSInvocationOperation
+
+//直接处理事务，不添加隐性队列
+- (void)cjl_createNSOperation{
+    //创建NSInvocationOperation对象并关联方法，之后start。
+    NSInvocationOperation *invocationOperation = [[NSInvocationOperation alloc] initWithTarget:self selector:@selector(doSomething:) object:@"CJL"];
+    
+    [invocationOperation start];
+}
+
+2、使用子类NSBlockOperation
+- (void)cjl_testNSBlockOperationExecution{
+    //通过addExecutionBlock这个方法可以让NSBlockOperation实现多线程。
+    //NSBlockOperation创建时block中的任务是在主线程执行，而运用addExecutionBlock加入的任务是在子线程执行的。
+    NSBlockOperation *blockOperation = [NSBlockOperation blockOperationWithBlock:^{
+        NSLog(@"main task = >currentThread: %@", [NSThread currentThread]);
+    }];
+    
+    [blockOperation addExecutionBlock:^{
+            NSLog(@"task1 = >currentThread: %@", [NSThread currentThread]);
+    }];
+    
+    [blockOperation addExecutionBlock:^{
+            NSLog(@"task2 = >currentThread: %@", [NSThread currentThread]);
+    }];
+    
+    [blockOperation addExecutionBlock:^{
+            NSLog(@"task3 = >currentThread: %@", [NSThread currentThread]);
+    }];
+    
+    [blockOperation start];
+}
+
+3、定义继承自NSOperation的子类，通过实现内部相应的方法来封装任务。
+//*********自定义继承自NSOperation的子类*********
+@interface CJLOperation : NSOperation
+@end
+
+@implementation CJLOperation
+- (void)main{
+    for (int i = 0; i < 3; i++) {
+        NSLog(@"NSOperation的子类：%@",[NSThread currentThread]);
+    }
+}
+@end
+
+//*********使用*********
+- (void)cjl_testCJLOperation{
+    //运用继承自NSOperation的子类 首先我们定义一个继承自NSOperation的类，然后重写它的main方法。
+    CJLOperation *operation = [[CJLOperation alloc] init];
+    [operation start];
+}
+
+
+NSOperationQueue:
+NSOperationQueue添加事务
+NSOperationQueue有两种队列：主队列、其他队列。其他队列包含了 串行和并发。
+
+主队列：主队列上的任务是在主线程执行的。
+其他队列（非主队列）：加入到'非队列'中的任务默认就是并发，开启多线程。
+
+- (void)cjl_testNSOperationQueue{
+    /*
+     NSInvocationOperation和NSBlockOperation两者的区别在于：
+     - 前者类似target形式
+     - 后者类似block形式——函数式编程，业务逻辑代码可读性更高
+     
+     NSOperationQueue是异步执行的，所以任务一、任务二的完成顺序不确定
+     */
+    // 初始化添加事务
+    NSBlockOperation *bo = [NSBlockOperation blockOperationWithBlock:^{
+        NSLog(@"任务1————%@",[NSThread currentThread]);
+    }];
+    // 添加事务
+    [bo addExecutionBlock:^{
+        NSLog(@"任务2————%@",[NSThread currentThread]);
+    }];
+    // 回调监听
+    bo.completionBlock = ^{
+        NSLog(@"完成了!!!");
+    };
+    
+    NSOperationQueue *queue = [[NSOperationQueue alloc] init];
+    [queue addOperation:bo];
+    NSLog(@"事务添加进了NSOperationQueue");
+}
+
+
+设置执行顺序:
+//执行顺序
+- (void)cjl_testQueueSequence{
+    NSOperationQueue *queue = [[NSOperationQueue alloc] init];
+        for (int i = 0; i < 5; i++) {
+            [queue addOperationWithBlock:^{
+                NSLog(@"%@---%d", [NSThread currentThread], i);
+            }];
+        }
+}
+
+设置优先级:
+- (void)cjl_testOperationQuality{
+    /*
+     NSOperation设置优先级只会让CPU有更高的几率调用，不是说设置高就一定全部先完成
+     - 不使用sleep——高优先级的任务一先于低优先级的任务二
+     - 使用sleep进行延时——高优先级的任务一慢于低优先级的任务二
+     */
+    NSBlockOperation *bo1 = [NSBlockOperation blockOperationWithBlock:^{
+        for (int i = 0; i < 5; i++) {
+            //sleep(1);
+            NSLog(@"第一个操作 %d --- %@", i, [NSThread currentThread]);
+        }
+    }];
+    // 设置最高优先级
+    bo1.qualityOfService = NSQualityOfServiceUserInteractive;
+    
+    NSBlockOperation *bo2 = [NSBlockOperation blockOperationWithBlock:^{
+        for (int i = 0; i < 5; i++) {
+            NSLog(@"第二个操作 %d --- %@", i, [NSThread currentThread]);
+        }
+    }];
+    // 设置最低优先级
+    bo2.qualityOfService = NSQualityOfServiceBackground;
+    
+    NSOperationQueue *queue = [[NSOperationQueue alloc] init];
+    [queue addOperation:bo1];
+    [queue addOperation:bo2];
+
+}
+
+
+设置并发数:
+//设置并发数
+- (void)cjl_testOperationMaxCount{
+    /*
+     在GCD中只能使用信号量来设置并发数
+     而NSOperation轻易就能设置并发数
+     通过设置maxConcurrentOperationCount来控制单次出队列去执行的任务数
+     */
+    NSOperationQueue *queue = [[NSOperationQueue alloc] init];
+    queue.name = @"Felix";
+    queue.maxConcurrentOperationCount = 2;
+    
+    for (int i = 0; i < 5; i++) {
+        [queue addOperationWithBlock:^{ // 一个任务
+            [NSThread sleepForTimeInterval:2];
+            NSLog(@"%d-%@",i,[NSThread currentThread]);
+        }];
+    }
+}
+
+
+添加依赖:
+//添加依赖
+- (void)cjl_testOperationDependency{
+    NSOperationQueue *queue = [[NSOperationQueue alloc] init];
+    NSBlockOperation *bo1 = [NSBlockOperation blockOperationWithBlock:^{
+        [NSThread sleepForTimeInterval:0.5];
+        NSLog(@"请求token");
+    }];
+    
+    NSBlockOperation *bo2 = [NSBlockOperation blockOperationWithBlock:^{
+        [NSThread sleepForTimeInterval:0.5];
+        NSLog(@"拿着token,请求数据1");
+    }];
+    
+    NSBlockOperation *bo3 = [NSBlockOperation blockOperationWithBlock:^{
+        [NSThread sleepForTimeInterval:0.5];
+        NSLog(@"拿着数据1,请求数据2");
+    }];
+    
+    [bo2 addDependency:bo1];
+    [bo3 addDependency:bo2];
+    
+    [queue addOperations:@[bo1,bo2,bo3] waitUntilFinished:YES];
+    
+    NSLog(@"执行完了?我要干其他事");
+}
+
+
+线程间通讯:
+//线程间通讯
+- (void)cjl_testOperationNoti{
+    NSOperationQueue *queue = [[NSOperationQueue alloc] init];
+    queue.name = @"Felix";
+    [queue addOperationWithBlock:^{
+        NSLog(@"请求网络%@--%@", [NSOperationQueue currentQueue], [NSThread currentThread]);
+        
+        [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+            NSLog(@"刷新UI%@--%@", [NSOperationQueue currentQueue], [NSThread currentThread]);
+        }];
+    }];
+
+}
