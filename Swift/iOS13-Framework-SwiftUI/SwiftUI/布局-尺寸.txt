@@ -1,0 +1,108 @@
+SwiftUI 布局过程:
+
+struct ContentView: View {
+    var body: some View {
+        ZStack {
+            Text("Hello world")
+        }
+    }
+}
+// ContentView
+//     |
+//     |———————— ZStack
+//                 |
+//                 |—————————— Text
+
+
+SwiftUI 的布局就是布局系统通过为视图树上的节点提供必要的信息，最终计算出每个视图（ 矩形 ）所需的尺寸以及摆放位置的行为。
+
+当前设备为 iPhone 13 Pro:
+ContentView 为应用的根视图
+SwiftUI 的布局系统为 ZStack 提供一个建议尺寸（ 390 x 763 该尺寸为设备屏幕尺寸去掉安全区域的大小 ），并询问 ZStack 的需求尺寸
+ZStack 为 Text 提供建议尺寸（ 390 x 763 ），并询问 Text 的需求尺寸
+Text 根据 ZStack 提供的建议尺寸，返回了自己的需求尺寸（ 85.33 x 20.33 ，因为 ZStack 提供建议尺寸大于 Text 的实际需求，因此 Text 的需求尺寸为对文本不折行，不省略的完整显示尺寸）
+ZStack 向 SwiftUI 的布局系统返回了自己的需求尺寸（ 85.33 x 20.33，因为 ZStack 中仅有 Text 一个子视图，因此 Text 的需求尺寸便是 ZStack 的需求尺寸 ）
+SwiftUI 的布局系统将 ZStack 放置在了 152.33, 418.33 处，并为其提供了布局尺寸（ 85.33 x 20.33 ）
+ZStack 将 Text 放置在了 152.33, 418.33 处，并为其提供了布局尺寸（ 85.33 x 20.33 ）
+
+布局过程基本上分为两个阶段:
+第一阶段 —— 讨价还价
+在这个阶段，父视图为子视图提供建议尺寸，子视图为父视图返回需求尺寸
+在 Layout 协议中，对应的是 sizeThatFits 方法。经过该阶段的协商，SwiftUI 将确定视图所在屏幕上的位置和尺寸。
+
+第二阶段 —— 安置子民
+在该阶段，父视图将根据 SwiftUI 布局系统提供的屏幕区域（ 由第一阶段计算得出 ）为子视图设置布局的位置和尺寸
+在 Layout 协议中，对应的是 placeSubviews 方法。此时，视图树上的每个视图都将与屏幕上的具体位置联系起来。
+
+讨价还价的次数与视图结构的复杂度成正比，整个的协商过程可能会反复出现多次甚至推倒重来的情况。
+
+
+容器与视图:
+在 SwiftUI 中，只有符合 View 协议的 component 才能被 ViewBuilder 所处理。
+因此任何一种布局容器，最终都会被包装并以 View 的形式出现在代码中。
+
+下面是 VStack 的构造函数，content 被传递给了真正的布局容器 _VStackLayout 进行布局
+public struct VStack<Content>: SwiftUI.View where Content: View {
+    internal var _tree: _VariadicView.Tree<_VStackLayout, Content>
+    public init(alignment: SwiftUI.HorizontalAlignment = .center, spacing: CoreFoundation.CGFloat? = nil, @SwiftUI.ViewBuilder content: () -> Content) {
+        _tree = .init(
+            root: _VStackLayout(alignment: alignment, spacing: spacing), content: content()
+        )
+    }
+    public typealias Body = Swift.Never
+}
+
+除了我们熟悉的 VStack、ZStack、List 等布局视图外，在 SwiftUI 中，大量的布局容器是以视图修饰器的形式存在的。例如，下面是 frame 在 SwiftUI 中的定义
+public extension SwiftUI.View {
+    func frame(width: CoreFoundation.CGFloat? = nil, height: CoreFoundation.CGFloat? = nil, alignment: SwiftUI.Alignment = .center) -> some SwiftUI.View {
+        return modifier(
+            _FrameLayout(width: width, height: height, alignment: alignment))
+    }
+}
+
+public struct _FrameLayout {
+    let width: CoreFoundation.CGFloat?
+    let height: CoreFoundation.CGFloat?
+    init(width: CoreFoundation.CGFloat?, height: CoreFoundation.CGFloat?, alignment: SwiftUI.Alignment)
+    public typealias Body = Swift.Never
+}
+
+_FrameLayout 被包装成 viewModifier ，作用于给定的视图。
+
+Text("Hi")
+    .frame(width: 100,height: 100)
+
+// 可以被视为
+
+_FrameLayout(width: 100,height: 100,alignment: .center) {
+    Text("Hi")
+}
+
+此时 _FrameLayout 即是 Text 的父视图，也是布局容器。
+
+对于不包含子视图的视图来说（ 例如 Text 这类的元视图 ），它们同样会提供接口供父视图来调用以向其传递建议尺寸并获取其需求尺寸。
+虽然当前 SwiftUI 中绝大多数的视图并不遵循 Layout 协议，但从 SwiftUI 诞生之始，其布局系统便是按照 Layout 协议提供的流程进行布局操作的，
+Layout 协议仅是将内部的实现过程包装成开发者可以调用的接口，以方便我们进行自定义布局容器的开发。
+
+将父视图与具备布局能力的容器等同起来
+
+不过需要注意的是，在 SwiftUI 中，有一类视图是会在视图树上显示为父视图，但并不具备布局能力。
+其中的代表有 Group、ForEach 等。这类视图的主要作用有:
+突破 ViewBuilder Block 的数量限制
+方便为一组视图统一设置 view modifier
+有利于代码管理
+其他特殊应用，如 ForEach 可支持动态数量的子视图等
+
+对于上面的例子，SwfitUI 会将 ContentView 视作类似 Group 的存在。
+这类视图本身并不会参与布局，SwiftUI 的布局系统会在布局时自动将它们忽略，让其子视图与具备布局能力的祖先视图直接联系起来。
+
+
+尽管 Layout 协议的主要用途是让开发者创建自定义布局容器，且在 SwiftUI 中仅有少数的视图符合该协议，但从 SwiftUI 1.0 开始，
+SwiftUI 视图的布局机制便基本与 Layout 协议所实现的流程一致。可以说 Layout 协议是一个用来观察和验证 SwiftUI 布局运作原理的优秀工具。
+
+
+建议尺寸:
+SwiftUI 的布局是从外向内进行的。布局过程的第一个步骤便是由父视图为子视图提供建议尺寸（ Proposal Size）。
+建议尺寸是父视图为子视图提供的建议，子视图在计算其需求尺寸时是否考虑建议尺寸完全取决于它自己的行为设定。
+
+

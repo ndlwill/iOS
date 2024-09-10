@@ -1,0 +1,195 @@
+https://fatbobman.com/zh/posts/swiftui-state/
+
+数据（状态）驱动
+在 SwiftUI 中，视图是由数据（状态）驱动的。
+
+每当视图在创建或解析时，都会为该视图和与该视图中使用的状态数据之间创建一个依赖关系，每当状态的信息发生变化时，有依赖关系的视图则会马上反应出这些变化并重绘。
+
+struct DemoView:View{
+  @State var name = "肘子"
+  var body:some View{
+    VStack{
+      Text(name)
+      Button("改名"){
+        self.name = "大肘子"
+      }
+    }
+  }
+}
+通过使用 @State，我们可以在未使用 mutating 的情况下修改结构中的值
+当状态值发生变化后，视图会自动重绘以反应状态的变化。
+
+
+属性包装器
+作为 swift 5.1 的新增功能之一，属性包装器在管理属性如何存储和定义属性的代码之间添加了一个分割层。
+
+
+Binding
+Binding 是数据的一级引用，在 SwiftUI 中作为数据（状态）双向绑定的桥梁，允许在不拥有数据的情况下对数据进行读写操作。
+我们可以绑定到多种类型，包括 State ObservedObject 等，甚至还可以绑定到另一个 Binding 上面。
+Binding 本身就是一个 Getter 和 Setter 的封装。
+
+@frozen @propertyWrapper public struct State<Value> : DynamicProperty {
+
+    /// Initialize with the provided initial value.
+    public init(wrappedValue value: Value)
+
+    /// Initialize with the provided initial value.
+    public init(initialValue value: Value)
+
+    /// The current state value.
+    public var wrappedValue: Value { get nonmutating set }
+
+    /// Produces the binding referencing this state value
+    public var projectedValue: Binding<Value> { get }
+}
+
+public protocol DynamicProperty {
+
+    /// Called immediately before the view's body() function is
+    /// executed, after updating the values of any dynamic properties
+    /// stored in `self`.
+    mutating func update()
+}
+
+
+什么时候建立的依赖？
+struct MainView: View {
+    @State var date: String = Date().description
+    var body: some View {
+        print("mainView")
+        return Form {
+            SubView(date: $date)
+            Button("修改日期") {
+                self.date = Date().description
+            }
+        }
+    }
+}
+
+struct SubView: View {
+    @Binding var date: String
+    var body: some View {
+        print("subView")
+        return Text(date)
+    }
+}
+执行这段代码，我们点击修改日期 ，我们会得到如下输出:
+执行后
+mainView
+subView
+点击
+subView
+
+虽然我们在 MainView 中使用 @State 声明了 date，并且在 MainView 中修改了 date 的值，
+但由于我们并没有在 MainView 中使用 date 的值来进行显示或者判断，
+所以无论我们如何修改 date 值，MainView 都不会重绘。
+###
+推测 @State 同视图的依赖是在 ViewBuilder 解析时进行的。编译器在解析我们的 body 时，会判断 date 的数据变化是否会对当前视图造成改变。如果没有则不建立依赖关联。
+###
+
+
+分析编译器对 ObservedObject 的反应:
+struct MainView: View {
+    @ObservedObject var store = AppStore()
+    
+    var body: some View {
+        print("mainView")
+        return Form {
+            SubView(date: $store.date)
+            Button("修改日期") {
+                self.store.date = Date().description
+            }
+        }
+    }
+}
+
+struct SubView: View {
+    @Binding var date: String
+    var body: some View {
+        print("subView")
+        return Text(date)
+    }
+}
+
+class AppStore:ObservableObject{
+    @Published var date:String = Date().description
+}
+执行后
+mainView
+subView
+点击
+mainView
+subView
+
+我们把 @State 换成了 @ObservedObject ，同样在 MainView 中并没有显示 store.date 的值或者用其来做判断，但是只要我们改变了 store 里的 date 值，MainView 便会刷新重绘。
+由此可以推测，SwiftUI 对于 ObservedObject 采用了不同的依赖创建时机，只要声明，无论 body 里是否有需要，在 ObservableObject 的 objectWillChange 产生 send 后，都会进行重绘。
+
+
+单一数据源（Single Souce of Truth）
+State 属于 SwiftUI 架构，ObservableObject 属于 Combine 架构
+
+因为这两种创建依赖的时机的不同会导致 View 更新效率的巨大差异
+
+
+以下两种使用方式是等效的:
+@State var name = ""
+self.name = "肘子"
+var name = State<String>(wrappedValue:"")
+self.name.wrappedValue = "肘子"
+
+
+实现增强型 @State:
+因此我们可以通过将 State 作为包装值类型，创建新的属性包装器
+
+@propertyWrapper
+struct MyState<Value>:DynamicProperty{
+    typealias Action = (Value) -> Void
+    
+    private var _value:State<Value>
+    private var _toAction:Action?
+    
+    init(wrappedValue value:Value){
+        self._value = State<Value>(wrappedValue: value)
+    }
+    
+    init(wrappedValue value:Value,toAction:@escaping Action){
+        self._value = State<Value>(wrappedValue: value)
+        self._toAction = toAction
+    }
+    
+    public var wrappedValue: Value {
+        get {self._value.wrappedValue}
+        nonmutating set {self._value.wrappedValue = newValue}
+    }
+    
+    public var projectedValue: Binding<Value>{
+        Binding<Value>(
+            get: {self._value.wrappedValue},
+            set: {
+                self._value.wrappedValue = $0
+                self._toAction?($0)
+        }
+        )
+    }
+    
+    public func update() {
+       print("视图重绘")
+    }
+    
+}
+
+
+@MyState var name = "hello"  //实现和标准@State 一样的功能
+@MyState<String>(
+  wrappedValue: "hello", 
+  toAction: {print($0)}
+) var name
+
+toAction 是在 projectedValue 修改时才被调用的
+
+
+###
+wrappedValue: 负责存储和访问属性的实际值
+projectedValue: 提供一个 Binding<Value>，允许这个属性在 SwiftUI 视图中与 TextField 等控件进行双向绑定。
+###

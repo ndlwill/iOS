@@ -1,0 +1,162 @@
+StateObject 是在 SwiftUI 2.0 中才添加的属性包装器
+
+结论:
+StateObject 和 ObservedObject 两者都是用来订阅可观察对象（ 符合 ObservableObject 协议的引用类型 ）的属性包装器。
+当被订阅的可观察对象通过内置的 Publisher 发送数据时（ 通过 @Published 或直接调用其 objectWillChange. send 方法 ）
+StateObject 和 ObservedObject 会驱动其所属的视图进行更新。
+
+ObservedObject 在视图的存续期间只保存了订阅关系，而 StateObject 除了保存了订阅关系外还保持了对可观察对象的强引用。
+
+基于 Swift 的 ARC（ 自动引用计数 ）机制，StateObject 保证了可观察对象的生存期必定不小于视图的存续期，从而确保了在视图的存续期内数据的稳定。
+
+
+订阅与 Cancellable:
+在 Combine 中，当使用 sink 或 assign 来订阅某个 Publisher 时，必须要持有该订阅关系，才能让这个订阅正常工作.
+订阅关系被包装成 AnyCancellable 类型，开发者可以通过调用 AnyCancellable 的 cancel 方法手动取消订阅。
+
+var cancellable: AnyCancellable?
+init() {
+    cancellable = NotificationCenter.default.publisher(for: .AVAssetContainsFragmentsDidChange)
+        .sink { print($0) }
+}
+
+var cancellable = Set<AnyCancellable>()
+init() {
+    NotificationCenter.default.publisher(for: .AVAssetContainsFragmentsDidChange)
+        .sink { print($0) }
+        .store(in: &cancellable)
+}
+
+除了可以从订阅者一方主动取消订阅关系外，如果 Publisher 不复存在了，订阅关系也将自动解除。
+
+ObservedObject 和 StateObject 两者都保存了视图与可观察对象的订阅关系，在视图存续期内，它们都不会主动取消这个订阅，
+但 ObservedObject 无法确保可观察对象是否会由于被销毁而提前取消订阅。
+
+
+视图的生存期从其被加载到视图树时开始，至其被从视图树上移走结束。
+在视图的存续期中，视图值将根据 source of truth （ 各种依赖源 ）的变化而不断变化。
+SwiftUI 也会在视图存续期内因多种原因，不断地依据描述该区域的声明创建新的实例，从而保证始终能够获得准确的计算值。
+
+由于实例是会反复创建的，因此，开发者必须用特定的标识（ @State、@StateObject 等 ）告诉 SwiftUI ，
+某些状态是与视图存续期绑定的，在存续期期间是唯一的。
+
+当将视图加载到视图树时，SwiftUI 会根据当时采用的实例将需要绑定的状态（ @State、@StateObject、onReceive 等 ）托管到 SwiftUI 的托管数据池中
+之后无论实例再被创建多少次，SwiftUI 始终只使用首次创建的状态。也就是说，为视图绑定状态的工作只会进行一次。
+
+
+我们需要从视图的角度来理解 SwiftUI 的属性包装器名称，例如：
+ObservedObject （ 视图订阅某个可观察对象 ）
+StateObject（ 订阅某个可观察对象，并持有其强引用 ）
+State（ 持有某个值 ）
+
+ObservedObject 和 StateObject 两者通过满足 DynamicProperty 协议从而实现上面的功能。
+在 SwiftUI 将视图添加到视图树上时，调用 _makeProperty 方法将需要持有的###订阅关系、强引用###等信息保存到 SwiftUI 内部的数据池中。
+
+
+注意事项:
+ObservedObject 的正确用法为：
+@ObservedObject var testObject:TestObject 。通过从父视图传递一个可以保证存续期长于当前视图存续期的可观察对象，从而避免不可控的情况发生
+
+对于数据的准备工作，可以使用 onAppear 或 task ，在视图加载时进行。
+
+
+StateObject 的一个显著特点是其实例的唯一性
+一旦使用了 @StateObject，标注的对象实例在其所属视图的整个生命周期中将保持唯一。
+这意味着，即便视图本身经历了更新（即视图的构造方法被重新调用），该对象实例也不会重新创建。
+这正是 ObservedObject 与 StateObject 最关键的区别所在。
+
+而对于 ObservedObject 来说，它的一大特色是在视图的整个生命周期中，@ObservedObject 可以灵活地切换并关联不同的实例。
+例如，在 NavigationSplitView 中，侧边栏（sidebar）可能列出了多个遵循 ObservableObject 协议的不同实例，而详细视图（detail view）则响应这些实例中的一个。
+通过在侧边栏中选择不同实例，详细视图可以动态地更换其数据源，尽管视图本身得到了更新，但并未重建。
+
+
+class NVStore:ObservableObject {
+    var item:Item?
+    @Published var id = UUID()
+    
+    class Item:ObservableObject {
+        let id:Int
+        init(id: Int) {
+            self.id = id
+        }
+    }
+}
+
+struct NVTest:View {
+    @StateObject var store = NVStore()
+    var body: some View {
+        NavigationSplitView {
+            List(0..<10){ i in
+                Button{
+                    store.item = .init(id: i)
+                    store.id = UUID()
+                } label: {
+                    Text("\(i)")
+                }
+            }
+        } detail: {
+            if let item = store.item {
+                NVDetailView(item: item)
+            }
+        }
+    }
+}
+
+struct NVDetailView:View {
+    @State var id = UUID()
+    @ObservedObject var item:NVStore.Item
+    var body: some View {
+        VStack {
+            Text("\(id)")
+            Text("\(item.id)")
+        }
+    }
+}
+在处理多对一关系的场景中，选择 ObservedObject 是最恰当且有效的策略。
+
+
+
+
+@Published 是 ObservableObject 的标准实践，用于自动处理属性变化的发布，并且简化了视图更新的逻辑。
+你不必使用 @Published，但如果选择不使用，你需要手动实现 ObservableObject 的 objectWillChange 以及相应的 Publisher 来触发视图更新。
+
+
+不使用 @Published 的情况
+
+1. 自定义 Publisher: 如果你需要对变化进行更多控制或使用不同的发布机制，可以创建一个自定义的 Publisher。
+import SwiftUI
+import Combine
+
+class MyModel: ObservableObject {
+    private var didChange = PassthroughSubject<Void, Never>()
+    
+    var value: Int = 0 {
+        didSet {
+            didChange.send()
+        }
+    }
+    
+    var objectWillChange: AnyPublisher<Void, Never> {
+        didChange.eraseToAnyPublisher()
+    }
+}
+
+
+2. 
+import SwiftUI
+import Combine
+
+class MyModel: ObservableObject {
+    var objectWillChange = PassthroughSubject<Void, Never>()
+    
+    private var _value: Int = 0 {
+        didSet {
+            objectWillChange.send()
+        }
+    }
+    
+    var value: Int {
+        get { _value }
+        set { _value = newValue }
+    }
+}

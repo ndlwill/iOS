@@ -1,0 +1,118 @@
+A lazy var is a property whose initial value is not calculated until the first time it’s called.
+
+A lazy stored property is a property whose initial value is not calculated until the first time it is used.
+
+struct Person {
+    let name: String
+    let age: Int
+}
+
+struct PeopleViewModel {
+    let people: [Person]
+    
+    lazy var oldest: Person? = {
+        print("Lazy var oldest initialized")
+        return people.max(by: { $0.age < $1.age })
+    }()
+    
+    init(people: [Person]) {
+        self.people = people
+        print("View model initialized")
+    }
+}
+
+Sorting a collection of elements can be expensive so we want to make sure we’re only performing this operation if we’re actually using the value.
+
+var viewModel = PeopleViewModel(people: [
+    Person(name: "Antoine", age: 30),
+    Person(name: "Jaap", age: 3),
+    Person(name: "Lady", age: 3),
+    Person(name: "Maaike", age: 27)
+])
+// Prints: "View model initialized"
+
+print(viewModel.oldest)
+// Prints: "Lazy var oldest initialized"
+// Prints: Person(name: "Antoine", age: 30)
+
+
+
+It’s important to understand the difference between a computed property and a lazy stored property. 
+If we would’ve used a computed property, the value oldest would be recalculated every time again:
+
+struct PeopleViewModel {
+    let people: [Person]
+    
+    var oldest: Person? {
+        print("oldest person calculated")
+        return people.max(by: { $0.age < $1.age })
+    }
+}
+
+print(viewModel.oldest)
+// Prints: "oldest person calculated"
+// Prints: Person(name: "Antoine", age: 30)
+print(viewModel.oldest)
+// Prints: "oldest person calculated"
+// Prints: Person(name: "Antoine", age: 30)
+
+This is a loss of performance compared to a lazy variable which is only called once:
+
+struct PeopleViewModel {
+    let people: [Person]
+    
+    lazy var oldest: Person? = {
+        print("oldest person calculated")
+        return people.max(by: { $0.age < $1.age })
+    }()
+}
+
+print(viewModel.oldest)
+// Prints: "oldest person calculated"
+// Prints: Person(name: "Antoine", age: 30)
+print(viewModel.oldest)
+// Prints: Person(name: "Antoine", age: 30)
+
+
+
+understanding the lifecycle of lazy variables
+As lazy properties are only calculated once called it means it will also use the state of the moment it’s getting called. 
+For example, if the collection of people is mutable it could mean that oldest is different when called before a mutating takes place:
+
+struct PeopleViewModel {
+    var people: [Person]
+    
+    lazy var oldest: Person? = {
+        print("oldest person calculated")
+        return people.max(by: { $0.age < $1.age })
+    }()
+}
+
+var viewModel = PeopleViewModel(people: [
+    Person(name: "Antoine", age: 30),
+    Person(name: "Jaap", age: 3),
+    Person(name: "Lady", age: 3),
+    Person(name: "Maaike", age: 27)
+])
+
+print(viewModel.oldest)
+// Prints: "oldest person calculated"
+// Prints: Person(name: "Antoine", age: 30)
+
+viewModel.people.append(Person(name: "Jan", age: 69))
+print(viewModel.oldest)
+// Prints: Person(name: "Antoine", age: 30)
+
+In this case, it might be better to go with a computed property instead as it takes into account the actual state of the people collection.
+
+
+###
+Lazy stored properties are mutable
+###
+var viewModel 改成 let viewModel
+print(viewModel.oldest) // 报错
+If your struct isn’t mutable and you’re calling the lazy variable, you’ll run into an error:
+Cannot use mutating getter on immutable value: ‘viewModel’ is a ‘let’ constant
+
+This is only the case for value types, in this case, a struct. 
+If our view model would’ve been a class, this error wouldn’t occur.

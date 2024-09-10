@@ -1,0 +1,107 @@
+https://stackoverflow.com/questions/57197958/what-is-the-xcode-background-processing-background-mode
+
+https://developer.apple.com/documentation/backgroundtasks
+
+Framework
+Background Tasks
+Request the system to launch your app in the background to run tasks.
+iOS 13.0
+
+
+Use the BackgroundTasks framework to keep your app content up to date and run tasks requiring minutes to complete while your app is in the background.
+Longer tasks can optionally require external power and network connectivity.
+
+Register launch handlers for tasks when the app launches and schedule them as required. 
+The system launches your app in the background and executes the tasks.
+
+
+==================================================Starting and Terminating Tasks During Development
+https://developer.apple.com/documentation/backgroundtasks/starting-and-terminating-tasks-during-development
+
+Use the debugger during development to start tasks and to terminate them before completion.
+
+The delay between the time you schedule a background task and when the system launches your app to run the task can be many hours. 
+While developing your app, you can use two private functions to start a task and to force early termination of the task according to your selected timeline. The debug functions work only on devices.
+
+
+Important:
+Use private functions only during development. 
+Including a reference to these functions in apps submitted to the App Store is cause for rejection.
+
+
+Launch a Task
+To launch a task:
+Set a breakpoint in the code that executes after a successful call to submit(_:).
+Run your app on a device until the breakpoint pauses your app.
+In the debugger, execute the line shown below, substituting the identifier of the desired task for TASK_IDENTIFIER.
+Resume your app. The system calls the launch handler for the desired task.
+
+e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"TASK_IDENTIFIER"]
+
+
+Force Early Termination of a Task
+To force termination of a task:
+Set a breakpoint in the desired task.
+Launch the task using the debugger as described in the previous section.
+Wait for your app to pause at the breakpoint.
+In the debugger, execute the line shown below, substituting the identifier of the desired task for TASK_IDENTIFIER.
+Resume your app. The system calls the expiration handler for the desired task.
+
+e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateExpirationForTaskWithIdentifier:@"TASK_IDENTIFIER"]
+
+
+==================================================Continue Foreground Work in the Background
+The system may place apps in the background at any time. If your app performs critical work that must continue while it runs in the background, 
+use beginBackgroundTask(withName:expirationHandler:) to alert the system. 
+Consider this approach if your app needs to finish sending a message or complete saving a file.
+
+
+If the task is one that takes some time, such as downloading or uploading files:
+Downloading files in the background
+https://developer.apple.com/documentation/foundation/url_loading_system/downloading_files_in_the_background
+
+
+==================================================Defer Intensive Work
+To preserve battery life and performance, you can schedule backgrounds tasks for periods of low activity, such as overnight when the device charges. 
+Use this approach when your app manages heavy workloads, such as training machine learning models or performing database maintenance.
+
+Schedule these types of background tasks using BGProcessingTask, and the system decides the best time to launch your background task.
+
+
+==================================================Update Your App’s Content
+Your app may require short bursts of background time to perform content refresh or other work; 
+for example, your app may fetch content from the server periodically, or regularly update its internal state. 
+In this situation, use BGAppRefreshTask by requesting BGAppRefreshTaskRequest.
+
+The system decides the best time to launch your background task, and provides your app up to 30 seconds of background runtime. 
+Complete your work within this time period and call setTaskCompleted(success:), or the system terminates your app.
+
+
+==================================================Wake Your App with a Background Push
+Background pushes silently wake your app in the background. They don’t display an alert, play a sound, or badge your app’s icon.
+
+If your app obtains content from a server infrequently or at irregular intervals, use background pushes to notify your app when new content becomes available.
+
+A messaging app with a muted conversation might use a background push solution, and so might an email app that processes incoming mail without alerting the user.
+
+When sending a background push, set content-available: to 1 without alert, sound, or badge.
+The system decides when to launch the app to download the content. To ensure your app launches, set apns-priority to 5, and apns-push-type to background.
+
+Once the system delivers the remote notification with application(_:didReceiveRemoteNotification:fetchCompletionHandler:), your app has up to 30 seconds to complete its work. 
+One your app performs the work, call the passed completion handler as soon as possible to conserve power.
+If you send background pushes more frequently than three times per hour, the system imposes rate limitations.
+
+Pushing background updates to your App:
+https://developer.apple.com/documentation/UserNotifications/pushing-background-updates-to-your-app
+
+
+==================================================Request Background Time and Notify the User
+If your app needs to perform a task in the background and show a notification to the user, use a Notification Service Extension.
+For example, an email app might need to notify a user after downloading a new email.
+Subclass UNNotificationServiceExtension and bundle the system extension with your app.
+Upon receiving a push notification, your service extension wakes up and obtains background runtime through didReceive(_:withContentHandler:).
+
+When your extension completes its work, it must call the content handler with the content you want to deliver to the user. 
+Your extension has a limited amount of time to modify the content and execute the contentHandler block.
+
+https://developer.apple.com/documentation/UserNotifications/UNNotificationServiceExtension

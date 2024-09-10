@@ -1,0 +1,699 @@
+###
+https://tenloy.github.io/2021/09/09/core-animation02.html
+###
+
+
+The job of CATransaction is to group multiple animation-related actions together. 
+It ensures that the desired animation changes are committed to Core Animation at the same time.
+
+UIView.animate(...) will only handle view property animations not layer property animations. 
+
+we want to animate layer and view properties at the same time.
+This is a perfect use for CATransaction.
+
+let oldValue = styledButton.frame.width/2
+let newButtonWidth: CGFloat = 60
+
+/* Do Animations */
+CATransaction.begin()
+CATransaction.setAnimationDuration(2.0)
+CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: kCAMediaTimingFunctionEaseInEaseOut))
+
+// View animations
+UIView.animate(withDuration: 2.0) {
+    self.styledButton.frame = CGRect(x: 0, y: 0, width: newButtonWidth, height: newButtonWidth)
+    self.styledButton.center = self.view.center
+}
+
+// Layer animations
+let cornerAnimation = CABasicAnimation(keyPath: #keyPath(CALayer.cornerRadius))
+cornerAnimation.fromValue = oldValue
+cornerAnimation.toValue = newButtonWidth/2
+
+styledButton.layer.cornerRadius = newButtonWidth/2
+styledButton.layer.add(cornerAnimation, forKey: #keyPath(CALayer.cornerRadius))
+
+CATransaction.commit()
+
+在一个 RunLoop 周期中，事务的提交（commit）通常发生在 RunLoop 的最后阶段，当所有定时器、输入源、事件处理等都已经完成时。
+在 RunLoop 即将进入休眠之前或在即将退出当前周期时被提交。这个过程通常发生在 RunLoop 的以下阶段：
+kCFRunLoopBeforeWaiting 阶段：在 RunLoop 即将进入休眠之前，系统会提交所有未提交的 CATransaction。这是因为在这个阶段，所有用户交互和系统事件都已经处理完毕，是提交动画和图层更新的合适时机。
+kCFRunLoopExit 阶段：如果 RunLoop 结束了当前的循环（不再进入等待状态），那么在此之前，系统也会提交所有的事务。这确保了所有的图层更新和动画都被应用在当前的屏幕刷新周期之前。
+
+==================================================CATransaction
+可动画的(animatable)：当改变时，会触发一个从旧的值过渡到新值的简单动画
+当你改变CALayer一个可做动画的属性时，这个改变并不会立刻在屏幕上体现出来。
+相反，该属性会从先前的值平滑过渡到新的值。这一切都是默认的行为，你不需要做额外的操作 —— 这就是可动画的(隐式动画)。
+几乎所有的图层的属性都是隐性可动画的。你可以在文档中看到它们的简介是以 ‘animatable’ 结尾的。
+
+像 paths 这样的属性也是 animatable 的，但是它不支持隐式动画。
+
+
+CATransaction是Core Animation中的事务类，负责批量的把多个对图层树(layer-tree)的修改作为一个原子更新到渲染树。
+事务是Core Animation用来包含一系列属性动画集合的机制，任何用指定事务去改变可动画的图层属性都不会立刻发生变化，而是当事务一旦提交的时候开始用一个动画过渡到新值。
+事务是通过CATransaction类来做管理
+CATransaction没有属性或者实例方法，并且也不能用+alloc和-init方法创建它。而是用类方法+begin和+commit分别来入栈或者出栈。
+支持嵌套事务。
+
+
+在iOS中的图层中，对图层树的每次修改都必须是事务的一部分。任何可动画的图层属性，发生改变产生的动画都会被添加到栈顶的事务
+
+
+Core Animation支持两种类型的事务：隐式事务和显式事务。
+当图层树被没有显式事务的线程修改时，隐式事务会自动创建，并在线程的 runloop 下一次迭代时自动提交。
+即Core Animation会监测修改，然后在每个runloop周期中自动开始一次新的事务.
+即使你不显式地使用[CATransaction begin]开始一次事务，在一个特定runloop循环中的任何属性的变化都会被收集起来，然后做一次0.25秒的动画。
+当应用程序在修改图层树之前向 CATransaction 类发送 begin() 消息，然后向 CATransaction 类发送 commit() 消息时，就会发生显式事务。
+
+（runloop是iOS负责收集用户输入，处理未完成的定时器或者网络事件，最终重新绘制屏幕的东西）
+
+
+@interface CATransaction : NSObject
+
+// 创建和提交事物（Creating and Committing Transactions）
+
+/* 当前线程创建一个新的事物(Transaction)，可嵌套 */
++ (void)begin;   
+/* 提交当前事物中的所有改动，如果事物不存在将会出现异常 */
++ (void)commit;  
+/* 提交任意的隐式动画，将被延迟一直到嵌套的显示事物被完成 */
++ (void)flush;   
+
+// 重写动画时间（Overriding Animation Duration and Timing）
+/* 获取动画时间，默认0.25秒 */
++ (CFTimeInterval)animationDuration;
+/* 设置动画时间 */
++ (void)setAnimationDuration:(CFTimeInterval)dur;
+
+/* 默认nil，设置和获取CAMediaTimingFunction（速度控制函数） */
++ (nullable CAMediaTimingFunction *)animationTimingFunction;
++ (void)setAnimationTimingFunction:(nullable CAMediaTimingFunction *)function;
+
+// 禁止属性更改而触发的action(隐式动画)（Temporarily Disabling Property Animations）
+/* 每条线程事物，都有disableActions属性的存取器，即设置和获取方法，默认为false，允许隐式动画 */
++ (BOOL)disableActions;
++ (void)setDisableActions:(BOOL)flag;
+
+// 回调闭包（Getting and Setting Completion Block Objects）
+/* 动画完成之后被调用 */
++ (nullable void (^)(void))completionBlock;
++ (void)setCompletionBlock:(nullable void (^)(void))block;
+
+// 管理并发（Managing Concurrency）
+/* 两个方法用于动画事物的加锁与解锁 在多线程动画中，保证修改属性的安全 */
++ (void)lock;
++ (void)unlock;
+
+// 设置和获取事物属性（Getting and Setting Transaction Properties）
+/* 支持的事务属性包括:"animationDuration"， "animationTimingFunction"， "completionBlock"， "disableActions"。*/
++ (nullable id)valueForKey:(NSString *)key;
++ (void)setValue:(nullable id)anObject forKey:(NSString *)key;
+
+@end
+
+
+CoreAnimation支持两种类型的动画：显式动画、隐式动画
+隐式动画：之所以叫隐式，是因为我们并没有指定任何动画的类型。我们仅仅改变了一个属性，然后Core Animation来决定如何并且何时去做动画。
+显式动画：
+需要创建一个动画对象，并设置开始和结束值，直到把动画应用到某图层上，动画才开始执行。
+显式动画既可以直接对图层属性做动画，也可以覆盖默认的图层行为。
+隐式动画底层是显式动画
+
+
+
+- (IBAction)changeColor
+{
+    //begin a new transaction
+    [CATransaction begin];
+    //set the animation duration to 1 second
+    [CATransaction setAnimationDuration:1.0];
+    //add the spin animation on completion
+    [CATransaction setCompletionBlock:^{
+        //rotate the layer 90 degrees
+        CGAffineTransform transform = self.colorLayer.affineTransform;
+        transform = CGAffineTransformRotate(transform, M_PI_2);
+        self.colorLayer.affineTransform = transform;
+    }];
+    //randomize the layer background color
+    CGFloat red = arc4random() / (CGFloat)INT_MAX;
+    CGFloat green = arc4random() / (CGFloat)INT_MAX;
+    CGFloat blue = arc4random() / (CGFloat)INT_MAX;
+    self.colorLayer.backgroundColor = [UIColor colorWithRed:red green:green blue:blue alpha:1.0].CGColor;
+    //commit the transaction
+    [CATransaction commit];
+}
+转动画要比颜色渐变快得多，这是因为完成块是在颜色渐变的事务提交并出栈之后才被执行，于是，用默认的事务做变换，默认的时间也就变成了0.25秒。
+
+当你改变一个属性，Core Animation是如何判断动画类型和持续时间的呢？实际上动画执行的时间取决于当前事务的设置，动画类型取决于图层行为(action)。
+
+UIView所关联layer禁止隐式动画:
+在 iOS 中也有一些单独的 layer，比如 AVCaptureVideoPreviewLayer 和 CAShapeLayer，它们不需要附加到 view 上就可以在屏幕上显示内容。两种情况下其实都是 layer 在起决定作用。
+附加到 view 上的 layer 和单独的 layer 在行为上还是稍有不同的。
+基本上你改变一个单独的 layer 的任何属性的时候，都会触发一个从旧的值过渡到新值的简单动画（这就是所谓的可动画 animatable）。
+然而，如果你改变的是 view 中 layer 的同一个属性，它只会从这一帧直接跳变到下一帧。尽管两种情况中都有 layer，但是当 layer 附加在 view 上时，它的默认的隐式动画的 layer 行为就不起作用了。
+
+
+UIView 默认情况下禁止了 layer 动画，但是在 animation block 中又重新启用了它们
+这正是我们所看到的行为；当一个属性在动画 block 之外被改变时，没有动画，但是当属性在动画 block 内被改变时，就带上了动画。
+
+###
+UIKit建立在Core Animation之上，而Core Animation默认对CALayer的所有属性（可动画的属性）做动画，但是UIView把它关联的图层的这个特性关闭了。
+
+对UIView关联的图层做动画而不是一个单独的图层:
+你会发现图层颜色瞬间切换到新的值，而不是之前平滑过渡的动画
+###
+
+
+CAAction:
+一个可动画的 layer 属性改变时，layer 都会寻找并运行合适的 ‘action’ 来实行这个改变。
+在 Core Animation 的专业术语中把这种改变属性时CALayer自动应用的动画称为action，或者 CAAction，中文译作动作，也称行为
+
+CAAction(行为)通常是一个被Core Animation隐式调用的显式动画对象（CAAnimation 实现了<CAAction> 协议）
+
+
+CALayer与CAAction协议:
+CAAction：技术上来说，这是一个接口，并可以用来做各种事情。但是实际中，某种程度上你可以只把它理解为用来处理动画。
+是一个接口，允许对象响应 CALayer 改变触发的 actions
+
+
+/** Action (event handler) protocol. **/
+@protocol CAAction
+//当一个 action object 被调用时，它接收三个参数：事件的名称、事件发生的对象（layer）以及特定于每种事件类型的命名参数字典。
+- (void)runActionForKey:(NSString *)event object:(id)anObject arguments:(nullable NSDictionary *)dict;
+@end
+  
+@interface CAAnimation : NSObject <NSSecureCoding, NSCopying, CAMediaTiming, CAAction>
+@end
+  
+@interface CALayer
+@property(nullable, weak) id <CALayerDelegate> delegate;
+/* A dictionary mapping keys to objects implementing the CAAction protocol. Default value is nil. */
+@property(nullable, copy) NSDictionary<NSString *, id<CAAction>> *actions;
+@property(nullable, copy) NSDictionary *style;
+
++ (nullable id<CAAction>)defaultActionForKey:(NSString *)event;
+
+/*
+ * 此方法搜索 layer 的给定action object。Actions 为 layer 定义了一些动态行为。
+ * @param event/key action标识符（a key path、外部action名称或预定义action标识符）
+ * @return 返回为key提供的action object。该对象必须实现 CAAction 协议
+ */
+- (id<CAAction>)actionForKey:(NSString *)event;
+
+@end
+    
+@protocol CALayerDelegate <NSObject>
+/* 如果已定义，则由 -actionForKey: 方法的默认实现调用。 */
+- (nullable id<CAAction>)actionForLayer:(CALayer *)layer forKey:(NSString *)event;
+@end
+
+
+CALayer 的 animatable 属性通常都具有相应的 action object 来启动实际动画，也就是说当 CALayer 改变属性时会自动应用动画。
+当CALayer的属性被修改时候，它会调用-actionForKey:方法，传递属性的名称。
+来查找到与该属性名称关联的 action object （遵守 CAAction 协议，并能接收 run(forKey:object:arguments:) 消息）并执行它。
+您还可以将自定义 action objects 与你的 layer 相关联，以实现一些 APP 特定的操作。
+
+
+actionForKey:查找流程:
+https://developer.apple.com/documentation/quartzcore/calayer/1410844-actionforkey
+layer 将像 CALayer 的 actionForKey: 文档 中所写的的那样去寻找对应属性变化的 action，整个过程分为四个步骤:
+
+If the layer has a delegate that implements the actionForLayer:forKey: method, the layer calls that method. The delegate must do one of the following:
+    Return the action object for the given key.
+    Return the NSNull object if it does not handle the action.
+The layer looks in the layer’s actions dictionary for a matching key/action pair.
+The layer looks in the style dictionary for an actions dictionary for a matching key/action pair.
+The layer calls the defaultActionForKey: class method to look for any class-defined actions.
+
+If any of the above steps returns an instance of NSNull, it is converted to nil before continuing.
+
+When an action object is invoked it receives three parameters: the name of the event, 
+the object on which the event happened (the layer), and a dictionary of named arguments specific to each event kind.
+
+注意：上面的步骤，是对于单独的 layer 来说的。
+对于 view 中的 layer，对行为的搜索基本只会到第一步为止
+当 layer 在背后支持一个 view 的时候，view 就是它的 delegate
+在 iOS 中，如果 layer 与一个 UIView 对象关联时，这个属性必须被设置为持有这个 layer 的那个 view。
+
+理解这些之后，就很容易解释UIKit是如何禁用隐式动画的：属性改变时 layer 会向 view 请求一个行为，而一般情况下 view 将返回一个 NSNull，只有当属性改变发生在动画 block 中时，view 才会返回实际的行为。
+
+
+验证示例1:
+对一个一般来说可以动画的 layer 属性向 view 询问行为就可以了，比如对于 ‘position’
+
+NSLog(@"outside animation block: %@",
+      [myView actionForLayer:myView.layer forKey:@"position"]);
+
+[UIView animateWithDuration:0.3 animations:^{
+    NSLog(@"inside animation block: %@",
+          [myView actionForLayer:myView.layer forKey:@"position"]);
+}];
+运行上面的代码，可以看到在 block 外 view 返回的是 NSNull 对象，而在 block 中时返回的是一个 CABasicAnimation。
+值得注意的是打印出的 NSNull 是带着一对尖括号的 (“<null>“)，这和其他对象一样，而打印 nil 的时候我们得到的是普通括号((null))：
+outside animation block: <null>
+inside animation block: <CABasicAnimation: 0x8c2ff10>
+
+
+
+验证示例2:
+@interface ViewController ()
+@property (nonatomic, weak) IBOutlet UIView *layerView;
+@end
+
+@implementation ViewController
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    //test layer action when outside of animation block
+    NSLog(@"Outside: %@", [self.layerView actionForLayer:self.layerView.layer forKey:@"backgroundColor"]);
+    //begin animation block
+    [UIView beginAnimations:nil context:nil];
+    //test layer action when inside of animation block
+    NSLog(@"Inside: %@", [self.layerView actionForLayer:self.layerView.layer forKey:@"backgroundColor"]);
+    //end animation block
+    [UIView commitAnimations];
+}
+
+@end
+
+$ LayerTest[21215:c07] Outside: <null>
+$ LayerTest[21215:c07] Inside: <CABasicAnimation: 0x757f090>
+
+
+
++setDisableActions:
+当然返回NSNull并不是禁用隐式动画唯一的办法，CATransaction有个方法叫做+setDisableActions:，可以用来对所有属性打开或者关闭隐式动画。
+[CATransaction begin]之后添加下面的代码，同样也会阻止动画的发生:
+[CATransaction setDisableActions:YES];
+
+
+总结:
+UIView关联的图层禁用了隐式动画，对这种图层做动画的唯一办法就是使用UIView的动画函数（而不是依赖CATransaction），或者继承UIView，并覆盖-actionForLayer:forKey:方法，或者直接创建一个显式动画。
+对于单独存在的图层，我们可以通过实现图层的-actionForLayer:forKey:委托方法，或者提供一个actions字典来控制隐式动画。
+
+
+自定义图层属性行为:
+行为通常是一个被Core Animation隐式调用的显式动画对象。
+这里我们使用的是一个实现了CATransition的实例，叫做推进过渡。不是 CATransaction
+对于现在，只要知道CATransition响应CAAction协议，并且可以当做一个图层行为就足够了。
+不论在什么时候改变背景颜色，新的色块都是从左侧滑入，而不是默认的渐变效果。
+实现自定义行为:
+@interface ViewController ()
+
+@property (nonatomic, weak) IBOutlet UIView *layerView;
+@property (nonatomic, strong) CALayer *colorLayer;
+
+@end
+
+@implementation ViewController
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    
+    //create sublayer
+    self.colorLayer = [CALayer layer];
+    self.colorLayer.frame = CGRectMake(50.0f, 50.0f, 100.0f, 100.0f);
+    self.colorLayer.backgroundColor = [UIColor blueColor].CGColor;
+    //add a custom action
+    CATransition *transition = [CATransition animation];
+    transition.type = kCATransitionPush;
+    transition.subtype = kCATransitionFromLeft;
+    self.colorLayer.actions = @{@"backgroundColor": transition};
+    //add it to our view
+    [self.layerView.layer addSublayer:self.colorLayer];
+}
+
+- (IBAction)changeColor
+{
+    //randomize the layer background color
+    CGFloat red = arc4random() / (CGFloat)INT_MAX;
+    CGFloat green = arc4random() / (CGFloat)INT_MAX;
+    CGFloat blue = arc4random() / (CGFloat)INT_MAX;
+    self.colorLayer.backgroundColor = [UIColor colorWithRed:red green:green blue:blue alpha:1.0].CGColor;
+}
+
+@end
+
+
+
+呈现图层与模型图层:
+presentationLayer与modelLayer
+CALayer的属性行为其实很不正常，因为改变一个图层的属性并没有立刻生效，而是通过一段时间渐变更新
+
+###
+当你改变一个图层的属性，属性值的确是立刻更新的（如果你读取它的数据，你会发现它的值在你设置它的那一刻就已经生效了），
+但是屏幕上并没有马上发生改变。这是因为你设置的属性并没有直接调整图层的外观，相反，他只是定义了图层动画结束之后将要变化的外观。
+###
+
+当设置CALayer的属性，实际上是在定义当前事务结束之后图层如何显示的模型。这里就是一个典型的微型MVC模式:
+Core Animation扮演了一个控制器的角色，并且负责根据图层行为和事务设置去不断更新视图的这些属性在屏幕上的状态。
+CALayer是一个连接用户界面（就是MVC中的view）虚构的类，但是在界面本身这个场景下，CALayer的行为更像是存储了视图如何显示和动画的数据模型。
+实际上，在苹果自己的文档中，图层树通常都是指的图层树模型。
+
+在iOS中，屏幕每秒钟重绘60次。如果动画时长比60分之一秒要长，Core Animation就需要在设置一次新值和新值生效之间，对屏幕上的图层进行重新组织。
+这意味着CALayer除了“真实”值（就是你设置的值）之外，必须要知道当前显示在屏幕上的属性值的记录。
+
+每个图层属性的显示值都被存储在一个叫做呈现图层的独立图层当中，他可以通过-presentationLayer方法来访问。
+这个呈现图层实际上是模型图层的复制，但是它的属性值代表了在任何指定时刻当前外观效果。
+换句话说，你可以通过呈现图层的值来获取当前屏幕上真正显示出来的值。
+
+有图层树，另外还有呈现树
+呈现树通过图层树中所有图层的呈现图层所形成。
+注意呈现图层仅仅当图层首次被提交（就是首次第一次在屏幕上显示）的时候创建，所以在那之前调用-presentationLayer将会返回nil。
+
+在呈现图层上调用–modelLayer将会返回它正在呈现所依赖的CALayer。
+通常在一个图层上调用-modelLayer会返回–self（实际上我们已经创建的原始图层就是一种数据模型）。
+
+
+呈现图层的使用场景:
+大多数情况下，你不需要直接访问呈现图层，你可以通过和模型图层的交互，来让Core Animation更新显示。
+两种情况下呈现图层会变得很有用，一个是同步动画，一个是处理用户交互。
+
+如果你在实现一个基于定时器的动画，而不仅仅是基于事务的动画，这个时候准确地知道在某一时刻图层显示在什么位置就会对正确摆放图层很有用了。
+如果你想让你做动画的图层响应用户输入，你可以使用-hitTest:方法来判断指定图层是否被触摸，这时候对呈现图层而不是模型图层调用-hitTest:会显得更有意义，因为呈现图层代表了用户当前看到的图层位置，而不是当前动画结束之后的位置。
+
+
+在这个例子中，点击屏幕上的任意位置将会让图层平移到那里。点击图层本身可以随机改变它的颜色。我们通过对呈现图层调用-hitTest:来判断是否被点击:
+如果修改代码让-hitTest:直接作用于colorLayer而不是呈现图层，你会发现当图层移动的时候它并不能正确工作。
+这时候你就需要点击图层将要移动到的位置而不是图层本身来响应点击（这就是用呈现图层来响应hit test的原因）。
+
+使用presentationLayer图层来判断当前图层位置
+@interface ViewController ()
+
+@property (nonatomic, strong) CALayer *colorLayer;
+
+@end
+
+@implementation ViewController
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+    //create a red layer
+    self.colorLayer = [CALayer layer];
+    self.colorLayer.frame = CGRectMake(0, 0, 100, 100);
+    self.colorLayer.position = CGPointMake(self.view.bounds.size.width / 2, self.view.bounds.size.height / 2);
+    self.colorLayer.backgroundColor = [UIColor redColor].CGColor;
+    [self.view.layer addSublayer:self.colorLayer];
+}
+
+- (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event
+{
+    //get the touch point
+    CGPoint point = [[touches anyObject] locationInView:self.view];
+    //check if we've tapped the moving layer
+    if ([self.colorLayer.presentationLayer hitTest:point]) {
+        //randomize the layer background color
+        CGFloat red = arc4random() / (CGFloat)INT_MAX;
+        CGFloat green = arc4random() / (CGFloat)INT_MAX;
+        CGFloat blue = arc4random() / (CGFloat)INT_MAX;
+        self.colorLayer.backgroundColor = [UIColor colorWithRed:red green:green blue:blue alpha:1.0].CGColor;
+    } else {
+        //otherwise (slowly) move the layer to new position
+        [CATransaction begin];
+        [CATransaction setAnimationDuration:4.0];
+        self.colorLayer.position = point;
+        [CATransaction commit];
+    }
+}
+@end
+
+
+
+addAnimation:forKey:
+当属性在动画 block 中改变时，view 将向 layer 返回一个基本动画，然后动画通过图层的 addAnimation:forKey: 方法被添加到 layer 中，就像显式地添加动画那样。
+
+归功于 UIView 的 +layerClass 类方法，view 和 layer 之间的交互很容易被观测到。通过这个方法我们可以在为 view 创建 layer 时为其指定要使用的类。
+通过子类一个 UIView，以及用这个方法返回一个自定义的 layer 类，我们就可以重写 layer 子类中的 addAnimation:forKey: 并输出一些东西来验证它是否确实被调用。
+唯一要记住的是我们需要调用 super 方法，不然的话我们就把要观测的行为完全改变了:
+
+@interface DRInspectionLayer : CALayer
+@end
+
+@implementation DRInspectionLayer
+- (void)addAnimation:(CAAnimation *)anim forKey:(NSString *)key
+{
+    NSLog(@"adding animation: %@", [anim debugDescription]);
+    [super addAnimation:anim forKey:key];
+}
+@end
+
+
+@interface DRInspectionView : UIView
+@end
+
+@implementation DRInspectionView
++ (Class)layerClass
+{
+    return [DRInspectionLayer class];
+}
+@end
+
+通过输出动画的 debug 信息，我们不仅可以验证它确实如预期一样被调用了，还可以看到动画是如何组织构建的
+<CABasicAnimation:0x8c73680; 
+    delegate = <UIViewAnimationState: 0x8e91fa0>;
+    fillMode = both; 
+    timingFunction = easeInEaseOut; 
+    duration = 0.3; 
+    fromValue = NSPoint: {5, 5}; 
+    keyPath = position
+>
+
+
+
+https://developer.apple.com/documentation/quartzcore/cabasicanimation
+当动画刚被添加到 layer 时，属性的新值还没有被改变。在构建动画时，只有 fromValue (也就是当前值) 被显式地指定了。
+CABasicAnimation 的文档向我们简单介绍了这么做对于动画的插值来说，意味着什么:
+
+fromValue、toValue、byValue三个对象定义了要插入的属性值。三者都是可选的，并且最多两个非nil。
+当只有 fromValue 不是 nil 时，在 fromValue 和属性当前显示层的值之间进行插值。
+插值指利用某一个函数来计算出2个或更多的值之间的值，最简单的比如算术平均数(x+y)/2就是x,y的线性插值。
+插值。在图形图像中例如旋转，放大，缩小等操作中，往往变化后图像中的点对应源图片中的点是不存在的，例如（2.1，3）这个点，那么在计算目标图像的在该点像素值的时候，就 需要进行插值运算来计算出该点的像素值。
+
+将一个属性改变为新的值，然后将动画对象添加到 layer 上:
+CABasicAnimation *fadeIn = [CABasicAnimation animationWithKeyPath:@"opacity"];
+fadeIn.duration  = 0.75;
+fadeIn.fromValue = @0;
+
+myLayer.opacity = 1.0; // 更改 model 的值 ...
+// ... 然后添加动画对象
+[myLayer addAnimation:fadeIn forKey:@"fade in slowly"];
+这很简洁，你也不需要在动画被移除的时候做什么额外操作。
+
+
+
+CAAnimationDelegate 协议:
+@interface CAAnimation : NSObject <NSSecureCoding, NSCopying, CAMediaTiming, CAAction>
+@property(nullable, strong) id <CAAnimationDelegate> delegate;
+@end
+
+@protocol CAAnimationDelegate <NSObject>
+@optional
+/* Called when the animation begins its active duration. */
+- (void)animationDidStart:(CAAnimation *)anim;
+
+/* Called when the animation either completes its active duration or is removed from the object
+ * it is attached to (i.e. the layer). 'flag' is true if the animation reached the end of its active 
+ * duration without being removed. */
+- (void)animationDidStop:(CAAnimation *)anim finished:(BOOL)flag;
+
+@end
+
+动画的 delegate,UIViewAnimationState类:
+https://github.com/rpetrich/iphoneheaders/blob/master/UIKit/UIViewAnimationState.h
+它主要用来维护动画的一些状态 (持续时间，延时，重复次数等等)。
+它还负责对一个栈做 push 和 pop，这是为了在多个动画 block 嵌套时能够获取正确的动画状态。
+真正有意思的是这个 delegate 实现了 animationDidStart: 和 animationDidStop:finished:，并将信息传给了它自己的 delegate。
+作为 CAAnimation 的 delegate 的私有类 UIViewAnimationState 中还有一个 _delegate 成员，并且 animationDidStart: 和 animationDidStop:finished: 也是典型的 delegate 的实现方法。
+
+
+UIViewAnimationBlockDelegate类:
+通过打印这个 delegate 的 delegate，我们可以发现它也是一个私有类：UIViewAnimationBlockDelegate。
+这是一个很小的类，只负责一件事情：响应动画的 delegate 回调并且执行相应的 block。
+如果我们使用自己的 Core Animation 代码，并且选择 block 而不是 delegate 做回调的话，添加这个是很容易的:
+@interface DRAnimationBlockDelegate : NSObject
+
+@property (copy) void(^start)(void);
+@property (copy) void(^stop)(BOOL);
+
++(instancetype)animationDelegateWithBeginning:(void(^)(void))beginning
+                                   completion:(void(^)(BOOL finished))completion;
+
+@end
+
+@implementation DRAnimationBlockDelegate
+
++ (instancetype)animationDelegateWithBeginning:(void (^)(void))beginning
+                                    completion:(void (^)(BOOL))completion
+{
+    DRAnimationBlockDelegate *result = [DRAnimationBlockDelegate new];
+    result.start = beginning;
+    result.stop  = completion;
+    return result;
+}
+
+- (void)animationDidStart:(CAAnimation *)anim
+{
+    if (self.start) {
+        self.start();
+    }
+    self.start = nil;
+}
+
+- (void)animationDidStop:(CAAnimation *)anim finished:(BOOL)flag
+{
+    if (self.stop) {
+        self.stop(flag);
+    }
+    self.stop = nil;
+}
+
+@end
+
+fadeIn.delegate = [DRAnimationBlockDelegate animationDelegateWithBeginning:^{
+    NSLog(@"beginning to fade in");
+} completion:^(BOOL finished) {
+    NSLog(@"did fade %@", finished ? @"to the end" : @"but was cancelled");
+}];
+
+
+
+自定义基于 block 的动画 APIs:
+[UIView DR_popAnimationWithDuration:0.7
+                         animations:^{
+                                myView.transform = CGAffineTransformMakeRotation(M_PI_2);
+                              }];
+
+代码实现
+1. Method Swizzle
+我们首先要做的是当一个 layer 属性变化时获取 delegate 的回调。因为我们无法事先预测 layer 要改变什么，所以我选择在一个 UIView 的 category 中 swizzle actionForLayer:forKey: 方法
+@implementation UIView (DR_CustomBlockAnimations)
+
++ (void)load
+{        
+    SEL originalSelector = @selector(actionForLayer:forKey:);
+    SEL extendedSelector = @selector(DR_actionForLayer:forKey:);
+
+    Method originalMethod = class_getInstanceMethod(self, originalSelector);
+    Method extendedMethod = class_getInstanceMethod(self, extendedSelector);
+
+    NSAssert(originalMethod, @"original method should exist");
+    NSAssert(extendedMethod, @"exchanged method should exist");
+
+    if(class_addMethod(self, originalSelector, method_getImplementation(extendedMethod), method_getTypeEncoding(extendedMethod))) {
+        class_replaceMethod(self, extendedSelector, method_getImplementation(originalMethod), method_getTypeEncoding(originalMethod));
+    } else {
+        method_exchangeImplementations(originalMethod, extendedMethod);
+    }
+}
+
+2. 上下文变量控制
+为了保证我们不破坏其他依赖于 actionForLayer:forKey: 回调的代码，我们使用一个静态变量来判断现在是不是处于我们自己定义的上下文中。
+对于这个例子来说一个简单的 BOOL 其实就够了，但是如果我们之后要写更多内容的话，上下文的话就要灵活得多了
+static void *DR_currentAnimationContext = NULL;
+static void *DR_popAnimationContext     = &DR_popAnimationContext;
+
+- (id<CAAction>)DR_actionForLayer:(CALayer *)layer forKey:(NSString *)event
+{
+    if (DR_currentAnimationContext == DR_popAnimationContext) {
+        // 这里写我们自定义的代码...
+    }
+
+    // 调用原始方法
+    return [self DR_actionForLayer:layer forKey:event]; // 没错，你没看错。因为它们已经被交换了
+}
+
+我们要确保在执行动画 block 之前设置动画的上下文，并且在执行后恢复上下文:
++ (void)DR_popAnimationWithDuration:(NSTimeInterval)duration
+                         animations:(void (^)(void))animations
+{
+    DR_currentAnimationContext = DR_popAnimationContext;
+    // 执行动画 (它将触发交换后的 delegate 方法)
+    animations();
+    /* 一会儿再添加 */
+    DR_currentAnimationContext = NULL;
+}
+
+3. 定义动画状态存储类
+如果我们想要做的不过是添加一个从旧的值向新的值过度的动画的话，我们可以直接在 delegate 的回调中来做。
+然而因为我们想要更精确地控制动画，我们需要用一个帧动画来实现。帧动画需要所有的值都是已知的，而对我们的情况来说，新的值还没有被设定，因此我们也就无从知晓。
+对于每个关键帧，在属性变化时，view 返回 nil，但是却存储下需要的状态。这样就能在所有关键帧 block 执行后创建一个 CAKeyframeAnimation 对象。
+
+我们可以创建一个小的类来存储我们创建动画时所需要的信息：什么 layer 被更改了，什么 key path 的值被改变了，以及原来的值是什么
+@interface DRSavedPopAnimationState : NSObject 
+@property (strong) CALayer  *layer; 
+@property (copy)   NSString *keyPath; 
+@property (strong) id        oldValue; 
++ (instancetype)savedStateWithLayer:(CALayer *)layer keyPath:(NSString *)keyPath; 
+@end 
+
+@implementation DRSavedPopAnimationState 
++ (instancetype)savedStateWithLayer:(CALayer *)layer keyPath:(NSString *)keyPath {     
+    DRSavedPopAnimationState *savedState = [DRSavedPopAnimationState new];     
+    savedState.layer    = layer;     
+    savedState.keyPath  = keyPath;     
+    savedState.oldValue = [layer valueForKeyPath:keyPath];     
+    return savedState; } 
+@end
+
+接下来，在我们的交换后的 delegate 回调中，我们简单地将被变更的属性的状态存入一个静态可变数组中
+- (id<CAAction>)DR_actionForLayer:(CALayer *)layer forKey:(NSString *)event{    
+    if (DR_currentAnimationContext == DR_popAnimationContext) 
+    {        
+    // 这里写我们自定义的代码...        
+    [[UIView DR_savedPopAnimationStates] addObject:[DRSavedPopAnimationState savedStateWithLayer:layer keyPath:event]];        // 没有隐式的动画 (稍后添加)        
+    return (id<CAAction>)[NSNull null];    
+    }    // 调用原始方法    
+    return [self DR_actionForLayer:layer forKey:event]; 
+    }
+
+
+4. 创建关键帧动画
+在动画 block 执行完毕后，所有的属性都被变更了，它们的状态也被保存了。现在，创建关键帧动画
+
++ (void)DR_popAnimationWithDuration:(NSTimeInterval)duration
+                         animations:(void (^)(void))animations
+{
+    DR_currentAnimationContext = DR_popAnimationContext;
+
+    // 执行动画 (它将触发交换后的 delegate 方法)
+    animations();
+
+    [[self DR_savedPopAnimationStates] enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
+        DRSavedPopAnimationState *savedState   = (DRSavedPopAnimationState *)obj;
+        CALayer *layer    = savedState.layer;
+        NSString *keyPath = savedState.keyPath;
+        id oldValue       = savedState.oldValue;
+        id newValue       = [layer valueForKeyPath:keyPath];
+
+        CAKeyframeAnimation *anim = [CAKeyframeAnimation animationWithKeyPath:keyPath];
+
+        CGFloat easing = 0.2;
+        CAMediaTimingFunction *easeIn  = [CAMediaTimingFunction functionWithControlPoints:1.0 :0.0 :(1.0-easing) :1.0];
+        CAMediaTimingFunction *easeOut = [CAMediaTimingFunction functionWithControlPoints:easing :0.0 :0.0 :1.0];
+
+        anim.duration = duration;
+        anim.keyTimes = @[@0, @(0.35), @1];
+        anim.values = @[oldValue, newValue, oldValue];
+        anim.timingFunctions = @[easeIn, easeOut];
+
+        // 不带动画地返回原来的值
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        [layer setValue:oldValue forKeyPath:keyPath];
+        [CATransaction commit];
+
+        // 添加 "pop" 动画
+        [layer addAnimation:anim forKey:keyPath];
+
+    }];
+
+    // 扫除工作 (移除所有存储的状态)
+    [[self DR_savedPopAnimationStates] removeAllObjects];
+
+    DR_currentAnimationContext = nil;
+}
+
+注意老的 model 值被设到了 layer 上，所以在当动画结束和移除后，model 的值和 presentation 的值是相符合的。

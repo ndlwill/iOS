@@ -1,0 +1,231 @@
+KVO，全称为Key-Value observing，中文名为键值观察，KVO是一种机制，它允许将其他对象的指定属性的更改通知给对象。
+
+https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/KeyValueObserving/Articles/KVOBasics.html#//apple_ref/doc/uid/20002252-BAJEAIEE
+KVO是基于KVC基础之上
+
+KVC是键值编码，在对象创建完成后，可以动态的给对象属性赋值，
+而KVO是键值观察，提供了一种监听机制，当指定的对象的属性被修改后，则对象会收到通知，所以可以看出KVO是基于KVC的基础上对属性动态变化的监听
+
+那么KVO与NSNotificatioCenter有什么区别呢？
+相同点
+1、两者的实现原理都是观察者模式，都是用于监听
+2、都能实现一对多的操作
+
+不同点
+1、KVO只能用于监听对象属性的变化，并且属性名都是通过NSString来查找，编译器不会帮你检测对错和补全,纯手敲会比较容易出错
+2、NSNotification的发送监听（post）的操作我们可以控制，kvo由系统控制。
+3、KVO可以记录新旧值变化
+
+
+KVO的基本使用主要分为3步:
+注册观察者addObserver:forKeyPath:options:context
+[self.person addObserver:self forKeyPath:@"name" options:NSKeyValueObservingOptionNew context:NULL];
+
+实现KVO回调observeValueForKeyPath:ofObject:change:context
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary<NSKeyValueChangeKey,id> *)change context:(void *)context{
+    if ([keyPath isEqualToString:@"name"]) {
+        NSLog(@"%@",change);
+    }
+}
+
+移除观察者removeObserver:forKeyPath:context
+[self.person removeObserver:self forKeyPath:@"nick" context:NULL];
+
+
+context使用:
+addObserver：forKeyPath：options：context：方法中的上下文context指针包含任意数据，这些数据将在相应的更改通知中传递回观察者。
+可以通过指定context为NULL，从而依靠keyPath即键路径字符串传来确定更改通知的来源，但是这种方法可能会导致对象的父类由于不同的原因也观察到相同的键路径而导致问题。
+所以可以为每个观察到的keyPath创建一个不同的context，从而完全不需要进行字符串比较，从而可以更有效地进行通知解析
+
+context上下文主要是用于区分不同对象的同名属性，从而在KVO回调方法中可以直接使用context进行区分，可以大大提升性能，以及代码的可读性
+
+不使用context，使用keyPath区分通知来源:
+//context的类型是 nullable void *，应该是NULL，而不是nil
+[self.person addObserver:self forKeyPath:@"nick" options:NSKeyValueObservingOptionNew context:NULL];
+
+
+使用context区分通知来源:
+//定义context
+static void *PersonNickContext = &PersonNickContext;
+static void *PersonNameContext = &PersonNameContext;
+//注册观察者
+[self.person addObserver:self forKeyPath:@"nick" options:NSKeyValueObservingOptionNew context:PersonNickContext];
+[self.person addObserver:self forKeyPath:@"name" options:NSKeyValueObservingOptionNew context:PersonNameContext];
+//KVO回调
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary<NSKeyValueChangeKey,id> *)change context:(void *)context{
+    if (context == PersonNickContext) {
+        NSLog(@"%@",change);
+    }else if (context == PersonNameContext){
+        NSLog(@"%@",change);
+    }
+}
+
+
+KVO的自动触发与手动触发:
+KVO观察的开启和关闭有两种方式，自动和手动
+
+自动开关，返回NO，就监听不到，返回YES，表示监听
+// 自动开关
++ (BOOL) automaticallyNotifiesObserversForKey:(NSString *)key{
+    return YES;
+}
+
+自动开关关闭的时候，可以通过手动开关监听
+- (void)setName:(NSString *)name{
+    //手动开关
+    [self willChangeValueForKey:@"name"];
+    _name = name;
+    [self didChangeValueForKey:@"name"];
+}
+使用手动开关的好处就是你想监听就监听，不想监听关闭即可，比自动触发更方便灵活
+
+
+
+KVO观察：一对多
+KVO观察中的一对多，意思是通过注册一个KVO观察者，可以监听多个属性的变化
+
+KVO观察 可变数组:
+//1、注册可变数组KVO观察者
+self.person.dateArray = [NSMutableArray arrayWithCapacity:1];
+[self.person addObserver:self forKeyPath:@"dateArray" options:(NSKeyValueObservingOptionNew) context:NULL];
+    
+//2、KVO回调
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary<NSKeyValueChangeKey,id> *)change context:(void *)context{
+    NSLog(@"%@",change);
+}
+
+//3、移除观察者
+- (void)dealloc{
+ [self.person removeObserver:self forKeyPath:@"dateArray"];
+}
+
+//4、触发数组添加数据
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event{
+    [self.person.dateArray addObject:@"1"];
+}
+
+KVO是基于KVC基础之上的，所以可变数组如果直接添加数据，是不会调用setter方法的，所有对可变数组的KVO观察下面这种方式不生效的,
+即直接通过[self.person.dateArray addObject:@"1"];向数组添加元素，是不会触发kvo通知回调的
+
+在KVC官方文档中，针对可变数组的集合类型，有如下说明，即访问集合对象需要需要通过mutableArrayValueForKey方法，这样才能将元素添加到可变数组中
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event{
+    // KVC 集合 array
+    [[self.person mutableArrayValueForKey:@"dateArray"] addObject:@"1"];
+}
+
+其中的kind表示键值变化的类型，是一个枚举，主要有以下4种
+typedef NS_ENUM(NSUInteger, NSKeyValueChange) {
+    NSKeyValueChangeSetting = 1,//设值
+    NSKeyValueChangeInsertion = 2,//插入
+    NSKeyValueChangeRemoval = 3,//移除
+    NSKeyValueChangeReplacement = 4,//替换
+};
+
+一般的属性与集合的KVO观察是有区别的，其kind不同，以属性name 和 可变数组为例
+属性的kind一般是设值
+可变数组的kind一般是插入
+
+
+
+KVO 底层原理:
+在KVO的官方使用指南中
+KVO是使用isa-swizzling的技术实现的。
+当为对象的属性注册观察者时，将修改观察对象的isa指针，指向中间类而不是真实类。结果，isa指针的值不一定反映实例的实际类。
+您永远不应依靠isa指针来确定类成员身份。相反，您应该使用class方法来确定对象实例的类。
+
+KVO只对属性观察:
+在LGPerson中有一个成员变量name 和 属性nickName，分别注册KVO观察，触发属性变化时，会有什么现象？
+self.person = [[LGPerson alloc] init];
+[self.person addObserver:self forKeyPath:@"nickName" options:(NSKeyValueObservingOptionNew) context:NULL];
+[self.person addObserver:self forKeyPath:@"name" options:(NSKeyValueObservingOptionNew) context:NULL];
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event{
+    NSLog(@"实际情况:%@-%@",self.person.nickName,self.person->name);
+    self.person.nickName = @"KC";
+    self.person->name    = @"Cooci";
+}
+
+结论：KVO对成员变量不观察，只对属性观察，属性和成员变量的区别在于属性多一个 setter 方法，而KVO恰好观察的是setter 方法
+
+
+中间类:
+在注册KVO观察者后，观察对象的isa指针指向会发生改变
+册观察者之前：实例对象person的isa指针指向LGPerson
+注册观察者之后：实例对象person的isa指针指向NSKVONotifying_LGPerson
+在注册观察者后，实例对象的isa指针指向由LGPerson类变为了NSKVONotifying_LGPerson中间类，即实例对象的isa指针指向发生了变化
+
+
+判断中间类是否是派生类 即子类？
+#pragma mark - 遍历类以及子类
+- (void)printClasses:(Class)cls{
+    
+    // 注册类的总数
+    int count = objc_getClassList(NULL, 0);
+    // 创建一个数组， 其中包含给定对象
+    NSMutableArray *mArray = [NSMutableArray arrayWithObject:cls];
+    // 获取所有已注册的类
+    Class* classes = (Class*)malloc(sizeof(Class)*count);
+    objc_getClassList(classes, count);
+    for (int i = 0; i<count; i++) {
+        if (cls == class_getSuperclass(classes[i])) {
+            [mArray addObject:classes[i]];
+        }
+    }
+    free(classes);
+    NSLog(@"classes = %@", mArray);
+}
+
+//********调用********
+[self printClasses:[LGPerson class]];
+
+结论: NSKVONotifying_LGPerson是LGPerson的子类
+
+
+中间类中有什么？
+获取NSKVONotifying_LGPerson类中的所有方法
+#pragma mark - 遍历方法-ivar-property
+- (void)printClassAllMethod:(Class)cls{
+    unsigned int count = 0;
+    Method *methodList = class_copyMethodList(cls, &count);
+    for (int i = 0; i<count; i++) {
+        Method method = methodList[i];
+        SEL sel = method_getName(method);
+        IMP imp = class_getMethodImplementation(cls, sel);
+        NSLog(@"%@-%p",NSStringFromSelector(sel),imp);
+    }
+    free(methodList);
+}
+
+//********调用********
+[self printClassAllMethod:objc_getClass("NSKVONotifying_LGPerson")];
+
+结论: 从结果中可以看出有四个方法，分别是setNickName 、 class 、 dealloc 、 _isKVOA，这些方法是继承还是重写？
+
+在LGStudent中重写setNickName方法，获取LGStudent类的所有方法
+结论: 与中间类的方法进行的对比说明只有重写的方法，才会在子类的方法列表中遍历打印出来，而继承的不会在子类遍历出来
+
+
+获取LGPerson和NSKVONotifying_LGPerson的方法列表进行对比
+有如下结论：
+NSKVONotifying_LGPerson中间类重写了父类LGPerson的setNickName方法
+NSKVONotifying_LGPerson中间类重写了基类NSObject的class 、 dealloc 、 _isKVOA方法
+其中dealloc是释放方法
+_isKVOA判断当前是否是kvo类
+
+
+
+dealloc中移除观察者后，isa指向是谁，以及中间类是否会销毁？
+移除观察者之前：实例对象的isa指向仍是NSKVONotifying_LGPerson中间类
+移除观察者之后：实例对象的isa指向更改为LGPerson类
+所以，在移除kvo观察者后，isa的指向由NSKVONotifying_LGPerson变成了LGPerson
+
+
+那么中间类从创建后，到dealloc方法中移除观察者之后，是否还存在？
+通过子类的打印结果可以看出，中间类一旦生成，没有移除，没有销毁，还在内存中 -- 主要是考虑重用的想法，即中间类注册到内存中，为了考虑后续的重用问题，所以中间类一直存在
+
+
+关于中间类，有如下说明:
+实例对象isa的指向在注册KVO观察者之后，由原有类更改为指向中间类
+中间类重写了观察属性的setter方法、class、dealloc、_isKVOA方法
+dealloc方法中，移除KVO观察者之后，实例对象isa指向由中间类更改为原有类
+中间类从创建后，就一直存在内存中，不会被销毁

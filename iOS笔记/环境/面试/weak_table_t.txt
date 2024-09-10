@@ -1,0 +1,192 @@
+struct weak_table_t {
+    weak_entry_t *weak_entries; //连续地址空间的头指针, 数组
+    size_t    num_entries; //数组中已占用位置的个数
+    uintptr_t mask; //数组下标最大值(即数组大小 -1)
+    uintptr_t max_hash_displacement; //最大哈希偏移值
+};
+
+weak_table 是一个哈希表的结构, 根据 weak 指针指向的对象的地址计算哈希值, 哈希值相同的对象按照下标 +1 的形式向后查找可用位置, 是典型的闭散列算法.
+最大哈希偏移值即是所有对象中计算出的哈希值和实际插入位置的最大偏移量, 在查找时可以作为循环的上限.
+
+struct weak_entry_t {
+    DisguisedPtr<objc_object> referent; //对象地址
+    union {  //这里又是一个联合体, 苹果设计的数据结构的确很棒
+        struct {
+            // 因为这里要存储的又是一个 weak 指针数组, 所以苹果继续选择采用哈希算法
+            weak_referrer_t *referrers; //指向 referent 对象的 weak 指针数组
+            uintptr_t        out_of_line_ness : 2; //这里标记是否超过内联边界, 下面会提到
+            uintptr_t        num_refs : PTR_MINUS_2; //数组中已占用的大小
+            uintptr_t        mask; //数组下标最大值(数组大小 - 1)
+            uintptr_t        max_hash_displacement; //最大哈希偏移值
+        };
+        struct {
+            //这是一个取名叫内联引用的数组
+            weak_referrer_t  inline_referrers[WEAK_INLINE_COUNT]; //宏定义的值是 4
+        };
+    };
+    ...
+}
+
+###
+我们通过对象的地址, 可以在 weak_table_t 中找到对应的 weak_entry_t, weak_entry_t 中保存了所有指向这个对象的 weak 指针.
+###
+
+苹果在 weak_entry_t 中又使用了一个共用体, 第一个结构体中 out_of_line_ness 占用 2bit, num_refs 在 64 位环境下占用了 62bit, 所以实际上两个结构体都是 32 字节, 共用一段地址.
+当指向这个对象的 weak 指针不超过 4 个, 则直接使用数组 inline_referrers, 省去了哈希操作的步骤, 如果 weak 指针个数超过了 4 个, 就要使用第一个结构体中的哈希表.
+
+
+###
+weak_table_t 的工作逻辑:
+1. 在 ARC 下, 编译器会自动添加管理引用计数的代码, weak 指针赋值的时候, 编译器会调用 storeWeak 来赋值, 
+若 weak 指针有指向的对象, 那么会先调用 weak_unregister_no_lock() 方法来从原有的表中先删除这个 weak 指针, 
+然后再调用 weak_register_no_lock() 来向对应的表中插入这个 weak 指针.
+2. 查找时先用被指向对象的地址来计算哈希值, 从 SideTables() 中找到对应的 SideTable,
+再进一步使用这个对象地址来从 SideTable 的 weak_table 中找到对应的 weak_entry_t. 最终要进行操作的就是这个 weak_entry_t.
+3. 如果这个对象的 weak 指针不超过 4 个, 则直接操作 inline_referrers 数组, 否则会为 referrers 数组申请内存, 采用哈希算法来管理表.
+4. 删除旧的 weak 指针时, 会使用原本指向的对象的地址来查找对应的 weak_entry_t, 从中删除这个 weak 指针.
+如果删除之后 weak 指针数组为空, 则销毁这个 weak_entry_t, 原有位置置空, 原本被指向对象的 isa 指针的 weak 引用标记位 0.
+5. 添加新的 weak 指针时, 如果查找到对应的 weak_entry_t, 则将 weak 指针插入到 referrers 数组中. 如果没找到则创建一个 weak_entry_t 配置好后插入 weak_table_t 的数组中.
+
+weak_table_t 中的 weak_entries 是成员为 weak_entry_t 的数组, weak_entry_t 就是对象与其 weak 指针数组的对应关系.
+###
+
+
+template <HaveOld haveOld, HaveNew haveNew, CrashIfDeallocating crashIfDeallocating>
+static id storeWeak(id *location, objc_object *newObj)
+{
+    //模板函数, haveOld 和 haveNew 由编译器决定传入的值, location 是 weak 指针, newObj 是 weak 指针将要指向的对象
+    ...
+    if (haveOld) {
+        //如果 weak 指针有旧值, 则需要在 weak_table 中处理掉旧值
+        weak_unregister_no_lock(&oldTable->weak_table, oldObj, location);
+    }
+    if (haveNew) {
+        //如果 weak 指针将要指向新值(即非 location = nil 的情况), 在 weak_table 中处理赋值操作
+        newObj = (objc_object *)
+            weak_register_no_lock(&newTable->weak_table, (id)newObj, location, 
+                                  crashIfDeallocating);
+        ...
+    }
+    ...
+    return (id)newObj;
+}
+storeWeak 主要功能就是调配, 如果 weak 指针有旧值, 就调用删除旧 weak 指针的方法, 如果 weak 此次有指向新的对象, 就调用 weak 赋值对应的操作.
+
+
+
+void weak_unregister_no_lock(weak_table_t *weak_table, id referent_id, id *referrer_id) {
+    objc_object *referent = (objc_object *)referent_id; //weak 指针指向的对象
+    objc_object **referrer = (objc_object **)referrer_id; //referrer_id是 weak 指针, 操作时需要用到这个指针的地址
+    weak_entry_t *entry;
+    if (!referent) return;
+    if ((entry = weak_entry_for_referent(weak_table, referent))) { //查找 referent 对象对应的 entry
+        remove_referrer(entry, referrer); //从 referent 对应的 entry 中删除地址为 referrer 的 weak 指针
+        bool empty = true;
+        if (entry->out_of_line()  &&  entry->num_refs != 0) { //如果 entry 中的数组容量大于 4 并且数组中还有元素
+            empty = false; //entry 非空
+        } else {
+            for (size_t i = 0; i < WEAK_INLINE_COUNT; i++) {
+                if (entry->inline_referrers[i]) { //否则循环查找 entry 数组, 如果 4 个位置中有一个非空
+                    empty = false;  //entry 非空
+                    break;
+                }
+            }
+        }
+        if (empty) { //如果没有通过之前的查找逻辑, 则说明 entry 为空
+            weak_entry_remove(weak_table, entry); //从 weak_table 中移除该条 entry
+        }
+    }
+    // 这里不要设置 *referrer(*referrer 即 weak) = nil, *referrer 的值后面还要用到.
+}
+
+static void weak_entry_remove(weak_table_t *weak_table, weak_entry_t *entry) {
+    if (entry->out_of_line()) free(entry->referrers); //如果 out_of_line(), 则需要 free 掉为 referrers alloc 的空间
+    bzero(entry, sizeof(*entry)); //entry 所属空间清空
+    weak_table->num_entries--; //weak_table 中 entries 元素个数 -1
+    weak_compact_maybe(weak_table); //根据需要重新调整 weak_table 的空间
+}
+
+static void weak_compact_maybe(weak_table_t *weak_table) {
+    size_t old_size = TABLE_SIZE(weak_table);
+    //如果数组大小大于 1024, 但使用量小于 1/16 的话, 将数组进行收缩, 节省空间
+    if (old_size >= 1024  && old_size / 16 >= weak_table->num_entries) {
+        weak_resize(weak_table, old_size / 8); //收缩至原有大小的 1/8
+        //使用量小于 1/16, 收缩至 1/8 后, 使用量小于 1/2
+    }
+}
+
+
+int value = 42;      // value 是一个 referent
+int* ptr = &value;   // ptr 是一个指针，是 referrer
+Referent 是被指向或引用的对象，即存储实际数据的实体。
+Referrer 是指向或引用 referent 的指针或引用，即持有指向 referent 地址的变量。
+
+
+weak_unregister_no_lock 是从 weak_table 中删除 weak 指针的操作, 其中涉及 remove_referrer() 函数
+weak_entry_for_referent() 函数是从 weak_table 中查找 weak_entry_t 的方法.
+
+
+id weak_register_no_lock(weak_table_t *weak_table, id referent_id, id *referrer_id, bool crashIfDeallocating) {
+    ...
+    weak_entry_t *entry;
+    if ((entry = weak_entry_for_referent(weak_table, referent))) { //如果 weak_table 有对应的 entry
+        append_referrer(entry, referrer); //将 weak 指针存入对应的 entry 中
+    } else {
+        weak_entry_t new_entry(referent, referrer); //创建新的 entry
+        weak_grow_maybe(weak_table); //查看是否需要调整 weak_table 中 weak_entries 数组大小
+        weak_entry_insert(weak_table, &new_entry); //将新的 entry 插入到 weak_table 中
+    }
+    // 这里不要设置 *referrer(weak) = nil, *referrer 的值后面还要用到.
+    return referent_id;
+}
+
+append_referrer() 和 remove_referrer() 两个方法的逻辑类似, 核心都在搜索算法上, 只不过搜索到之后, 一个把 weak 指针加进去, 一个是从里面删除 weak 指针.
+
+static void append_referrer(weak_entry_t *entry, objc_object **new_referrer)
+{
+    if (! entry->out_of_line()) { //如果数组大小没超过 4
+        for (size_t i = 0; i < WEAK_INLINE_COUNT; i++) {
+            if (entry->inline_referrers[i] == nil) { //循环查找数组成员
+                entry->inline_referrers[i] = new_referrer; //把新的 weak 指针插入到空位置
+                return;
+            }
+        }
+        //数组中的 4 个位置都非空, 就要调整策略使用 referrers 了
+        //从这里开始, 这一段是把 inline_referrers 数组调整为使用 referrers 的形式
+        weak_referrer_t *new_referrers = (weak_referrer_t *)
+            calloc(WEAK_INLINE_COUNT, sizeof(weak_referrer_t)); //还是开辟 4 个 weak_referrer_t 大小的空间
+        for (size_t i = 0; i < WEAK_INLINE_COUNT; i++) {
+            new_referrers[i] = entry->inline_referrers[I]; //将 inline_referrers 中的值赋值给 referrers
+        }
+        //配置 entry 结构
+        entry->referrers = new_referrers;
+        entry->num_refs = WEAK_INLINE_COUNT;
+        entry->out_of_line_ness = REFERRERS_OUT_OF_LINE;
+        entry->mask = WEAK_INLINE_COUNT-1;
+        entry->max_hash_displacement = 0;
+        //到这里结束
+    }
+    assert(entry->out_of_line());
+    if (entry->num_refs >= TABLE_SIZE(entry) * 3/4) { //数组使用量超过 3/4
+        return grow_refs_and_insert(entry, new_referrer); //需要扩展数组并进行插入
+    }
+    //开始哈希算法
+    size_t begin = w_hash_pointer(new_referrer) & (entry->mask);
+    size_t index = begin; //使用哈希算法计算到一个起始下标
+    size_t hash_displacement = 0; //哈希偏移次数
+    while (entry->referrers[index] != nil) { //循环找空位置
+        hash_displacement++; //移位一次 +1
+        index = (index+1) & entry->mask; //从起始位置开始遍历, 对数组大小取模
+        if (index == begin) bad_weak_table(entry); //如果找了一圈, 证明算法出了点问题
+    }
+    //这里记录下移位的最大值, 那么数组里的任何一个数据, 存储时的移位次数都不大于这个值
+    //可以提升查找时的效率, 如果移位次数超过了这个值都没有找到, 就证明要查找的项不在数组中
+    if (hash_displacement > entry->max_hash_displacement) {
+        entry->max_hash_displacement = hash_displacement;
+    }
+    weak_referrer_t &ref = entry->referrers[index];
+    ref = new_referrer; //这里为什么没有用 entry->referrers[index] = new_referrer, 我也不太理解.
+    entry->num_refs++; //数组使用量 +1
+}
+
+grow_refs_and_insert() 函数内部会扩展 referrer 数组, 然后会再调用 append_referrer().

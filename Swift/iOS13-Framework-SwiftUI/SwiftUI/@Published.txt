@@ -1,0 +1,408 @@
+@Published 属性包装器
+@Published 是一个属性包装器，用于自动发布属性的变化。
+当你在 ObservableObject 的属性上使用 @Published 时，SwiftUI 会自动为该属性创建一个 Publisher，视图会根据这个发布者的变化来重新渲染。
+
+
+@Published 的能力:
+@Published 是 Combine 框架中最常用到的属性包装器。通过 @Published 标记的属性在发生改变时，其订阅者（通过 $ 或 projectedValue 提供的 Publisher ）将收到即将改变的值。
+不要被它名称尾缀的 ed 所迷惑，它的发布时机是在改变前（ willSet ）
+
+class Weather {
+    @Published var temperature: Double
+    init(temperature: Double) {
+        self.temperature = temperature
+    }
+}
+
+let weather = Weather(temperature: 20)
+let cancellable = weather.$temperature
+    .sink() {
+        print ("Temperature now: \($0)")
+}
+weather.temperature = 25
+
+// Temperature now: 20.0
+// Temperature now: 25.0
+
+
+#####
+而在符合 ObservableObject 协议的类中，通过 @Published 标记的属性在发生改变时，
+除了会通知自身 Publisher 的订阅者外，也会通过包裹它的类实例的 objectWillChange 来通知类实例（ 符合 ObservableObject 协议）的订阅者。
+这一特性，也让 @Published 成为 SwiftUI 中最有用的属性包装器之一。
+#####
+
+
+class Weather:ObservableObject {  // 遵循 ObservableObject
+    @Published var temperature: Double
+    init(temperature: Double) {
+        self.temperature = temperature
+    }
+}
+
+let weather = Weather(temperature: 20)
+let cancellable = weather.objectWillChange // 订阅 weather 实例的 obejctWillChange
+    .sink() { _ in
+        print ("weather will change")
+}
+weather.temperature = 25
+
+// weather will change
+
+
+仅从调用包裹其类的 objectWillChange 的时机来讲，下面的代码与上面的代码的表现是一样的，
+但在 @Published 的版本中，我们并没有为 @Published 提供包裹其类的实例，它是隐式获得的。
+
+class Weather:ObservableObject {
+    var temperature: Double{  // 没有使用 @Published 进行标记
+        willSet {  // 改变前调用类实例的 objectWillChange 
+            self.objectWillChange.send()  // 在代码中明确地引用了 Weahter 实例
+        }
+    }
+    init(temperature: Double) {
+        self.temperature = temperature
+    }
+}
+
+let weather = Weather(temperature: 20)
+let cancellable = weather.objectWillChange // 订阅 weather 实例
+    .sink() { _ in
+        print ("weather will change")
+}
+weather.temperature = 25
+
+// weather will change
+
+
+
+为其他属性包装类型添加的类似 @Published 的能力是指 —— 无需显式设置，属性包装类型便可访问包裹其的类实例的属性或方法。
+
+// swift-evolution/proposals/
+https://github.com/swiftlang/swift-evolution/tree/main/proposals
+
+每当 Swift 推出新的语言特性后，很多像例如 Paul Hudson 这样的优秀博主会在第一时间将新特性提炼并整理出来
+https://www.hackingwithswift.com/
+
+
+
+如何在属性包装类型中引用包裹其的类实例
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0258-property-wrappers.md#referencing-the-enclosing-self-in-a-wrapper-type
+Referencing the enclosing 'self' in a wrapper type
+Manually-written getters and setters for properties declared in a type often refer to the self of their enclosing type. 
+For example, this can be used to notify clients of a change to a property's value:
+public class MyClass: Superclass {
+  private var backingMyVar: Int
+  public var myVar: Int {
+    get { return backingMyVar }
+    set {
+      if newValue != backingMyVar {
+        self.broadcastValueWillChange(newValue: newValue)
+      }
+      backingMyVar = newValue
+    }
+  }
+}
+
+This "broadcast a notification that the value has changed" implementation cannot be cleanly factored into a property wrapper type, 
+because it needs access to both the underlying storage value (here, backingMyVar) and the self of the enclosing type. 
+We could require a separate call to register the self instance with the wrapper type, e.g.,
+
+protocol Observed {
+  func broadcastValueWillChange<T>(newValue: T)
+}
+
+@propertyWrapper
+public struct Observable<Value> {
+  public var stored: Value
+  var observed: Observed?
+  
+  public init(wrappedValue: Value) {
+    self.stored = wrappedValue
+  }
+  
+  public func register(_ observed: Observed) {
+    self.observed = observed
+  }
+  
+  public var wrappedValue: Value {
+    get { return stored }
+    set {
+      if newValue != stored {
+        observed?.broadcastValueWillChange(newValue: newValue)
+      }
+      stored = newValue
+    }
+  }
+}
+
+However, this means that one would have to manually call register(_:) in the initializer for MyClass:
+
+public class MyClass: Superclass {
+  @Observable public var myVar: Int = 17
+  
+  init() {
+    // self._myVar gets initialized with Observable(wrappedValue: 17) here
+    super.init()
+    self._myVar.register(self)    // register as an Observable
+  }
+}
+
+
+@Published var count = 0 // 等价于 var count1 = Published<Int>(wrappedValue: 0)
+let c1 = count // Int
+let c2  = $count// Published<Int>.Publisher
+let c3 = _count // Published<Int>
+
+
+提案者提出：通过让属性包装类型提供一个静态下标方法，以实现对包裹其的类实例的自动获取（无需显式设置）。
+public static subscript<OuterSelf>(
+        _enclosingInstance: OuterSelf, // 正确的参数名为 _enclosingInstance
+        wrapped: ReferenceWritableKeyPath<OuterSelf, Value>,
+        storage: ReferenceWritableKeyPath<OuterSelf, Self>
+    ) -> Value
+@Published 就是通过实现了该下标方法从而获得了“特殊”能力。
+
+
+
+
+属性包装器的运作原理:
+编译器在最终编译前，首先会对用户自定义的属性包装类型代码进行转译
+
+struct Demo {
+    @State var name = "fat"
+}
+
+编译器将其转译成:
+
+struct Demo {
+    private var _name = State(wrappedValue: "fat")
+    var name: String {
+        get { _name.wrappedValue }
+        set { _name.wrappedValue = newValue }
+    }
+}
+
+可以看出 propertyWrapper 没有什么特别的魔法，就是一个语法糖。
+上面的代码也解释了为什么在使用了属性包装器后，无法再声明相同名称（前面加下划线）的变量。
+
+// 在使用了属性包装器后，无法再声明相同名称（前面加下划线）的变量。
+struct Demo {
+    @State var name = "fat"
+    var _name:String = "ds"  // invalid redeclaration of synthesized property '_name'
+}
+// '_name' synthesized for property wrapper backing storage
+
+当属性包装类型仅提供了 wrappedValue 时（比如上面的 State ），转译后的 getter 和 setter 将直接使用 wrappedValue 
+
+
+不过一旦属性包装类型实现了上文介绍的静态下标方法，转译后将变成如下的代码:
+class Test:ObservableObject{
+    @Published var name = "fat"
+}
+
+// 转译为
+class Test:ObservableObject{
+    private var _name = Published(wrappedValue: "fat")
+    var name:String {
+        get {
+            Published[_enclosingInstance: self,
+                                 wrapped: \Test.name,
+                                 storage: \Test._name]
+        }
+        set {
+            Published[_enclosingInstance: self,
+                                 wrapped: \Test.name,
+                                 storage: \Test._name] = newValue
+        }
+    }
+}
+
+当属性包装器实现了静态下标方法且被类所包裹时，编译器将优先使用静态下标方法来实现 getter 和 setter 。
+
+
+下标方法的三个参数分别为:
+_enclosingInstance
+包裹当前属性包装器的类实例
+
+wrapped
+对外计算属性的 KeyPath （上面代码中对应 name 的 KeyPath ）
+
+storage
+内部存储属性的 KeyPath （上面代码中对应 _name 的 KeyPath ）
+
+
+在实际使用中，我们只需使用 _enclosingInstance 和 storage 。
+
+
+我们可以得到以下结论:
+@Published 的“特殊”能力并非其独有的，与特定的属性包装类型无关
+任何实现了该静态下标方法的属性包装类型都可以具备本文所探讨的所谓“特殊”能力
+由于下标参数 wrapped 和 storage 为 ReferenceWritableKeyPath 类型，因此只有在属性包装类型被类包裹时，编译器才会转译成下标版本的 getter 和 setter
+
+
+
+创建 @MyPublished:
+@Published 的 projectedValue 的类型为 Published.Publisher<Value,Never>
+通过对 CurrentValueSubject 的包装，即可轻松地创建自定义 Publisher
+调用包裹类实例的 objectWillChange 和给 projectedValue 的订阅者发送信息均应在更改 wrappedValue 之前
+
+@propertyWrapper
+public struct MyPublished<Value> {
+    public var wrappedValue: Value {
+        willSet {  // 修改 wrappedValue 之前
+            publisher.subject.send(newValue)
+        }
+    }
+
+    public var projectedValue: Publisher {
+        publisher
+    }
+
+    private var publisher: Publisher
+
+    public struct Publisher: Combine.Publisher {
+        public typealias Output = Value
+        public typealias Failure = Never
+
+        var subject: CurrentValueSubject<Value, Never> // PassthroughSubject 会缺少初始话赋值的调用
+
+        public func receive<S>(subscriber: S) where S: Subscriber, Self.Failure == S.Failure, Self.Output == S.Input {
+            subject.subscribe(subscriber)
+        }
+
+        init(_ output: Output) {
+            subject = .init(output)
+        }
+    }
+
+    public init(wrappedValue: Value) {
+        self.wrappedValue = wrappedValue
+        publisher = Publisher(wrappedValue)
+    }
+
+    public static subscript<OuterSelf: ObservableObject>(
+        _enclosingInstance observed: OuterSelf,
+        wrapped wrappedKeyPath: ReferenceWritableKeyPath<OuterSelf, Value>,
+        storage storageKeyPath: ReferenceWritableKeyPath<OuterSelf, Self>
+    ) -> Value {
+        get {
+            observed[keyPath: storageKeyPath].wrappedValue
+        }
+        set {
+            if let subject = observed.objectWillChange as? ObservableObjectPublisher {
+                subject.send() // 修改 wrappedValue 之前
+                observed[keyPath: storageKeyPath].wrappedValue = newValue
+            }
+        }
+    }
+}
+
+现在，@MyPublished 拥有与 @Published 完全一样的功能与行为表现:
+
+class T: ObservableObject {
+    @MyPublished var name = "fat" // 将 MyPublished 替换成 Published 将获得同样的结果 
+    init() {}
+}
+
+let object = T()
+
+let c1 = object.objectWillChange.sink(receiveValue: {
+    print("object will changed")
+})
+let c2 = object.$name.sink{
+    print("name will get new value \($0)")
+}
+
+object.name = "bob"
+
+// name will get new value fat
+// object will changed
+// name will get new value bob
+
+
+@Published 只能胜任包装值为值类型的场景，当 wrappedValue 为引用类型时，仅改变包装值的属性内容并不会对外发布通知。
+
+
+class RefObject {
+    var count = 0
+    init() {}
+}
+
+class Test: ObservableObject {
+    @Published var ref = RefObject()
+}
+
+let test = Test()
+let cancellable = test.objectWillChange.sink{ print("object will change")}
+
+test.ref.count = 100
+// 不会有提示
+
+
+我们可以实现一个适用于引用类型的 @Published 版本 —— @PublishedObject
+@PublishedObject 的 wrappedValue 为遵循 ObservableObject 协议的引用类型
+在属性包装器中订阅 wrappedValue 的 objectWillChange ，每当 wrappedValue 发生改变时，将调用指定的闭包
+在属性包装器创建后，系统会立刻调用静态下标的 getter 一次，选择在此时机完成对 wrappedValue 的订阅和闭包的设置
+
+@propertyWrapper
+public struct PublishedObject<Value: ObservableObject> { // wrappedValue 要求符合 ObservableObject
+    public var wrappedValue: Value
+
+    public init(wrappedValue: Value) {
+        self.wrappedValue = wrappedValue
+    }
+
+    public static subscript<OuterSelf: ObservableObject>(
+        _enclosingInstance observed: OuterSelf,
+        wrapped wrappedKeyPath: ReferenceWritableKeyPath<OuterSelf, Value>,
+        storage storageKeyPath: ReferenceWritableKeyPath<OuterSelf, Self>
+    ) -> Value where OuterSelf.ObjectWillChangePublisher == ObservableObjectPublisher {
+        get {
+            if observed[keyPath: storageKeyPath].cancellable == nil {
+                // 只会执行一次
+                observed[keyPath: storageKeyPath].setup(observed)
+            }
+            return observed[keyPath: storageKeyPath].wrappedValue
+        }
+        set {
+            observed.objectWillChange.send() // willSet
+            observed[keyPath: storageKeyPath].wrappedValue = newValue
+        }
+    }
+
+    private var cancellable: AnyCancellable?
+    // 订阅 wrappedvalue 的 objectWillChange 
+    // 每当 wrappedValue 发送通知时，调用 _enclosingInstance 的 objectWillChange.send。
+    // 使用闭包对 _enclosingInstance 进行弱引用
+    private mutating func setup<OuterSelf: ObservableObject>(_ enclosingInstance: OuterSelf) where OuterSelf.ObjectWillChangePublisher == ObservableObjectPublisher {
+        cancellable = wrappedValue.objectWillChange.sink(receiveValue: { [weak enclosingInstance] _ in
+            (enclosingInstance?.objectWillChange)?.send()
+        })
+    }
+}
+
+
+@objc(Event)
+public class Event: NSManagedObject { // Core Data 的托管对象符合 ObservableObject 协议
+    @NSManaged public var timestamp: Date?
+}
+
+class Store: ObservableObject {
+    @PublishedObject var event = Event(context: container.viewContext)
+
+    init() {
+        event.timestamp = Date().addingTimeInterval(-1000)
+    }
+}
+
+struct DemoView: View {
+    @StateObject var store = Store()
+    var body: some View {
+        VStack {
+            Text(store.event.timestamp, format: .dateTime)
+            Button("Now") {
+                store.event.timestamp = .now
+            }
+        }
+        .frame(width: 300, height: 300)
+    }
+}

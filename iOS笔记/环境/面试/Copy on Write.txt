@@ -1,0 +1,84 @@
+https://fabernovel.github.io/2020-10-30/Understanding-Copy-on-Write
+
+
+At a basic level, Array is just a structure that holds a reference to a heap-allocated buffer containing the elements – therefore multiple Array instances can reference the same buffer. 
+When you come to mutate a given array instance, the implementation will check if the buffer is uniquely referenced, and if so, mutate it directly. 
+Otherwise, the array will perform a copy of the underlying buffer in order to preserve value semantics.
+
+isKnownUniquelyReferenced 可以⽤来判断 Class 是否被唯⼀引⽤，从⽽进⾏ copy on write
+Array、Dictionary、Set 等类型都是 Struct 实现的，值类型，⽀持 Copy-on-Write
+
+"// isKnownUniquelyReferenced 的使⽤
+isKnownUniquelyReferenced(&object: T)
+
+final class Box<A> {
+    var unbox:A
+    init(_ value:A) {
+        self.unbox = value
+    }
+}   
+var a = Box(NSMutableData())
+isKnownUniquelyReferenced(&a)"//true
+var b = a 
+isKnownUniquelyReferenced(&a)"//false
+
+"// 写时复制的代码原理
+final class Ref<T> {
+  var val : T
+  init(_ v : T) {val = v}
+}
+
+struct Box<T> {
+    var ref : Ref<T>
+    init(_ x : T) { ref = Ref(x) }
+
+    var value: T {
+        get { return ref.val }
+        set {
+          if (!isUniquelyReferencedNonObjC(&ref)) {
+            ref = Ref(newValue)
+            return
+          }
+          ref.val = newValue
+        }
+    }
+}
+当进⾏ set 的时候判断是否有多个 reference，如果是多个 reference 则进⾏拷⻉，反之则不会。
+
+
+Swift Copy-on-Write 是怎么去实现的?
+// Actual CoW implementation
+struct CoWSomeClass {
+    init(value: Int) {
+        storage = SomeClass(value: value)
+    }
+
+    private storage: SomeClass
+
+    var value: Int {
+        get {
+            storage.value
+        }
+        set {
+            if !isKnownUniquelyReferenced(&storage) {
+                storage = storage.copy()
+            }
+            storage.value = newValue
+        }
+    }
+}
+
+// Storage definition
+extension CoWSomeClass {
+    private class SomeClass {
+        var value: Int
+
+        init(value: Int) {
+            self.value = value
+        }
+
+        func copy() -> SomeClass {
+            SomeClass(value: value)
+        }
+    }
+}

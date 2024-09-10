@@ -1,0 +1,172 @@
+https://developer.apple.com/documentation/uikit/app_and_environment/scenes/preparing_your_ui_to_run_in_the_background
+
+Typically, an app is in a suspended state when it’s in the background.
+However, there are a limited number of background execution modes your app can support that enable it to run when in the background, such as playing audio, receiving location updates, or processing scheduled tasks.
+For apps that adopt one or more of these modes, the system launches or resumes the app, in the background, and affords it time to process any related events.
+
+Use background execution modes sparingly because overuse can negatively impact device performance and battery life.
+
+==================================================About the app launch sequence
+https://developer.apple.com/documentation/uikit/app_and_environment/responding_to_the_launch_of_your_app/about_the_app_launch_sequence
+
+Learn the order in which the system executes your code at app launch time:
+
+
+The user or the system launches your app, or the system prewarms your app.
+
+The system executes the main() function that Xcode provides.
+
+The main() function calls UIApplicationMain(_:_:_:_:), which creates an instance of UIApplication and of your app delegate.
+
+UIKit loads the default storyboard you specify in your app’s Info.plist file, or in the target’s Custom iOS Target Properties tab of Xcode’s project editor; apps that don’t use a default storyboard skip this step.
+
+UIKit calls the application(_:willFinishLaunchingWithOptions:) method in your app delegate.
+
+UIKit performs state restoration, which results in the execution of additional methods in your app delegate and app’s view controllers. For more information, see About the UI restoration process.
+https://developer.apple.com/documentation/uikit/view_controllers/preserving_your_app_s_ui_across_launches/about_the_ui_restoration_process
+
+UIKit calls your app delegate’s application(_:didFinishLaunchingWithOptions:) method.
+
+
+
+After the launch sequence completes, the system uses your app or scene delegates to display your app’s user interface and to manage its life cycle.
+
+
+==================================================Background execution:
+Using background tasks to update your app
+Extending your app’s background execution time
+About the background execution sequence
+
+
+=================================================Using background tasks to update your app
+https://developer.apple.com/documentation/uikit/app_and_environment/scenes/preparing_your_ui_to_run_in_the_background/using_background_tasks_to_update_your_app
+
+A task is a standalone activity that an app performs, often on a recurring basis.
+Examples of tasks include performing maintenance on a database, refining a machine learning model, or updating displayed data.
+You can configure your app to launch and run tasks in the background to take advantage of processing time when the device isn’t used.
+
+There are two types of background tasks: BGAppRefreshTask and BGProcessingTask.
+BGAppRefreshTask is for short-duration tasks that expect quick results, such as downloading a stock quote. 
+BGProcessingTask is for tasks that might be time-consuming, such as downloading a large file or synchronizing data. 
+Your app can use one or both of these.
+
+If you’re using BGAppRefreshTask, select ”Background fetch.“
+If you’re using BGProcessingTask, select ”Background processing.“
+
+In iOS 13 and later, adding a BGTaskSchedulerPermittedIdentifiers key to the Info.plist disables the application(_:performFetchWithCompletionHandler:) and setMinimumBackgroundFetchInterval(_:) methods.
+
+
+Register, schedule, and run tasks:
+Register all of the tasks before the end of the app launch sequence
+
+Note
+An extension can schedule a task, but your main app must register the task. The system launches the app to run the task.
+
+###
+To submit a task request for the system to launch your app in the background at a later time, use submit(_:). 
+When you resubmit a task, the new submission replaces the previous submission.
+
+submit(_:):
+Submit a previously registered background task for execution.
+Submitting a task request for an unexecuted task that’s already in the queue replaces the previous task request.
+There can be a total of 1 refresh task and 10 processing tasks scheduled at any time. 
+Trying to schedule more tasks returns BGTaskScheduler.Error.Code.tooManyPendingTaskRequests.
+###
+
+When the system opens your app in the background, it calls the launch handler to run the task.
+launch handler 就是 BGTaskScheduler.shared.register 的尾随闭包
+
+
+==================================================Extending your app’s background execution time
+https://developer.apple.com/documentation/uikit/app_and_environment/scenes/preparing_your_ui_to_run_in_the_background/extending_your_app_s_background_execution_time
+Ensure that critical tasks finish when your app moves to the background.
+
+Extending your app’s background execution time ensures that you have adequate time to perform critical tasks. For tasks that require more background time, use Background Tasks.
+https://developer.apple.com/documentation/backgroundtasks
+
+###
+When your app moves to the background, the system calls your app delegate’s applicationDidEnterBackground(_:) method. 
+That method has five seconds to perform any tasks and return. Shortly after that method returns, the system puts your app into the suspended state. 
+For most apps, five seconds is enough to perform any crucial tasks, but if you need more time, you can ask UIKit to extend your app’s runtime.
+###
+
+You extend your app’s runtime by calling the beginBackgroundTask(withName:expirationHandler:) method. 
+Calling this method gives you extra time to perform important tasks. 
+(You can find out the maximum background time available using the backgroundTimeRemaining property.) When you finish your tasks, 
+call the endBackgroundTask(_:) method right away to let the system know that you’re done. 
+If you don’t end your tasks in a timely manner, the system terminates your app.
+
+Note:
+Don’t wait until your app moves to the background to call the beginBackgroundTask(withName:expirationHandler:) method. 
+Call the method before performing any long-running task.
+
+The following code shows an example that configures a background task so that the app may save data to its server, which could take longer than five seconds. 
+The beginBackgroundTask(withName:expirationHandler:) method returns an identifier that you must save and pass to the endBackgroundTask(_:) method.
+
+func sendDataToServer( data : NSData ) {
+   // Perform the task on a background queue.
+   DispatchQueue.global().async {
+      // Request the task assertion and save the ID.
+      self.backgroundTaskID = UIApplication.shared.
+                 beginBackgroundTask (withName: "Finish Network Tasks") {
+         // End the task if time expires.
+         UIApplication.shared.endBackgroundTask(self.backgroundTaskID!)
+         self.backgroundTaskID = UIBackgroundTaskInvalid
+      }
+            
+      // Send the data synchronously.
+      self.sendAppDataToServer( data: data)
+            
+      // End the task assertion.
+      UIApplication.shared.endBackgroundTask(self.backgroundTaskID!)
+      self.backgroundTaskID = UIBackgroundTaskInvalid
+   }
+}
+
+Note:
+The beginBackgroundTask(withName:expirationHandler:) method can’t be called from an app extension. 
+To request extra execution time from your app extension, call the performExpiringActivity(withReason:using:) method of ProcessInfo instead.
+
+
+==================================================About the background execution sequence
+https://developer.apple.com/documentation/uikit/app_and_environment/scenes/preparing_your_ui_to_run_in_the_background/about_the_background_execution_sequence/
+
+An app may enter the background from one of several different starting points. 
+System events can cause a suspended app to be returned to the background, or cause a not running app to be launched directly into the background. 
+A foreground app transitions to the background when another app is launched or when the user returns to the Home screen.
+
+
+Handle background events:
+For apps that support one of the Background Modes capabilities, the system launches or resumes the app in the background to handle events associated with those capabilities.
+For example, the system might launch or resume the app to respond to a location update or to perform a background fetch.
+
+
+If your app isn’t running when an event arrives, the system launches the app and moves it directly to the background, following this sequence:
+The system launches the app and follows the initialization sequence described in ###About the app launch sequence.###
+UIKit calls the app delegate’s applicationDidEnterBackground(_:) method.
+UIKit delivers the event that caused the launch.
+The app’s snapshot is taken.
+The app may be suspended again.
+
+
+If your app is in memory and suspended when an event arrives, the system resumes the app in the background, following this sequence:
+The system resumes the app.
+UIKit calls the app delegate’s applicationDidEnterBackground(_:) method.
+UIKit delivers the event that caused the launch.
+The app’s snapshot is taken.
+The app may be suspended again.
+
+
+
+Transition from the foreground:
+When another app is launched or the user returns to the Home screen, the foreground app moves to the background, following this sequence:
+The user exits the running app.
+UIKit calls the app delegate’s applicationWillResignActive(_:) method.
+UIKit calls the app delegate’s applicationDidEnterBackground(_:) method.
+The app’s snapshot is taken.
+The app may be suspended again.
+
+
+
+==================================================Preparing your UI to run in the foreground
+https://developer.apple.com/documentation/uikit/app_and_environment/scenes/preparing_your_ui_to_run_in_the_foreground

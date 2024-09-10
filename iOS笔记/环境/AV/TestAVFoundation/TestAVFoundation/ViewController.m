@@ -17,6 +17,11 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
 
+    [AVAsset alloc];
+    [AVAssetTrack alloc];
+    
+    [AVMetadataItem alloc];
+    
 }
 
 

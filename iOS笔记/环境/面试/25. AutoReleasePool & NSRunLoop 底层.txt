@@ -416,6 +416,7 @@ struct AutoreleasePoolPageData
 属性depth、hiwat类型为uint32_t，实际类型是unsigned int类型，均占4字节（即2*4=8字节）
 
 
+
 --------------------------------------------------objc_autoreleasePoolPush 源码分析:
 //入栈
 static inline void *push() 
@@ -470,6 +471,28 @@ static inline AutoreleasePoolPage *hotPage()
     if (result) result->fastcheck();
     return result;
 }
+
+
+tls_get_direct
+只考虑真机运行的情况, 最终调用情况是
+__attribute__((always_inline)) static __inline__ void* _os_tsd_get_direct(unsigned long slot)
+{
+    return _os_tsd_get_base()[slot]; //slot即为传进来的key
+}
+
+//_os_tsd_get_base 函数的实现
+__attribute__((always_inline, pure)) static __inline__ void** _os_tsd_get_base(void)
+{
+#if ......
+  //一些非 arm64 环境下的操作
+#elif defined(__arm64__) // arm64 版本对应的命令
+    uint64_t tsd;
+    __asm__("mrs %0, TPIDRRO_EL0" : "=r" (tsd)); //将线程指针寄存器(TPIDRRO_EL0)里的值赋值给变量 tsd
+    tsd &= ~0x7ull; //tsd 和 0x7ull 取非后的数字进行按位与操作
+#endif
+    return (void**)(uintptr_t)tsd;
+}
+tls_get_direct 函数内部最终是通过对线程指针寄存器中的数据经过运算后得到一个元素为 void * 型指针的数组, 该数组的第 43 号元素即为 hotPage
 
 
 //******** autoreleaseNoPage方法 ********
@@ -927,4 +950,559 @@ void kill()
 
 
 
-==================================================
+
+
+==================================================RunLoop
+RunLoop是事件接收和分发机制的一个实现，是线程相关的基础框架的一部分，一个RunLoop就是一个事件处理的循环，用来不停的调度工作以及处理输入事件。
+
+RunLoop本质是一个 do-while循环，没事做就休息，来活了就干活。与普通的while循环是有区别的，
+普通的while循环会导致CPU进入忙等待状态，即一直消耗cpu，而RunLoop则不会，
+RunLoop是一种闲等待，即RunLoop具备休眠功能。
+
+RunLoop的作用:
+保持程序的持续运行
+处理App中的各种事件（触摸、定时器、performSelector）
+节省cpu资源，提供程序的性能，该做事就做事，该休息就休息
+
+RunLoop的获取主要有以下两种方式:
+// 主运行循环
+CFRunLoopRef mainRunloop = CFRunLoopGetMain();
+// 当前运行循环
+CFRunLoopRef currentRunloop = CFRunLoopGetCurrent();
+
+CFRunLoopRef CFRunLoopGetMain(void) {
+    CHECK_FOR_FORK();
+    static CFRunLoopRef __main = NULL; // no retain needed
+    //pthread_main_thread_np 主线程
+    if (!__main) __main = _CFRunLoopGet0(pthread_main_thread_np()); // no CAS needed
+    return __main;
+}
+
+// should only be called by Foundation
+// t==0 is a synonym for "main thread" that always works
+CF_EXPORT CFRunLoopRef _CFRunLoopGet0(pthread_t t) {
+    //如果t不存在，则标记为主线程（即默认情况，默认是主线程）
+    if (pthread_equal(t, kNilPthreadT)) {
+        t = pthread_main_thread_np();
+    }
+    __CFSpinLock(&loopsLock);
+    if (!__CFRunLoops) {
+        __CFSpinUnlock(&loopsLock);
+        
+        //创建全局字典，标记为kCFAllocatorSystemDefault
+        CFMutableDictionaryRef dict = CFDictionaryCreateMutable(kCFAllocatorSystemDefault, 0, NULL, &kCFTypeDictionaryValueCallBacks);
+        //通过主线程 创建主运行循环
+        CFRunLoopRef mainLoop = __CFRunLoopCreate(pthread_main_thread_np());
+        //利用dict，进行key-value绑定操作，即可以说明，线程和runloop是一一对应的
+        // dict : key value
+        CFDictionarySetValue(dict, pthreadPointer(pthread_main_thread_np()), mainLoop);
+        
+        if (!OSAtomicCompareAndSwapPtrBarrier(NULL, dict, (void * volatile *)&__CFRunLoops)) {
+            CFRelease(dict);
+        }
+        
+        CFRelease(mainLoop);
+        __CFSpinLock(&loopsLock);
+    }
+    //通过其他线程获取runloop
+    CFRunLoopRef loop = (CFRunLoopRef)CFDictionaryGetValue(__CFRunLoops, pthreadPointer(t));
+    __CFSpinUnlock(&loopsLock);
+    if (!loop) {
+        //如果没有获取到，则新建一个运行循环
+        CFRunLoopRef newLoop = __CFRunLoopCreate(t);
+        __CFSpinLock(&loopsLock);
+        loop = (CFRunLoopRef)CFDictionaryGetValue(__CFRunLoops, pthreadPointer(t));
+        if (!loop) {
+            //将新建的runloop 与 线程进行key-value绑定
+            CFDictionarySetValue(__CFRunLoops, pthreadPointer(t), newLoop);
+            loop = newLoop;
+        }
+        // don't release run loops inside the loopsLock, because CFRunLoopDeallocate may end up taking it
+        __CFSpinUnlock(&loopsLock);
+        CFRelease(newLoop);
+    }
+    if (pthread_equal(t, pthread_self())) {
+        _CFSetTSD(__CFTSDKeyRunLoop, (void *)loop, NULL);
+        if (0 == _CFGetTSD(__CFTSDKeyRunLoopCntr)) {
+            _CFSetTSD(__CFTSDKeyRunLoopCntr, (void *)(PTHREAD_DESTRUCTOR_ITERATIONS-1), (void (*)(void *))__CFFinalizeRunLoop);
+        }
+    }
+    return loop;
+}
+
+Runloop只有两种，一种是主线程的， 一个是其他线程的。即runloop和线程是一一对应的
+
+RunLoop的创建:
+static CFRunLoopRef __CFRunLoopCreate(pthread_t t) {
+    CFRunLoopRef loop = NULL;
+    CFRunLoopModeRef rlm;
+    uint32_t size = sizeof(struct __CFRunLoop) - sizeof(CFRuntimeBase);
+    loop = (CFRunLoopRef)_CFRuntimeCreateInstance(kCFAllocatorSystemDefault, __kCFRunLoopTypeID, size, NULL);
+    //如果loop为空，则直接返回NULL
+    if (NULL == loop) {
+        return NULL;
+    }
+    //runloop属性配置
+    (void)__CFRunLoopPushPerRunData(loop);
+    __CFRunLoopLockInit(&loop->_lock);
+    loop->_wakeUpPort = __CFPortAllocate();
+    if (CFPORT_NULL == loop->_wakeUpPort) HALT;
+    __CFRunLoopSetIgnoreWakeUps(loop);
+    loop->_commonModes = CFSetCreateMutable(kCFAllocatorSystemDefault, 0, &kCFTypeSetCallBacks);
+    CFSetAddValue(loop->_commonModes, kCFRunLoopDefaultMode);
+    loop->_commonModeItems = NULL;
+    loop->_currentMode = NULL;
+    loop->_modes = CFSetCreateMutable(kCFAllocatorSystemDefault, 0, &kCFTypeSetCallBacks);
+    loop->_blocks_head = NULL;
+    loop->_blocks_tail = NULL;
+    loop->_counterpart = NULL;
+    loop->_pthread = t;
+#if DEPLOYMENT_TARGET_WINDOWS
+    loop->_winthread = GetCurrentThreadId();
+#else
+    loop->_winthread = 0;
+#endif
+    rlm = __CFRunLoopFindMode(loop, kCFRunLoopDefaultMode, true);
+    if (NULL != rlm) __CFRunLoopModeUnlock(rlm);
+    return loop;
+}
+
+其实RunLoop也是一个对象。是__CFRunLoop结构体的指针类型
+
+typedef struct __CFRunLoop * CFRunLoopRef;
+👇
+struct __CFRunLoop {
+    CFRuntimeBase _base;
+    pthread_mutex_t _lock;            /* locked for accessing mode list */
+    __CFPort _wakeUpPort;            // used for CFRunLoopWakeUp
+    Boolean _unused;
+    volatile _per_run_data *_perRunData;              // reset for runs of the run loop
+    pthread_t _pthread;
+    uint32_t _winthread;
+    CFMutableSetRef _commonModes;
+    CFMutableSetRef _commonModeItems;
+    CFRunLoopModeRef _currentMode;
+    CFMutableSetRef _modes;
+    struct _block_item *_blocks_head;
+    struct _block_item *_blocks_tail;
+    CFTypeRef _counterpart;
+};
+一个RunLoop依赖于多个Mode，意味着一个RunLoop需要处理多个事务，即一个Mode对应多个Item，而一个item中，包含了timer、source、observer
+
+Mode类型:
+其中mode在苹果文档中提及的有五个，而在iOS中公开暴露出来的只有 NSDefaultRunLoopMode 和 NSRunLoopCommonModes。
+NSRunLoopCommonModes 实际上是一个 Mode 的集合，默认包括 NSDefaultRunLoopMode 和 NSEventTrackingRunLoopMode。
+NSDefaultRunLoopMode：默认的mode，正常情况下都是在这个mode
+NSConnectionReplyMode
+NSModalPanelRunLoopMode
+NSEventTrackingRunLoopMode：使用这个Mode去跟踪来自用户交互的事件（比如UITableView上下滑动）
+NSRunLoopCommonModes：伪模式，灵活性更好
+
+Source & Timer & Observer:
+Source表示可以唤醒RunLoop的一些事件，例如用户点击了屏幕，主要分为Source0和Source1
+Source0 表示 非系统事件，即用户自定义的事件
+Source1 表示系统事件，主要负责底层的通讯，具备唤醒能力
+Timer 就是常用NSTimer定时器这一类
+Observer 主要用于监听RunLoop的状态变化，并作出一定响应，主要有以下一些状态
+typedef CF_OPTIONS(CFOptionFlags, CFRunLoopActivity) {
+    //进入RunLoop
+    kCFRunLoopEntry = (1UL << 0),
+    //即将处理Timers
+    kCFRunLoopBeforeTimers = (1UL << 1),
+    //即将处理Source
+    kCFRunLoopBeforeSources = (1UL << 2),
+    //即将进入休眠
+    kCFRunLoopBeforeWaiting = (1UL << 5),
+    //被唤醒
+    kCFRunLoopAfterWaiting = (1UL << 6),
+    //退出RunLoop
+    kCFRunLoopExit = (1UL << 7),
+    kCFRunLoopAllActivities = 0x0FFFFFFFU
+};
+
+
+RunLoop和mode是一对多
+runloop在运行时的mode只有一个
+
+mode和Item也是一对多
+
+在RunLoop源码中查看Item类型，有以下几种:
+block应用:__CFRUNLOOP_IS_CALLING_OUT_TO_A_BLOCK__
+调用timer:__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__
+响应source0: __CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE0_PERFORM_FUNCTION__
+响应source1: __CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE1_PERFORM_FUNCTION__
+GCD主队列:__CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__
+observer源: __CFRUNLOOP_IS_CALLING_OUT_TO_AN_OBSERVER_CALLBACK_FUNCTION__
+
+
+在这里以Timer为例，一般初始化timer时，都会将timer通过addTimer:forMode:方法添加到Runloop中，
+于是在源码中查找addTimer的相关方法，即CFRunLoopAddTimer方法，
+其源码实现如下，其实现主要判断是否是kCFRunLoopCommonModes，然后查找runloop的mode进行匹配处理
+
+其中kCFRunLoopCommonModes 不是一种模式，是一种抽象的伪模式，比defaultMode更加灵活
+通过CFSetAddValue(rl->_commonModeItems, rlt);可以得知，runloop与mode 是一对多的，同时可以得出mode 与 item 也是一对多的
+void CFRunLoopAddTimer(CFRunLoopRef rl, CFRunLoopTimerRef rlt, CFStringRef modeName) {
+    CHECK_FOR_FORK();
+    if (__CFRunLoopIsDeallocating(rl)) return;
+    if (!__CFIsValid(rlt) || (NULL != rlt->_runLoop && rlt->_runLoop != rl)) return;
+    __CFRunLoopLock(rl);
+    
+    // 重点 : kCFRunLoopCommonModes
+    if (modeName == kCFRunLoopCommonModes) {
+        //如果是kCFRunLoopCommonModes 类型
+       
+        CFSetRef set = rl->_commonModes ? CFSetCreateCopy(kCFAllocatorSystemDefault, rl->_commonModes) : NULL;
+        
+        if (NULL == rl->_commonModeItems) {
+            rl->_commonModeItems = CFSetCreateMutable(kCFAllocatorSystemDefault, 0, &kCFTypeSetCallBacks);
+        }
+        //runloop与mode 是一对多的， mode与item也是一对多的
+        CFSetAddValue(rl->_commonModeItems, rlt);
+        if (NULL != set) {
+            CFTypeRef context[2] = {rl, rlt};
+            /* add new item to all common-modes */
+            //执行
+            CFSetApplyFunction(set, (__CFRunLoopAddItemToCommonModes), (void *)context);
+            CFRelease(set);
+        }
+    } else {
+        //如果是非commonMode类型
+        //查找runloop的模型
+        CFRunLoopModeRef rlm = __CFRunLoopFindMode(rl, modeName, true);
+        if (NULL != rlm) {
+            if (NULL == rlm->_timers) {
+                CFArrayCallBacks cb = kCFTypeArrayCallBacks;
+                cb.equal = NULL;
+                rlm->_timers = CFArrayCreateMutable(kCFAllocatorSystemDefault, 0, &cb);
+            }
+        }
+        //判断mode是否匹配
+        if (NULL != rlm && !CFSetContainsValue(rlt->_rlModes, rlm->_name)) {
+            __CFRunLoopTimerLock(rlt);
+            if (NULL == rlt->_runLoop) {
+                rlt->_runLoop = rl;
+            } else if (rl != rlt->_runLoop) {
+                __CFRunLoopTimerUnlock(rlt);
+                __CFRunLoopModeUnlock(rlm);
+                __CFRunLoopUnlock(rl);
+                return;
+            }
+            // 如果匹配，则将runloop加进去，而runloop的执行依赖于  [runloop run]
+            CFSetAddValue(rlt->_rlModes, rlm->_name);
+            __CFRunLoopTimerUnlock(rlt);
+            __CFRunLoopTimerFireTSRLock();
+            __CFRepositionTimerInMode(rlm, rlt, false);
+            __CFRunLoopTimerFireTSRUnlock();
+            if (!_CFExecutableLinkedOnOrAfter(CFSystemVersionLion)) {
+                // Normally we don't do this on behalf of clients, but for
+                // backwards compatibility due to the change in timer handling...
+                if (rl != CFRunLoopGetCurrent()) CFRunLoopWakeUp(rl);
+            }
+        }
+        if (NULL != rlm) {
+            __CFRunLoopModeUnlock(rlm);
+        }
+    }
+   
+    __CFRunLoopUnlock(rl);
+}
+
+
+RunLoop执行:
+RunLoop的执行依赖于run方法，其底层执行的是__CFRunLoopRun方法
+进入__CFRunLoopRun源码，针对不同的对象，有不同的处理
+如果有observer，则调用 __CFRunLoopDoObservers
+如果有block，则调用__CFRunLoopDoBlocks
+如果有timer，则调用 __CFRunLoopDoTimers
+如果是source0，则调用__CFRunLoopDoSources0
+如果是source1，则调用__CFRunLoopDoSource1
+
+
+/* rl, rlm are locked on entrance and exit */
+static int32_t __CFRunLoopRun(CFRunLoopRef rl, CFRunLoopModeRef rlm, CFTimeInterval seconds, Boolean stopAfterHandle, CFRunLoopModeRef previousMode) {
+    ...
+    
+    do{
+        ...
+         //通知 Observers: 即将处理timer事件
+        if (rlm->_observerMask & kCFRunLoopBeforeTimers) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeTimers);
+        //通知 Observers: 即将处理Source事件
+        if (rlm->_observerMask & kCFRunLoopBeforeSources) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeSources);
+        //处理Blocks
+        __CFRunLoopDoBlocks(rl, rlm);
+        //处理sources0
+        Boolean sourceHandledThisLoop = __CFRunLoopDoSources0(rl, rlm, stopAfterHandle);
+        //处理sources0返回为YES
+        if (sourceHandledThisLoop) {
+            // 处理Blocks
+            __CFRunLoopDoBlocks(rl, rlm);
+        }
+        
+        ...
+        
+        //如果是timer
+        else if (modeQueuePort != MACH_PORT_NULL && livePort == modeQueuePort) {
+            CFRUNLOOP_WAKEUP_FOR_TIMER();
+            if (!__CFRunLoopDoTimers(rl, rlm, mach_absolute_time())) {
+                // Re-arm the next timer, because we apparently fired early
+                __CFArmNextTimerInMode(rlm, rl);
+            }
+        }
+        
+        ...
+        
+        //如果是source1
+        CFRunLoopSourceRef rls = __CFRunLoopModeFindSourceForMachPort(rl, rlm, livePort);
+        if (rls) {
+#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+            mach_msg_header_t *reply = NULL;
+            sourceHandledThisLoop = __CFRunLoopDoSource1(rl, rlm, rls, msg, msg->msgh_size, &reply) || sourceHandledThisLoop;
+            if (NULL != reply) {
+                (void)mach_msg(reply, MACH_SEND_MSG, reply->msgh_size, 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
+                CFAllocatorDeallocate(kCFAllocatorSystemDefault, reply);
+            }
+#elif DEPLOYMENT_TARGET_WINDOWS
+            sourceHandledThisLoop = __CFRunLoopDoSource1(rl, rlm, rls) || sourceHandledThisLoop;
+#endif
+        }
+        ...
+    
+    }while (0 == retVal);
+    
+    ...
+}
+
+进入__CFRunLoopDoTimers源码，主要是通过for循环，对单个timer进行处理
+
+static Boolean __CFRunLoopDoTimers(CFRunLoopRef rl, CFRunLoopModeRef rlm, uint64_t limitTSR) {    /* DOES CALLOUT */
+    ...
+    //循环遍历，做下层单个timer的执行
+    for (CFIndex idx = 0, cnt = timers ? CFArrayGetCount(timers) : 0; idx < cnt; idx++) {
+        CFRunLoopTimerRef rlt = (CFRunLoopTimerRef)CFArrayGetValueAtIndex(timers, idx);
+        Boolean did = __CFRunLoopDoTimer(rl, rlm, rlt);
+        timerHandled = timerHandled || did;
+    }
+    ...
+}
+
+进入__CFRunLoopDoTimer源码，主要逻辑是timer执行完毕后，
+会主动调用__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__函数，正好与timer堆栈调用中的一致
+
+timer执行总结:
+为自定义的timer，设置Mode，并将其加入RunLoop中
+在RunLoop的run方法执行时，会调用__CFRunLoopDoTimers执行所有timer
+在__CFRunLoopDoTimers方法中，会通过for循环执行单个timer的操作
+在__CFRunLoopDoTimer方法中，timer执行完毕后，会执行对应的timer回调函数
+对于observer、block、source0、source1，其执行原理与timer是类似的
+
+
+RunLoop 底层原理:
+CFRunLoopRun -> __CFRunLoopRun
+
+void CFRunLoopRun(void) {    /* DOES CALLOUT */
+    int32_t result;
+    do {
+        // 其中传入的参数1.0e10（科学计数） 等于 1* e^10，用于表示超时时间
+        result = CFRunLoopRunSpecific(CFRunLoopGetCurrent(), kCFRunLoopDefaultMode, 1.0e10, false);
+        CHECK_FOR_FORK();
+    } while (kCFRunLoopRunStopped != result && kCFRunLoopRunFinished != result);
+}
+
+进入CFRunLoopRunSpecific源码，首先根据modeName找到对应的mode，然后主要分为三种情况：
+如果是entry，则通知observer，即将进入runloop
+如果是exit，则通过observer，即将退出runloop
+如果是其他中间状态，主要是通过runloop处理各种源
+
+SInt32 CFRunLoopRunSpecific(CFRunLoopRef rl, CFStringRef modeName, CFTimeInterval seconds, Boolean returnAfterSourceHandled) {     /* DOES CALLOUT */
+    CHECK_FOR_FORK();
+    if (__CFRunLoopIsDeallocating(rl)) return kCFRunLoopRunFinished;
+    __CFRunLoopLock(rl);
+    
+    //首先根据modeName找到对应mode
+    CFRunLoopModeRef currentMode = __CFRunLoopFindMode(rl, modeName, false);
+    
+    // 通知 Observers: RunLoop 即将进入 loop。
+    __CFRunLoopDoObservers(rl, currentMode, kCFRunLoopEntry);
+    
+    // 内部函数，进入loop
+    result = __CFRunLoopRun(rl, currentMode, seconds, returnAfterSourceHandled, previousMode);
+    
+    // 通知 Observers: RunLoop 即将退出。
+    __CFRunLoopDoObservers(rl, currentMode, kCFRunLoopExit);
+    
+    return result;
+    
+}
+
+
+入__CFRunLoopRun源码,其主要逻辑是根据不同的事件源进行不同的处理，当RunLoop休眠时，可以通过相应的事件唤醒RunLoop
+//核心函数
+/* rl, rlm are locked on entrance and exit */
+static int32_t __CFRunLoopRun(CFRunLoopRef rl, CFRunLoopModeRef rlm, CFTimeInterval seconds, Boolean stopAfterHandle, CFRunLoopModeRef previousMode){
+    
+    //通过GCD开启一个定时器，然后开始跑圈
+    dispatch_source_t timeout_timer = NULL;
+    ...
+    dispatch_resume(timeout_timer);
+    
+    int32_t retVal = 0;
+    
+    //处理事务,即处理items
+    do {
+        
+        // 通知 Observers: 即将处理timer事件
+        __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeTimers);
+        
+        // 通知 Observers: 即将处理Source事件
+        __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeSources)
+        
+        // 处理Blocks
+        __CFRunLoopDoBlocks(rl, rlm);
+        
+        // 处理sources0
+        Boolean sourceHandledThisLoop = __CFRunLoopDoSources0(rl, rlm, stopAfterHandle);
+        
+        // 处理sources0返回为YES
+        if (sourceHandledThisLoop) {
+            // 处理Blocks
+            __CFRunLoopDoBlocks(rl, rlm);
+        }
+        
+        // 判断有无端口消息(Source1)
+        if (__CFRunLoopWaitForMultipleObjects(NULL, &dispatchPort, 0, 0, &livePort, NULL)) {
+            // 处理消息
+            goto handle_msg;
+        }
+        
+        
+        // 通知 Observers: 即将进入休眠
+        __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeWaiting);
+        __CFRunLoopSetSleeping(rl);
+        
+        // 等待被唤醒
+        __CFRunLoopServiceMachPort(waitSet, &msg, sizeof(msg_buffer), &livePort, poll ? 0 : TIMEOUT_INFINITY);
+        
+        // user callouts now OK again
+        __CFRunLoopUnsetSleeping(rl);
+        
+        // 通知 Observers: 被唤醒，结束休眠
+        __CFRunLoopDoObservers(rl, rlm, kCFRunLoopAfterWaiting);
+        
+        
+    handle_msg:
+        if (被timer唤醒) {
+            // 处理Timers
+            __CFRunLoopDoTimers(rl, rlm, mach_absolute_time())；
+        }else if (被GCD唤醒){
+            // 处理gcd
+            __CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__(msg);
+        }else if (被source1唤醒){
+            // 被Source1唤醒，处理Source1
+            __CFRunLoopDoSource1(rl, rlm, rls, msg, msg->msgh_size, &reply)
+        }
+        
+        // 处理block
+        __CFRunLoopDoBlocks(rl, rlm);
+        
+        if (sourceHandledThisLoop && stopAfterHandle) {
+            retVal = kCFRunLoopRunHandledSource;//处理源
+        } else if (timeout_context->termTSR < mach_absolute_time()) {
+            retVal = kCFRunLoopRunTimedOut;//超时
+        } else if (__CFRunLoopIsStopped(rl)) {
+            __CFRunLoopUnsetStopped(rl);
+            retVal = kCFRunLoopRunStopped;//停止
+        } else if (rlm->_stopped) {
+            rlm->_stopped = false;
+            retVal = kCFRunLoopRunStopped;//停止
+        } else if (__CFRunLoopModeIsEmpty(rl, rlm, previousMode)) {
+            retVal = kCFRunLoopRunFinished;//结束
+        }
+        
+        
+        
+    }while (0 == retVal);
+    
+    return retVal;
+}
+
+
+==================================================AutoreleasePool 相关
+临时变量什么时候释放？
+如果在正常情况下，一般是超出其作用域就会立即释放
+如果将临时变量加入了自动释放池，会延迟释放，即在runloop休眠或者autoreleasepool作用域之后释放
+
+
+AutoreleasePool原理？
+自动释放池的本质是一个AutoreleasePoolPage结构体对象，是一个栈结构存储的页，每一个AutoreleasePoolPage都是以双向链表的形式连接
+自动释放池的压栈和出栈主要是通过结构体的构造函数和析构函数调用底层的objc_autoreleasePoolPush和objc_autoreleasePoolPop，实际上是调用AutoreleasePoolPage的push和pop两个方法
+每次调用push操作其实就是创建一个新的AutoreleasePoolPage，而AutoreleasePoolPage的具体操作就是插入一个POOL_BOUNDARY，并返回插入POOL_BOUNDARY的内存地址。而push内部调用autoreleaseFast方法处理，主要有以下三种情况
+    当page存在，且不满时，调用add方法将对象添加至page的next指针处，并next递增
+    当page存在，且已满时，调用autoreleaseFullPage初始化一个新的page，然后调用add方法将对象添加至page栈中
+    当page不存在时，调用autoreleaseNoPage创建一个hotPage，然后调用add方法将对象添加至page栈中
+当执行pop操作时，会传入一个值，这个值就是push操作的返回值，即POOL_BOUNDARY的内存地址token。所以pop内部的实现就是根据token找到哨兵对象所处的page中，然后使用 objc_release 释放 token之前的对象，并把next 指针到正确位置
+
+
+
+==================================================RunLoop相关
+当前有个子线程，子线程中有个timer。timer是否能够执行 并进行持续的打印？
+CJLThread *thread = [[CJLThread alloc] initWithBlock:^{
+
+// thread.name = nil 因为这个变量只是捕捉
+// CJLThread *thread = nil
+// thread = 初始化 捕捉一个nil进来
+NSLog(@"%@---%@",[NSThread currentThread],[[NSThread currentThread] name]);
+[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer * _Nonnull timer) {
+    NSLog(@"hello word");            // 退出线程--结果runloop也停止了
+    if (self.isStopping) {
+        [NSThread exit];
+    }
+}];
+}];
+
+thread.name = @"lgcode.com";
+[thread start];
+
+不可以，因为子线程的runloop默认不启动， 需要runloop run启动，需要将上述代码改成下面这样：
+
+//改成
+CJLThread *thread = [[CJLThread alloc] initWithBlock:^{
+
+// thread.name = nil 因为这个变量只是捕捉
+// CJLThread *thread = nil
+// thread = 初始化 捕捉一个nil进来
+NSLog(@"%@---%@",[NSThread currentThread],[[NSThread currentThread] name]);
+[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer * _Nonnull timer) {
+    NSLog(@"hello word");            // 退出线程--结果runloop也停止了
+    if (self.isStopping) {
+        [NSThread exit];
+    }
+}];
+    [[NSRunLoop currentRunLoop] run];
+}];
+
+thread.name = @"lgcode.com";
+[thread start];
+
+
+
+RunLoop和线程的关系？
+每个线程都有一个与之对应的RunLoop，所以RunLoop与线程是一一对应的，其绑定关系通过一个全局的DIctionary存储，线程为key，runloop为value。
+线程中的RunLoop主要是用来管理线程的，当线程的RunLoop开启后，会在执行完任务后进行休眠状态，当有事件触发唤醒时，又开始工作，即有活时干活，没活就休息
+主线程的RunLoop是默认开启的，在程序启动之后，会一直运行，不会退出
+其他线程的RunLoop默认是不开启的，如果需要，则手动开启
+
+
+
+NSRunLoop 和 CFRunLoopRef 区别？
+NSRunLoop是基于CFRunLoopRef面向对象的API，是不安全的
+CFRunLoopRef是基于C语言，是线程安全的
+
+
+
+Runloop的mode作用是什么？
+mode主要是用于指定RunLoop中事件优先级的
+
+
+以+scheduledTimerWithTimeInterval:的方式触发的timer，在滑动页面上的列表时，timer会暂停回调， 为什么？如何解决？
+timer停止的原因是因为滑动scrollView时，主线程的RunLoop会从NSDefaultRunLoopMode切换到UITrackingRunLoopMode，而timer是添加在NSDefaultRunLoopMode。所以timer不会执行
+将timer放入NSRunLoopCommonModes中执行

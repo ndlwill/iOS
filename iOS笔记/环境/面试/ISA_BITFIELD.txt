@@ -1,0 +1,70 @@
+#   define ISA_MASK        0x0000000ffffffff8ULL
+#   define ISA_MAGIC_MASK  0x000003f000000001ULL
+#   define ISA_MAGIC_VALUE 0x000001a000000001ULL
+#   define ISA_BITFIELD                                                      \
+      uintptr_t nonpointer        : 1;                                       \
+      uintptr_t has_assoc         : 1;                                       \
+      uintptr_t has_cxx_dtor      : 1;                                       \
+      uintptr_t shiftcls          : 33; /*MACH_VM_MAX_ADDRESS 0x1000000000*/ \
+      uintptr_t magic             : 6;                                       \
+      uintptr_t weakly_referenced : 1;                                       \
+      uintptr_t deallocating      : 1;                                       \
+      uintptr_t has_sidetable_rc  : 1;                                       \
+      uintptr_t extra_rc          : 19
+#   define RC_ONE   (1ULL<<45)
+#   define RC_HALF  (1ULL<<18)
+
+
+nonpointer
+共用体 isa_t 中的一个结构体成员, 共用 isa_t 的第一个 bit. 这个 bit 标记 isa 指针是否支持优化, 目前 ARM64 环境下都是支持优化的. 只有这个标记位为 1, 才会有后面的 isa 优化.
+has_assoc
+共用 isa_t 的第二个 bit, 标记这个对象是否有绑定关联对象, 对应 objc_setAssociatedObject() 和 objc_getAssociatedObject(), 如果没有绑定, 则会跳过释放关联对象的步骤, 能够在释放对象时节省时间.
+has_cxx_dtor
+共用 isa_t 的第三个 bit, 标记本对象是否有析构函数, 如果没有析构函数, 则会跳过析构逻辑, 能加快对象的释放.
+shiftcls
+共用 isa_t 的第 4 到第 36 个 bit, 用于存储类对象的地址. 优化后的 isa 指针使用了 33 个 bit 来存储它的类对象地址, 33 bit 可以寻址 0~8G 的地址空间, 对目前最大允许内存为 4G 的 iPhone 手机来说是绰绰有余的.
+magic
+和 AutoreleasePoolPage 里的 magic 类似, 在申请一段内存空间并初始化后设置为一个固定的值, 作为已完成内存申请并初始化的标记.
+weakly_referenced
+标记本对象是否有 weak 指针指向, 如果没有, 则释放本对象时, 就会跳过 weak 指针的处理逻辑, 加快释放速度.
+deallocating
+标记本对象是否正在回收, 可以避免使用到正处于回收中的对象, 造成错误.
+has_sidetable_rc
+isa 指针中用来存储引用计数的位数有限, 虽然可以存储 2^19 引用计数, 但最终还是要考虑到超过这个数字时的方案, 苹果给的方案是使用 SideTable, 一个 hash 表. 这个标记位标记引用计数已经超出 isa 指针预留的数目.
+extra_rc
+isa 指针的最高 19bit, 用来存储对象的引用计数, 通常情况下这里存储的是实际的引用计数减去 1 的结果, 当 release 的时候, 如果存储的是0, 就会启动释放流程. 平时我们输出 retainCount 的时候, 都会把这个数字加 1 后返回.
+ISA_MASK
+isa & ISA_MASK 可以保留 isa 的第 4 到 36 个 bit, 得出的结果再向右移 3 位, 就是指向对应的类对象的指针的值了.
+ISA_MAGIC_MASK 和 ISA_MAGIC_VALUE
+如果一个 isa & ISA_MAGIC_MASK == ISA_MAGIC_VALUE, 那么这个 isa 指针是一个完整可用 isa 指针.
+RC_ONE
+一个宏定义, 1 << 45 刚好是 extra_rc 的最低位, 当对一个对象进行 retain 操作时, 直接给这个对象的 isa 指针加上一个 RC_ONE, 就相当于给 extra_rc 加 1.
+RC_HALF
+一旦引用计数过大, isa 无法存储时, runtime 会利用 isa 和 SideTable 同时来存储引用计数, extra_rc = RC_HALF, 来存储 2^18 个引用计数, 其它的使用 SideTable. 如果 has_sidetable_rc 为 1, 管理引用计数时会优先操作 SideTable, 直到引用计数小于 2^18, 就会将 has_sidetable_rc 设置为 0, 按照正常的 isa 管理流程来执行.
+
+
+
+- (void)test {
+    NSObject * obj = [[NSObject alloc] init];
+}
+(lldb) p/x obj
+(lldb) p/x obj->isa
+(lldb) p/x [obj class]
+(lldb) p/x &obj
+(lldb) p/x &obj->isa
+
+(NSObject *) $0 = 0x0000000283044760
+(Class) $1 = 0x000001a22b16feb1
+(Class) $2 = 0x000000022b16feb0
+(NSObject **) $3 = 0x000000016fd7d4b8
+(Class *) $4 = 0x0000000283044760
+
+obj 和 &obj->isa 输出的都是 obj 对象在内存中的地址, C 语言中, 一个结构体的地址就是这个结构体第一个成员的地址, 
+而 obj 的第一个成员就是 isa, 所以 isa 的地址就是 obj 的地址.
+
+obj->isa 和 [obj class]
+一个对象的 isa 指针指向它的类对象. 所以 obj->isa 和 [obj class] 输出的地址应该是一样的
+这里的 obj->isa 输出了优化后的 isa 指针, 将 isa & ISA_MASK 得到的结果, 就是 [obj class] 的输出结果
+
+&obj
+obj 是一个指针, 它指向的地址是 obj 这个对象的地址, &obj 实际上是这个指针在栈上的地址.

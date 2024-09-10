@@ -1,0 +1,228 @@
+ARM64 环境下, 苹果使用了 isa 指针中的 19 个 bit 来存储对象的引用计数
+如果一个对象的引用计数超过 isa 可存储的最大值, 这两种情况下苹果还有一个引用计数管理方案, 就是 SideTables. 另外 ARC 的 weak 指针的实现也是基于 SideTables.
+
+HashMap(哈希表)
+基于数组的一种数据结构, 通过一定的算法, 把 key 进行运算得出一个数字, 用这个数字做数组下标, 将 value 存入这个下标对应的内存中.
+
+HashTon(哈希桶，Hash Bucket)
+哈希算法中计算出的数字, 有可能会重复, 对于哈希值重复的数据, 如何存入哈希表呢? 
+常用方法有闭散列和开散列等方式, 其中采用开散列方式的哈希表, 就可以称为哈希桶. 
+开散列就是在哈希值对应的位置上, 使用链表或数组, 将哈希值冲突的数据存入这个链表或者数组中, 可以提高查找效率.
+
+GPT:
+哈希表 (Hash Table)
+定义：哈希表是一种数据结构，用于以常数时间复杂度（O(1)）进行插入、删除和查找操作。它使用哈希函数将键映射到存储数据的数组索引。
+组成：哈希表由一个数组和一个哈希函数组成。哈希函数负责将输入的键转换为数组的索引。
+操作：
+插入：将键值对插入到哈希表中。通过哈希函数计算键的索引，并将值存储在该索引位置。
+查找：通过键查找对应的值。哈希函数计算键的索引，从而在数组中找到对应的值。
+删除：通过键删除对应的值。哈希函数计算键的索引，从数组中删除值。
+
+哈希桶 (Hash Bucket)
+定义：哈希桶是哈希表中存储数据的单元。当多个键通过哈希函数映射到相同的数组索引时，哈希桶用于处理这些冲突。
+组成：哈希桶可以是链表、树或其他数据结构，用于存储映射到同一索引的多个键值对。
+作用：哈希桶用于解决哈希冲突。当不同的键映射到相同的索引时，这些键值对存储在同一个哈希桶中。常见的解决哈希冲突的方法包括链地址法（链表）、开放地址法等。
+
+
+SideTables 实际上是一个全局的哈希桶:
+static StripedMap<SideTable>& SideTables() {
+    return *reinterpret_cast<StripedMap<SideTable>*>(SideTableBuf);
+}
+
+
+StripedMap 通常指的是一种高效的并发哈希表实现，特别适用于多线程环境。其设计目标是提高并发操作的性能，同时避免传统哈希表在高并发下的瓶颈问题。
+分段锁：StripedMap 将哈希表分成多个小段（称为“桶”或“条纹”），每个小段都有自己的锁。这种设计允许多个线程同时访问不同的小段，从而减少锁竞争，提高并发性。
+锁分离：与单锁哈希表不同，StripedMap 中每个桶都有自己的独立锁，这样多个线程可以同时访问不同的桶，而不会相互阻塞。
+条纹（Stripe）：StripedMap 通过将哈希表分成多个条纹，每个条纹对应一个小段和一个独立的锁。
+哈希函数：根据键的哈希值，将键映射到特定的条纹。
+操作分离：插入、查找和删除操作通过锁定特定的条纹进行，而不会影响其他条纹的操作。
+
+SideTables() 方法返回的是一个 StripedMap<SideTable>& 类型的引用:
+template<typename T>
+class StripedMap {
+#if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
+    enum { StripeCount = 8 };
+#else
+    enum { StripeCount = 64 };
+#endif
+
+    struct PaddedT {
+        T value alignas(CacheLineSize);
+    };
+
+    PaddedT array[StripeCount];
+    ...
+}
+
+StripedMap 是一个模板类, 内部维护一个大小为 StripeCount 的数组, 数组的成员为结构体 PaddedT
+SideTables() 返回的 StripedMap, 是一个 value 为 SideTable 的哈希桶(由于 SideTable 内部又在维护数组, 所以这是一个哈希桶结构), 
+哈希值由对象的地址计算得出.
+
+struct SideTable {
+    spinlock_t slock; //线程锁
+    RefcountMap refcnts;
+    weak_table_t weak_table;
+    ...
+}
+
+
+RefcountMap:
+// DisguisedPtr: 伪装指针
+typedef objc::DenseMap<DisguisedPtr<objc_object>,size_t,true> RefcountMap;
+
+DenseMap 又是一个模板类
+template<typename KeyT, typename ValueT,
+         bool ZeroValuesArePurgeable = false, 
+         typename KeyInfoT = DenseMapInfo<KeyT> >
+class DenseMap : public DenseMapBase<DenseMap<KeyT, ValueT, 
+  ZeroValuesArePurgeable, KeyInfoT>, KeyT, ValueT, KeyInfoT, 
+  ZeroValuesArePurgeable> {
+  ...
+  BucketT *Buckets;
+  unsigned NumEntries;
+  unsigned NumTombstones;
+  unsigned NumBuckets;
+  ...
+}
+
+Dense: 密集
+DenseMap 是一种哈希表，它采用开放地址法来处理冲突。它通过使用一个密集数组（dense array）来存储键值对，以提高缓存命中率和性能。
+开放地址法：在发生哈希冲突时，DenseMap 会使用线性探测、二次探测或其他形式的开放地址技术来寻找下一个可用的存储位置，而不是使用链表来处理冲突。
+
+ZeroValuesArePurgeable 默认值是 false, 但 RefcountMap 指定其初始化为 true.
+这个成员标记是否可以使用值为 0 (引用计数为 1) 的桶. 因为空桶存的初始值就是 0, 所以值为 0 的桶和空桶没什么区别.
+如果允许使用值为 0 的桶, 查找桶时如果没有找到对象对应的桶, 也没有找到墓碑桶, 就会优先使用值为 0 的桶.
+
+Buckets 指针管理一段连续内存空间, 也就是数组, 数组成员是 BucketT 类型的对象, 我们这里将 BucketT 对象称为桶(实际上这个数组才应该叫桶, 苹果把数组中的元素称为桶应该是为了形象一些, 而不是哈希桶中的桶的意思).
+桶数组在申请空间后, 会进行初始化, 在所有位置上都放上空桶(桶的 key 为 EmptyKey 时是空桶), 之后对引用计数的操作, 都要依赖于桶.
+
+桶的数据类型实际上是 std::pair, 类似于 swift 中的元祖类型, 就是将对象地址和对象的引用计数(这里的引用计数类似于 isa, 也是使用其中的几个 bit 来保存引用计数, 留出几个 bit 来做其它标记位)组合成一个数据类型.
+typedef std::pair<KeyT, ValueT> BucketT;
+
+NumEntries 记录数组中已使用的非空的桶的个数.
+NumTombstones, Tombstone 直译为墓碑, 当一个对象的引用计数为0, 要从桶中取出时, 其所处的位置会被标记为 Tombstone. NumTombstones 就是数组中的墓碑的个数.
+NumBuckets 桶的数量, 因为数组中始终都充满桶, 所以可以理解为数组大小.
+
+inline uint64_t NextPowerOf2(uint64_t A) {
+    A |= (A >> 1);
+    A |= (A >> 2);
+    A |= (A >> 4);
+    A |= (A >> 8);
+    A |= (A >> 16);
+    A |= (A >> 32);
+    return A + 1;
+}
+
+这是对应 64 位的提供数组大小的方法, 需要为桶数组开辟空间时, 会由这个方法来决定数组大小.
+这个算法可以做到把最高位的 1 覆盖到所有低位.
+// 0b10000: 0b表示二进制 10000才是实际的值
+例如 A = 0b10000, (A >> 1) = 0b01000，按位或就会得到 A = 0b11000
+这个时候 (A >> 2) = 0b00110, 按位或就会得到 A = 0b11110.
+以此类推 A 的最高位的 1, 会一直覆盖到高 2 位、高 4 位、高 8 位, 直到最低位.
+最后这个充满 1 的二进制数会再加 1, 得到一个 0b1000...(N 个 0).
+也就是说, 桶数组的大小会是 2^n.
+
+
+RefcountMap 的工作逻辑:
+1. 通过计算对象地址的哈希值, 来从 SideTables 中获取对应的 SideTable. 哈希值重复的对象的引用计数存储在同一个 SideTable 里.
+2. SideTable 使用 find() 方法和重载 [] 运算符的方式, 通过对象地址来确定对象对应的桶. 最终执行到的查找算法是 LookupBucketFor().
+3. 查找算法会先对桶的个数进行判断, 如果桶数为 0 则 return false 回上一级调用插入方法.
+如果查找算法找到空桶或者墓碑桶, 同样 return false 回上一级调用插入算法, 不过会先记录下找到的桶.
+如果找到了对象对应的桶, 只需要对其引用计数 + 1 或者 - 1. 如果引用计数为 0 需要销毁对象, 就将这个桶中的 key 设置为 TombstoneKey
+4. 插入算法会先查看可用量, 如果哈希表的可用量(墓碑桶+空桶的数量)小于 1/4，则需要为表重新开辟更大的空间,
+如果表中的空桶位置少于 1/8 (说明墓碑桶过多), 则需要清理表中的墓碑. 
+以上两种情况下哈希查找算法会很难查找正确位置, 甚至可能会产生死循环, 所以要先处理表, 处理表之后还会重新分配所有桶的位置, 之后重新查找当前对象的可用位置并插入.
+如果没有发生以上两种情况, 就直接把新的对象的引用计数放入调用者提供的桶里.
+
+
+查找算法最核心的部分: RefcountMap 的结构
+首先我们有一个初始化好的, 大小为 9 的桶数组, 同时有 a b c d e 五个对象要使用桶数组, 这里我们假设五个对象都被哈希算法分配到下标 0 的位置里.
+a 第一个进入, 但 b c d e 由于下标 0 处已经不是空桶, 则需要进行下一步哈希算法来查找合适的位置, 假设这 4 个对象又恰巧都被分配到了下标为 1 的位置, 但只有 b 可以存入.
+假设每一次哈希计算都只给下标增加了 1, 以此类推
+假设这个时候 c 对象被释放了, 之前提到过这个时候会把对应的位置的 key 设置为 TombstoneKey
+接下来就体现了墓碑的作用:
+如果 c 对象销毁后将下标 2 的桶设置为空桶, 此时为 e 对象增加引用计数, 根据哈希算法查找到下标为 2 的桶时, 就会直接插入, 无法为已经在下标为 4 的桶中的 e 增加引用计数.
+如果此时初始化了一个新的对象 f, 根据哈希算法查找到下标为 2 的桶时发现桶中放置了墓碑, 此时会记录下来下标 2.
+接下来继续哈希算法查找位置, 查找到空桶时, 就证明表中没有对象 f, 此时 f 使用记录好的下标 2 的桶而不是查找到的空桶, 就可以利用到已经释放的位置.
+
+
+查找代码:
+bool LookupBucketFor(const LookupKeyT &Val,
+                    const BucketT *&FoundBucket) const {
+...
+if (NumBuckets == 0) { //桶数是0
+    FoundBucket = 0;
+    return false; //返回 false 回上层调用添加函数
+}
+...
+unsigned BucketNo = getHashValue(Val) & (NumBuckets-1); //将哈希值与数组最大下标按位与
+unsigned ProbeAmt = 1; //哈希值重复的对象需要靠它来重新寻找位置
+while (1) {
+    const BucketT *ThisBucket = BucketsPtr + BucketNo; //头指针 + 下标, 类似于数组取值
+    //找到的桶中的 key 和对象地址相等, 则是找到
+    if (KeyInfoT::isEqual(Val, ThisBucket->first)) {
+    FoundBucket = ThisBucket;
+    return true;
+    }
+    //找到的桶中的 key 是空桶占位符, 则表示可插入
+    if (KeyInfoT::isEqual(ThisBucket->first, EmptyKey)) { 
+    if (FoundTombstone) ThisBucket = FoundTombstone; //如果曾遇到墓碑, 则使用墓碑的位置
+    FoundBucket = FoundTombstone ? FoundTombstone : ThisBucket;
+    return false; //找到空占位符, 则表明表中没有已经插入了该对象的桶
+    }
+    //如果找到了墓碑
+    if (KeyInfoT::isEqual(ThisBucket->first, TombstoneKey) && !FoundTombstone)
+    FoundTombstone = ThisBucket;  // 记录下墓碑
+    //这里涉及到最初定义 typedef objc::DenseMap<DisguisedPtr<objc_object>,size_t,true> RefcountMap, 传入的第三个参数 true
+    //这个参数代表是否可以清除 0 值, 也就是说这个参数为 true 并且没有墓碑的时候, 会记录下找到的 value 为 0 的桶
+    if (ZeroValuesArePurgeable  && 
+        ThisBucket->second == 0  &&  !FoundTombstone) 
+    FoundTombstone = ThisBucket;
+
+    //用于计数的 ProbeAmt 如果大于了数组容量, 就会抛出异常
+    if (ProbeAmt > NumBuckets) {
+        _objc_fatal("...");
+    }
+    BucketNo += ProbeAmt++; //本次哈希计算得出的下表不符合, 则利用 ProbeAmt 寻找下一个下标
+    BucketNo&= (NumBuckets-1); //得到新的数字和数组下标最大值按位与
+}
+}
+
+这里的哈希算法, 苹果通过 getHashValue(Val) 得出了对象地址的哈希值, 又将这个哈希值和 NumBuckets-1 按位与, 这样做的目的是什么呢.
+说过 NumBuckets 等于 2^n, 假如 NumBuckets = 0b10000, 那 X & 0b1111 就相当于 X % 16. 一个数对数组元素个数取模
+BucketNo += ProbeAmt++ 即是在哈希值重复时, 继续向下查找, 并且查找间隔越来越大, 因为如果查找太密集, 可能会占用到其它对象哈希值对应的位置.
+
+
+插入代码:
+BucketT *InsertIntoBucketImpl(const KeyT &Key, BucketT *TheBucket) {
+    unsigned NewNumEntries = getNumEntries() + 1; //桶的使用量 +1
+    unsigned NumBuckets = getNumBuckets(); //桶的总数
+    if (NewNumEntries*4 >= NumBuckets*3) { //使用量超过 3/4
+      this->grow(NumBuckets * 2); //数组大小 * 2做参数, grow 中会决定具体数值
+      //grow 中会重新布置所有桶的位置, 所以将要插入的对象也要重新确定位置
+      LookupBucketFor(Key, TheBucket);
+      NumBuckets = getNumBuckets(); //获取最新的数组大小
+    }
+    //如果空桶数量少于 1/8, 哈希查找会很难定位到空桶的位置
+    if (NumBuckets-(NewNumEntries+getNumTombstones()) <= NumBuckets/8) {
+      //grow 以原大小重新开辟空间, 重新安排桶的位置并能清除墓碑
+      this->grow(NumBuckets);
+      LookupBucketFor(Key, TheBucket); //重新布局后将要插入的对象也要重新确定位置
+    }
+    assert(TheBucket);
+    //找到的 BucketT 标记了 EmptyKey, 可以直接使用
+    if (KeyInfoT::isEqual(TheBucket->first, getEmptyKey())) {
+      incrementNumEntries(); //桶使用量 +1
+    }
+    else if (KeyInfoT::isEqual(TheBucket->first, getTombstoneKey())) { //如果找到的是墓碑
+      incrementNumEntries(); //桶使用量 +1
+      decrementNumTombstones(); //墓碑数量 -1
+    }
+    else if (ZeroValuesArePurgeable  &&  TheBucket->second == 0) { //找到的位置是 value 为 0 的位置
+      TheBucket->second.~ValueT(); //测试中这句代码被直接跳过并没有执行, value 还是 0
+    } else {
+      // 其它情况, 并没有成员数量的变化(官方注释是 Updating an existing entry.)
+    }
+    return TheBucket;
+  }
+

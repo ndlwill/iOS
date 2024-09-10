@@ -1,0 +1,277 @@
+在libdispatch.dylib去探索队列是如何创建的
+
+底层源码分析
+在源码中搜索dispatch_queue_create
+
+dispatch_queue_t
+dispatch_queue_create(const char *label, dispatch_queue_attr_t attr)
+{
+    return _dispatch_lane_create_with_target(label, attr, DISPATCH_TARGET_QUEUE_DEFAULT, true);
+}
+
+DISPATCH_NOINLINE
+static dispatch_queue_t
+_dispatch_lane_create_with_target(const char *label, dispatch_queue_attr_t dqa,
+        dispatch_queue_t tq, bool legacy)
+{
+    // dqai 创建 -
+    dispatch_queue_attr_info_t dqai = _dispatch_queue_attr_to_info(dqa);
+    
+    //第一步：规范化参数，例如qos, overcommit, tq
+    ...
+    
+    //拼接队列名称
+    const void *vtable;
+    dispatch_queue_flags_t dqf = legacy ? DQF_MUTABLE : 0;
+    if (dqai.dqai_concurrent) { //vtable表示类的类型
+        // OS_dispatch_queue_concurrent
+        vtable = DISPATCH_VTABLE(queue_concurrent);
+    } else {
+        vtable = DISPATCH_VTABLE(queue_serial);
+    }
+    
+    ....
+    
+    //创建队列，并初始化
+    dispatch_lane_t dq = _dispatch_object_alloc(vtable,
+            sizeof(struct dispatch_lane_s)); // alloc
+    //根据dqai.dqai_concurrent的值，就能判断队列 是 串行 还是并发
+    _dispatch_queue_init(dq, dqf, dqai.dqai_concurrent ?
+            DISPATCH_QUEUE_WIDTH_MAX : 1, DISPATCH_QUEUE_ROLE_INNER |
+            (dqai.dqai_inactive ? DISPATCH_QUEUE_INACTIVE : 0)); // init
+    //设置队列label标识符
+    dq->dq_label = label;//label赋值
+    dq->dq_priority = _dispatch_priority_make((dispatch_qos_t)dqai.dqai_qos, dqai.dqai_relpri);//优先级处理
+    
+    ...
+    
+    //类似于类与元类的绑定，不是直接的继承关系，而是类似于模型与模板的关系
+    dq->do_targetq = tq;
+    _dispatch_object_debug(dq, "%s", __func__);
+    return _dispatch_trace_queue_create(dq)._dq;//研究dq
+}
+
+【第一步】通过_dispatch_queue_attr_to_info方法传入dqa（即队列类型，串行、并发等）创建dispatch_queue_attr_info_t类型的对象dqai，用于存储队列的相关属性信息
+【第二步】设置队列相关联的属性，例如服务质量qos等
+【第三步】通过DISPATCH_VTABLE拼接队列名称，即vtable，其中DISPATCH_VTABLE是宏定义
+所以队列的类型是通过OS_dispatch_+队列类型queue_concurrent拼接而成的
+串行队列类型：OS_dispatch_queue_serial
+并发队列类型：OS_dispatch_queue_concurrent
+object_getClass(serial)// serial为创建的串行队列对象，获取它的类型
+
+#define DISPATCH_VTABLE(name) DISPATCH_OBJC_CLASS(name)
+👇
+#define DISPATCH_OBJC_CLASS(name)   (&DISPATCH_CLASS_SYMBOL(name))
+👇
+#define DISPATCH_CLASS(name) OS_dispatch_##name
+
+【第四步】通过alloc+init初始化队列，即dq，其中在_dispatch_queue_init传参中根据dqai.dqai_concurrent的布尔值，
+就能判断队列 是 串行 还是并发，而 vtable表示队列的类型，说明队列也是对象
+进入_dispatch_object_alloc -> _os_object_alloc_realized方法中设置了isa的指向，从这里可以验证队列也是对象的说法
+进入_dispatch_queue_init方法,队列类型是dispatch_queue_t,并设置队列的相关属性
+【第五步】通过_dispatch_trace_queue_create对创建的队列进行处理，其中_dispatch_trace_queue_create是_dispatch_introspection_queue_create封装的宏定义，最后会返回处理过的_dq
+进入_dispatch_introspection_queue_create_hook -> dispatch_introspection_queue_get_info -> _dispatch_introspection_lane_get_info中可以看出，与我们自定义的类还是有所区别的，创建队列在底层的实现是通过模板创建的
+
+总结:
+队列创建方法dispatch_queue_create中的参数二（即队列类型），决定了下层中 max & 1（用于区分是 串行 还是 并发），其中1表示串行
+queue 也是一个对象，也需要底层通过alloc + init 创建，并且在alloc中也有一个class，这个class是通过宏定义拼接而成，并且同时会指定isa的指向
+创建队列在底层的处理是通过模板创建的，其类型是dispatch_introspection_queue_s结构体
+
+
+
+异步函数dispatch_async 和 同步函数dispatch_sync:
+异步函数 dispatch_async:
+void
+dispatch_async(dispatch_queue_t dq, dispatch_block_t work)//work 任务
+{
+    dispatch_continuation_t dc = _dispatch_continuation_alloc();
+    uintptr_t dc_flags = DC_FLAG_CONSUME;
+    dispatch_qos_t qos;
+
+    // 任务包装器（work在这里才有使用） - 接受work - 保存work - 并函数式编程
+    // 保存 block 
+    qos = _dispatch_continuation_init(dc, dq, work, 0, dc_flags);
+    //并发处理
+    _dispatch_continuation_async(dq, dc, qos, dc->dc_flags);
+}
+
+DISPATCH_ALWAYS_INLINE
+static inline dispatch_qos_t
+_dispatch_continuation_init(dispatch_continuation_t dc,
+        dispatch_queue_class_t dqu, dispatch_block_t work,
+        dispatch_block_flags_t flags, uintptr_t dc_flags)
+{
+    void *ctxt = _dispatch_Block_copy(work);//拷贝任务
+
+    dc_flags |= DC_FLAG_BLOCK | DC_FLAG_ALLOCATED;
+    if (unlikely(_dispatch_block_has_private_data(work))) {
+        dc->dc_flags = dc_flags;
+        dc->dc_ctxt = ctxt;//赋值
+        // will initialize all fields but requires dc_flags & dc_ctxt to be set
+        return _dispatch_continuation_init_slow(dc, dqu, flags);
+    }
+
+    dispatch_function_t func = _dispatch_Block_invoke(work);//封装work - 异步回调
+    if (dc_flags & DC_FLAG_CONSUME) {
+        func = _dispatch_call_block_and_release;//回调函数赋值 - 同步回调
+    }
+    return _dispatch_continuation_init_f(dc, dqu, ctxt, func, flags, dc_flags);
+}
+
+DISPATCH_ALWAYS_INLINE
+static inline void
+_dispatch_continuation_async(dispatch_queue_class_t dqu,
+        dispatch_continuation_t dc, dispatch_qos_t qos, uintptr_t dc_flags)
+{
+#if DISPATCH_INTROSPECTION
+    if (!(dc_flags & DC_FLAG_NO_INTROSPECTION)) {
+        _dispatch_trace_item_push(dqu, dc);//跟踪日志
+    }
+#else
+    (void)dc_flags;
+#endif
+    return dx_push(dqu._dq, dc, qos);//与dx_invoke一样，都是宏
+}
+#define dx_push(x, y, z) dx_vtable(x)->dq_push(x, y, z)
+
+
+#define _dispatch_Block_invoke(bb) \
+        ((dispatch_function_t)((struct Block_layout *)bb)->invoke)
+其block回调执行的调用路径为:
+_dispatch_root_queues_init_once ->_dispatch_worker_thread2 -> _dispatch_root_queue_drain -> _dispatch_root_queue_drain -> _dispatch_continuation_pop_inline -> _dispatch_continuation_invoke_inline -> _dispatch_client_callout -> dispatch_call_block_and_release
+
+
+队列也是一个对象，有父类、根类，所以会递归执行到根类的方法
+
+
+同步函数:
+进入dispatch_sync源码实现，其底层的实现是通过栅栏函数实现的
+同步函数 + 并发队列 顺序执行的原因:
+将任务压入队列： _dispatch_thread_frame_push
+执行任务的block回调： _dispatch_client_callout
+将任务出队：_dispatch_thread_frame_pop
+
+
+
+栅栏函数:
+GCD中常用的栅栏函数，主要有两种
+同步栅栏函数dispatch_barrier_sync（在主线程中执行）：前面的任务执行完毕才会来到这里，但是同步栅栏函数会堵塞线程，影响后面的任务执行
+异步栅栏函数dispatch_barrier_async：前面的任务执行完毕才会来到这里
+栅栏函数最直接的作用就是 控制任务执行顺序，使同步执行。
+
+栏函数需要注意一下几点:
+栅栏函数只能控制同一并发队列
+同步栅栏添加进入队列的时候，当前线程会被锁死，直到同步栅栏之前的任务和同步栅栏任务本身执行完毕时，当前线程才会打开然后继续执行下一句代码。
+在使用栅栏函数时.使用自定义队列才有意义,如果用的是串行队列或者系统提供的全局并发队列,这个栅栏函数的作用等同于一个同步函数的作用，没有任何意义
+
+异步栅栏函数 不会阻塞主线程 ，异步 堵塞 的是队列
+同步栅栏函数 会堵塞主线程，同步 堵塞 是当前的线程
+总结:
+异步栅栏函数阻塞的是队列，而且必须是自定义的并发队列，不影响主线程任务的执行
+同步栅栏函数阻塞的是线程，且是主线程，会影响主线程其他任务的执行
+
+注意:
+如果栅栏函数中使用 全局队列， 运行会崩溃，原因是系统也在用全局并发队列，使用栅栏同时会拦截系统的，所以会崩溃
+如果将自定义并发队列改为串行队列，即serial ，串行队列本身就是有序同步 此时加栅栏，会浪费性能
+栅栏函数只会阻塞一次
+
+dispatch_barrier_async源码实现，其底层的实现与dispatch_async类似
+
+
+信号量:
+信号量的作用一般是用来使任务同步执行，类似于互斥锁，用户可以根据需要控制GCD最大并发数
+
+dispatch_semaphore_t sem = dispatch_semaphore_create(1);
+
+dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+dispatch_semaphore_signal(sem);
+
+dispatch_semaphore_create 主要就是初始化限号量
+dispatch_semaphore_wait是对信号量的value进行--，即加锁操作
+dispatch_semaphore_signal 是对信号量的value进行++，即解锁操作
+
+
+调度组:
+dispatch_group_t
+dispatch_group_create(void)
+{
+    return _dispatch_group_create_with_count(0);
+}
+
+DISPATCH_ALWAYS_INLINE
+static inline dispatch_group_t
+_dispatch_group_create_with_count(uint32_t n)
+{
+    //创建group对象,类型为OS_dispatch_group
+    dispatch_group_t dg = _dispatch_object_alloc(DISPATCH_VTABLE(group),
+            sizeof(struct dispatch_group_s));
+    //group对象赋值
+    dg->do_next = DISPATCH_OBJECT_LISTLESS;
+    dg->do_targetq = _dispatch_get_default_queue(false);
+    if (n) {
+        os_atomic_store2o(dg, dg_bits,
+                (uint32_t)-n * DISPATCH_GROUP_VALUE_INTERVAL, relaxed);
+        os_atomic_store2o(dg, do_ref_cnt, 1, relaxed); // <rdar://22318411>
+    }
+    return dg;
+}
+
+void
+dispatch_group_enter(dispatch_group_t dg)
+{
+    // The value is decremented on a 32bits wide atomic so that the carry
+    // for the 0 -> -1 transition is not propagated to the upper 32bits.
+    uint32_t old_bits = os_atomic_sub_orig2o(dg, dg_bits,//原子递减 0 -> -1
+            DISPATCH_GROUP_VALUE_INTERVAL, acquire);
+    uint32_t old_value = old_bits & DISPATCH_GROUP_VALUE_MASK;
+    if (unlikely(old_value == 0)) {//如果old_value
+        _dispatch_retain(dg); // <rdar://problem/22318411>
+    }
+    if (unlikely(old_value == DISPATCH_GROUP_VALUE_MAX)) {//到达临界值，会报crash
+        DISPATCH_CLIENT_CRASH(old_bits,
+                "Too many nested calls to dispatch_group_enter()");
+    }
+}
+
+void
+dispatch_group_leave(dispatch_group_t dg)
+{
+    // The value is incremented on a 64bits wide atomic so that the carry for
+    // the -1 -> 0 transition increments the generation atomically.
+    uint64_t new_state, old_state = os_atomic_add_orig2o(dg, dg_state,//原子递增 ++
+            DISPATCH_GROUP_VALUE_INTERVAL, release);
+    uint32_t old_value = (uint32_t)(old_state & DISPATCH_GROUP_VALUE_MASK);
+    //根据状态，唤醒
+    if (unlikely(old_value == DISPATCH_GROUP_VALUE_1)) {
+        old_state += DISPATCH_GROUP_VALUE_INTERVAL;
+        do {
+            new_state = old_state;
+            if ((old_state & DISPATCH_GROUP_VALUE_MASK) == 0) {
+                new_state &= ~DISPATCH_GROUP_HAS_WAITERS;
+                new_state &= ~DISPATCH_GROUP_HAS_NOTIFS;
+            } else {
+                // If the group was entered again since the atomic_add above,
+                // we can't clear the waiters bit anymore as we don't know for
+                // which generation the waiters are for
+                new_state &= ~DISPATCH_GROUP_HAS_NOTIFS;
+            }
+            if (old_state == new_state) break;
+        } while (unlikely(!os_atomic_cmpxchgv2o(dg, dg_state,
+                old_state, new_state, &old_state, relaxed)));
+        return _dispatch_group_wake(dg, old_state, true);//唤醒
+    }
+    //-1 -> 0, 0+1 -> 1，即多次leave，会报crash，简单来说就是enter-leave不平衡
+    if (unlikely(old_value == 0)) {
+        DISPATCH_CLIENT_CRASH((uintptr_t)old_value,
+                "Unbalanced call to dispatch_group_leave()");
+    }
+}
+
+
+总结:
+enter-leave只要成对就可以，不管远近
+dispatch_group_enter在底层是通过C++函数，对group的value进行--操作（即0 -> -1）
+dispatch_group_leave在底层是通过C++函数，对group的value进行++操作（即-1 -> 0）
+dispatch_group_notify在底层主要是判断group的state是否等于0，当等于0时，就通知
+block任务的唤醒，可以通过dispatch_group_leave，也可以通过dispatch_group_notify
+dispatch_group_async 等同于enter - leave，其底层的实现就是enter-leave

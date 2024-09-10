@@ -1,0 +1,755 @@
+如何修改变量值的三种方式：使用static、指针和__block关键字
+
+int a = 3;
+void (^yang)(void) = ^{
+   
+    NSLog(@"a=%d", a);
+};
+a = 9;
+yang();
+
+
+
+方式一： 使用static
+// 局部静态变量存储全局区 可以在block内部直接访问修改
+static int a = 3;
+NSLog(@"%p",&a);
+void (^yang)(void) = ^{
+   
+   NSLog(@"a=%d", a);
+   NSLog(@"%p",&a);
+   a = 12;
+};
+a = 9;
+yang();
+NSLog(@"a=%d", a);
+局部静态变量存储全局区 可以在block内部直接访问修改
+
+
+方式二：使用指针
+int a = 3;
+int *p = &a;
+void (^yang)(void) = ^{
+   
+    NSLog(@"a=%d", a);// 3
+    *p = 12;
+};
+*p = 5;
+NSLog(@"a=%d", a);// 5
+yang();
+NSLog(@"a=%d", a);// 12
+
+
+
+方式三：加 __block
+__block int a = 3;
+NSLog(@"%p", &a);
+void (^yang)(void) = ^{
+   
+    NSLog(@"%p", &a);
+    NSLog(@"a=%d", a);
+};
+NSLog(@"%p", &a);
+a = 9;
+yang();
+NSLog(@"%p", &a);
+
+
+__block变量的作用，它改变了自动变量的存储区域，使得Block内部可以修改局部变量的值
+
+
+
+==================================================捕获 自动变量、静态变量、静态全局变量、全局变量
+#import <Foundation/Foundation.h>
+
+int global_i = 1;
+
+static int static_global_j = 2;
+
+int main(int argc, const char * argv[]) {
+   
+    static int static_k = 3;
+    int val = 4;
+    
+    void (^myBlock)(void) = ^{
+        global_i ++;
+        static_global_j ++;
+        static_k ++;
+        NSLog(@"Block中 global_i = %d,static_global_j = %d,static_k = %d,val = %d",global_i,static_global_j,static_k,val);
+    };
+    
+    global_i ++;
+    static_global_j ++;
+    static_k ++;
+    val ++;
+    NSLog(@"Block外 global_i = %d,static_global_j = %d,static_k = %d,val = %d",global_i,static_global_j,static_k,val);
+    
+    myBlock();
+    
+    return 0;
+}
+
+Block 外  global_i = 2,static_global_j = 3,static_k = 4,val = 5
+Block 中  global_i = 3,static_global_j = 4,static_k = 5,val = 4
+
+
+int global_i = 1;
+
+static int static_global_j = 2;
+
+struct __main_block_impl_0 {
+  struct __block_impl impl;
+  struct __main_block_desc_0* Desc;
+  int *static_k;
+  int val;
+  __main_block_impl_0(void *fp, struct __main_block_desc_0 *desc, int *_static_k, int _val, int flags=0) : static_k(_static_k), val(_val) {
+    impl.isa = &_NSConcreteStackBlock;
+    impl.Flags = flags;
+    impl.FuncPtr = fp;
+    Desc = desc;
+  }
+};
+static void __main_block_func_0(struct __main_block_impl_0 *__cself) {
+  int *static_k = __cself->static_k; // bound by copy
+  int val = __cself->val; // bound by copy
+
+        global_i ++;
+        static_global_j ++;
+        (*static_k) ++;
+        NSLog((NSString *)&__NSConstantStringImpl__var_folders_45_k1d9q7c52vz50wz1683_hk9r0000gn_T_main_6fe658_mi_0,global_i,static_global_j,(*static_k),val);
+    }
+
+static struct __main_block_desc_0 {
+  size_t reserved;
+  size_t Block_size;
+} __main_block_desc_0_DATA = { 0, sizeof(struct __main_block_impl_0)};
+
+
+int main(int argc, const char * argv[]) {
+
+    static int static_k = 3;
+    int val = 4;
+
+    void (*myBlock)(void) = ((void (*)())&__main_block_impl_0((void *)__main_block_func_0, &__main_block_desc_0_DATA, &static_k, val));
+
+    global_i ++;
+    static_global_j ++;
+    static_k ++;
+    val ++;
+    NSLog((NSString *)&__NSConstantStringImpl__var_folders_45_k1d9q7c52vz50wz1683_hk9r0000gn_T_main_6fe658_mi_1,global_i,static_global_j,static_k,val);
+
+    ((void (*)(__block_impl *))((__block_impl *)myBlock)->FuncPtr)((__block_impl *)myBlock);
+
+    return 0;
+}
+
+自动变量是以值传递方式传递到Block的构造函数里面去的。
+Block只捕获Block中会用到的变量。由于只捕获了自动变量的值，并非内存地址，所以Block内部不能改变自动变量的值。
+Block捕获的外部变量可以改变值的是静态变量，静态全局变量，全局变量
+
+静态变量传递给Block是内存地址值，所以能在Block里面直接改变值
+
+在Block中改变变量值有2种方式，一是传递内存地址指针到Block中，二是改变存储区方式(__block)。
+
+#import <Foundation/Foundation.h>
+
+int main(int argc, const char * argv[]) {
+    
+  NSMutableString * str = [[NSMutableString alloc]initWithString:@"Hello,"];
+    
+        void (^myBlock)(void) = ^{
+            [str appendString:@"World!"];
+            NSLog(@"Block中 str = %@",str);
+        };
+    
+    NSLog(@"Block外 str = %@",str);
+    
+    myBlock();
+    
+    return 0;
+}
+
+Block 外  str = Hello,
+Block 中  str = Hello,World!
+
+struct __main_block_impl_0 {
+  struct __block_impl impl;
+  struct __main_block_desc_0* Desc;
+  NSMutableString *str;
+  __main_block_impl_0(void *fp, struct __main_block_desc_0 *desc, NSMutableString *_str, int flags=0) : str(_str) {
+    impl.isa = &_NSConcreteStackBlock;
+    impl.Flags = flags;
+    impl.FuncPtr = fp;
+    Desc = desc;
+  }
+};
+
+static void __main_block_copy_0(struct __main_block_impl_0*dst, struct __main_block_impl_0*src) {_Block_object_assign((void*)&dst->str, (void*)src->str, 3/*BLOCK_FIELD_IS_OBJECT*/);}
+
+static void __main_block_dispose_0(struct __main_block_impl_0*src) {_Block_object_dispose((void*)src->str, 3/*BLOCK_FIELD_IS_OBJECT*/);}
+
+static struct __main_block_desc_0 {
+  size_t reserved;
+  size_t Block_size;
+  void (*copy)(struct __main_block_impl_0*, struct __main_block_impl_0*);
+  void (*dispose)(struct __main_block_impl_0*);
+} __main_block_desc_0_DATA = { 0, sizeof(struct __main_block_impl_0), __main_block_copy_0, __main_block_dispose_0};
+
+这里的_Block_object_assign和_Block_object_dispose就对应着retain和release方法。
+BLOCK_FIELD_IS_OBJECT 是Block截获对象时候的特殊标示，如果是截获的__block，那么是BLOCK_FIELD_IS_BYREF。
+
+
+==================================================block copy和dispose
+
+case 1 //  1级copy  struct __main_block_impl_0 需要copy 
+示例代码
+int age = 6;
+void(^block)(void) = ^{
+   
+    NSLog(@"a==%d",age);
+};
+
+case 2 // 2级copy struct __main_block_impl_0 需要copy  NSObject *obj需要copy
+示例代码
+NSObject *obj = [NSObject new];
+void(^block)(void) = ^{
+   
+    NSLog(@"a==%@",obj);
+};
+
+case 3  // 2级copy struct __main_block_impl_0 需要copy struct __Block_byref_age_0 需要copy 
+示例代码
+__block int age = 6;
+void(^block)(void) = ^{
+   
+    NSLog(@"a==%d",age);
+};
+
+case 4 // 3级copy struct __main_block_impl_0 需要copy  struct __Block_byref_obj_0 需要copy  NSObject *obj需要copy  
+示例代码
+__block NSObject *obj = [NSObject new];
+void(^block)(void) = ^{
+   
+    NSLog(@"a==%@",obj);
+};
+
+
+对Block的copy实际是调用了NSBlock的copy方法，而它的copy方法也很简单，直接调用了libsystem_blocks.dylib中的_Block_copy，libsystem_blocks.dylib是专门来处理block的框架，代码是开源的。
+
+
+blocks库提供的几个核心函数都在 runtime.cpp 文件中:
+// block结构体自身的copy  
+_Block_copy  
+
+// 为block的内部成员变量寻找copy函数
+_Block_call_copy_helper
+
+// 区分copy函数的参数类型 
+_Block_object_assign
+
+//  __block变量copy
+_Block_byref_copy 
+
+//  oc对象类型的copy
+_Block_retain_object
+
+
+
+
+https://github.com/halfrost/Halfrost-Field/blob/master/contents/iOS/Block/ios_block.md
+
+一般Block就分为以下3种，_NSConcreteStackBlock，_NSConcreteMallocBlock，_NSConcreteGlobalBlock
+_NSConcreteStackBlock： 只用到外部局部变量、成员属性变量，且没有强指针引用的block都是StackBlock。 StackBlock的生命周期由系统控制的，一旦返回之后，就被系统销毁了。
+_NSConcreteMallocBlock： 有强指针引用或copy修饰的成员属性引用的block会被复制一份到堆中成为MallocBlock，没有强指针引用即销毁，生命周期由程序员控制
+_NSConcreteGlobalBlock： 没有用到外界变量或只用到全局变量、静态变量的block为_NSConcreteGlobalBlock，生命周期从创建到应用程序结束。
+
+没有用到外部变量肯定是_NSConcreteGlobalBlock
+只用到全局变量、静态变量的block也是_NSConcreteGlobalBlock。
+
+#define Block_copy(...) ((__typeof(__VA_ARGS__))_Block_copy((const void *)(__VA_ARGS__)))
+#define Block_release(...) _Block_release((const void *)(__VA_ARGS__))
+
+// Used by the compiler. Do not call this function yourself.
+BLOCK_EXPORT void _Block_object_assign(void *, const void *, const int)
+    __OSX_AVAILABLE_STARTING(__MAC_10_6, __IPHONE_3_2);
+
+// Used by the compiler. Do not call this function yourself.
+BLOCK_EXPORT void _Block_object_dispose(const void *, const int)
+    __OSX_AVAILABLE_STARTING(__MAC_10_6, __IPHONE_3_2);
+
+void *_Block_copy(const void *arg) {
+    return _Block_copy_internal(arg, WANTS_ONE);
+}    
+
+https://www.galloway.me.uk/2013/05/a-look-inside-blocks-episode-3-block-copy/
+
+
+
+==================================================__block
+1.普通非对象的变量
+#import <Foundation/Foundation.h>
+
+int main(int argc, const char * argv[]) {
+    
+    __block int i = 0;
+    
+    void (^myBlock)(void) = ^{
+        i ++;
+        NSLog(@"%d",i);
+    };
+    
+    myBlock();
+    
+    return 0;
+}
+
+
+
+struct __Block_byref_i_0 {
+  void *__isa;
+__Block_byref_i_0 *__forwarding;
+ int __flags;
+ int __size;
+ int i;
+};
+
+struct __main_block_impl_0 {
+  struct __block_impl impl;
+  struct __main_block_desc_0* Desc;
+  __Block_byref_i_0 *i; // by ref
+  __main_block_impl_0(void *fp, struct __main_block_desc_0 *desc, __Block_byref_i_0 *_i, int flags=0) : i(_i->__forwarding) {
+    impl.isa = &_NSConcreteStackBlock;
+    impl.Flags = flags;
+    impl.FuncPtr = fp;
+    Desc = desc;
+  }
+};
+static void __main_block_func_0(struct __main_block_impl_0 *__cself) {
+  __Block_byref_i_0 *i = __cself->i; // bound by ref
+
+        (i->__forwarding->i) ++;
+        NSLog((NSString *)&__NSConstantStringImpl__var_folders_45_k1d9q7c52vz50wz1683_hk9r0000gn_T_main_3b0837_mi_0,(i->__forwarding->i));
+    }
+static void __main_block_copy_0(struct __main_block_impl_0*dst, struct __main_block_impl_0*src) {_Block_object_assign((void*)&dst->i, (void*)src->i, 8/*BLOCK_FIELD_IS_BYREF*/);}
+
+static void __main_block_dispose_0(struct __main_block_impl_0*src) {_Block_object_dispose((void*)src->i, 8/*BLOCK_FIELD_IS_BYREF*/);}
+
+static struct __main_block_desc_0 {
+  size_t reserved;
+  size_t Block_size;
+  void (*copy)(struct __main_block_impl_0*, struct __main_block_impl_0*);
+  void (*dispose)(struct __main_block_impl_0*);
+} __main_block_desc_0_DATA = { 0, sizeof(struct __main_block_impl_0), __main_block_copy_0, __main_block_dispose_0};
+int main(int argc, const char * argv[]) {
+    __attribute__((__blocks__(byref))) __Block_byref_i_0 i = {(void*)0,(__Block_byref_i_0 *)&i, 0, sizeof(__Block_byref_i_0), 0};
+
+    void (*myBlock)(void) = ((void (*)())&__main_block_impl_0((void *)__main_block_func_0, &__main_block_desc_0_DATA, (__Block_byref_i_0 *)&i, 570425344));
+
+    ((void (*)(__block_impl *))((__block_impl *)myBlock)->FuncPtr)((__block_impl *)myBlock);
+
+    return 0;
+}
+
+带有 __block的变量也被转化成了一个结构体__Block_byref_i_0
+
+
+__forwarding指针初始化传递的是自己的地址。然而这里__forwarding指针真的永远指向自己么？
+
+//以下代码在MRC中运行
+    __block int i = 0;
+    NSLog(@"%p",&i);
+    
+    void (^myBlock)(void) = [^{
+        i ++;
+        NSLog(@"这是Block 里面%p",&i);
+    }copy];
+
+这个时候打印出来的2个i变量的地址就不同了。
+
+0x7fff5fbff818
+<__NSMallocBlock__: 0x100203cc0>
+这是Block 里面 0x1002038a8
+
+说明__forwarding指针并没有指向之前的自己了
+
+
+Block里面的__block的地址和Block的地址就相差1052。__block现在也在堆上了。
+
+我们把Block通过copy到了堆上，堆上也会重新复制一份Block，并且该Block也会继续持有该__block。
+当Block释放的时候，__block没有被任何对象引用，也会被释放销毁。
+
+###
+__forwarding指针这里的作用就是针对堆的Block，把原来__forwarding指针指向自己，换成指向_NSConcreteMallocBlock上复制之后的__block自己。
+然后堆上的变量的__forwarding再指向自己。
+这样不管__block怎么复制到堆上，还是在栈上，都可以通过(i->__forwarding->i)来访问到变量值。
+###
+
+static void __main_block_func_0(struct __main_block_impl_0 *__cself) {
+__Block_byref_i_0 *i = __cself->i; // bound by ref
+
+    (i->__forwarding->i) ++;
+    NSLog((NSString *)&__NSConstantStringImpl__var_folders_45_k1d9q7c52vz50wz1683_hk9r0000gn_T_main_3b0837_mi_0,(i->__forwarding->i));
+}
+
+
+//以下代码在MRC中运行
+    __block int i = 0;
+    NSLog(@"%p",&i);
+    
+    void (^myBlock)(void) = ^{
+        i ++;
+        NSLog(@"Block 里面的%p",&i);
+    };
+    
+    
+    NSLog(@"%@",myBlock);
+    
+    myBlock();
+
+结果和之前copy的例子完全不同。
+
+0x7fff5fbff818
+<__NSStackBlock__: 0x7fff5fbff7c0>**
+0x7fff5fbff818
+
+###
+mrc中Block在捕获住__block变量之后，并不会复制到堆上，所以地址也一直都在栈上。这与ARC环境下的不一样。
+###
+
+ARC环境下，一旦Block赋值就会触发copy，__block就会copy到堆上，Block也是__NSMallocBlock。ARC环境下也是存在__NSStackBlock的时候，这种情况下，__block就在栈上。
+MRC环境下，只有copy，__block才会被复制到堆上，否则，__block一直都在栈上，block也只是__NSStackBlock，这个时候__forwarding指针就只指向自己了。
+
+
+2.对象的变量
+
+//以下代码是在ARC下执行的
+#import <Foundation/Foundation.h>
+
+int main(int argc, const char * argv[]) {
+     
+    __block id block_obj = [[NSObject alloc]init];
+    id obj = [[NSObject alloc]init];
+
+    NSLog(@"block_obj = [%@ , %p] , obj = [%@ , %p]",block_obj , &block_obj , obj , &obj);
+    
+    void (^myBlock)(void) = ^{
+        NSLog(@"***Block中****block_obj = [%@ , %p] , obj = [%@ , %p]",block_obj , &block_obj , obj , &obj);
+    };
+    
+    myBlock();
+   
+    return 0;
+}
+
+
+block_obj = [<NSObject: 0x100b027d0> , 0x7fff5fbff7e8] , obj = [<NSObject: 0x100b03b50> , 0x7fff5fbff7b8]
+Block****中********block_obj = [<NSObject: 0x100b027d0> , 0x100f000a8] , obj = [<NSObject: 0x100b03b50> , 0x100f00070]
+
+
+
+struct __Block_byref_block_obj_0 {
+  void *__isa;
+__Block_byref_block_obj_0 *__forwarding;
+ int __flags;
+ int __size;
+ void (*__Block_byref_id_object_copy)(void*, void*);
+ void (*__Block_byref_id_object_dispose)(void*);
+ id block_obj;
+};
+
+struct __main_block_impl_0 {
+  struct __block_impl impl;
+  struct __main_block_desc_0* Desc;
+  id obj;
+  __Block_byref_block_obj_0 *block_obj; // by ref
+  __main_block_impl_0(void *fp, struct __main_block_desc_0 *desc, id _obj, __Block_byref_block_obj_0 *_block_obj, int flags=0) : obj(_obj), block_obj(_block_obj->__forwarding) {
+    impl.isa = &_NSConcreteStackBlock;
+    impl.Flags = flags;
+    impl.FuncPtr = fp;
+    Desc = desc;
+  }
+};
+static void __main_block_func_0(struct __main_block_impl_0 *__cself) {
+  __Block_byref_block_obj_0 *block_obj = __cself->block_obj; // bound by ref
+  id obj = __cself->obj; // bound by copy
+
+        NSLog((NSString *)&__NSConstantStringImpl__var_folders_45_k1d9q7c52vz50wz1683_hk9r0000gn_T_main_e64910_mi_1,(block_obj->__forwarding->block_obj) , &(block_obj->__forwarding->block_obj) , obj , &obj);
+    }
+static void __main_block_copy_0(struct __main_block_impl_0*dst, struct __main_block_impl_0*src) {_Block_object_assign((void*)&dst->block_obj, (void*)src->block_obj, 8/*BLOCK_FIELD_IS_BYREF*/);_Block_object_assign((void*)&dst->obj, (void*)src->obj, 3/*BLOCK_FIELD_IS_OBJECT*/);}
+
+static void __main_block_dispose_0(struct __main_block_impl_0*src) {_Block_object_dispose((void*)src->block_obj, 8/*BLOCK_FIELD_IS_BYREF*/);_Block_object_dispose((void*)src->obj, 3/*BLOCK_FIELD_IS_OBJECT*/);}
+
+static struct __main_block_desc_0 {
+  size_t reserved;
+  size_t Block_size;
+  void (*copy)(struct __main_block_impl_0*, struct __main_block_impl_0*);
+  void (*dispose)(struct __main_block_impl_0*);
+} __main_block_desc_0_DATA = { 0, sizeof(struct __main_block_impl_0), __main_block_copy_0, __main_block_dispose_0};
+
+
+int main(int argc, const char * argv[]) {
+
+    __attribute__((__blocks__(byref))) __Block_byref_block_obj_0 block_obj = {(void*)0,(__Block_byref_block_obj_0 *)&block_obj, 33554432, sizeof(__Block_byref_block_obj_0), __Block_byref_id_object_copy_131, __Block_byref_id_object_dispose_131, ((NSObject *(*)(id, SEL))(void *)objc_msgSend)((id)((NSObject *(*)(id, SEL))(void *)objc_msgSend)((id)objc_getClass("NSObject"), sel_registerName("alloc")), sel_registerName("init"))};
+
+    id obj = ((NSObject *(*)(id, SEL))(void *)objc_msgSend)((id)((NSObject *(*)(id, SEL))(void *)objc_msgSend)((id)objc_getClass("NSObject"), sel_registerName("alloc")), sel_registerName("init"));
+    NSLog((NSString *)&__NSConstantStringImpl__var_folders_45_k1d9q7c52vz50wz1683_hk9r0000gn_T_main_e64910_mi_0,(block_obj.__forwarding->block_obj) , &(block_obj.__forwarding->block_obj) , obj , &obj);
+
+    void (*myBlock)(void) = ((void (*)())&__main_block_impl_0((void *)__main_block_func_0, &__main_block_desc_0_DATA, obj, (__Block_byref_block_obj_0 *)&block_obj, 570425344));
+
+    ((void (*)(__block_impl *))((__block_impl *)myBlock)->FuncPtr)((__block_impl *)myBlock);
+
+    return 0;
+}
+
+
+对象在OC中，默认声明自带__strong所有权修饰符的，所以main开头我们声明的
+__block id block_obj = [[NSObject alloc]init];
+id obj = [[NSObject alloc]init];
+等价于
+__block id __strong block_obj = [[NSObject alloc]init];
+id __strong obj = [[NSObject alloc]init];
+
+在转换出来的源码中，我们也可以看到，Block捕获了__block，并且强引用了，因为在__Block_byref_block_obj_0结构体中，有一个变量是id block_obj，这个默认也是带__strong所有权修饰符的。
+
+###
+ARC环境下，Block捕获外部对象变量，是都会copy一份的，地址都不同。只不过带有__block修饰符的变量会被捕获到Block内部持有。
+###
+
+
+总结：
+在MRC环境下，__block根本不会对指针所指向的对象执行copy操作，而只是把指针进行的复制。 
+而在ARC环境下，对于声明为__block的外部对象，在block内部会进行retain，以至于在block环境内能安全的引用外部对象，所以才会产生循环引用的问题！
+在ARC环境下，对于没有声明为__block的外部对象，也会被retain。
+如果严格的来说，捕获是必须在Block结构体__main_block_impl_0里面有成员变量的话，Block能捕获的变量就只有带有自动变量和静态变量了。捕获进Block的对象会被Block持有
+
+在ARC环境下，不仅仅是声明了__block的外部对象，没有加__block的对象，在block内部也会被retain。因为加了__block，只是对一个自动变量有影响，它们是指针
+
+
+自动变量的值，被copy进了Block，不带__block的自动变量只能在里面被访问，并不能改变值。
+带__block的自动变量 和 静态变量 就是直接地址访问。所以在Block里面可以直接改变变量的值。
+而剩下的静态全局变量，全局变量，函数参数，也是可以在直接在Block中改变变量值的，但是他们并没有变成Block结构体__main_block_impl_0的成员变量，因为他们的作用域大，所以可以直接更改他们的值。
+
+
+对于对象来说，
+在MRC环境下，__block根本不会对指针所指向的对象执行copy操作，而只是把指针进行的复制。 
+而在ARC环境下，对于声明为__block的外部对象，在block内部会进行retain，以至于在block环境内能安全的引用外部对象。
+对于没有声明__block的外部对象，在block中也会被retain。
+
+
+
+在ARC环境下，Block也是存在__NSStackBlock的时候的，平时见到最多的是_NSConcreteMallocBlock，是因为我们会对Block有赋值操作，所以ARC下，block 类型通过=进行传递时，会导致调用objc_retainBlock->_Block_copy->_Block_copy_internal方法链。
+并导致 __NSStackBlock__ 类型的 block 转换为 __NSMallocBlock__ 类型。
+
+
+#import <Foundation/Foundation.h>
+int main(int argc, const char * argv[]) {
+    
+    __block int temp = 10;
+    
+    NSLog(@"%@",^{NSLog(@"*******%d %p",temp ++,&temp);});
+   
+    return 0;
+}
+<__NSStackBlock__: 0x7fff5fbff768>
+这种情况就是ARC环境下Block是__NSStackBlock的类型。
+
+
+id obj = [[NSObject alloc]init];
+NSLog(@"obj = [%@ , %p]", obj , &obj);
+obj = [<NSObject: 0x100b03b50> , 0x7fff5fbff7b8]
+obj 是一个指针，指向堆区的地址 0x100b03b50，而 &obj 是 obj 变量在栈区的地址，即 obj 指针本身存储的位置。
+
+
+
+==================================================
+为了保证block内部能够正常访问外部的变量，Block有一个变量捕获机制，即Block语法表达式所使用变量可以被保存到Block的结构体实例(Block自身)中
+
+
+int main(int argc, const char * argv[]) {
+  NSMutableString *mStr = @"mStr".mutableCopy;
+    void (^myBlock)(void) = ^{
+        //mStr = @"newMstr".mutableCopy; //代码1：直接修改了mStr指针内容（直接修改了mStr指针指向）；// 报错 Variable is not assignable (missing __block type specifier)
+        [mStr appendString:@"-ExtraStr"]; //代码2：修改mStr指针指向的堆中内容；
+        NSLog(@"Block内：mStr:%@",mStr);
+    };
+    NSLog(@"Block外：%@",mStr);
+    myBlock();
+    return 0;
+}
+//代码2打印结果：
+//Block外：mStr
+//Block内：mStr:mStr-ExtraStr
+
+
+struct __main_block_impl_0 {
+  struct __block_impl impl;
+  struct __main_block_desc_0* Desc;
+  NSMutableString *mStr;
+  __main_block_impl_0(void *fp, struct __main_block_desc_0 *desc, NSMutableString *_mStr, int flags=0) : mStr(_mStr) {
+    impl.isa = &_NSConcreteStackBlock;
+    impl.Flags = flags;
+    impl.FuncPtr = fp;
+    Desc = desc;
+  }
+};
+static void __main_block_func_0(struct __main_block_impl_0 *__cself){
+  NSMutableString *mStr = __cself->mStr; // bound by copy
+
+        ((void (*)(id, SEL, NSString * _Nonnull))(void *)objc_msgSend)((id)mStr, sel_registerName("appendString:"), (NSString *)&__NSConstantStringImpl__var_folders_3f_crl5bnj956d806cp7d3ctqhm0000gn_T_main_fe0cca_mi_1);
+        NSLog((NSString *)&__NSConstantStringImpl__var_folders_3f_crl5bnj956d806cp7d3ctqhm0000gn_T_main_fe0cca_mi_2,mStr);
+    }
+    
+static void __main_block_copy_0(struct __main_block_impl_0*dst, struct __main_block_impl_0*src) {_Block_object_assign((void*)&dst->mStr, (void*)src->mStr, 3/*BLOCK_FIELD_IS_OBJECT*/);}
+
+static void __main_block_dispose_0(struct __main_block_impl_0*src) {_Block_object_dispose((void*)src->mStr, 3/*BLOCK_FIELD_IS_OBJECT*/);}
+
+static struct __main_block_desc_0 {
+  size_t reserved;
+  size_t Block_size;
+  void (*copy)(struct __main_block_impl_0*, struct __main_block_impl_0*);
+  void (*dispose)(struct __main_block_impl_0*);
+} __main_block_desc_0_DATA = { 0, sizeof(struct __main_block_impl_0), __main_block_copy_0, __main_block_dispose_0};
+
+int main(int argc, const char * argv[]) {
+    NSMutableString *mStr = ((id (*)(id, SEL))(void *)objc_msgSend)((id)&__NSConstantStringImpl__var_folders_3f_crl5bnj956d806cp7d3ctqhm0000gn_T_main_fe0cca_mi_0, sel_registerName("mutableCopy"));
+    void (*myBlock)(void) = ((void (*)())&__main_block_impl_0((void *)__main_block_func_0, &__main_block_desc_0_DATA, mStr, 570425344));
+
+    NSLog((NSString *)&__NSConstantStringImpl__var_folders_3f_crl5bnj956d806cp7d3ctqhm0000gn_T_main_fe0cca_mi_3,mStr);
+    ((void (*)(__block_impl *))((__block_impl *)myBlock)->FuncPtr)((__block_impl *)myBlock);
+    return 0;
+}
+
+作为对象的字符串会涉及到释放的问题，所以此处转换后的源码与基本类型有所区别
+这句代码的含义可以归纳为：@"mStr".mutableCopy创建了新的字符串对象，并将新对象的地址返回，最后又赋值给了mStr；
+可我们知道mStr指针是在栈上的，它随时可能被释放，直接修改就有可能造成野指针错误，这刚好对应了先前自动变量不可修改的问题
+但通过appendString为什么又可以修改字符串呢？这主要因为mStr通过指针传递被Block捕获后，Block只是借助其内部的指针(和mStr同名，且指向同一个地址)，找到了可变字符串的位置，向这块内存追加新的内容，但是并未改变mStr的内存地址
+重要总结：Block修改外部变量的限制，其实是指Block不允许修改栈中指针的内容
+
+###
+所以Block中不允许修改外部变量的值的问题，其实最根本的原因还是Block不允许修改栈中指针的内容（即指针指向，地址），可以修改指针指向的内容（值）；
+###
+
+
+#import <Foundation/Foundation.h>
+
+//使用如下的命令，可将OC代码编译为C++代码
+//clang -rewrite-objc main.m
+
+int global_val = 1;                  //全局变量
+static int static_global_val = 1;    //静态全局变量
+
+int main(int argc, char * argv[]) {
+    int val = 1;                     //自动变量
+    static int static_val = 1;       //局部静态变量
+
+Int tmp = 10;
+int value = 10;
+int *pVal = &value;
+    
+    void (^myBlock)(void) = ^{
+        global_val ++;
+        static_global_val ++;
+        static_val ++;
+        //val++//直接修改会报错(Variable is not assignable (missing __block type specifier)
+        
+        *pVal = 1000;// 改变的是指针指向的存储内容
+// pVal = &tmp; // 报错 Variable is not assignable (missing __block type specifier)
+        
+        NSLog(@"\nBlock内:\nglobal_val = %d,\nstatic_global_val = %d,\nval = %d,\nstatic_val= %d,\npVal= %d,\nvalue= %d",global_val,static_global_val,val,static_val,*pVal, value);// 3, 3, 1, 3, 1000, 10
+    };
+    
+    global_val ++;
+    static_global_val ++;
+    val ++;
+    static_val ++;
+    *pVal = 100;
+    
+    NSLog(@"\nBlock外:\nglobal_val = %d,\nstatic_global_val = %d,\nval = %d,\nstatic_val= %d,\npVal= %d,\nvalue= %d",global_val,static_global_val,val,static_val,*pVal, value);// 2, 2, 2, 2, 100, 100
+    myBlock();
+    return 0;
+}
+
+
+
+int value = 10;
+int value1 = value;
+NSLog(@"%p %p", &value, &value1);// 0x16fdff2c8 0x16fdff2c4
+
+
+
+int global_val = 1;
+static int static_global_val = 1;
+
+struct __main_block_impl_0 {
+  struct __block_impl impl;
+  struct __main_block_desc_0* Desc;
+  int *static_val;  //对应静态局部变量
+  int val;          //对应自动变量
+  __main_block_impl_0(void *fp, struct __main_block_desc_0 *desc, int *_static_val, int _val, int flags=0) : static_val(_static_val), val(_val) {
+    impl.isa = &_NSConcreteStackBlock;
+    impl.Flags = flags;
+    impl.FuncPtr = fp;
+    Desc = desc;
+  }
+};
+
+static void __main_block_func_0(struct __main_block_impl_0 *__cself) {
+  int *static_val = __cself->static_val; // bound by copy
+  int val = __cself->val; // bound by copy
+
+        global_val ++;
+        static_global_val ++;
+        (*static_val) ++;
+
+        NSLog((NSString *)&__NSConstantStringImpl__var_folders_3f_crl5bnj956d806cp7d3ctqhm0000gn_T_main_78fd5a_mi_0,global_val,static_global_val,val,(*static_val));
+    }
+
+static struct __main_block_desc_0 {
+  size_t reserved;
+  size_t Block_size;
+} __main_block_desc_0_DATA = { 0, sizeof(struct __main_block_impl_0)};
+
+int main(int argc, char * argv[]) {
+    int val = 1;
+    static int static_val = 1;
+
+    void (*myBlock)(void) = ((void (*)())&__main_block_impl_0((void *)__main_block_func_0, &__main_block_desc_0_DATA, &static_val, val));
+
+    global_val ++;
+    static_global_val ++;
+    val ++;
+    static_val ++;
+
+    NSLog((NSString *)&__NSConstantStringImpl__var_folders_3f_crl5bnj956d806cp7d3ctqhm0000gn_T_main_78fd5a_mi_1,global_val,static_global_val,val,static_val);
+
+    ((void (*)(__block_impl *))((__block_impl *)myBlock)->FuncPtr)((__block_impl *)myBlock);
+
+    return 0;
+}
+
+
+
+自动变量存在栈上被销毁的时间不定，这很有可能导致Block执行的时候自动变量已经被销毁，那么此时访问被销毁的地址就会产生野指针错误。
+
+
+栈区
+存放局部变量的值，系统自动分配和释放;特点：容量小，速度快，有序
+
+堆区
+存放通过malloc系列函数或new操作符分配的内存，如对象；一般由程序员分配和释放，如果不释放，则出现内存泄露;特点：容量大，速度慢，无序；
+无序指的是
+内存管理器会根据请求的大小和堆内存中空闲区域的情况来分配内存。当你多次分配内存时，这些内存块并不会按顺序存放，可能会分散在堆的不同区域。
+当你在堆区分配内存时，例如创建对象1和对象2，它们的内存地址不一定是连续的。对象1可能位于地址1，而对象2可能位于地址5，而不是紧邻地址1的地址2。
+在堆区申请一块连续的内存
+Object* objects = (Object*)malloc(10 * sizeof(Object));
+
+静态区
+存放全局变量和静态变量(包括静态局部变量和静态全局变量)；当程序结束时，系统回收；
+
+常量区
+存放常量的内存区域；程序结束时，系统回收；
+
+代码区
+存放二进制代码的区域
+
+

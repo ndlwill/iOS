@@ -1,0 +1,182 @@
+[self.tableView reloadData];
+dispatch_async(dispatch_get_main_queue(), ^{
+  //列表刷新完成
+});
+以上代码有时生效有时又不生效
+
+
+runloop的源码，伪代码如下:
+static int32_t __CFRunLoopRun(CFRunLoopRef rl, CFRunLoopModeRef rlm, CFTimeInterval seconds, Boolean stopAfterHandle, CFRunLoopModeRef previousMode) {
+  do {
+    //通知监听kCFRunLoopBeforeTimers的observer
+    __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeTimers);
+
+    //通知监听kCFRunLoopBeforeSources的observer
+    __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeSources);
+
+    //调用添加到runloop的block
+    __CFRunLoopDoBlocks(rl, rlm);
+
+    //调用source0
+    Boolean sourceHandledThisLoop = __CFRunLoopDoSources0(rl, rlm, stopAfterHandle);
+    if (sourceHandledThisLoop) {
+        __CFRunLoopDoBlocks(rl, rlm);
+    }
+
+    if (MACH_PORT_NULL != dispatchPort && !didDispatchPortLastTime) {
+      //如果有CGD派发到主队列的任务可以消费，goto到handle_msg来跳过runloop休眠
+      if (__CFRunLoopServiceMachPort(dispatchPort, &msg, sizeof(msg_buffer), &livePort, 0, &voucherState, NULL)) {
+        goto handle_msg;
+      }
+    }
+    
+    didDispatchPortLastTime = false;
+
+    //通知监听kCFRunLoopBeforeWaiting的observer
+    __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeWaiting);
+
+    //runloop休眠
+    __CFRunLoopSetSleeping(rl);
+
+    ...
+
+    //被唤醒
+
+    //唤醒后，通知监听kCFRunLoopAfterWaiting的observer
+    __CFRunLoopDoObservers(rl, rlm, kCFRunLoopAfterWaiting);
+    
+    //刚刚的goto定义在这里
+    handle_msg:;
+
+    if (MACH_PORT_NULL == livePort) {
+      //啥也不做
+    } else if (livePort == rl->_wakeUpPort) {
+      //啥也不做
+    } else if (rlm->_timerPort != MACH_PORT_NULL && livePort == rlm->_timerPort) {
+        //处理Timer事件
+        if (!__CFRunLoopDoTimers(rl, rlm, mach_absolute_time())) {
+          __CFArmNextTimerInMode(rlm, rl);
+      }
+    } else if (livePort == dispatchPort) {
+      //处理dispatch到主队列的事件
+      __CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__(msg);
+      didDispatchPortLastTime = true;
+    } else {
+      //处理source1
+      __CFRunLoopDoSource1(rl, rlm, rls, msg, msg->msgh_size, &reply)
+    }
+
+  } while (...)
+
+}
+
+
+runloop源码最重要的逻辑在于do-while循环，主要逻辑描述如下:
+通知kCFRunLoopBeforeTimers
+通知kCFRunLoopBeforeSources
+执行Sources0
+若主队列有任务且上一次循环没有处理过派发到主队列的任务，则跳转到9
+通知kCFRunLoopBeforeWaiting
+休眠
+被唤醒
+通知kCFRunLoopAfterWaiting
+条件判断
+    若因timer唤醒，处理timer任务
+    若因dispatch唤醒，处理派发到主队列的任务
+    若因source1唤醒，处理source1事件
+
+
+代码1:
+[self.tableView reloadData];
+NSLog(@"reloadData");
+dispatch_async(dispatch_get_main_queue(), ^{
+  NSLog(@"dispatch_get_main_queue");
+});
+
+kCFRunLoopAfterWaiting
+kCFRunLoopBeforeTimers
+kCFRunLoopBeforeSources
+reloadData
+dispatch_get_main_queue
+kCFRunLoopBeforeTimers
+kCFRunLoopBeforeSources
+kCFRunLoopBeforeWaiting
+cellForRowAtIndexPath
+
+在reloadData后紧接着输出了mainQueue的log，接着又经历了一个runloop循环
+直到kCFRunLoopBeforeWaiting时触发了cellForRow。显然，可以发现这段代码是不能用于判断列表刷新完成的。
+
+
+但有时候，通过点击一个按钮来调用reloadData，它的输出如下。
+可以发现，这段代码又很神奇的能判断列表刷新完成了。
+kCFRunLoopAfterWaiting
+kCFRunLoopBeforeTimers
+kCFRunLoopBeforeSources
+reloadData
+cellForRowAtIndexPath
+dispatch_get_main_queue
+kCFRunLoopBeforeTimers
+kCFRunLoopBeforeSources
+kCFRunLoopBeforeWaiting
+
+
+代码2:
+外层的block为block1，内层block为block2
+//block1
+dispatch_async(dispatch_get_main_queue(), ^{
+  NSLog(@"dispatch_get_main_queue_1");
+  [self.tableView reloadData];
+  NSLog(@"reloadData");
+  //block2
+  dispatch_async(dispatch_get_main_queue(), ^{
+    NSLog(@"dispatch_get_main_queue_2");
+  });
+});
+
+block1中调用了reloadData，接着循环runloop，走到了beforeWaitding阶段开始触发列表cellForRow。
+之后runloop进入休眠，在休眠过后执行派发到主队列的block2。可以得到一个结论，那就是在block2中列表确实刷新完成了。
+
+
+
+CellForRow调用时机:
+CATransaction注册了runloop的observer监听kCFRunLoopBeforeWaiting时机，会在该阶段调用commit触发UI更新。
+列表的cellForRow代理会在CATransaction的commit方法中触发。
+
+另外，runloop由source1唤醒后会继续在source0中处理任务，比如说处理手势任务。
+###
+在这个过程中，UIKit有些情况下会调用CATransaction的flush方法来触发UI刷新，因此source0中也有可能调用cellForRow。
+###
+
+__UIApplicationFlushRunLoopCATransactionIfTooLate 中会调用 CATransaction的flush
+
+
+代码1:
+在代码1中，reloadData会在source0事件中触发，紧接着runloop会判断是否有GCD的主队列任务可以处理，
+若可以处理则会直接goto去处理，这样就跳过了beforeWaiting和休眠，主队列任务也就在cellForRow之前执行。
+处理GCD主队列任务后有设置标识符didDispatchPortLastTime为true，下次处理完source0后会判断标识符，若为true则不能直接跳过再次去处理GCD任务了。
+这个逻辑很好理解，可以避免当CGD主队列一直有任务时，runloop循环会一直去处理。
+
+在代码1中，若reloadData调用后，由于某种原因UIKit触发了CATransaction的flush方法，那么会同步调用cellForRow，
+此时GCD主队列任务一定会在列表刷新完成后触发。
+
+
+代码2:
+在代码2中，runloop处理完source0，检测到GCD主队列有任务，因此直接goto到休眠后处理GCD主队列任务，在block1中触发reloadData。
+之后由于本次loop唤醒后处理过GCD主队列，因此在处理完source0后不能继续goto来跳过休眠，而是走到了beforeWaiting，触发了列表的cellForRow，之后runloop休眠。
+在休眠后，会继续处理GCD主队列任务，此时block2肯定在cellForRow之后，因此可以判断列表刷新完成。
+
+
+结论:
+列表存在同步刷新和runloop的beforeWaiting时机刷新两种情况，
+GCD主队列任务存在跳过beforeWaiting时机直接处理和等待休眠后处理两种情况，
+因此在实际开发中用GCD判断列表刷新完成有时生效有时失效。
+
+
+source1基本就是系统事件，source0基本就是应用层事件
+Source1 :基于mach_Port的,来自系统内核或者其他进程或线程的事件，可以主动唤醒休眠中的RunLoop。
+（iOS里进程间通信开发过程中我们一般不主动使用）。mach_port大家就理解成进程间相互发送消息的一种机制就好。
+Source0 ：非基于Port的 处理事件，什么叫非基于Port的呢？就是说你这个消息不是其他进程或者内核直接发送给你的。
+
+一个APP在前台静止着，此时，用户用手指点击了一下APP界面，那么过程就是下面这样的:
+我们触摸屏幕,先摸到硬件(屏幕)，屏幕表面的事件会先包装成Event, Event先告诉source1（mach_port）,source1唤醒RunLoop, 然后将事件Event分发给source0,然后由source0来处理。
+如果没有事件,也没有timer,则runloop就会睡眠, 如果有,则runloop就会被唤醒,然后跑一圈。

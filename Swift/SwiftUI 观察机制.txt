@@ -1,0 +1,199 @@
+作为一个响应式框架，SwiftUI 的视图需要随着状态(数据)的变化而更新
+这就要求它依赖于某种机制来追踪这些状态变化。
+
+在引入 Observation 框架之前，SwiftUI 实际上已经有了两套不同的观察机制。
+
+首先是针对值类型状态的观察机制。例如，对于视图内的简单状态，我们一般使用 @State 进行声明，而这些状态大多是值类型。
+对于此类状态，SwiftUI 能够自行进行观察。
+
+对于引用类型的状态，SwiftUI 不能独立进行观察，而需要借助 Combine 框架提供的“发布者-订阅者”模式来实现观察。
+这种观察模式在当前的 SwiftUI 中存在一些问题。
+
+导致大量视图无效更新的原因:
+final class MyObservableObject: ObservableObject {
+    @Published var name: String
+    @Published var age: Int
+    // 更多属性...
+}
+
+protocol ObservableObject {
+    // associatedtype 带有默认值的写法是在 Swift 5.1 中引入的
+    // 这一特性允许协议在定义关联类型时指定一个默认的类型，从而减少遵循协议的类型需要手动指定关联类型的情况。
+    // 例如，当大多数情况下某个协议的关联类型使用相同的类型时，可以通过指定默认值来避免重复代码。
+    // = ObservableObjectPublisher 指定了 ObjectWillChangePublisher 的默认类型。
+    associatedtype ObjectWillChangePublisher : Publisher = ObservableObjectPublisher where Self.ObjectWillChangePublisher.Failure == Never
+    var objectWillChange: Self.ObjectWillChangePublisher // 内部发布者实例，视图将订阅这个发布者
+}
+
+
+当我们使用 Combine 框架，并声明一个类型为 ObservableObject 的可观察对象时，首先需要的是符合 ObservableObject 协议。
+这个协议会在类中创建一个发布者实例。每当有属性被 @Published 修饰符标记的变量发生改变时，@Published 会触发类中的这个发布者，向所有订阅者发送通知。
+然而，因为这些通知不包含改变的具体信息，订阅者无法得知是哪个 @Published 标记的属性发生了变化。
+
+在 SwiftUI 中，与可观察对象相关联的视图就是这些订阅者。
+即使是可观察对象中极小的一部分状态发生变化，也会导致所有相关联的视图进行更新，进而造成了大量的无效视图更新，严重影响了应用的性能。
+
+final class Store: ObservableObject {
+  @Published var name = "肥肥"
+  @Published var age = 5
+}
+
+struct NameView: View {
+  @ObservedObject var store: Store
+  var body: some View {
+    let _ = print("NameView Update")
+    Text(store.name)
+  }
+}
+
+struct AgeView: View {
+  @ObservedObject var store: Store
+  var body: some View {
+    let _ = print("AgeView Update")
+    Text(store.age, format: .number)
+  }
+}
+由于 NameView 视图与 store 实例建立了联系（即响应该实例发出的通知），因此，即便是 age 属性发生变化时，它也会被更新。这就揭示了当前观察机制的不足之处。
+
+
+改善无效更新的手段:
+按需引入状态
+不将整个状态容器引入视图，而是仅传递视图实际所需的状态。
+这样做虽然能减少不必要的视图更新，但会增加开发的工作量，并且此方法只适用于不需要在视图中调用状态容器方法的纯展示场景。
+struct NameView{
+  let name: String
+  var body: some View{
+    let _ = print("NameView Update")
+    Text(name)
+  }
+}
+经过调整后的 NameView，不会因为 age 状态的变化而更新。
+
+利用等值协议（Equatable）
+另一种方法是使视图遵循 Equatable 协议，并自定义比较逻辑以避免不相关的属性更新导致的重绘。
+不过，这种方法对于基于类的容器来说不适用。
+@State var student = Student(name: "fat", age: 88)
+
+struct StudentNameView: View, Equatable {
+    let student: Student
+    var body: some View {
+        let _ = Self._printChanges()
+        Text(student.name)
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.student.name == rhs.student.name
+    }
+}
+
+拆分状态容器
+将较大的状态容器拆分为若干个更小的状态容器也是一个解决方案。这种方式能够缩小更新的范围，但同时牺牲了状态管理的便捷性。
+class Store: ObservableObject {
+  @Published var a: String
+  @Published var b: String
+}
+
+class SubStore1: ObservableObject {
+  @Published var a: String
+}
+
+class SubStore2: ObservableObject {
+  @Published var b: String
+}
+
+状态的逐级比对
+一些第三方框架通过在状态变化时进行逐级比对，以排除未发生变化的部分，从而优化性能。但这种比对本身也是一种性能消耗。
+
+
+
+
+它们并未从根本上解决由观察机制引起的性能问题，仅仅是治标不治本。
+因此，SwiftUI 迫切需要一种新的观察机制，专门针对引用类型的状态。
+苹果公司推出了 Observation 框架。
+
+
+Observation 的观察方式:
+Observation 框架为开发者提供了两个主要工具：@Observable 宏和 withObservationTracking 函数。
+宏在 Swift 5.9 中引入，旨在减轻开发者的负担，避免手动编写重复的代码，从而提高开发效率。
+
+@Observable 首先在引用类型声明中引入一个“观察协调器”—— ObservationRegistrar 实例。
+这个协调器负责维护可观察属性与观察者之间的联系。
+这有点类似于 ObservableObject 协议为类添加发布者的过程，但原理和工作机制完全不同。
+
+接着，@Observable 会把存储属性转化为计算属性，确保它们的存储操作完全由观察协调器管理，
+这样可以整合观察逻辑，这在某种程度上类似于 @Published 属性包装器的工作方式。
+
+在声明完可观察对象后，我们需要使用全局函数 withObservationTracking 来构建观察。
+这个函数要求开发者提供两个闭包：所有需要被观察的属性都必须在 apply 闭包中出现并被读取其值
+当被观察的属性即将发生变化时，框架会调用 onChange 闭包，完成“观察-回调”的完整流程。
+
+通过这种方式，Observation 提供了对属性的细粒度观察能力，解决了仅能观察整个实例而导致的精度不足问题，这是其解决 Combine 观察机制中存在问题的根本方案。
+
+
+Observation 的特点:
+Observation 框架所提供的观察机制展现了几个独特的特点:
+局部观察性：仅对 apply 闭包中实际读取其值的可观察对象属性进行观察，确保观察的精确性和高效性。
+变化前通知：在属性值实际变化之前（即 willSet 阶段）调用 onChange 闭包，允许开发者在变化发生前做出响应。
+一次性观察：每次观察都是一次性的，一旦 onChange 闭包被触发，相应的观察操作就会结束。
+多属性、多实例监控：在一次观察过程中，可以同时监控多个可观察实例的多个属性。任何一个被观察的属性的变化都会触发 onChange 闭包，并结束这次观察。
+
+
+它形成了一个完美的闭环：从“创建观察”（将视图的 body 放入 apply），到“状态变化”，再到“视图更新”（调用 onChange 闭包），
+最后“重新创建观察”（重复之前的步骤），这一系列操作紧密相连，适应了 SwiftUI 的渲染和更新机制。
+
+
+在实际的 SwiftUI 开发过程中，开发者通常不需要直接使用 withObservationTracking 来手动构建观察，
+因为 SwiftUI 已经在其视图评估逻辑中集成了观察操作。
+
+
+将之前基于 Combine 的示例修改成使用 Observation 的方式:
+要将基于 Combine 的可观察对象迁移到 Observation 框架，我们需要进行几项关键的调整：移除 ObservableObject 协议声明，移除所有的 @Published 属性包装器，并在类声明前添加 @Observable 宏。
+@Observable
+class Store {
+  var name: String
+  var age: Int
+  
+  func updateAge() {}
+}
+
+在视图中引用这个新的可观察对象时，我们会用 @State 来替换原本的 @StateObject，并通过 let 关键字直接在子视图中引入这个实例。
+尽管在视图中直接使用了可观察对象，但得益于 Observation 所提供的更精确的观察能力，NameView 视图不会因 age 属性的变化而更新。
+
+Observation 框架还开启了哪些新的可能性:
+灵活的构筑形式:
+现在，我们可以将一个可观察对象嵌套在另一个对象中，实现以前难以构建的状态关系。
+在 Combine 框架下，尝试实现这种嵌套会面临很大的挑战，因为 @Published 属性不支持观察引用类型内部的变化。
+@Observable
+class A {
+   var b = 1
+}
+
+@Observable
+class B {
+   var b = 1
+   var a = A() // 将一个可观察对象作为另一个可观察对象的属性
+}
+
+
+精准的观察构建逻辑:
+通过 Observation，我们的视图更新变得更加精准和高效。它不仅精确到属性级别，而且还精确到对属性的具体操作方式。
+只有当视图实际读取可观察对象的属性（即触发其 getter 方法）时，才会建立观察关系。
+如果只是赋值或调用可观察对象中的方法，而不触发属性的读取，就不会与视图建立观察联系。
+在基于 Combine 的实现中，只要将可观察对象引入到视图中（比如使用 @EnvironmentObject），即使 body 中没有使用任何属性或方法，视图仍然需要响应可观察对象实例的变化。
+Observation 的这种精准观察能力大大减轻了开发者的负担，让我们能以更放松的心态设计状态。
+
+struct A: View {
+  let store: Store
+  var body: some View {
+    Text(store.name) // 读取属性，创建关联
+  }
+}
+
+struct B: View {
+  let store: Store
+  var body: some View {
+    Button("Update"){
+      store.name = "hello" // 未触发getter方法，不会建立观察关系
+    }
+  }
+}

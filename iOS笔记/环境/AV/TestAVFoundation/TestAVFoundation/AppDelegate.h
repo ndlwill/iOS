@@ -390,6 +390,32 @@
  }
  
  导出预设:
+ AVAssetExportSession提供了一个方法 allExportPresets，可以查看当前系统设备所有可用的导出预设名称，在 iOS 系统中大致分为 5 类
+ 质量预设
+ AVAssetExportPresetHighestQuality,
+ AVAssetExportPresetLowQuality,
+ AVAssetExportPresetMediumQuality
+
+ 尺寸预设
+ AVAssetExportPreset640x480,
+ AVAssetExportPreset960x540,
+ AVAssetExportPreset1280x720,
+ AVAssetExportPreset1920x1080,
+ AVAssetExportPreset3840x2160
+
+ HEVC 尺寸预设
+ AVAssetExportPresetHEVC1920x1080,
+ AVAssetExportPresetHEVC1920x1080WithAlpha,
+ AVAssetExportPresetHEVC3840x2160,
+ AVAssetExportPresetHEVC3840x2160WithAlpha,
+ AVAssetExportPresetHEVCHighestQuality,
+ AVAssetExportPresetHEVCHighestQualityWithAlpha
+
+ 纯音频预设
+ AVAssetExportPresetAppleM4A
+ 
+ 直通预设
+ AVAssetExportPresetPassthrouge
  
  */
 

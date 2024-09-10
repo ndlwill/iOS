@@ -1,0 +1,178 @@
+Lazy collections are similar to a regular collection but change the way how modifiers like map, filter, and reduce are processed.
+
+A lazy collection postpones calculations until they are actually needed.
+This can be beneficial in many different cases and prevent doing unneeded work if elements are never being asked in the end.
+
+Without using the lazy keyword, all items would be processed directly upon creation:
+var numbers: [Int] = [1, 2, 3, 6, 9]
+let modifiedNumbers = numbers
+    .filter { number in
+        print("Even number filter")
+        return number % 2 == 0
+    }.map { number -> Int in
+        print("Doubling the number")
+        return number * 2
+    }
+print(modifiedNumbers)
+/*
+Even number filter
+Even number filter
+Even number filter
+Even number filter
+Even number filter
+Doubling the number
+Doubling the number
+[4, 12]
+*/
+
+
+let modifiedLazyNumbers = numbers.lazy
+    .filter { number in
+        print("Lazy Even number filter")
+        return number % 2 == 0
+    }.map { number -> Int in
+        print("Lazy Doubling the number")
+        return number * 2
+    }
+print(modifiedLazyNumbers)
+// Prints:
+// LazyMapSequence>, Int>(_base: Swift.LazyFilterSequence>(_base: [1, 2, 3, 6, 9], _predicate: (Function)), _transform: (Function))
+
+In fact, the modifiers aren’t getting called at all! This is because we didn’t request any of the numbers yet. 
+Modifiers like filter and map will only be executed upon requesting an element:
+print(modifiedLazyNumbers.first!)
+/*
+Prints:
+Lazy Even number filter
+Lazy Even number filter
+Lazy Doubling the number
+4
+*/
+
+You can imagine this can save you from a lot of work if only a few items are used from a big collection.
+
+
+
+
+Handling output values on the go:
+Another benefit of lazy collections is the option to handle output values on the go.
+let usernames = ["Antoine", "Maaike", "Jaap", "Amber", "Lady", "Angie"]
+usernames
+    .filter { username in
+        print("filtered name")
+        return username.lowercased().first == "a"
+    }.forEach { username in
+        print("Fetch avatar for (username)")
+    }
+/*
+Prints:
+filtered name
+filtered name
+filtered name
+filtered name
+filtered name
+filtered name
+Fetch avatar for Antoine
+Fetch avatar for Amber
+Fetch avatar for Angie
+*/
+All names are filtered first, after which we fetch an avatar for all names starting with an A.
+
+
+we would be able to start fetching avatars on the go:
+let usernames = ["Antoine", "Maaike", "Jaap", "Amber", "Lady", "Angie"]
+usernames.lazy
+    .filter { username in
+        print("filtered name")
+        return username.lowercased().first == "a"
+    }.forEach { username in
+        print("Fetch avatar for (username)")
+    }
+/*
+Prints:
+filtered name
+Fetch avatar for Antoine
+filtered name
+filtered name
+filtered name
+Fetch avatar for Amber
+filtered name
+filtered name
+Fetch avatar for Angie
+*/
+
+It’s important to understand the differences between a lazy array and a regular array.
+
+
+Don’t over optimize:
+A collection having only 5 items won’t give you a lot of performance wins when using lazy.
+In most cases, lazy will only be useful when you’re only going to use a few items of a large collection.
+
+
+Lazy Collections don’t cache:
+A lazy collection postpones executing modifiers until they’re requested. 
+This also means that the outcome values aren’t stored in an output array. In fact, all modifiers are executed again on each item request:
+
+let modifiedLazyNumbers = numbers.lazy
+    .filter { number in
+        print("Lazy Even number filter")
+        return number % 2 == 0
+    }.map { number -> Int in
+        print("Lazy Doubling the number")
+        return number * 2
+    }
+print(modifiedLazyNumbers.first!)
+print(modifiedLazyNumbers.first!)
+/*
+Prints:
+Lazy Even number filter
+Lazy Even number filter
+Lazy Doubling the number
+4
+Lazy Even number filter
+Lazy Even number filter
+Lazy Doubling the number
+4
+*/
+
+
+While the same scenario with a non-lazy collection would compute output values only once:
+let modifiedNumbers = numbers
+    .filter { number in
+        print("Lazy Even number filter")
+        return number % 2 == 0
+    }.map { number -> Int in
+        print("Lazy Doubling the number")
+        return number * 2
+    }
+print(modifiedNumbers.first!)
+print(modifiedNumbers.first!)
+/*
+Prints:
+Lazy Even number filter
+Lazy Even number filter
+Lazy Even number filter
+Lazy Even number filter
+Lazy Even number filter
+Lazy Doubling the number
+Lazy Doubling the number
+4
+4
+*/
+
+
+Consider using standard Swift APIs over lazy arrays:
+For example, you might think it’s a smart decision to use lazy in this scenario as it prevents us from filter all numbers before we start using only the first element:
+let collectionOfNumbers = (1…1000000)
+let lazyFirst = collectionOfNumbers.lazy
+    .filter {
+        print("filter")
+        return $0 % 2 == 0
+    }.first
+print(lazyFirst) // Prints: 2
+
+
+However, in this case, we benefit from using first(where:) instead. It’s a standard Swift API and it allows us to benefit from all underlying (future) optimizations:
+
+let firstWhere = collectionOfNumbers.first(where: { $0 % 2 == 0 })
+print(firstWhere) // Prints: 2

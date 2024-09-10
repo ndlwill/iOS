@@ -1,0 +1,93 @@
+Binary Targets in Swift Package Manager (SPM) allow packages to declare xcframework bundles as available targets.
+The technique is often used to provide access to closed-source libraries and can improve CI performance by reducing time spent on fetching SPM repositories.
+
+
+What is a binary target?
+A binary target is explained as a target referencing a specific binary. 
+Binary frameworks are pre-compiled source code joined by a defined interface that allows it to be used in your apps. 
+A binary framework can be defined as static or dynamic.
+
+Swift Package Manager allows defining binary targets by referencing so-called xcframeworks.
+
+XCFramework:
+An XCFramework allows the distribution of multiple frameworks and libraries required to build for multiple platforms. 
+The included frameworks can be static or dynamic and define the supported platforms for the xcframework.
+
+Inside an XCFramework, you’ll find a framework for each supported architecture.
+The Info.plist file defines all available frameworks
+Your apps will only build for the platforms supported by the referenced xcframeworks.
+
+
+The downsides of using binary targets:
+Binary targets are great for distributing closed-source frameworks, but that also means debugging becomes harder. 
+Since you can only reference header files, you won’t be able to debug through the lines of code as you would otherwise be able to do when referencing packages as regular SPM targets.
+
+Secondly, an xcframework only supports the platforms for which it contains frameworks or libraries. 
+Platforms move forward by adopting new architectures, requiring you to update and rebuild the XCFramework libraries to add support for new architectures.
+
+
+The upsides of binary targets:
+A commonly mentioned benefit is that you can distribute frameworks as closed source. 
+A downside of Swift Package Manager is that the whole repository has to be downloaded before your project can start building.
+
+Swift Package Manager caches its fetched frameworks to optimize performance in a folder structure that looks as follows:
+.spm-build/repositories
+The repositories directory contains files for the Git tag matching the latest release you’ve fetched. Files are optimized using so-called Packfiles to save space and be more efficient. 
+Yet, it still means SPM has to fetch all the large files defined inside the repository.
+
+When dealing with large repositories you can start considering binary targets to help you speed up CI and SPM performance. 
+
+Defining a binary target
+You can define a binary target using a local path or a remote URL.
+The latter will let SPM fetch the binary up on fetching all other packages.
+The local path reference can be helpful for local packages or when you want to provide binary targets for frameworks that don’t offer xcframeworks themselves.
+
+Remote Binary Targets
+An example binary target referencing a remote URL can look as follows:
+.binaryTarget(
+    name: "SwiftLintBinary",
+    url: "https://github.com/realm/SwiftLint/releases/download/0.49.1/SwiftLintBinary-macos.artifactbundle.zip",
+    checksum: "227258fdb2f920f8ce90d4f08d019e1b0db5a4ad2090afa012fd7c2c91716df3"
+)
+This is an example of SwiftLint that provides a binary with each release.
+Remote binary targets require you to provide a checksum to verify that the hosted archive file matches the archive you declare in the manifest file. 
+Not all packages provide such checksum, so let me explain how you can define them yourself.
+
+In case your package comes with a Package.swift file you can execute the following command in your terminal:
+swift package compute-checksum FirebaseAnalytics.xcframework
+Prints: 547258fdb2f920f8ce90d4fkli9873mb0db5a4ad2090afa012fd7c2c91716ds1
+
+However, you might be running into an error:
+error: Could not find Package.swift in this directory or any of its parent directories.
+In this case, you can run the following command:
+shasum -a 256 SwiftLintBinary-macos.artifactbundle.zip | sed 's/ .*//'                 
+Prints: 227258fdb2f920f8ce90d4f08d019e1b0db5a4ad2090afa012fd7c2c91716df3
+
+
+Local Binary Targets:
+You can define local binary targets using a path inside your Package.swift file:
+
+.binaryTarget(
+    name: "FirebaseAnalytics",
+    path: "FirebaseAnalytics.xcframework"
+)
+Since you’re referencing a framework found locally, there’s no need to compare a checksum for security reasons.
+
+
+
+Creating an xcframework:
+$ xcodebuild archive -workspace Lottie.xcworkspace -scheme "Lottie (iOS)" -destination generic/platform=iOS -archivePath "archives/Lottie_iOS" SKIP_INSTALL=NO BUILD_LIBRARY_FOR_DISTRIBUTION=YES
+And another command for adding support for the Simulator:
+$ xcodebuild archive -workspace Lottie.xcworkspace -scheme "Lottie (iOS)" -destination "generic/platform=iOS Simulator" -archivePath "archives/Lottie_iOS_Simulator" SKIP_INSTALL=NO BUILD_LIBRARY_FOR_DISTRIBUTION=YES
+
+Lastly, I executed the following command to generate an xcframework:
+$ xcodebuild -create-xcframework -framework archives/Lottie_iOS.xcarchive/Products/Library/Frameworks/Lottie.framework -framework archives/Lottie_iOS_Simulator.xcarchive/Products/Library/Frameworks/Lottie.framework -output xcframeworks/Lottie.xcframework
+
+xcframework successfully written out to: /Users/avanderlee/Downloads/lottie-ios-master 2/xcframeworks/Lottie.xcframework
+
+The result of these commands is a new xcframework
+We can start referencing this xcframework locally inside our package manifest file:
+.binaryTarget(
+    name: "Lottie",
+    path: "Lottie.xcframework"
+)

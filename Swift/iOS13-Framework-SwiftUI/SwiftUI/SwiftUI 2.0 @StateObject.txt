@@ -1,0 +1,165 @@
+https://fatbobman.com/zh/posts/stateobject/
+
+
+我们可以方便的将值类型数据作为 View 的 Source of truth。
+在 SwiftUI 1.0 时代，如果想将引用类型作为 source of truth, 通常的方法是使用 @EnvironmentObject 或者 @ObservedObject。
+
+
+struct RootView:View{
+    var body: some View{
+        ContentView()
+            .environmentObject(Store())
+    }
+}
+
+struct ContentView: View {
+    @EnvironmentObject  var store1:Store
+    var body: some View {
+        Text("count:\(store.count)")
+    }
+}
+
+对于使用 @EnvironmentObject 注入的数据，由于其通常是在 SceneDelegate 或着当前 View 的父辈、祖先 View 上创建的，所以其生命周期必然不短于当前 View
+因此在使用中并不会发生由于生命周期不可预测而导致的异常。
+
+
+struct Test5: View {
+    @ObservedObject var store = Store()
+    var body: some View {
+        Text("count:\(store.count)")
+    }
+}
+对于上面的代码，乍看起来没有任何不妥，不过由于 @ObservedObject 的机制问题，
+其创建的实例并不被当前 View 所拥有（当前 View 无法管理其生命周期），因此在一些特殊的情况下会出现不可预料的结果。
+
+
+苹果在 SwiftUI 2.0 中添加了 @StateObject。顾名思义，它是 @State 的引用类型版本。
+
+苹果明确的表明 @StateObject 是被创建他的 View 所持有的，也就是说，实例的生命周期是完全可控的，是同创建它的 View 的生命周期一样的。
+
+###
+@StateObject 和 @ObservedObject 的区别就是实例是否被创建其的 View 所持有，其生命周期是否完全可控。
+###
+
+class StateObjectClass:ObservableObject{
+    let type:String
+    let id:Int
+    @Published var count = 0
+    init(type:String){
+        self.type = type
+        self.id = Int.random(in: 0...1000)
+        print("type:\(type) id:\(id) init")
+    }
+    deinit {
+        print("type:\(type) id:\(id) deinit")
+    }
+}
+
+struct CountViewState:View{
+    @StateObject var state = StateObjectClass(type:"StateObject")
+    var body: some View{
+        VStack{
+            Text("@StateObject count :\(state.count)")
+            Button("+1"){
+                state.count += 1
+            }
+        }
+    }
+}
+
+struct CountViewObserved:View{
+    @ObservedObject var state = StateObjectClass(type:"Observed")
+    var body: some View{
+        VStack{
+            Text("@Observed count :\(state.count)")
+            Button("+1"){
+                state.count += 1
+            }
+        }
+    }
+}
+
+struct Test1: View {
+    @State var count = 0
+    var body: some View {
+        VStack{
+            Text("刷新 CounterView 计数 :\(count)")
+            Button("刷新"){
+                count += 1
+            }
+            
+            CountViewState()
+                .padding()
+            
+            CountViewObserved()
+                .padding()
+            
+        }
+    }
+}
+
+
+#####
+2024.8.28:
+当进点击+1 按钮时，无论是 @StateObject 或是 @ObservedObject 其都表现出一致的状态，两个 View 都可以正常的显示当前按钮的点击次数，
+不过当点击刷新按钮时，CountViewState 中的数值仍然正常，不过 CountViewObserved 中的计数值被清零了。
+当点击刷新时，CountViewObserved 中的实例被重新创建了，并销毁了之前的实例（CountViewObserved 视图并没有被重新创建(但调用了init)，仅是重新求了 body 的值）。
+
+###
+init 仅表示 SwiftUI 创建了一个表述视图的实例，在视图的生存器中，SwiftUI 可能在很多的情况下重新创建实例，但并不表示一定会重新创建视图。
+视图只有在位置（结构化标识）或显式标识发生变化时才会重建。
+
+重新创建实例也不表示一定会对视图表述的 body 重新求值，只有在与视图有关的状态（ Sourth of truth）发生变化后，才会重新求值。
+###
+
+#####
+
+
+struct Test2: View {
+    @State var count = 0
+    var body: some View {
+        NavigationView{
+            List{
+                NavigationLink("@StateObject", destination: CountViewState())
+                NavigationLink("@ObservedObject", destination: CountViewObserved())
+            }
+        }
+    }
+}
+测试 2 中，点击 link 进入对应的 View 后通过点击+1 进行计数，然后返回父视图。当再次进入 link 后，
+@StateObject 对应的视图中计数清零（由于返回父视图，再次进入时会重新创建视图，所以会重新创建实例），
+不过@ObservedObject 对应的视图中计数是不清零的。
+在这个测试中，@ObservedObject 创建的实例生命周期长于当前的 View
+
+
+struct Test3: View {
+    @State private var showStateObjectSheet = false
+    @State private var showObservedObjectSheet = false
+    var body: some View {
+        List{
+            Button("Show StateObject Sheet"){
+                showStateObjectSheet.toggle()
+            }
+            .sheet(isPresented: $showStateObjectSheet) {
+                CountViewState()
+            }
+            Button("Show ObservedObject Sheet"){
+                showObservedObjectSheet.toggle()
+            }
+            .sheet(isPresented: $showObservedObjectSheet) {
+                CountViewObserved()
+            }   
+        }
+    }
+}
+测试 3 中点击按钮，在 sheet 中点击+1, 当再次进入 sheet 后，无论是 @StateObject 还是 @ObservedObject 对应的 View 中的计数都被清零。
+在这个测试中，@ObservedObject 创建的实例生命周期和 View 是一致的。
+
+三段代码，三种结果，这也就是为什么苹果要新增 @StateObject 的原因——让开发者可以明确地了解并掌握实例的生命周期，消除不确定性！
+
+
+
+
+StateObject 之所以能为实例创建稳定的生命周期，其根本原因是其为实例带来了唯一性：使用 @StateObject 标注的对象在视图的整个生命周期中是唯一的。
+这意味着即使视图重新渲染，对象也不会重新创建。
+但这也同时意味着，在某些我们不需要这种唯一性的场景时，@ObservedObject 才是正确的选择。

@@ -1,0 +1,195 @@
+https://www.avanderlee.com/swift/creating-swift-package-manager-framework/
+
+Swift Package Manager (SPM) is Apple’s answer for managing dependencies.
+
+Apple introduced Swift Package Manager in Swift 3.0, enabling us to manage Swift dependencies without a third-party solution.
+
+The Package Manager is integrated with the Swift build system to automate the process of downloading, compiling, and linking dependencies.
+
+
+Creating a Swift Package from the Terminal:
+$ mkdir SwiftLeePackage
+$ cd SwiftleePackage
+$ swift package init
+You can explore your package and run the tests by opening the Package.swift that will open your package in Xcode.
+
+You can also do the same in the Terminal directly be executing the following commands:
+$ swift build
+$ swift test
+
+
+Creating a Swift Package in Xcode:
+File ➞ New ➞ Package...
+
+
+How to version Swift packages?
+It’s important to know that the first line in the package file is required to stay:
+// swift-tools-version: 5.10
+It indicates which minimum version of Swift is required to build the Package.
+Packages that omit this special comment will default to tools version 3.1.0, which is probably not what you want.
+
+Swift Package Manager assigns a predefined minimum deployment version for each supported platform by default.
+// swift-tools-version: 5.10
+// The swift-tools-version declares the minimum version of Swift required to build this package.
+
+import PackageDescription
+
+let package = Package(
+    name: "SwiftLeePackage",
+    platforms: [
+        // Add support for all platforms starting from a specific version.
+        .macOS(.v13),
+        .iOS(.v13),
+        .watchOS(.v9),
+        .tvOS(.v16)
+    ],
+    products: [
+        // Products define the executables and libraries a package produces, making them visible to other packages.
+        .library(name: "SwiftLeePackage", targets: ["SwiftLeePackage"])
+    ],
+    targets: [
+        // Targets are the basic building blocks of a package, defining a module or a test suite.
+        // Targets can depend on other targets in this package and products from dependencies.
+        .target(name: "SwiftLeePackage"),
+        .testTarget(name: "SwiftLeePackageTests", dependencies: ["SwiftLeePackage"]),
+    ]
+)
+
+If you would like to only add support for iOS 15 and up, you can change the platforms property as follows:
+platforms: [
+    // Only add support for iOS 15 and up.
+    .iOS(.v15)
+]
+This will indicate to implementers that the package does not support all other platforms.
+
+
+Adding dependencies to your package:
+For example, we could add the Mocker framework as a dependency for our test target:
+
+// swift-tools-version: 5.10
+import PackageDescription
+
+let package = Package(
+    name: "SwiftLeePackage",
+    platforms: [
+        .iOS(.v15)
+    ],
+    products: [
+        .library(name: "SwiftLeePackage", targets: ["SwiftLeePackage"])
+    ],
+    dependencies: [
+        // 1. Define the Mocker dependency:
+        .package(url: "https://github.com/WeTransfer/Mocker.git", from: "3.0.2")
+    ],
+    targets: [
+        .target(name: "SwiftLeePackage", dependencies: []),
+
+        .testTarget(name: "SwiftLeePackageTests", dependencies: [
+            "SwiftLeePackage",
+            
+            // 2. Add Mocker as a dependency of the test target
+            "Mocker"
+        ])
+    ]
+)
+
+In this example, we’re adding the Mocker framework and telling the package manager to automatically fetch the version starting from 3.0.2. 
+This allows us to fetch versions like 3.0.3 or 3.1.0, 
+but not 4.0.0 as that’s the next major version that’s likely contains breaking changes.
+
+There’s plenty of options here to add specific requirements to your dependency, like using ranges or exact versions:
+.package(url: "https://github.com/WeTransfer/Mocker.git", from: "3.0.2"),
+.package(url: "https://github.com/WeTransfer/Mocker.git", exact: "3.0.2"),
+.package(url: "https://github.com/WeTransfer/Mocker.git", branch: "<branch_name>"),
+.package(url: "https://github.com/WeTransfer/Mocker.git", revision: "<commit_hash>")
+.package(url: "https://github.com/WeTransfer/Mocker.git", "3.0.0"..<"3.5.0"),
+.package(url: "https://github.com/WeTransfer/Mocker.git", .upToNextMajor(from: "3.0.2")),
+.package(url: "https://github.com/WeTransfer/Mocker.git", .upToNextMinor(from: "3.0.2"))
+
+Adding a dependency using a specific branch or revision
+You can also add specific branches or revisions if you’d like to fetch a dependency that is currently under development or not yet released:
+.package(url: "https://github.com/WeTransfer/Mocker.git", branch: "development"),
+.package(url: "https://github.com/WeTransfer/Mocker.git", revision: "e74b07278b926c9ec6f9643455ea00d1ce04a021")
+
+Adding a dependency using a local path for development
+Another common use-case is to add a local package during development to easily iterate and test it out. You can do this by specifying the path to the package:
+.package(path: "/your/local/package/path")
+
+
+Bundling resources with a Swift Package:
+Each SPM target can contain resources that will become available inside the Swift package code. Resources can contain anything like:
+Core Data files; for example, xcdatamodeld files
+Asset catalogs
+.lproj folders you use to provide localized resources
+
+.target(
+    name: "SwiftLeePackage",
+    resources: [
+        /// Option 1: Process all resources found in the Resources directory:
+        .process("Resources/"),
+        
+        /// Option 2: Only add a specific file:
+        .process("Resources/image.png"),
+        
+        /// Option 3: Copy a file without modifications:
+        .copy("Resources/raw_image.png")
+    ]
+)
+
+As demonstrated in the code example, there are several ways of adding resources. 
+For most use cases, using the process rule will be sufficient. It’s essential to realize Xcode might optimize your files. 
+For example, it might optimize images for a specific platform. If using the original files is necessary, consider using the copy rule.
+
+Excluding specific resources:
+.target(
+    name: "SwiftLeePackage",
+    exclude: ["Readme.md"],
+    resources: [
+        .process("Resources/")
+    ]
+)
+
+Accessing resources in code using the module bundle:
+You can access any resources using the Bundle.module accessor. 
+Note that the module property will only become available if there are any resources rules defined in the package target. 
+For example, we could load an image with the following path: Resources/sample_image.png as follows:
+UIImage(named: "sample_image", in: .module, compatibleWith: nil)
+
+It’s important to note that the following code won’t work for SwiftUI in packages:
+var body: some View {
+    Image("sample_image", bundle: .module)
+}
+
+Instead, you’ll have to rely on UIKit and load the image as follows:
+import SwiftUI
+import UIKit
+
+struct ContentView: View {
+    
+    var image: UIImage {
+        return UIImage(named: "sample_image", in: .module, compatibleWith: nil)!
+    }
+    
+    var body: some View {
+        Image(uiImage: image)
+    }
+}
+
+This is unfortunate, but the fix is simple enough to work with. 
+For any other resources, you can rely on accessing resources directly using the Bundle:
+Bundle.module.url(forResource: "sample_text_resource", withExtension: "txt")
+
+
+Adding a binary target to a package:
+A binary framework can be defined as static or dynamic.
+https://www.avanderlee.com/swift/binary-targets-swift-package-manager/
+
+
+Publishing your Swift Package:
+To publish your Swift package you can simply create a new tag on your Git repository. 
+As you’ve seen in the dependencies section, you can add references to dependencies using Git URLs.
+
+Swift Package Index
+https://swiftpm.co/
+
+https://github.com/login?return_to=https%3A%2F%2Fgithub.com%2FSwiftPackageIndex%2FPackageList%2Fissues%2Fnew%2Fchoose

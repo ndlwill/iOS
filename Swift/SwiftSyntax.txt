@@ -1,0 +1,119 @@
+https://www.avanderlee.com/swift/swiftsyntax-parse-and-generate-swift-source-code/
+
+SwiftSyntax: Parse and Generate Swift source code
+
+SwiftSyntax is a collection of Swift libraries that allow you to parse, inspect, generate, and adjust Swift source code.
+https://github.com/swiftlang/swift-syntax
+The SwiftSyntax library is the foundation upon which tools like the Swift parser, swift-format, and Swift macros are built.
+
+SwiftSyntax releases align with Swift and Xcode releases using a matching tag name. 
+For example, the 508.0.0 tag release aligns with Swift 5.8, which comes with Xcode 14.3.
+
+You can add SwiftSyntax as a dependency via Swift Package Manager:
+// swift-tools-version:5.9
+import PackageDescription
+
+let package = Package(
+    name: "MyTool",
+    dependencies: [
+        .package(url: "https://github.com/apple/swift-syntax.git", exact: "<#Specify Release tag#>"),
+    ],
+    targets: [
+        .target(name: "MyTool", dependencies: [
+            .product(name: "SwiftSyntax", package: "swift-syntax"),
+        ]),
+    ]
+)
+The package dependency definition should link to the specific tag release.
+
+
+Exploring the Abstract Syntax Tree (AST) of Swift source code:
+SwiftSyntax creates an Abstract Syntax Tree (AST) of Swift source code, which allows you to interact with a high-level, safe, and efficient API.
+
+A great way to familiarize yourself with such a tree is by using swift-ast-explorer.com
+https://swift-ast-explorer.com/
+
+You can write your Swift code on the left and explore the syntax tree on the right side.
+If you hover over an item, you’ll get extra details like child items and error tokens.
+
+
+Using a Syntax Tree when writing Macros:
+Especially when you’re writing with attached macros, 
+you’ll get a declaration as input via the static method.
+For example, when you’re writing a member macro:
+public static func expansion<Declaration, Context>(
+    of node: AttributeSyntax,
+    providingMembersOf declaration: Declaration, /// Contains the syntax declaration.
+    in context: Context
+) throws -> [DeclSyntax] where Declaration : DeclGroupSyntax, Context : MacroExpansionContext
+
+The Swift AST Explorer showed previously that our enum returns an EnumDeclSyntax item. 
+We could use that as a guard statement to ensure our macro only allows enum attachments:
+
+guard declaration.is(EnumDeclSyntax.self) else {
+    throw CustomError.message("Only works with enums")
+}
+
+The compiler will show the thrown error in case we attach our macro to a struct
+
+
+Generating Swift Source Code:
+While SwiftSyntax works great for inspecting Swift code, you will also want to generate Swift code when working with features like Macros.
+We want to create a macro that will add conformance to the Identifiable protocol for enums without associated values.
+In this case, we want to attach the following code as a member:
+var id: Self { self }
+I recommend pasting the code you want to return into the AST Explorer to use as a source for writing the syntax to return.
+The above example translates to the following syntax tree written in Swift:
+DeclSyntax(
+    VariableDeclSyntax(bindingSpecifier: .keyword(.var), bindings: PatternBindingListSyntax(
+        [
+            PatternBindingSyntax(
+                pattern: IdentifierPatternSyntax(identifier: .identifier("id")),
+                typeAnnotation: TypeAnnotationSyntax(colon: .colonToken(), type: IdentifierTypeSyntax(name: .keyword(.`Self`))),
+                accessorBlock: AccessorBlockSyntax(
+                    accessors: AccessorBlockSyntax.Accessors(
+                        AccessorDeclListSyntax(
+                            [
+                                AccessorDeclSyntax(
+                                    accessorSpecifier: .keyword(.get),
+                                    body: CodeBlockSyntax(
+                                        leftBrace: .leftBraceToken(leadingTrivia: .space),
+                                        statements: CodeBlockItemListSyntax(
+                                            [
+                                                CodeBlockItemSyntax(item: .stmt(
+                                                    StmtSyntax(
+                                                        ReturnStmtSyntax(
+                                                            returnKeyword: .keyword(.return),
+                                                            expression: DeclReferenceExprSyntax(baseName: .keyword(.`self`))
+                                                        )
+                                                    )
+                                                ))
+                                            ]
+                                        ),
+                                        rightBrace: .rightBraceToken(leadingTrivia: .newline)
+                                    ))
+                            ]
+                        )
+                    )
+                )
+            )
+        ]
+    ))
+)
+The above would instead translate to the following code:
+
+let variable = try VariableDeclSyntax("var id: Self") {
+    StmtSyntax("return self")
+}
+let declaration = DeclSyntax(variable)
+
+
+
+After cloning the repository, you need to run Product → Build Documentation, after which the documentation will show up
+
+https://github.com/swiftlang/swift-syntax/tree/main/Sources/SwiftSyntax/Documentation.docc
+
+
+SwiftSyntax allows you to parse and generate Swift source code, especially useful when writing custom Macros. 
+Using the AST explorer, you’ll be able to learn how source code translates into an Abstract Syntax Tree. 
+Instead of writing complex combinations of syntax nodes, it’s recommended to use trailing closures and result builders.

@@ -1,0 +1,307 @@
+==================================================cmake 和 cmake --build
+运行 cmake 命令时，CMake 会进行配置阶段，主要目的是生成构建系统（如 Makefile、Ninja build 文件、Visual Studio 项目文件等）。具体来说，执行 cmake 命令会:
+读取 CMakeLists.txt 文件：分析项目的 CMake 配置文件，了解项目的结构和依赖关系。
+选择生成器：根据指定的生成器（如 Ninja、Unix Makefiles、Visual Studio 等）生成适合该平台和构建系统的文件。
+配置项目：根据提供的预设（如 configurePresets）设置各种缓存变量、环境变量等，准备构建所需的所有信息。
+生成构建文件：在指定的二进制目录中生成构建系统文件，这些文件将用于后续的构建阶段。
+
+运行 cmake --build 命令时，CMake 进入构建阶段，主要目的是实际编译和链接项目中的源代码，生成可执行文件或库。具体来说，执行 cmake --build 命令会:
+调用构建工具：根据之前 cmake 命令生成的构建文件，调用相应的构建工具（如 make、ninja、MSBuild 等）。
+执行构建目标：编译源文件、链接生成目标文件（如可执行文件、静态库或动态库）。
+处理依赖关系：根据构建系统中的依赖关系图，确保所有依赖关系正确处理，按顺序编译和链接。
+
+==================================================JSON Schema:
+JSON Schema 本身是用 JSON 编写的
+它只是一种用于“描述其他数据结构”的声明性格式。
+简明地描述数据的表面结构并根据它自动验证数据很容易
+{
+  "first_name": "George",
+  "last_name": "Washington",
+  "birthday": "1732-02-22",
+  "address": {
+    "street_address": "3200 Mount Vernon Memorial Highway",
+    "city": "Mount Vernon",
+    "state": "Virginia",
+    "country": "United States"
+  }
+}
+以下 JSON Schema 片段描述了上面示例的结构。
+{
+  "type": "object",
+  "properties": {
+    "first_name": { "type": "string" },
+    "last_name": { "type": "string" },
+    "birthday": { "type": "string", "format": "date" },
+    "address": {
+      "type": "object",
+      "properties": {
+        "street_address": { "type": "string" },
+        "city": { "type": "string" },
+        "state": { "type": "string" },
+        "country": { "type" : "string" }
+      }
+    }
+  }
+}
+
+
+Schema:
+This file provides a machine-readable JSON schema for the CMakePresets.json format.
+https://cmake.org/cmake/help/v3.29/_downloads/3e2d73bff478d88a7de0de736ba5e361/schema.json
+
+==================================================cmake-presets
+
+New in version 3.19.
+
+#####
+One problem that CMake users often face is sharing settings with other people for common ways to configure a project.
+This may be done to support CI builds, or for users who frequently use the same build.
+CMake supports two main files, CMakePresets.json and CMakeUserPresets.json, that allow users to specify common configure options and share them with others.
+CMake also supports files included with the include field.
+#####
+
+CMakePresets.json and CMakeUserPresets.json live in the project's root directory.
+They both have exactly the same format, and both are optional (though at least one must be present if --preset is specified).
+CMakePresets.json is meant to specify project-wide build details, while CMakeUserPresets.json is meant for developers to specify their own local build details.
+
+CMakePresets.json may be checked into a version control system, and CMakeUserPresets.json should NOT be checked in.
+For example, if a project is using Git, CMakePresets.json may be tracked, and CMakeUserPresets.json should be added to the .gitignore.
+
+
+Format:
+The files are a JSON document with an object as the root:
+
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 23,
+    "patch": 0
+  },
+  "include": [
+    "otherThings.json",
+    "moreThings.json"
+  ],
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Default Config",
+      "description": "Default build using Ninja generator",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/default",
+      "cacheVariables": {
+        "FIRST_CACHE_VARIABLE": {
+          "type": "BOOL",
+          "value": "OFF"
+        },
+        "SECOND_CACHE_VARIABLE": "ON"
+      },
+      "environment": {
+        "MY_ENVIRONMENT_VARIABLE": "Test",
+        "PATH": "$env{HOME}/ninja/bin:$penv{PATH}"
+      },
+      "vendor": {
+        "example.com/ExampleIDE/1.0": {
+          "autoFormat": true
+        }
+      }
+    },
+    {
+      "name": "ninja-multi",
+      "inherits": "default",
+      "displayName": "Ninja Multi-Config",
+      "description": "Default build using Ninja Multi-Config generator",
+      "generator": "Ninja Multi-Config"
+    },
+    {
+      "name": "windows-only",
+      "inherits": "default",
+      "displayName": "Windows-only configuration",
+      "description": "This build is only available on Windows",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "output": {"outputOnFailure": true},
+      "execution": {"noTestsAction": "error", "stopOnFailure": true}
+    }
+  ],
+  "packagePresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "generators": [
+        "TGZ"
+      ]
+    }
+  ],
+  "workflowPresets": [
+    {
+      "name": "default",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "default"
+        },
+        {
+          "type": "build",
+          "name": "default"
+        },
+        {
+          "type": "test",
+          "name": "default"
+        },
+        {
+          "type": "package",
+          "name": "default"
+        }
+      ]
+    }
+  ],
+  "vendor": {
+    "example.com/ExampleIDE/1.0": {
+      "autoFormat": false
+    }
+  }
+}
+
+
+The root object recognizes the following fields:
+$schema:
+An optional string that provides a URI to the JSON schema that describes the structure of this JSON document.
+
+version:
+A required integer representing the version of the JSON schema. The supported versions are:
+1
+New in version 3.19.
+2
+New in version 3.20.
+3
+New in version 3.21.
+4
+New in version 3.23.
+5
+New in version 3.24.
+6
+New in version 3.25.
+7
+New in version 3.27.
+8
+New in version 3.28.
+
+cmakeMinimumRequired:
+An optional object representing the minimum version of CMake needed to build this project. This object consists of the following fields:
+major
+An optional integer representing the major version.
+minor
+An optional integer representing the minor version.
+patch
+An optional integer representing the patch version.
+
+include:
+An optional array of strings representing files to include. 
+If the filenames are not absolute, they are considered relative to the current file. This is allowed in preset files specifying version 4 or above.
+CMakePresets.json and CMakeUserPresets.json can include other files with the include field in file version 4 and later. 
+Files included by these files can also include other files. 
+If CMakePresets.json and CMakeUserPresets.json are both present, CMakeUserPresets.json implicitly includes CMakePresets.json, 
+even with no include field, in all versions of the format.
+If a preset file contains presets that inherit from presets in another file, the file must include the other file either directly or indirectly. Include cycles are not allowed among files. 
+If a.json includes b.json, b.json cannot include a.json. 
+However, a file may be included multiple times from the same file or from different files.
+Files directly or indirectly included from CMakePresets.json should be guaranteed to be provided by the project. 
+CMakeUserPresets.json may include files from anywhere.
+Starting from version 7, the include field supports macro expansion, but only $penv{} macro expansion.
+
+configurePresets:
+An optional array of Configure Preset objects. This is allowed in preset files specifying version 1 or above.
+
+buildPresets:
+An optional array of Build Preset objects. This is allowed in preset files specifying version 2 or above.
+
+testPresets:
+An optional array of Test Preset objects. This is allowed in preset files specifying version 2 or above.
+
+packagePresets:
+An optional array of Package Preset objects. This is allowed in preset files specifying version 6 or above.
+
+workflowPresets:
+An optional array of Workflow Preset objects. This is allowed in preset files specifying version 6 or above.
+
+
+
+Configure Preset:
+Each entry of the configurePresets array is a JSON object that may contain the following fields:
+name:
+A required string representing the machine-friendly name of the preset. 
+This identifier is used in the cmake --preset option. 
+There must not be two configure presets in the union of CMakePresets.json and CMakeUserPresets.json in the same directory with the same name. 
+However, a configure preset may have the same name as a build, test, package, or workflow preset.
+hidden:
+An optional boolean specifying whether or not a preset should be hidden. 
+If a preset is hidden, it cannot be used in the --preset= argument, will not show up in the CMake GUI, 
+and does not have to have a valid generator or binaryDir, even from inheritance. 
+hidden presets are intended to be used as a base for other presets to inherit via the inherits field.
+inherits:
+An optional array of strings representing the names of presets to inherit from. 
+This field can also be a string, which is equivalent to an array containing one string.
+The preset will inherit all of the fields from the inherits presets by default (except name, hidden, inherits, description, and displayName), 
+but can override them as desired. If multiple inherits presets provide conflicting values for the same field, 
+the earlier preset in the inherits array will be preferred.
+A preset can only inherit from another preset that is defined in the same file or in one of the files it includes (directly or indirectly). 
+Presets in CMakePresets.json may not inherit from presets in CMakeUserPresets.json.
+displayName:
+An optional string with a human-friendly name of the preset.
+description:
+An optional string with a human-friendly description of the preset.
+generator:
+An optional string representing the generator to use for the preset. 
+If generator is not specified, it must be inherited from the inherits preset (unless this preset is hidden). 
+In version 3 or above, this field may be omitted to fall back to regular generator discovery procedure.
+Note that for Visual Studio generators, unlike in the command line -G argument, 
+you cannot include the platform name in the generator name. Use the architecture field instead.
+binaryDir:
+An optional string representing the path to the output binary directory. 
+This field supports macro expansion. If a relative path is specified, it is calculated relative to the source directory. 
+If binaryDir is not specified, it must be inherited from the inherits preset (unless this preset is hidden). 
+In version 3 or above, this field may be omitted.
+cacheVariables:
+An optional map of cache variables. The key is the variable name (which may not be an empty string), 
+and the value is either null, a boolean (which is equivalent to a value of "TRUE" or "FALSE" and a type of BOOL), 
+a string representing the value of the variable (which supports macro expansion), 
+or an object with the following fields:
+type
+An optional string representing the type of the variable.
+value
+A required string or boolean representing the value of the variable. 
+A boolean is equivalent to "TRUE" or "FALSE". This field supports macro expansion.
+Cache variables are inherited through the inherits field, and the preset's variables will be the union of its own cacheVariables and the cacheVariables from all its parents. If multiple presets in this union define the same variable, the standard rules of inherits are applied. 
+Setting a variable to null causes it to not be set, even if a value was inherited from another preset.
+environment:
+An optional map of environment variables. The key is the variable name (which may not be an empty string), 
+and the value is either null or a string representing the value of the variable. 
+Each variable is set regardless of whether or not a value was given to it by the process's environment. 
+This field supports macro expansion, and environment variables in this map may reference each other, and may be listed in any order, 
+as long as such references do not cause a cycle (for example, if ENV_1 is $env{ENV_2}, ENV_2 may not be $env{ENV_1}.)
+Environment variables are inherited through the inherits field, and the preset's environment will be the union of its own environment and the environment from all its parents. If multiple presets in this union define the same variable, 
+the standard rules of inherits are applied. Setting a variable to null causes it to not be set, even if a value was inherited from another preset.
+
+
+Build Preset:
+Each entry of the buildPresets array is a JSON object that may contain the following fields:
+configurePreset:
+An optional string specifying the name of a configure preset to associate with this build preset. 
+If configurePreset is not specified, it must be inherited from the inherits preset (unless this preset is hidden). 
+The build directory is inferred from the configure preset, so the build will take place in the same binaryDir that the configuration did.

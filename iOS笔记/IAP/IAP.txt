@@ -11,6 +11,12 @@ StoreKit manages all communication with Apple’s iTunes servers to get product 
 static let AppleVerifyReceiptUrl = "https://buy.itunes.apple.com/verifyReceipt"
 static let AppleVerifyReceiptInSandboxUrl = "https://sandbox.itunes.apple.com/verifyReceipt"
 
+
+
+originalTransactionId:
+Tip
+If you maintain a database to manage your subscribers, save the original transaction identifier to uniquely identify auto-renewable subscriptions.
+
 ============================================================2021.4.16
 ###
 点击恢复购买，走paymentQueue(_ queue: SKPaymentQueue, updatedTransactions transactions: [SKPaymentTransaction])的transaction.transactionState==.restored，然后没有finishTransaction
@@ -789,3 +795,67 @@ purchased: transaction = <SKPaymentTransaction: 0x28b24d4f0> productIdentifier =
 restored: transaction = <SKPaymentTransaction: 0x2883898b0> productIdentifier = com.fvcorp.group.auto.m1.AJSPremium transactionIdentifier = Optional("2000000362816926") originalTransactionIdentifier = Optional("2000000362806872")
 transaction = <SKPaymentTransaction: 0x2883898b0> transactionIdentifier = 2000000362816926 original.transactionIdentifier = 2000000362806872 state = 3 （purchased: 1, restored: 3）
 thread = <_NSMainThread: 0x281490700>{number = 1, name = main} Transactions count = 1 purchasedTransactions count = 0
+
+
+
+==================================================2024.8.2 新账号
+现购买非续订订阅，再购买自动续订订阅，再自动走1笔自动续订订阅
+
+// 购买非续订订阅
+[iap--verifyTransaction(with:isRealPurchasing:productCurrency:productPrice:callback:)] 
+params = ["productPrice": "30", 
+"productCurrency": "CNY", 
+"transactionId": "2000000674394571", 
+"originalTransactionId": "", 
+"_client_login": "u.b24swdwpaj2|123f16bf940f9106982c46f19d624868.1722556800"]
+
+结论:
+restore:
+/*
+非续订订阅 restore 不会生成 SKPaymentTransaction。此时 queue.transactions.count = 0
+*/
+
+--------------------------------------------------
+
+// 购买自动续订订阅
+[iap--verifyTransaction(with:isRealPurchasing:productCurrency:productPrice:callback:)] 
+params = ["_client_login": "u.b24swdwpaj2|123f16bf940f9106982c46f19d624868.1722556800", 
+"originalTransactionId": "", 
+"transactionId": "2000000674474593", 
+"productPrice": "25", 
+"productCurrency": "CNY"]
+
+// restore
+transaction = <SKPaymentTransaction: 0x28eb45b20>
+transactionIdentifier = 2000000674475399
+original.transactionIdentifier = 2000000674474593
+state = 3
+
+结论:
+restore恢复的订单的原始交易号就是购买自动续订订阅的交易号，并且恢复的订单的交易号与自动续订订阅的交易号不一致。
+
+
+--------------------------------------------------
+// 自动走的1笔自动续订订阅
+[iap--verifyTransaction(with:isRealPurchasing:productCurrency:productPrice:callback:)] 
+params = ["_client_login": "u.b24swdwpaj2|123f16bf940f9106982c46f19d624868.1722556800", 
+"productPrice": "25", 
+"productCurrency": "CNY", 
+"originalTransactionId": "2000000674474593", 
+"transactionId": "2000000674478326"]
+
+// restore （此时一共有两笔，加上购买的自动续订订阅那笔）
+[D][iap--paymentQueueRestoreCompletedTransactionsFinished(_:)] 
+transaction = <SKPaymentTransaction: 0x28cd38300>
+transactionIdentifier = 2000000674481516
+original.transactionIdentifier = 2000000674474593
+state = 3
+
+[D][iap--paymentQueueRestoreCompletedTransactionsFinished(_:)] 
+transaction = <SKPaymentTransaction: 0x28cd38370>
+transactionIdentifier = 2000000674481517
+original.transactionIdentifier = 2000000674474593
+state = 3
+
+结论:
+每次restore，恢复的订单的交易号都会改变

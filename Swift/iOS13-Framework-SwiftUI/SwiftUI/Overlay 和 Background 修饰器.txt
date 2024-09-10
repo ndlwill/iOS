@@ -1,0 +1,209 @@
+overlay 和 ZStack 区别，主要体现在以下几点：
+视图间的关系不同
+对齐的逻辑不同
+整体呈现尺寸在布局中的作用不同
+
+
+
+在 ZStack 中，所有视图处于同一层级，由 zIndex 和声明顺序决定显示顺序。
+而在使用 overlay 的场景中，视图间存在主从关系，overlay 修饰的视图将作为主视图。
+
+
+
+1. 谁与谁对齐:
+ZStack 和 overlay 如何处理视图对齐时，我们可以通过以下示例理解这两者之间的区别
+
+// ZStack
+ZStack(alignment: .topTrailing) {
+  blueRectangle
+  yellowRectangle
+}
+
+// overlay
+blueRectangle
+  .overlay(alignment: .topTrailing) {
+    yellowRectangle
+  }
+
+
+ZStack 中的 blueRectangle 和 yellowRectangle 是并列关系。在这里，SwiftUI 将在 topTrailing 位置对齐 ZStack 内的所有视图（此例中有两个），并按声明顺序进行堆叠。
+overlay 中的 blueRectangle 作为主视图，yellowRectangle 作为从视图。SwiftUI 首先定位 blueRectangle，然后将 yellowRectangle 的 topTrailing 与 blueRectangle 的 topTrailing 对齐。
+
+
+构建一个 200 x 200 的矩形，并在其 topTrailing 和 bottomLeading 位置放置一个半径为 30 的圆形，使圆形的中心点与矩形的角对齐。
+
+
+使用 overlay 来描述这个场景将非常清晰和简单:
+struct Demo1View: View {
+  var body: some View {
+    blueRectangle
+      .overlay(alignment: .topTrailing) {
+        yellowCircle
+          .alignmentGuide(.top) { $0[.top] + $0.width / 2 }
+          .alignmentGuide(.trailing) { $0[.trailing] - $0.height / 2 }
+      }
+      .overlay(alignment: .bottomLeading) {
+        yellowCircle
+          .offset(x: -30, y: 30) // 在清楚视图的具体尺寸情况下
+      }
+  }
+
+  var blueRectangle: some View {
+    Rectangle()
+      .foregroundStyle(.blue.gradient)
+      .frame(width: 200, height: 200)
+  }
+
+  var yellowCircle: some View {
+    Circle()
+      .foregroundStyle(.yellow.gradient)
+      .frame(width: 60, height: 60)
+  }
+}
+
+而在仅使用一个 ZStack 的方案中，如果视图尺寸未知，通过调整对齐指南（alignmentGuide）或偏移（offset）来定位会变得极其复杂。
+
+###
+鉴于 overlay 和 ZStack 在对齐逻辑上的根本不同，
+当需要以某个视图为主，其他视图以此为基准进行布局时，overlay 和 background 显然是更优的选择。
+###
+
+
+
+2. 尺寸由谁做主
+需求尺寸（Required Size）指的是视图在布局系统中期望的大小，这通常是有足够空间的条件下视图的最终尺寸。
+某个视图的需求尺寸会影响到其余视图的可用空间和布局位置。
+
+在一个矩形的 topTrailing 处摆放一个圆形:
+通过 ZStack 加上 alignmentGuide 实现这一效果时，需求尺寸为 230 x 230，即矩形的尺寸加上球的半径。
+
+ZStack(alignment: .topTrailing) {
+  blueRectangle
+  yellowCircle
+    .alignmentGuide(.top){ $0[.top] + $0.height / 2}
+    .alignmentGuide(.trailing){ $0[.trailing] - $0.width / 2}
+}
+.border(.red, width: 2)
+这是因为 ZStack 会将其内部所有视图的综合尺寸作为其需求尺寸。
+
+
+而采用 overlay 的方法则完全不同
+blueRectangle
+  .overlay(alignment: .topTrailing) {
+    yellowCircle
+      .alignmentGuide(.top) { $0[.top] + $0.height / 2 }
+      .alignmentGuide(.trailing) { $0[.trailing] - $0.width / 2 }
+  }
+  .border(.red, width: 2)
+
+使用 overlay 时，无论嵌入其中（ overlay 当中 ）的视图有多大，布局系统都只会将主视图的需求尺寸作为整个复合视图的尺寸。
+
+
+
+Overlay 是 GeometryReader 的最佳伙伴:
+由于 overlay 和 background 在布局中与主视图保持一种主从关系，它们常被用作获取主视图几何信息的首选工具
+
+blueRectangle
+  .background(
+    GeometryReader{ proxy in
+      Color.clear // 创建于主视图尺寸一致的空白视图
+        .task(id:proxy.size){
+          size = proxy.size
+        }
+    }
+  )
+
+利用 overlay 和 background 不改变复合视图需求尺寸的特性，我们可以在其中绘制超出主视图尺寸的内容，同时获取这些内容的尺寸信息，而不影响整体布局。
+这使得在视图尺寸超出主视图范围时，其对整体布局的影响被有效隔离。
+
+使用这一技术在 SwiftUI 中根据视图的高度动态调整 sheet 的高度。通过 background 预先获取即将展示的 sheet 视图的高度，并据此调整 presentationDetents：
+struct AdaptiveSheetModifier<SheetContent: View>: ViewModifier {
+  @Binding var isPresented: Bool
+  @State private var subHeight: CGFloat = 0
+  var sheetContent: SheetContent
+
+  init(isPresented: Binding<Bool>, @ViewBuilder _ content: () -> SheetContent) {
+    _isPresented = isPresented
+    sheetContent = content()
+  }
+
+  func body(content: Content) -> some View {
+    content
+      .background(
+        sheetContent // 在 background 中预先绘制 sheet 视图的内容，不会影响 content 的需求尺寸
+          .background( // 在另一个 background 获取预先绘制的视图尺寸
+            GeometryReader { proxy in
+              Color.clear
+                .task(id: proxy.size.height) {
+                  subHeight = proxy.size.height
+                }
+            }
+          )
+          .hidden() // 隐藏这个预先绘制的视图
+      )
+      .sheet(isPresented: $isPresented) {
+        sheetContent
+          .presentationDetents([.height(subHeight)])
+      }
+      .id(subHeight)
+  }
+}
+
+
+
+主视图的唯一性:
+使用多个视图修饰器对单一视图进行修饰时，会产生一个庞大且复杂的类型层级。
+Rectangle().foregroundStyle(.blue)
+.frame(width: 200, height: 200)
+.overlay(
+Circle().foregroundStyle(.yellow)
+    .frame(width: 60, height: 60)
+)
+.overlay(
+Circle().foregroundStyle(.red)
+    .frame(width: 40, height: 40)
+)
+
+此代码生成的类型如下:
+ModifiedContent<
+  ModifiedContent<
+    ModifiedContent<
+      ModifiedContent<
+        Rectangle, _ForegroundStyleModifier<Color>
+      >, _FrameLayout
+    >, _OverlayModifier<
+      ModifiedContent<
+        ModifiedContent<
+          Circle, _ForegroundStyleModifier<Color>
+        >, _FrameLayout
+      >
+    >
+  >, _OverlayModifier<
+    ModifiedContent<
+      ModifiedContent<
+        Circle, _ForegroundStyleModifier<Color>
+      >, _FrameLayout
+    >
+  >
+>
+
+最外层的 overlay 是作用于包括 Rectangle 和第一个 overlay 在内的复合视图上
+无论对视图应用了多少层 overlay 或 background，它们都将该视图视为主视图。开发者只需关注 background 或 overlay 的声明顺序即可。
+
+RootView()
+  .overlay(A())
+  .background(D())
+  .overlay(B())
+  .background(C())
+
+最终的渲染顺序会是:
+C -> D -> RootView -> A -> B
+
+
+Background 的 SafeArea 溢出特性:
+public func background<S>(_ style: S, ignoresSafeAreaEdges edges: Edge.Set = .all) -> some View where S : ShapeStyle
+
+这个构造方法允许遵守 ShapeStyle 协议的背景视图，通过 ignoresSafeAreaEdges 参数控制其是否延伸到安全区边缘。
+这一功能在处理全屏视图或需要特别处理安全区的布局时尤为有用。
+
+

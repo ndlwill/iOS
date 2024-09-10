@@ -1,1 +1,298 @@
-在这篇文章中，您了解了分离任务和非结构化任务之间的区别。您了解到非结构化任务会继承上下文，而分离任务则不会。您还了解到，分离任务和非结构化任务都不会成为其上下文的子任务，因为它们不参与结构化并发。
+KVC的全称是Key-Value Coding
+键值编码是由NSKeyValueCoding非正式协议启用的一种机制，对象采用该协议来间接访问其属性
+即可以通过一个字符串key来访问某个属性。这种间接访问机制补充了实例变量及其相关的访问器方法所提供的直接访问。
+
+KVC 相关API:
+//直接通过Key来取值
+- (nullable id)valueForKey:(NSString *)key;
+
+//通过Key来设值
+- (void)setValue:(nullable id)value forKey:(NSString *)key;
+
+//通过KeyPath来取值
+- (nullable id)valueForKeyPath:(NSString *)keyPath; 
+
+//通过KeyPath来设值                 
+- (void)setValue:(nullable id)value forKeyPath:(NSString *)keyPath;  
+
+
+其他方法:
+//默认返回YES，表示如果没有找到Set<Key>方法的话，会按照_key，_iskey，key，iskey的顺序搜索成员，设置成NO就不这样搜索
++ (BOOL)accessInstanceVariablesDirectly;
+
+//KVC提供属性值正确性验证的API，它可以用来检查set的值是否正确、为不正确的值做一个替换值或者拒绝设置新值并返回错误原因。
+- (BOOL)validateValue:(inout id __nullable * __nonnull)ioValue forKey:(NSString *)inKey error:(out NSError **)outError;
+
+//这是集合操作的API，里面还有一系列这样的API，如果属性是一个NSMutableArray，那么可以用这个方法来返回。
+- (NSMutableArray *)mutableArrayValueForKey:(NSString *)key;
+
+//如果Key不存在，且KVC无法搜索到任何和Key有关的字段或者属性，则会调用这个方法，默认是抛出异常。
+- (nullable id)valueForUndefinedKey:(NSString *)key;
+
+//和上一个方法一样，但这个方法是设值。
+- (void)setValue:(nullable id)value forUndefinedKey:(NSString *)key;
+
+//如果你在SetValue方法时面给Value传nil，则会调用这个方法
+- (void)setNilValueForKey:(NSString *)key;
+
+//输入一组key,返回该组key对应的Value，再转成字典返回，用于将Model转到字典。
+- (NSDictionary<NSString *, id> *)dictionaryWithValuesForKeys:(NSArray<NSString *> *)keys;
+
+
+KVC 设值 底层原理:
+针对对象属性的赋值，一般有以下两种方式:
+直接通过setter方法赋值
+通过KVC键值编码的相关API赋值
+
+LGPerson *person = [[LGPerson alloc] init];
+// 1、一般setter 方法
+person.name      = @"CJL_哈哈";
+// 2、KVC方式
+[person setValue:@"CJL_嘻嘻" forKey:@"name"]; 
+
+
+https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/KeyValueCoding/index.html#//apple_ref/doc/uid/10000107-SW1
+setValue:forKey:
+当调用setValue:forKey:设置属性value时，其底层的执行流程为
+【第一步】首先查找是否有这三种setter方法，按照查找顺序为set<Key>：-> _set<Key> -> setIs<Key>
+如果有其中任意一个setter方法，则直接设置属性的value（主注意：key是指成员变量名，首字符大小写需要符合KVC的命名规范）
+如果都没有，则进入【第二步】
+【第二步】：如果没有第一步中的三个简单的setter方法，则查找accessInstanceVariablesDirectly是否返回YES，
+如果返回YES，则查找间接访问的实例变量进行赋值，查找顺序为：_<key> -> _is<Key> -> <key> -> is<Key>
+    如果找到其中任意一个实例变量，则赋值
+    如果都没有，则进入【第三步】
+如果返回NO，则进入【第三步】
+【第三步】如果setter方法 或者 实例变量都没有找到，系统会执行该对象的setValue：forUndefinedKey:方法，默认抛出NSUndefinedKeyException类型的异常
+
+
+KVC 取值 底层原理:
+当调用valueForKey：时，其底层的执行流程如下
+【第一步】首先查找getter方法，按照get<Key> -> <key> -> is<Key> -> _<key>的方法顺序查找，
+如果找到，则进入【第五步】
+如果没有找到，则进入【第二步】
+【第二步】如果第一步中的getter方法没有找到，KVC会查找countOf <Key>和objectIn <Key> AtIndex :和<key> AtIndexes :
+如果找到countOf <Key>和其他两个中的一个，则会创建一个响应所有NSArray方法的集合代理对象，并返回该对象，即NSKeyValueArray，是NSArray的子类。
+代理对象随后将接收到的所有NSArray消息转换为countOf<Key>，objectIn<Key> AtIndex：和<key>AtIndexes：消息的某种组合，用来创建键值编码对象。
+如果原始对象还实现了一个名为get<Key>：range：之类的可选方法，则代理对象也将在适当时使用该方法（注意：方法名的命名规则要符合KVC的标准命名方法，包括方法签名。）
+如果没有找到这三个访问数组的，请继续进入【第三步】
+【第三步】如果没有找到上面的几种方法，则会同时查找countOf <Key>，enumeratorOf<Key>和memberOf<Key>这三个方法
+如果这三个方法都找到，则会创建一个响应所有NSSet方法的集合代理对象，并返回该对象，此代理对象随后将其收到的所有NSSet消息转换为countOf<Key>，enumeratorOf<Key>和memberOf<Key>：消息的某种组合，用于创建它的对象
+如果还是没有找到，则进入【第四步】
+【第四步】如果还没有找到，检查类方法InstanceVariablesDirectly是否YES，依次搜索_<key>，_is<Key>，<key>或is<Key>的实例变量
+如果搜到，直接获取实例变量的值，进入【第五步】
+【第五步】根据搜索到的属性值的类型，返回不同的结果
+如果是对象指针，则直接返回结果
+如果是NSNumber支持的标量类型，则将其存储在NSNumber实例中并返回它
+如果是是NSNumber不支持的标量类型，请转换为NSValue对象并返回该对象
+【第六步】如果上面5步的方法均失败，系统会执行该对象的valueForUndefinedKey:方法，默认抛出NSUndefinedKeyException类型的异常
+
+
+
+自定义KVC:
+原理：通过给NSObject添加分类CJLKVC，实现自定义的cjl_setValue:forKey:和cjl_valueForKey:方法，根据苹果官方文档提供的查找规则进行实现
+@interface NSObject (CJLKVC)
+
+//设值
+- (void)cjl_setValue:(nullable id)value forKey:(NSString *)key;
+//取值
+- (nullable id)cjl_valueForKey:(NSString *)key;
+
+@end
+
+
+自定义KVC设值:
+//设值
+- (void)cjl_setValue:(nullable id)value forKey:(NSString *)key{
+    
+//    1、判断key 是否存在
+    if (key == nil || key.length == 0) return;
+    
+//    2、找setter方法，顺序是：setXXX、_setXXX、 setIsXXX
+    // key 要大写
+    NSString *Key = key.capitalizedString;
+    // key 要大写
+    NSString *setKey = [NSString stringWithFormat:@"set%@:", Key];
+    NSString *_setKey = [NSString stringWithFormat:@"_set%@:", Key];
+    NSString *setIsKey = [NSString stringWithFormat:@"setIs%@:", Key];
+    
+    if ([self cjl_performSelectorWithMethodName:setKey value:value]) {
+        NSLog(@"*************%@*************", setKey);
+        return;
+    }else if([self cjl_performSelectorWithMethodName:_setKey value:value]){
+        NSLog(@"*************%@*************", _setKey);
+        return;
+    }else if([self cjl_performSelectorWithMethodName:setIsKey value:value]){
+        NSLog(@"*************%@*************", setIsKey);
+        return;
+    }
+    
+    
+//    3、判断是否响应`accessInstanceVariablesDirectly`方法，即间接访问实例变量，返回YES，继续下一步设值，如果是NO，则崩溃
+    if (![self.class accessInstanceVariablesDirectly]) {
+        @throw [NSException exceptionWithName:@"CJLUnKnownKeyException" reason:[NSString stringWithFormat:@"****[%@ valueForUndefinedKey:]: this class is not key value coding-compliant for the key name.****",self] userInfo:nil];
+    }
+    
+//    4、间接访问变量赋值，顺序为：_key、_isKey、key、isKey
+    // 4.1 定义一个收集实例变量的可变数组
+    NSMutableArray *mArray = [self getIvarListName];
+    // _<key> _is<Key> <key> is<Key>
+    NSString *_key = [NSString stringWithFormat:@"_%@", key];
+    NSString *_isKey = [NSString stringWithFormat:@"_is%@", key];
+    NSString *isKey = [NSString stringWithFormat:@"is%@", key];
+    if ([mArray containsObject:_key]) {
+        // 4.2 获取相应的 ivar
+        Ivar ivar = class_getInstanceVariable([self class], _key.UTF8String);
+        // 4.3 对相应的 ivar 设置值
+        object_setIvar(self, ivar, value);
+        return;
+    }else if ([mArray containsObject:_isKey]) {
+        
+        Ivar ivar = class_getInstanceVariable([self class], _isKey.UTF8String);
+        object_setIvar(self, ivar, value);
+        return;
+    }else if ([mArray containsObject:key]) {
+        
+        Ivar ivar = class_getInstanceVariable([self class], key.UTF8String);
+        object_setIvar(self, ivar, value);
+        return;
+    }else if ([mArray containsObject:isKey]) {
+        
+        Ivar ivar = class_getInstanceVariable([self class], isKey.UTF8String);
+        object_setIvar(self, ivar, value);
+        return;
+    }
+    
+//    5、如果找不到则抛出异常
+    @throw [NSException exceptionWithName:@"CJLUnknownKeyException" reason:[NSString stringWithFormat:@"****[%@ %@]: this class is not key value coding-compliant for the key name.****",self,NSStringFromSelector(_cmd)] userInfo:nil];
+    
+}
+
+
+自定义KVC取值:
+//取值
+- (nullable id)cjl_valueForKey:(NSString *)key{
+    
+//    1、判断非空
+    if (key == nil || key.length == 0) {
+        return nil;
+    }
+    
+//    2、找到相关方法：get<Key> <key> countOf<Key>  objectIn<Key>AtIndex
+    // key 要大写
+    NSString *Key = key.capitalizedString;
+    // 拼接方法
+    NSString *getKey = [NSString stringWithFormat:@"get%@",Key];
+    NSString *countOfKey = [NSString stringWithFormat:@"countOf%@",Key];
+    NSString *objectInKeyAtIndex = [NSString stringWithFormat:@"objectIn%@AtIndex:",Key];
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+    if ([self respondsToSelector:NSSelectorFromString(getKey)]) {
+        return [self performSelector:NSSelectorFromString(getKey)];
+    }else if ([self respondsToSelector:NSSelectorFromString(key)]){
+        return [self performSelector:NSSelectorFromString(key)];
+    }
+    //集合类型
+    else if ([self respondsToSelector:NSSelectorFromString(countOfKey)]){
+        if ([self respondsToSelector:NSSelectorFromString(objectInKeyAtIndex)]) {
+            int num = (int)[self performSelector:NSSelectorFromString(countOfKey)];
+            NSMutableArray *mArray = [NSMutableArray arrayWithCapacity:1];
+            for (int i = 0; i<num-1; i++) {
+                num = (int)[self performSelector:NSSelectorFromString(countOfKey)];
+            }
+            for (int j = 0; j<num; j++) {
+                id objc = [self performSelector:NSSelectorFromString(objectInKeyAtIndex) withObject:@(num)];
+                [mArray addObject:objc];
+            }
+            return mArray;
+        }
+    }
+
+#pragma clang diagnostic pop
+    
+//    3、判断是否响应`accessInstanceVariablesDirectly`方法，即间接访问实例变量，返回YES，继续下一步设值，如果是NO，则崩溃
+    if (![self.class accessInstanceVariablesDirectly]) {
+        @throw [NSException exceptionWithName:@"CJLUnKnownKeyException" reason:[NSString stringWithFormat:@"****[%@ valueForUndefinedKey:]: this class is not key value coding-compliant for the key name.****",self] userInfo:nil];
+    }
+    
+//    4.找相关实例变量进行赋值，顺序为：_<key>、 _is<Key>、 <key>、 is<Key>
+    // 4.1 定义一个收集实例变量的可变数组
+    NSMutableArray *mArray = [self getIvarListName];
+    // 例如：_name -> _isName -> name -> isName
+    NSString *_key = [NSString stringWithFormat:@"_%@",key];
+    NSString *_isKey = [NSString stringWithFormat:@"_is%@",Key];
+    NSString *isKey = [NSString stringWithFormat:@"is%@",Key];
+    if ([mArray containsObject:_key]) {
+        Ivar ivar = class_getInstanceVariable([self class], _key.UTF8String);
+        return object_getIvar(self, ivar);;
+    }else if ([mArray containsObject:_isKey]) {
+        Ivar ivar = class_getInstanceVariable([self class], _isKey.UTF8String);
+        return object_getIvar(self, ivar);;
+    }else if ([mArray containsObject:key]) {
+        Ivar ivar = class_getInstanceVariable([self class], key.UTF8String);
+        return object_getIvar(self, ivar);;
+    }else if ([mArray containsObject:isKey]) {
+        Ivar ivar = class_getInstanceVariable([self class], isKey.UTF8String);
+        return object_getIvar(self, ivar);;
+    }
+
+    return @"";
+    
+    return @"";
+}
+
+
+使用路由访问，即keyPath:
+一个类的成员变量有可能是自定义类或者其他的复杂数据类型，一般的操作是，我们可以先通过KVC获取该属性，然后再通过KVC获取自定义类的属性，就是比较麻烦，
+还有另一种比较简便的方法，就是使用KeyPath即路由，涉及以下两个方法：setValue:forKeyPath: 和 valueForKeyPath:
+//通过KeyPath来取值
+- (nullable id)valueForKeyPath:(NSString *)keyPath;                  
+
+//通过KeyPath来设值
+- (void)setValue:(nullable id)value forKeyPath:(NSString *)keyPath;  
+
+
+KVC 使用场景:
+1、动态设值和取值
+常用的可以通过setValue:forKey: 和 valueForKey:
+也可以通过路由的方式setValue:forKeyPath: 和 valueForKeyPath:
+
+2、通过KVC访问和修改私有变量
+对于类的私有属性，在外部定义的对象，是无法直接访问私有属性的，但是对于KVC而言，一个对象没有自己的隐私，所以可以通过KVC修改和访问任何私有属性
+
+3、多值操作（model和字典互转）
+model和字典的转换可以通过下面两个KVC的API实现
+//字典转模型
+- (void)setValuesForKeysWithDictionary:(NSDictionary<NSString *, id> *)keyedValues;
+
+//模型转字典
+- (NSDictionary<NSString *, id> *)dictionaryWithValuesForKeys:(NSArray<NSString *> *)keys;
+
+4、修改一些系统空间的内部属性
+很多UI控件都是在其内部由多个UI空间组合而成，这些内部控件苹果并没有提供访问的API，但是使用KVC可以解决这个问题，常用的就是自定义tabbar、个性化UITextField中的placeHolderText
+
+5、用KVC实现高阶消息传递
+在对容器类使用KVC时，valueForKey:将会被传递给容器中的每一个对象，而不是对容器本身进行操作，结果会被添加到返回的容器中，这样，可以很方便的操作集合 来返回 另一个集合
+
+//KVC实现高阶消息传递
+- (void)transmitMsg{
+    NSArray *arrStr = @[@"english", @"franch", @"chinese"];
+    NSArray *arrCapStr = [arrStr valueForKey:@"capitalizedString"];
+    
+    for (NSString *str in arrCapStr) {
+        NSLog(@"%@", str);
+    }
+    
+    NSArray *arrCapStrLength = [arrCapStr valueForKeyPath:@"capitalizedString.length"];
+    for (NSNumber *length in arrCapStrLength) {
+        NSLog(@"%ld", (long)length.integerValue);
+    }
+}
+
+//********打印结果********
+2020-10-27 11:33:43.377672+0800 CJLCustom[60035:6380757] English
+2020-10-27 11:33:43.377773+0800 CJLCustom[60035:6380757] Franch
+2020-10-27 11:33:43.377860+0800 CJLCustom[60035:6380757] Chinese
+2020-10-27 11:33:43.378233+0800 CJLCustom[60035:6380757] 7
+2020-10-27 11:33:43.378327+0800 CJLCustom[60035:6380757] 6
+2020-10-27 11:33:43.378417+0800 CJLCustom[60035:6380757] 7

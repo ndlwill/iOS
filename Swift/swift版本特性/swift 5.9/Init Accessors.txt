@@ -1,0 +1,115 @@
+A common pattern in Swift code is to use one property as backing storage for one or more computed properties, 
+and abstractions like property wrappers and attached macros help facilitate this pattern.
+Under this pattern, the backing storage is an implementation detail, and most code works with the computed property, including initializers.
+
+
+struct Angle {
+  var degrees: Double
+  var radians: Double {
+    @storageRestrictions(initializes: degrees)
+    init(initialValue)  {
+      degrees = initialValue * 180 / .pi
+    }
+
+    get { degrees * .pi / 180 }
+    set { degrees = newValue * 180 / .pi }
+  }
+
+  init(degrees: Double) {
+    self.degrees = degrees // initializes 'self.degrees' directly
+  }
+
+  init(radiansParam: Double) {
+    self.radians = radiansParam // calls init accessor for 'self.radians', passing 'radiansParam' as the argument
+  }
+}
+
+initializes and accesses are side-effects of the init accessor.
+The radians property in the example above specifies no access effect, but initializes the degrees property, so it specifies only initializes: degrees.
+
+
+Access effects allow a computed property to be initialized by placing its contents into another stored property:
+struct ProposalViaDictionary {
+  private var dictionary: [String: String]
+
+  var title: String {
+    @storageRestrictions(accesses: dictionary)
+    init(newValue)  {
+      dictionary["title"] = newValue
+    }
+
+    get { dictionary["title"]! }
+    set { dictionary["title"] = newValue }
+  }
+
+   var text: String {
+    @storageRestrictions(accesses: dictionary)
+    init(newValue) {
+      dictionary["text"] = newValue
+    }
+
+    get { dictionary["text"]! }
+    set { dictionary["text"] = newValue }
+  }
+
+  init(title: String, text: String) {
+    self.dictionary = [:] // 'dictionary' must be initialized before init accessors access it
+    self.title = title // calls init accessor to insert title into the dictionary
+    self.text = text   // calls init accessor to insert text into the dictionary
+
+    // it is an error to omit either initialization above
+  }
+}
+Both init accessors document that they access dictionary, which allows them to insert the new values into the dictionary with the appropriate key as part of initialization.
+
+
+@propertyWrapper
+struct Wrapper<T> {
+  var wrappedValue: T
+}
+
+struct S {
+  private var _value: Wrapper<Int>
+  var value: Int {
+    @storageRestrictions(initializes: _value)
+    init(newValue)  {
+      self._value = Wrapper(wrappedValue: newValue)
+    }
+
+    get { _value.wrappedValue }
+    set { _value.wrappedValue = newValue }
+  }
+
+  // This initializer is the same as the generated member-wise initializer.
+  init(value: Int) {
+    self.value = value  // Calls 'init' accessor on 'self.value'
+  }
+}
+
+S(value: 10)
+
+This proposal allows macros to model the following property-wrapper-like patterns including out-of-line initialization of the computed property:
+A wrapped property with attribute arguments
+A wrapped property that is backed by an explicit stored property
+A set of wrapped properties that are backed by a single stored property
+
+
+
+side effects（副作用）是指函数或方法在执行时除了返回值之外，###还会对程序的其他部分产生的影响。###
+（1）修改外部状态
+副作用最常见的形式是函数或方法在执行过程中修改了函数外部的状态。例如，函数在执行时修改了一个全局变量或类的属性。
+var count = 0
+func increment() {
+    count += 1
+}
+increment()
+
+（2）I/O 操作
+执行输入/输出操作，比如读写文件、打印输出、发送网络请求等，这些操作都会影响程序外部的环境，因此也被视为副作用
+func writeToFile() {
+    let text = "Hello, world!"
+    try? text.write(to: URL(fileURLWithPath: "path/to/file.txt"), atomically: true, encoding: .utf8)
+}
+
+（3）抛出异常
+如果一个函数可能抛出异常，导致程序的正常执行流程被中断，这也是一种副作用

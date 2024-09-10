@@ -1,0 +1,50 @@
+@Binding 是 SwiftUI 中用于实现双向数据绑定的属性包装器
+@Binding 不直接持有数据，而是提供了对其他数据源的读写访问的包装。
+它允许 UI 元素直接修改数据，并反映这些数据的变化。
+
+典型应用场景
+@Binding 主要用于与支持双向数据绑定的 UI 组件，如和 TextField、Stepper、Sheet 和 Slider 等配合使用。
+它适用于需要在子视图中直接修改父视图中的数据情况。
+
+当子视图只需响应数据变化而无需修改时，无需使用 @Binding。
+在复杂的视图层级中，逐级传递 @Binding 可能导致数据流难以追踪，此时应考虑使用其他状态管理方法。
+由于 @Binding 只是一个管道，它并不保证对应的数据源在调用时必然存在。
+
+开发者可以通过提供 get 和 set 的方式来自定义 Binding
+let binding = Binding<String>(
+    get: { text },
+    // 限制字符串的长度
+    set: { text = String($0.prefix(10)) }
+)
+
+通过为 Binding 类型创建扩展，可以极大地提高开发的效率和灵活性。
+// 将一个 Binding<V?> 转换为 Binding<Bool>
+extension Binding {
+    static func isPresented<V>(_ value: Binding<V?>) -> Binding<Bool> {
+        Binding<Bool>(
+            get: { value.wrappedValue != nil },
+            set: {
+                if !$0 { value.wrappedValue = nil }
+            }
+        )
+    }
+}
+
+@Binding 并不是独立的数据源。实际上，它只是对已存在数据的引用。只有能够引发视图更新的值被 get 方法读取时，才会触发视图更新（ 比如 @State、@StateObject ）
+
+struct Test: View {
+    let a = A()
+    var body: some View {
+        let binding = Binding<String>(
+            get: { a.name },
+            set: { a.name = $0 }
+        )
+        // 尽管 A 符合 ObservableObject 协议，但是由于没有使用 StateObject 与视图关联，因此为其属性创建的 Binding 也同样不会引发视图更新
+        Text(binding.wrappedValue)
+        TextField("input:", text: binding)
+    }
+
+    class A: ObservableObject {
+        @Published var name: String = ""
+    }
+}

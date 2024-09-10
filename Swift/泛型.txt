@@ -1,0 +1,313 @@
+所谓泛化类型，并不是要抹除具体类型存在的意义。而是说，对于某些数据的类型，可以从编写代码阶段的明确延迟到运行阶段再明确。
+
+如果我们不把参数的类型硬编码，而是也通过参数传递给函数，这样不就可以抽象出来更高级的函数代码了么？
+上面这个问题的解决方案就是——泛型
+func swapTwoValues<T>(_ a: inout T, _ b: inout T) {
+    let temporaryA = a
+    a = b
+    b = temporaryA
+}
+
+需要注意的是T并不是一个类型，而是一种占位符，本质上来说它也是个参数。
+
+func anyCommonElements<T>(_ lhs: T, _ rhs: T) -> Bool
+where T:Sequence, T.Element: Equatable
+{
+    for lhsItem in lhs {
+        for rhsItem in rhs {
+            if lhsItem == rhsItem {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+protocol Sequence<Element>
+
+通过where我们可以对函数声明的泛型追加一些限制条件
+
+
+所以上面方法的声明等价于下面这种写法
+func anyCommonElements<T:Sequence>(_ lhs: T, _ rhs: T) -> Bool
+where T.Element: Equatable
+
+
+
+我们不再要求两个参数同属一个类型，而是允许它们各自不同
+func anyCommonElements<T:Sequence, U:Sequence>(_ lhs: T, _ rhs: U) -> Bool
+where T.Element: Equatable, T.Element == U.Element
+{
+    for lhsItem in lhs {
+        for rhsItem in rhs {
+            if lhsItem == rhsItem {
+                return true
+            }
+        }
+    }
+   return false
+}
+anyCommonElements(1...3, [3])
+
+
+有两种范型，即范型函数和范型类型
+协议不支持范型，为此 Swift 引入了关联类型。
+协议中的关联类型等价于类、结构体和枚举中的范型类型，都是占位符
+范型是对参数的类型参数化的一种机制
+
+protocol Container {
+    associatedtype Item
+    mutating func append(_ item: Item)
+    var count: Int { get }
+    subscript(i: Int) -> Item { get }
+}
+
+给关联类型添加限制
+associatedtype Item: Equatable
+
+
+在关联类型的限制中使用协议
+protocol Container {    
+    associatedtype Item: Equatable    
+    func append(_ item: Item)    
+    var count: Int { get }    
+    subscript(i: Int) -> Item { get }
+}
+    
+在协议 SuffixableContainer 的声明中，可以使用声明的协议限制关联类型，并要求继承的 Container 协议中的 Item 类型和关联类型的属性的 Item 的类型相同
+protocol SuffixableContainer: Container {    
+    associatedtype Suffix: SuffixableContainer where Suffix.Item == Item    
+    func suffix(_ size: Int) -> Suffix //returns a given number of elements
+}
+
+class Stack<Element: Equatable>: Container, SuffixableContainer 
+{    
+    var items = [Element]()    
+    func push(_ item: Element) {        items.append(item)    }    
+    func pop() -> Element { return items.removeLast() }    
+    func append(_ item: Element) { self.push(item) }    
+    var count: Int { return items.count }    
+    subscript(i: Int) -> Element { return items[i] }    
+    func suffix(_ size: Int) -> Stack {        
+        let result = Stack()        
+        for index in (count-size)..<count {            
+            result.append(self[index])        
+            }        
+        return result    
+    }
+}
+
+
+可以给类型参数和关联类型加上限制也可以通过 Where 语句添加限制
+func allItemsMatch<C1: Container, C2: Container>
+    (_ someContainer: C1, _ anotherContainer: C2) -> Bool
+    where C1.Item == C2.Item, C1.Item: Equatable {        // Check that both containers contain the same number of items.
+        if someContainer.count != anotherContainer.count {
+            return false
+        }        // Check each pair of items to see if they're equivalent.
+        for i in 0..<someContainer.count {
+            if someContainer[i] != anotherContainer[i] {
+                return false
+            }
+        }        // All items match, so return true.
+        return true
+}
+
+C1 must conform to the Container protocol (written as C1: Container).
+C2 must also conform to the Container protocol (written as C2: Container).
+The Item for C1 must be the same as the Item for C2 (written as C1.Item == C2.Item).
+The Item for C1 must conform to the Equatable protocol (written as C1.Item: Equatable). 
+
+
+扩展 Where 语句
+extension Stack where Element: Equatable {
+    func isTop(_ item: Element) -> Bool {
+        guard let topItem = items.last else {
+            return false
+        }
+        return topItem == item
+    }
+}
+
+
+上下文 Where 子句:
+范型的 Where 子句可作用于整个元素，如类、结构体、枚举、协议或是扩展，也可以作用于其内部的某个限制上，多个限制的 Where 限制相互独立
+如下面 where Item == Int 限制作用于函数 func average() -> Double；
+where Item: Equatable 作用于函数 func endsWith(_ item: Item) -> Bool。
+
+extension Container {
+    func average() -> Double where Item == Int {
+        var sum = 0.0
+        for index in 0..<count {
+            sum += Double(self[index])
+        }
+        return sum / Double(count)
+    }
+    func endsWith(_ item: Item) -> Bool where Item: Equatable {
+        return count >= 1 && self[count-1] == item
+    }
+}
+let numbers = [1260, 1200, 98, 37]
+print(numbers.average())
+// Prints "648.75"
+print(numbers.endsWith(37))
+// Prints "true"
+
+
+下面是非上下文限制:
+extension Container where Item == Int {
+    func average() -> Double {
+        var sum = 0.0
+        for index in 0..<count {
+            sum += Double(self[index])
+        }
+        return sum / Double(count)
+    }
+}
+extension Container where Item: Equatable {
+    func endsWith(_ item: Item) -> Bool {
+        return count >= 1 && self[count-1] == item
+    }
+}
+
+
+
+带有范型 Where 语句的关联类型
+protocol Container {
+    associatedtype Item
+    mutating func append(_ item: Item)
+    var count: Int { get }
+    subscript(i: Int) -> Item { get }
+
+    associatedtype Iterator: IteratorProtocol where Iterator.Element == Item
+    func makeIterator() -> Iterator
+}
+
+
+范型下标:
+可以在下标的返回值和参数中使用范型，并用范型 where 语句添加限制。
+extension Container {
+    subscript<Indices: Sequence>(indices: Indices) -> [Item]
+        where Indices.Iterator.Element == Int {
+            var result = [Item]()
+            for index in indices {
+                result.append(self[index])
+            }
+            return result
+    }
+}
+Container 协议的扩展向 Container 添加了一个下标，会以索引序列 Indices: Sequence 为顺序，以数组的形式输出容器内的元素。 该范型下标涉及的限制有:
+<Indices: Sequence>：范型参数 Indices 是一个Sequence 
+(indices: Indices)：该范型下标只有一个参数，即indices
+where Indices.Iterator.Element == Int：范型 where 语句要求序列的迭代器的操作的元素是 Int 类型。即该范型下标操作的元素类型是 Int。
+
+
+
+
+https://developer.apple.com/documentation/swift/sequence
+protocol Sequence<Element>
+A type that provides sequential, iterated access to its elements.
+
+func makeIterator() -> Self.Iterator
+Returns an iterator over the elements of this sequence.
+Required Default implementations provided.
+
+associatedtype Iterator : IteratorProtocol
+A type that provides the sequence’s iteration interface and encapsulates its iteration state.
+Required
+
+associatedtype Element
+A type representing the sequence’s elements.
+Required
+
+
+The most common way to iterate over the elements of a sequence is to use a for-in loop:
+let oneTwoThree = 1...3
+for number in oneTwoThree {
+    print(number)
+}
+
+Conforming to the Sequence Protocol:
+Making your own custom types conform to Sequence enables many useful operations, like for-in looping and the contains method, without much effort.
+To add Sequence conformance to your own custom type, add a makeIterator() method that returns an iterator.
+Alternatively, if your type can act as its own iterator, implementing the requirements of the IteratorProtocol protocol and declaring conformance to both Sequence and IteratorProtocol are sufficient.
+Here’s a definition of a Countdown sequence that serves as its own iterator. The makeIterator() method is provided as a default implementation.
+
+struct Countdown: Sequence, IteratorProtocol {
+    var count: Int
+
+
+    mutating func next() -> Int? {
+        if count == 0 {
+            return nil
+        } else {
+            defer { count -= 1 }
+            return count
+        }
+    }
+}
+
+
+let threeToGo = Countdown(count: 3)
+for i in threeToGo {
+    print(i)
+}
+// Prints "3"
+// Prints "2"
+// Prints "1"
+
+
+Expected Performance
+A sequence should provide its iterator in O(1). 
+The Sequence protocol makes no other requirements about element access, 
+so routines that traverse a sequence should be considered O(n) unless documented otherwise.
+
+
+
+
+
+
+
+https://developer.apple.com/documentation/swift/iteratorprotocol
+protocol IteratorProtocol<Element>
+A type that supplies the values of a sequence one at a time.
+
+associatedtype Element
+The type of element traversed by the iterator.
+Required
+
+func next() -> Self.Element?
+Advances to the next element and returns it, or nil if no next element exists.
+Required
+
+
+struct Countdown: Sequence {
+    let start: Int
+
+
+    func makeIterator() -> CountdownIterator {
+        return CountdownIterator(self)
+    }
+}
+
+
+struct CountdownIterator: IteratorProtocol {
+    let countdown: Countdown
+    var times = 0
+
+
+    init(_ countdown: Countdown) {
+        self.countdown = countdown
+    }
+
+
+    mutating func next() -> Int? {
+        let nextNumber = countdown.start - times
+        guard nextNumber > 0
+            else { return nil }
+
+
+        times += 1
+        return nextNumber
+    }
+}
