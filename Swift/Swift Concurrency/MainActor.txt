@@ -1,3 +1,5 @@
+https://www.avanderlee.com/swift/mainactor-dispatch-main-thread/
+
 MainActor usage in Swift explained to dispatch to the main thread
 
 MainActor is a new attribute introduced in Swift 5.5 as a global actor providing an executor which performs its tasks on the main thread.
@@ -16,7 +18,10 @@ Global Actors can be seen as singletons: there’s only one instance of each.
 As of now, global actors only work by enabling experimental concurrency. 
 You can do so by adding the following value to “Other Swift Flags” in Xcode’s build settings:
 -Xfrontend -enable-experimental-concurrency
-One enabled, we could define our own global actor as follows:
+
+
+You can see Global Actors as singletons: only one instance exists. 
+We can define a global actor as follows:
 @globalActor
 actor SwiftLeeActor {
     static let shared = SwiftLeeActor()
@@ -30,8 +35,26 @@ final class SwiftLeeFetcher {
     // ..
 }
 
+Anywhere you use the global actor attribute, you’ll ensure synchronization through the shared actor instance to ensure mutually exclusive access to declarations.
+
+
+The underlying @MainActor implementation is similar to our custom-defined @SwiftLeeActor:
+@globalActor
+final actor MainActor: GlobalActor {
+    static let shared: MainActor
+}
+
+###
+It’s available by default and defined inside the concurrency framework. 
+In other words, you can start using this global actor immediately and mark your code to be executed on the main thread by synchronizing via this global actor.
+###
+
+
 ----------How to use MainActor in Swift?
+###
 A global actor can be used with properties, methods, closures, and instances.
+###
+
 For example, we could add the main actor attribute to a view model to make it perform all its tasks on the main thread:
 
 @MainActor
@@ -40,32 +63,35 @@ final class HomeViewModel {
 }
 
 Using nonisolated, we can make sure that methods without the main thread requirement perform as fast as possible.
+###
 A class can only be annotated with a global actor if it has no superclass, the superclass is annotated with the same global actor, or the superclass is NSObject.
 A subclass of a global-actor-annotated class must be isolated to the same global actor.
+###
 
+###
 In other cases, we might want to define individual properties with a global actor:
 final class HomeViewModel {
-    
     @MainActor var images: [UIImage] = []
 
 }
-
+###
 Marking the images property with the @MainActor property ensures that it can only be updated from the main thread
 
 Individual methods can be marked with the attribute as well:
 @MainActor func updateViews() {
     // Perform UI updates..
+    images = []
 }
 
 And even closures can be marked to perform on the main thread:
 func updateData(completion: @MainActor @escaping () -> ()) {
-    /// Example dispatch to mimic behaviour
-    DispatchQueue.global().async {
-        async {
-            await completion()
-        }
+    Task {
+        await someHeavyBackgroundOperation()
+        await completion()
     }
 }
+Although in this case, you should rewrite the updateData method to an async variant without needing a completion closure.
+
 
 ----------Using the main actor directly
 The MainActor in Swift comes with an extension to use the actor directly:
@@ -77,53 +103,51 @@ extension MainActor {
 }
 
 This allows us to use the MainActor directly from within methods, even if we didn’t define any of its body using the global actor attribute:
-async {
+
+Task {
+    await someHeavyBackgroundOperation()
     await MainActor.run {
         // Perform UI updates
     }
 }
+
 In other words, there’s no real need to use DispatchQueue.main.async anymore.
 
+
 ----------When should I use the MainActor attribute?
-Before Swift 5.5, you might have defined many dispatch statements to make sure tasks are running on the main thread. An example could look as follows:
-func fetchData(completion: @escaping (Result<[UIImage], Error>) -> Void) {
-    URLSession.shared.dataTask(with: URL(string: "..some URL")) { data, response, error in
-        // .. Decode data to a result
-        
+Before Swift 5.5, you might have defined many dispatch statements to make sure tasks are running on the main thread. 
+An example could look as follows:
+
+func fetchImage(for url: URL, completion: @escaping (Result<UIImage, Error>) -> Void) {
+    URLSession.shared.dataTask(with: url) { data, response, error in
+        guard let data, let image = UIImage(data: data) else {
+            DispatchQueue.main.async {
+                completion(.failure(ImageFetchingError.imageDecodingFailed))
+            }
+            return
+        }
+
         DispatchQueue.main.async {
-            completion(result)
+            completion(.success(image))
         }
-    }
-} 
-
-In the above example, we’re pretty sure that a dispatch is needed. However, the dispatch might be unnecessary in other cases as we’re already on the Main Thread.
-
-Either way, in those cases, it makes sense to define properties, methods, instances, or closures as a main actor to make sure tasks are performing on the main thread.
-We could, for example, rewrite the above example as follows:
-func fetchData(completion: @MainActor @escaping (Result<[UIImage], Error>) -> Void) {
-    URLSession.shared.dataTask(with: URL(string: "..some URL")!) { data, response, error in
-        // .. Decode data to a result
-        let result: Result<[UIImage], Error> = .success([])
-        
-        async {
-            await completion(result)
-        }
-    }
+    }.resume()
 }
 
-As we’re working with an actor-defined closure now, we need to use the async await technique to call into our closure.
-Using the @MainActor attribute here allows the Swift compiler to optimize our code for performance.
+In the above example, you’re sure a dispatch is needed to return the image to the main thread. 
+We have to perform dispatches in several places, resulting in code clutter with several closures.
 
-----------Picking the right strategy
-It’s important to pick the right strategy with actors.
-In the above example, we decided to make the closure an actor, which means that whoever is using our method, the completion callback will be performed using the MainActor. 
-In some cases, this might not make sense if the data requesting method is also used from a place where it’s not important to handle the completion callback on the main thread.
+In those cases, isolating properties, methods, instances, or closures to the main actor ensures tasks perform on the main thread. 
+Ideally, we would rewrite the above example as follows:
 
-In those cases, it’s likely better to make the implementors responsible for dispatching to the right queue:
-viewModel.fetchData { result in
-    async {
-        await MainActor.run {
-            // Handle result
-        }
+
+@MainActor
+func fetchImage(for url: URL) async throws -> UIImage {
+    let (data, _) = try await URLSession.shared.data(from: url)
+    guard let image = UIImage(data: data) else {
+        throw ImageFetchingError.imageDecodingFailed
     }
+    return image
 }
+
+The @MainActor attribute ensures the logic executes on the main thread while the network request is still performed on the background queue. 
+Dispatching to the main actor only takes place if needed to ensure the best performance possible.

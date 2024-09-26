@@ -1,0 +1,658 @@
+https://zhuanlan.zhihu.com/p/511767529
+
+在 SwiftUI 中，实现一个动画需要以下三个要素:
+一个时序曲线算法函数
+将状态（特定依赖项）同该时序曲线函数相关联的声明
+一个依赖于该状态（特定依赖项）的可动画部件
+
+
+时序曲线函数:
+SwiftUI 为时序曲线算法函数取了一个令人困惑的名字 —— Animation
+或许用时序曲线或动画曲线来命名会更加贴切（譬如 Core Animation 中的 CAMediaTimingFunction）。
+
+该函数将动画的节奏定义为一条计时曲线，将起点数据沿计时曲线变换为终点数据
+Text("Hello world")
+   .animation(.linear(duration: 0.3), value: startAnimation)
+   .opacity(startAnimation ? 0 : 1)
+
+时序曲线函数的工作仅为对数据进行插值变换
+
+
+VectorArithmetic:
+只有符合 VectorArithmetic 协议的数据类型方可被应用于时序曲线函数
+例如：Float、Double、CGFloat 等
+https://swiftwithmajid.com/2020/06/17/the-magic-of-animatable-values-in-swiftui/
+
+
+将时序曲线函数与状态关联:
+只有通过某种形式将时序曲线函数（Animation）与某个（或多个）依赖项关联后，SwiftUI 才会在状态（ 被关联的依赖项 ）变化时为动画生成插值数据
+关联的方式有：视图修饰符 animation 或全局函数 withAnimation 。
+Text("Hello world")
+       .offset(x: animated ? 200 : 0)
+       .animation(.easeInOut, value: animated)
+
+    
+VStack {
+   Text("Hello world")
+       .offset(x: animated ? 200 : 0)
+​
+   Text("Fat")
+       .offset(x: animated ? 200 : 0)
+}
+.animation(.easeInOut, value: animated)
+
+同所有 SwiftUI 的视图修饰符一样，在代码中所处的位置决定了修饰符的作用对象和范围。 animation 的作用对象仅限于它所在视图层次及该层次的子节点
+
+使用 withAnimation 也可以达到同样的效果，通过在 withAnimation 的闭包中修改特定的依赖项从而实现单独的动画控制。
+
+
+
+为不同的依赖项关联不同的时序曲线函数:
+struct Demo4: View {
+   @State var x: CGFloat = 0
+   @State var y: CGFloat = 0
+   var body: some View {
+       VStack {
+           Spacer()
+           Circle()
+               .fill(.orange)
+               .frame(width: 30, height: 30)
+               .offset(x: x, y: y) // x、y 分别关联了不同的时序曲线函数
+           Spacer()
+           Button("Animate") {
+               withAnimation(.linear) { 
+                   if x == 0 { x = 100 } else { x = 0 }
+               }
+               withAnimation(.easeInOut) {
+                   if y == 0 { y = 100 } else { y = 0 }
+               }
+           }
+       }
+       .frame(width: 500, height: 500)
+   }
+}
+
+
+
+让你的视图元素可动画（Animatable）:
+将时序曲线函数与特定的依赖进行关联，仅是完成了设置动画开启条件（特定依赖项发生改变）和指定插值算法这一步骤。
+至于如何利用这些动画数据（插值数据）生成动画，则是由与特定依赖项关联的可动画部件决定的。
+
+通过遵循 Animatable 协议，可以让 View 或 ViewModifier 具备获得动画数据的能力（ AnimatableModifier 已被弃用）。
+例如：offset、frame、opacity、fill 等。
+
+Animatable 协议的要求非常简单，只需实现一个计算属性 animatableData
+
+public protocol Animatable {
+​
+   /// The type defining the data to animate.
+   associatedtype AnimatableData : VectorArithmetic
+​
+   /// The data to animate.
+   var animatableData: Self.AnimatableData { get set }
+}
+协议中规定 animatableData 的类型必须满足 VectorArithmetic 协议，这是因为时序曲线函数只能对满足 VectorArithmetic 协议的类型进行插值计算。
+
+
+当可动画部件关联的依赖项发生变化时，SwiftUI 将通过指定的时序曲线函数进行插值计算，并持续调用与该依赖项关联的可动画部件的 animatableData 属性
+struct AnimationDataMonitorView: View, Animatable {
+   static var timestamp = Date()
+   var number: Double
+   var animatableData: Double { // SwiftUI 在渲染时发现该视图为 Animatable，则会在状态已改变后，依据时序曲线函数提供的值持续调用 animableData
+       get { number }
+       set { number = newValue }
+   }
+​
+   var body: some View {
+       let duration = Date().timeIntervalSince(Self.timestamp).formatted(.number.precision(.fractionLength(2)))
+       let currentNumber = number.formatted(.number.precision(.fractionLength(2)))
+       let _ = print(duration, currentNumber, separator: ",")
+​
+       Text(number, format: .number.precision(.fractionLength(3)))
+   }
+}
+​
+struct Demo: View {
+   @State var startAnimation = false
+   var body: some View {
+       VStack {
+           AnimationDataMonitorView(number: startAnimation ? 1 : 0) // 声明两种状态下的形态
+               .animation(.linear(duration: 0.3), value: startAnimation) // 关联依赖项和时序曲线函数
+           Button("Show Data") {
+               AnimationDataMonitorView.timestamp = Date() 
+               startAnimation.toggle() // 改变依赖项
+           }
+       }
+       .frame(width: 300, height: 300)
+   }
+}
+
+声明过程:
+指定时序曲线函数 —— linear
+将依赖项 startAnimation 与 linear 相关联
+AnimationDataMonitorView （可动画部件）符合 Animatable 且依赖了 startAnimation
+
+动画处理过程:
+点击按钮改变依赖项 startAnimation 的值
+SwiftUI 会立即完成对 startAnimation 值的改变（依赖值的改变发生在动画开始前，比如本例中，true 将立刻变成 false ）
+SwiftUI 发现 AnimationDataMonitorView 符合 Animatable 协议，使用 linear 进行插值计算
+SwiftUI 将按照设备的刷新率（ 60 fps/sec 或 120 fps/sec）持续使用 linear 的计算结果设置 AnimationDataMonitorView 的 animatableData 属性，并对 AnimationDataMonitorView 的 body 求值、渲染
+
+
+
+当可动画元素有多个可变依赖项时，需将 animatableData 设置为 AnimatablePair 类型，以便 SwiftUI 可以传递分属于不同依赖项的动画插值数据。
+AnimatablePair 类型符合 VectorArithmetic 协议，同时要求其包装的数值类型也需符合 VectorArithmetic 协议
+
+struct AnimationDataMonitorView: View, Animatable {
+   static var timestamp = Date()
+   var number1: Double // 会发生变化
+   let prefix: String
+   var number2: Double // 会发生变化
+​
+   var animatableData: AnimatablePair<Double, Double> {
+       get { AnimatablePair(number1, number2) }
+       set {
+           number1 = newValue.first
+           number2 = newValue.second
+       }
+   }
+​
+   var body: some View {
+       let duration = Date().timeIntervalSince(Self.timestamp).formatted(.number.precision(.fractionLength(2)))
+       let currentNumber1 = number1.formatted(.number.precision(.fractionLength(2)))
+       let currentNumber2 = number2.formatted(.number.precision(.fractionLength(2)))
+       let _ = print(duration, currentNumber1, currentNumber2, separator: ",")
+​
+       HStack {
+           Text(prefix)
+               .foregroundColor(.green)
+           Text(number1, format: .number.precision(.fractionLength(3)))
+               .foregroundColor(.red)
+           Text(number2, format: .number.precision(.fractionLength(3)))
+               .foregroundColor(.blue)
+       }
+   }
+}
+​
+struct Demo: View {
+   @State var startNumber1 = false
+   @State var startNumber2 = false
+   var body: some View {
+       VStack {
+           AnimationDataMonitorView(
+               number1: startNumber1 ? 1 : 0,
+               prefix: "Hi:",
+               number2: startNumber2 ? 1 : 0
+           )
+           Button("Animate") {
+               AnimationDataMonitorView.timestamp = Date()
+               withAnimation(.linear) {
+                   startNumber1.toggle()
+               }
+               withAnimation(.easeInOut) {
+                   startNumber2.toggle()
+               }
+           }
+       }
+       .frame(width: 300, height: 300)
+   }
+}
+
+SwiftUI 在传递插值数据时非常聪明，只会将发生变化的依赖项通过 animatableData 传递给可动画元素。
+比如在上面的代码中，参数 prefix 不发生变化，因此在合成 AnimatablePair 数据时会自动跳过，只合成 number1 和 number2。
+
+当需要传递更多的参数时，可嵌套使用 AnimatablePair 类型
+AnimatablePair<CGFloat, AnimatablePair<Float, AnimatablePair<Double, CGFloat>>>
+// newValue.second.second.first.
+
+
+使用 Transaction 进行更精细的控制:
+用 SwiftUI 的官方语言来描述【将时序曲线函数与状态关联的过程】应该是：为视图声明事务（ Transaction）
+事务提供了更加灵活的曲线函数类型设置方式以及动画开关和临时状态标识
+
+无论是修饰符 animation 还是全局函数 withAnimation ，实际上都是在视图中声明 Transaction 的快捷方法，内部分别对应着 transaction 和 withTransaction
+withAnimation(.easeInOut){
+   show.toggle()
+}
+// 对应为
+let transaction = Transaction(animation: .easeInOut)
+withTransaction(transaction) {
+   show.toggle()
+}
+
+
+https://github.com/xybp888/iOS-SDKs
+
+#####
+arm64-apple-ios.swiftinterface:
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/System/Library/Frameworks/SwiftUI.framework/Modules/SwiftUI.swiftmodule/arm64-apple-ios.swiftinterface
+#####
+
+animation(_ animation: Animation?) 同样是通过 Transaction 来实现的：
+// 代码来自于 swiftinterface
+extension SwiftUI.View {
+   @_disfavoredOverload @inlinable public func animation(_ animation: SwiftUI.Animation?) -> some SwiftUI.View {
+       return transaction { t in
+           if !t.disablesAnimations {
+               t.animation = animation
+           }
+       }
+   }
+}
+Transaction 提供的 disablesAnimations 和 isContinuous 可以帮助开发者更好的进行动画控制
+
+(1)动态选择需要关联的时序曲线函数:
+Text("Hi")
+   .offset(x: animated ? 100 : 0)
+   .transaction {
+       if position < 0 || position > 100 {
+           $0.animation = .easeInOut
+       } else {
+           $0.animation = .linear
+       }
+   }
+transaction 的作用范围与关联的依赖项与不指定特定依赖项版本的 animation 是一样的，它不具备与特定依赖项关联的能力。
+
+// 并不表示仅与 x 关联，作用域范围内的其他依赖项发生变化，同样会产生动画
+.transaction {
+    if x == 0 {
+        $0.animation = .linear
+    } else {
+        $0.animation = nil
+    }
+}
+
+// 相当于
+.animation(x == 0 ? .linear : nil)
+
+
+(2)disablesAnimations
+struct Demo: View {
+    @State var position: CGFloat = 40
+    var body: some View {
+        VStack {
+            Text("Hi")
+                .offset(x: position, y: position)
+                .animation(.easeInOut, value: position)
+
+            Slider(value: $position, in: 0...150)
+            Button("Animate") {
+                var transaction = Transaction() // 没有指定时序曲线函数，将保留原有设置（本例为 easeInOut）
+                if position < 100 { transaction.disablesAnimations = true }
+                withTransaction(transaction) { // withTransaction 可以禁止原有事务的时序曲线函数（由 animation 相关联），但无法屏蔽由 transaction 关联的时序曲线函数
+                    position = 0
+                }
+            }
+        }
+        .frame(width: 400, height: 500)
+    }
+}
+withTransaction （通过设置 disablesAnimations 来屏蔽动画）+ animation<V>(_ animation: Animation?, value: V) 是比较成熟的搭配。
+
+
+(3)isContinuous
+struct Demo: View {
+    @GestureState var position: CGPoint = .zero
+    var body: some View {
+        VStack {
+            Circle()
+                .fill(.orange)
+                .frame(width: 30, height: 50)
+                .offset(x: position.x, y: position.y)
+                .transaction {
+                    if $0.isContinuous {
+                        $0.animation = nil // 拖动时，不设置时序曲线函数
+                    } else {
+                        $0.animation = .easeInOut(duration: 1)
+                    }
+                }
+                .gesture(
+                    DragGesture()
+                        .updating($position, body: { current, state, transaction in
+                            state = .init(x: current.translation.width, y: current.translation.height)
+                            transaction.isContinuous = true // 拖动时，设置标识
+                        })
+                )
+        }
+        .frame(width: 400, height: 500)
+    }
+}
+
+另外，在某些场景下，可以通过 Transaction 来获取或设置有关动画的信息，如:
+UIViewRepresentableContext
+AsyncImage
+GestureState
+Binding 等
+
+
+为 Binding 设置 Transaction:
+struct Demo: View {
+    @State var animated = false
+    let animation: Animation?
+
+    var animatedBinding: Binding<Bool> { // 生成包含指定 Transaction 的 Binding 类型
+        let transaction = Transaction(animation: animation)
+        return $animated.transaction(transaction)
+    }
+
+    var body: some View {
+        VStack {
+            Text("Hi")
+                .offset(x: animated ? 100 : 0)
+
+            Toggle("Animated", isOn: animatedBinding) // 点击时会自动产生动画效果
+        }
+        .frame(width: 400, height: 500)
+    }
+}
+
+PlaygroundPage.current.setLiveView(Demo(animation: .easeInOut))
+
+
+
+注意事项:
+1. SwiftUI 只会使用与可动画部件位置最近的关联声明
+Circle()
+    .fill(red ? .red : .blue)
+    .animation(.easeInOut(duration: 1), value: red)  // 使用它
+    .animation(.linear(duration: 3), value: red)
+
+
+2. withAnimation（ withTransaction ）指定的时序曲线函数并不能更改 animation 中关联的函数
+Circle()
+    .fill(red ? .red : .blue)
+    .animation(.easeInOut(duration: 1), value: red)  // 使用它
+
+Button("Change red"){
+    withAnimation(.linear(duration:3)){  // 作用域最大，意味着距离动画部件最远
+        red.toggle()
+    }
+}
+
+
+animation 和 withAnimation 应该二选一
+
+withTransaction 可以屏蔽 animation 关联的时序曲线函数
+通过设置 disablesAnimations 可以禁用事务中原有的时序曲线函数（不可更改）
+
+
+// 方式一，与特定依赖关联，在仅有两种情况时比较适用
+.animation(red ? .linear : .easeIn , value: red) 
+
+// 方式二， 可以处理更多的逻辑，但不与特定依赖关联
+.transaction{
+    switch status{
+        case .one:
+            $0.animation = .linear
+        case .two:
+            $0.animation = .easeIn
+        case .three:
+            $0.animation = nil
+    }
+}
+
+// 方式三，支持复杂逻辑，且与特定状态关联
+var animation:Animation?{
+    // 即使闭包中出现多个不同的依赖项，也不会影响 animation 仅与指定的依赖相关联的特性
+    switch status{
+        case .one:
+            $0.animation = .linear
+        case .two:
+            $0.animation = .easeIn
+        case .three:
+            $0.animation = nil
+    }
+}
+
+.animation(animation , value: status)
+
+// 方式四，作用域大
+var animation:Animation?{
+    switch status{
+        case .one:
+            $0.animation = .linear
+        case .two:
+            $0.animation = .easeIn
+        case .three:
+            $0.animation = nil
+    }
+}
+
+withAnimation(animation){
+    ...
+}
+
+// 方式五，作用域大
+var animation:Animation?{
+    switch status{
+        case .one:
+            $0.animation = .linear
+        case .two:
+            $0.animation = .easeIn
+        case .three:
+            $0.animation = nil
+    }
+}
+var transaction = Transaction(animation:animation)
+withTransaction(transaction){
+    ...
+}
+
+
+
+转场（ Transition ）:
+SwiftUI 的转场类型（ AnyTransition ）是对可动画部件的再度包装。
+当状态的改变导致视图树的分支发生变化时，SwiftUI 将使用其包裹的可动画部件对视图进行动画处理。
+
+使用转场同样需要满足 SwiftUI 动画的三要素
+
+struct TransitionDemo: View {
+    @State var show = true
+    var body: some View {
+        VStack {
+            Spacer()
+            Text("Hello")
+            if show {
+                Text("World")
+                    .transition(.slide) // 可动画部件（包装在其中）
+            }
+            Spacer()
+            Button(show ? "Hide" : "Show") {
+                show.toggle() 
+            }
+        }
+        .animation(.easeInOut(duration:3), value: show) // 创建关联依赖、设定时序曲线函数
+        .frame(width: 300, height: 300)
+    }
+}
+
+同所有的 SwiftUI 动画元素一样，转场也支持可中断动画。
+比如，在出场动画进行中时，将状态 show 恢复成 true ，SwiftUI 将会保留当前的分支状态(不会重新创建视图)
+
+
+自定义转场:
+大多数情况下都可以通过使用 SwiftUI 已提供的可动画部件组合而成。
+struct MyTransition: ViewModifier { // 自定义转场的包装对象要求符合 ViewModifier 协议
+    let rotation: Angle
+    func body(content: Content) -> some View {
+        content
+            .rotationEffect(rotation) // 可动画部件
+    }
+}
+
+extension AnyTransition {
+    static var rotation: AnyTransition {
+        AnyTransition.modifier(
+            active: MyTransition(rotation: .degrees(360)),
+            identity: MyTransition(rotation: .zero)
+        )
+    }
+}
+
+struct CustomTransitionDemo: View {
+    @State var show = true
+    var body: some View {
+        VStack {
+            VStack {
+                Spacer()
+                Text("Hello")
+                if show {
+                    Text("World")
+                        .transition(.rotation.combined(with: .opacity))
+                }
+                Spacer()
+            }
+            .animation(.easeInOut(duration: 2), value: show) // 在这里声明，Button 的文字将没有动画效果
+            Button(show ? "Hide" : "Show") {
+                show.toggle()
+            }
+        }
+//        .animation(.easeInOut(duration: 2), value: show) // 如果在这里声明，对 Button 的文字同样有影响，结果如下图
+        .frame(width: 300, height: 300)
+        .onChange(of: show) {
+            print($0)
+        }
+    }
+}
+
+
+虽然 MyTransition 表面上并不符合 Animatable 协议，但其中的 rotationEffect （可动画 ViewModifier ）帮助我们实现了动画效果。
+另外，我们也可以使用符合 Animatable 的 GeometryEffect（ 符合 ViewModifier 和 Animatable ）来创建复杂的转场效果。
+
+https://swiftui-lab.com/advanced-transitions/
+
+
+
+
+状态、视图标识、动画:
+SwiftUI 的动画是创建从一个状态到另一个状态的平滑过渡，那么我们必须对状态（依赖项）的改变可能导致的结果有正确的认识
+SwiftUI 对视图采用两种标识方式：结构性标识和显式标识。
+对于动画来讲，采用不同的标识方式所需注意的点不太一样。
+
+结构性标识:
+尽管都是采用了结构性视图标识（ 以所在的视图层次位置和类型进行标识 ），但它们的意图是完全不同的。
+// 代码一
+if show {
+    Text("Hello")  // 分支一
+} else {
+    Text("Hello")  // 分支二
+      .offset(y : 100)
+}
+
+// 代码二
+Text("Hello")
+    .offset(y : show ? 100 : 0)  // 同一视图两种状态声明
+
+
+代码一描述了在依赖项 show 发生变化时，SwiftUI 将在分支一和分支二中进行切换。
+此种情况下，我们可以通过 transition 来分别设定分支一和分支二的进出场动画（ 也可以在分支选择的外侧统一设定 Transition ），但无法要求分支一移动到分支二上面。
+// 代码一
+VStack{  //  使用布局容器
+    if !show {
+        Text("Hello")  // 分支一
+           .transition(.scale)
+    } else {
+        Text("Hello")  // 分支二
+          .offset(y : 100)
+          .transition(.move(edge: .bottom))
+    }
+}
+.animation(.easeIn, value: show)
+
+两个需要注意的地方:
+1. 必须在条件判断语句的外侧使用 animation ，因为只有在 if - else 的外侧声明，作用域才会对 show 的判断有效
+2. 应使用布局容器（ VStack、ZStack、HStack 视图 ）包裹条件判断语句（ 不要使用 Group ）。由于两个分支视图在转场时会同时出现，因此只有在布局容器中才会正确的处理转场动画。
+Group 只能对其子元素进行统一设置，不具备处理两个分支视图同时出现的情况（会有一个视图分支的转场丢失）。
+
+
+代码二描述了在 show 发生变化时同一个视图的不同状态（ offset 的 y 数值不同）。
+因此，在对时序曲线函数关联后，视图将从状态一（ y : 0 ）的位置移动到状态二（ y : 100）的位置。
+// 代码二
+Text("Hello")
+    .offset(y : show ? 100 : 0)  // 同一视图两种状态声明
+    .animation(.spring(), value: show)
+
+
+显式标识:
+在 SwiftUI 中，为视图设置显式识别有两种方式：ForEach 和 id 修饰符。
+
+给 ForEach 提供一个稳定且唯一的的 KeyPath 作为标识:
+struct Demo: View {
+    @State var items = (0...100).map { $0 }
+    var body: some View {
+        VStack {
+            List {
+                ForEach(items, id: \.self) { item in // id: \.self 使用 element 作为 identifier
+                    Text("\(item)")
+                }
+            }
+            .animation(.easeInOut, value: items)
+            Button("Remove Second") {
+                items.remove(at: 1)
+            }
+            Button("add Second") {  // 在 items 中会出现相同的元素，破坏了标识的唯一性
+                items.insert(Int.random(in: 0...100), at: 1)
+            }
+        }
+        .frame(width: 400, height: 500)
+    }
+}
+items 是整数数组。上面的代码中使用了 \.self 作为标识依据。
+这意味着，当数组中出现了两个同样的元素（点击添加按钮），SwiftUI 将无法正确识别我们的意图 —— 究竟是想对那个元素（值相同意味着标识也相同）进行操作。
+因此有很大的可能因为对视图的识别错误，而产生动画异常。下面的动图中，当出现相同元素时，SwiftUI 给出了警告提示。
+
+为 ForEach 提供具有唯一标识的数据源可有效避免因此而产生的动画异常。
+struct Item: Identifiable, Equatable {
+    let id = UUID() // 唯一标识
+    let number: Int
+}
+
+struct Demo: View {
+    @State var items = (0...100).map { Item(number: $0) }
+    var body: some View {
+        VStack {
+            List {  // 目前无法为 List 里的 item 指定 transition ，又一个没有在原始控件中很好兼容 SwiftUI 动画的例子。换成 ScrollView 可以支持指定 item 的转场
+                ForEach(items, id: \.id) { item in
+                    Text("\(item.number)")
+                }
+            }
+            .animation(.easeInOut, value: items) // List 使用该关联来处理动画，而不是 ForEach
+            Button("Remove Second") {
+                items.remove(at: 1)
+            }
+            Button("add Second") {
+                items.insert(Item(number: Int.random(in: 0...100)), at: 1)
+            }
+        }
+        .frame(width: 400, height: 500)
+    }
+}
+
+
+修饰符 id 需要使用转场:
+修饰符 id 是另一种为视图提供显示标识的方式。
+当修饰符 id 的值发生变化时，SwiftUI 将其作用的视图从当前的视图结构中移除，并创建新的视图添加到原先所在的视图层次位置。
+因此，可以影响到它的动画部件也是 AnyTransaction 。
+
+struct Demo: View {
+    @State var id = UUID()
+    var body: some View {
+        VStack {
+            Spacer()
+            Text("Hello \(UUID().uuidString)")
+                .id(id) // id 发生变化时 原视图移除，新视图移入
+                .transition(.slide) 
+                .animation(.easeOut, value: id)
+            Button("Update id") {
+                id = UUID()
+            }
+            Spacer()
+        }
+        .frame(width: 300, height: 300)
+    }
+}
+SwiftUI 目前在处理因 id 值变化而产生的视图转换的效果一般，仅支持部分的转场效果。
+
+
+
+SwiftUI 中的不少控件是采用对 UIKit（ AppKit ）控件进行封装实现的，当前的动画处理并不到位。

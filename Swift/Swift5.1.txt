@@ -1,4 +1,33 @@
------可以使用Self替代类名来访问静态成员
+-----单行返回函数可以省略return关键词
+let doubled1 = [1, 2, 3].map { $0 * 2 }
+
+如果一个闭包或者函数只包含一个返回表达式，那么可以把return省略掉，隐式返回该表达式。
+
+
+-----扩展了Self的使用
+
+在class,struct, enmu中使用时候可以指向这个类型。这点在动态类型中很有用，特别是某些类型需要在运行时才能决定时候。
+class NetworkManager {
+    class var maximumActiveRequests: Int {
+        return 4
+    }
+
+    func printDebugData() {
+        print("Maximum network requests: \(NetworkManager.maximumActiveRequests).")
+    }
+}
+
+class ThrottledNetworkManager: NetworkManager {
+    override class var maximumActiveRequests: Int {
+        return 1
+    }
+}
+如果我们调用printDebugData()，它只会打印父类的属性
+我们改写printDebugData()用Self(大写S)来指向当前的类型
+Self在协议中仍然像早期Swift中一样工作。
+
+
+可以使用Self替代类名来访问静态成员
 class Student {    
     static var age = 10
     
@@ -16,7 +45,7 @@ let stu = Student()
 stu.say()
 
 
------可以在Key Path中使用元组，通过.访问元素
+-----可以在Key Path中使用元组，通过.访问元素 ??? swift4.0
 struct Student  {    
     var name: String
     var age: Int
@@ -31,7 +60,7 @@ let ios = stu[keyPath:\Student.score.iOS]
 let mac = stu[keyPath:\Student.score.Mac]
 
 
------@dynamicMemberLookup查找Key Path
+-----@dynamicMemberLookup查找Key Path ??? swift4.0
 struct Person { 
     var name: String
     var age: Int
@@ -57,10 +86,6 @@ let stu = Student(stuNo: "123456789", person: p)
 stu.name
 stu.age
 
-
------如果一个闭包或者函数只包含一个返回表达式，那么可以把return省略掉，隐式返回该表达式。
-
-
 -----根据默认值合成结构体的构造函数
 以前一个结构体的所有属性都有默认值时，编译器会基于属性生成两个构造函数。
 结构体名()和结构体名(所有属性参数),但是并不会生成可选属性参数的构造函数
@@ -75,10 +100,15 @@ let wangwu = Person(name: "wangwu")
 
 
 -----不透明的返回类型（Opaque Result Types）
+知晓某个对象的能力但是不需要知道这个对象的具体类型
+
 // 报错：Protocol 'Equatable' can only be used as a generic constraint because it has Self or associated type requirements
 func generateIntNumber() -> Equatable {
     return 5
 }
+
+这是因为Equatable有一个Self的associated type。 有associated type的协议看起来像类型，但是它们实际上不是，它们实际上表示的是“遵循此协议的任意类型”
+Swift 5.1中的不透明返回类型，可以将这种协议作做一个普通的类型来使用
 
 let number1 = generateIntNumber()
 let number2 = generateIntNumber()
@@ -122,7 +152,9 @@ if number1 == number2 {
 
 在保持性能的同时，隐藏真实类型的新功能
 通过引入some这个关键字去修饰返回值，语法上隐藏具体类型，所以叫做不透明结果类型，这样可以让被调用方选择具体的返回值类型，并且是在编译时确定下来的。
+###
 允许带有Self或者associatedtype的 protocol 作为返回类型。
+###
 
 
 protocol Animal {
@@ -162,6 +194,15 @@ struct ContentView: View {
     }
 }
 
+#####
+不透明返回类型(Opaque Return types)可以带来的好处有:
+
+我们的函数决定具体的返回类型，而不是函数的调用方。
+我们不需要在关心Self或者associated type，因为编译器会明确知道内部具体的类型。
+为函数定义方将来改变实现留有余地。
+函数定义方不需要对外保留内部的类型。
+#####
+
 
 -----属性包装类型（Property Wrapper Types）
 关键字@propertyWrapper，用它修饰一个结构体，它修饰的结构体可以变成一个新的修饰符并作用在其他代码上，来改变这些代码默认的行为。
@@ -193,3 +234,83 @@ post.body  // "is very important"
 
 post.title = "      @propertyWrapper     "
 post.title  // "@propertyWrapper"
+
+
+-----支持Static和class类下标(subscripts)
+使用没有case的enum，也就让你没法实例化Settings。
+可以使用static subscript
+
+public enum NewSettings {
+    private static var values = [String: String]()
+
+    public static subscript(_ name: String) -> String? {
+        get {
+            return values[name]
+        }
+        set {
+            print("Adjusting \(name) to \(newValue ?? "nil")")
+            values[name] = newValue
+        }
+    }
+}
+
+NewSettings["Captain"] = "Gary"
+NewSettings["Friend"] = "Mooncake"
+print(NewSettings["Captain"] ?? "Unknown")
+
+
+static或者class都是静态的前缀，区别是，class容许子类型覆盖
+
+
+-----可排序集合的diff
+Swift 5.1 为可排序集合(内含Equatable元素)提供了一个difference(from:)方法来计算两个集合，那个元素被移除了，新增了哪个……
+
+此方法被标注为，swift 5.1才@available
+
+因此使用需要 #if swift(>=5.1)
+
+let operatingSystems = ["Yosemite",
+                        "El Capitan",
+                        "Sierra",
+                        "High Sierra",
+                        "Mojave",
+                        "Catalina"]
+var answers = ["Mojave",
+               "High Sierra",
+               "Sierra",
+               "El Capitan",
+               "Yosemite",
+               "Mavericks"]
+
+
+#if swift(>=5.1)
+let differences = operatingSystems.difference(from: answers)
+let sameAnswers = answers.applying(differences) ?? []
+// 1
+for change in differences.inferringMoves() {
+  switch change {
+    // 2
+    case .insert(let offset, let element, let associatedWith):
+      answers.insert(element, at: offset)
+      guard let associatedWith = associatedWith else {
+        print("\(element) inserted at position \(offset + 1).")
+        break
+      }
+      print("""
+            \(element) moved from position \(associatedWith + 1) to position
+            \(offset + 1).
+            """)
+    // 3
+    case .remove(let offset, let element, let associatedWith):
+      answers.remove(at: offset)
+      guard let associatedWith = associatedWith else {
+        print("\(element) removed from position \(offset + 1).")
+        break
+      }
+      print("""
+            \(element) removed from position \(offset + 1) because it should be
+              at position \(associatedWith + 1).
+            """)
+  }
+}
+#endif

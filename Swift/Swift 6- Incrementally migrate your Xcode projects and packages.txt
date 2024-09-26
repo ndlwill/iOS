@@ -1,0 +1,95 @@
+Eliminating all data races:
+Once you migrate your projects to Swift 6, you’ll notice several warnings related to Sendable and concurrency.
+These warnings guide you towards making your project thread-safe, eliminating data races and race conditions
+
+
+Incrementally migrating your Xcode Projects:
+The time it takes to migrate your projects to Swift 6 depends on the type and size of your project.
+
+You’ll follow the same steps for migrating modules (Swift Packages) as for Xcode projects, 
+but you’ll apply build settings inside the Package.swift file. Each migration follows the following steps:
+Determine an isolated part of your project. This will either be an individual target, test target, or module.
+Enable upcoming language features for Swift 6, one by one.
+Increase the strict concurrency checking from minimal to targeted and finally to complete.
+After fixing all warnings in each step, you can change the language mode to Swift 6.
+
+
+1. Determining an isolated part of your project
+Migrating to Swift 6 is definitely a potentially large refactor, so it’s essential to pick a piece of isolated code. 
+By this, I mean code that can be compiled in isolation. Examples are targets or individual modules.
+If you can, try to pick an app extension with fewer code files. 
+This will allow you to familiarize yourself with migrating a part of your code to Swift 6.
+
+2. Enable upcoming Swift 6 language features, one by one
+You can do this by going into build settings and searching for “Upcoming features”:
+
+focusing on the build settings that contain the $(SWIFT_UPCOMING_FEATURE_6_0) variable, as these relate to Swift 6 directly.
+These features will also be enabled automatically when you change the project’s language feature to version six.
+
+You’ll likely see new warnings after enabling one of the upcoming features. 
+Some of these warnings will become errors when you’ve updated your language version, so try to fix as many as you can.
+
+Once done, open a pull request with just these changes before moving towards the next upcoming feature.
+
+For Swift packages, you can enable upcoming features as follows:
+.target(
+    name: "WindowMonitoring",
+    dependencies: [],
+    swiftSettings: [
+        .enableUpcomingFeature("SWIFT_UPCOMING_FEATURE_FORWARD_TRAILING_CLOSURES")
+    ]
+)
+The key for each upcoming feature can be found inside Xcode’s Quick Help after selecting the build setting:
+
+3. Enabling Strict Concurrency Checking
+Enabling upcoming features one by one prepares your project for strict concurrency checking. 
+The strict concurrency checking build setting controls the level of Sendable enforcement and actor-isolation checking performed by the Swift compiler.
+
+There are three levels to pick from:
+Minimal: Enforce Sendable constraints only where they have been explicitly adopted and perform actor-isolation checking wherever code has adopted concurrency.
+Targeted: Enforce Sendable constraints and perform actor-isolation checking wherever code has adopted concurrency, including code that has explicitly adopted Sendable.
+Complete: Enforce Sendable constraints and actor-isolation checking throughout the entire project or module.
+
+Each step results in stricter checking and potentially more warnings. Don’t go too fast here, and adopt each level individually. 
+After fixing the warnings for each level, you can open a pull request and continue to the next level.
+
+If you’re using Swift packages, you can change the strict concurrency level as follows:
+.target(
+    name: "CoreExtensions",
+    dependencies: ["Logging"],
+    path: "CoreExtensions/Sources",
+    swiftSettings: [
+        /// Used to be like this in Xcode 14:
+        SwiftSetting.unsafeFlags(["-Xfrontend", "-strict-concurrency=complete"]),
+
+        /// Xcode 15 & 16. Remove `=targeted` to use the default `complete`. Potentially isolate to a platform to further reduce scope.
+        .enableExperimentalFeature("StrictConcurrency=targeted", .when(platforms: [.macOS]))
+    ]
+)
+
+The warnings (or errors) triggered after enabling this setting give you insights into areas of improvement. 
+As a team, I recommend enabling this setting by default to migrate your codebase gracefully. 
+Code implementations like networking layers can be a great start since they’ll likely allow you to adopt async/await higher up in more places.
+
+4. Change the Swift Language Version to Swift 6
+The final step of the migration requires you to change the Swift Language Version to Swift 6. Go into the build settings and search for Swift Language Version:
+
+You might still run into new warnings and errors after enabling, but you’ve likely eliminated a bunch of warnings already due to the incremental migration steps.
+
+For packages, make sure to not get confused by the swift-tools-version:
+// swift-tools-version:6.0
+// The swift-tools-version declares the minimum version of Swift required to build this package.
+
+import PackageDescription
+
+This is the first line inside your Package.swift files and only determines the minimum version of Swift required to build the package.
+To actually update your package’s language version, you’ll need to adopt the following Swift setting:
+.target(
+    name: "WindowMonitoring",
+    dependencies: [],
+    swiftSettings: [
+        .swiftLanguageVersion(.v6)
+    ]
+)
+
+Note that you can remove any other Swift Settings for upcoming features or strict concurrency checking since they’ll be enabled by default after updating the language version.

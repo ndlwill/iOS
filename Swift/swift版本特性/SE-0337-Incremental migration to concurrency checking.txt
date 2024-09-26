@@ -1,0 +1,36 @@
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0337-support-incremental-migration-to-concurrency-checking.md
+
+For example, consider a function that can only be called on the main actor, then runs the provided closure on a different task:
+@MainActor func doSomethingThenFollowUp(_ body: @Sendable () -> Void) {
+  // do something
+  Task.detached {
+    // do something else
+    body()
+  }
+}
+
+This function could have existed before concurrency, without the @MainActor and @Sendable annotations. 
+After adding these concurrency annotations, code that worked previously would start producing errors:
+
+class MyButton {
+  var clickedCount = 0
+  
+  func onClicked() { // always called on the main thread by the system
+    doSomethingThenFollowUp { // ERROR: cannot call @MainActor function outside the main actor
+      clickedCount += 1 // ERROR: captured 'self' with non-Sendable type `MyButton` in @Sendable closure
+    }
+  }
+}
+
+However, if we add @preconcurrency to the declaration of doSomethingThenFollowUp, its type is adjusted to remove both the @MainActor and the @Sendable, 
+eliminating the errors and providing the same type inference from before concurrency was adopted by doSomethingThenFollowUp.
+
+The difference is visible in the type of doSomethingThenFollowUp in a minimal vs. a strict context:
+
+func minimal() {
+  let fn = doSomethingThenFollowUp // type is (( )-> Void) -> Void
+}
+
+func strict() async {
+  let fn = doSomethingThenFollowUp // type is @MainActor (@Sendable ( )-> Void) -> Void
+}

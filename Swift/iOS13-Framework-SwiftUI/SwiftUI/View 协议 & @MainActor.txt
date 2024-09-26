@@ -1,0 +1,115 @@
+在 WWDC 2024 上，Apple 对 SwiftUI 的 View 协议进行了一项重要更新：将整个协议标记为 @MainActor，同时确保了向后兼容性。
+意味着所有遵循 View 协议的类型现在都将自动获得 @MainActor 的标注。
+
+在启用并发严格检查选项后，编译器对 PasteButton 给出了下面的错误
+Call to main actor-isolated initializer 'init(payloadType:onPast:)' in a synchronous nonisolated context
+
+
+@MainActor public struct PasteButton : View
+
+
+actor 类似于类（class），但它专门用来解决并发环境下的数据竞争和同步问题。
+actor 的魔法在于通过串行化访问来避免数据竞争，为并发操作提供了一条清晰、安全的路径。
+然而，这种隔离是局部的，仅限于特定的 actor 实例。Swift 进一步引入了 GlobalActor 概念，以在更广泛的范围内实现隔离。
+GlobalActor 允许我们标记跨不同模块的文件中的代码，确保这些操作在相同的串行队列中执行，从而维持操作的原子性和一致性。
+
+@MainActor 是 Swift 定义的一个特殊的 GlobalActor。其职责是确保所有标记为 @MainActor 的代码都在同一串行队列中执行，并且这一切发生在主线程上。
+@globalActor actor MainActor : GlobalActor {
+    static let shared: MainActor
+}
+
+
+View 协议: 仅有 body 属性被显式地标记为 @MainActor。
+这个发现意味着遵循 View 协议的类型，并不保证其整体运行在主线程上。除了 body 之外，编译器不会自动确保其他属性或方法在主线程中执行。
+public protocol View {
+    associatedtype Body : View
+    @ViewBuilder @MainActor var body: Self.Body { get }
+}
+这一发现对于理解 SwiftUI 官方组件如 PasteButton 的使用尤为关键，因为它与大多数其他组件不同，被明确地标记为 @MainActor。
+这表示，PasteButton 必须在同样被标记为 @MainActor 的上下文中使用，否则编译器将报错，指出不允许在非隔离的同步上下文中调用隔离于主线程的初始化器
+
+struct PasteButtonDemo:View {
+  var body: some View {
+    VStack {
+      Text("Hello")
+      button
+    }
+  }
+  
+  var button:some View {
+    PasteButton(payloadType: String.self){ str in // Call to main actor-isolated initializer 'init(payloadType:onPaste:)' in a synchronous nonisolated context
+      print(str)
+    }
+  }
+}
+为解决这一问题，简单地将 button 变量标记为 @MainActor 就可以顺利通过编译，因为这样做确保了 button 在一个符合要求的上下文中被初始化和使用
+
+
+大多数 SwiftUI 组件都是值类型并符合 Sendable 协议，它们并未被显式标记为 @MainActor，因此不会遇到 PasteButton 所面临的特定问题。
+
+这个改动突显了在 SwiftUI 视图中使用 @MainActor 的重要性，同时也提醒开发者注意，不是所有视图相关的代码都默认运行在主线程中。
+
+
+我们还可以定义一个使用 @MainActor 标注的协议，让任何遵循该协议的视图自动继承主线程的执行环境:
+@MainActor
+protocol MainActorView: View {}
+
+struct AsyncDemoView: MainActorView {
+  var body: some View {
+    Text("abc")
+      .task {
+        await doSomething()
+      }
+  }
+  
+  func doSomething() async {
+    print(Thread.isMainThread) // true
+  }
+}
+若不进行 @MainActor 标注，我们便能更灵活地根据需要对属性和方法进行逐一标注
+
+
+
+
+
+Xcode 16：View 协议的 @MainActor 标注
+在 Xcode 16 中，Apple 对 SwiftUI 框架的 View 协议进行了重要调整。
+这一变更似乎是为了解决仅对 body 属性标注 @MainActor 可能给开发者带来的困扰。
+现在，整个 View 协议都被标注为 @MainActor，不仅限于 body 属性。值得注意的是，这一改变是向后兼容的。
+
+@available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
+@MainActor @preconcurrency public protocol View {
+    associatedtype Body : View
+    @ViewBuilder @MainActor @preconcurrency var body: Self.Body { get }
+}
+
+struct MainActorViewDemo:View {
+  var body: some View {
+    Text("Hello world")
+      .task {
+        await doSomethingNotInMainActor()
+      }
+  }
+  
+  func doSomethingNotInMainActor() async {
+    print(Thread.isMainThread)
+  }
+}
+
+// Xcode 15 输出：false（doSomethingNotInMainActor 在非主线程上运行）
+// Xcode 16 输出：true（doSomethingNotInMainActor 在主线程上运行）
+
+
+如果您希望确保 doSomethingNotInMainActor 方法继续在非主线程上运行，可以使用 nonisolated 关键字将其从 @MainActor 上下文中隔离出来
+
+nonisolated func doSomethingNotInMainActor() async {
+  print(Thread.isMainThread)
+}
+
+// Xcode 15
+false
+
+// Xcode 16
+false
+
+通过这种调整，无论在 Xcode 15 还是 Xcode 16 中，该方法都将在非主线程上执行，保持了一致的行为。
