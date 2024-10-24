@@ -1,0 +1,277 @@
+https://developer.apple.com/documentation/accelerate/simd
+
+
+==================================================Matrices:
+Solve Simultaneous Equations:
+
+You can use matrices to solve simultaneous equations of the form AX = B; 
+for example, to find x and y in the following equations:
+2x + 4y = 2
+-4x + 2y = 14
+
+You first create a 2 x 2 matrix containing the left-side coefficients:
+
+let a = simd_double2x2(rows: [
+    simd_double2( 2, 4),
+    simd_double2(-4, 2)
+    ])
+
+Then create a vector containing the right-side values:
+let b = simd_double2(2, 14)
+
+To find the values of x and y, multiply the inverse of the matrix a with the vector b:
+let x = simd_mul(a.inverse, b)
+
+The result, x, is a two-element vector containing (x = -2.6, y = 1.8).
+
+
+
+
+Transform Vectors with Matrix Multiplication:
+Matrices provide a convenient way to transform (translate, rotate, and scale) points in 2D and 3D space.
+
+The following shows point A translated to B, rotated to C, and scaled to D:
+
+By representing 2D coordinates as a three-element vector, you can transform points using matrix multiplication.
+Typically, the third component of the vector, z, is set to 1, which indicates that the vector represents a position in space.
+For example, the vector shown as A in the preceding illustration is defined as a simd_float3 with the following code:
+
+let positionVector = simd_float3(x: 3, y: 2, z: 1)
+
+Transform matrices for 2D coordinates are represented by 3 x 3 matrices.
+
+Translate:
+A translate matrix takes the following form:
+
+1   0   tx
+
+0   1   ty
+
+0   0   1
+
+The simd library provides constants for identity matrices (matrices with ones along the diagonal, and zeros elsewhere). 
+The 3 x 3 Float identity matrix is matrix_identity_float3x3.
+
+The following function returns a simd_float3x3 matrix using the specified tx and ty translate values by setting the elements in an identity matrix:
+func makeTranslationMatrix(tx: Float, ty: Float) -> simd_float3x3 {
+    var matrix = matrix_identity_float3x3
+    
+    matrix[2, 0] = tx
+    matrix[2, 1] = ty
+    
+    return matrix
+}
+
+To apply a translate to the position vector, you multiply the pair together:
+
+let translationMatrix = makeTranslationMatrix(tx: 1, ty: 3)
+let translatedVector = translationMatrix * positionVector
+The resulting translatedVector has the values (x: 4.0, y: 5.0, z: 1.0), shown as B in the illustration above.
+
+
+Rotate:
+A rotation matrix around the z-axis (that is, on the xy plane) takes the following form:
+
+cos(angle)  -sin(angle) 0
+
+sin(angle)  cos(angle)  0
+
+0   0   1
+
+The following function returns a simd_float3x3 matrix using the specified rotation angle in radians:
+
+func makeRotationMatrix(angle: Float) -> simd_float3x3 {
+    let rows = [
+        simd_float3(cos(angle), -sin(angle), 0),
+        simd_float3(sin(angle), cos(angle), 0),
+        simd_float3(0,          0,          1)
+    ]
+    
+    return float3x3(rows: rows)
+}
+The resulting rotatedVector has the values (x: 0.964102, y: 6.33013, z: 1.0), shown as C in the illustration above.
+
+
+Scale:
+A scale matrix takes the following form:
+xScale  0   0
+
+0   yScale  0
+
+0   0   1
+
+The following function returns a simd_float3x3 matrix using the specified x and y scale values:
+func makeScaleMatrix(xScale: Float, yScale: Float) -> simd_float3x3 {
+    let rows = [
+        simd_float3(xScale,      0, 0),
+        simd_float3(     0, yScale, 0),
+        simd_float3(     0,      0, 1)
+    ]
+    
+    return float3x3(rows: rows)
+}
+
+To apply a scale to the previously rotated vector, you multiply the pair together:
+
+let scaleMatrix = makeScaleMatrix(xScale: 8, yScale: 1.25)
+let scaledVector = scaleMatrix * rotatedVector
+
+The resulting scaledVector has the values (x: 7.71282, y: 7.91266, z: 1.0), shown as D in the illustration above.
+
+The three transform matrices can be multiplied together and the product multiplied with the position vector to get the same result:
+
+let transformMatrix = scaleMatrix * rotationMatrix * translationMatrix
+let transformedVector = transformMatrix * positionVector
+
+
+
+==================================================Quaternions:
+Quaternions are defined by a scalar (real) part, and three imaginary parts collectively called the vector part. 
+Quaternions are often used in graphics programming as a compact representation of the rotation of an object in three dimensions.
+
+The length of a quaternion is the square root of the sum of the squares of its components.
+
+let ix = 1.0
+let iy = 4.0
+let iz = 8.0
+let r = 9.0
+
+
+let q = simd_quatd(ix: ix, iy: iy, iz: iz, r: r)
+
+The length of the quaternion can be calculated manually with sqrt(ix*ix + iy*iy + iz*iz + r*r), or more simply accessed through its length property.
+Quaternions with a length of one are called unit quaternions and can represent rotations in 3D space. 
+You can easily convert a nonunit quaternion representing a rotation into a unit quaternion by normalizing its axes.
+
+The following code shows q1, which contains rotations around all three axes with a length greater than 1, and q2, 
+which contains the same rotation but has a length of 1 and is, 
+therefore, suitable for applying a rotation to a 3D coordinate:
+
+let axis = simd_double3(x: -2,
+                        y: 1,
+                        z: 0.5)
+
+
+// `q1` length = 2.29128
+let q1 = simd_quatd(angle: .pi,
+                    axis: axis)
+
+
+// `q2` length = 1
+let q2 = simd_quatd(angle: .pi,
+                    axis: simd_normalize(axis))
+
+
+Quaternions have some advantages over matrices.
+For example, they're smaller: A 3 x 3 matrix of floats is 48 bytes, and a single-precision quaternion is 16 bytes.
+They also can offer better performance: Although a single rotation using a quaternion is a little slower than one using a matrix, when combining actions, quaternions can be up to 30% faster.
+
+
+
+The following examples show a few common uses of quaternions.:
+1. 
+Rotate a Point Around a Sphere:
+The following illustration shows a point, defined by originVector, rotated over the surface of a sphere by 60º about the x axis.
+
+To apply this rotation, you define the vector to be rotated and the quaternion that represents the rotation:
+
+func degreesToRadians(_ degrees: Float) -> Float {
+    return degrees * .pi / 180
+}
+
+
+let originVector = simd_float3(x: 0, y: 0, z: 1)
+
+
+let quaternion = simd_quatf(angle: degreesToRadians(-60),
+                            axis: simd_float3(x: 1,
+                                              y: 0,
+                                              z: 0))
+
+The rotation of the vector by a quaternion is known as an action; to apply the rotation to originVector, you call the act(_:) method:
+
+let rotatedVector = quaternion.act(originVector)
+rotatedVector is now at the position of the blue point in the illustration above.
+
+
+
+2. 
+###
+逆时针旋转：被认为是正方向（即正角度），例如旋转 +30°。
+顺时针旋转：被认为是负方向（即负角度），例如旋转 -30°。
+默认逆时针为正方向的旋转规则在数学和物理中是一个广泛接受的约定
+它是一个国际公认的标准惯例。
+
+四元数旋转默认使用 右手法则 来判断方向
+
+在右手法则中，当你用右手表示旋转轴时，大拇指指向旋转轴的正方向，四根手指的弯曲方向表示旋转方向（通常是逆时针）。
+###
+
+
+Interpolate Between Two Points on a Sphere:
+One of the advantages quaternions have over matrices when representing rotations is that they simplify interpolation between rotated coordinates.
+
+The following image shows the spherical linear interpolation along the shortest arc between q0 and q1, and along the longest arc between q1 and q2.
+
+The following code shows how the three points are defined in the preceding image:
+let origin = simd_float3(0, 0, 1)
+
+
+let q0 = simd_quatf(angle: .pi / 6,
+                    axis: simd_normalize(simd_float3(x: 0,
+                                                     y: -1,
+                                                     z: 0)))
+let u0 = simd_act(q0, origin)
+
+
+let q1 = simd_quatf(angle: .pi / 6,
+                    axis: simd_normalize(simd_float3(x: -1,
+                                                     y: 1,
+                                                     z: 0)))
+let u1 = simd_act(q1, origin)
+
+
+let q2 = simd_quatf(angle: .pi / 20,
+                    axis: simd_normalize(simd_float3(x: 1,
+                                                     y: 0,
+                                                     z: -1)))
+
+
+The simd_slerp(_:_:_:) function linearly interpolates along the shortest arc between two quaternions. 
+The following code calls simd_slerp(_:_:_:) with small increments to its t parameter, adding a line segment at each interpolated value to build the short arc between q0 and q1 shown in the preceding image:
+for t: Float in stride(from: 0, to: 1, by: 0.001) {
+    let q = simd_slerp(q0, q1, t)
+    // code to add line segment at `q.act(origin)`
+}
+
+
+The simd_slerp_longest(_:_:_:) function linearly interpolates along the longest arc between two quaternions. The following code calls simd_slerp_longest(_:_:_:) with small increments to its t parameter, 
+adding a line segment at each interpolated value to build the long arc between q1 and q2 shown in the preceding image:
+for t: Float in stride(from: 0, to: 1, by: 0.001) {
+    let q = simd_slerp_longest(q1, q2, t)
+    // code to add line segment at `q.act(origin)`
+}
+
+
+3.
+Interpolate Between Multiple Points on a Sphere
+To interpolate between multiple quaternions that define positions on the surface of a sphere, the simd library provides the simd_spline(_:_:_:_:_:) function.
+
+The following image illustrates a series of quaternions that define positions on the surface of a sphere, shown as points, and a line that shows the smooth interpolation between them.
+
+Much like simd_slerp(_:_:_:), simd_spline(_:_:_:_:_:) accepts the two quaternions to interpolate between, 
+but also requires the surrounding two quaternions. Given an array of quaternions named rotations, the following code iterates over each element, adding a line segment at each interpolated value to build the smooth line shown in the preceding image:
+
+let rotations: [simd_quatf] = ...
+
+
+for i in 1 ... rotations.count - 3 {
+    for t: Float in stride(from: 0, to: 1, by: 0.001) {
+        let q = simd_spline(rotations[i - 1],
+                            rotations[i],
+                            rotations[i + 1],
+                            rotations[i + 2],
+                            t)
+        // code to add line segment at `q.act(origin)`
+    }
+}
