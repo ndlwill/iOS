@@ -1,0 +1,30 @@
+https://developer.apple.com/forums/thread/714795
+
+
+As per https://developer.apple.com/forums/thread/714795, Apple suggested adding -Wl,-weak-lswiftCoreGraphics to the linker flags.
+
+The problem was that without this flag your app will expect libswiftCoreGraphics.dylib to be at /usr/lib/swift/libswiftCoreGraphics.dylib on the phone. 
+Because the dylib isn't there on older iOS versions, you'll get error like
+
+EXC_CRASH (SIGABRT)
+Exception Type:  EXC_CRASH (SIGABRT)
+Exception Codes: 0x0000000000000000, 0x0000000000000000
+Exception Note:  EXC_CORPSE_NOTIFY
+Termination Description: DYLD, Library not loaded: /usr/lib/swift/libswiftCoreGraphics.dylib
+
+Adding the flag tells the linker to treat this library as a weak linker flag. 
+At the launch(or load) time, the dylib will be searched relative to the @rpath instead of hard coded /usr/lib/swift path.
+
+After running otool -L on the app I see few more libraries pointing to their /usr/lib/swift version but all of them are weak references e.g
+/usr/lib/swift/libswiftCoreMIDI.dylib (compatibility version 1.0.0, current version 6.0.0, weak)
+/usr/lib/swift/libswiftCoreML.dylib (compatibility version 1.0.0, current version 1436.0.14, weak)
+/usr/lib/swift/libswiftDataDetection.dylib (compatibility version 1.0.0, current version 723.0.0, weak)
+/usr/lib/swift/libswiftFileProvider.dylib (compatibility version 1.0.0, current version 730.0.125, weak)
+/usr/lib/swift/libswiftOSLog.dylib (compatibility version 1.0.0, current version 4.0.0, weak)
+
+The only library with non-weak reference was libswiftCoreGraphics before adding the linker flag.
+/usr/lib/swift/libswiftCoreGraphics.dylib (compatibility version 1.0.0, current version 120.100.0)
+
+
+After adding the linker flag it appears as:
+@rpath/libswiftCoreGraphics.dylib (compatibility version 1.0.0, current version 15.0.0, weak)

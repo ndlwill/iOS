@@ -1,0 +1,252 @@
+
+三个核心概念：视图类型、视图声明和视图类型实例。这些概念看似简单，却是理解 SwiftUI 工作原理的关键。
+
+
+1. 视图类型:
+在讨论 SwiftUI 中的”视图”时，通常指的是一个符合 View 协议的类型。
+struct DemoView: View {
+    var body: some View {
+        Text("Hello World")
+    }
+}
+
+虽然结构体是最常用的方式，但 SwiftUI 并不限制我们只能使用结构体。任何值类型都可以成为视图类型，比如枚举
+enum EnumView: View {
+    case hello
+    var body: some View {
+        Text("\(self)")
+    }
+}
+
+
+视图类型并不一定要以描述 UI 为主要目的。我们可以让任何类型通过扩展来获得成为视图类型的能力
+struct Student {
+    var name: String
+    var age: Int
+    var height: Double
+    var weight: Double
+
+    func sayHello() {
+        print("Hello, I'm \(name)")
+    }
+
+    var bmi: Double {
+        weight / (height * height)
+    }
+}
+
+extension Student: View {
+    var body: some View {
+        Text("Hello, I'm \(name), \(age) years old")
+    }
+}
+
+
+2. 视图声明:
+视图声明是开发者描述界面呈现的代码片段。
+虽然最常见的是在视图类型的 body 属性中进行声明，但 SwiftUI 提供了多种灵活的声明方式：
+
+// 全局函数
+func hello() -> some View {
+    Text("Hello World")
+}
+
+// 全局变量
+let world = Text("World")
+
+// 类型属性
+@MainActor
+enum MyViews {
+    static let redRectangle: some View = Rectangle().foregroundStyle(.red)
+}
+
+// 枚举
+enum MyEnumView: String, View {
+    case hello
+    case world
+
+    var body: some View {
+        Text(rawValue)
+    }
+}
+
+struct CombineView: View {
+    var body: some View {
+        VStack {
+            hello()
+            world
+            MyViews.redRectangle
+            MyEnumView.hello
+        }
+    }
+}
+
+需要注意的是，视图声明并不是一个固定的像素级描述，而是一个抽象的表达。
+SwiftUI 会根据多个因素（如状态、布局空间、色彩模式、硬件设备规格等）来确定最终的呈现效果。
+对 SwiftUI 来说，视图声明本质上就是一个值，是通过解析声明代码计算得到的结果。
+
+
+3. 视图类型实例:
+为了获取视图声明的值，SwiftUI 需要创建视图类型的实例
+这个过程大致如下：
+// SwiftUI 内部工作流程示意
+let demoViewInstance = DemoView()        // 创建视图类型实例
+saveInstanceValue(demoViewInstance)      // 保存实例值
+let demoViewValue = demoViewInstance.body // 获取视图声明值
+saveViewValue(demoViewValue)             // 保存视图声明值
+
+SwiftUI 会保存两个关键值:
+视图类型实例的值
+视图声明的值
+
+#####
+为什么要保存视图类型实例的值？这是因为在没有收到明确重新计算的信号时， SwiftUI 需要通过比较视图实例值的变化来决定是否需要重新计算视图声明值。
+这个机制是 SwiftUI 视图刷新的核心之一
+#####
+
+
+响应与视图声明值的重新评估:
+SwiftUI 的响应机制
+#####
+除了声明式框架外，我们常说 SwiftUI 还是一个响应式框架，它会自动响应事件并调用相应的逻辑。
+#####
+最常见的事件类型主要是用户交互和系统事件。
+
+
+struct OnTapDemo: View {
+    @State var count = 0
+    var body: some View {
+        let _ = print("Evaluating View Declaration Value")
+        Text("Count: \(count)")
+        Text("Tap Me")
+            .onTapGesture {
+                print("hello world")
+            }
+    }
+}
+
+在上面的代码中，我们展示了 SwiftUI 如何响应用户的点击事件:
+开发者使用 onTapGesture 方法，通过 SwiftUI 框架注入了一段响应代码。
+当用户点击 Tap Me 时，会调用这段代码，并在控制台输出 hello world。
+
+运行上述代码后，我们会发现除了首次加载时，SwiftUI 会调用 OnTapDemo 的 body 属性获取视图声明值外，之后无论点击多少次，body 都不会被重新调用。
+这是因为在 onTapGesture 闭包中，我们并未进行 SwiftUI 所认可的、会影响视图声明值结果的操作。
+
+
+下面这段代码通过 onReceive 注入了对一个计时器 Publisher 的响应代码。与上面的代码类似，尽管会持续在控制台输出 hello，但并不会导致视图声明值的重新计算。
+struct OnReceiveDemo: View {
+    @State var timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    var body: some View {
+        let _ = print("Evaluating View Declaration Value")
+        Text("Hello")
+            .onReceive(timer) { _ in
+                print("hello")
+            }
+    }
+}
+这意味着在视图代码中进行响应，并不必然导致视图声明值发生变化，也不必然导致 SwiftUI 重新评估（计算）视图声明值。
+
+
+#####
+视图声明值的重新评估条件:
+#####
+除了首次将视图加载到视图树上需要计算视图声明值外，为了避免不必要的开销，SwiftUI 只有在特定条件下才会重新评估视图声明值。这些条件包括：
+1. 由 SwiftUI 预设的属性包装器引发的明确评估要求（例如：@State、@StateObject、@Environment 等）。
+2. 视图类型的实例值发生变化。
+
+但无论是哪种情况，其起点必然是源自某个事件的响应。也就是说，必须先有事件，才可能触发重新评估。
+
+
+struct OnTapDemo: View {
+    @State var count = 0
+    var body: some View {
+        let _ = print("Evaluating View Declaration Value")
+        Text("Count: \(count)")
+        Text("Tap Me")
+            .onTapGesture {
+                count += 1
+            }
+    }
+}
+当点击事件发生后，由于 count（基于 @State）发生了变化，满足了 SwiftUI 重新评估视图声明值的条件。可以看到，视图的 body 被重新调用，屏幕上的 Count 显示值也发生了变化。
+在 SwiftUI 中，计算视图声明值的过程是递归的。它以当前视图为起点，按照视图树的顺序向下遍历，除非某个分支明确指示无需继续向下计算。
+
+#####
+例如，在 OnTapDemo 中，重新评估其声明值时，print("Evaluating View Declaration Value") 必然会执行，但这并不意味着所有子视图都会被重新计算声明值。
+SwiftUI 会重新创建每个子视图的实例，并与之前保存的实例值进行比对。两者间是否发生变化，决定了是否需要继续沿着这个子视图继续向下计算视图声明值。
+
+Text("Count: \(count)") 由于 count 值的变化（通过构造方法传递的参数发生了变化），导致它的实例值也发生了变化。因此，这个子视图必然会被重新计算，我们也能够看到 Count 显示的值发生了变化。
+而 Text("Tap Me")，由于前后两次实例值一致，因此 SwiftUI 并不会重新计算这个子视图的视图声明值。
+#####
+
+
+为了更好地展示这一过程，我们可以通过构建子视图并添加更多的输出点的方式来观察:
+struct OnTapDemo: View {
+    @State var count = 0
+    var body: some View {
+        let _ = print("Evaluating View Declaration Value")
+        Text("Count: \(count)")
+        Text("Tap Me")
+            .onTapGesture {
+                count += 1
+            }
+        SubView1()
+        SubView2(count: count)
+    }
+}
+
+struct SubView1: View {
+    init() {
+        print("subview1 init")
+    }
+
+    var body: some View {
+        let _ = print("subview1 body update")
+        Text("No changes")
+    }
+}
+
+struct SubView2: View {
+    let count: Int
+    init(count: Int) {
+        self.count = count
+        print("subview2 init")
+    }
+
+    var body: some View {
+        let _ = print("subview2 body update")
+        Text("Count Changes: \(count)")
+    }
+}
+
+通过观察这段代码在控制台的输出，我们可以清楚地看到 SwiftUI 如何评估子视图是否需要重新计算其视图声明值:
+当点击事件发生后，OnTapDemo 中的 count 发生了变化，导致 SwiftUI 重新评估其视图声明值。
+在评估过程中，当处理到 SubView1 时，会重新创建一个 SubView1 的视图类型实例，并进行比对（控制台输出 subview1 init）。
+SwiftUI 发现 SubView1 的新实例值与之前保存的实例值一致，因此不会继续重新评估 SubView1 的视图声明值，停止对其的处理（ 结束了在此分支下进行继续递归 ）。
+在处理 SubView2 时，同样会重新创建一个新的实例（控制台输出 subview2 init）。
+由于 SubView2 的构造参数 count 发生了变化，导致新实例值与之前保存的实例值不一致，SwiftUI 会重新评估 SubView2 的视图声明值（控制台输出 subview2 body update），并用新实例值替换原有的实例值以便之后的判断。
+SwiftUI 将继续按照上述规则在 SubView2 中继续向下递归处理。
+
+
+#####
+通过这段代码，开发者应该能够理解为什么 SwiftUI 在响应事件后，无论视图是否发生了变化，都需要对分支中的子视图重新构建视图实例。
+出于性能考虑，SwiftUI 在默认场景下会使用类似 memcmp 的方式来比较两个实例值的不同。
+#####
+
+
+视图更新的递归与起点:
+当 SwiftUI 在一次更新中，从某个视图开始向下递归比对，如果发现子视图的实例值未发生变化并因此结束了递归操作，那么如果孙视图所依赖的状态在同一更新周期中发生了变化，孙视图还会被更新吗？
+答案是肯定的。在 SwiftUI 的一次更新周期中，可能有多个状态发生变化，或者有多个视图直接依赖了这些变化的状态。
+SwiftUI 会统一考虑所有需要重新评估视图声明值的视图，并将它们各自作为更新操作的起点。
+简单来说，在一个多层级的视图结构中，例如 A -> B -> C -> D，如果视图 A 和 C 因状态变化需要更新，而 B 和 D 的视图实例值没有发生变化，SwiftUI 会分别以 A 和 C 作为本次更新的起点，独立地进行递归操作。
+
+
+
+
+
+探索 SwiftUI 中的视图概念和响应更新机制:
+响应代码不必然导致视图声明值重新计算：在视图代码中添加响应逻辑，并不意味着视图声明值会因此被重新评估。
+视图声明值的重新计算需要事件触发：SwiftUI 只有在特定条件下（如状态变化）才会重新评估视图声明值，这个过程必然是由某个事件引发的。
+谨慎处理视图类型构造过程：避免在视图类型的构造方法中执行耗时或复杂的操作。因为无论视图声明值是否需要重新计算，SwiftUI 都可能多次创建该视图类型的实例。
+优化视图声明值的计算过程：视图声明值的计算是一个递归的过程。通过适当的优化，如减少不必要的嵌套计算，可以有效降低计算开销。
+理拆分视图结构：将视图声明封装在单独的视图类型中，可以让 SwiftUI 更好地识别哪些视图无需重新计算。从而提高视图更新的效率。

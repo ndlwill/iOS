@@ -1,0 +1,372 @@
+KeyPath 是 Swift 4 引入的一种强大特性，用于引用（ 表示 ）类型中的属性或下标。
+
+它具备以下特征：
+1. 与具体实例无关：KeyPath 描述了从某种类型到其属性或下标的访问路径，独立于任何具体的对象实例。
+它可以被视为一种静态引用，精确定位类型中特定属性或下标的位置。
+这种抽象可以通过类比来理解：比如”我的车的左前轮”是基于特定实例的描述，而 KeyPath 更像是”汽车的左前轮”——一个基于类型的、普遍适用的描述。
+这种设计使得 KeyPath 在泛型编程和元编程中特别有用，因为它允许我们在不知道具体实例的情况下操作类型的结构。
+
+2. 仅限描述属性：KeyPath 仅能用于描述类型中的属性或下标，不能用于引用类型中的方法。
+
+3. 线程安全：尽管 KeyPath 本身未标注为 Sendable，但它被设计为不可变的，因此可以安全地在线程之间传递。然而，使用 KeyPath 访问的数据本身的线程安全性仍需要单独考虑。
+
+4. 编译时类型检查：KeyPath 提供了编译时的类型检查，确保对属性的访问是类型安全的。这样可以避免运行时类型错误。
+
+5. 元编程的组成部分：KeyPath 是 Swift 元编程的重要组成部分。它允许开发者通过类型安全的方式动态访问属性，实现了代码的高度灵活性和通用性。
+
+6. 符合 Hashable 和 Equatable 协议：KeyPath 遵循 Hashable 和 Equatable 协议，这使得它们可以作为字典的键或存储在集合中，拓展了其使用场景。
+
+7. 丰富的变体：KeyPath 实际上是一个类型家族的总称，包括 KeyPath、WritableKeyPath 和 ReferenceWritableKeyPath 等。虽然这些变体本质上都描述了属性的访问路径，但它们各自适用于不同的场景。
+
+8. 组合性：KeyPath 具有强大的组合能力，允许开发者将多个 KeyPath 串联在一起。这种特性使得我们可以轻松地表达和访问深层嵌套的属性。
+
+
+声明:
+KeyPath 的声明语法是在 类型.属性 之前添加反斜杠 \
+struct People {
+  var name: String = "fat"
+  var age: Int = 100
+  var addresses: [String] = ["world"]
+}
+
+// 描述了访问 People 类型中 name 属性的路径
+let namePath = \People.name
+
+// 描述了访问 People 类型中 addresses 属性第一个元素的路径
+let firstAddressPath = \People.addresses[0]
+
+
+通过 KeyPath 读取值:
+let people1 = People()
+print(people1[keyPath: firstAddressPath]) // "world"
+
+var people2 = People()
+people2.name = "bob"
+print(people2[keyPath: namePath]) // "bob"
+
+
+
+通过 KeyPath 设置值:
+var people = People() // 使用 var 来声明值类型
+people[keyPath: namePath] = "bob"
+print(people[keyPath: \.name]) // "bob"
+
+
+将 KeyPath 作为参数:
+KeyPath 的另一个重要特性是它可以作为参数传递，使得我们能够在不知道具体属性名的情况下操作实例的属性
+
+struct People {
+  var name: String = "fat"
+  var age: Int = 100
+  var addresses: [String] = ["world"]
+
+  // 接收一个 KeyPath，其 Root 为 People, Value 为 String
+  func getInfo(keyPath: KeyPath<Self, String>) -> String {
+    self[keyPath: keyPath]
+  }
+}
+print(people.getInfo(keyPath: \.name)) // "fat"
+
+
+
+KeyPath 的家族成员:
+- AnyKeyPath
+    - PartialKeyPath<Root>
+        - KeyPath<Root, Value>
+            - WritableKeyPath<Root, Value>
+                - ReferenceWritableKeyPath<Root, Value>
+
+
+AnyKeyPath:
+KeyPath 家族中所有类型的基类。
+不指定 Root 或 Value 类型。
+只读访问，不允许写操作。
+最大的特点是不使用任何泛型，因此它能够泛化所有 KeyPath 类型。
+
+PartialKeyPath<Root>:
+指定 Root 类型，但不指定 Value 类型。
+只读访问，不允许写操作。
+使用一个泛型（Root），可用于部分特化的 KeyPath。
+
+KeyPath<Root, Value>:
+同时指定 Root 和 Value 类型。
+只读访问，不允许写操作。
+使用两个泛型，提供了 Root 到 Value 的具体映射。
+
+WritableKeyPath<Root, Value>:
+允许对属性进行读取和写入操作。
+适用于值类型和引用类型。
+是 KeyPath 的可写版本。
+
+ReferenceWritableKeyPath<Root, Value>:
+专门用于引用类型的属性。
+允许对属性进行读取和写入操作。
+提供额外的性能优化，特别是对 let 属性的支持。
+
+KeyPath 家族的传承具有以下特点:
+泛型的特化程度逐渐增加，从无泛型到使用两个泛型。
+访问权限逐渐增强，从只读到可读写。
+
+
+
+let namePath = \People.name // 推断为 WritableKeyPath<People, String>
+这是因为 Swift 编译器会根据类型的种类（值类型或引用类型）以及属性的可读写状态（只读或可读写），自动推断出 KeyPath 家族中最为特化的类型。
+
+People 是一个值类型，name 是一个可读写的属性，因此推断为 WritableKeyPath<People, String>。
+其中，People 对应泛型中的 Root，String 对应泛型中的 Value。
+
+struct People {
+  let name: String
+}
+let peopleNamePath = \People.name // 推断为 KeyPath<People, String>，因为 name 是只读的
+
+class Item {
+  var firstName: String
+  var lastName: String
+  var name: String {
+    get { firstName }
+    set { firstName = newValue }
+  }
+}
+
+// 推断为 ReferenceWritableKeyPath<Item, String>，因为 Item 是引用类型，firstName 是可写的
+let firstNamePath = \Item.firstName
+
+// 推断为 ReferenceWritableKeyPath<Item, String>，因为 name 有 setter，可写
+let itemNamePath = \Item.name
+
+// 推断为 KeyPath<Item, Int>，因为 count 是 String 的只读计算属性
+let firstNameCountPath = \Item.firstName.count
+
+
+如果我们想明确声明一个特定类型的 KeyPath，可以在声明时显式指定类型:
+// 显式声明为 WritableKeyPath
+let firstNamePath: WritableKeyPath<Item, String> = \Item.firstName // 声明为比 ReferenceWritableKeyPath 高一级的类型
+// 显式声明为 KeyPath
+let itemNamePath: KeyPath<Item, String> = \Item.name // 声明为比 ReferenceWritableKeyPath 级别更高的类型
+// 直接声明为 AnyKeyPath，避免使用泛型
+let firstNameCountAnyPath: AnyKeyPath = \Item.firstName.count
+
+// ❌，声明失败，因为 count 不可写
+let firstNameCountAnyPath: WritableKeyPath<Item, Int> = \Item.firstName.count 
+
+
+
+在 KeyPath 家族中，可以将更特化的类型转换为更泛化的类型。例如:
+let firstNameAnyPath: AnyKeyPath = firstNamePath
+let itemNameAnyPath: PartialKeyPath<Item> = itemNamePath
+
+
+
+这种转换方式与 Swift 中父类和子类的转换机制不同，只要类型和属性特性满足条件，我们可以在 KeyPath 的层次结构中自由转换类型。
+比如，将 AnyKeyPath 转换为更特化的类型:
+let firstNameCountAnyPath: AnyKeyPath = \Item.firstName.count
+
+// 成功转换为 KeyPath
+let firstNameCountPath1 = firstNameCountAnyPath as! KeyPath<Item, Int>
+
+// 转换失败，因为 count 是不可写的
+let firstNameCountPath2 = firstNameCountAnyPath as! WritableKeyPath<Item, Int>
+
+这种转换之所以可能，是因为即便是最泛化的 AnyKeyPath 类型，内部也保留了特化类型的所有信息。
+
+
+
+AnyKeyPath，非一般的类型抹除工具:
+看到 AnyKeyPath，许多开发者可能会联想到诸如 AnyHashable、AnyPublisher、AnyView 等类型擦除工具。
+虽然 AnyKeyPath 确实具有类型擦除的特性（尤其是泛型擦除），但本质上它不仅仅是一个类型擦除工具。
+AnyKeyPath 是一个包含全面信息的基类，其子类如 PartialKeyPath 和 KeyPath 则通过添加泛型约束，进一步提供了额外的类型安全和编译时检查。
+这种设计巧妙结合了运行时的灵活性和编译时的安全性，使得键路径系统既强大又安全。
+
+与其他具备类型擦除功能的工具类似，AnyKeyPath 在某些场景下特别有用，尤其是在需要避免泛型约束时，比如数组或字典的声明：
+let keys:[AnyKeyPath] = [\Item.name, \People.age]
+
+而只带有一个泛型的 PartialKeyPath 则适用于已明确 Root 类型的场景。
+一方面，它对可以使用的键路径进行了约束；另一方面，由于上下文中提供了 Root 类型，开发者也能更方便地录入键路径:
+let keys:[PartialKeyPath<People>] = [\.name, \.age]
+
+
+
+组合 KeyPath:
+struct A {
+  var b:B
+}
+
+struct B {
+  var name:String
+}
+
+let namePath = \A.b.name // WritableKeyPath<A, String>
+let nameCountPath = \A.b.name.count // KeyPath<A, Int>
+
+对于一个包含两个泛型约束的 KeyPath 类型来说，无论路径的深度如何，Root 和 Value 的规则始终保持一致:
+Root：访问路径的起点类型。
+Value：访问路径终点属性的类型。
+
+因此，\A.b.name.count 的推断类型为 KeyPath<A, Int>，因为 count 属性的类型是 Int。
+
+在很多情况下，我们不需要直接声明嵌套层次较深的路径，可以通过 appending(path:) 将两个 KeyPath 组合成一个新路径:
+// WritableKeyPath<A, B>
+let bPath = \A.b
+// KeyPath<B, Int>
+let bNameCountPath = \B.name.count
+// KeyPath<A, Int>
+let nameCountPath1 = bPath.appending(path: bNameCountPath)
+
+组合 KeyPath 的基本要求是，追加的 KeyPath 的 Root 类型必须与被追加的 KeyPath 的 Value 类型一致。组合后的 KeyPath 泛型为：原 KeyPath 的 Root 和追加的 KeyPath 的 Value。
+
+
+当使用 AnyKeyPath 或 PartialKeyPath 时，与其他 KeyPath 类型组合将返回一个可选的 KeyPath，如果类型不匹配，运行时将返回 nil:
+// AnyKeyPath
+let bPath: AnyKeyPath = \A.b
+// KeyPath<B, Int>
+let bNameCountPath = \B.name.count
+// AnyKeyPath?
+let nameCountPath1 = bPath.appending(path: bNameCountPath)
+
+// Root 为 Item
+let itemNamePath = \Item.name
+// nil
+let combinePath = bPath.appending(path: itemNamePath)
+
+需要注意的是，并非所有不同类型的 KeyPath 都可以成功组合。
+例如，尝试使用 KeyPath.appending(path: AnyKeyPath) 进行组合时会失败，尽管 AnyKeyPath 实际上包含了组合所需的全部信息。
+在实际使用中，开发者应进行额外测试来确保类型的兼容性。
+
+
+
+WritableKeyPath vs ReferenceWritableKeyPath:
+WritableKeyPath 和 ReferenceWritableKeyPath 都可以用于表示一个可写的属性路径。两者的主要区别如下:
+1. 适用类型
+WritableKeyPath 适用于值类型和引用类型，而 ReferenceWritableKeyPath 只能用于引用类型
+
+2. 实例声明要求
+使用 WritableKeyPath 时，实例必须由 var 声明才能修改属性；而使用 ReferenceWritableKeyPath 时，即使实例由 let 声明，属性依然可以被修改。
+// WritableKeyPath<A, String>
+let aNamePath = \A.name
+let a = A()
+a[keyPath: aNamePath] = "fat" // 编译错误，因 a 是 let 声明的
+
+// ReferenceWritableKeyPath<B, String>
+let bNamePath: ReferenceWritableKeyPath<B, String> = \B.name
+let b = B()
+b[keyPath: bNamePath] = "bob" // 正确执行，尽管 b 是 let 声明的
+
+3. 专为引用类型设计
+ReferenceWritableKeyPath 是专门为引用类型属性设计的。它是 WritableKeyPath 的一个特殊子类，为引用类型提供了额外的保证和潜在的优化。
+func strLength<T>(obj: T, strKeyPath: ReferenceWritableKeyPath<T, String>) -> Int {
+  obj[keyPath: strKeyPath].count
+}
+
+strLength(obj: b, strKeyPath: \.name) // 正常运行，B 是引用类型
+strLength(obj: a, strKeyPath: \.name) // 编译错误，A 是值类型
+
+
+Hashable 和 Equatable:
+虽然许多类型都遵循 Hashable 和 Equatable 协议，但 KeyPath 家族的成员在实现这些协议时有其独特之处
+
+由于 KeyPath 家族中的不同层级类型（如 KeyPath 和 AnyKeyPath）在内部实际上共享相同的信息，这使得跨类型的比较成为可能
+let nameKeyPath: KeyPath<People, String> = \.name
+let nameAnyKeyPath: AnyKeyPath = \People.name
+
+// 比较 KeyPath<People, String> 和 AnyKeyPath
+print(nameKeyPath == nameAnyKeyPath) // true
+
+同样，它们的 hashValue 计算也基于相同的内部信息
+print(nameKeyPath.hashValue == nameAnyKeyPath.hashValue) // true
+
+这一特性使得开发者在进行 KeyPath 比较或将 KeyPath 用作字典键时更加便捷。无论使用哪种类型的 KeyPath，只要描述的是同一路径，都能作为相同的键
+var keysCount: [AnyKeyPath: Int] = [:]
+
+keysCount[nameKeyPath, default: 0] = keysCount[nameKeyPath, default: 0] + 1 // KeyPath<People, String>
+keysCount[nameKeyPath, default: 0] = keysCount[nameAnyKeyPath, default: 0] + 1 // AnyKeyPath
+print(keysCount[\People.name]) // Optional(2)
+
+
+
+\.self:
+在声明 KeyPath 时，当希望 Value 表示类型本身时，可以使用 .self
+
+var texts = ["b", "o", "b"]
+// WritableKeyPath<[String], [String]>
+let array = \[String].self
+texts[keyPath: array] = ["f", "a", "t"]
+print(texts) // ["f", "a", "t"]
+
+var numbers = [3, 5, 6]
+// WritableKeyPath<[Int], Int>
+let firstElement = \[Int].self[0] // `self` 可以被省略，写成 `\[Int].[0]`
+numbers[keyPath: firstElement] = 10
+print(numbers) // [10, 5, 6]
+
+
+在 SwiftUI 视图中会使用类似的代码:
+struct DemoView: View {
+    let numbers = [3, 5, 6, 8, 5, 3]
+    var body: some View {
+        VStack {
+            ForEach(numbers, id: \.self) { number in
+                Text(number, format: .number)
+            }
+        }
+    }
+}
+
+此时，ForEach 的构造方法如下:
+public init<Data: RandomAccessCollection, ID: Hashable>(
+    _ data: Data,
+    id: KeyPath<Data.Element, ID>,
+    @ViewBuilder content: @escaping (Data.Element) -> Content
+)
+
+通过 id: \.self，我们将数组中的每个元素作为 ForEach 的唯一标识符（ID）。
+但如果数组中有重复的元素，ForEach 中的视图标识符会发生冲突，这个问题在添加或删除元素时尤为明显。
+因此，最佳做法是让元素遵循 Identifiable 协议，而不是直接使用元素本身作为 ID，以避免潜在的冲突。
+
+
+
+
+过去使用闭包的高阶函数，现在可以通过更优雅的 KeyPath 来实现:
+let peoples: [People] = []
+// 传统方式
+let names1 = peoples.map { $0.name }
+// 基于 KeyPath 的方式
+let names2 = peoples.map(\.name)
+
+
+
+在新的谓词宏中，KeyPath 也扮演了重要角色:
+let predicate = #Predicate<Settings> {
+    $0.name == "abc"
+}
+
+// 宏展开后
+Foundation.Predicate<Settings>({
+    PredicateExpressions.build_Equal(
+        lhs: PredicateExpressions.build_KeyPath(
+            root: PredicateExpressions.build_Arg($0),
+            keyPath: \.name
+        ),
+        rhs: PredicateExpressions.build_Arg("abc")
+    )
+})
+
+
+在 Observation 框架中，KeyPath 还用于触发属性变化的通知:
+internal nonisolated func withMutation<Member, T>(keyPath: KeyPath<Settings, Member>, _ mutation: () throws -> T) rethrows -> T {
+  try _$observationRegistrar.withMutation(of: self, keyPath: keyPath, mutation)
+}
+
+
+KeyPath 与 @dynamicMemberLookup 结合使用也是一种常见的应用场景。这种方式既保证了内部数据的封装，又提供了灵活且类型安全的属性访问:
+@dynamicMemberLookup
+final class Store<State>: ObservableObject {
+    @Published private var state: State
+    subscript<T>(dynamicMember keyPath: KeyPath<State, T>) -> T {
+        state[keyPath: keyPath]
+    }
+    ...
+}
+
+let userName = store.user // 对应 store.state.user
+许多苹果官方框架提供的属性包装器（如 @ObservedObject、@StateObject）都体现了这一应用。

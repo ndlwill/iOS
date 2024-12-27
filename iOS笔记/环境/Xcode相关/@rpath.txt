@@ -1,0 +1,92 @@
+https://blog.krzyzanowskim.com/2018/12/05/rpath-what/
+
+
+Dynamic linking:
+It's an operation that happens when part of the code spreads across different files (called libraries), and the binary content of the library is loaded in runtime.
+
+A dynamic linker (which is a system tool) finds a symbol (e.g., function), located in the dynamic library.
+Next, loads the code into memory and assign memory address with the symbol.
+This way running program can find the implementation of the symbol stored in an external library (shared library).
+Action happens at the beginning of the program execution process before the application code starts executing (may happen later if symbols are lazily loaded)
+
+
+If linking is not properly set up for the executable, this is the wake-up call we'll notice at the very end of the development process:
+dyld: Library not loaded: @rpath/Allthethings.framework/Allthethings
+Referenced from: /private/var/mobile/Containers/Bundle/Application/0F2C2461-A68B-4ABA-A604-B88E6E9D1BB1/App.app/App
+Reason: image not found
+
+What is says:
+while executing an App binary from App.app bundle
+dyld - the dynamic linker tool from macOS system
+can't load Allthethings binary from the Allthethings.framework bundle
+due to image not found when a search for @rpath/Allthethings.framework/Allthethings binary
+
+The short answer is: because the file is not there.
+Where exactly is there? the path is @rpath/Allthethings.framework/Allthethings. This value was set while building the application. It was passed to the linker (not the compiler).
+
+@rpath stands for Runpath Search Path
+In the Xcode, it's set with LD_RUNPATH_SEARCH_PATH setting.
+In ld command tool it's set with -rpath parameter when linking.
+So it's a search path for the linker. Runtime Search Path instructs the dynamic linker to search a list of paths in order, to locate the dynamic library.
+
+The value of the parameter may be an absolute path (or multiple paths) to a directory, e.g.: /usr/private/lib or @executable_path/Frameworks.
+
+
+For the relative path, we can use one of two substitution symbols:
+1. @loader_path - resolves with the path to the directory containing the Mach-O binary which contains the load command. 
+Thus, in every binary, it's resolved to a different path, that said it's the path to the library doing the loading of a given library.
+It's not necessary the same library. 
+Imagine that library libc.dylib loads another library libqq.dylib. 
+In this case, loader_path will point to where libc.dylib is located (because this is caller is located).
+2. @executable_path - resolves to the absolute path of the executable, 
+eg. /private/var/mobile/Containers/Bundle/Application/0F2C2461-A68B-4ABA-A604-B88E6E9D1BB1/App.app/
+
+
+At runtime, dyld uses the runpath when searching for dynamic libraries whose load path begins with @rpath.
+
+
+How the path @rpath/Allthethings.framework/Allthething from the error message is resolved then?
+To solve that, we need to learn about possible rpath for the binary.
+In this example the binary to investigate is locate at /private/var/mobile/Containers/Bundle/Application/0F2C2461-A68B-4ABA-A604-B88E6E9D1BB1/App.app/App.
+
+
+Runpath Search Path is stored as a part of the binary, as an LC_RPATH command. 
+To read the value of the section, we can use the command line tool otool -l 0F2C2461-A68B-4ABA-A604-B88E6E9D1BB1/App.app/App and search for LC_RPATH in the output:
+Load command 48
+          cmd LC_RPATH
+      cmdsize 48
+         path @executable_path/../Frameworks (offset 12)
+
+there are one or more entries like this.
+Now we can substitute @rpath with the found path and verify why the file is missing.
+
+
+To fix the initial problem we'll need to either:
+copy binary to the expected directory
+add another Runpath Search Path by modifying the value of LD_RUNPATH_SEARCH_PATH (or -rpath)
+
+
+the @rpath is part of the binary and is set during the compilation process (linking phase) with a given value of the parameters. 
+However, if we need to modify the @rpath manually, e.g., as a part of installation phase - there's an app for that: install_name_tool
+
+
+install_name_tool:
+install_name_tool changes dynamic shared library install names and manipulate Runpaths
+
+To add new path:
+install_name_tool -add_rpath @executable_path/../private/libs File
+
+To delete added path (we can only delete path added with -add_rpath):
+install_name_tool -delete_rpath @executable_path/../private/libs File
+
+To change the existing path:
+install_name_tool -rpath @executable_path/../Frameworks @executable_path/../private/libs File
+
+
+
+Embedded Binaries:
+We just mastered dynamic linking problem-solving. The meaning of the Embedded Binaries section from the Xcode is clear:
+// 通过查看Embedded Binaries & Linked Frameworks and Libraries
+Xcode copies files from "Embedded Binaries" section to the place where LD_RUNPATH_SEARCH_PATH points to.
+
+

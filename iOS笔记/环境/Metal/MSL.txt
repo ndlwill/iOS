@@ -1,0 +1,944 @@
+==================================================Metal Coordinate Systems
+Metal defines several standard coordinate systems to represent transformed graphics data at different stages along the rendering pipeline.
+
+A four-dimensional homogenous vector (x,y,z,w) specifies a three-dimensional point in clip-space coordinates. 
+A vertex shader generates positions in clip-space coordinates. 
+Metal divides the x, y, and z values by w to convert clip-space coordinates into normalized device coordinates.
+
+Normalized device coordinates use a left-handed coordinate system (see Figure 1) and map to positions in the viewport. 
+These coordinates are independent of viewport size. 
+The lower-left corner of the viewport is at an (x,y) coordinate of (-1.0,-1.0) and the upper corner is at (1.0,1.0). 
+Positive-z values point away from the camera ("into the screen"). 
+The visible portion of the z coordinate is between 0.0 and 1.0. 
+The Metal rendering pipeline clips primitives to this box.
+
+
+The rasterizer stage transforms normalized-device coordinates (NDC) into viewport coordinates (see Figure 2). 
+The (x,y) coordinates in this space are measured in pixels, with the origin in the top-left corner of the viewport and positive values going to the right and down. 
+You specify viewports in this coordinate space, and the Metal maps NDC coordinates to the extents of the viewport.
+
+If you are using variable rasterization rate (see Section 6.15), then the viewport coordinate system is a logical coordinate system independent of the render target’s physical layout. 
+A rate map determines the relationship between coordinates in this logical coordinate system (sometimes called screen space) and pixels in the render targets (physical coordinates).
+
+
+Texture coordinates use a similar coordinate system to viewport coordinates.
+Texture coordinates can also be specified using normalized texture coordinates.
+For 2D textures, normalized texture coordinates are values from 0.0 to 1.0 in both x and y directions, as seen in Figure 3.
+A value of (0.0, 0.0) specifies the pixel at the first byte of the image data (the top-left corner of the image).
+A value of (1.0, 1.0) specifies the pixel at the last byte of the image data (the bottom-right corner of the image).
+
+
+==================================================Matrix Data Types
+floatnxm:
+Where n and m are numbers of columns and rows. n and m must be 2, 3, or 4. 
+A matrix of type floatnxm is composed of n floatm vectors.
+
+Metal also supports matrix<T,c, r> where T is a valid floating point type, c is 2, 3, or 4, and r is 2, 3, or 4.
+
+Accessing Matrix Components:
+Applying a single subscript to a matrix treats the matrix as an array of column vectors.
+Two subscripts select a column and then a row.
+
+You can access floatnxm and halfnxm matrices as an array of n floatm or n halfm entries.
+
+
+Matrix Constructors:
+You can use constructors to create matrices from a set of scalars, vectors, or matrices.
+For example, if you initialize a matrix with only a single scalar parameter, 
+the result is a matrix that contains that scalar for all components of the matrix’s diagonal, with the remaining components initialized to 0.0.
+
+Matrix components are constructed and consumed in column-major order.
+float3x2(float2, float2, float2)
+
+
+==================================================SIMD-group Matrix Data Types
+Metal supports the following SIMD-group matrix type names, where T is half or float and Cols and Rows are 8:
+simdgroup_half8x8
+simdgroup_float8x8
+
+Operations on SIMD-group matrices are executed cooperatively by threads in the SIMD-group.
+Therefore, all operations must be executed only under uniform control-flow within the SIMD-group or the behavior is undefined.
+
+
+==================================================Atomic Data Types
+Objects of atomic types are free from data races.
+If one thread writes to an atomic object while another thread reads from it, the behavior is well-defined.
+
+Metal atomic functions (as described in section 6.15) can only use Metal atomic data types.
+These atomic functions are a subset of the C++14 atomic and synchronization functions.
+
+
+==================================================Pixel Data Types
+iOS: Pixel data types supported since Metal 2.0.
+macOS: Pixel data types supported since Metal 2.3.
+
+rgba8unorm:
+RGBA：指颜色的四个分量
+8：表示每个颜色分量的位数。这里是 8，即每个分量占 8 位
+unorm：表示无符号归一化（unsigned normalized）格式
+无符号（unsigned）：表示每个颜色分量的值是无符号整数，即取值范围从 0 到 255
+归一化（normalized）：表示颜色的每个分量值虽然以整数形式存储（在 0 到 255 的范围内），但在实际使用时，这些值将被映射到 [0.0, 1.0] 的浮动区间。
+
+
+==================================================Buffers
+MSL implements a buffer as a pointer to a built-in or user defined data type described in the device, constant, or threadgroup address space.
+
+
+==================================================Textures
+The texture data type is a handle to one-, two-, or three-dimensional texture data that corresponds to all or a portion of a single mipmap level of a texture.
+
+T specifies the color type of one of the components returned when reading from a texture or the color type of one of the components specified when writing to the texture. 
+For texture types (except depth texture types), T can be half, float, short, ushort, int, or uint. 
+For depth texture types, T must be float.
+
+These access attributes describe support for accessing a texture:
+• sample — A graphics or kernel function can sample the texture object. 
+sample implies the ability to read from a texture with and without a sampler.
+• read — Without a sampler, a graphics or kernel function can only read the texture object.
+• write — A graphics or kernel function can write to the texture object.
+• read_write — A graphics or kernel function can read and write to the texture object.
+
+Multisampled textures only support the read attribute. 
+Depth textures only support the sample and read attributes
+
+You can use a texture type as the variable type for any variables declared inside a function. 
+The access attribute for variables of texture type declared inside a function must be access::read or access:sample.
+
+
+Texture Buffers:
+All OS: Texture buffers supported since Metal 2.1.
+texture_buffer<T, access a = access::read>
+access can be one of read, write, or read_write
+
+However, you cannot sample a texture buffer.
+
+
+==================================================Samplers
+The sampler type identifies how to sample a texture.
+
+You must use constexpr to declare samplers that are initialized in MSL source.
+
+
+==================================================Imageblocks
+An imageblock is a 2D data structure (represented by width, height, and number of samples) allocated in threadgroup memory that is an efficient mechanism for processing 2D image data.
+
+Each element of the structure can be a scalar or vector integer or floating-point data type, pixel data types, an array of these types, or structures built using these types.
+You can use an (x, y) coordinate and optionally the sample index to access the elements in the imageblock.
+The elements in the imageblock associated with a specific (x, y) are the per-thread imageblock data or just the imageblock data.
+
+Imageblocks are only used with fragment and kernel functions.
+
+For fragment functions, you can access only the fragment’s imageblock data (identified by the fragment’s pixel position in the tile). 
+Use the tile size to derive the imageblock dimensions.
+For kernel functions, all threads in the threadgroup can access the imageblock. 
+You typically derive the imageblock dimensions from the threadgroup size, before you specify the imageblock dimensions.
+
+An imageblock slice refers to a region in the imageblock that describes the values of a given element in the imageblock data structure for all pixel locations or threads in the imageblock.
+The storage type of the imageblock slice must be compatible with the texture format of the target texture
+
+
+==================================================Aggregate Types 聚合类型
+Metal supports several aggregate types: arrays, structures, classes, and unions.
+
+Do not specify a structure member with an address space attribute, unless the member is a pointer type.
+All members of an aggregate type must belong to the same address space
+
+
+（1）Arrays of Textures, Texture Buffers, and Samplers:
+
+iOS: Arrays of textures supported since Metal 1.2; arrays of samplers since Metal 2.0; arrays of texture buffers since Metal 2.1.
+
+Declare an array of textures as either:
+array<typename T, size_t N>
+const array<typename T, size_t N>
+
+typename shall be a texture type declared with the access::read or access::sample attribute.
+On macOS since Metal 2.0 and on iOS with at least A12 hardware since Metal 2.2, support for an array of writeable textures (access::write) is also available
+
+Construct an array of texture buffers with the access::read qualifier using:
+array<texture_buffer<T>, size t N>
+
+Declare an array of samplers as either:
+array<sampler, size_t N>
+const array<sampler, size_t N>
+
+You can pass an array of textures or an array of samplers as an argument to a function (graphics, kernel, or user function) or declare an array of textures or samples as a local variable inside a function.
+You can also declare an array of samplers in program scope.
+Unless used in an argument buffer, you cannot declare an array<T, N> type (an array of textures, texture buffers, or samplers) in a structure.
+
+
+MSL also adds support for array_ref<T>.
+An array_ref<T> represents an immutable array of size() elements of type T.
+T must be a sampler type or a supported texture type, including texture buffers.
+The storage for the array is not owned by the array_ref<T> object.
+A common use for array_ref<T> is to pass an array of textures as an argument to functions so they can accept a variety of array types.
+
+The array_ref<T> type cannot be passed as an argument to graphics and kernel functions.
+However, the array_ref<T> type can be passed as an argument to user functions.
+The array_ref<T> type cannot be declared as local variables inside functions.
+
+Array Element Access with its Operator:
+Elements of an array of textures, texture buffers, or samplers can be accessed using the [] operator:
+reference operator[] (size_t pos);
+
+
+Below is an example of an array of samplers declared in program scope:
+constexpr array<sampler, 2> = { sampler(address::clamp_to_zero), sampler(coord::pixel) };
+
+
+（2）Structures of Buffers, Textures, and Samplers
+###
+Arguments to a graphics, kernel, visible, or user function can be a structure or a nested structure with members that are buffers, textures, or samplers only.
+###
+You must pass such a structure by value. 
+Each member of such a structure passed as the argument type to a graphics or kernel function can have an attribute to specify its location
+
+
+Example of a structure passed as an argument:
+struct Foo {
+texture2d<float> a [[texture(0)]];
+depth2d<float> b [[texture(1)]];
+};
+[[kernel]] void
+my_kernel(Foo f)
+{…}
+
+
+You can also nest structures, as shown in the following example:
+struct Foo {
+texture2d<float> a [[texture(0)]];
+depth2d<float> b [[texture(1)]];
+};
+struct Bar {
+Foo f;
+sampler s [[sampler(0)]];
+};
+[[kernel]] void
+my_kernel(Bar b)
+{…}
+
+
+
+==================================================Argument Buffers
+All OS: Argument buffers supported since Metal 2.0.
+
+Argument buffers extend the basic buffer types to include pointers (buffers), textures, texture buffers, and samplers.
+However, argument buffers cannot contain unions.
+The following example specifies an argument buffer structure called Foo for a function:
+
+struct Foo {
+texture2d<float, access::write> a;
+depth2d<float> b;
+sampler c;
+texture2d<float> d;
+device float4* e;
+texture2d<float> f;
+texture_buffer<float> g;
+int h;
+};
+kernel void
+my_kernel(constant Foo & f [[buffer(0)]])
+{…}
+
+Arrays of textures and samplers can be declared using the existing array<T, N> templated type. 
+Arrays of all other legal buffer types can also be declared using C-style array syntax.
+
+Members of argument buffers can be assigned a generic [[id(n)]] attribute, where n is a 32-bit unsigned integer that can be used to identify the buffer element from the Metal API.
+Argument buffers can be distinguished from regular buffers if they contain buffers, textures, samplers, or any element with the [[id]] attribute.
+
+The same index may not be assigned to more than one member of an argument buffer.
+Manually assigned indices do not need to be contiguous, but they must be monotonically increasing.
+In the following example, index 0 is automatically assigned to foo1. 
+The [[id(n)]] attribute specifies the index offsets for the t1 and t2 structure members.
+Since foo2 has no specified index, it is automatically assigned the next index, 4, which is determined by adding 1 to the maximum ID used by the previous structure member.
+struct Foo {
+texture2d<float> t1 [[id(1)]];
+texture2d<float> t2 [[id(3)]];
+};
+
+struct Bar {
+Foo foo1; // foo1 assigned idx 0, t1 and t2 assigned idx 1 and 3
+Foo foo2; // foo2 assigned idx 4, t1 and t2 assigned idx 5 and 7
+};
+
+
+If you omit the [[id]] attribute, an ID is automatically assigned according to the following rules:
+（1）IDs are assigned to structure members in order, by adding 1 to the maximum ID used by the previous structure member. 
+In the example below, the indices are not provided, so indices 0 and 1 are automatically assigned.
+struct MaterialTexture {
+texture2d<float> tex; // Assigned index 0
+float4 uvScaleOffset; // Assigned index 1
+};
+
+
+（2）IDs are assigned to array elements in order, by adding 1 to the maximum ID used by the previous array element. 
+In the example below, indices 1-3 are automatically assigned to the three array elements of texs1. 
+Indices 4-5 are automatically assigned to the fields in materials[0], indices 6-7 to materials[1], and indices 8-9 to materials[2].
+The [[id(20)]] attribute starts by assigning index 20 to constants.
+struct Material {
+float4 diffuse; // Assigned index 0
+array<texture2d<float>, 3> texs1; // Assigned indices
+1-3
+MaterialTexture materials[3]; // Assigned indices
+4-9
+int constants [[id(20)]] [4]; // Assigned indices
+20-23
+};
+
+（3）If a structure member or array element E is itself a structure or array, its structure members or array elements are assigned indices according to rules 1 and 2 recursively, starting from the ID assigned to E. 
+In the following example, index 4 is explicitly provided for the nested structure called normal, so its elements (previously defined as tex and uvScaleOffset) are assigned IDs 4 and 5, respectively. 
+The elements of the nested structure called specular are assigned IDs 6 and 7 by adding one to the maximum ID (5) used by the previous member.
+struct Material {
+MaterialTexture diffuse; // Assigned indices 0, 1
+MaterialTexture normal [[id(4)]];// Assigned indices 4, 5
+MaterialTexture specular; // Assigned indices 6, 7
+}
+
+（4）Top-level argument buffer arguments are assigned IDs starting from 0, according to the previous three rules.
+
+
+Tier 2 Hardware Support for Argument Buffers:
+Tier 2 Hardware 是指支持更高级功能集的 GPU 硬件
+Metal 根据硬件支持的能力，将其功能划分为 Tier 1 和 Tier 2
+
+You can access argument buffers through pointer indexing.
+kernel void
+kern(constant Resources *resArray [[buffer(0)]])
+{
+constant Resources &resources = resArray[3];
+}
+
+To support GPU driven pipelines and indirect draw calls and dispatches, 
+you can copy resources between structures and arrays within a function,
+kernel void
+copy(constant Foo & src [[buffer(0)]],
+device Foo & dst [[buffer(1)]])
+{
+dst.a = src.d;
+…
+}
+
+
+Samplers cannot be copied from the thread address space to the device address space. 
+As a result, samplers can only be copied into an argument buffer directly from another argument buffer.
+struct Resources {
+sampler sam;
+};
+kernel void
+copy(device Resources *src,
+device Resources *dst,
+sampler sam1)
+{
+constexpr sampler sam2;
+dst->sam = src->sam; // Legal: device -> device
+dst->sam = sam1; // Illegal: thread -> device
+dst->sam = sam2; // Illegal: thread -> device
+}
+
+
+Argument buffers can contain pointers to other argument buffers:
+struct Textures {
+texture2d<float> diffuse;
+texture2d<float> specular;
+};
+struct Material {
+device Textures *textures;
+};
+fragment float4
+fragFunc(device Material & material);
+
+
+==================================================Uniform Type
+All OS: uniform types supported since Metal 2.0.
+
+The Need for a Uniform Type:
+In the following function example, the variable i is used to index into an array of textures given by texInput.
+The variable i is non-uniform; that is, it can have a different value for threads executing the graphics or kernel function for a draw or dispatch call, 
+as shown in the example below.
+Therefore, the texture sampling hardware has to handle a sample request that can refer to different textures for threads executing the graphics or kernel function for a draw or dispatch call
+kernel void
+my_kernel(array<texture2d<float>, 10> texInput,
+array<texture2d<float>, 10> texOutput,
+sampler s,
+…,
+uint2 gid [[thread_position_in_grid]])
+{
+int i = …;
+float4 color = texInput[i].sample(s, float2(gid));
+…;
+texOutput[i].write(color, float2(gid));
+}
+
+
+If the variable i has the same value for all threads (is uniform) executing the graphics or kernel function of a draw or dispatch call and if this information was communicated to the hardware,
+then the texture sampling hardware can apply appropriate optimizations.
+A similar argument can be made for texture writes, where a variable computed at runtime is used as an index into an array of textures or to index into one or more buffers.
+
+To indicate that this variable is uniform for all threads executing the graphics or kernel function of a draw or dispatch call, 
+MSL adds a new template class called uniform (available in the header metal_uniform) that can be used to declare variables inside a graphics or kernel function.
+###
+This template class can only be instantiated with arithmetic types (such as Boolean, integer, and floating point) and vector types.
+###
+The code below is a modified version of the previous example, where the variable i is declared as a uniform type:
+kernel void
+my_kernel(array<texture2d<float>, 10> texInput,
+array<texture2d<float>, 10> texOutput,
+sampler s,
+…,
+uint2 gid [[thread_position_in_grid]])
+{
+uniform<int> i = …;
+float4 color = texInput[i].sample(s, float2(gid));
+…;
+texOutput[i].write(color, float2(gid));
+}
+
+
+Behavior of the Uniform Type:
+###
+If a variable is of the uniform type, and the variable does not have the same value for all threads executing the kernel or graphics function, then the behavior is undefined.
+###
+
+Uniform variables implicitly type convert to non-uniform types. 
+Assigning the result of an expression computed using uniform variables to a uniform variable is legal, 
+but assigning a non-uniform variable to a uniform variable results in a compile-time error.
+
+In the following example, the multiplication legally converts the uniform variable x into non-uniform product z. 
+However, assigning the non-uniform variable z to the uniform variable b results in a compile-time error.
+uniform<int> x = …;
+int y = …;
+int z = x*y; // x is converted to a non-uniform for a
+multiply
+uniform<int> b = z; // illegal; compile-time error
+
+
+To declare an array of uniform elements:
+uniform<float> bar[10]; // elements stored in bar array are uniform
+The uniform type is legal for both parameters and the return type of a function. For example:
+uniform<int> foo(…); // foo returns a uniform integer value
+int bar(uniform<int> a, …);
+
+
+It is legal to declare a pointer to a uniform type, but not legal to declare a uniform pointer. For example:
+device uniform<int> *ptr; // values pointed to by ptr are uniform
+uniform<device int *> ptr; // illegal; compile-time error
+
+
+The results of expressions that combine uniform with non-uniform variables are non- uniform. 
+If the non-uniform result is assigned to a uniform variable, as in the example below, the behaviors is undefined. 
+(The front-end might generate a compile-time error, but it is not guaranteed to do so.)
+uniform<int> i = …;
+int j = …;
+if (i < j) { // non-uniform result for expression (i < j)
+…
+i++; // compile-time error, undefined behavior
+}
+
+The following example is similar:
+bool p = … // non-uniform condition.
+uniform<int> a = …, b = …;
+uniform<int> c = p ? a : b; // compile-time error, undefined
+behavior
+
+
+==================================================Visible Function Table
+All OS: type is supported since Metal 2.3.
+
+Defined in the header <metal_visible_function_table>, the visible_function_table type is used to represent a table of function pointers to visible functions stored in device memory.
+In Metal 2.3, It can be used in a compute (kernel) function.
+As of Metal 2.4, it can be used in fragment, vertex, and tile functions.
+
+在图形学中，tile（瓦片） 是一种将屏幕分割成小区域（比如 16x16 或 32x32 像素块）的处理方式。
+Tile-based 渲染通过在小范围内进行计算和资源管理，降低内存带宽的使用，优化性能。
+每个 tile 是渲染流水线中的一个逻辑单元，便于集中处理。
+GPU 会逐个 tile 处理像素，从而有效地减少全局内存的访问。
+
+It is an opaque type, and the content of the table cannot be modified from the GPU.
+
+A visible_function_table type can be used in an argument buffer or directly passed to qualified function using a buffer binding point.
+
+To declare a visible_function_table type with a template parameter T where T is the signature of the function stored in the table, use the following template function.
+visible_function_table<typename T>
+
+The following example shows how to declare a table that is compatible with a function whose definition is “[[visible]] int func(float f)”.
+visible_function_table<int(float)> functions;
+
+To get a visible function pointer from the table, use the [] operator.
+using fnptr = T (*)(…) [[visible]] 
+fnptr operator[](uint index) const;
+
+size() returns the number of function pointer entries in the table.
+uint size() const
+
+empty() returns true if the table is empty.
+bool empty() const
+
+The following function can be used to determine if a table is a null visible_function_table.
+A null visible_function_table is a table that is not pointing to anything.
+bool is_null_visible_function_table(visible_function_table<T>);
+
+
+The following example shows how the table can be passed in a buffer.
+using TFuncSig = void(float, int);
+kernel void F(uint tid [[thread_position_in_grid]],
+ device float* buf [[buffer(0)]],
+ visible_function_table<TFuncSig> table [[buffer(1)]])
+{
+ uint tsize = table.size();
+ table[tid % tsize](buf[tid], tid); 
+}
+
+
+
+==================================================Function Group Attribute
+All OS: [[function_group]] is supported since Metal 2.3
+
+The optional [[function_group]] attribute can be used to indicate the possible groups of functions being called from an indirect call through a function pointer or visible_function_table.
+This is a compiler hint to enable the compiler to optimize the call site.
+The groups of functions are specified as string literal arguments of the attribute.
+This attribute can be applied in three different contexts:
+1. variable declarations with an initializer expression -- It affects all indirect call expressions in the initializer expressions.
+2. expression statements -- It affects all the indirect call expressions of the given expression.
+3. return statements -- It affects all the indirect call expressions of the return value expression.
+
+
+The following examples show how [[function_group]] can be used.
+float h(visible_function_table<float(float)> table,
+ float (*fnptr[3])(float))
+{
+ // indirect call to table[0] is restricted to “group1”
+ [[function_groups("group1")]] float x = table[0](1.0f); 
+ // indirect call to `fnptr[0]` can call any function
+ x += fnptr[0](2.0f);
+ // indirect call to `fnptr[1]` is restricted to "group2"+"group3"
+[[function_groups("group2", "group3")]] return x + fnptr[1](3.0f); 
+}
+
+
+==================================================Ray Tracing Types
+All OS: Ray tracing types are supported since Metal 2.3.
+These types are defined in the header <metal_raytracing> in the namespace metal::raytracing.
+In Metal 2.3, these types are only supported in a compute function (kernel functions) except where noted below.
+As of Metal 2.4, they are also supported in vertex, fragment, and tile functions.
+
+
+Ray Tracing Intersection Tags:
+All OS: Ray Tracing Intersection Tags are supported since Metal 2.3
+
+The intersection_tags are defined in the header <metal_raytracing> in the namespace metal::raytracing.
+They are listed in Table 2.9 and are used in ray tracing when defining
+• intersection functions (section 5.1.6)
+• intersection function tables (section 2.17.3)
+• intersection results (section 2.17.4)
+• intersector types and associated functions (section 6.18.2)
+• acceleration structure types (section 2.17.6 and section 6.18.1)
+• intersection queries (section 6.18.4)
+
+The tags control the behavior and semantics of the different types and tables.
+For example, intersection_tags controls which fields may be read from the intersection type and the type of acceleration structure passed to intersector functions.
+The intersection_tags must match between related uses of different types.
+For example, the tags used for the intersector must match with the tags used with intersection functions that the intersector calls. Otherwise, the behavior is undefined
+
+
+Ray Type:
+The ray struct is a container for the properties of the ray required for an intersection.
+struct ray
+{
+ ray(float3 origin = 0.0f, float3 direction = 0.0f,
+ float min_distance = 0.0f, float max_distance = INFINITY);
+ float3 origin;
+ float3 direction;
+ float min_distance;
+ float max_distance;
+};
+
+
+==================================================Interpolant Type
+All OS: Interpolant Type is supported since Metal 2.3.
+The interpolant type interpolant<T,P> defined in <metal_interpolant> is a templatized type that encapsulates a fragment shader input for pull-model interpolation
+
+Type parameters T and P represent the input's data type and perspective-correctness, respectively.
+
+Supported values for T are the scalar and vector floating-point types.
+Supported values of P are the types interpolation::perspective and interpolation::no_perspective.
+
+透视变换 (Perspective Transformation)：将三维空间中的点映射到二维屏幕上的过程。
+
+透视投影：物体的远近会影响大小，视觉效果更真实。
+正交投影：物体的大小与距离无关，通常用于工程图绘制。
+
+
+You can declare a variable with the interpolant<T,P> type only in the following contexts:
+1. As a fragment shader input argument with [[stage_in]]. 
+Such a declaration must match a corresponding vertex shader output argument of type T with the same name or [[user(name)]] attribute. 
+The declaration can’t have a sampling-and-interpolation attribute (section 5.4).
+2. As a local or temporary variable, which must be initialized as a copy of the above.
+
+An interpolant<T,P> variable is not automatically convertible to a value of type T. 
+Instead, retrieve a value by calling one of several interpolation methods (see section 6.11). 
+The interpolation shall be perspective-correct if the value of P is interpolation::perspective.
+
+
+==================================================Mesh Shader Types
+All OS: Mesh shader types have been supported since Metal 3.0. These types are used in the mesh pipeline to render geometry and are defined in the header <metal_mesh>.
+
+Mesh Grid Property Type:
+All OS: Mesh Grid PropertyType has been supported since Metal 3.0
+
+An object function can use the mesh_grid_properties type to specify the size of the mesh grid to dispatch for a given threadgroup from the object stage.
+Call the following member function to control the number of threadgroups of the mesh grid that will be dispatched.
+void set_threadgroups_per_grid(uint3)
+
+If the member function set_threadgroups_per_grid for a given threadgroup of the object grid is never called, then no mesh grid will be dispatched for the given object grid threadgroup.
+
+Calls to set_threadgroups_per_grid behave as a write to threadgroup memory performed by each thread.
+
+
+Mesh Type:
+All OS: Mesh Type has been supported since Metal 3.0.
+A mesh function can use an argument of type mesh<V, P, NV, NT, t> struct type to represent the exported mesh data.
+
+A valid vertex type V follows the same rules as the vertex function return type defined in section 5.2.3.3 with the following restrictions. 
+The vertex type can be either
+A float4 represents the vertex position
+or a user defined structure:
+• Includes a field with the [[position]] attribute.
+• May include other fields of scalar or vector of integer or floating-point type.
+• Supports the following attributes from Table 2.11. Each attribute can be used once within the vertex type.
+
+
+A valid primitive type follows the same rules as fragment input section 5.2.3.4. 
+A valid primitive type is either
+void indicating no per-primitive type or a user-defined structure
+• Includes fields of scalar or vector of integer or floating-point type
+• Supports only the following attributes from Table 2.12. Each attribute can be used once within the primitive type.
+
+
+==================================================Type Conversions and Re-interpreting Data
+The static_cast operator is used to convert from a scalar or vector type to another scalar or vector type with no saturation and with a default rounding mode.
+
+(When converting to floating-point, round to nearest; when converting to integer, round toward zero.) 
+If the source type is a scalar or vector Boolean, the value false is converted to zero and the value true is converted to one.
+
+Metal adds an as_type<type-id> operator to allow any scalar or vector data type (that is not a pointer) to be reinterpreted as another scalar or vector data type of the same size. 
+The bits in the operand are returned directly without modification as the new type. The usual type promotion for function arguments is not performed.
+
+For example, as_type<float>(0x3f800000) returns 1.0f, which is the value of the bit pattern 0x3f800000 if viewed as an IEEE-754 single precision value
+
+Using the as_type<type-id> operator to reinterpret data to a type with a different number of bytes results in an error.
+
+Examples of legal and illegal type conversions:
+float f = 1.0f;
+// Legal. Contains: 0x3f800000
+uint u = as_type<uint>(f);
+
+// Legal. Contains:
+// (int4)(0x3f800000, 0x40000000, 0x40400000, 0x40800000)
+float4 f = float4(1.0f, 2.0f, 3.0f, 4.0f);
+int4 i = as_type<int4>(f);
+
+int i;
+// Legal.
+short2 j = as_type<short2>(i);
+half4 f;
+// Error. Result and operand have different sizes
+float4 g = as_type<float4>(f);
+float4 f;
+// Legal. g.xyz has same values as f.xyz.
+float3 g = as_type<float3>(f);
+
+
+==================================================Implicit Type Conversions
+Implicit conversions between scalar built-in types (except void) are supported. 
+When an implicit conversion is done, it is not just a re-interpretation of the expression's value but a conversion of that value to an equivalent value in the new type. 
+For example, the integer value 5 is converted to the floating-point value 5.0.
+
+All vector types are considered to have a higher conversion rank than scalar types. 
+Implicit conversions from a vector type to another vector or scalar type are not permitted and a compilation error results. 
+For example, the following attempt to convert from a 4-component integer vector to a 4-component floating-point vector fails.
+int4 i;
+float4 f = i; // compile error.
+
+Implicit conversions from scalar-to-vector types are supported. 
+The scalar value is replicated in each element of the vector. 
+The scalar may also be subject to the usual arithmetic conversion to the element type used by the vector.
+For example:
+float4 f = 2.0f; // f = (2.0f, 2.0f, 2.0f, 2.0f)
+
+Implicit conversions from scalar-to-matrix types and vector-to-matrix types are not supported and a compilation error results. 
+Implicit conversions from a matrix type to another matrix, vector or scalar type are not permitted and a compilation error results.
+Implicit conversions for pointer types follow the rules described in the C++14 Specification.
+
+
+==================================================3. Operators:
+float3 v;
+float3x3 m, n;
+float a = 3.0f;
+
+The matrix-to-scalar multiplication:
+float3x3 m1 = m * a;
+is equivalent to:
+m1[0][0] = m[0][0] * a;
+m1[0][1] = m[0][1] * a;
+m1[0][2] = m[0][2] * a;
+m1[1][0] = m[1][0] * a;
+m1[1][1] = m[1][1] * a;
+m1[1][2] = m[1][2] * a;
+m1[2][0] = m[2][0] * a;
+m1[2][1] = m[2][1] * a;
+m1[2][2] = m[2][2] * a;
+
+
+The vector-to-matrix multiplication :
+float3 u = v * m;
+is equivalent to:
+u.x = dot(v, m[0]);
+u.y = dot(v, m[1]);
+u.z = dot(v, m[2]);
+
+
+The matrix-to-vector multiplication:
+float3 u = m * v;
+is equivalent to:
+u.x = m[0].x * v.x + m[1].x * v.y + m[2].x * v.z;
+u.y = m[0].y * v.x + m[1].y * v.y + m[2].y * v.z;
+u.z = m[0].z * v.x + m[1].z * v.y + m[2].z * v.z;
+
+
+The matrix-to-matrix multiplication :
+float3x3 r = m * n; // m, n are float3x3
+is equivalent to:
+r[0].x = m[0].x * n[0].x + m[1].x * n[0].y + m[2].x * n[0].z;
+r[0].y = m[0].y * n[0].x + m[1].y * n[0].y + m[2].y * n[0].z;
+r[0].z = m[0].z * n[0].x + m[1].z * n[0].y + m[2].z * n[0].z;
+r[1].x = m[0].x * n[1].x + m[1].x * n[1].y + m[2].x * n[1].z;
+r[1].y = m[0].y * n[1].x + m[1].y * n[1].y + m[2].y * n[1].z;
+r[1].z = m[0].z * n[1].x + m[1].z * n[1].y + m[2].z * n[1].z;
+r[2].x = m[0].x * n[2].x + m[1].x * n[2].y + m[2].x * n[2].z;
+r[2].y = m[0].y * n[2].x + m[1].y * n[2].y + m[2].y * n[2].z;
+r[2].x = m[0].z * n[2].x + m[1].z * n[2].y + m[2].z * n[2].z;
+
+
+==================================================4. Address Spaces:
+An address space attribute specifies the region of memory from where buffer memory objects are allocated.
+
+All arguments to a graphics or kernel function that are a pointer or reference to a type must be declared with an address space attribute.
+
+For graphics functions, an argument that is a pointer or reference to a type must be declared in the device or constant address space.
+For kernel functions, an argument that is a pointer or reference to a type must be declared in the device, threadgroup, threadgroup_imageblock, or constant address space.
+
+The address space for a variable at program scope must be constant.
+
+Any variable that is a pointer or reference must be declared with one of the address space attributes discussed in this section.
+
+If an address space attribute is missing on a pointer or reference type declaration, a compilation error occurs.
+
+
+1. device Address Space
+The device address space name refers to buffer memory objects allocated from the device memory pool that are both readable and writeable.
+
+Since you always allocate texture objects from the device address space, you do not need the device address attribute for texture types.
+You cannot directly access the elements of a texture object, so use the built-in functions to read from and write to a texture object
+
+
+2. constant Address Space
+The constant address space name refers to buffer memory objects allocated from the device memory pool that are read-only.
+You must declare variables in program scope in the constant address space and initialize them during the declaration statement.
+
+Variables in program scope have the same lifetime as the program, and their values persist between calls to any of the compute or graphics functions in the program.
+
+Buffers in the constant address space passed to kernel, vertex, and fragment functions have minimum alignment requirements based on the GPU. 
+See “Minimum constant buffer offset alignment” in the Metal Feature Set Tables for more information.
+
+
+3. thread Address Space
+The thread address space refers to the per-thread memory address space.
+Variables allocated in this address space are not visible to other threads. 
+Variables declared inside a graphics or kernel function are allocated in the thread address space.
+
+thread 是用来标注变量存储位置的关键字。它表示该变量的存储位置是在每个线程的私有地址空间中。
+这个概念在 GPU 编程中非常重要，因为每个线程在执行着色器时通常都有自己的局部数据空间，这些数据不会与其他线程共享。
+
+
+4. threadgroup Address Space
+A GPU compute unit can execute multiple threads concurrently in a threadgroup, and a GPU can execute a separate threadgroup for each of its compute units.
+
+Threads in a threadgroup can work together by sharing data in threadgroup memory, which is faster on most devices than sharing data in device memory.
+
+Use the threadgroup address space to:
+• Allocate a threadgroup variable in a kernel function.
+• Define a fragment or kernel function parameter that’s a pointer to a threadgroup address.
+
+Threadgroup variables in a kernel function only exist for the lifetime of the threadgroup that executes the kernel.
+
+Within a threadgroup, you can divide threads into SIMD-groups, which are collections of threads that execute concurrently.
+
+
+5. threadgroup_imageblock Address Space
+The threadgroup_imageblock address space refers to objects allocated in threadgroup memory that are only accessible using an imageblock<T, L> object
+
+A pointer to a user-defined type allocated in the threadgroup_imageblock address space can be an argument to a tile shading function
+There is exactly one threadgroup per tile, and each threadgroup can access the threadgroup memory and the imageblock associated with its tile.
+
+Variables allocated in the threadgroup_imageblock address space in a kernel function are allocated for each threadgroup executing the kernel, 
+are shared by all threads in a threadgroup, and exist only for the lifetime of the threadgroup that executes the kernel.
+Each thread in the threadgroup uses explicit 2D coordinates to access imageblocks.
+
+
+6. ray_data Address Space
+All OS: ray_data address supported since Metal 2.3
+
+The ray_data address space refers to objects allocated in a memory that is only accessible in an intersection function for Ray Tracing.
+Intersection functions can read and write to a custom payload using [[payload]] attribute in the ray_dat address space.
+
+When a shader calls intersect() with a payload, the system copies the payload to the ray_data address space, calls the intersection function, 
+and when the intersection function returns, it copies the payload back out.
+
+
+7. object_data Address Space
+All OS: object_data address supported since Metal 3.0.
+
+Object functions use the object_data address space to pass a payload to a mesh function
+
+
+==================================================5. Function and Variable Declarations
+（1）Functions
+Metal 1.0 or later supports the kernel, vertex, and fragment attributes for every OS. 
+Metal 2.3 or later supports the C++ attributes:
+• [[vertex]] or vertex (See section 5.1.1)
+• [[fragment]] or fragment (See section 5.1.2)
+• [[kernel]] or kernel (See section 5.1.3)
+• [[visible]] (See section 5.1.4)
+• [[stitchable]] (See section 5.1.5)
+• [[intersection(…)]] (See section 5.1.6)
+• [[object]] (See section 5.1.7)
+• [[mesh]] (See section 5.1.8)
+
+Make a function accessible to the Metal API by adding one of these function attributes at the start of a function, which makes it a qualified function.
+
+Kernel, vertex, and fragment functions can’t call one another without triggering a compilation error, 
+but they may call other functions that use the [[visible]] attribute.
+They can also call functions with the [[intersection(…)]] attribute by calling intersect()
+
+
+Vertex Functions:
+You can declare the vertex or since Metal 2.3 [[vertex]] attribute only for a graphics function.
+Metal executes a vertex function for each vertex in the vertex stream and generates per-vertex output.
+vertex void
+my_vertex_func(…)
+{…}
+[[vertex]] void
+vertex_func2(…)
+{…}
+For a vertex function, the return type identifies the output generated by the function.
+If the vertex function does not generate output, it shall return void and can only be used in a render pipeline with rasterization disabled.
+
+
+Fragment Functions:
+You can declare the fragment or since Metal 2.3 [[fragment]] attribute only for a graphics function.
+Metal executes a fragment function for each fragment in the fragment stream and their associated data and generates per-fragment output.
+
+For graphics functions, the return type identifies whether the output generated by the function is either per-vertex or per-fragment.
+If the fragment function does not generate output, it shall return void
+To request performing fragment tests before the fragment function executes, use the [[early_fragment_tests]] function attribute with a fragment function
+[[early_fragment_tests]]
+fragment float4
+my_fragment( … )
+{…}
+
+深度值通常是在渲染管线中的裁剪和投影变换后计算出来的，表示该像素在屏幕空间中的相对位置。
+
+It is an error if the return type of the fragment function declared with the [[early_fragment_tests]] attribute includes a depth or stencil value; that is, 
+if the return type of this fragment function includes an element declared with the [[depth(depth_attribute)]] or [[stencil]] attribute.
+It is an error to use the [[early_fragment_tests]] attribute with any function that is not a fragment function; that is, not declared with the fragment attribute.
+
+
+Compute Functions (Kernels):
+A compute function (also called a "kernel") is a data-parallel function that is executed over a 1-, 2-, or 3D grid.
+kernel
+void my_kernel(…) {…}
+[[kernel]]
+void my_kernel2(…) {…}
+
+Functions declared with the kernel or [[kernel]] attribute must return void.
+
+You can use the [[max_total_threads_per_threadgroup]] function attribute with a kernel function to specify the maximum threads per threadgroup.
+Below is an example of a kernel function that uses this attribute:
+[[max_total_threads_per_threadgroup(x)]]
+kernel void
+my_kernel(…)
+{…}
+
+If the [[max_total_threads_per_threadgroup]] value is greater than the [MTLDevice maxThreadsPerThreadgroup] property, then compute pipeline state creation shall fail.
+
+
+Visible Functions:
+All OS: [[visible]] functions are supported since Metal 2.3.
+
+A function with a [[visible]] attribute is a function that is visible from the Metal Framework API, i.e., one may get a MTLFunction object of this function.
+It is legal for other functions to direct call a visible function.
+[[visible]] float my_visible(device int *data, int data_offset) {…}
+
+
+Stitchable Functions:
+The [[stitchable]] attribute implies [[visible]], which means that stitchable functions can be used in all contexts where a visible function can be used
+
+
+Intersection Functions:
+All OS: [[intersection(primitive_type, intersection_tags…]] functions are supported since Metal 2.3
+
+One can declare a custom intersection function to be used with raytracing by using the [[intersection(primitive_type, intersection_tags…)]] attribute.
+Custom intersection functions are called when the shader calls intersect() to determine if a potential ray intersection is valid or if traversal should continue.
+
+[[intersection(triangle, triangle_data, instancing,
+world_space_data)]]
+bool triangleIntersectionFunction(...) {…}
+The intersection function primitive_type and intersection_tags control the allowable input and output attributes
+
+Intersection functions support passing buffer arguments from device and constant address space.
+Intersection functions don’t support passing texture arguments to an intersection function.
+However, you can pass a texture using an argument buffer.
+
+Intersection functions don’t support threadgroup memory.
+Intersection functions don’t support threadgroup_barrier or simdgroup_barrier. If they are used, the result is undefined
+
+
+
+
+
+==================================================6. Metal Standard Library:
+Metal Standard Library (MSLib)
+
+
+Namespace and Header Files:
+The MSLib functions and enumerations are declared in the metal namespace.
+
+In addition to the header files described in the MSLib functions, 
+the <metal_stdlib> header is available and can access all the functions supported by the MSLib.
+
+
+Common Functions:
+defined in the header <metal_common>.
+T is one of the scalar or vector floating-point types.
+
+
+Integer Functions:
+defined in the header <metal_integer>
+T is one of the scalar or vector integer types.
+Tu is the corresponding unsigned scalar or vector integer type.
+T32 is one of the scalar or vector 32-bit int or uint types.
+
+
+Relational Functions:
+
+
+
+==================================================7. Numerical Compliance
+Rounding Mode:
+Either round to nearest even or round to zero rounding mode may be supported for single- and half-precision floating-point operations
+
+
+Texture Addressing and Conversion Rules:
+The texture coordinates specified to the sample, sample_compare, gather, gather_compare, read, and write functions cannot be INF or NaN.
+In addition, for the texture read and write functions, the texture coordinates must refer to a region inside the texture.
+If the texture coordinates are outside the bounds of the texture, the read and write function behavior is undefined.
