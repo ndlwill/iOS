@@ -39,7 +39,13 @@ class RectangleDetector {
     weak var delegate: RectangleDetectorDelegate?
     
     init(with arSession: ARSession) {
-        self.updateTimer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { [weak self] _ in
+        // MARK: - Detect rectangular shapes in the user’s environment
+        /**
+         As shown below, you can use Vision in real-time to check the camera feed for rectangles.
+         You perform this check up to 10 times a second by using RectangleDetector to schedule a repeating timer with an updateInterval of 0.1 seconds.
+         */
+        self.updateTimer = Timer.scheduledTimer(withTimeInterval: updateInterval,
+                                                repeats: true) { [weak self] _ in
             // CVPixelBuffer
             if let capturedImage = arSession.currentFrame?.capturedImage {
                 self?.search(in: capturedImage)
@@ -55,7 +61,7 @@ class RectangleDetector {
     private func search(in pixelBuffer: CVPixelBuffer) {
         guard !isBusy else { return }
         isBusy = true
- 
+        
         // Remember the current image.
         currentCameraImage = pixelBuffer
         
@@ -119,6 +125,7 @@ class RectangleDetector {
             return
         }
         
+        // perspective correction filter
         guard let filter = CIFilter(name: "CIPerspectiveCorrection") else {
             print("Error: Rectangle detection failed - Could not create perspective correction filter.")
             return

@@ -1,0 +1,65 @@
+class MCSession
+iOS 7.0+
+An MCSession object enables and manages communication among all peers in a Multipeer Connectivity session.
+
+
+1. Initiating a Session
+To set up a session:
+(1)Use the init(displayName:) method of the MCPeerID to create a peer ID that represents the local peer, or retrieve a peer ID that you previously archived (to maintain a stable peer ID over time).
+(2)Use the peer ID with the method init(peer:) to initialize the session object.
+(3)Invite peers to join the session using an MCNearbyServiceBrowser object, an MCBrowserViewController object, or your own peer discovery code. (Sessions currently support up to 8 peers, including the local peer.)
+(4)Set up an MCNearbyServiceAdvertiser object or MCAdvertiserAssistant object to allow other devices to ask your app to join a session that they create.
+
+If you use one of the framework’s browser objects for peer discovery, when a peer accepts an invitation, the session calls its delegate object’s session(_:peer:didChange:) method with MCSessionState.connected as the new state, along with an object that tells you which peer became connected.
+
+If instead you write your own peer discovery code, you are responsible for managing the connection manually. See the Managing Peers Manually section for more information.
+
+
+2. Communicating with Peers
+Once you have set up the session, your app can send data to other peers by calling one of the following methods, found in Sending Data and Resources:
+(1)send(_:toPeers:with:) sends an NSData object to the specified peers.
+On each recipient device, the delegate object’s session(_:didReceive:fromPeer:) method is called with the data object when the data has been fully received.
+
+(2)sendResource(at:withName:toPeer:withCompletionHandler:) sends the contents from an NSURL object to the specified peer. 
+The URL can be either a local file URL or a web URL. The completionHandler block is called when the resource is fully received by the recipient peer or when an error occurs during transmission.
+This method returns an NSProgress object that you can use to cancel the transfer or check the current status of the transfer.
+On the recipient device, the session calls its delegate object’s session(_:didStartReceivingResourceWithName:fromPeer:with:) method when the device begins receiving the resource, and calls its session(_:didFinishReceivingResourceWithName:fromPeer:at:withError:) method when the resource has been fully received or when an error occurs.
+
+(3)startStream(withName:toPeer:) creates a connected byte stream (NSOutputStream) that you can use to send data to the specified peer.
+On the recipient device, the session calls its delegate object’s session(_:didReceive:withName:fromPeer:) method with an NSInputStream object that represents the other endpoint of communication.
+On both sides, your code must set the stream’s delegate, schedule the stream on a run loop, and open the stream. Your code must also implement stream delegate methods to manage sending and receiving stream data.
+
+
+Important:
+Delegate calls occur on a private operation queue. 
+If your app needs to perform an action on a particular run loop or operation queue, its delegate method should explicitly dispatch or schedule that work.
+
+
+3. Managing Peers Manually
+If instead of using the framework’s browser and advertiser objects to perform peer discovery, 
+you decide to write your own peer discovery code (with NSNetService or the Bonjour C API, for example), you can manually connect nearby peers into a session. To do this:
+
+(1)Establish a connection from your app to nearby peers, and exchange peer IDs with those peers.
+Each peer should serialize its own local MCPeerID object with NSKeyedArchiver, and the receiving peer should unserialize it with NSKeyedUnarchiver.
+
+Important:
+Do not attempt to construct a peer ID object for a nonlocal peer using init(displayName:). A peer ID object must be constructed on the device that it represents.
+
+(2)Exchange connection data. After you have obtained the nearby peer’s ID object, call nearbyConnectionData(forPeer:withCompletionHandler:) to obtain a connection data object specific to that nearby peer.
+When the completion handler block is called, send the resulting connection data object to that peer.
+
+Note:
+Each device in the session must perform this step for each nonlocal peer in the session. 
+So if there are four devices in the session, each device must generate a connection data object for each of the other three devices.
+
+(3)When your app receives connection data from another peer, it must call connectPeer(_:withNearbyConnectionData:) to add that peer to the session.
+
+Note:
+Each of the nonlocal peers must also call connectPeer(_:withNearbyConnectionData:) with the connection data that it received from your app and other nonlocal peers.
+
+You can also cancel an outstanding connection attempt by calling cancelConnectPeer(_:). These methods are described in the Managing Peers Manually group.
+
+
+4. Disconnecting
+To leave a session, your app must call disconnect(). For more details, see Leaving a Session.
+

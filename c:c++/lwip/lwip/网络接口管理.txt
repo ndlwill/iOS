@@ -1,0 +1,154 @@
+netif.c/h实现网络接口管理，完成对网卡的抽象描述，网卡初始化，网卡发送数据，网卡接收数据等
+
+网卡描述结构体struct netif
+struct netif {
+  /** pointer to next in linked list *///指向下一个netif结构
+  struct netif *next;
+  /** IP address configuration in network byte order */
+  ip_addr_t ip_addr;/**///ip地址
+  ip_addr_t netmask;/**///子网掩码
+  ip_addr_t gw;/**///网关
+
+  /** This function is called by the network device driver
+   *  to pass a packet up the TCP/IP stack. */
+  netif_input_fn input;/**///从网卡接收到数据包给ip层函数指针
+  /** This function is called by the IP module when it wants
+   *  to send a packet on the interface. This function typically
+   *  first resolves the hardware address, then sends the packet. */
+  netif_output_fn output;/**///ip层发送数据包函数指针
+  /** This function is called by the ARP module when it wants
+   *  to send a packet on the interface. This function outputs
+   *  the pbuf as-is on the link medium. */
+  netif_linkoutput_fn linkoutput;/**///arp层调用发送数据包函数指针
+  /** This field can be set by the device driver and could point
+   *  to state information for the device. */
+  void *state;/**///记录一些设备信息
+  /** maximum transfer unit (in bytes) */
+  u16_t mtu;/**///网卡mtu
+  /** number of bytes used in hwaddr */
+  u8_t hwaddr_len;/**///网卡mac长度
+  /** link level hardware address of this interface */
+  u8_t hwaddr[NETIF_MAX_HWADDR_LEN];/**///网卡mac
+  /** flags (see NETIF_FLAG_ above) */
+  u8_t flags;/**///该接口状态、属性
+  /** descriptive abbreviation */
+  char name[2];/**///该接口名字
+  /** number of this interface */
+  u8_t num;/**///该接口编号
+#if ENABLE_LOOPBACK
+  /* List of packets to be queued for ourselves. */
+  struct pbuf *loop_first;/**///指向发给自己数据包第一个pbuf
+  struct pbuf *loop_last;/**///指向发给自己数据包最后一个pbuf
+#endif /* ENABLE_LOOPBACK */
+}
+
+
+向内核注册网卡:
+lwip会把所有网卡接口netif结构串成一张链表，netif_list指向这条链表的首部，netif_default指向默认网卡
+
+
+向内核注册一张网卡步骤
+//global data，定义一个网卡结构体
+struct netif enc28j60_netif;
+void lwip_init_task(void)
+{
+	struct ip_addr ipaddr, netmask, gw;
+
+    lwip_init();//lwip内核初始化
+	IP4_ADDR(&gw, 192,168,1,1);
+	IP4_ADDR(&ipaddr, 192,168,1,37);
+	IP4_ADDR(&netmask, 255,255,255,0);
+
+    netif_add(&enc28j60_netif, &ipaddr, &netmask, &gw, NULL, ethernetif_init,ethernet_input);//添加网卡
+	netif_set_default(&enc28j60_netif);//设置默认网卡
+	netif_set_up(&enc28j60_netif);//使用网卡
+	
+}
+
+netif.c netif_add:
+
+struct netif *
+netif_add(struct netif *netif, ip_addr_t *ipaddr, ip_addr_t *netmask,
+  ip_addr_t *gw, void *state, netif_init_fn init, netif_input_fn input)
+{
+
+  LWIP_ASSERT("No init function given", init != NULL);
+
+  /* reset new interface configuration state */
+  ip_addr_set_zero(&netif->ip_addr);
+  ip_addr_set_zero(&netif->netmask);
+  ip_addr_set_zero(&netif->gw);
+  netif->flags = 0;
+
+#if ENABLE_LOOPBACK
+  netif->loop_first = NULL;
+  netif->loop_last = NULL;
+#endif /* ENABLE_LOOPBACK */
+
+  /* remember netif specific state information data */
+  netif->state = state;
+  netif->num = netif_num++;/**///网卡编号
+  netif->input = input;/**///注册从网卡接收到的数据包交给ip层函数ethernet_input(atharp.c中)
+
+  netif_set_addr(netif, ipaddr, netmask, gw);/**///设置ip、子网、网关
+
+  /* call user specified initialization function for netif */
+  if (init(netif) != ERR_OK) {/**///这里调用网卡硬件初始化函数ethernetif_init
+    return NULL;
+  }
+  /* add this netif to the list *///添加这张网卡结构netif到链表
+  netif->next = netif_list;
+  netif_list = netif;
+
+  return netif;
+}
+
+
+ethernetif.c中:
+/**
+ * Should be called at the beginning of the program to set up the
+ * network interface. It calls the function low_level_init() to do the
+ * actual setup of the hardware.
+ *
+ * This function should be passed as a parameter to netif_add().
+ *
+ * @param netif the lwip network interface structure for this ethernetif
+ * @return ERR_OK if the loopif is initialized
+ *         ERR_MEM if private data couldn't be allocated
+ *         any other err_t on error
+ */
+err_t
+ethernetif_init(struct netif *netif)
+{
+  struct ethernetif *ethernetif;/**///默认是网卡mac地址，用户还可以网这个结构体继续添加网卡信息
+
+  LWIP_ASSERT("netif != NULL", (netif != NULL));
+    
+  ethernetif = mem_malloc(sizeof(struct ethernetif));
+  if (ethernetif == NULL) {
+    LWIP_DEBUGF(NETIF_DEBUG, ("ethernetif_init: out of memory\n"));
+    return ERR_MEM;
+  }
+  netif->state = ethernetif;/**///记录网卡信息
+  netif->name[0] = IFNAME0;
+  netif->name[1] = IFNAME1;/**///网卡名字
+  
+  netif->output = etharp_output;/**///ip层发送数据包函数，最终是调用netif->linkoutput
+  netif->linkoutput = low_level_output;/**///arp层发送数据包函数
+  
+  ethernetif->ethaddr = (struct eth_addr *)&(netif->hwaddr[0]);
+  /**///网卡硬件初始化函数
+  /* initialize the hardware*/ 
+  low_level_init(netif);
+
+  return ERR_OK;
+}
+
+总结下流程:
+netif_add内部调用ethernetif_init，并注册函数ethernet_input(atharp.c中)，用于把收到数据包给ip层
+
+ethernetif_init内部调用low_level_init初始化网卡硬件，并注册etharp_output、low_level_output，low_level_output是最终操作网卡发送数据包的函数，etharp_output是ip层发送数据包函数
+
+###
+ethernetif_input（ethernetif.c中）会被周期或者中断服务函数调用用来接收数据包，该函数内部先调用low_level_input从网卡收数据，再调用netif->input（即ethernet_input）把数据包交给协议栈进一步处理
+###

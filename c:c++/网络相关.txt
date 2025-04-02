@@ -1,0 +1,716 @@
+==============================网络编程之sockaddr与sockaddr_in,sockaddr_un结构体
+---------------
+sockaddr:
+struct sockaddr {
+unsigned  short  sa_family;     /* address family, AF_xxx */
+char  sa_data[14];                 /* 14 bytes of protocol address */
+};
+sa_family是地址家族，一般都是“AF_xxx”的形式。好像通常大多用的是都是AF_INET。
+sa_data是14字节协议地址。
+此数据结构用做bind、connect、recvfrom、sendto等函数的参数，指明地址信息。
+但一般编程中并不直接针对此数据结构操作，而是使用另一个与sockaddr等价的数据结构
+
+---------------
+sockaddr_in:
+sockaddr_in（在netinet/in.h中定义）：
+struct  sockaddr_in {
+short  int  sin_family;                      /* Address family */
+unsigned  short  int  sin_port;       /* Port number */
+struct  in_addr  sin_addr;              /* Internet address */
+unsigned  char  sin_zero[8];         /* Same size as struct sockaddr */
+};
+struct  in_addr {
+unsigned  long  s_addr;
+};
+
+typedef struct in_addr {
+union {
+            struct{
+                        unsigned char s_b1,
+                        s_b2,
+                        s_b3,
+                        s_b4;
+                        } S_un_b;
+           struct {
+                        unsigned short s_w1,
+                        s_w2;
+                        } S_un_w;
+            unsigned long S_addr;
+          } S_un;
+} IN_ADDR;
+
+sin_family指代协议族，在socket编程中只能是AF_INET
+sin_port存储端口号（使用网络字节顺序）
+sin_addr存储IP地址，使用in_addr这个数据结构
+sin_zero是为了让sockaddr与sockaddr_in两个数据结构保持大小相同而保留的空字节。
+s_addr按照网络字节顺序存储IP地址
+
+sockaddr_in和sockaddr是并列的结构，指向sockaddr_in的结构体的指针也可以指向
+sockadd的结构体，并代替它。也就是说，你可以使用sockaddr_in建立你所需要的信息,
+在最后用进行类型转换就可以了bzero((char*)&mysock,sizeof(mysock));//初始化
+
+mysock结构体名
+mysock.sa_family=AF_INET;
+mysock.sin_addr.s_addr=inet_addr("192.168.0.1");
+……
+等到要做转换的时候用：
+（struct sockaddr*）mysock
+
+---------------
+#include <sys/un.h>
+sockaddr_un:
+进程间通信的一种方式是使用UNIX套接字，人们在使用这种方式时往往用的不是网络套接字，而是一种称为本地套接字的方式。这样做可以避免为黑客留下后门。
+
+创建
+使用套接字函数socket创建，不过传递的参数与网络套接字不同。域参数应该是PF_LOCAL或者PF_UNIX，而不能用PF_INET之类。
+本地套接字的通讯类型应该是SOCK_STREAM或SOCK_DGRAM，协议为默认协议。例如：
+int sockfd;
+sockfd = socket(PF_LOCAL, SOCK_STREAM, 0);
+
+绑定
+创建了套接字后，还必须进行绑定才能使用。不同于网络套接字的绑定，本地套接字的绑定的是struct sockaddr_un结构。
+struct sockaddr_un结构有两个参数：sun_family、sun_path。sun_family只能是AF_LOCAL或AF_UNIX，而sun_path是本地文件的路径。通常将文件放在/tmp目录下。例如：
+struct sockaddr_un sun;
+sun.sun_family = AF_LOCAL;
+strcpy(sun.sun_path, filepath);
+bind(sockfd, (struct sockaddr*)&sun, sizeof(sun));
+
+监听
+本地套接字的监听、接受连接操作与网络套接字类似。
+
+连接
+连接到一个正在监听的套接字之前，同样需要填充struct sockaddr_un结构，然后调用connect函数。
+
+连接建立成功后，我们就可以像使用网络套接字一样进行发送和接受操作了。甚至还可以将连接设置为非阻塞模式
+
+==============================
+服务器端的步骤如下：
+1. socket：      建立一个socket
+2. bind：          将这个socket绑定在某个文件上（AF_UNIX）或某个端口上（AF_INET），我们会分别介绍这两种。
+3. listen：        开始监听
+4. accept：      如果监听到客户端连接，则调用accept接收这个连接并同时新建一个socket来和客户进行通信
+5. read/write：读取或发送数据到客户端
+6. close：        通信完成后关闭socket
+
+客户端的步骤如下：
+1. socket：      建立一个socket
+2. connect：   主动连接服务器端的某个文件（AF_UNIX）或某个端口（AF_INET）
+3. read/write：如果服务器同意连接（accept），则读取或发送数据到服务器端
+4. close：        通信完成后关闭socket
+
+Makefile：
+all: tcp_client.c tcp_server.c  
+    gcc -g -Wall -o tcp_client tcp_client.c  
+    gcc -g -Wall -o tcp_server tcp_server.c  
+  
+clean:  
+    rm -rf *.o tcp_client tcp_server
+
+
+以AF_UNIX方式进行通信的，这种方式是通过文件来将服务器和客户端连接起来的，因此我们应该先运行tcp_server，创建这个文件，
+默认情况下，这个文件会创建在当前目录下，并且第一个s表示它是一个socket文件：
+
+int socket(int domain, int type, int protocol)
+domain：指定socket所属的域，常用的是AF_UNIX或AF_INET
+AF_UNIX表示以文件方式创建socket，AF_INET表示以端口方式创建socket
+type：指定socket的类型，可以是SOCK_STREAM或SOCK_DGRAM
+SOCK_STREAM表示创建一个有序的，可靠的，面向连接的socket，因此如果我们要使用TCP，就应该指定为SOCK_STREAM
+SOCK_DGRAM表示创建一个不可靠的，无连接的socket，因此如果我们要使用UDP，就应该指定为SOCK_DGRAM
+protocol：指定socket的协议类型，我们一般指定为0表示由第一第二两个参数自动选择。
+socket()函数返回新创建的socket，出错则返回-1
+
+struct sockaddr_un  
+{  
+  sa_family_t sun_family;  /* AF_UNIX */  
+  char sun_path[];         /* pathname */  
+}  
+  
+  
+struct sockaddr_in  
+{  
+  short int sin_family;          /* AF_INET */  
+  unsigned short int sin_port;   /* port number */  
+  struct in_addr sin_addr;       /* internet address */  
+}  
+
+struct in_addr  
+{  
+  unsigned long int s_addr;  
+}  
+
+sun_path存放socket的本地文件名，sin_addr存放socket的ip地址，sin_port存放socket的端口号。
+
+int bind(int socket, const struct sockaddr * address, size_t address_len)
+如果我们使用AF_UNIX来创建socket，相应的地址格式是sockaddr_un，而如果我们使用AF_INET来创建socket，相应的地址格式是sockaddr_in，
+因此我们需要将其强制转换为sockaddr这一通用的地址格式类型，而sockaddr_un中的sun_family和sockaddr_in中的sin_family分别说明了它的地址格式类型，
+因此bind()函数就知道它的真实的地址格式。第三个参数address_len则指明了真实的地址格式的长度。
+bind()函数正确返回0，出错返回-1
+
+int listen(int socket, int backlog)
+backlog：等待连接的最大个数，如果超过了这个数值，则后续的请求连接将被拒绝
+listen()函数正确返回0，出错返回-1
+
+int accept(int socket, struct sockaddr * address, size_t * address_len)
+同样，第二个参数也是一个通用地址格式类型，这意味着我们需要进行强制类型转化
+这里需要注意的是，address是一个传出参数，它保存着接受连接的客户端的地址，如果我们不需要，将address置为NULL即可。
+address_len：我们期望的地址结构的长度，注意，这是一个传入和传出参数，传入时指定我们期望的地址结构的长度，如果多于这个值，则会被截断，而当accept()函数返回时，address_len会被设置为客户端连接的地址结构的实际长度。
+另外如果没有客户端连接时，accept()函数会阻塞
+accept()函数成功时返回新创建的socket描述符，出错时返回-1
+
+int connect(int socket, const struct sockaddr * address, size_t address_len)
+对于第二个参数，我们同样需要强制类型转换
+address_len指明了地址结构的长度
+connect()函数成功时返回0，出错时返回-1
+
+int close(int fd)
+close是一个通用函数（和read，write一样），不仅可以关闭文件描述符，还可以关闭socket描述符
+
+==============================setsockopt getsockopt
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <assert.h>
+/*
+  * This function reports the error and
+   * exits back to the shell:
+ */
+static void bail(const char *on_what) {
+    if (errno != 0) {
+        fputs(strerror(errno), stderr);
+        fputs(": ", stderr);
+    }
+    fputs(on_what, stderr);
+    fputc('\n', stderr);
+    exit(1);
+}
+ 
+int main(int argc, char **argv) {
+    int z;
+    int s = -1; /* Socket */
+    int sndbuf = 0; /* 发送缓冲区大小  */
+    int rcvbuf = 0;/* 接收缓冲区大小  */
+ 
+    socklen_t optlen; /* 设置项长度 （字节）*/
+ 
+    /*
+     *建立一个 TCP/IP socket做测试:
+       */
+    s = socket(PF_INET, SOCK_STREAM, 0);
+    if (s == -1)
+        bail("socket(2)");
+ 
+     // 设置SO_SNDBUF Size:ss
+    sndbuf = 5000; /* Send buffer size */
+    z = setsockopt(s, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof sndbuf);
+ 
+    if (z)
+        bail("setsockopt(s,SOL_SOCKET,"
+                "SO_SNDBUF)");
+ 
+    /** 设置SO_RCVBUF 大小:      */
+    rcvbuf = 8192; /* Send buffer size */
+    z = setsockopt(s, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof rcvbuf);
+ 
+    if (z)
+        bail("setsockopt(s,SOL_SOCKET,"
+                "SO_RCVBUF)");
+ 
+    /*
+       *       检查上面的设置
+       * Get socket option SO_SNDBUF:
+    */
+    optlen = sizeof sndbuf;
+    z = getsockopt(s, SOL_SOCKET, SO_SNDBUF, &sndbuf, &optlen);
+    if (z)
+        bail("getsockopt(s,SOL_SOCKET,"
+                "SO_SNDBUF)");
+ 
+    assert(optlen == sizeof sndbuf);
+ 
+    /* * 得到设置的socket选项 SO_SNDBUF:*/
+    optlen = sizeof rcvbuf;
+    z = getsockopt(s, SOL_SOCKET, SO_RCVBUF, &rcvbuf, &optlen);
+    if (z)
+        bail("getsockopt(s,SOL_SOCKET,"
+                "SO_RCVBUF)");
+ 
+    assert(optlen == sizeof rcvbuf);
+ 
+    /* * 输出缓冲区的大小:*/
+    printf("Socket s : %d\n", s);
+    printf(" Send buf: %d bytes\n", sndbuf);
+}
+
+==============================socket RAW
+#include <stdio.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/in_systm.h>
+#include <netinet/ip.h>
+#include <netinet/ip_icmp.h>
+#include <string.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+ 
+int main(int argc, char *argv[])
+{
+	int s, i;
+	char buf[400];
+	struct ip *ip = (struct ip *) buf;
+	struct icmphdr *icmp = (struct icmphdr *) (ip + 1);
+	struct hostent *hp, *hp2;
+	struct sockaddr_in dst;
+	int offset;
+	int on;
+	int num = 100;
+ 
+	if (argc < 3)
+	{
+ 
+		printf("\nUsage: %s <saddress> <dstaddress> [number]\n", argv[0]);
+		printf("- saddress is the spoofed source address\n");
+		printf("- dstaddress is the target\n");
+		printf("- number is the number of packets to send, 100 is the default\n");
+		exit(1);
+	}
+ 
+	/* 如果输入的参数符合要求 */
+ 
+	if (argc == 4)
+ 
+		/* 给发送的包数量赋值 */
+ 
+		num = atoi(argv[3]);
+ 
+	/* Loop based on the packet number */
+ 
+	for (i = 1; i <= num; i++)
+	{
+		printf("test\n");
+		on = 1;
+		bzero(buf, sizeof(buf));
+ 
+		/* 创建 RAW socket */
+ 
+		if ((s = socket(AF_INET, SOCK_RAW, IPPROTO_RAW)) < 0) {
+ 
+			perror("socket() error");
+ 
+			/* If something wrong, just exit */
+			exit(1);
+		}
+ 
+		/* 使用socket options, 告诉系统 我们提供 IP structure */
+		//Prototype: int setsockopt (int socket, int level, int optname, void *optval, socklen_t optlen)
+		if (setsockopt(s, IPPROTO_IP, IP_HDRINCL, &on, sizeof(on)) < 0)
+		{
+			perror("setsockopt() for IP_HDRINCL error");
+			exit(1);
+		}
+ 
+		/* gethostbyname()返回对应于给定主机名的包含主机名字和地址信息的hostent结构指针。 */
+		if ((hp = gethostbyname(argv[2])) == NULL) {
+			if ((ip->ip_dst.s_addr = inet_addr(argv[2])) == -1) {
+				fprintf(stderr, "%s: Can't resolve, unknown host.\n", argv[2]);
+				exit(1);
+			}
+		} else
+			bcopy(hp->h_addr_list[0], &ip->ip_dst.s_addr, hp->h_length);
+ 
+		/* The following source address just redundant for target to collect */
+ 
+		if ((hp2 = gethostbyname(argv[1])) == NULL)
+		{
+			if ((ip->ip_src.s_addr = inet_addr(argv[1])) == -1)
+			{
+				fprintf(stderr, "%s: Can't resolve, unknown host\n", argv[1]);
+				exit(1);
+			}
+		}
+		else
+			bcopy(hp2->h_addr_list[0], &ip->ip_src.s_addr, hp->h_length);
+ 
+		printf("Sending to %s from spoofed %s\n", inet_ntoa(ip->ip_dst),argv[1]);
+ 
+		/* Ip structure, check the ip.h */
+ 
+		ip->ip_v = 4;
+		ip->ip_hl = sizeof *ip >> 2;
+		ip->ip_tos = 0;
+		ip->ip_len = htons(sizeof(buf));
+		ip->ip_id = htons(4321);
+		ip->ip_off = htons(0);
+		ip->ip_ttl = 255;
+		ip->ip_p = 1;
+		ip->ip_sum = 0; /* Let kernel fills in */
+		dst.sin_addr = ip->ip_dst;
+		dst.sin_family = AF_INET;
+		icmp->type = ICMP_ECHO;
+		icmp->code = 0;
+ 
+		/* Header checksum */
+		icmp->checksum = htons(~(ICMP_ECHO << 8));
+		//for (offset = 0; offset < 65536; offset += (sizeof(buf) - sizeof(*ip)))
+		//{
+			ip->ip_off = htons(offset >> 3);
+			if (offset < 65120)
+				ip->ip_off |= htons(0x2000);
+			else
+				ip->ip_len = htons(418); /* make total 65538 */
+ 
+			/* sending time */
+			if (sendto(s, buf, sizeof(buf), 0, (struct sockaddr *) &dst,
+					sizeof(dst)) < 0)
+			{
+				fprintf(stderr, "offset %d: ", offset);
+				perror("sendto() error");
+			}
+			else
+				printf("sendto() is OK.\n");
+ 
+			/* IF offset = 0, define our ICMP structure */
+ 
+			if (offset == 0)
+			{
+				icmp->type = 0;
+				icmp->code = 0;
+				icmp->checksum = 0;
+			}
+		//}
+ 
+		/* close socket */
+		close(s);
+		usleep(30000);
+	}
+ 
+	return 0;
+ 
+}
+
+==============================TCP通信
+client.cpp
+
+#include <stdlib.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <stdio.h>
+ 
+int main() {
+ 
+	//创建一个socket
+	int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+ 
+	//创建好地址
+	struct sockaddr_in address;
+	address.sin_family = AF_INET;
+	address.sin_port = htons(1991); //端口和服务器端对应
+	address.sin_addr.s_addr = inet_addr("127.0.0.1");
+ 
+	//开始连接服务器
+	int result = connect(sock_fd, (struct sockaddr *) &address, sizeof(address));
+ 
+	if(result == -1){
+		perror("connect failed: ");
+		exit(1);
+	}
+ 
+	char ch = 'A';
+	//给服务器发送 一个字符
+	write( sock_fd, &ch, 1);
+	printf("client says: %c\n", ch);
+ 
+	// 读取一个字符
+	read(sock_fd, &ch, 1);
+	printf("get char from server:%c\n", ch);
+ 
+	//关掉连接
+	close(sock_fd);
+ 
+ 
+	return 0;
+}
+
+server.cpp
+
+
+#include <stdlib.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <stdio.h>
+ 
+int main() {
+ 
+	//用 SOCK_STREAM 标识建立 TCP连接
+	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+ 
+	struct sockaddr_in server_addr;
+	server_addr.sin_family = AF_INET;
+	server_addr.sin_port = htons(1991); //需要转化字节序
+ 
+	//需要把点分10进制的地址转化
+	/*
+	 * Name: inet_addr
+	 Prototype: uint32_t inet_addr (const char *name)
+	 Description:
+	 This function converts the IPv4 Internet host address name from the standard numbers-and-dots notation
+	 into binary data. If the input is not valid, inet_addr returns INADDR_NONE. This is an obsolete interface to
+	 inet_aton, described immediately above. It is obsolete because INADDR_NONE is a valid address
+	 (255.255.255.255), and inet_aton provides a cleaner way to indicate error return.
+	 */
+	server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+ 
+	/*绑定*/
+	bind(sockfd, (struct sockaddr *) &server_addr, sizeof(server_addr));
+ 
+	/*
+	 * Name: listen
+	 Prototype: int listen (int socket, int n)
+	 Description:
+	 The listen function enables the socket socket to accept connections, thus making it a server socket.
+	 The argument n specifies the length of the queue for pending connections. When the queue fills, new
+	 clients attempting to connect fail with ECONNREFUSED until the server calls accept to accept a
+	 connection from the queue.
+	 The listen function returns 0 on success and -1 on failure. The following errno error conditions are defined
+	 for this function:
+	 */
+	listen(sockfd, 10);
+ 
+	char ch;
+ 
+	struct sockaddr_in client_addr;
+	socklen_t len = sizeof(client_addr);
+//	socklen_t len = 0;
+	while(1)
+	{
+		int client_sockfd;
+		printf("server waiting: \n");
+		client_sockfd = accept(sockfd, (struct sockaddr *) &client_addr, &len);
+ 
+		//只读取一个字符
+		read(client_sockfd, &ch, 1);
+		printf("get char from client: %c\n", ch);
+		++ch;
+ 
+		//把该字符 +1后再发回给客户端
+		write(client_sockfd, &ch, 1);
+ 
+		close(client_sockfd);
+	}
+ 
+	//printf("%0x", server_addr.sin_addr.s_addr);
+	return 0;
+}
+
+==============================UDP通信
+client.cpp
+
+#include <stdio.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>// ###
+#include <unistd.h>
+#include <errno.h>
+#include <string.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include <arpa/inet.h>// ###
+ 
+#define DEST_IP "127.0.0.1"
+#define SERV_PORT   8000
+ 
+int main() {
+	/* socket文件描述符 */
+	int sock_fd;
+ 
+	/* 建立udp socket */
+	sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+ 
+	if (sock_fd < 0) {
+		perror("socket");
+		exit(1);
+	}
+ 
+	/* 定义一个连接的地址结构体 address */
+	struct sockaddr_in addr_serv;
+	int len;
+	memset(&addr_serv, 0, sizeof(struct sockaddr_in));
+ 
+	//*************  设置协议族 即IPV4 ************//
+	addr_serv.sin_family = AF_INET;
+ 
+	//*************  设置连接的服务器端口 ************//
+	//端口号和IP地址都是以 网络字节存储的，需要重新排序
+	addr_serv.sin_port = htons(SERV_PORT); //转换为网络字节序， 小端 -> 大端
+ 
+	//*************  设置连接的服务器地址 ************//
+	//第0种写法，用INADDR_ANY代表服务器地址
+	/* INADDR_ANY 表示不管是哪个网卡接收到数据，只要端口号对应，就会被该程序接收 */
+	//addr_serv.sin_addr.s_addr = htonl(INADDR_ANY );
+ 
+	//第1种地址转换方法(点分10进制，转换为in_addr_t 类型)
+	addr_serv.sin_addr.s_addr = inet_addr("127.0.0.1"); //出错返回INADDR_NONE
+ 
+	//第2种
+	//inet_aton("127.0.0.1", &addr_serv.sin_addr);
+	//*************  设置连接的服务器地址 ************//
+ 
+	len = sizeof(addr_serv);
+ 
+ 
+	//*************  获取本机mac地址 可忽略 ************//
+	struct ifreq ifr;
+	ifr.ifr_addr.sa_family = AF_INET;
+	strncpy(ifr.ifr_name, "eth0", IFNAMSIZ - 1);
+	ioctl(sock_fd, SIOCGIFHWADDR, &ifr);
+	printf("我是客户端，我的MAC地址：");
+	printf("%.2x:%.2x:%.2x:%.2x:%.2x:%.2x\n",
+			(unsigned char) ifr.ifr_hwaddr.sa_data[0],
+			(unsigned char) ifr.ifr_hwaddr.sa_data[1],
+			(unsigned char) ifr.ifr_hwaddr.sa_data[2],
+			(unsigned char) ifr.ifr_hwaddr.sa_data[3],
+			(unsigned char) ifr.ifr_hwaddr.sa_data[4],
+			(unsigned char) ifr.ifr_hwaddr.sa_data[5]);
+	//获取mac地址结束，
+ 
+	int recv_num;
+	int send_num;
+	char send_buf[20] = "Hi, I am the client";
+	char recv_buf[20]; //接收缓存
+ 
+	//**************给服务器发送数据 *************//
+	//相比TCP，UDP节省了connect函数，即3次握手，可以直接发送数据
+	//int sendto (int socket, void *buffer. size_t size, int flags, struct sockaddr *addr, socklen_t length)
+	send_num = sendto(sock_fd, send_buf, strlen(send_buf), 0,
+			(struct sockaddr *) &addr_serv, len);
+ 
+	printf("客户端说：%s\n", send_buf);
+ 
+	if(send_num < 0){
+		perror("sendto error");
+		exit(1);
+	}
+ 
+	//**************接收服务器数据 *************//
+	//int recvfrom (int socket, void *buffer, size_t size, int flags, struct sockaddr *addr, socklen_t *length-ptr)
+	recv_num = recvfrom(sock_fd, recv_buf, sizeof(recv_buf), 0,
+			(struct sockaddr *)&addr_serv,(socklen_t *)len);
+ 
+	recv_buf[recv_num] = '\0';
+	printf("客户端收到： %d bytes : %s\n", recv_num, recv_buf);
+	close(sock_fd);
+ 
+	return 0;
+}
+
+server.cpp
+
+#include <stdio.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <errno.h>
+#include <string.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+ 
+#define SERV_PORT   8000
+ 
+int main() {
+	/* socket文件描述符 */
+	int sock_fd;
+ 
+	/* 建立udp socket */
+	sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+ 
+	if (sock_fd < 0) {
+		perror("socket");
+		exit(1);
+	}
+ 
+	/* 设置 address */
+	struct sockaddr_in addr_serv;
+	int len;
+	memset(&addr_serv, 0, sizeof(struct sockaddr_in));
+	addr_serv.sin_family = AF_INET;
+	//htons含义：h:host n:network s:short l:long l:long
+	addr_serv.sin_port = htons(SERV_PORT); //转换为网络字节序， 小端 -> 大端
+ 
+	/* INADDR_ANY 表示不管是哪个网卡接收到数据，只要端口号对应，就会被该程序接收 */
+	addr_serv.sin_addr.s_addr = htonl(INADDR_ANY );
+	len = sizeof(addr_serv);
+ 
+	/* 绑定 socket */
+	// int bind (int socket, struct sockaddr *addr, socklen_t length)
+	if (bind(sock_fd, (struct sockaddr *) &addr_serv, sizeof(addr_serv)) < 0) {
+		perror("bind error:");
+		exit(1);
+	}
+ 
+	int recv_num;
+	int send_num;
+	char send_buf[20] = "i am server!";
+	char recv_buf[20]; //接收缓存
+	struct sockaddr_in addr_client;
+ 
+	//获取本机mac地址
+	struct ifreq ifr;
+	ifr.ifr_addr.sa_family = AF_INET;
+	strncpy(ifr.ifr_name, "eth0", IFNAMSIZ - 1);
+	ioctl(sock_fd, SIOCGIFHWADDR, &ifr);
+	printf("我是服务器，我的MAC地址：");
+	printf("%.2x:%.2x:%.2x:%.2x:%.2x:%.2x\n",
+			(unsigned char) ifr.ifr_hwaddr.sa_data[0],
+			(unsigned char) ifr.ifr_hwaddr.sa_data[1],
+			(unsigned char) ifr.ifr_hwaddr.sa_data[2],
+			(unsigned char) ifr.ifr_hwaddr.sa_data[3],
+			(unsigned char) ifr.ifr_hwaddr.sa_data[4],
+			(unsigned char) ifr.ifr_hwaddr.sa_data[5]);
+ 
+	//循环等待
+	while (1) {
+		printf("server wait:\n");
+ 
+		/* recvfrom() 从基于UDP的套接口接收数据，包括发送者的IP地址。因为数据包可能来自任何主机
+		 * flag=0, 常规读取，等同read()函数。 flag=MSG_PEEK,读数据但不刷新读缓冲区。MSG——OOB，读带外数据，普通数据被忽略 */
+		recv_num = recvfrom(sock_fd, recv_buf, sizeof(recv_buf), 0,
+				(struct sockaddr *) &addr_client, (socklen_t *) &len);
+ 
+		if (recv_num < 0) {
+			perror("recvfrom error:");
+			exit(1);
+		}
+ 
+		recv_buf[recv_num] = '\0';
+		printf("服务端收到: %d bytes: %s\n", recv_num, recv_buf);
+ 
+		//给客户端发送数据
+		send_num = sendto(sock_fd, send_buf, recv_num, 0,
+				(struct sockaddr *) &addr_client, len);
+		printf("服务器说：%s\n",send_buf);
+ 
+		if (send_num < 0) {
+			perror("sendto error:");
+			exit(1);
+		}
+	}
+ 
+	close(sock_fd);
+ 
+	return 0;
+}

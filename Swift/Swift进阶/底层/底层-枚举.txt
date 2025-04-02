@@ -1,0 +1,868 @@
+<!--1、写法一-->
+enum Week{
+    case MON
+    case TUE
+    case WED
+    case THU
+    case FRI
+    case SAT
+    case SUN
+}
+
+<!--2、写法二-->
+//也可以直接一个case，然后使用逗号隔开
+enum Week{
+    case MON, TUE, WED, THU, FRI, SAT, SUN
+}
+
+<!--定义一个枚举变量-->
+var w: Week = .MON
+
+
+enum默认枚举值是整型
+
+
+/*
+- =左边的值是枚举值，例如 MON
+- =右边的值在swift中称为 RawValue（原始值），例如 "MON"
+- 两者的关系为：case 枚举值 = rawValue原始值
+*/
+enum Week: String{
+    case MON = "MON"
+    case TUE = "TUE"
+    case WED = "WED"
+    case THU = "THU"
+    case FRI = "FRI"
+    case SAT = "SAT"
+    case SUN = "SUN"
+}
+
+如果不想写枚举值后的字符串，也可以使用隐式RawValue分配
+
+<!--String类型-->
+enum Week: String{
+    case MON, TUE, WED = "WED", THU, FRI, SAT, SUN
+}
+
+<!--Int类型-->
+//MON是从0开始一次递推，而WED往后是从10开始一次递推
+enum Week: Int{
+    case MON, TUE, WED = 10, THU, FRI, SAT, SUN
+}
+
+注：如果enum没有声明类型，是没有rawValue属性的
+
+
+==================================================枚举的访问
+enum Week: String{
+    case MON, TUE, WED, THU, FRI, SAT, SUN
+}
+var w = Week.MON.rawValue
+<!--访问-->
+print(w)
+
+<!--打印结果-->
+MON
+
+swift是如何做到打印 MON的？我们通过SIL文件分析
+
+查看SIL文件中的enum，底层多增加了一些东西
+1、给枚举值的类型，通过typealias取了一个别名RawValue
+2、默认添加了一个可选类型的init方法
+3、增加一个计算属性rawValue，用于获取枚举值的原始值
+
+查看SIL中的main方法，可以得知w是通过枚举值的rawValue的get方法获取
+
+查看SIL文件rawValue的get方法，主要有以下几步：
+1、接收一个枚举值，用于匹配对应的分支
+2、在对应分支创建对应的String
+3、返回对应的String
+
+结论1：使用rawValue的本质是调用get方法
+
+但是get方法中的String是从哪里来的呢？String存储在哪里？
+其实这些对应分支的字符串在编译时期就已经存储好了，即存放在Maach-O文件的__TEXT.cstring（字符串字面量，即 只读的常量字符串区）中，且是连续的内存空间
+
+const char *p1 = "222";// p1: __DATA,__const, 222: __TEXT,__cstring
+const char p2[] = "333";// const 修饰的全局变量（非指针） 可能会进入 __TEXT,__const p2: __TEXT,__const
+
+__TEXT,__const 和 __DATA,__const 都用于存储常量数据：
+__TEXT,__const（代码段的常量区）：
+const 修饰的全局变量（非指针）。
+__DATA,__const（数据段的常量区）：
+const 指针变量（即 const 仅修饰指针，而非指针指向的数据）。指针常量（const char *p = "Hello"; 里的 p 指针）
+
+结论2：rawValue的get方法中的分支构建的字符串，主要是从Mach-O文件对应地址取出的字符串，然后再返回给w
+
+总结：
+使用rawValue的本质就是在底层调用get方法，即在get方法中从Mach-O对应地址中取出字符串并返回的操作
+
+
+==================================================区分 case枚举值 & rawValue原始值
+//输出 case枚举值
+print(Week.MON)
+//输出 rawValue 
+print(Week.MON.rawValue)
+
+<!--打印结果-->
+MON
+MON
+
+虽然输出的都是MON，但并不是同一个东西：
+第一个输出的case枚举值
+第二个是通过rawValue访问的rawValue的get方法
+
+
+==================================================枚举的init调用时机
+print(Week.MON.rawValue)
+let w = Week.MON.rawValue
+通过运行结果发现，都是不会走init方法的
+
+
+print(Week.init(rawValue: "MON"))
+总结：enum中init方法的调用是通过枚举.init(rawValue:）或者枚举(rawValue:）触发的
+
+
+print(Week.init(rawValue: "MON"))
+print(Week.init(rawValue: "Hello"))
+
+<!--打印结果-->
+Optional(_6_EnumTest.Week.MON)
+nil
+
+第一个输出的可选值，第二个输出的是nil，表示没有找到对应的case枚举值
+
+分析SIL文件中的Week.init方法，主要有以下几步：
+1、在init方法中是将所有enum的字符串从Mach-O文件中取出，依次放入数组中
+2、放完后，然后调用_findStringSwitchCase方法进行匹配
+
+在swift-source中查找_findStringSwitchCase方法，接收两个参数，分别是 数组 + 需要匹配的String
+1、遍历数组，如果匹配则返回对应的index
+2、如果不匹配，则返回-1
+
+@_semantics("findStringSwitchCase")
+public // COMPILER_INTRINSIC
+// 接收一个数组 + 需要匹配的string
+func _findStringSwitchCase( 
+  cases: [StaticString],
+  string: String) -> Int {
+// 遍历之前创建的字符串数组，如果匹配则返回对应的index
+  for (idx, s) in cases.enumerated() {
+    if String(_builtinStringLiteral: s.utf8Start._rawValue,
+              utf8CodeUnitCount: s._utf8CodeUnitCount,
+              isASCII: s.isASCII._value) == string {
+      return idx
+    }
+  }
+  // 如果不匹配，则返回-1
+  return -1
+}
+
+继续分析SIL中的week.init方法
+1、如果没有匹配成功，则构建一个.none类型的Optional，表示nil
+2、如果匹配成功，则构建一个.some类型的Optional，表示有值
+
+
+==================================================枚举的遍历
+CaseIterable协议通常用于没有关联值的枚举，用来访问所有的枚举值，只需要对应的枚举遵守该协议即可，然后通过allCases获取所有枚举值
+
+
+==================================================关联值
+//注：当使用了关联值后，就没有RawValue了，主要是因为case可以用一组值来表示，而rawValue是单个的值
+enum Shape{
+    //case枚举值后括号内的就是关联值，例如 radius
+    case circle(radius: Double)
+    case rectangle(width: Int, height: Int)
+}
+
+注：具有关联值的枚举，就没有rawValue属性了，主要是因为一个case可以用一个或者多个值来表示，而rawValue只有单个的值
+
+首先查看SIL文件，发现此时的enum中既没有别名，也没有init方法、计算属性rawValue了
+其中关联值中radius、width、height这些都是自定义的标签，也可以不写
+
+
+==================================================模式匹配
+1. 简单enum的模式匹配
+
+enum Week: String{
+    case MON
+    case TUE
+    case WED
+    case THU
+    case FRI
+    case SAT
+    case SUN
+}
+
+var current: Week?
+switch current {
+    case .MON:print(Week.MON.rawValue)
+    case .TUE:print(Week.MON.rawValue)
+    case .WED:print(Week.MON.rawValue)
+    default:print("unknow day")
+}
+
+<!--打印结果-->
+unknow day
+
+
+2. 具有关联值enum的模式匹配
+enum Shape{
+    case circle(radius: Double)
+    case rectangle(width: Int, height: Int)
+}
+
+let shape = Shape.circle(radius: 10.0)
+switch shape{
+    //相当于将10.0赋值给了声明的radius常量
+    case let .circle(radius):
+        print("circle radius: \(radius)")
+    case let .rectangle(width, height):
+        print("rectangle width: \(width) height: \(height)")
+}
+
+<!--打印结果-->
+circle radius: 10.0
+
+或者：
+
+enum Shape{
+    case circle(radius: Double)
+    case rectangle(width: Int, height: Int)
+}
+
+let shape = Shape.circle(radius: 10)
+switch shape{
+    //做了Value-Binding，相当于将10.0赋值给了声明的radius常量
+    case .circle(let radius):
+        print("circle radius: \(radius)")
+    case .rectangle(let width, var height):
+        height += 1
+        print("rectangle width: \(width) height: \(height)")
+}
+
+<!--打印结果-->
+circle radius: 10.0
+
+
+3. 通过if case匹配单个case
+enum Shape{
+    case circle(radius: Double)
+    case rectangle(width: Int, height: Int)
+}
+
+let circle = Shape.circle(radius: 10)
+
+<!--匹配单个case-->
+if case let Shape.circle(radius) = circle {
+    print("circle radius: \(radius)")
+}
+
+
+注：
+枚举使用过程中不关心某一个关联值，可以使用通配符_表示
+OC只能调用swift中Int类型的枚举
+
+
+==================================================枚举的嵌套
+1、【枚举嵌套枚举】一个复杂枚举是由一个或多个枚举组成
+2、【结构体嵌套枚举】enum是不对外公开的，即是私有的
+
+枚举嵌套枚举:
+enum CombineDirect{
+    //枚举中嵌套的枚举
+    enum BaseDirect{
+        case up
+        case down
+        case left
+        case right
+    }
+    //通过内部枚举组合的枚举值
+    case leftUp(baseDIrect1: BaseDirect, baseDirect2: BaseDirect)
+    case leftDown(baseDIrect1: BaseDirect, baseDirect2: BaseDirect)
+    case rightUp(baseDIrect1: BaseDirect, baseDirect2: BaseDirect)
+    case rightDown(baseDIrect1: BaseDirect, baseDirect2: BaseDirect)
+}
+
+//使用
+let leftUp = CombineDirect.leftUp(baseDIrect1: CombineDirect.BaseDirect.left, baseDirect2: CombineDirect.BaseDirect.up)
+
+
+结构体嵌套枚举:
+//结构体嵌套枚举
+struct Skill {
+    enum KeyType{
+        case up
+        case down
+        case left
+        case right
+    }
+    
+    let key: KeyType
+    
+    func launchSkill(){
+        switch key {
+        case .left, .right:
+            print("left, right")
+        case .up, .down:
+            print("up, down")
+        }
+    }
+}
+
+
+==================================================枚举中包含属性
+enum中只能包含计算属性、类型属性，不能包含存储属性
+
+enum Shape{
+    case circle(radius: Double)
+    case rectangle(width: Double, height: Double)
+    
+    //编译器报错：Enums must not contain stored properties 不能包含存储属性，因为enum本身是值类型
+//    var radius: Double
+    
+    //计算属性 - 本质是方法（get、set方法）
+    var with: Double{
+        get{
+            return 10.0
+        }
+    }
+    //类型属性 - 是一个全局变量
+    static let height = 20.0
+}
+
+
+为什么struct中可以放存储属性，而enum不可以？
+因为struct中可以包含存储属性是因为其大小就是存储属性的大小
+enum枚举的大小是取决于case的个数的，如果没有超过255，enum的大小就是1字节（8位）
+
+
+==================================================枚举中包含方法
+enum Week: Int{
+    case MON, TUE, WED, THU, FRI, SAT, SUN
+    
+    mutating func nextDay(){
+        if self == .SUN{
+            self = Week(rawValue: 0)!
+        }else{
+            self = Week(rawValue: self.rawValue+1)!
+        }
+    }
+}
+
+<!--使用-->
+var w = Week.MON
+w.nextDay()
+print(w)
+
+
+==================================================indirect
+indirect 关键字用于声明递归枚举，即某个枚举的 case 可以包含该枚举自身作为关联值。
+
+//用枚举表示链表结构
+enum List<T>{
+    case end
+    //表示case是用引用来存储
+    indirect case node(T, next: List<T>)
+}
+
+<!--也可以将indirect放在enum前-->
+//表示整个enum是用引用来存储
+indirect enum List<T>{
+    case end
+    case node(T, next: List<T>)
+}
+
+You indicate that an enumeration case is recursive by writing indirect before it, 
+which tells the compiler to insert the necessary l ayer of indirection.
+
+enum List<T>{
+    case end
+    indirect case node(T, next: List<T>)
+}
+print(MemoryLayout<List<Int>>.size)
+print(MemoryLayout<List<Int>>.stride)
+
+<!--打印结果-->
+8 //size大小是8
+8 //stride大小是8
+
+换成其他类型，其结果依旧是8
+
+
+通过lldb分析其内存：
+命令	适用对象	作用
+p	基本数据类型（Int、Float、Bool）、指针、结构体	显示变量类型和内容
+po	NSObject 及符合 CustomStringConvertible/CustomDebugStringConvertible 的对象	调用 description 以打印更可读的内容
+所以indirect关键字其实就是通知编译器，我当前的enum是递归的，大小是不确定的，需要分配一块堆区的内存空间，用来存放enum
+如果是end，此时存储的是case值，而case为node时存储的是引用地址
+
+
+也可以通过SIL来验证：
+
+
+==================================================swift和OC混编enum
+在swift中，enum非常强大，可以添加方法、添加extension
+而在OC中，enum仅仅只是一个整数值
+
+如果想将swift中的enum暴露给OC使用：
+用@objc关键字标记enum
+当前enum应该是Int类型
+
+OC调用Swift的enum:
+<!--swift中定义-->
+@objc enum Week: Int{
+    case MON, TUE, WED, THU, FRI, SAT, SUN
+}
+
+<!--OC使用-->
+- (void)test{
+    Week mon = WeekMON;
+}
+
+
+Swift调用OC的enum:
+OC中的枚举会自动转换成swift中的enum
+
+
+如果OC中是使用typedef enum定义的，自动转换成swift就成了下面这样:
+typedef enum {
+    Num1,
+    Num2
+}OCNum;
+
+<!--swift中使用-->
+let ocEnum = OCNum.init(0)
+print(ocEnum)
+
+//*******打印结果*******
+OCNum(rawValue: 0)
+
+通过typedef enum定义的enum，在swift中变成了一个结构体,并遵循了两个协议：Equatable 和 RawRepresentable
+
+
+==================================================枚举的大小
+主要分析以下几种情况的大小:
+1、普通enum
+2、具有关联值的enum
+3、enum嵌套enum
+4、struct嵌套enum
+
+
+(1)普通enum
+enum NoMean{
+    case a
+}
+print(MemoryLayout<NoMean>.size)
+print(MemoryLayout<NoMean>.stride)
+
+<!--打印结果-->
+0 //size大小是0
+1 //表示访问下一个NoMean的case时，需要跨越1字节的步长
+
+enum NoMean{
+    case a
+    case b
+}
+print(MemoryLayout<NoMean>.size)
+print(MemoryLayout<NoMean>.stride)
+
+<!--打印结果-->
+1 //size大小是1
+1 //步长是1
+
+enum NoMean{
+    case a
+    case b
+    case c
+    case d
+}
+print(MemoryLayout<NoMean>.size)
+print(MemoryLayout<NoMean>.stride)
+
+<!--打印结果-->
+1
+1
+
+###
+enum就是以1字节存储在内存中
+###
+
+值类型（Value Type） 变量的地址存的是 变量本身的值。
+引用类型（Reference Type） 变量的地址存的是 实例的地址（即堆上的对象地址）。
+
+var tmp = NoMean.b
+每个变量都在 内存中有一个地址
+tmp 是一个 变量，意味着它有一个 内存地址。
+这个值会被存储在 tmp 变量所在的内存地址里
+变量tmp在内存中只占1字节，并且它存储的值就是0x01
+(lldb) po tmp
+TestSwift.NoMean.b
+(lldb) p tmp
+(TestSwift.NoMean) b
+(lldb) po withUnsafePointer(to: &tmp) { print($0) } // 使用withUnsafePointer，tmp必须var
+0x000000016fbaf687
+(lldb) x/16b 0x000000016fbaf687
+0x16fbaf687: 0x01 0xa0 0xda 0x81 0x01 0x01 0x00 0x00
+0x16fbaf68f: 0x00 0xb0 0x13 0x3c 0x00 0x01 0x00 0x00
+
+在计算机中，内存地址通常是**按字节（Byte）**来计数的。
+enum大小取决于case的个数，只要case个数没有超过255，enum的大小就是1字节
+case是UInt8，即1字节（8位），最大可以存储255
+如果超过了255，会自动从UInt8 -> UInt16 -> UInt32 -> UInt64
+
+普通enum总结:
+1、如果enum中有原始值，即rawValue，其大小取决于case的多少，如果没有超过UInt8即255，则就是1字节存储case
+2、Int标识的其实就是 RawValue的值
+3、当只有一个case的情况下，size是0，表示这个enum是没有意义的，
+4、当有两个及以上case时，此时的enum是有意义的，如果没有超过255，则case的步长是1字节，如果超过，则UInt8->UInt16...，以此类推
+
+
+(2)具有关联值enum
+enum Shape{
+    case circle(radius: Double)
+    case rectangle(width: Double, height: Double)
+}
+print(MemoryLayout<Shape>.size)
+print(MemoryLayout<Shape>.stride)
+
+<!--打印结果-->
+17 //size的大小是17
+24 //stride的步长是24
+
+enum中有关联值时，其内存大小取决于关联值的大小
+
+enum有关联值时，关联值的大小 取 对应枚举关联值 最大的，例如circle中关联值大小是8，而rectangle中关联值大小是16，所以取16。
+所以enum的size = 最大关联值大小 + case（枚举值）大小 = 16 + 1 = 17，而stride由于8字节对齐，所以自动补齐到24
+
+总结:
+1、具有关联值的enum大小，取决于最大case的内存大小【枚举大小的本质】
+2、关联值枚举⼤⼩，取决于最⼤关联值⼤⼩，并加上1字节枚举值大小。
+3、size 表示 实际大小
+4、stride 表示 对齐后的大小（内存空间中真实占用的大小）
+
+
+(3)enum嵌套enum
+enum CombineDirect{
+    enum BaseDirect{
+        case up, down, left, right
+    }
+    
+    case leftUp(baseDirect1: BaseDirect, baseDirect2: BaseDirect)
+    case rightUp(baseDirect1: BaseDirect, baseDirect2: BaseDirect)
+    case leftDown(baseDirect1: BaseDirect, baseDirect2: BaseDirect)
+    case rightDown(baseDirect1: BaseDirect, baseDirect2: BaseDirect)
+}
+
+print(MemoryLayout<CombineDirect>.size)
+print(MemoryLayout<CombineDirect>.stride)
+
+<!--打印结果-->
+2 //size大小，enum有关联值取决于关联值的大小，每个case都有2个大小为1的enum，所以为2
+2 //stride大小
+
+enum嵌套enum同具有关联值的enum是一样的，同样取决于关联值的大小，其内存大小是最大关联值的大小
+
+
+(4)结构体嵌套enum
+struct Skill{
+    enum KeyType{
+        case up
+        case down
+        case left
+        case right
+    }
+
+    let key: KeyType
+}
+
+print("stride：\(MemoryLayout<Skill>.stride)")
+print("size：\(MemoryLayout<Skill>.size)")
+
+//输出以下内容：
+//stride：1
+//size：1
+
+
+struct Skill {
+    enum KeyType{
+        case up
+        case down
+        case left
+        case right
+    }
+}
+print(MemoryLayout<Skill>.size)
+print(MemoryLayout<Skill>.stride)
+
+<!--打印结果-->
+0 //size的大小取决于成员变量，但是struct中目前没有属性
+1
+
+
+struct Skill {
+    enum KeyType{
+        case up
+        case down
+        case left
+        case right
+    }
+
+    let key: KeyType //1字节
+
+    var height: UInt8 //1字节
+
+    func launchSkill(){
+        switch key {
+        case .left, .right:
+            print("left, right")
+        case .up, .down:
+            print("up, down")
+        }
+    }
+}
+print(MemoryLayout<Skill>.size)
+print(MemoryLayout<Skill>.stride)
+
+<!--打印结果-->
+2
+2
+
+
+struct Skill {
+    enum KeyType{
+        case up
+        case down
+        case left
+        case right
+    }
+    
+    var width: Int //8字节
+
+    let key: KeyType //1字节
+
+    var height: UInt8 //1字节
+
+    func launchSkill(){
+        switch key {
+        case .left, .right:
+            print("left, right")
+        case .up, .down:
+            print("up, down")
+        }
+    }
+}
+print(MemoryLayout<Skill>.size)
+print(MemoryLayout<Skill>.stride)
+
+<!--打印结果-->
+10 //size大小
+16 //stride大小
+
+结论:
+1、如果结构体中没有其他属性，只有枚举变量，那么结构体的大小就是枚举的大小，即size为1
+2、如果结构体中嵌套了enum，但是没有声明变量，此时的size是0，stride是1
+3、如果结构体中还有其他属性，则按照OC中的结构体内存对齐三原则进行分析
+
+
+==================================================内存对齐 & 字节对齐
+内存对齐（Memory Alignment）& 字节对齐（Byte Alignment）
+
+内存对齐（Memory Alignment）是针对对象或数据结构的，确保它们的起始地址满足 CPU 访问的要求，提高访问效率。
+字节对齐（Byte Alignment）是指对象内部的字段（属性）如何排布，以符合对齐规则。
+
+内存对齐目的是 提高 CPU 访问内存的效率，避免额外的性能开销。
+
+字节对齐：OC内存对齐中的min(m，n)，其中m表示存储的位置，n表示属性的大小，需要满足位置m整除n时，才能从该位置存放属性。简单来说，就是必须在自身的倍数位置开始
+对象是服从内存对齐
+从结构上说，结构内部服从最大字节对齐
+
+内存对齐：iOS中是8字节对齐(isa指针，指针占8字节)，苹果实际分配的对象采用16字节对齐，这种只会在分配对象时出现
+
+
+struct Skill {
+    var age: Int //8字节
+    var height: UInt8 //1字节
+    var width: UInt16 //2字节
+}
+print(MemoryLayout<Skill>.size)
+print(MemoryLayout<Skill>.stride)
+
+<!--打印结果-->
+12
+16 // stride为16的原因：stride是实际分配的，必须是最大属性大小的整数倍，即8的倍数，所以是16。这边是struct，不是对象
+
+
+MemoryLayout<T> 适用于值类型（struct、enum）。
+对于 class，MemoryLayout<T> 返回的是指针的大小，因为 class 的实例在堆上分配，变量存储的是指针。
+class_getInstanceSize & malloc_size 才是用于对象的
+
+
+// swift
+class Skill {
+}
+var skl = Skill()
+print(class_getInstanceSize(Skill.self))// 16
+print(malloc_size(Unmanaged.passUnretained(skl).toOpaque()))// 16
+print(MemoryLayout<Skill>.size)// 8
+print(MemoryLayout<Skill>.stride)// 8
+
+class Skill {
+    var age: Int = 0 //8字节
+}
+var skl = Skill()
+print(class_getInstanceSize(Skill.self))// 24
+print(malloc_size(Unmanaged.passUnretained(skl).toOpaque()))// 32
+print(MemoryLayout<Skill>.size)// 8
+print(MemoryLayout<Skill>.stride)// 8
+
+class Skill {
+    var age: Int = 0 //8字节
+    var height: UInt8 = 0 //1字节
+}
+var skl = Skill()
+print(class_getInstanceSize(Skill.self))// 32
+print(malloc_size(Unmanaged.passUnretained(skl).toOpaque()))// 32
+print(MemoryLayout<Skill>.size)// 8
+print(MemoryLayout<Skill>.stride)// 8
+
+class Skill {
+    var age: Int = 0 //8字节
+    var height: UInt8 = 0 //1字节
+    var width: UInt16 = 0 //2字节
+}
+var skl = Skill()
+print(class_getInstanceSize(Skill.self))// 32
+print(malloc_size(Unmanaged.passUnretained(skl).toOpaque()))// 32
+print(MemoryLayout<Skill>.size)// 8
+print(MemoryLayout<Skill>.stride)// 8
+
+
+结构体的对齐:
+struct A {
+    char a;   // 1 字节
+    int b;    // 4 字节
+};
+如果没有对齐，b 会紧跟 a，但 b 需要 4 字节对齐，所以需要 填充（padding）
+| char a | padding (3B) | int b (4B) |
+结构体大小 = 8 字节
+
+
+#import <Foundation/Foundation.h>
+#import <objc/runtime.h>
+#import <malloc/malloc.h>
+
+int main(int argc, const char * argv[]) {
+    @autoreleasepool {
+        NSObject *lbobjc = [[NSObject alloc] init];
+        
+        NSLog(@"lbobjc对象实际需要的内存大小: %zd",class_getInstanceSize([lbobjc class]));// 8
+        NSLog(@"lbobjc对象实际分配的内存大小: %zd",malloc_size((__bridge const void *)(lbobjc)));// 16
+    }
+    return 0;
+}
+
+对于上面的例子，查看内存具体内容，发现创建的对象 后面几个字节全部为 00 
+
+obj4 中 alloc 和 allocWithZone 两个函数的实现，会发现这两个函数都会调用一个 instanceSize 的函数
+size_t instanceSize(size_t extraBytes) {
+     size_t size = alignedInstanceSize() + extraBytes;
+      // CF requires all objects be at least 16bytes.
+      if (size < 16) size = 16;
+      return size; 
+}
+最少会开辟16个字节
+
+
+
+包含其他属性占用内存情况:
+#import <Foundation/Foundation.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+@interface LBPerson : NSObject
+@property (nonatomic,assign) int age;
+@property (nonatomic,assign) int height;
+@property (nonatomic,assign) int row;
+@end
+
+#import <Foundation/Foundation.h>
+#import <objc/runtime.h>
+#import <malloc/malloc.h>
+#import "LBPerson.h"
+
+int main(int argc, const char * argv[]) {
+    @autoreleasepool {
+        LBPerson * obj = [[LBPerson alloc] init];
+        obj.age = 4;
+        obj.height = 5;
+        obj.row = 6;
+        NSLog(@"lbobjc对象实际需要的内存大小: %zd",class_getInstanceSize([obj class]));// 24
+        NSLog(@"lbobjc对象实际分配的内存大小: %zd",malloc_size((__bridge const void *)(obj)));// 32
+    }
+    return 0;
+}
+
+用 sizeof(obj) 试试看，它只会返回指针大小 8，因为 obj 是个指针，而不是对象本身。
+
+class_getInstanceSize(Class cls) 返回的是 对象实际需要的内存大小，不包括额外的对齐填充。
+由于 NSObject 内部至少包含一个 isa 指针（8B 对齐），所以 LBPerson 的成员变量也必须 遵守 8 字节对齐。
+对齐计算
+成员变量	大小（字节）	偏移地址	对齐要求
+isa（NSObject）	8	0x00 - 0x07	8 字节
+age	4	0x08 - 0x0B	4 字节
+height	4	0x0C - 0x0F	4 字节
+row	4	0x10 - 0x13	4 字节
+填充	4	0x14 - 0x17	让结构体大小变为 8 的倍数
+
+LBPerson 结构体的最大对齐要求是 isa 指针的 8 字节，所以 整个对象大小必须是 8 的倍数。
+
+#####
+实际需要内存大小 24 , 为什么呢 ? 其实这里就是 结构体内存分配的原理了.
+
+结构体每个成员相对于结构体首地址的偏移量都是这个成员大小的整数倍，如果有需要，编译器会在成员之间加上填充字节
+
+结构体的总大小为结构体最宽成员大小的整数倍。
+
+对于结构体成员属性中包含结构体变量的复合型结构体，在确定最宽基本类型成员时，应当包括复合类型成员的子成员。但在确定复合类型成员的偏移位置时则是将复合类型作为整体看待。
+#####
+
+由于原本结构体 isa 指针占用8个 , age 属性占用4个, height 占用 4个, row 属性再占用4个 , 这中间由于满足整除并没有自动偏移补充.
+而由于 : 结构体的总大小为结构体最宽成员大小的整数倍 , 而且对开辟满足 16 字节对齐原则
+因此实际总占用内存为24. 而实际开辟则满足对齐标准开辟为 32.
+
+libmaclloc 源码 , nano_malloc.c 中，16 字节对齐
+
+malloc_size 返回的是 实际分配的内存大小
+在 macOS/iOS 上，malloc 分配的内存通常是 16 字节对齐的
+
+
+(只考虑64位):
+OC对象 最少占用 16 个字节内存 .
+当对象中包含属性, 会按属性占用内存开辟空间. 在结构体内存分配原则下自动偏移和补齐 .
+对象最终满足 16 字节对齐标准 .
+属性最终满足 8 字节对齐标准 .
+
+class_getInstanceSize：是采用8字节对齐，参照的对象的属性内存大小
+malloc_size：采用16字节对齐，参照的整个对象的内存大小，对象实际分配的内存大小必须是16的整数倍
+
+
+
+enum Shape {
+    case circle(radius: Double)
+    case rectangle(width: Int8, height: Int, w: Int16, h: Int32)
+}
+
+print("stride：\(MemoryLayout<Shape>.stride)")
+print("size：\(MemoryLayout<Shape>.size)")
+
+//输出以下内容：
+//stride：24
+//size：24
+
+width：Int8类型，占1字节
+height：Int类型，占8字节
+w：Int16类型，占2字节
+h：Int32类型，占4字节
+width占1字节，但第二成员height占8字节。按字节对齐规则，height起始位置必须是自身的整数倍，所以width要补齐到8字节。
+而w占2字节，但h占4字节，所以同理w要补齐到4字节。最终size大小：8 + 8 + 4 + 4 = 24字节

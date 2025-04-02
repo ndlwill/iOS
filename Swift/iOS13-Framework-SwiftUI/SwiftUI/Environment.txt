@@ -1,0 +1,260 @@
+SwiftUI 的 Environment 是一个强大的依赖注入机制
+
+
+专属于视图的依赖注入机制:
+依赖注入（Dependency Injection，简称 DI）是现代软件工程中实现组件与其依赖解耦的重要技术。
+其核心思想包括：
+控制反转：组件不再主动创建依赖，而是被动地从外部接收。
+关注点分离：对象的创建逻辑与使用逻辑清晰分离。
+
+SwiftUI 的 EnvironmentValue（以及 EnvironmentObject）作为原生的 DI 机制，有一个明显特征：Environment 只能在视图加载后获取。
+
+
+不仅用于值类型:
+EnvironmentValue 的应用范围远超出值类型的边界。与其他成熟的依赖注入方案一样，它能够灵活地持有并注入引用类型、函数、工厂方法、协议约束等多种形式的依赖。
+
+###
+尽管 SwiftUI 从诞生之初就为 ObservableObject 提供了专门的 EnvironmentObject 机制，但这实际上是出于实现细节的考量。
+在 Observation 框架出现之前，SwiftUI 视图只能通过订阅 ObservableObject 实例的 Publisher 来响应状态变化，因此需要一个专门的 API 来处理这种特殊情况。
+随着 Observation 框架的推出，Observable 实例现在已经能够与 EnvironmentValue 无缝协作，并提供了更精细的、基于属性级别的响应机制。
+###
+
+SwiftUI 的官方 EnvironmentValue 默认实现中，始终包含了多种引用类型和函数类型的案例：
+managedObjectContext：提供 NSManagedObjectContext 实例，用于 Core Data 的数据访问
+dismiss：对应 DismissAction 的 callAsFunction 方法，用于以编程方式关闭视图
+editMode：提供读写 EditMode 的 Binding，用于控制列表的编辑状态
+
+
+因此，开发者不应将 Environment 的应用局限于值类型。
+SwiftUI Environment 是一个通用的依赖容器，能够承载任何符合依赖注入核心理念的外部信息，无论其类型如何
+
+
+https://developer.apple.com/documentation/swiftui/entry()
+https://www.avanderlee.com/swiftui/entry-macro-custom-environment-values/
+
+
+
+==================================================Observation 与默认值:
+开发者对 EnvironmentObject 常有顾虑，其中一个关键原因是：一旦忘记注入依赖，应用就会立即崩溃。
+相比之下，EnvironmentValue 的设计更为安全可靠，因为它要求开发者必须为每个环境值提供默认值。
+
+extension EnvironmentValues {
+  @Entry var store: Store = .init()
+}
+
+@Observable
+class Store {
+  ...
+}
+
+struct ContentView: View {
+    @Environment(\.store) var store // 在视图中通过环境注入
+    var body: some View {
+       ...
+    }
+}
+
+这种基于 EnvironmentValue 的注入方式不仅避免了潜在的崩溃风险，还提供了额外的灵活性。比如，你可以轻松地注入多个相同类型的可观察实例，这在 EnvironmentObject 中是难以实现的：
+extension EnvironmentValues {
+  @Entry var store: Store = .init()
+  @Entry var store1: Store = .init()
+  @Entry var store2: Store = .init()
+}
+
+
+==================================================在 DynamicProperty 中使用:
+@Environment 的应用范围不仅限于视图本身，它同样可以在遵循 DynamicProperty 协议的自定义属性包装器中使用。这为创建复杂、可重用的 UI 组件提供了强大的支持。
+
+需要特别注意的是，与视图中使用 @Environment 类似，DynamicProperty 的实现也遵循同样的生命周期规则：环境值只能在包含该属性的视图被加载后才能获取。
+这意味着我们不能在自定义属性包装器的构造方法中访问环境值，而应该在适当的生命周期方法（如 update() 或视图的 body 计算属性被访问时）中使用这些值。
+
+
+==================================================Environment 的优化:
+当使用 EnvironmentValue 管理应用状态时，视图的更新效率直接影响用户体验。以下是两种有效的优化策略，可以显著减少不必要的视图重绘：
+
+(1)精准引入
+对于包含多个子状态的复合值类型，精准引入特定属性是避免级联更新的关键。通过只订阅视图实际需要的部分状态，我们可以构建更高效的响应式界面。
+struct MyState {
+  var name = "fat"
+  var age = 100
+}
+
+extension EnvironmentValues {
+  @Entry var myState = MyState()
+}
+
+struct NameView: View {
+  @Environment(\.myState.name) var name // 只引入 name 属性
+  var body: some View {
+    let _ = print("name view update")
+    Text("name: \(name)")
+  }
+}
+
+struct AgeView: View {
+  @Environment(\.myState.age) var age // 只引入 age 属性
+  var body: some View {
+    let _ = print("age view update")
+    Text("age: \(age)")
+  }
+}
+
+struct RootView: View {
+  @State var myState = MyState()
+  var body: some View {
+    List {
+      Button("Change Name") {
+        myState.name = "\(Int.random(in: 200 ... 400))"
+      }
+      Button("Change Age") {
+        myState.age = Int.random(in: 100 ... 199)
+      }
+      NameView()
+      AgeView()
+    }
+    .environment(\.myState, myState)
+  }
+}
+
+修改 name 属性只会触发 NameView 更新，而修改 age 属性只会触发 AgeView 更新。这种精细的依赖跟踪机制避免了整个视图树的不必要重建，特别是在处理大型复杂状态时尤为重要。
+
+(2)选择性修改
+另一个强大的优化手段是使用 transformEnvironment 替代常规的 environment 修饰符。这允许我们添加条件逻辑，只在满足特定条件时才更新环境值：
+
+struct RootView: View {
+  @State var myState = MyState()
+  @State var age = 100
+  var body: some View {
+    List {
+      Button("Change Age") {
+        age = Int.random(in: 100 ... 199)
+      }
+      AgeView()
+    }
+    .transformEnvironment(\.myState){ state in
+      guard age > 150 else {
+        print("Ignore \(age)")
+        return
+      }
+      state.age = age // 只有当 age > 150 时才会更新
+    }
+  }
+}
+这个技巧特别适用于那些只有在达到特定阈值或条件时才需要触发视图更新的场景。通过减少更新频率，我们可以显著提升应用的响应速度和流畅度，尤其是在处理频繁变化的数据时。
+
+
+==================================================环境值的作用域与传递机制:
+SwiftUI 中的环境值修改遵循严格的向下传递原则 - 任何对环境值的修改仅对当前视图的子层级及其后代生效，而无法影响同级或上层视图。这一特性在处理像列表编辑模式这样的常见场景时尤为重要：
+struct EnvironmentBinding:View {
+  @State private var editMode = EditMode.active
+  @State var items = (0..<10).map{Item(id: $0)}
+  @State var item:Item?
+  var body: some View {
+      List(selection:$item) {
+        ForEach(items){ item in
+          Text("\(item.id)")
+            .tag(item)
+        }
+        .onDelete { _ in }
+      }
+      // 关键点：必须显式注入编辑模式到环境中
+      .environment(\.editMode, $editMode)
+  }
+}
+
+
+==================================================Environment 与并发安全:
+在设计环境值时，我们应优先考虑其在多线程环境下的行为特性，特别是当它们涉及异步操作时。
+
+函数类型的并发标记
+对于通过环境传递的函数类型，明确指定并发安全属性是一项良好实践：
+struct CreateNewGroupKey: EnvironmentKey {
+    static let defaultValue: @Sendable (TodoGroup) async -> Void = { _ in }
+}
+
+extension EnvironmentValues {
+  var createNewGroup: @Sendable (TodoGroup) async -> Void {
+    get { self[CreateNewGroupKey.self] }
+    set { self[CreateNewGroupKey.self] = newValue }
+  }
+}
+
+struct TodoGroup:Sendable {}
+在这个例子中，@Sendable 标记确保了函数可以安全地跨线程边界传递，而不会引发数据竞争或其他并发问题。
+同时，参数类型 TodoGroup 也被标记为 Sendable，表明它的值可以安全地在不同的任务间传递。
+
+@Entry 宏的并发简化优势:
+@Entry 宏不仅简化了环境值的定义，还能缓解并发约束的压力。这一点在处理引用类型时尤为明显。考虑以下在 Swift 6 中无法编译通过的代码：
+@Observable
+class Store {}
+
+struct StoreKey:EnvironmentKey {
+  static let defaultValue = Store()// 报错
+}
+
+extension EnvironmentValues {
+  var store: Store {
+    get {self[StoreKey.self]}
+  }
+}
+
+Swift 6 编译器会明确要求 Store 类遵循 Sendable 协议，以确保其实例可以安全地在并发环境中使用。然而，使用 @Entry 宏后，这一限制被自动处理：
+
+@Observable
+class Store {}
+
+extension EnvironmentValues {
+  @Entry var store = Store()
+}
+
+这种方式让开发者无需显式处理 Sendable 一致性，避免了以下繁琐的声明：
+// 选项 1: 使用 @unchecked 手动确保并发安全
+@Observable
+class Store:@unchecked Sendable {}
+
+// 选项 2: 将整个类限制在主线程上
+@MainActor
+@Observable
+class Store {}
+
+
+Sendable	确保类型可以安全地在线程间传递（编译器检查）。
+@unchecked Sendable	强制声明类型是 Sendable，但不进行编译器检查（⚠️ 需要手动保证线程安全）。
+
+
+@Entry 宏的实例重复创建问题:
+在 Xcode 16.2 之前，@Entry 通过将 defaultValue 声明为计算属性来满足编译要求。换句话说，上文的 @Entry 代码在底层实际会展开为以下逻辑（功能效果相同）：
+@Observable
+class Store {}
+
+struct __StoreKey: EnvironmentKey {
+    static var defaultValue: Store { Store() }
+}
+
+extension EnvironmentValues {
+    var store: Store {
+        get { self[__StoreKey.self] }
+        set { self[__StoreKey.self] = newValue }
+    }
+}
+因此，如果只依赖 @Entry 提供的引用类型默认值，SwiftUI 会在每次为视图准备上下文时不断创建新实例。
+尽管在上层视图中注入一个实例可以解决一致性问题，但需要注意的是，即使在 Xcode 16.2+ 中 @Entry 的内部实现已调整为使用存储类型，SwiftUI 在实际准备视图环境时依然会多次创建新实例（而视图最终使用的则是上层注入的那个实例）。
+如果对性能有顾虑，建议开发者依旧采用传统方式在 EnvironmentValues 中手动声明引用类型数据。
+
+
+==================================================Environment 与第三方依赖注入框架:
+SwiftUI Environment 的设计虽然优雅，但其严格绑定视图生命周期的特性在某些场景下可能成为限制 — 特别是当开发者需要将业务逻辑分离到 ViewModel 层或进行单元测试时。
+为了突破这一限制，许多开发者转向第三方依赖注入框架，其中 Point-Free 的 Swift-Dependencies 库是一个值得关注的选择。
+
+https://github.com/pointfreeco/swift-dependencies?utm_source=Fatbobman%20Blog&utm_medium=web
+
+private enum MyValueKey: DependencyKey {
+  static let liveValue = 42
+}
+
+extension DependencyValues {
+  var myValue: Int {
+    get { self[MyValueKey.self] }
+    set { self[MyValueKey.self] = newValue }
+  }
+}

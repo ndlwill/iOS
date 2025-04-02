@@ -1,0 +1,370 @@
+在计算机科学中，闭包（Closure），又称词法闭包（Lexical Closure）或函数闭包（function closures），是在支持头等函数的编程语言中实现词法绑定的一种技术。
+
+闭包在实现上是一个结构体，它存储了一个函数（通常是其入口地址）和一个关联的环境（相当于一个符号查找表）。
+
+func test() {
+    print("test")
+}
+test是⼀个全局函数，也是⼀种特殊的闭包，只不过当前全局函数并不捕获值
+
+
+func makeIncrementer() -> () -> Int {
+    var runningTotal = 12
+    func incrementer() -> Int {
+        runningTotal += 1
+        return runningTotal
+    }
+    return incrementer
+}
+incrementer称之为内嵌函数，同时从上层函数makeIncrementer中捕获变量runningTotal
+
+
+{(age: Int) -> Int in
+    return age
+}
+闭包表达式，是⼀个匿名函数，可以从上下⽂中捕获变量和常量
+
+
+闭包表达式:
+闭包表达式是Swift语法,具有以下特性:
+利⽤上下⽂推断参数和返回值类型
+单表达式可以隐式返回，既省略return关键字
+参数名称可简写，⽐如$0
+尾随闭包表达式
+{(param) -> ReturnType in
+   //函数体
+}
+作⽤域，也就是⼤括号
+参数和返回值
+函数体，也就是in之后的代码
+
+
+Swift中闭包即可以当做变量，也可以当做参数传递
+var closure: (Int) -> Int = {(age: Int) in
+   return age
+}
+
+func test(param : (Int) -> Int){
+   print(param(10))
+}
+
+test(param: closure)
+
+
+可以将闭包声明⼀个可选类型，需要在参数和返回值外整体加()?
+var closure: ((Int) -> Int)?
+closure = nil
+
+
+
+尾随闭包:
+把闭包表达式作为函数的最后⼀个参数。如果当前闭包表达式很⻓，可以通过尾随闭包的书写⽅式来提⾼代码的可读性
+
+
+==================================================闭包是引⽤类型
+捕获值:
+func makeIncrementer() -> () -> Int {
+    var runningTotal = 10
+    
+    func incrementer() -> Int {
+        runningTotal += 1
+        return runningTotal
+    }
+    return incrementer
+}
+
+print("makeIncrementer：\(makeIncrementer()())")
+print("makeIncrementer：\(makeIncrementer()())")
+print("makeIncrementer：\(makeIncrementer()())")
+print("--------------------")
+
+let makeInc = makeIncrementer()
+
+print("makeInc：\(makeInc())")
+print("makeInc：\(makeInc())")
+print("makeInc：\(makeInc())")
+
+//输出以下内容：
+//makeIncrementer：11
+//makeIncrementer：11
+//makeIncrementer：11
+//--------------------
+//makeInc：11
+//makeInc：12
+//makeInc：13
+
+当每次修改捕获值时，修改的是堆区中的value值
+当每次重新执行当前函数时，都会重新创建内存空间
+
+通过SIL代码，分析makeIncrementer函数是如何捕获变量的
+alloc_box官方文档说明：在堆上分配一块内存空间，存储了metadata、refCount、当前的value
+通过断点查看汇编代码，确实调⽤了swift_allocObject⽅法
+
+
+捕获变量的本质：就是在堆上开辟内存空间，将当前的变量存储到里面
+闭包的本质：就是当前的内嵌函数，加上捕获的变量或者常量
+⼀个闭包能够从上下⽂捕获已被定义的常量和变量。即使定义这些常量和变量的原作⽤域已经不存在， 闭包仍能够在其函数体内引⽤和修改这些值
+每次修改捕获值的时候，修改的是堆区中的value值
+每次重新执⾏当前函数的时候，都会重新创建内存空间
+
+
+闭包是引⽤类型:
+func makeIncrementer() -> () -> Int {
+    var runningTotal = 10
+    
+    func incrementer() -> Int {
+        runningTotal += 1
+        return runningTotal
+    }
+    return incrementer
+}
+let makeInc = makeIncrementer()// 所以makeIncrementer函数赋值给变量使用时，相当于给makeInc就是FunctionData结构体，其中关联了内嵌函数地址，以及捕获变量的地址
+swiftc -emit-ir main.swift | xcrun swift-demangle
+
+makeIncrementer函数赋值给变量，这时变量⾥⾯存储的是什么？是函数地址吗？
+可以把SIL代码再降⼀级，通过IR来观察数据的构成
+
+定义FuntionData结构体，仿照IR的swift.function进行代码还原
+struct FuntionData<T>{
+   var ptr: UnsafeRawPointer
+   var captureValue: UnsafePointer<T>
+}
+ptr：内嵌函数地址
+captureValue：捕获值地址
+
+定义HeapObject结构体，相当于swift.refcounted
+struct HeapObject{
+   var type: UnsafeRawPointer
+   var refCount1: UInt32
+}
+
+定义Box结构体，相当于swift.full_boxmetadata
+struct Box<T> {
+   var refCounted: HeapObject
+   var value: T
+}
+refCounted：HeapObject
+value：捕获值
+
+
+makeInc无法直接绑定为FuntionData<Box<Int>>类型，因为编译器无法推断出具体类型
+定义VoidIntFun结构体，用结构体将函数包裹一层，并将函数设为结构体的第一个属性，目的是利用结构体地址就是首元素地址的特性
+
+
+struct VoidIntFun {
+   var f: () ->Int
+}
+
+###
+声明makeInc结构体，传入makeIncrementer函数，获取VoidIntFunc类型指针ptr，再将ptr绑定为FunctionData<Box<Int>>类型，最终返回指针
+###
+
+var makeInc = VoidIntFun(f: makeIncrementer())
+
+let ptr = UnsafeMutablePointer<VoidIntFun>.allocate(capacity: 1)
+ptr.initialize(to: makeInc)
+
+let ctx = ptr.withMemoryRebound(to: FuntionData<Box<Int>>.self, capacity: >1) {
+   $0.pointee
+}
+
+print("incrementer内嵌函数地址：\(ctx.ptr)")
+print("runningTotal值：\(ctx.captureValue.pointee.value)")
+
+//输出以下内容：
+//incrementer内嵌函数地址：0x0000000100005800
+//runningTotal值：10
+
+nm【Mach-O路径】| grep【地址】。在终端搜索地址0000000100005800
+输出incrementer内嵌函数的符号
+还原符号名称：xcrun swift-demangle【符号】，在终端还原符号名称，记住没有前面的_$
+输出incrementer内嵌函数
+$s11LGSwiftTest15makeIncrementerSiycyF11incrementerL_SiyFTA ---> partial apply forwarder for incrementer #1 () -> Swift.Int in LGSwiftTest.makeIncrementer() -> () -> Swift.Int
+
+
+
+案例：捕获2个值
+//2、闭包捕获多个值的原理
+struct HeapObject {
+    var type: UnsafeRawPointer
+    var refCount1: UInt32
+    var refCount2: UInt32
+}
+
+//函数返回值结构体
+//BoxType 是一个泛型，最终是由传入的Box决定的
+struct FunctionData<BoxType>{
+    var ptr: UnsafeRawPointer//内嵌函数地址
+    var captureValue: UnsafePointer<BoxType>
+}
+
+//捕获值的结构体
+struct Box<T> {
+    var refCounted: HeapObject
+    //valueBox用于存储Box类型
+    var valueBox: UnsafeRawPointer
+    var value: T
+}
+
+//封装闭包的结构体，目的是为了使返回值不受影响
+struct VoidIntFun {
+    var f: () ->Int
+}
+
+//下面代码的打印结果是什么？
+func makeIncrementer(forIncrement amount: Int) -> () -> Int{
+    var runningTotal = 12
+    //内嵌函数，也是一个闭包
+    func incrementer() -> Int{
+        runningTotal += amount
+        return runningTotal
+    }
+    return incrementer
+}
+
+var makeInc = makeIncrementer(forIncrement: 10)
+var f = VoidIntFun(f: makeInc)
+
+let ptr = UnsafeMutablePointer<VoidIntFun>.allocate(capacity: 1)
+//初始化的内存空间
+ptr.initialize(to: f)
+//将ptr重新绑定内存
+let ctx = ptr.withMemoryRebound(to: FunctionData<Box<Int, Int>>.self, capacity: 1) {
+     $0.pointee
+}
+print(ctx.ptr)
+print(ctx.captureValue.pointee)
+print(ctx.captureValue.pointee.valueBox)
+
+<!--打印结果-->
+0x0000000100002b30
+Box<Int>(refCounted: _7_Clourse.HeapObject(type: 0x0000000100004090, refCount1: 3, refCount2: 4), valueBox: 0x00000001006094a0, value: 10)
+0x00000001006094a0
+
+
+案例：捕获多个值
+捕获makeIncrementer函数的入参amount，以及函数内部的runningTotal、val、str三个不同数据类型变量
+struct HeapObject{
+    var type: UnsafeRawPointer
+    var refCount1: UInt32
+    var refCount2: UInt32
+}
+
+struct FuntionData<T>{
+    var ptr: UnsafeRawPointer
+    var captureValue: UnsafePointer<T>
+}
+
+struct Box<T1,T2,T3,T4> {
+    var refCounted: HeapObject
+    var valueBox: UnsafePointer<ValueBox<T1,T2,T3>>
+    var value: T4
+}
+
+struct ValueBox<T1,T2,T3> {
+    var obj1: ValueBoxObj<T1>
+    var obj2: ValueBoxObj<T2>
+    var obj3: ValueBoxObj<T3>
+}
+
+struct ValueBoxObj<T> {
+    var refCounted: HeapObject
+    var value: T
+    var type: UnsafeRawPointer
+}
+
+struct VoidIntFun {
+    var f: () ->Int
+}
+
+func makeIncrementer(forIncrement amount: Int) -> () -> Int {
+    var runningTotal: Int = 3
+    var val: Double = 5.5
+    var str: String = "Zang"
+    
+    func incrementer() -> Int {
+
+        runningTotal += amount
+        val += Double(amount)
+        str += String(amount)
+
+        return runningTotal
+    }
+    return incrementer
+}
+
+var makeInc = VoidIntFun(f: makeIncrementer(forIncrement: 10))
+
+let ptr = UnsafeMutablePointer<VoidIntFun>.allocate(capacity: 1)
+ptr.initialize(to: makeInc)
+
+let ctx = ptr.withMemoryRebound(to: FuntionData<Box<Int,Double,String,Int>>.self, capacity: 1) {
+    $0.pointee
+}
+
+print("内嵌函数地址：\(ctx.ptr)")
+print("amount值：\(ctx.captureValue.pointee.value)")
+print("runningTotal值：\(ctx.captureValue.pointee.valueBox.pointee.obj1.value)")
+print("val值：\(ctx.captureValue.pointee.valueBox.pointee.obj2.value)")
+print("str值：\(ctx.captureValue.pointee.valueBox.pointee.obj3.value)")
+
+//输出以下内容：
+//内嵌函数地址：0x00000001000033f0
+//amount值：10
+//runningTotal值：3
+//val值：5.5
+//str值：Zang
+
+捕获值的原理：在堆上开辟内存空间，将捕获的值放到这个内存空间里
+修改捕获值的时候，去堆上把变量拿出来，修改的就是堆空间里的值
+闭包是一个引用类型（地址传递），底层结构是结构体，包含函数地址和捕获变量的值
+闭包是一个引用类型（引用类型是地址传递），闭包的底层结构（是结构体：函数地址 + 捕获变量的地址 == 闭包）
+
+
+==================================================函数也是引用类型
+func makeIncrementer(inc: Int) -> Int {
+   var runningTotal = 10
+   return runningTotal + inc
+}
+
+var makeInc = makeIncrementer
+
+swiftc -emit-ir main.swift | xcrun swift-demangle
+
+struct FuntionData{
+    var ptr: UnsafeRawPointer
+    var captureValue: UnsafeRawPointer?
+}
+
+struct VoidIntFun {
+    var f: (Int) -> Int
+}
+
+func makeIncrementer(inc: Int) -> Int {
+   var runningTotal = 10
+   return runningTotal + inc
+}
+
+var makeInc = VoidIntFun(f: makeIncrementer)
+
+let ptr = UnsafeMutablePointer<VoidIntFun>.allocate(capacity: 1)
+ptr.initialize(to: makeInc)
+
+let ctx = ptr.withMemoryRebound(to: FuntionData.self, capacity: 1){$0.pointee}
+
+print("函数地址：\(ctx.ptr)")
+print("捕获值：\(ctx.captureValue)")
+
+//输出以下内容：
+//函数地址：0x0000000100002070
+//捕获值：nil
+
+函数的本质：函数是引用类型，底层结构是结构体{函数地址，null}。结构体只有函数地址，捕获值为nil
+
+
+==================================================
+
+https://godbolt.org/
+
+swiftc -emit-sil main.swift
+swiftc -emit-ir main.swift

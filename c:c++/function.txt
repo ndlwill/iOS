@@ -1,0 +1,100 @@
+function < 函数返回类型（函数参数…）>
+
+1.包装普通函数
+int add(int a, int b)
+{
+	return a + b;
+}
+
+int main()
+{
+	//包装普通函数
+	function<int(int,int)> F1(add);
+	cout << F1(5, 10) << endl;
+	return 0;
+}
+我们创建的F1就已经包装好了add函数，可以使用直接列表初始化，也可以使用=赋值初始化
+
+
+2.包装成员函数
+class Foo
+{
+public:
+	mutable int a, b;
+	Foo() = default;
+	Foo(const int& a, const int& b) :a(a), b(b){}
+	void Class()
+	{
+		cout << __FUNCTION__ << endl;
+	}
+	void operator()(int a, int b)
+	{
+		cout << __FUNCTION__ << ": " << a * b << endl;
+	}
+};
+int main()
+{	
+	//包装成员函数：首先要进行bind绑定
+	Foo a;
+	function<void(int,int)> F2_1 = bind(&Foo::operator(),Foo(), placeholders::_1, placeholders::_2);
+	function<void()> F2_2 = bind(&Foo::Class, Foo());
+	F2_1(5,122);
+	F2_2();
+	return 0;
+}
+我们具有一个类，类中有我们自己定义的成员函数，我们可以把成员函数包装成普通函数。
+类成员函数的包装需要使用bind函数绑定为普通函数，然后进行包装。
+
+
+3.包装函数对象（仿函数）
+class Foo
+{
+public:
+	mutable int a, b;
+	void operator()(int a, int b)
+	{
+		cout << __FUNCTION__ << ": " << a * b << endl;
+	}
+};
+int main()
+{
+	//包装函数对象（仿函数）
+	function<void(int,int)> F3 = bind(Foo(), placeholders::_1, placeholders::_2);
+	F3(50, 40);
+	return 0;
+}
+仿函数：就是一个实现了重载括号运算符的函数
+我们使用function包装仿函数也需要一个bind先绑定为普通函数，然后再对绑定后的函数起个别名
+
+
+4.包装lambda表达式
+int main()
+{
+	//包装lambda表达式
+	function<void(const int&,const int&)> F4 = bind([](const int& a, const int& b) {cout <<__FUNCTION__<<" :: " << a << ": " << b << endl; }, placeholders::_1, placeholders::_2);
+	F4(669, 999);
+	return 0;
+}
+同样使用bind函数进行一次绑定，然后对F4函数进行包装，将此lambda表达式包装成一个接受int类型（const int& 类型也行），然后返回值为void 的普通函数，这样就能调用这个包装的函数了。
+
+5.对标准库函数再封装
+在# include < function >文件中定义了很多的仿函数
+int main()
+{
+	//function偷取标准库函数
+	function<bool(int, int)> My_greater = bind(greater<int>(), placeholders::_1, placeholders::_2);
+	cout << boolalpha << My_greater(50, 10) << endl;
+	function<bool(int)> My_less = bind(less<int>(), placeholders::_1, 20);
+	cout << boolalpha << My_less(10) << endl;
+	return 0;
+}
+
+
+为什么要用function包装？
+auto F2_1 = bind(&Foo::operator(),Foo(), placeholders::_1, placeholders::_2);
+F2_1的类型：std::_Binder<std::_Unforced,void (__cdecl Foo：：*)(int,int),Foo,std::_Ph< 1 > const &,std::_Ph< 2 > const &>
+对，你没看错，就是这样的，也就是说，如果你要自己手写它的数据类型，让你对着抄你都抄不对，所以我们必须使用auto来自动推断bind函数的类型。
+但是我们使用auto未免不直观，我们可以使用function自动包装成简单的类型，只需要指定原函数的返回类型和参数类型即可：
+function<void(int,int)> F2_1 = bind(&Foo::operator(),Foo(), placeholders::_1, placeholders::_2);
+包装后的F2_1的函数类型：std::function<void __cdecl(int,int)>
+这样我们简化了auto自动推断的类型，同时又不缺失函数的功能

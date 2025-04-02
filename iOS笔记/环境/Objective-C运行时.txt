@@ -1,0 +1,169 @@
+OC 其实并不算是静态类型语言，虽然在写 OC 代码的时候会声明数据的类型，但是编译器并不会严格的检查数据类型。只要两者都是对象指针，就可以赋值
+因为 Objective-C 运行时允许对象的动态绑定，真正的方法解析是在 运行时 进行的，而不是编译时决定的。
+NSString *str = @1;// 换成 UIView *str = @1; 也一样
+NSLog(@"str = %@", str);// 1
+Incompatible pointer types initializing 'NSString *' with an expression of type 'NSNumber *'
+编译器并不会报错，而只是给个警告 
+
+这主要是因为 Objective-C 运行时的动态特性
+虽然编译器会给出 类型不兼容的警告，但不会导致程序崩溃。
+NSLog(@"%@") 使用 NSObject 的 -description 方法进行字符串化，而 NSNumber 也实现了 -description，其默认行为是返回 数值的字符串表示。
+
+在 Objective-C 中，编译器不会强制阻止指针赋值（即使类型不匹配），因为所有对象都是 NSObject * 的子类，只要调用的方法存在于对象的实现中，程序就能运行。
+
+虽然 str 变量被声明为 NSString *，但它实际上存储的是 NSNumber *，NSLog(@"%@") 依赖 -description 方法，而 NSNumber 也实现了该方法，因此不会崩溃。
+
+
+NSUInteger len = [str length];// 就会运行崩溃
+在 Objective-C，你可以把 NSNumber * 赋值给 NSString *，但如果用 NSString 方法访问 NSNumber，就会崩溃。
+
+
+运行时对象本质:
+在 Objective-C 运行时（Runtime），所有对象都是 指针，NSString *str 实际上只是一个指针变量，并没有真正限制它指向的对象类型
+方法调用时会检查，如果方法不存在，则会崩溃，而不是像c那样产生未定义行为。
+可以用 isKindOfClass: 进行运行时类型检查，避免崩溃
+NSLog(@"%d-%d", [str isKindOfClass:[NSString class]], [str isKindOfClass:[NSNumber class]]);// 0-1
+
+
+C 语言中的指针
+int num = 42;
+float *f = (float *)&num; // 类型不匹配，但可以编译
+printf("%f\n", *f);  // 产生未定义行为
+
+
+#####
+静态/动态语言区分标准，应该就是类型检查的时机，编译时检查就是静态语言，运行时检查就是动态语言。
+弱/强类型指的是语言类型系统的类型检查的严格程度。比如强类型语言中不允许有任何的隐式类型转换，而弱类型语言则允许任意的数据隐式类型转换。
+#####
+凭编译没有办法确定数据的真正类型。从这点上来说 OC 也不算是强类型语言
+
+
+运行时系统(runtime):
+作为动态类型的语言 Objective-C 语言尽可能地将许多决策从编译时间和链接时间推迟到运行时。只要有可能，它会以动态方式执行操作。
+这意味着该语言不仅需要编译器，还需要运行时系统来执行编译后的代码。运行时系统充当了Objective-C语言的一种操作系统
+它是使语言正常工作的基础。
+
+
+Objective-C 中所有的类都需要继承自 NSObject (opens new window)类，即 NSObject 是 OC 类继承体系中的根类，为什么所有的 OC 类都要继承 NSObject 呢？因为它提供了所有类的动态特性。
+
+
+==================================================运行时数据结构:
+@interface NSObject <NSObject> {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wobjc-interface-ivars"
+    Class isa  OBJC_ISA_AVAILABILITY;
+#pragma clang diagnostic pop
+}
+NSObject 的定义中只包含了成员变量 isa。这里面的 Class 关键字是表示类，而在底层实现中 Class 关键字就是 stuct objc_class *
+所以相当于 NSObject 类只是在 objc_class 外面包了一层而已。
+typedef struct objc_class *Class
+运行时底层最基础的数据结构 objc_class 以及 objc_object。
+objc_object 表示的类实例，objc_class 则表示类对象。
+
+struct objc_class : objc_object {
+    isa_t isa;   //在 objc_object 中 // 是存储一个指针，指向了当前对象所属类。
+    Class superclass;
+    cache_t cache;
+    class_data_bits_t bits;
+};
+
+所以本质上除了类实例之外，类也是对象
+
+元类(meta-class)
+什么是元类呢？其实就是类对象的类
+
+对象的表示 objc_object，它里面只有指向所属类的 isa 指针，并没有额外的成员变量保存对象别的信息，比如对象可调用的方法列表和对象包含的属性列表等。
+想要获取这些信息，必须通过对象的 isa 指针找到所属类，在类中查找方法列表和成员变量。
+objc_class 类中的 class_data_bits_t 结构体实例保存着指向方法、属性和协议列表的内存地址。
+同理，类方法调用时，通过类的 isa 在元类中获取类方法的实现。
+所以元类是必要的，它保存了类的方法和属性列表等信息。
+根据我们之前说的类也是对象，那元类的 isa 指针指向哪里呢？答案是指向 NSObject 类的元类。而 NSObject 元类的 isa 指针则指向其自身。
+
+父类(superclass)
+objc_class 中有 superclass 成员变量，superclass 就是指向当前类的父类。
+
+Objective-C 使用两个指针(isa & superclass)完成了类、元类和父类查找
+
+
+
+==================================================基于运行时的消息查找体系
+Objective-C 的方法查找机制也是以这个体系为框架进行查找，当我们调用实例方法的话，运行时会先通过isa指针找到实例所属类，在类的方法列表找有没有这个方法。
+如果在方法列表中找不到该选择器，objc_msgSend 会继续跟踪指向父类(superclass)的指针，并尝试在其方法列表中查找该选择器。
+连续的失败会导致 objc_msgSend 沿着类层次结构向上查找，直到达到 NSObject 类为止。如果 NSObject 类依然没有此方法，则会走消息转发机制。
+
+
+
+==================================================消息派发机制
+Objective-C 的消息发送机制全都依赖于运行时
+Swift 的消息派发机制主要是依赖于静态绑定(static binding)，即编译器明确的知道要执行哪个方法，直接生成在编译的时候就生成好跳转代码，而不需要在运行时决定到底执行哪个方法，这点是和 OC 消息派送最大的不同。
+在 Swift 中，类的方法调用可能是静态派发（Static Dispatch），也可能是动态派发（Dynamic Dispatch），具体取决于方法的定义方式。
+
+这也就是为什么在 Objective-C 中，我们不会使用「方法调用」来形容方法的被动执行，而是使用「消息传递」这个词。
+
+方法调用: 通常与静态类型语言（如C++和Java）以及编译时绑定相关。
+消息传递: 通常与动态类型语言（如Objective-C、Smalltalk和Python）以及运行时绑定相关。
+
+在OC上层语言调用中，我们消息传递的语法是 [receiver message]，不过在编译过程中，会把这条语句编译为类似 objc_msgSend(object, @selector(message)) 这样的 API。
+发送到对象的超类（使用 super 关键字）的消息是使用 objc_msgSendSuper 发送的；其他消息使用 objc_msgSend 发送
+
+
+Method & Selector & IMP：
+Method (opens new window)表示类定义中的方法的类型。
+SEL (opens new window)表示方法选择器（选择子）的不透明类型，本质上是个 C 的字符串，并且已经在运行时注册。
+但在使用选择器时，必须使用从 sel_registerName 或 Objective-C 编译器指令 @selector() 返回的值，而不能简单地将 C 字符串转换为 SEL。
+IMP (opens new window)指向方法实现开始的指针。该数据类型是指向实现该方法的函数开头的指针，第一个参数是指向 self 的指针，第二个参数是 SEL，即方法选择器。
+
+/// An opaque type that represents a method in a class definition.
+typedef struct objc_method *Method;
+//objc.h
+/// An opaque type that represents a method selector.
+typedef struct objc_selector *SEL;
+/// A pointer to the function of a method implementation.
+typedef void (*IMP)(void /* id, SEL, ... */ );
+
+在 runtime 的 objc_class 中的方法列表(method_list_t)里看到方法类型是 method_t。我理解 method_t 和 objc_method 类型应该是一个意思。
+
+总的来说，Method 是 selector 和 IMP 的集合体。
+
+SEL 和 @selector：
+SEL 可以理解为类型，已编译的选择器被分配给特殊类型 SEL
+@selector() 指令允许您引用已编译的选择器，而不是完整的方法名称。
+SEL setWidthHeight;  //声明 SEL 类型变量
+setWidthHeight = @selector(setWidth:height:); //获取选择子
+
+
+消息派送流程：
+当消息发送到对象时，消息会现在对象所属类的体系中进行查找，如果没有找到的话就会触发消息转发机制。
+（1）继承体系内查找
+当向对象消息发送的时候，会通过对象的 isa 指针找到所属类结构，在类结构中查找方法列表(dispatch table)中的方法选择器。
+如果在那里找不到选择器， objc_msgSend 就会沿着指向超类的指针并尝试在其调度表中找到选择器。
+连续失败会导致 objc_msgSend 一直沿着类继承结构向上寻找，直到到达 NSObject 类。一旦找到选择器，该函数就会调用方法列表中的方法，并将其传递给接收对象的数据结构。
+注意：这里的对象不仅仅包含类实例也包含类对象。
+
+（2）缓存机制
+同时为了加快消息传递的过程，也引入了缓存机制，想想如果不去做方法缓存，
+一些较极端的情况下方法很多，继承体系又比较复杂，那消息查找的时间复杂度就是 O(N^2)，缓存之后直接降到接近 O(N)，所以缓存是非常必要的。
+每个类都有一个单独的缓存，它可以包含父类以及当前类中的方法。
+在搜索调度表之前，消息传递例程首先检查接收对象类的缓存（理论上，使用过一次的方法可能会再次使用）。
+如果方法位于缓存中，则消息传递仅比函数调用稍慢（因为有个在缓存中查找消息的流程）。
+一旦程序运行了足够长的时间来“预热”其缓存，几乎它发送的所有消息都会找到缓存的方法。当程序运行时，缓存会动态增长以容纳新消息。
+
+（3）消息转发机制
+如果没有 OC 的消息转发机制的话，我们给实例发送一个压根不存在的方法，运行后大概率会得到下面的异常提示：
+Terminating app due to uncaught exception 'NSInvalidArgumentException', reason: '-[YourClass notExistMethod]: unrecognized selector sent to instance 0x600000010020'
+幸亏 Objective-C 提供了一个消息转发机制来让我们有更多的补救措施来避免类似情况的发生。
+消息转发机制有几个阶段：
+1. 动态方法解析(dynamic method resolution)。
+当我们给某个类实例发送消息，而整个类继承体系都没有办法找到对应方法的时候，则会调用当前类的方法 + (BOOL)resolveInstanceMethod:(SEL)sel，此时我们可以在这个方法里面为当前类加入已经准备好的应对方法。
+同理，如果消息是发给类对象，则会调用对应类方法 + (BOOL)resolveClassMethod:(SEL)sel。
+
+2. (fast message forwarding)
+如果你没有对消息做上一步动态解析，运行时系统会给接受对象第二次机会来对消息进行处理。如果目标对象实现了 -forwardingTargetForSelector: ，Runtime 这时就会调用这个方法，给你把这个消息转发给其他对象的机会。
+如果一个对象实现或继承此方法，并返回非 nil 且非 self 结果，则返回的对象将用作新的接收者对象，并且完整执行新对象的消息派送流程。 显然，如果您从此方法返回 self，代码就会陷入无限循环。
+
+3. 完整消息转发(normal message forwarding)。
+如果你没有实现上面的方法，运行时系统会给接受对象最后一次机会来对消息进行处理，即运行时会给接收消息的对象那个发送 forwardInvocation: 消息，这个消息会将原始消息封装成一个 NSInvocation 对象，并将其作为方法参数传到该方法内。
+我们就可以实现 forwardInvocation: 方法来提供对消息的响应，这个方法实现通常就是将消息转发给能处理这个消息的对象。
+
+objc_msgSend 的底层实现解析：
+https://github.com/draveness/analyze/blob/master/contents/objc/%E4%BB%8E%E6%BA%90%E4%BB%A3%E7%A0%81%E7%9C%8B%20ObjC%20%E4%B8%AD%E6%B6%88%E6%81%AF%E7%9A%84%E5%8F%91%E9%80%81.md#%E8%A7%A3%E6%9E%90-objc_msgsend

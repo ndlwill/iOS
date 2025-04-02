@@ -1,0 +1,55 @@
+每一个event有相似的生命周期， 当你建立了一个event，并把他绑定了一个event_base上面的时候，他就处于初始化完成状态，
+你可以add让它处于pending状态，当event处于pending状态，并且能够触发event的状态触发的时候（例如超时，或者文件状态改变），
+event就处于active状态，用户定义的callback就会被调用，如果event被设置成了persistent，他会继续等待触发，
+如果没有设置，他就不处于pending状态了。你也可以通过delete，使它处于非pending状态。
+
+#define EV_PERSIST 0x10       //默认事件是触发一次，当指定此标志时，他会一直触发。可以调用event_del删除
+
+typedef void (*event_callback_fn)(evutil_socket_t, short, void *);
+
+生成之后，他处于初始化完成状态，如果我们想让它处于pending状态，我们需要调用event_add()函数。
+不管event处于pending或者初始化完成状态，我们都可以调用event_free，释放该结构。
+struct event *event_new(struct event_base *base, 
+evutil_socket_t fd,
+short what, 
+event_callback_fn cb,
+void *arg);
+
+void event_free(struct event *event)
+
+当你想把event自身，作为cb函数的参数的时候，因为我们还没构造出event，我们通过调用下面的函数作为event_new的arg参数：
+void *event_self_cbarg()
+
+通过把fd传如负值，我们可以把event伪装成定时器的功能
+
+
+我们也可以注册系统signal：注意每个进程只能有一个event_base注册signal事件。
+#define evsignal_new(base, signum, callback, arg) \
+    event_new(base, signum, EV_SIGNAL|EV_PERSIST, cb, arg)
+#define evsignal_add(ev, tv) \
+    event_add((ev),(tv))
+#define evsignal_del(ev) \
+    event_del(ev)
+#define evsignal_pending(ev, what, tv_out) \
+    event_pending((ev), (what), (tv_out))
+
+
+一系列函数来获取，event结构中的数据：
+evutil_socket_t event_get_fd(const struct event *ev);              //获取fd
+struct event_base *event_get_base(const struct event *ev);  //获取base
+short event_get_events(const struct event *ev);                      //获取event flag
+event_callback_fn event_get_callback(const struct event *ev);
+void *event_get_callback_arg(const struct event *ev);
+int event_get_priority(const struct event *ev);
+
+你可以主动触发一个事件，无论他处于pending状态与否：
+void event_active(struct event *ev, int what, short ncalls)
+
+==================================================event接口函数
+event_new(), event_free(), event_assign(), event_get_assignment(),
+event_add(), event_del(), event_active(), event_pending(),
+event_get_fd(), event_get_base(), event_get_events(),
+event_get_callback(), event_get_callback_arg(),
+event_priority_set()
+
+https://blog.csdn.net/u013354486/article/details/80772217

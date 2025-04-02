@@ -1,0 +1,140 @@
+rbp（Base Pointer）和 rsp（Stack Pointer），两个关键寄存器，主要用于管理函数调用栈（Stack Frame）。
+
+%rbp	基址指针（Base Pointer）	记录 当前栈帧的起始地址，用于访问局部变量和参数
+%rsp	栈指针（Stack Pointer）	指向 当前栈顶，用于管理函数调用和返回
+
+栈是从高地址向低地址增长的，变量的地址通常是从高到低分配的。
+栈的地址是从高地址向低地址增长的，所以栈顶（%rsp 指向的位置）通常是当前栈中地址最小的。
+每次 push（入栈）：rsp -= size，地址变小
+每次 pop（出栈）：rsp += size，地址变大
+
+
+rsp（栈指针）
+始终指向栈顶（最新的入栈数据）
+调用新函数时，rsp 会减少
+函数返回后，rsp 需要恢复到调用前的状态
+
+rbp（基址指针）
+固定指向当前函数的栈帧底部（一般不变）
+方便访问局部变量和参数
+movq %rsp, %rbp 用于建立新的栈帧
+
+
+#include <stdio.h>
+
+void func() {
+    int a = 10;
+    printf("Hello\n");
+}
+
+int main() {
+    func();
+    return 0;
+}
+
+
+编译成汇编后（简化版）：
+func:
+    pushq   %rbp           # 1️⃣ 备份旧 rbp
+    movq    %rsp, %rbp     # 2️⃣ 设定新的栈帧 // 2. 把栈指针 rsp 的值拷贝到 rbp，相当于：rbp = rsp;
+    subq    $16, %rsp      # 3️⃣ 预留 16 字节（用于局部变量 a）// 3. 将 rsp（栈指针）向下移动 16 个字节，即在栈上分配 16 字节的空间，通常用于存放局部变量。
+
+    movl    $10, -4(%rbp)  # 4️⃣ 存储 `a = 10`
+    callq   printf         # 5️⃣ 调用 printf
+
+    movq    %rbp, %rsp     # 6️⃣ 恢复栈指针
+    popq    %rbp           # 7️⃣ 恢复旧 rbp
+    ret                    # 8️⃣ 返回 main
+
+movq %rsp, %rbp 是 函数调用栈帧的标准设置，它的作用是 让 rbp 记录当前栈帧的基址，方便后续访问局部变量和函数参数。
+
+运行时栈变化
+假设 rsp=0x7ffe12345680，执行 func() 过程中栈的变化如下：
+操作	%rbp	%rsp	栈内容
+pushq %rbp	0x7ffe12345690	0x7ffe12345678	[旧 rbp]
+movq %rsp, %rbp	0x7ffe12345678	0x7ffe12345678	[rbp = rsp]
+subq $16, %rsp	0x7ffe12345678	0x7ffe12345668	[预留局部变量]
+movl $10, -4(%rbp)	0x7ffe12345678	0x7ffe12345668	[存 a=10]
+callq printf	0x7ffe12345678	0x7ffe12345660	[返回地址]
+movq %rbp, %rsp	0x7ffe12345678	0x7ffe12345678	[恢复 rsp]
+popq %rbp	0x7ffe12345690	0x7ffe12345680	[恢复 rbp]
+
+1.
+在 x86-64 架构 中：
+pushq 操作入栈 8 字节（64 位）。
+###
+pushq %rbp 使 rsp 减少 8 个字节（从 0x7ffe12345680 变为 0x7ffe12345678），因为它存储了 8 字节的 rbp 值。
+###
+pushq %rbp 把当前 rbp 的值（即 0x7ffe12345690）存入栈中，存储位置就是 rsp 指向的地址 (0x7ffe12345678)。
+
+4.
+movl $10, -4(%rbp)
+把 10 存入 rbp 寄存器偏移 -4 处的内存地址（即栈上的某个局部变量）。
+假设：
+rbp = 0x7ffe12345678（函数栈帧的基址）
+-4(%rbp) 表示 rbp 向下偏移 4 字节的内存，即 0x7ffe12345674
+*(0x7ffe12345674) = 10
+即，把 10 存入 0x7ffe12345674 这个地址。
+
+所以 10 存储在：
+0x7ffe12345674  ~  0x7ffe12345677
+[0x7ffe12345674]  = 0x0A （低字节）
+[0x7ffe12345675]  = 0x00
+[0x7ffe12345676]  = 0x00
+[0x7ffe12345677]  = 0x00 （高字节）
+
+小端存储方式：低字节在低地址，高字节在高地址。
+
+
+在 x86-64 体系下，默认采用 小端存储（Little-Endian）。
+#include <stdio.h>
+
+int main() {
+    int num = 0x12345678;
+    unsigned char *ptr = (unsigned char *)&num;
+
+    printf("内存存储顺序: ");
+    for (int i = 0; i < sizeof(int); i++) {
+        printf("%02x ", ptr[i]);  // 逐字节打印
+    }
+    printf("\n");
+
+    return 0;
+}
+
+如果你的系统是 小端存储，会看到：
+内存存储顺序: 78 56 34 12
+小端存储 把最低字节 78 放在最低地址，所以打印出来是 78 56 34 12
+
+几乎所有 x86-64 和 ARM 设备默认都是 小端存储
+
+地址（递增）	存储的字节（小端存储）
+0x1000 →	0x78 (最低字节)
+0x1001 →	0x56
+0x1002 →	0x34
+0x1003 →	0x12 (最高字节)
+
+地址是递增的（左 → 右），但数据是 小端存储，所以 最低字节 0x78 存在最低地址 0x1000，而 最高字节 0x12 存在最高地址 0x1003。
+
+地址:  0x1000  0x1001  0x1002  0x1003  (递增)
+数据:  0x78    0x56    0x34    0x12    (小端存储)
+
+
+5.
+callq printf 为什么会导致 %rsp 变化？
+callq 指令会进行以下两个操作：
+压栈：将下一条指令的地址（即返回地址）push 到栈中。
+跳转：跳转到 printf 的地址执行。
+假设 callq printf 执行前，%rsp = 0x7ffe12345668，执行后变成 0x7ffe12345660，说明 %rsp 下降了 8 字节。
+
+操作	%rsp 变化	栈内容
+callq printf 执行前	0x7ffe12345668	-
+callq printf 压栈	0x7ffe12345660	[返回地址]
+因为 x86-64 是 64 位架构，所以返回地址是 8 字节，callq 指令会执行 pushq 操作，把返回地址压入栈中，使 %rsp 减少 8 字节。
+
+callq 实际做了什么
+等价于：
+pushq %rip    # 先把返回地址压栈（占 8 字节）
+jmp   printf  # 跳转到 printf
+
+movq    %rbp, %rsp 的地址是该指令在内存中的地址，也就是 callq printf 的下一条指令

@@ -1,0 +1,368 @@
+https://juejin.cn/user/325111174945479/posts
+
+
+#####
+Unicode 不是一种具体的编码方式，而是一种字符集，它为每个字符分配了一个唯一的标识符，称为 码点
+（例如，字母 'A' 的 Unicode 码点是 U+0041，汉字 '中' 的 Unicode 码点是 U+4E2D）。
+UTF-8 是一种 字符编码方案，它基于 Unicode 编码标准，并且能够灵活地对 Unicode 中的字符进行编码。
+#####
+
+
+M3U 的全称是 "MP3 URL" 或 "MPEG version 3 Uniform Resource Locator"。
+
+M3U8，用 UTF-8 编码。"M3U" 和 "M3U8" 文件都是苹果公司使用的 HTTP Live Streaming（HLS） 协议格式的基础
+
+M3U8文件是M3U文件的一种，只不过它的编码格式是UTF-8。
+M3U是纯文本文件
+所以UTF-8编码的M3U文件也简称为 M3U8
+
+HLS 是一个由苹果公司提出的基于 HTTP 的流媒体网络传输协议。
+流媒体（Streaming Media）是指通过互联网等网络技术，将音频、视频或其他多媒体内容实时传输给用户的技术。
+与传统的下载方式不同，流媒体允许用户在内容传输的过程中就可以开始播放，而不必等待整个文件下载完成。
+
+流媒体的基本原理：
+分段传输：流媒体内容通常被分成一个个小数据包（或称为“数据段”），这些数据包会连续不断地通过网络发送到用户的设备。
+实时播放：用户的设备会接收到这些数据包后，立即进行解码和播放，保证内容的连续性和实时性。用户可以在播放的同时看到或听到正在传输的内容。
+缓冲区：在播放流媒体时，设备通常会预先缓冲一些数据，以防止网络波动导致播放中断。缓冲区的大小决定了流畅度和延迟。
+
+HLS 的工作原理是把整个流分成一个个小的基于 HTTP 的文件来下载，每次只下载一些。
+当媒体流正在播放时，客户端可以选择从许多不同的备用源中以不同的速率下载同样的资源，允许流媒体会话适应不同的数据速率。
+在开始一个流媒体会话时，客户端会下载一个包含元数据的 extended M3U (m3u8) playlist文件，用于寻找可用的媒体流。
+
+HLS 只请求基本的 HTTP 报文，与实时传输协议（RTP）不同，HLS 可以穿过任何允许 HTTP 数据通过的防火墙或者代理服务器。
+它也很容易使用内容分发网络来传输媒体流。这是HLS应用在直播上的一大优势。
+
+我们播放一个HLS，首先要对HLS流对应的M3U8文件进行解析，解析M3U8文件，首先要搞清楚M3U8的封装格式；
+
+
+==================================================HLS格式解析
+HLS流可以用于直播，也可以用于点播
+
+M3U8 文件实质是一个播放列表（playlist），其可能是一个媒体播放列表（Media Playlist），或者是一个主列表（Master Playlist）。
+
+
+
+HLS类型:
+当 M3U8 文件作为媒体播放列表（Media Playlist）时，其内部信息记录的是一系列媒体片段资源，顺序播放该片段资源，即可完整展示多媒体资源。
+#EXTM3U
+#EXT-X-TARGETDURATION:10
+
+#EXTINF:9.009,
+http://media.example.com/first.ts
+#EXTINF:9.009,
+http://media.example.com/second.ts
+#EXTINF:3.003,
+http://media.example.com/third.ts
+#EXT-X-ENDLIST
+
+
+当 M3U8 作为主播放列表（Master Playlist）时，其内部提供的是同一份媒体资源的多份流列表资源。
+#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=150000,RESOLUTION=416x234,CODECS="avc1.42e00a,mp4a.40.2"
+http://example.com/low/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=240000,RESOLUTION=416x234,CODECS="avc1.42e00a,mp4a.40.2"
+http://example.com/lo_mid/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=440000,RESOLUTION=416x234,CODECS="avc1.42e00a,mp4a.40.2"
+http://example.com/hi_mid/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=640000,RESOLUTION=640x360,CODECS="avc1.42e00a,mp4a.40.2"
+http://example.com/high/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=64000,CODECS="mp4a.40.5"
+http://example.com/audio/index.m3u8
+#EXT-X-ENDLIST
+
+
+
+HLS基本字段:
+#EXTM3U                    M3U8文件头，必须放在第一行;
+#EXT-X-MEDIA-SEQUENCE      第一个TS分片的序列号，一般情况下是0，但是在直播场景下，这个序列号标识直播段的起始位置; #EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-TARGETDURATION      每个分片TS的最大的时长;   #EXT-X-TARGETDURATION:10     每个分片的最大时长是 10s
+#EXT-X-ALLOW-CACHE         是否允许cache;          #EXT-X-ALLOW-CACHE:YES      #EXT-X-ALLOW-CACHE:NO    默认情况下是YES
+#EXT-X-ENDLIST             M3U8文件结束符；
+#EXTINF                    extra info，分片TS的信息，如时长，带宽等；一般情况下是    #EXTINF:<duration>,[<title>] 后面可以跟着其他的信息，逗号之前是当前分片的ts时长，分片时长 移动要小于 #EXT-X-TARGETDURATION 定义的值；
+#EXT-X-VERSION             M3U8版本号
+#EXT-X-DISCONTINUITY       该标签表明其前一个切片与下一个切片之间存在中断。
+#EXT-X-PLAYLIST-TYPE       表明流媒体类型；
+#EXT-X-KEY                 是否加密解析，    #EXT-X-KEY:METHOD=AES-128,URI="https://priv.example.com/key.php?r=52"    加密方式是AES-128,秘钥需要请求   https://priv.example.com/key.php?r=52  ，请求回来存储在本地；
+
+
+
+如何判断HLS是否是直播:
+1.判断是否存在 #EXT-X-ENDLIST
+对于一个M3U8文件，如果结尾不存在 #EXT-X-ENDLIST，那么一定是 直播，不是点播
+
+2.判断 #EXT-X-PLAYLIST-TYPE 类型
+'#EXT-X-PLAYLIST-TYPE' 有两种类型
+VOD 即 Video on Demand，表示该视频流为点播源，因此服务器不能更改该 M3U8 文件；
+EVENT 表示该视频流为直播源，因此服务器不能更改或删除该文件任意部分内容（但是可以在文件末尾添加新内容）
+（注：VOD 文件通常带有 EXT-X-ENDLIST 标签，因为其为点播源，不会改变；而 EVEVT 文件初始化时一般不会有 EXT-X-ENDLIST 标签，暗示有新的文件会添加到播放列表末尾，因此也需要客户端定时获取该 M3U8 文件，以获取新的媒体片段资源，直到访问到 EXT-X-ENDLIST 标签才停止）。
+
+
+
+HLS提供多码率:
+Master Playlist 就是会提供 多份码率的列表资源
+'#EXT-X-STREAM-INF' 字段后面有： BANDWIDTH 指定码率 RESOLUTION 分辨率 PROGRAM-ID 唯一ID CODECS 指定流的编码类型
+
+码率、码流是同一个概念，是数据传输时单位时间传送的数据量，一般用单位kbps表示。
+视频码率就是指视频文件在单位时间内使用的数据量。简单理解就是要播放一秒的视频需要多少数据，从这个角度就不难理解通常码率越高视频质量也越好，相应的文件体积也会越大。
+码率、视频质量、文件体积是正相关的。
+但当码率超过一定数值后，对图像的质量影响就不大了。几乎所有的编码算法都在追求用最低的码率达到最少的失真(最好的清晰度)；
+
+
+
+HLS中插入广告:
+M3U8文件中插入广告，要想灵活的控制广告，则广告可以插入任何视频中，那么无法保证广告的编码格式和码率等信息和原视频的编码格式等信息保持一致，就必须告知播放器，在插入广告的地方，ts片段发生的信息变更，需要播放器适配处理。
+
+'#EXT-X-DISCONTINUITY' 该标签表明其前一个切片与下一个切片之间存在中断。说明有不连续的视频出现，这个视频绝大多数情况下就是广告；
+'#EXT-X-DISCONTINUITY' 这个字段就是来做这个事情的； 当出现以下情况时，必须使用该标签：
+file format
+encoding parameters
+
+
+
+#EXTM3U
+#EXT-X-TARGETDURATION:10
+#EXT-X-VERSION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXTINF:10.0,
+movieA.ts
+#EXTINF:10.0,
+movieB.ts
+ ...
+#EXT-X-ENDLIST
+
+想在开头插入广告:
+
+#EXTM3U
+#EXT-X-TARGETDURATION:10
+#EXT-X-VERSION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXTINF:10.0,
+ad0.ts
+#EXTINF:8.0,
+ad1.ts
+#EXT-X-DISCONTINUITY
+#EXTINF:10.0,
+movieA.ts
+#EXTINF:10.0,
+movieB.ts
+...
+#EXT-X-ENDLIST
+
+当然你可以在任意位置插入广告。
+
+https://datatracker.ietf.org/doc/html/rfc8216
+
+
+1.视频切换清晰度功能
+目前线上有很多的M3U8文件都提供多码率（多种清晰度）的选择，我们可以改进我们的功能，为用户提供多种视频清晰度的选择；
+2.视频广告
+目前M3U8视频占我们线上视频的比例是近60%，量非常大，我们可以在M3U8视频中任意位置插入一些广告，为探索商业化开辟新的路。
+
+
+
+==================================================高级字段:
+EXT-X-BYTERANGE:
+我们知道M3U8需要切片,但是有时候我们不想切片
+只想用一个ts来构建一个类似M3U8的分片索引, 这时候EXT-X-BYTERANGE就派上用场了
+#EXT-X-BYTERANGE:<length>[@<offset>]
+其中length表示range的长度, offset表示这个range从分片的什么位置开始读.
+
+#EXTM3U
+#EXT-X-TARGETDURATION:11
+#EXT-X-MEDIA-SEQUENCE:0
+#EXT-X-VERSION:4
+#EXTINF:9.009,
+#EXT-X-BYTERANGE:12345@0
+media.ts
+#EXTINF:9.009,
+#EXT-X-BYTERANGE:82112@12345
+media.ts
+#EXTINF:3.003,
+#EXT-X-BYTERANGE:69864
+media.ts
+#EXT-X-ENDLIST
+
+这个M3U8索引文件中,只有media.ts一个分片文件,这个文件可能很大, 第一个指定的分片是从media.ts的0位置开始读12345长度的数据; 
+第二个指定的分片是从media.ts的12345位置开始读82112长度的数据;
+第三个没有指定offset, 那么默认从上一个指定分为的结束处开始读.
+当然只有VERSION版本不低于4才可以应用这个属性
+
+
+EXT-X-KEY:
+M3U8索引文件中有了#EXT-X-KEY 字段,说明当前的M3U8视频片段可能被加密了
+这一行是告诉你应该怎么解密这些视频分片
+表达的格式如下:
+#EXT-X-KEY:<attribute-list>
+
+这个属性列表中有如下几个字段:
+METHOD
+这个是一个枚举值,可以为NONE, AES-128, SAMPLE-AES
+NONE表述分片并没有被加密,其他的属性集就没有必要出现了
+URI
+密钥的地址存放的地方,也是一个url
+IV
+该值是一个十六进制序列, 它指定要与密钥一起使用的128位无符号整数初始化向量
+KEYFORMAT
+这个密钥的格式, 可选字段, 默认情况下是"identity", 主要是加强数字证书校验安全性设定的.
+
+M3U8加密和解密非常重要, 是M3U8的优势之一, 毕竟现代社会越来越注重安全,版权意识也非常重要.
+
+
+EXT-X-MAP:
+这个字段是视频的初始化片段, 简而言之,有了这个字段,说明后续的每一个分片文件必须和通过这个初始化片段才能完整解读,缺少这个初始化片段, M3U8视频根本播放不了.
+#EXT-X-MAP:<attribute-list>
+
+URI 初始化片段的地址, 这个信息是必须的.
+BYTERANGE 这个可以参考 #EXT-X-BYTERANGE 字段
+
+#EXT-X-MAP:URI="init-v1-a1.mp4"
+说明后续的每一个分片都需要这个init-v1-a1.mp4才能真正解码播放出来
+光解析第一个分片是不行的,因为真正的视频头部信息在init-v1-a1.mp4中.
+
+#EXT-X-MAP的字段主要目的有3个:
+为了安全
+为了节省存储空间
+为了减少切片, 减少切片服务器的工作量
+
+1.#EXT-X-MAP的安全作用:
+将一个完整视频的头单独存放, 将其他部分存在另一个视频文件中, 这样就是你们抓到了其中一个视频, 也播放不了, 这是防止盗链的一种手段
+
+其中#EXT-X-MAP中视频片段是
+#EXT-X-MAP:URI="https://europe.olemovienews.com/hlstimeofffmp4/20210226/fICqcpqr/mp4/fICqcpqr.mp4/init-v1-a1.mp4"
+#EXT-X-MAP中的视频片段中没有实质内容, 只有视频的头部
+了解MP4视频构造的都知道moov是MP4的头部, mdat才是MP4的实质内容
+
+我可以将#EXT-X-MAP中的片段和其他的片段放在不同的服务器上, 只要两个片段不被同时拿到, 还是安全的.
+当然安全并不是#EXT-X-MAP的主要目的, 毕竟如果为了安全, 还是使用#EXT-X-KEY更方便一点.
+
+FMP4（Fragmented MP4）是 MP4（MPEG-4 Part 14）格式的一种变体，它将传统的 MP4 文件分成多个较小的片段（fragment）
+.m4s 文件是 MPEG-DASH 协议中的媒体片段文件
+
+2.#EXT-X-MAP减少存储空间
+虽然MP4的moov头部占比不太大, 但是对于一个动不动有成百上千个的M3U8文件, 加起来的大小还是比较可观的, 一个moov头部一般有100K, 如果有1000个FMP4片段, 那么就可以节省10M大小, 海量的视频算算要节省多少数据.
+
+3.#EXT-X-MAP减少切片工作
+#EXT-X-MAP:URI="init-v1-a1.mp4",BYTERANGE="1000@2000"
+这就表示init-v1-a1.mp4中的1000和2000之间的数据被采用, 其他的不被采用.
+这样做的好处是将一个完整的视频切片是需要工作量的, 如果服务端不想做这个工作, 直接在M3U8索引文件中标识一下采用哪一段的数据, 就不用切片这么复杂的工作了.
+
+
+EXT-X-I-FRAMES-ONLY:
+I帧（Intra-coded frame）是视频编码中的一种帧类型，是压缩视频流中的关键帧。
+它在视频序列中充当“参考点”，不依赖于其他帧进行解码。I帧的特点是它是完全自包含的，意味着它可以单独解码而不需要其他帧的信息。
+在视频压缩中，I帧通常是最为详细和完整的帧，它保存了完整的图像数据，因此占用的空间较大。
+它的作用是保证视频的高质量，并在视频播放时提供一个起始点。
+在编码过程中，通常会定期插入I帧，以确保即使在数据丢失的情况下，也能从I帧恢复画面。
+相比之下，其他类型的帧（如P帧和B帧）则依赖于前后的帧来进行编码，它们压缩的效率较高，但解码时需要参考I帧或其他P帧和B帧。
+总的来说，I帧是保证视频质量和解码准确性的关键帧。
+
+这个字段表示每个片段只有一个I帧
+如果都是I帧,那么特效/反转/快进/快退非常方便.
+当然实际上M3U8上用到 #EXT-X-I-FRAMES-ONLY并不多
+
+
+EXT-X-MEDIA:
+例如同一段视频有视频/音频/字幕, 甚至还不止一个音频轨道, 还有很多种语言的字幕, 一段视频有这么多信息, #EXT-X-MEDIA 就是干这个的
+
+#EXT-X-MEDIA:<attribute-list>
+属性集有下面的字段:
+TYPE
+这是一个枚举值, 可以是AUDIO, VIDEO, SUBTITLES, CLOSED-CAPTIONS, 这个字段是必须的.
+URI
+数据源的url, 如果TYPE是CLOSED-CAPTIONS, URI就没有了
+GROUP-ID
+表示源属于的组ID, 这只是一个标识
+DEFAULT
+YES 或者 NO
+AUTOSELECT
+YES 或者 NO
+举个例子:
+
+
+
+直播的例子:
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:8
+#EXT-X-MEDIA-SEQUENCE:2680
+#EXTINF:7.975,
+https://priv.example.com/fileSequence2680.ts
+#EXTINF:7.941,
+https://priv.example.com/fileSequence2681.ts
+#EXTINF:7.975,
+https://priv.example.com/fileSequence2682.ts
+
+
+
+XT-X-MEDIA例子:
+#EXTM3U
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aac",NAME="English", \
+      DEFAULT=YES,AUTOSELECT=YES,LANGUAGE="en", \
+      URI="main/english-audio.m3u8"
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aac",NAME="Deutsch", \
+      DEFAULT=NO,AUTOSELECT=YES,LANGUAGE="de", \
+      URI="main/german-audio.m3u8"
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aac",NAME="Commentary", \
+      DEFAULT=NO,AUTOSELECT=NO,LANGUAGE="en", \
+      URI="commentary/audio-only.m3u8"
+#EXT-X-STREAM-INF:BANDWIDTH=1280000,CODECS="...",AUDIO="aac"
+low/video-only.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=2560000,CODECS="...",AUDIO="aac"
+mid/video-only.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=7680000,CODECS="...",AUDIO="aac"
+hi/video-only.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=65000,CODECS="mp4a.40.5",AUDIO="aac"
+main/english-audio.m3u8
+
+
+
+==================================================URL生成规则
+1.直接给出url
+#EXTM3U
+#EXT-X-TARGETDURATION:10
+#EXT-X-VERSION:3
+#EXTINF:9.009,
+http://media.example.com/first.ts
+#EXTINF:9.009,
+http://media.example.com/second.ts
+#EXTINF:3.003,
+http://media.example.com/third.ts
+#EXT-X-ENDLIST
+
+上面的每一个片段都直接指出了片段的具体url是什么,就是完整的url请求,我们在解析的时候就不需要对片段的具体为值进行拼接了,直接请求url即可
+
+
+2.单文件名相对位置
+#EXTM3U
+#EXT-X-TARGETDURATION:10
+#EXT-X-VERSION:3
+#EXTINF:9.009,
+first.ts
+#EXTINF:9.009,
+second.ts
+#EXTINF:3.003,
+third.ts
+#EXT-X-ENDLIST
+
+这儿没有任何url, 只有片段的名字
+
+
+3.带文件路径的相对位置
+#EXTM3U
+#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=800000,RESOLUTION=1080x608
+1000k/hls/index.m3u8
+
+这个1000k/hls/index.m3u8 就不是文件名，是一个相对路径
+有时候也可以写成如下:
+#EXTM3U
+#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=800000,RESOLUTION=1080x608
+/1000k/hls/index.m3u8
+
+
+4. 双斜杠相对位置
+双斜杠后面一般直接就是域名了
+#EXTM3U
+#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=800000,RESOLUTION=1080x608
+//douban.donghongzuida.com/20210109/15467_73a719b2/1000k/hls/index.m3u8
+
+这时候直接增加一个协议就可以的.

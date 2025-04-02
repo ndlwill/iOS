@@ -336,9 +336,9 @@ GeometryReader
 
 
 
-
-
 ==================================================
+
+ZStack、overlay、background:
 
 struct HeartView: View {
     var body: some View {
@@ -397,7 +397,249 @@ struct IconDemo3: View {
 你会发现它们在容器内的布局后的摆放结果明显不同 —— 需求尺寸的构成和大小不一样
 布局容器在规划自身的需求尺寸上的策略不同是造成上述现象的原因
 
+###
 像 ZStack、VStack、HStack 这几个容器，它们的需求尺寸是由其全部子视图按照指定的布局指南进行摆放后的获得的总尺寸所构成的
 而 overlay 和 background 的需求尺寸则完全取决于它们的主视图
+###
 
 
+SwiftUI 的布局操作是在视图层面进行的，而所有针对关联图层（ backing layer ）的操作仍是通过 Core Animation 来完成的
+针对 CALayer直接做出的调整，SwiftUI 的布局系统是无法感知的。
+
+Rectangle()
+    .fill(.green.gradient)
+    .frame(width: 100, height: 50)
+    .border(.blue)
+    .offset(x: 30, y: 30)
+    .border(.green)
+在 SwiftUI 中，offset 修饰符对应的是 Core Animation 中的 CGAffineTransform 操作。.offset(x: 30, y: 30) 相当于 .transformEffect(.init(translationX: 30, y: 30))。
+这种直接在 CALayer 层面进行的修改，并不会对布局造成影响
+
+// 通过 padding
+Rectangle()
+    .fill(.green.gradient)
+    .frame(width: 100, height: 50)
+    .border(.blue)
+    .padding(EdgeInsets(top: 30, leading: 30, bottom: 0, trailing: 0))
+    .border(.green)
+如果想实现让位移后的视图能够对它的父视图（ 容器 ）的布局有所影响，或许就需要换一种方式 —— 用布局容器而非 Core Animtion 操作
+或者:
+// 通过 frame
+Rectangle()
+    .fill(.green.gradient)
+    .frame(width: 100, height: 50)
+    .border(.blue)
+    .frame(width: 130, height: 80, alignment: .bottomTrailing)
+    .border(.green)
+
+// 通过 position
+Rectangle()
+    .fill(.green.gradient)
+    .frame(width: 100, height: 50)
+    .border(.blue)
+    .position(x: 80, y: 55)
+    .frame(width: 130, height: 80)
+    .border(.green)
+
+
+开发者在对视图进行调整前需要清楚该操作是针对里子（ 基于布局机制 ）还是面子（ 在 CALayer 层面）
+
+
+
+
+在 SwiftUI 中，通常需要对布局容器进行二次包装后再使用。例如 _VStackLayout 被包装成 VStack，_FrameLayout 被包装成 frame 视图修饰器。
+模仿:
+private struct MyFrameLayout: Layout, ViewModifier {
+    let width: CGFloat?
+    let height: CGFloat?
+    let alignment: Alignment
+
+    func body(content: Content) -> some View {
+        MyFrameLayout(width: width, height: height, alignment: alignment)() { // 由于 callAsFunction 所导致的多括号
+            Color.clear // 添加用于辅助对齐的视图
+            content
+        }
+    }
+}
+
+public extension View {
+    func myFrame(width: CGFloat? = nil, height: CGFloat? = nil, alignment: Alignment = .center) -> some View {
+        self
+            .modifier(MyFrameLayout(width: width, height: height, alignment: alignment))
+    }
+
+    @available(*, deprecated, message: "Please pass one or more parameters.")
+    func myFrame() -> some View {
+        modifier(MyFrameLayout(width: nil, height: nil, alignment: .center))
+    }
+}
+
+func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard subviews.count == 2, let content = subviews.last else { fatalError("Can't use MyFrameLayout directly") }
+    var result: CGSize = .zero
+
+    if let width, let height { // 两个维度都有设定
+        result = .init(width: width, height: height)
+    }
+
+    if let width, height == nil {  // 仅宽度有设定
+        let contentHeight = content.sizeThatFits(.init(width: width, height: proposal.height)).height // 子视图在该维度上的需求尺寸
+        result = .init(width: width, height: contentHeight)
+    }
+
+    if let height, width == nil {
+        let contentWidth = content.sizeThatFits(.init(width: proposal.width, height: height)).width
+        result = .init(width: contentWidth, height: height)
+    }
+
+    if height == nil, width == nil {
+        result = content.sizeThatFits(proposal)
+    }
+
+    return result
+}
+
+在 placeSubviews 中，我们将利用 modifier 中添加的辅助视图，对子视图进行对齐摆放。
+func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    guard subviews.count == 2, let background = subviews.first, let content = subviews.last else {
+        fatalError("Can't use MyFrameLayout directly")
+    }
+    // 在 bounds 中满铺 Color.clear
+    background.place(at: .zero, anchor: .topLeading, proposal: .init(width: bounds.width, height: bounds.height))
+    // 获取 Color.clear 对齐指南的位置
+    let backgroundDimensions = background.dimensions(in: .init(width: bounds.width, height: bounds.height))
+    let offsetX = backgroundDimensions[alignment.horizontal]
+    let offsetY = backgroundDimensions[alignment.vertical]
+    // 获取子视图对齐指南的位置
+    let contentDimensions = content.dimensions(in: .init(width: bounds.width, height: bounds.height))
+    // 计算 content 的 topLeading 偏移量
+    let leading = offsetX - contentDimensions[alignment.horizontal] + bounds.minX
+    let top = offsetY - contentDimensions[alignment.vertical] + bounds.minY
+    content.place(at: .init(x: leading, y: top), anchor: .topLeading, proposal: .init(width: bounds.width, height: bounds.height))
+}
+现在我们已经可以在视图中使用 myFrame 替代 frame ，并实现完全一样的效果。
+
+
+
+fixedSize 为子视图的特定维度提供未指定模式（ nil ）的建议尺寸，
+以使其在该维度上将理想尺寸作为其需求尺寸返回，并以该尺寸作为自身的需求尺寸返回给父视图。
+
+private struct MyFixedSizeLayout: Layout, ViewModifier {
+    let horizontal: Bool
+    let vertical: Bool
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard subviews.count == 1, let content = subviews.first else {
+            fatalError("Can't use MyFixedSizeLayout directly")
+        }
+        // 准备提交给子视图的建议尺寸
+        let width = horizontal ? nil : proposal.width // 如果 horizontal 为 true 则提交非指定模式的建议尺寸，否则则提供父视图在改维度上的建议尺寸
+        let height = vertical ? nil : proposal.height // 如果 vertical 为 true 则提交非指定模式的建议尺寸，否则则提供父视图在改维度上的建议尺寸
+        let size = content.sizeThatFits(.init(width: width, height: height)) // 向子视图提交上方确定的建议尺寸，并获取子视图的需求尺寸
+        return size // 以子视图的需求尺寸作为 MyFixedSizeLayout 容器的需求尺寸
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 1, let content = subviews.first else {
+            fatalError("Can't use MyFixedSizeLayout directly")
+        }
+
+        content.place(at: .init(x: bounds.minX, y: bounds.minY), anchor: .topLeading, proposal: .init(width: bounds.width, height: bounds.height))
+    }
+
+    func body(content: Content) -> some View {
+        MyFixedSizeLayout(horizontal: horizontal, vertical: vertical)() {
+            content
+        }
+    }
+}
+
+public extension View {
+    func myFixedSize(horizontal: Bool, vertical: Bool) -> some View {
+        modifier(MyFixedSizeLayout(horizontal: horizontal, vertical: vertical))
+    }
+
+    func myFixedSize() -> some View {
+        myFixedSize(horizontal: true, vertical: true)
+    }
+}
+
+
+frame(minWidth:, idealWidth: , maxWidth: , minHeight: , idealHeight:, maxHeight: , alignment:) 是对布局容器 _FlexFrameLayout 的二次包装。
+_FlexFrameLayout 实际上是两个功能的结合体：
+在设置了 ideal 值且父视图的在该维度上提供了未指定模式的建议尺寸时，以 ideal value 作为需求尺寸返回，并将其作为子视图的布局尺寸
+当 min 或（ 和 ） max 有值时，会按如下规则返回 _FlexFrameLayout 的在该维度上的需求尺寸
+https://swiftui-lab.com/frame-behaviors/?utm_source=Fatbobman%20Blog&utm_medium=web&utm_campaign=Fatbobman%20Blog
+
+func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard subviews.count == 2, let content = subviews.last else { fatalError("Can't use MyFlexFrameLayout directly") }
+
+    var resultWidth: CGFloat = 0
+    var resultHeight: CGFloat = 0
+
+    let contentWidth = content.sizeThatFits(proposal).width // 以父视图的建议尺寸为建议尺寸，获取子视图在宽度上的需求尺寸
+    // idealWidth 有值，且父视图在宽度上的建议尺寸为未指定模式，需求宽度为 idealWidth
+    if let idealWidth, proposal.width == nil {
+        resultWidth = idealWidth
+    } else if minWidth == nil, maxWidth == nil { // min 和 max 均没有指定，返回子视图在宽度上的需求尺寸
+        resultWidth = contentWidth
+    } else if let minWidth, let maxWidth { // min 和 max 都有值时
+            resultWidth = clamp(min: minWidth, max: maxWidth, source: proposal.width ?? contentWidth)
+    } else if let minWidth { // min 有值时，确保需求尺寸不小于最小值
+        resultWidth = clamp(min: minWidth, max: maxWidth, source: contentWidth)
+    } else if let maxWidth { // max 有值时，确保需求尺寸不大于最大值
+        resultWidth = clamp(min: minWidth, max: maxWidth, source: proposal.width ?? contentWidth)
+    }
+
+    // 将上面确定的需求宽度作为建议宽度，获取子视图的需求高度
+    let contentHeight = content.sizeThatFits(.init(width: proposal.width == nil ? nil : resultWidth, height: proposal.height)).height
+    if let idealHeight, proposal.height == nil {
+        resultHeight = idealHeight
+    } else if minHeight == nil, maxHeight == nil {
+        resultHeight = contentHeight
+    } else if let minHeight, let maxHeight {
+            resultHeight = clamp(min: minHeight, max: maxHeight, source: proposal.height ?? contentHeight)
+    } else if let minHeight {
+        resultHeight = clamp(min: minHeight, max: maxHeight, source: contentHeight)
+    } else if let maxHeight {
+        resultHeight = clamp(min: minHeight, max: maxHeight, source: proposal.height ?? contentHeight)
+    }
+
+    let size = CGSize(width: resultWidth, height: resultHeight)
+    return size
+}
+
+// 将值限制在最小和最大之间
+func clamp(min: CGFloat?, max: CGFloat?, source: CGFloat) -> CGFloat {
+    var result: CGFloat = source
+    if let min {
+        result = Swift.max(source, min)
+    }
+    if let max {
+        result = Swift.min(source, max)
+    }
+    return result
+}
+
+在 View 扩展中需要判断 min、ideal、max 的值是否满足了升序要求
+public extension View {
+    func myFrame(minWidth: CGFloat? = nil, idealWidth: CGFloat? = nil, maxWidth: CGFloat? = nil, minHeight: CGFloat? = nil, idealHeight: CGFloat? = nil, maxHeight: CGFloat? = nil, alignment: Alignment = .center) -> some View {
+        // 判断是否 min < ideal < max
+        func areInNondecreasingOrder(
+            _ min: CGFloat?, _ ideal: CGFloat?, _ max: CGFloat?
+        ) -> Bool {
+            let min = min ?? -.infinity
+            let ideal = ideal ?? min
+            let max = max ?? ideal
+            return min <= ideal && ideal <= max
+        }
+
+        // SwiftUI 官方实现在数值错误的情况下仍会执行，但会在控制台显示错误信息。
+        if !areInNondecreasingOrder(minWidth, idealWidth, maxWidth)
+            || !areInNondecreasingOrder(minHeight, idealHeight, maxHeight) {
+            fatalError("Contradictory frame constraints specified.")
+        }
+
+        return modifier(MyFlexFrameLayout(minWidth: minWidth, idealWidth: idealWidth, maxWidth: maxWidth, minHeight: minHeight, idealHeight: idealHeight, maxHeight: maxHeight, alignment: alignment))
+    }
+}

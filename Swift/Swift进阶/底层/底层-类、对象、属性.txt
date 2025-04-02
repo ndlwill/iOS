@@ -1,0 +1,533 @@
+对象的内存分配过程:
+__allocating_init
+
+
+__allocating_init函数执行内部，发现它做了两件事：
+调用swift_allocObject函数
+执行demo.LGTeacher.init方法，进行初始化变量
+
+
+通过swift_allocObject来探索swift中对象的创建过程:
+swift_allocObject，发现其内部依次调用_swift_allocObject_和swift_slowAlloc两个函数
+
+
+swift_allocObject的源码如下，主要有以下几部分:
+通过swift_slowAlloc分配内存，并进行内存字节对齐
+通过new + HeapObject + metadata初始化一个实例对象
+函数的返回值是HeapObject类型，所以当前对象的内存结构就是HeapObject的内存结构
+
+static HeapObject *_swift_allocObject_(HeapMetadata const *metadata,
+                                       size_t requiredSize,
+                                       size_t requiredAlignmentMask) {
+  assert(isAlignmentMask(requiredAlignmentMask));
+  auto object = reinterpret_cast<HeapObject *>(
+      swift_slowAlloc(requiredSize, requiredAlignmentMask));//分配内存+字节对齐
+
+  // NOTE: this relies on the C++17 guaranteed semantics of no null-pointer
+  // check on the placement new allocator which we have observed on Windows,
+  // Linux, and macOS.
+  new (object) HeapObject(metadata);//初始化一个实例对象
+
+  // If leak tracking is enabled, start tracking this object.
+  SWIFT_LEAKS_START_TRACKING_OBJECT(object);
+
+  SWIFT_RT_TRACK_INVOCATION(object, swift_allocObject);
+
+  return object;
+}
+
+
+// 其内部主要是通过malloc在堆中分配size大小的内存空间，并返回内存地址，主要是用于存储实例变量
+void *swift::swift_slowAlloc(size_t size, size_t alignMask) {
+  void *p;
+  // This check also forces "default" alignment to use AlignedAlloc.
+  if (alignMask <= MALLOC_ALIGN_MASK) {
+#if defined(__APPLE__)
+    p = malloc_zone_malloc(DEFAULT_ZONE(), size);
+#else
+    p = malloc(size);// 堆中创建size大小的内存空间，用于存储实例变量
+#endif
+  } else {
+    size_t alignment = (alignMask == ~(size_t(0)))
+                           ? _swift_MinAllocationAlignment
+                           : alignMask + 1;
+    p = AlignedAlloc(size, alignment);
+  }
+  if (!p) swift::crash("Could not allocate memory.");
+  return p;
+}
+
+
+进入HeapObject初始化方法，需要两个参数：metadata、refCounts
+其中metadata类型是HeapMetadata，是一个指针类型，占8字节
+refCounts（引用计数，类型是InlineRefCounts，而InlineRefCounts是一个类RefCounts的别名，占8个字节），swift采用arc引用计数
+
+
+对于实例对象t来说，其本质是一个HeapObject 结构体，默认16字节内存大小（metadata 8字节 + refCounts 8字节）
+与OC的对比如下
+OC中实例对象的本质是结构体，是以objc_object为模板继承的，其中有一个isa指针，占8字节
+Swift中实例对象，默认的比OC中多了一个refCounted引用计数大小，默认属性占16字节
+
+Swift中对象的内存分配流程是：__allocating_init --> swift_allocObject_ --> _swift_allocObject --> swift_slowAlloc --> malloc
+init在其中的职责就是初始化变量，这点与OC中是一致的
+
+
+我们可以通过Runtime方法获取类的内存大小
+class_getInstanceSize(LGTeacher.self)
+从HeapObject的分析中我们知道了，一个类在没有任何属性的情况下，默认占用16字节大小
+
+对于Int、String类型，进入其底层定义,两个都是结构体类型
+print(MemoryLayout<Int>.stride)
+print(MemoryLayout<String>.stride)
+Int类型占8字节，String类型占16字节
+CJLTeacher的内存大小等于40，即40 = metadata（8字节） +refCount（8字节）+ Int（8字节）+ String（16字节）
+
+
+
+
+==================================================Swift中类的结构
+而在Swift中，类的结构在底层是HeapObject，其中有 metadata + refCounts
+
+
+HeapMetadata类型：
+using HeapMetadata = TargetHeapMetaData<Inprocess>;
+
+进入TargetHeapMetaData定义，其本质是一个模板类型
+
+//模板类型
+template <typename Runtime>
+struct TargetHeapMetadata : TargetMetadata<Runtime> {
+  using HeaderType = TargetHeapMetadataHeader<Runtime>;
+
+  TargetHeapMetadata() = default;
+  //初始化方法
+  constexpr TargetHeapMetadata(MetadataKind kind)// 初始化方法中参数kind的类型是MetadataKind
+    : TargetMetadata<Runtime>(kind) {}// 调用父类构造函数（基类初始化），都属于“委托构造”
+#if SWIFT_OBJC_INTEROP
+  constexpr TargetHeapMetadata(TargetAnyClassMetadata<Runtime> *isa)
+    : TargetMetadata<Runtime>(isa) {}
+#endif
+};
+
+
+普通构造函数：通常在 运行时 被调用，创建对象并初始化数据。
+constexpr 构造函数：允许在 编译时 直接计算对象的值，并避免运行时的开销。
+
+
+//******** TargetMetaData 定义 ********
+struct TargetMetaData{
+   using StoredPointer = typename Runtime::StoredPointer;
+    ...
+    
+    StoredPointer kind;
+}
+
+//******** Inprocess 定义 ********
+struct Inprocess{
+    ...
+    using StoredPointer = uintptr_t;
+    ...
+}
+
+//******** uintptr_t 定义 ********
+typedef unsigned long uintptr_t;
+
+进入TargetMetaData定义，有一个kind属性，kind的类型就是之前传入的Inprocess。
+于kind，其类型就是unsigned long，主要用于区分是哪种类型的元数据
+
+调用自己的构造函数（C++11 引入）→ 构造函数委托（Constructor Delegation）
+
+进入MetadataKind定义，里面有一个#include "MetadataKind.def"
+其中记录了所有类型的元数据
+name	value
+Class	0x0
+Struct	0x200
+Enum	0x201
+Optional	0x202
+ForeignClass	0x203
+Opaque	0x300
+Tuple	0x301
+Function	0x302
+Existential	0x303
+Metatype	0x304
+ObjCClassWrapper	0x305
+ExistentialMetatype	0x306
+HeapLocalVariable	0x400
+HeapGenericLocalVariable	0x500
+ErrorObject	0x501
+LastEnumerated	0x7FF
+
+回到TargetMetaData结构体定义中，找方法getClassObject，
+在该方法中去匹配kind返回值是TargetClassMetadata类型
+如果是Class，则直接对this（当前指针，即metadata）强转为ClassMetadata
+ const TargetClassMetadata<Runtime> *getClassObject() const;
+ 
+//******** 具体实现 ********
+template<> inline const ClassMetadata *
+Metadata::getClassObject() const {
+  //匹配kind
+  switch (getKind()) {
+    //如果kind是class
+  case MetadataKind::Class: {
+    // Native Swift class metadata is also the class object.
+    //将当前指针强转为ClassMetadata类型
+    return static_cast<const ClassMetadata *>(this);
+  }
+  case MetadataKind::ObjCClassWrapper: {
+    // Objective-C class objects are referenced by their Swift metadata wrapper.
+    auto wrapper = static_cast<const ObjCClassWrapperMetadata *>(this);
+    return wrapper->Class;
+  }
+  // Other kinds of types don't have class objects.
+  default:
+    return nullptr;
+  }
+}
+这个地址中存储的是元数据信息
+所以，TargetMetadata 和 TargetClassMetadata 本质上是一样的，因为在内存结构中，可以直接进行指针的转换，
+所以可以说，我们认为的结构体，其实就是TargetClassMetadata
+
+进入TargetClassMetadata定义，继承自TargetAnyClassMetadata，有以下这些属性，这也是类结构的部分
+template <typename Runtime>
+struct TargetClassMetadata : public TargetAnyClassMetadata<Runtime> {
+    ...
+    //swift特有的标志
+    ClassFlags Flags;
+    //实例对象内存大小
+    uint32_t InstanceSize;
+    //实例对象内存对齐方式
+    uint16_t InstanceAlignMask;
+    //运行时保留字段
+    uint16_t Reserved;
+    //类的内存大小
+    uint32_t ClassSize;
+    //类的内存首地址
+    uint32_t ClassAddressPoint;
+  ...
+}
+进入TargetAnyClassMetadata定义，继承自TargetHeapMetadata
+template <typename Runtime>
+struct TargetAnyClassMetadata : public TargetHeapMetadata<Runtime> {
+    ...
+    ConstTargetMetadataPointer<Runtime, swift::TargetClassMetadata> Superclass;
+    TargetPointer<Runtime, void> CacheData[2];
+    StoredSize Data;
+    ...
+}
+
+当metadata的kind为Class时，有如下继承链：
+当前类返回的实际类型是 TargetClassMetadata,而TargetMetaData中只有一个属性kind，
+TargetAnyClassMetaData中有4个属性，分别是kind， superclass，cacheData、data
+当前Class在内存中所存放的属性由 TargetClassMetadata属性 + TargetAnyClassMetaData属性 + TargetMetaData属性 构成
+所以得出的metadata的数据结构体如下：
+struct swift_class_t: NSObject{
+    void *kind;//相当于OC中的isa，kind的实际类型是unsigned long
+    void *superClass;
+    void *cacheData;
+    void *data;
+    uint32_t flags; //4字节
+    uint32_t instanceAddressOffset;//4字节
+    uint32_t instanceSize;//4字节
+    uint16_t instanceAlignMask;//2字节
+    uint16_t reserved;//2字节
+    
+    uint32_t classSize;//4字节
+    uint32_t classAddressOffset;//4字节
+    void *description;
+    ...
+}
+
+
+与OC对比：
+实例对象 & 类
+OC中的实例对象本质是结构体，是通过底层的objc_object模板创建，类是继承自objc_class
+Swift中的实例对象本质也是结构体，类型是HeapObject，比OC多了一个refCounts
+
+方法列表
+OC中的方法存储在objc_class结构体class_rw_t的methodList中
+swift中的方法存储在 metadata 元数据中
+
+引用计数
+OC中的ARC维护的是散列表
+Swift中的ARC是对象内部有一个refCounts属性
+
+
+==================================================Swift属性
+属性主要分为以下几种：
+存储属性
+计算属性
+延迟存储属性
+类型属性
+
+1. 存储属性，又分两种：
+要么是常量存储属性，即let修饰
+要么是变量存储属性，即var修饰
+
+class CJLTeacher{
+    var age: Int = 18
+    var name: String = "CJL"
+}
+
+可以在SIL中体现：
+class CJLTeacher {
+    //_hasStorage 表示是存储属性
+  @_hasStorage @_hasInitialValue var age: Int { get set }
+  @_hasStorage @_hasInitialValue var name: String { get set }
+  @objc deinit
+  init()
+}
+存储属性特征：会占用占用分配实例对象的内存空间
+
+
+2. 计算属性
+是指不占用内存空间，本质是set/get方法的属性
+
+class Square{
+    var width: Double = 8.0
+    var area: Double{
+        get{
+            //这里的return可以省略，编译器会自动推导
+            return width * width
+        }
+        set{
+            width = sqrt(newValue)
+        }
+    }
+}
+print(class_getInstanceSize(Square.self))
+类Square的内存大小是24，等于 （metadata + refCounts）类自带16字节 + width（8字节） = 24，是没有加上area的。从这里可以证明 area属性没有占有内存空间。
+
+本质是set/get方法
+swiftc -emit-sil main.swift >> ./main.sil
+class Square {
+  @_hasStorage @_hasInitialValue var width: Double { get set }
+  var area: Double { get set }
+  @objc deinit
+  init()
+}
+
+
+3. 属性观察者（didSet、willSet）
+willSet：新值存储之前调用 newValue
+didSet：新值存储之后调用 oldValue
+
+class CJLTeacher{
+    var name: String = "测试"{
+        //新值存储之前调用
+        willSet{
+            print("willSet newValue \(newValue)")
+        }
+        //新值存储之后调用
+        didSet{
+            print("didSet oldValue \(oldValue)")
+        }
+    }
+}
+var t = CJLTeacher()
+t.name = "CJL"
+
+willSet newValue CJL
+didSet oldValue 测试
+
+
+init方法中是否会触发属性观察者
+运行结果发现，并没有走willSet、didSet中的打印方法，所以有以下结论：
+在init方法中，如果调用属性，是不会触发属性观察者的
+init中主要是初始化当前变量，除了默认的前16个字节，其他属性会调用memset清理内存空间（因为有可能是脏数据，即被别人用过），然后才会赋值
+
+
+哪里可以添加属性观察者？
+（1）
+类中定义的存储属性
+通过类继承的存储属性
+class CJLMediumTeacher: CJLTeacher{
+    override var age: Int{
+        //新值存储之前调用
+        willSet{
+            print("willSet newValue \(newValue)")
+        }
+        //新值存储之后调用
+        didSet{
+            print("didSet oldValue \(oldValue)")
+        }
+    }
+}
+
+（2）通过类继承的计算属性
+class CJLTeacher{
+    var age: Int = 18
+    
+    var age2: Int {
+        get{
+            return age
+        }
+        set{
+            self.age = newValue
+        }
+    }
+}
+var t = CJLTeacher()
+
+
+class CJLMediumTeacher: CJLTeacher{
+    override var age: Int{
+        //新值存储之前调用
+        willSet{
+            print("willSet newValue \(newValue)")
+        }
+        //新值存储之后调用
+        didSet{
+            print("didSet oldValue \(oldValue)")
+        }
+    }
+    
+    override var age2: Int{
+        //新值存储之前调用
+        willSet{
+            print("willSet newValue \(newValue)")
+        }
+        //新值存储之后调用
+        didSet{
+            print("didSet oldValue \(oldValue)")
+        }
+    }
+}
+
+
+子类和父类的属性同时存在didset、willset时，其调用顺序是什么？
+class CJLTeacher{
+    var age: Int = 18{
+        //新值存储之前调用
+        willSet{
+            print("父类 willSet newValue \(newValue)")
+        }
+        //新值存储之后调用
+        didSet{
+            print("父类 didSet oldValue \(oldValue)")
+        }
+    }
+    
+    var age2: Int {
+        get{
+            return age
+        }
+        set{
+            self.age = newValue
+        }
+    }
+}
+
+
+class CJLMediumTeacher: CJLTeacher{
+    override var age: Int{
+        //新值存储之前调用
+        willSet{
+            print("子类 newValue \(newValue)")
+        }
+        //新值存储之后调用
+        didSet{
+            print("子类 didSet oldValue \(oldValue)")
+        }
+    }
+    
+}
+
+var t = CJLMediumTeacher()
+t.age = 20
+对于同一个属性，子类和父类都有属性观察者，其顺序是：先子类willset，后父类willset，在父类didset， 子类的didset，即：子父 父子
+
+
+子类调用了父类的init，是否会触发观察属性？
+class CJLMediumTeacher: CJLTeacher{
+    override var age: Int{
+        //新值存储之前调用
+        willSet{
+            print("子类 willSet newValue \(newValue)")
+        }
+        //新值存储之后调用
+        didSet{
+            print("子类 didSet oldValue \(oldValue)")
+        }
+    }
+    
+    override init() {
+        super.init()
+        self.age = 20
+    }
+}
+
+//****** 打印结果 ******
+子类 willSet newValue 20
+父类 willSet newValue 20
+父类 didSet oldValue 18
+子类 didSet oldValue 18
+会触发属性观察者，主要是因为子类调用了父类的init，已经初始化过了，而初始化流程保证了所有属性都有值（即super.init确保变量初始化完成了），所以可以观察属性了
+
+
+4. 延迟属性
+使用lazy修饰的存储属性
+延迟属性必须有一个默认的初始值
+延迟存储在第一次访问的时候才被赋值，此前是没值的，哪怕设置了初始值
+###延迟存储属性并不能保证线程安全###
+延迟存储属性对实例对象大小的影响
+
+通过sil：
+lazy修饰的存储属性在底层是一个optional类型
+从getter方法中可以验证，在第一次访问时，就从没值变成了有值的操作
+
+lazy修饰的属性，在底层默认是optional，在没有被访问时，默认是nil，在内存中的表现就是0x0。
+在第一次访问过程中，调用的是属性的getter方法，其内部实现是通过当前enum的分支，来进行一个赋值操作（可选类型的底层是enum）
+
+可选类型是16字节吗？可以通过MemoryLayout打印
+size：实际大小
+stride：分配大小（主要是由于内存对齐）
+
+print(MemoryLayout<Optional<Int>>.stride)
+print(MemoryLayout<Optional<Int>>.size)
+16
+9
+为什么实际大小是9？Optional其本质是一个enum，其中Int占8字节，另一个字节主要用于存储case值
+
+一个类包含一个Int属性时：
+不使用lazy修饰的情况，类的内存大小是24
+使用lazy修饰的情况下，类的内存大小是32
+使用lazy和不使用lazy，其实例对象的内存大小是不一样的
+
+
+5. 类型属性
+使用关键字static修饰，且是一个全局变量
+类型属性必须有一个默认的初始值
+类型属性只会被初始化一次
+
+class CJLTeacher{
+    static var age: Int = 18
+}
+var age = CJLTeacher.age
+
+生成SIL文件，查看：
+发现多了一个全局变量，类型属性是一个全局变量
+其中 globalinit_029_12232F587A4C5CD8B1EEDF696793B2FC_func0是全局变量初始化函数
+builtin "once" ，通过断点调试，发现调用的是swift_once，表示属性只初始化一次
+源码中搜索swift_once，其内部是通过GCD的dispatch_once_f 单例实现
+void swift::swift_once(swift_once_t *predicate, void (*fn)(void *),
+                       void *context) {
+#if defined(__APPLE__)
+  dispatch_once_f(predicate, context, fn);
+#elif defined(__CYGWIN__)
+  _swift_once_f(predicate, context, fn);
+#else
+  std::call_once(*predicate, [fn, context]() { fn(context); });
+#endif
+}
+
+所以对于类型属性来说，一是全局变量，只初始化一次，二是线程安全的
+
+
+==================================================
+这个 const 表示指针指向的对象是常量
+const TargetClassMetadata<Runtime> *ptr;
+ptr->someMember = 5; // 编译错误，不能修改对象的成员
+ptr = anotherPtr;    // 合法，指针本身可以修改
+
+const 出现在函数签名的末尾，是一个 常量成员函数
+这个函数不会修改它所在的类的任何成员变量。

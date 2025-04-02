@@ -1,0 +1,204 @@
+class ViewController: UIViewController {
+    
+    let taskQueue = DispatchQueue(label: "TaskQueue")
+    let taskSubQueue = DispatchQueue(label: "taskSubQueue")
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        
+        taskQueue.async {
+            print("111")
+        }
+        
+        taskQueue.async {
+            print("222-111")
+            self.taskSubQueue.sync {
+                print("222-222")
+            }
+            print("222-333")
+        }
+        
+        taskQueue.async {
+            print("333")
+        }
+        
+        taskQueue.async {
+            print("444")
+        }
+        
+        taskQueue.async {
+            print("555")
+        }
+    }
+}
+111
+222-111
+222-222
+222-333
+333
+444
+555
+打印顺序固定
+
+
+self.taskSubQueue.sync换成self.taskSubQueue.async
+
+
+111
+222-111
+222-333
+333
+444
+222-222
+555
+或者
+111
+222-111
+222-333
+333
+222-222
+444
+555
+打印顺序不固定
+
+
+==================================================常驻线程，有个任务队列，有任务时处理，没有任务时休息
+轮询: 轮询方式被称为 忙等（busy-waiting），它是低效的，因为它占用了 CPU 时间，导致系统资源浪费。即使没有任务，CPU 也会被占用。
+轮询常用于一些简单的或低延迟要求不高的场景
+不过，这种做法通常会有一定的延迟
+
+例子：
+假设你在实现一个简单的网络客户端，轮询从网络套接字中接收数据。当没有数据可读时，线程就会阻塞，但每隔一段时间，它会检查一下网络连接，看看是否有新数据到达。
+假设每次轮询检查的间隔是 100 毫秒。
+理想情况：如果没有数据，线程每次都要休眠 100 毫秒再检查一次。
+延迟的场景：假设有一个数据包在第 50 毫秒时到达，这时线程正在休眠中，直到 100 毫秒时才会醒来继续检查网络连接。
+所以，你会经历 50 毫秒的延迟——即使数据包已经到达，线程在这一段时间内没有被通知。
+这个延迟是由轮询的固定间隔（100 毫秒）引入的。即使数据很早就到了，线程也必须等到下一个轮询周期才能被唤醒。
+这对于一些低延迟要求的应用，比如实时通信或在线游戏等，可能会造成体验上的问题。
+与此相比，RunLoop 机制会让线程在没有任务时完全阻塞，直到有新的事件到来，能实现更精确的调度，因此能更及时地响应事件。
+
+在轮询模型中，程序不断地检查套接字是否有数据可读（通常是通过 recv()、read() 等系统调用），如果没有，它就会继续检查或者阻塞一段时间再检查。
+
+select 和 poll 是传统的 I/O 多路复用技术，允许程序在多个套接字上同时等待事件的发生。
+当你调用 select 或 poll 时，操作系统会帮你检测哪些套接字有数据可读，哪些可以写数据，或者哪些发生了异常。
+这种模型会让线程在等待 I/O 时被阻塞，直到某个套接字的状态发生变化。
+但 select 和 poll 也有一个限制：当你监听的套接字数量很多时，它们的性能会变得较差（尤其是 select，因为它的文件描述符上限是有限的）。
+而且，像轮询一样，select 和 poll 也有一定的延迟，特别是在有大量套接字需要检查时。
+
+epoll 是 Linux 特有的一种更高效的 I/O 多路复用机制，解决了 select 和 poll 的性能瓶颈。
+它采用了事件驱动的方式，只有在套接字的状态发生变化时，才会通知应用程序。这使得程序可以避免定期轮询的延迟。
+像 epoll 这样的事件驱动模型，正是为了避免轮询中那种不必要的延迟，让程序在有事件时尽早响应，而不是在固定的轮询周期后才去处理。
+
+轮询：简单，但会有明显的延迟，尤其是在轮询间隔不匹配时。
+select/poll：更高效，但在大量套接字的情况下，性能会退化，且也有一定延迟。
+epoll：效率高，低延迟，适合处理大量并发连接。
+
+
+class TaskManager {
+    private var tasks: [() -> Void] = []
+    private let semaphore = DispatchSemaphore(value: 0)
+    private let taskQueueLock = NSLock()
+    private let taskQueue = DispatchQueue(label: "taskQueue")  // 任务队列
+    private let taskProcessingQueue = DispatchQueue(label: "taskProcessingQueue", qos: .background)  // 任务处理队列
+
+    // 启动任务处理线程
+    init() {
+        // 只启动一次任务处理线程
+        taskProcessingQueue.async {
+            self.processTasks()
+        }
+    }
+
+    // 添加任务到队列
+    func addTask(_ task: @escaping () -> Void) {
+        /*
+        #####
+        注意点:
+        taskQueue 是一个串行队列，async 表示异步执行代码块。
+        因此，每次调用 taskQueue.async {} 都会将传入的任务（即代码块）放入串行队列 taskQueue 中执行。
+        这个队列是串行的，所以任务会按照先后顺序执行
+
+        当第一次调用 addTask 时，taskQueue.async {} 中的代码会异步执行，并将任务添加到 taskQueue。
+        注意，taskQueue.async 不会创建新的线程，而是使用系统的线程池。(###不是创建一个新的线程，而是启动一个新的线程来处理任务队列###)
+        它会把任务放入串行队列中，系统会根据任务队列的空闲情况从线程池中分配一个线程来执行这个代码块。
+
+        后续调用 addTask，都会将新的任务添加到 taskQueue 串行队列中，后续的任务会继续按顺序排队执行。
+        任务可能会在不同的线程上执行，因为系统调度会根据当前空闲的线程来执行这些任务。
+
+        所以，每次代码块的任务都可能是在不同的线程执行，只不过任务是一个一个执行的
+
+        线程池：操作系统通常会维护一个线程池，当串行队列中的任务准备好执行时，线程池中的空闲线程会被分配来执行该任务。
+        由于是 串行队列，即使系统可能使用不同的线程来执行不同的任务，但 每个任务会按顺序一个一个执行，永远不会并行
+
+        线程池的工作方式：
+        操作系统会使用 线程池 来分配线程。如果串行队列中有多个任务，操作系统可能会从线程池中选择不同的线程来执行每个任务。
+        虽然它们是顺序执行的，但每个任务会在哪个线程上执行取决于系统的线程池管理和线程调度。
+        调度决定执行线程：
+        串行队列只是确保任务按顺序执行，而 线程的分配 是由操作系统的调度器决定的，可能会使用不同的线程池中的线程来执行任务。
+        #####
+        */
+        taskQueue.async {
+            self.taskQueueLock.lock()
+            self.tasks.append(task)
+            print("Added task to queue.", Thread.current)
+            self.taskQueueLock.unlock()
+
+            // 唤醒等待中的线程
+            /*
+            #####
+            当你调用 semaphore.signal() 时，它会增加信号量的计数，表示有一个资源或者任务可以被处理。这就像在任务队列中通知某个等待的线程“现在可以继续执行了”。
+            semaphore.signal() 会唤醒一个正在等待的线程。操作系统根据线程的优先级和调度策略来决定哪个线程会被唤醒。线程并不会立刻获取 CPU 时间，它可能需要排队等待直到操作系统为它分配时间片。
+            #####
+            */
+            self.semaphore.signal()
+        }
+    }
+
+    // 处理任务队列中的任务
+    private func processTasks() {
+        while true {
+            /*
+            #####taskQueueLock.lock() 和 taskQueueLock.unlock() 都需要保证最小的临界区，即在锁定期间尽量避免做其他耗时操作，避免锁竞争。#####
+            */
+            taskQueueLock.lock()
+            // 如果队列为空，等待新任务
+            if tasks.isEmpty {
+                print("No tasks, resting...")
+                taskQueueLock.unlock() // 解锁后等待
+                semaphore.wait() // 阻塞，直到有任务被添加
+                taskQueueLock.lock() // 再次锁定
+            }
+
+            // 获取队列中的任务并处理
+            if let task = tasks.first {
+                tasks.removeFirst()
+                print("Processing task...")
+                task()
+            }
+
+            taskQueueLock.unlock() // 处理完任务后释放锁
+        }
+    }
+}
+
+// 示例任务
+func exampleTask() {
+    print("Task executed!")
+}
+
+// 创建任务管理器
+let taskManager = TaskManager()
+
+// 模拟添加任务
+taskManager.addTask(exampleTask)
+taskManager.addTask {
+    print("Another task executed!")
+}
+
+
+
+事件驱动：runloop
+使用 RunLoop 可以让线程在没有任务时自动进入休眠状态，不会占用 CPU 资源。
+RunLoop 适合处理长期运行的任务，尤其是需要长时间保持活跃、且没有持续任务需要处理的情况。例如，在 UI 线程中使用 RunLoop 以处理事件、定时器等任务。
+RunLoop 是事件驱动的，可以挂起线程，直到新的事件或任务到来，这样的模型比简单的轮询更加高效。
+

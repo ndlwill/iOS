@@ -1,0 +1,429 @@
+用于超时管理的min_heap，在执行主循环的过程中，它每次都会去检查min_heap的堆顶event是否超时，
+如果超时的话就进行相应的处理并且从min_heap中移除这个event，然后调整整个堆，直到堆顶event未超时则停止检查。
+这种方法虽然好，逻辑清晰，看上去每次删除堆顶超时的event时间复杂度只需要O(logn)，效率也足够高，
+但是如果某次主循环中超时的event过多，假设有m个event超时了需要同时处理，那么此时需要花费的时间就是O(mlogn),
+当m足够多的时候，这个效率还是比较低的，因此就引入了common_timeout这一结构。
+
+common_timeout的作用:
+common_timeout把base中所有拥有共同点的event放在了一起，而这个所谓的“共同点”就是指超时时长相同，这些超时时长相同的event，他们的超时时间是不同的。
+
+举个例子，我添加了一个eventA，设置它的超时时长为5分钟，即如果5分钟内没有触发相应事件，那么5分钟后就直接进行回调处理；
+然后我再添加了一个eventB，也设置它的超时时长为5分钟。那么就称eventA和eventB具有相同的超时时长。
+如果eventA添加的时间为10:00，eventB添加的时间为11:00，那么二者的超时时间就一个是10:05，另一个就是11:05，因此超时时长相同，但是超时时间是不同的。
+
+###
+拥有相同超时时长的所有event构成一个链表events，并且让它们按照超时时间的先后按升序排列（即相同超时时长中最先超时的那个event放在最前面）
+###
+而events中设置一个内部使用的timeout_event作为代表，把最先超时的那个event的超时时间添加到timeout_event中
+然后把timeout_event放到min_heap中，当放到min_heap中的timeout_event超时，就回到events中，从前往后把所有超时的event全部激活。
+
+在这种情况下，相当于每一个由相同超时时长的event组成的链表都在min_heap中存在一个“代表”
+
+到底是否使用common_timeout，还是视情况而定，这也是为什么在libevent中虽然设计了common_timeout，
+但是并没有将其直接用来管理超时，而是留给用户接口去选择是否使用common_timeout，可见，common_timeout+min_heap的超时管理并非就一定比只使用min_heap的效率高。
+而至于具体在什么情况下使用哪种方式，个人觉得如果超时的event很多那还是应该考虑使用common_timeout+min_heap，
+因为event很多的话分布的链表也更大概率密集一些；如果超时的event比较少的话，还是应该只使用min_heap。
+
+
+struct event_base
+{
+    ......
+ 
+    /** An array of common_timeout_list* for all of the common timeout
+	 * values we know. */
+	struct common_timeout_list **common_timeout_queues;   //common_timeout_list *数组，存放不同超时时长的common_timeout_list的指针
+	/** The number of entries used in common_timeout_queues */
+	int n_common_timeouts;  //common_timeout_queues中实际的元素个数
+	/** The total size of common_timeout_queues. */
+	int n_common_timeouts_allocated;  //common_timeout_queues的容量
+    ......
+}
+
+ommon_timeout_queues是一个common_timeout_list *类型的指针数组，其中每个元素都指向一个common_timeout_list
+//event-internal.h
+struct common_timeout_list {
+	/* List of events currently waiting in the queue. */
+	struct event_list events;  //event的双向链表
+	/* 'magic' timeval used to indicate the duration of events in this
+	 * queue. */
+	struct timeval duration;  //该common_timeout_list的超时时长，events双向链表中的所有event都是相同的超时时长
+	/* Event that triggers whenever one of the events in the queue is
+	 * ready to activate */
+	struct event timeout_event;  //“event代表”，最终只有这个event实际插到了min_heap中
+	/* The event_base that this timeout list is part of */
+	struct event_base *base;  //该common_timeout_list所在的event_base
+};
+ 
+//event_struct.h
+ 
+TAILQ_HEAD (event_list, event);  //由event组成的双向链表
+
+
+每一个event_base都对应一个common_timeout_list *的数组common_timeout_queues，它其中每个元素都指向一个common_timeout_List，
+每一个common_timeout_list都指明了其对应的超时时长（duration），以及超时时长相同都等于duration的所有event组成的双向链表（events）。
+此外就是timeout_event，这个event最终会作为“代表”插入到min_heap中，实际min_heap处理的超时event也是timeout_event。
+
+举个例子，假如common_timeout_queues[0]对应的common_timeout_list的duration为3s，
+那么这个common_timeout_list的events双向链表中就会存放所有超时时长为3s的event。
+不过这必须保证这里设置的“3s”必须是common_timeout的3s而不是普通超时结构体的3s。
+
+==============================common_timeout与一般timeout的区分
+对于一个timeval超时结构体来说，它有两个成员，一个数tv_sec用来指明超时时间中的秒数，一个就是tv_usec用来指明超时时间中的微秒数。
+由于微秒的数值范围只能是0~999999，而tv_usec的变量类型实际上是32位的，能表示的数值范围远远大于999999，因此用低20位足以来表示timeval中的tv_usec，这样一来，tv_usec的高12位就是没有使用的。
+而libevent中则是通过这高12位来区分一个timeval超时结构体是common_timeout还是普通的timeout。
+
+//event-internal.h
+#define COMMON_TIMEOUT_MICROSECONDS_MASK       0x000fffff   //取低20位掩码 5个f*4=20位
+ 
+//event.c
+#define MICROSECONDS_MASK       COMMON_TIMEOUT_MICROSECONDS_MASK   //取低20位，即微秒超时时长
+#define COMMON_TIMEOUT_IDX_MASK 0x0ff00000   //20~27bit为该超时时长在common_timeout_queues中的位置
+#define COMMON_TIMEOUT_IDX_SHIFT 20          //微秒最大为999999，因此用低20位存储即可，高12位中前4位标识是否为common_timeout 
+#define COMMON_TIMEOUT_MASK     0xf0000000   //取高四位掩码
+#define COMMON_TIMEOUT_MAGIC    0x50000000   //高四位标志是否为common timeout
+
+timeval结构体中的tv_usec由32位表示，而实际上微秒的数值只需低20位即可表示，因此，tv_usec & MICROSECONDS_MASK  即可得到低20位的值，也就是实际的微秒数值。
+
+对于高12位来说，tv_usec的高4位用来判断一个这个timeval是否是common_timeout
+因为用 tv_usec & COMMON_TIMEOUT_MASK就可以屏蔽掉除高4位以外的其他位
+在libevent中规定，如果屏蔽掉低位后得到的值刚好是COMMON_TIMEOUT_MAGIC（即0x5000000），那么就说明这个timeval是一个common_timeout，否则就表示这个timeval只是一个普通的超时结构体。
+
+如果是common_timeout，那么这个event是放在base的common_timeout_queues某一项（如common_timeout_queues[i]）所对应的common_timeout_list中的
+而tv_usec剩下的20~27bit则用来表示这个common_timeout所在的common_timeout_list在common_timeout_queues数组中的索引。
+举个例子，如果tv_usec的20~27bit为00000101，则说明这个tv_usec对应的common_timeout_list放在common_timeout_queues[5]下面
+
+==============================获取common_timeout在common_timeout_queues中的下标
+#define COMMON_TIMEOUT_IDX(tv) \ //获取tv所在的common_timeout_list在common_timeout_queues中的位置
+	(((tv)->tv_usec & COMMON_TIMEOUT_IDX_MASK)>>COMMON_TIMEOUT_IDX_SHIFT)//20~27bit右移20位得到下标
+
+将tv_usec与COMMON_TIMEOUT_IDX_MASK按位与，屏蔽掉tv_usec除20~27bit以外的其他位，
+得到的结果再右移20位得到的结果就是原来的tv_usec的20~27bit的值，
+这个值就是common_timeout对应的common_timeout_list对应在common_timeout_queues中的下标。
+
+==============================判断一个timeval是否为common_timeout
+static inline int
+is_common_timeout(const struct timeval *tv,
+    const struct event_base *base)
+{
+	int idx;
+	if ((tv->tv_usec & COMMON_TIMEOUT_MASK) != COMMON_TIMEOUT_MAGIC)//取高4位，COMMON_TIMEOUT_MAGIC说明它是一个common timeout，如果高四位不等于COMMON_TIMEOUT_MAGIC，那么就不是commontimeout
+		return 0;
+	idx = COMMON_TIMEOUT_IDX(tv);
+	return idx < base->n_common_timeouts; //下标必须小于 base中common_timeout_queues的实际元素个数
+}
+
+==============================判断两个timeval是否是同样的common_timeout
+static inline int
+is_same_common_timeout(const struct timeval *tv1, const struct timeval *tv2)
+{
+	return (tv1->tv_usec & ~MICROSECONDS_MASK) ==
+	    (tv2->tv_usec & ~MICROSECONDS_MASK);   //比较的实际上是20~31bit，如果相同则说明两个超时共用同一个common timeout
+}
+
+
+==============================获取common_timeout对应的common_timeout_list
+static inline struct common_timeout_list *  //获得tv所在的common_timeout_list指针
+get_common_timeout_list(struct event_base *base, const struct timeval *tv)
+{
+	return base->common_timeout_queues[COMMON_TIMEOUT_IDX(tv)];  
+}
+
+==============================创建一个common_timeout
+如果想要创建一个common_timeout，首先就必须在base的common_timeout_queues中有相应的common_timeout_list去存放这个common_timeout所对应的event
+也就是说，创建一个common_timeout就必须在base中有相应的空间
+第二点则是，common_timeout与一般的timeval不同，其tv_usec中的高12位存放的都是common_timeout相关的信息，
+如果想把一个普通的timeval，那么就必须对timeval的tv_usec高12位进行修改才行，而这种修改不应该由用户手动修改，这样显得太麻烦了。
+
+以上两点，是创建一个common_timeout的条件
+const struct timeval *
+event_base_init_common_timeout(struct event_base *base,
+    const struct timeval *duration) //查看base中是否有duration相应的common_timeout_list，如果没有就分配一个，并且将新分配中的timeout_event进行设置回调函数。传入的duration既可以是带掩码的也可以是不带掩码的，返回的是相应的common_timeout_list的duration
+{
+	int i;
+	struct timeval tv;
+	const struct timeval *result=NULL;
+	struct common_timeout_list *new_ctl;
+ 
+	EVBASE_ACQUIRE_LOCK(base, th_base_lock);
+	if (duration->tv_usec > 1000000) { //微秒最大值应该是999999，如果超过了1000000，要么它是一个common_timeout，就取出实际的超时时间，否则就把微秒进位到秒上去
+		memcpy(&tv, duration, sizeof(struct timeval));
+		if (is_common_timeout(duration, base))
+			tv.tv_usec &= MICROSECONDS_MASK;
+		tv.tv_sec += tv.tv_usec / 1000000;
+		tv.tv_usec %= 1000000;
+		duration = &tv;   //更新duration的实际时长
+	}
+	for (i = 0; i < base->n_common_timeouts; ++i) { //遍历现在有的common_timeout_list，查看是否存在超时时长等于duration的list
+		const struct common_timeout_list *ctl =
+		    base->common_timeout_queues[i];
+		if (duration->tv_sec == ctl->duration.tv_sec &&
+		    duration->tv_usec ==
+		    (ctl->duration.tv_usec & MICROSECONDS_MASK)) {
+			EVUTIL_ASSERT(is_common_timeout(&ctl->duration, base));
+			result = &ctl->duration; //如果存在duration等于传入的参数的common_timeout_list，那么就把这个common_timeout_list的duration存到result中返回即可。
+			goto done;
+		}
+	}
+	
+	if (base->n_common_timeouts == MAX_COMMON_TIMEOUTS) {
+		event_warnx("%s: Too many common timeouts already in use; "
+		    "we only support %d per event_base", __func__,
+		    MAX_COMMON_TIMEOUTS);
+		goto done;
+	}
+	if (base->n_common_timeouts_allocated == base->n_common_timeouts) { //如果base中的common_timeout_list分配满了
+		int n = base->n_common_timeouts < 16 ? 16 : //如果少于16则分配16的容量，否则容量加倍
+		    base->n_common_timeouts*2;
+		struct common_timeout_list **newqueues =
+		    mm_realloc(base->common_timeout_queues,
+			n*sizeof(struct common_timeout_queue *));//重新分配common_timeout_queues的空间大小
+		if (!newqueues) {
+			event_warn("%s: realloc",__func__);
+			goto done;
+		}
+		base->n_common_timeouts_allocated = n;  //更新common_timeout_queues地址及其容量
+		base->common_timeout_queues = newqueues;
+	}
+    //执行到这里说明没有common_timeout_list的duration等于传入的参数duration
+	new_ctl = mm_calloc(1, sizeof(struct common_timeout_list));   //新分配一个common_timeout_list
+	if (!new_ctl) {
+		event_warn("%s: calloc",__func__);
+		goto done;
+	}
+	TAILQ_INIT(&new_ctl->events); //初始化该duration对应的events链表为空
+	new_ctl->duration.tv_sec = duration->tv_sec;
+	new_ctl->duration.tv_usec =
+	    duration->tv_usec | COMMON_TIMEOUT_MAGIC |
+	    (base->n_common_timeouts << COMMON_TIMEOUT_IDX_SHIFT);  //把微秒转换为为带掩码、并且添上下标位
+	evtimer_assign(&new_ctl->timeout_event, base,
+	    common_timeout_callback, new_ctl); //给新分配的common_timeout_list中的timeout_event注册信息，回调函数为common_timeout_callback
+	new_ctl->timeout_event.ev_flags |= EVLIST_INTERNAL;  //标志为内部使用的event
+	event_priority_set(&new_ctl->timeout_event, 0);  //设置timeout_event的优先级为0
+	new_ctl->base = base;
+	base->common_timeout_queues[base->n_common_timeouts++] = new_ctl; //在common_timeout_queues现有元素的最后加上新创建的common_timeout_list
+	result = &new_ctl->duration;  //result保存common_timeout_list的duration
+ 
+done:
+	if (result)
+		EVUTIL_ASSERT(is_common_timeout(result, base));
+ 
+	EVBASE_RELEASE_LOCK(base, th_base_lock);
+	return result;  //返回的result是已经设置过相应标志位的common_timeout，也就是指定了超时时长为duration的common_timeout，之后就可以用result作为参数调用event_add，就可以把event添加到相应的common_timeout_list中
+}
+
+传入该函数的参数一个是base，这没有什么可说的，另一个就是duration。
+这里的duration是什么意思呢？比如说你想在后面为一个event添加一个超时时长为3s的common_timeout，
+那么你就需要先把3s作为这里的duration参数去调用event_base_init_common_timeout函数
+
+如果找到了，那么就直接把这个common_timeout_list的duration存到result中返回
+这里common_timeout_list的duration和传入的3s的duration是不同的，传入的duration只是你单纯想要的一个3s，
+而传出的duration则是在这个3s的基础上设置好了高12位的common_timeout。
+
+如果没找到，那么就会重新创建一个common_timeout_list并将其放到base的common_timeout_queues中，
+然后把传入的3s的timeval的tv_usec加上高12位的标志位作为新建的common_timeout_list的duration，
+并且将这个duration存到result中
+
+除此之外，对于新建的common_timeout_list，还会通过event_assign来对的timeout_event成员进行注册，为这个timeout_event添加回调函数等信息
+evtimer_assign(&new_ctl->timeout_event, base,common_timeout_callback, new_ctl); 
+//event.h
+#define evtimer_assign(ev, b, cb, arg)  event_assign((ev), (b), -1, 0, (cb), (arg))
+这个timeout_event最终会被作为整个common_timeout_list上所有event的“代表”添加到min_heap中
+
+调用该函数后，返回的timeval实际上是时间设置与传入的duration相同，但是变成了common_timeout
+这样如果你后面想为一个event添加一个3s中的common_timeout，就可以用返回的timeval作为超时参数。
+
+==============================为event添加common_timeout
+通过event_add函数可以向base中添加一个监听事件event，并且设置监听超时timeval，该函数内部实际上是调用的event_add_internal实现相应功能的。
+
+看看该函数是如何为一个event添加一个common_timeout的
+static inline int
+event_add_internal(struct event *ev, const struct timeval *tv,
+    int tv_is_absolute)  //根据event的类型events来将其放到对应的queue中，并且设置相应的flag，如果还设置了超时，就将event的超时结构体放到定时器堆中
+{   
+        ......
+ 
+		gettime(base, &now); //获取系统时间
+ 
+		common_timeout = is_common_timeout(tv, base);
+		if (tv_is_absolute) {  //如果是绝对时间 就直接用ev_timeout存储
+			ev->ev_timeout = *tv;
+		} else if (common_timeout) {   //如果不是绝对时间，是common_timeout的话就要处理一下高12位的标志
+			struct timeval tmp = *tv;
+			tmp.tv_usec &= MICROSECONDS_MASK;  //传入的相对时间实际上只是低20位
+			evutil_timeradd(&now, &tmp, &ev->ev_timeout);  //将绝对时间加上相对时间，作为超时时间
+			ev->ev_timeout.tv_usec |=
+			    (tv->tv_usec & ~MICROSECONDS_MASK);//将tv->tv_usec的高12位添加到ev_timeout中
+		} else {
+			evutil_timeradd(&now, tv, &ev->ev_timeout); //如果就只是一个普通的相对时间，就直接用绝对时间加上该值作为超时时间
+		}
+		//执行到这里，ev->ev_timeout中存放的就是绝对时间了。
+		event_debug((
+			 "event_add: timeout in %d seconds, call %p",
+			 (int)tv->tv_sec, ev->ev_callback));
+ 
+		event_queue_insert(base, ev, EVLIST_TIMEOUT); //插入到超时队列中，如果是common_timeout就插入到相应的common_timeout_List按升序排列的events的相应位置，否则就直接插入到min_heap中
+		
+ 
+        if (common_timeout) {//如果是common_timeout，仅当event是common_timeout_list中的第一项会将其插入到min_heap中
+			struct common_timeout_list *ctl =
+			    get_common_timeout_list(base, &ev->ev_timeout); //得到超时时间所对应的common_timeout_list
+			if (ev == TAILQ_FIRST(&ctl->events)) { //判断ev是否是其对应的common_timeout_list的第一项
+				common_timeout_schedule(ctl, &now, ev); //如果ev是第一项，说明它就是整个list中最先超时的那个event，就用该event的超时时间作为参数
+			}
+		} 
+		......
+}
+
+按照event_queue_insert(base, ev, EVLIST_TIMEOUT);一句分为上下两部分
+对于上面一部分，会先获取当前的系统时间到now中（这里的系统时间指的是从1970年1月1日到现在的时间）
+由于event的ev_timeout成员中存储的超时是相对于系统时间来说的绝对超时时长，而我们传入的tv一般来说都是相对超时时长
+因此如果传入的tv是common_timeout（非绝对时间），那么就会先将tv的tv_usec微秒定时与掩码进行按位与，
+那么得到的tv就是不带common_timeout掩码的相对超时时长，然后将这个超时时长与当前的系统时间求和，得到的就是绝对超时时间保存到ev_timeout中
+也就是当系统时间到达ev_timeout的时间，相应事件才会超时。
+然后将ev_timeout的超时时间做好之后，就可以通过ev->ev_timeout.tv_usec |=(tv->tv_usec & ~MICROSECONDS_MASK);来给ev_timeout添加common_timeout的12位标志。
+
+因此上面部分代码的主要作用是：如果传入的tv是common_timeout，那么就先根据这个common_timeout取出它的实际超时时长，
+然后将这个超时时长加上系统时间得到绝对超时时间，并将其保存到event的ev_timeout中并为其添加common_timeout的标志位
+以上部分程序，相当于只是让event的ev_timeout保存了这个common_timeout
+但是如果想让base按照common_timeout去处理这个event，那么就还需要把这个event放到common_timeout对应的common_timeout_list中，接下来调用的event_queue_insert就做了这样的事情：
+static void 
+event_queue_insert(struct event_base *base, struct event *ev, int queue)
+{
+	......
+	switch (queue) {
+	......
+	case EVLIST_TIMEOUT: {   //如果是设置超时事件
+		if (is_common_timeout(&ev->ev_timeout, base)) {
+			struct common_timeout_list *ctl =
+			    get_common_timeout_list(base, &ev->ev_timeout);
+			insert_common_timeout_inorder(ctl, ev);
+		} else
+			min_heap_push(&base->timeheap, ev);
+		break;
+	}
+	......
+}
+
+对于common_timeout来说，这里传入的queue就是EVLIST_TIMEOUT
+该函数的目的就是将event插入到base的超时队列中
+由于上面那段程序已经设置了event的ev_timeout，因此这里is_common_timeout(&ev->ev_timeout, base)就为真
+紧接着获取了base中ev_timeout对应的那个common_timeout_list，并且调用了insert_common_timeout_inorder函数: 这是向common_timeout_list中按序插入这个event
+
+static void
+insert_common_timeout_inorder(struct common_timeout_list *ctl,
+    struct event *ev)//不一定就能保证后插入的超时一定比先插入的超时长，因此需要遍历events找到合适插入的地方，而由于后插的超时更大可能靠后，因此从后往前
+{
+	struct event *e;
+	/* By all logic, we should just be able to append 'ev' to the end of
+	 * ctl->events, since the timeout on each 'ev' is set to {the common
+	 * timeout} + {the time when we add the event}, and so the events
+	 * should arrive in order of their timeeouts.  But just in case
+	 * there's some wacky threading issue going on, we do a search from
+	 * the end of 'ev' to find the right insertion point.
+	 */
+	TAILQ_FOREACH_REVERSE(e, &ctl->events,
+	    event_list, ev_timeout_pos.ev_next_with_common_timeout) {
+		/* This timercmp is a little sneaky, since both ev and e have
+		 * magic values in tv_usec.  Fortunately, they ought to have
+		 * the _same_ magic values in tv_usec.  Let's assert for that.
+		 */
+		EVUTIL_ASSERT(
+			is_same_common_timeout(&e->ev_timeout, &ev->ev_timeout));
+		if (evutil_timercmp(&ev->ev_timeout, &e->ev_timeout, >=)) {
+			TAILQ_INSERT_AFTER(&ctl->events, e, ev,
+			    ev_timeout_pos.ev_next_with_common_timeout);
+			return;
+		}
+	}
+	TAILQ_INSERT_HEAD(&ctl->events, ev,
+	    ev_timeout_pos.ev_next_with_common_timeout);
+}
+
+insert_common_timeout_inorder函数的作用就是按照升序把event插到其对应的那个common_timeout_list中
+把event按升序插入common_timeout_list中时是逆向遍历插入而不是正向遍历插入的，这是因为从逻辑上来说，
+先插入队列的event它的超时时间应该更早，后插入的event它的超时时间更晚，因此新插入的event更有可能在队列中靠后，
+所以逆向遍历会更快一些。
+
+这里调用event_queue_insert函数实际上是把common_timeout event按升序插入到相应的common_timeout_list中
+
+==============================从common_timeout_list到min_heap
+common_timeout的event是如何与min_heap产生联系的？
+
+在event_queue_insert之后，还有这段代码
+static inline int
+event_add_internal(struct event *ev, const struct timeval *tv,
+    int tv_is_absolute) 
+{   
+        ......
+		if (common_timeout) {//如果是common_timeout，仅当event是common_timeout_list中的第一项会将其插入到min_heap中
+			struct common_timeout_list *ctl =
+			    get_common_timeout_list(base, &ev->ev_timeout); //得到超时时间所对应的common_timeout_list
+			if (ev == TAILQ_FIRST(&ctl->events)) { //判断ev是否是其对应的common_timeout_list的第一项
+				common_timeout_schedule(ctl, &now, ev); //如果ev是第一项，说明它就是整个list中最先超时的那个event，就用该event的超时时间作为参数
+			}
+		} 
+	......
+}
+由于前面已经为event的ev_timeout进行了赋值，在common_timeout的情况下，ev_timeout中存放的是common_timeout形式的绝对超时时间。
+先通过get_common_timeout_list函数取得ev_timeout在base中对应的那个common_timeout_list
+然后去判断event是不是这个common_timeout_list的第一项，由于整个common_timeout_list是按照超时时间升序排列的，因此common_timeout_list的第一项肯定是最先超时的那个event。
+这里调用了common_timeout_schedule
+
+static void
+common_timeout_schedule(struct common_timeout_list *ctl,
+    const struct timeval *now, struct event *head)
+{
+	struct timeval timeout = head->ev_timeout;  //获取的是第一个超时的event的超时时间
+	timeout.tv_usec &= MICROSECONDS_MASK;   //取出低20位
+	event_add_internal(&ctl->timeout_event, &timeout, 1);  //此时的timeout是一个非common_timeout
+	//添加的其实是common_timeout_list中的那个timeout_event，这是一个内部event，设置了回调函数为timeout_callback，但是超时时间设置的是list中最先超时的那个event的超时时间
+}
+
+调用该common_timeout_schedule的前提是前面所说的那个带common_timeout的event是其对应的common_timeout_list中最先超时的那个event
+在该函数中，先用timeout变量保存了这个event的超时时间，由于这个超时时间是一个common_timeout，因此通过掩码按位与获得一个实际超时时间
+接着是最关键的一步：把common_timeout_list中的timeout_event添加到事件监听中。而这个timeout_event，在event_base_init_common_timeout函数中就已经通过evtimer_assign(&new_ctl->timeout_event, base,common_timeout_callback, new_ctl);为其注册了回调函数等信息
+这里调用event_add_internal所使用的timeout并不是一个common_timeout，并且还是最先超时的那个event的超时时间。
+event_queue_insert函数中，可以发现，如果这个event所设置的超时不是common_timeout，那么就会直接把这个超时放到min_heap中
+简单来说，common_timeout_schedule就是把common_timeout_list中的最先超时的那个event的超时添加到了timeout_event中
+而这个timeout_event，最终作为整个common_timeout_list的“代表”，被添加到了min_heap中。
+
+==============================激活common_timeout对应的event
+被插入到heap中的timeout_event设置的回调函数是common_timeout_callback，
+当min_heap中的timeout_event发生超时而激活后，就会直接去调用common_timeout_callback
+
+static void
+common_timeout_callback(evutil_socket_t fd, short what, void *arg)
+{
+	struct timeval now;
+	struct common_timeout_list *ctl = arg;  //传入的参数是event所在的那个common_timeout_list
+	struct event_base *base = ctl->base;
+	struct event *ev = NULL;
+	EVBASE_ACQUIRE_LOCK(base, th_base_lock);
+	gettime(base, &now);  //获取系统时间
+	while (1) {
+		ev = TAILQ_FIRST(&ctl->events); //遍历这个common_timeout_list中的所有event，如果有超时的就添加到激活队列中
+		if (!ev || ev->ev_timeout.tv_sec > now.tv_sec ||
+		    (ev->ev_timeout.tv_sec == now.tv_sec &&
+			(ev->ev_timeout.tv_usec&MICROSECONDS_MASK) > now.tv_usec))
+			break;
+		event_del_internal(ev);
+		event_active_nolock(ev, EV_TIMEOUT, 1);
+	}
+	if (ev) //此时的ev如果不为空，那么它就是未来最先超时的那个event
+		common_timeout_schedule(ctl, &now, ev); //重新将这个event的超时时间加上common_timeout_callback添加到min_heap中
+	EVBASE_RELEASE_LOCK(base, th_base_lock);
+}
+
+当作为common_timeout_list的timeout_event超时激活后，就会回到common_timeout_list中，从前往后遍历events链表中的event
+如果发现超时的，就把超时的event以EV_TIMEOUT的形式激活。
+当遍历到第一个未超时的event，那么其后的所有event肯定都是未超时的了，然后就退出遍历。
+此时的ev指针就指向第一个未超时的event，这个event实际上就是未来最先超时的event，然后再次调用common_timeout_schedule函数，就以这个event的超时为基础，重新插入一个新的“代表”timeout_event到min_heap中。
+
+common_timeout_callback函数的作用就是遍历common_timeout_list中的event，激活所有超时的event，并且根据未来最先超时的那个event重新设置一个新的“代表”timeout_event插入到min_heap中。
+
+总结:
+每一个base中都有一个common_timeout_queues，这是一个common_timeout_list的指针，每个元素都对应一个common_timeout_list。
+每一个这样的list中都放着具有相同超时时长的event，但是这些event按照超时时间升序排列，还有一个timeout_event，这个timeout_event也是一个event，只不过是内部使用的,
+因此它会有EVLIST_INTERNAL的标志，timeout_event的ev_timeout设置的超时时间是整个list中最先超时的那个event的超时时间，回调函数设置为common_timeout_callback,
+后把timeout_event放到min_heap中。当timeout_event激活后，自动调用common_timeout_callback函数,
+该函数会去激活整个list中所有超时的event，并且删除这些超时的event，最后剩下来的第一个event就成了最先超时的那个event了，然后把它的超时时间重新设置到timeout_event中，再把timeout_event重新丢到min_heap中等待下一次超时。

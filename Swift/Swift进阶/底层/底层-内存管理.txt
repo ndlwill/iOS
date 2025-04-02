@@ -1,0 +1,908 @@
+在 C++ 中，struct 和 class 在定义上的唯一区别是默认的成员访问权限不同：
+struct 默认是 public
+class 默认是 private
+除此之外，struct 本质上还是一个类
+
+
+（1）在 C++ 中的类，如果它的 第一个成员变量 没有被 虚函数表（vtable）指针 或者 继承的父类数据 影响，那么第一个成员变量的地址就是整个类实例的地址。
+#include <iostream>
+
+class A {
+public:
+    int x;
+    float y;
+};
+
+int main() {
+    A obj;
+    std::cout << "Object address: " << &obj << std::endl;
+    std::cout << "First member address: " << &obj.x << std::endl;
+    return 0;
+}
+
+
+（2）如果类有 虚函数，C++ 需要 额外存储一个虚函数表指针（vtable pointer），通常放在对象的 最前面（编译器实现可能不同）。
+#include <iostream>
+
+class B {
+public:
+    virtual void foo() {}
+    int x;
+};
+
+int main() {
+    B obj;
+    std::cout << "Object address: " << &obj << std::endl;
+    std::cout << "First member address: " << &obj.x << std::endl;
+    return 0;
+}
+
+
+（3）继承情况下，子类对象地址通常等于父类对象地址
+#include <iostream>
+
+class Parent {
+public:
+    int p;
+};
+
+class Child : public Parent {
+public:
+    int c;
+};
+
+int main() {
+    Child obj;
+    std::cout << "Object address: " << &obj << std::endl;
+    std::cout << "Parent address: " << static_cast<Parent*>(&obj) << std::endl;
+    std::cout << "First member address: " << &obj.p << std::endl;
+    return 0;
+}
+
+
+==================================================
+对象的内存分配过程
+__allocating_init函数执行内部，它做了两件事：
+调用swift_allocObject函数 // 其内部依次调用_swift_allocObject_和swift_slowAlloc两个函数
+执行demo.LGTeacher.init方法，进行初始化变量
+
+
+swift_slowAlloc，其内部最终调用了malloc函数
+
+
+__allocating_init->swift_allocObject->_swift_allocObject_->swift_slowAlloc->malloc
+
+_swift_allocObject_函数，当swift_slowAlloc完成创建内存的工作后，
+继续执行new HeapObject来进行初始化对象的工作，最终返回HeapObject结构体
+
+
+实例对象的本质：
+oc：objc_object结构体，默认有class类型的isa指针，占8字节
+swift：HeapObject结构体，默认有元数据metadata、引用计数refCounts，占16字节
+
+
+==================================================捕获列表
+var age = 0
+var height = 0.0
+
+let closure = { [age] in
+    print(age)
+    print(height)
+}
+
+age = 10
+height = 1.85
+
+closure()
+
+//输出以下内容：
+//0
+//1.85
+
+捕获列表的age是常量，并且进行了值拷贝。对于捕获列表中的每个常量，闭包会利⽤周围范围内具有相同名称的常量或变量，来初始化捕获列表中定义的常量。
+
+
+==================================================源码分析和理解
+##### _swift_allocObject_
+static HeapObject *_swift_allocObject_(HeapMetadata const *metadata,
+                                       size_t requiredSize,
+                                       size_t requiredAlignmentMask) {
+  assert(isAlignmentMask(requiredAlignmentMask));
+  auto object = reinterpret_cast<HeapObject *>(
+      swift_slowAlloc(requiredSize, requiredAlignmentMask));//分配内存+字节对齐
+
+  // NOTE: this relies on the C++17 guaranteed semantics of no null-pointer
+  // check on the placement new allocator which we have observed on Windows,
+  // Linux, and macOS.
+  new (object) HeapObject(metadata);//初始化一个实例对象
+
+  // If leak tracking is enabled, start tracking this object.
+  SWIFT_LEAKS_START_TRACKING_OBJECT(object);
+
+  SWIFT_RT_TRACK_INVOCATION(object, swift_allocObject);
+
+  return object;
+}
+
+##### swift_slowAlloc
+void *swift::swift_slowAlloc(size_t size, size_t alignMask) {
+  void *p;
+  // This check also forces "default" alignment to use AlignedAlloc.
+  if (alignMask <= MALLOC_ALIGN_MASK) {
+#if defined(__APPLE__)
+    p = malloc_zone_malloc(DEFAULT_ZONE(), size);
+#else
+    p = malloc(size);// 堆中创建size大小的内存空间，用于存储实例变量
+#endif
+  } else {
+    size_t alignment = (alignMask == ~(size_t(0)))
+                           ? _swift_MinAllocationAlignment
+                           : alignMask + 1;
+    p = AlignedAlloc(size, alignment);
+  }
+  if (!p) swift::crash("Could not allocate memory.");
+  return p;
+}
+
+##### HeapObject
+struct HeapObject {
+  /// This is always a valid pointer to a metadata object.
+  HeapMetadata const *metadata;
+
+  SWIFT_HEAPOBJECT_NON_OBJC_MEMBERS;
+
+#ifndef __swift__
+  HeapObject() = default;
+
+  // Initialize a HeapObject header as appropriate for a newly-allocated object.
+  constexpr HeapObject(HeapMetadata const *newMetadata) 
+    : metadata(newMetadata)
+    , refCounts(InlineRefCounts::Initialized)
+  { }
+  
+  // Initialize a HeapObject header for an immortal object
+  constexpr HeapObject(HeapMetadata const *newMetadata,
+                       InlineRefCounts::Immortal_t immortal)
+  : metadata(newMetadata)
+  , refCounts(InlineRefCounts::Immortal)
+  { }
+
+#ifndef NDEBUG
+  void dump() const LLVM_ATTRIBUTE_USED;
+#endif
+
+#endif // __swift__
+};
+
+##### HeapMetadata
+using HeapMetadata = TargetHeapMetaData<Inprocess>;
+
+
+##### TargetHeapMetadata
+template <typename Runtime>
+struct TargetHeapMetadata : TargetMetadata<Runtime> {
+  using HeaderType = TargetHeapMetadataHeader<Runtime>;
+
+  TargetHeapMetadata() = default;
+  //初始化方法
+  constexpr TargetHeapMetadata(MetadataKind kind)
+    : TargetMetadata<Runtime>(kind) {}
+#if SWIFT_OBJC_INTEROP
+  constexpr TargetHeapMetadata(TargetAnyClassMetadata<Runtime> *isa)
+    : TargetMetadata<Runtime>(isa) {}
+#endif
+};
+
+
+##### TargetMetaData
+//******** TargetMetaData 定义 ********
+struct TargetMetaData{
+   using StoredPointer = typename Runtime::StoredPointer;// typename 关键字表示 Runtime::StoredPointer 是一个类型，而不是一个静态成员或变量。
+    ...
+    
+    StoredPointer kind;// ###
+}
+
+##### Inprocess
+struct Inprocess{
+    ...
+    using StoredPointer = uintptr_t;
+    ...
+}
+
+##### uintptr_t
+typedef unsigned long uintptr_t;
+
+
+回到TargetMetaData结构体定义中，找方法getClassObject，在该方法中去匹配kind返回值是TargetClassMetadata类型:
+const TargetClassMetadata<Runtime> *getClassObject() const;
+
+using ClassMetadata = TargetClassMetadata<InProcess>;
+
+##### ClassMetadata
+template<> inline const ClassMetadata *
+  Metadata::getClassObject() const {
+    //匹配kind
+    switch (getKind()) {
+      //如果kind是class
+    case MetadataKind::Class: {
+      // Native Swift class metadata is also the class object.
+      //将当前指针强转为ClassMetadata类型
+      return static_cast<const ClassMetadata *>(this);
+    }
+    case MetadataKind::ObjCClassWrapper: {
+      // Objective-C class objects are referenced by their Swift metadata wrapper.
+      auto wrapper = static_cast<const ObjCClassWrapperMetadata *>(this);
+      return wrapper->Class;
+    }
+    // Other kinds of types don't have class objects.
+    default:
+      return nullptr;
+    }
+  }
+
+
+##### TargetClassMetadata
+template <typename Runtime>
+struct TargetClassMetadata : public TargetAnyClassMetadata<Runtime> {
+    ...
+    //swift特有的标志
+    ClassFlags Flags;
+    //实力对象内存大小
+    uint32_t InstanceSize;
+    //实例对象内存对齐方式
+    uint16_t InstanceAlignMask;
+    //运行时保留字段
+    uint16_t Reserved;
+    //类的内存大小
+    uint32_t ClassSize;
+    //类的内存首地址
+    uint32_t ClassAddressPoint;
+  ...
+}
+
+
+##### TargetAnyClassMetadata
+template <typename Runtime>
+struct TargetAnyClassMetadata : public TargetHeapMetadata<Runtime> {
+    ...
+    ConstTargetMetadataPointer<Runtime, swift::TargetClassMetadata> Superclass;// ###
+    TargetPointer<Runtime, void> CacheData[2];// ###
+    StoredSize Data;// ###
+    ...
+}
+
+
+### 继承链
+TargetClassMetadata 继承 TargetAnyClassMetadata
+TargetAnyClassMetadata 继承 TargetHeapMetadata
+TargetHeapMetadata 继承 TargetMetadata
+###
+
+###
+由此得出结论，其实当前的TargetHeapMetaData就是TargetClassMetadata，因为在内存结构中，它们可以直接进行指针转换
+
+通过上面的继承链，得知，TargetClassMetadata 拥有了父类的kind、superclass、cacheData、Data等属性
+###
+
+当前Class在内存中所存放的属性由 TargetClassMetadata属性 + TargetAnyClassMetaData属性 + TargetMetaData属性 构成
+我们得出当前metadata的数据结构体如下
+struct swift_class_t: NSObject{
+    void *kind;//相当于OC中的isa，kind的实际类型是unsigned long
+
+    void *superClass;
+    void *cacheData;
+    void *data;
+
+    uint32_t flags; //4字节
+    uint32_t instanceAddressOffset;//4字节
+    uint32_t instanceSize;//4字节
+    uint16_t instanceAlignMask;//2字节
+    uint16_t reserved;//2字节
+    
+    uint32_t classSize;//4字节
+    uint32_t classAddressOffset;//4字节
+    void *description;
+    ...
+}
+
+
+类结构的探索：
+当metadata的kind类型为Class，类结构继承关系如下：
+TargetClassMetadata->TargetAnyClassMetadata->TargetHeapMetadata->TargetMetaData
+
+TargetMetaData类似oc中的objc_object，内含kind属性
+
+TargetAnyClassMetadata，类似oc中的objc_class
+
+TargetHeapMetadata为模板类型，接收一个Inprocess参数，也就是kind属性
+
+kind属性为unsigned long类型，类似oc中的isa
+
+
+方法列表：
+OC中的方法存储在objc_class结构体class_rw_t的methodList中
+swift中的方法存储在 metadata 元数据中
+
+
+==================================================强引用
+Swift使用ARC管理内存
+
+class LGTeacher{
+    var age: Int = 18
+    var name: String = "Zang"
+}
+
+var t=LGTeacher()
+var t1=t
+var t2=t
+
+通过LLDB指令来查看t的引⽤计数
+输出的refCounts为什么是0x0000000600000003？
+通过源码进行分析，打开HeapObhect.h，看到一个宏
+进入SWIFT_HEAPOBJECT_NON_OBJC_MEMBERS宏定义，这里看到refCounts类型是InlineRefCounts
+
+
+##### HeapObject
+struct HeapObject {
+  /// This is always a valid pointer to a metadata object.
+  HeapMetadata const *metadata;
+
+  SWIFT_HEAPOBJECT_NON_OBJC_MEMBERS;
+
+#ifndef __swift__
+  HeapObject() = default;
+
+  // Initialize a HeapObject header as appropriate for a newly-allocated object.
+  /*
+  constexpr 使这个构造函数可以 在编译时 创建 HeapObject，前提是传入的参数 newMetadata 和 InlineRefCounts::Initialized 也是 编译时常量。
+  如果 newMetadata 不是编译期常量，它仍然可以 在运行时执行，类似普通的构造函数。
+  */
+  constexpr HeapObject(HeapMetadata const *newMetadata) 
+    : metadata(newMetadata)
+    , refCounts(InlineRefCounts::Initialized)// InlineRefCounts::Initialized 等价于 RefCounts<InlineRefCountBits>::Initialized。
+  { }
+  
+  // Initialize a HeapObject header for an immortal object
+  constexpr HeapObject(HeapMetadata const *newMetadata,
+                       InlineRefCounts::Immortal_t immortal)
+  : metadata(newMetadata)
+  , refCounts(InlineRefCounts::Immortal)
+  { }
+
+#ifndef NDEBUG
+  void dump() const LLVM_ATTRIBUTE_USED;
+#endif
+
+#endif // __swift__
+};
+
+
+##### InlineRefCounts
+#define SWIFT_HEAPOBJECT_NON_OBJC_MEMBERS       \
+  InlineRefCounts refCounts
+相当于
+RefCounts<RefCountBitsT<RefCountIsInline>>
+
+
+##### RefCounts<InlineRefCountBits>
+typedef RefCounts<InlineRefCountBits> InlineRefCounts;
+
+
+##### RefCounts
+template <typename RefCountBits>
+class RefCounts {
+  std::atomic<RefCountBits> refCounts;
+  ...
+}
+进入InlineRefCounts定义，它是RefCounts类型的别名
+进入RefCounts定义，它是一个模板类。
+后续逻辑取决于模板参数RefCountBits,也就是传入的InlineRefCountBits的类型
+
+
+##### RefCountBitsT<RefCountIsInline>
+typedef RefCountBitsT<RefCountIsInline> InlineRefCountBits;
+进入InlineRefCountBits定义，它是RefCountBitsT类型的别名
+
+首先确认RefCountIsInline是什么，进入RefCountIsInline定义，本质上是enum，只有true和false。这里传入的RefCountIsInline就是true
+##### RefCountInlinedness
+enum RefCountInlinedness { RefCountNotInline = false, RefCountIsInline = true };
+
+##### RefCountBitsT
+/*
+这段代码使用了 类模板（class template） 语法，
+其中 template <RefCountInlinedness refcountIsInline> 定义了一个 非类型模板参数（non-type template parameter）。
+refcountIsInline 是该模板的一个 参数变量，在实例化 RefCountBitsT 时提供一个具体的值
+*/
+template <RefCountInlinedness refcountIsInline>
+class RefCountBitsT {
+    ...
+      typedef typename RefCountBitsInt<refcountIsInline, sizeof(void*)>::Type BitsType;// 相当于 typedef uint32_t BitsType;
+      // typename 关键字在这行代码中表示 RefCountBitsInt<refcountIsInline, sizeof(void*)>::Type 是一个类型。
+    ...
+    BitsType bits;// #####
+    ...
+}
+再进入到RefCountBitsT的定义，里面的成员变量bits，类型为BitsType
+
+
+##### 模版特化
+template <>
+struct RefCountBitsInt<RefCountNotInline, 4> {
+  typedef uint64_t Type;
+  typedef int64_t SignedType;
+};
+
+##### 模版特化，这个特化匹配RefCountIsInline 和 4 （即 sizeof(void*) == 4，表示 32 位系统）
+template <>
+struct RefCountBitsInt<RefCountIsInline, 4> {
+  typedef uint32_t Type;
+  typedef int32_t SignedType;  
+};
+
+
+###
+bits对RefCountBitsInt的Type属性取别名
+###
+明白了bits是什么，下面就来分析HeapObject的初始化方法，重点看第二个参数refCounts
+
+template <typename RefCountBits>
+class RefCounts {
+  std::atomic<RefCountBits> refCounts;// 真正干事的是RefCountBits
+
+  public:
+  enum Initialized_t { Initialized };
+  enum Immortal_t { Immortal };
+
+  constexpr RefCounts(Initialized_t)// 这里 RefCounts(Initialized_t) 省略了参数名，但这在 C++ 中是允许的。
+    : refCounts(RefCountBits(0, 1)) {}
+
+  // Refcount of an immortal object has top and bottom bits set
+  constexpr RefCounts(Immortal_t)
+  : refCounts(RefCountBits(RefCountBits::Immortal)) {}
+}
+进入Initialized定义，它的本质是一个enum，找到对应的refCounts方法，需要分析一下传入的RefCountBits(0, 1)
+
+
+typedef RefCounts<InlineRefCountBits> InlineRefCounts;
+typedef RefCountBitsT<RefCountIsInline> InlineRefCountBits;
+#####进入RefCountBits，实际就是 InlineRefCountBits，就是 RefCountBitsT<RefCountIsInline>#####
+找到真正的初始化方法RefCountBitsT，传入strongExtraCount和unownerCount两个uint32_t类型参数，将这两个参数根据Offsets进行位移操作
+
+template <RefCountInlinedness refcountIsInline>
+class RefCountBitsT {// 实际上是做了一个位域操作，根据的是Offsets
+  constexpr
+  RefCountBitsT(uint32_t strongExtraCount, uint32_t unownedCount)
+    : bits((BitsType(strongExtraCount) << Offsets::StrongExtraRefCountShift) |
+           (BitsType(1)                << Offsets::PureSwiftDeallocShift) |
+           (BitsType(unownedCount)     << Offsets::UnownedRefCountShift))
+  { }
+}
+
+最终我们得出这样⼀个结论:
+isImmortal(0)
+UnownedRefCount(1-31)：无主引用计数
+isDeinitingMask(32)：是否进行释放操作
+StrongExtraRefCount(33-62)：强引用计数
+UseSlowRC(63)
+
+
+bits((BitsType(strongExtraCount) << Offsets::StrongExtraRefCountShift) |
+           (BitsType(1)                << Offsets::PureSwiftDeallocShift) |
+           (BitsType(unownedCount)     << Offsets::UnownedRefCountShift))
+这个表达式用于 初始化 bits，它的目的是 按照位偏移（bit shift）方式，将多个值存入 bits 变量。这通常用于位域（bit field）或者压缩存储多个标志位的情况。
+按照位偏移（bit shift）
+位域（bit field）
+
+
+使用二进制查看refCounts输出的0x0000000600000002
+1-31位是UnownedRefCount无主引用计数
+33-62位是StrongExtraRefCount强引用计数
+
+
+class LGTeacher {
+    var age: Int = 18
+    var name: String = "Zang"
+}
+
+var t = LGTeacher() // t 存储的是 LGTeacher() 实例的堆区地址，也就是一个 指向 LGTeacher 实例的指针。// 指针本身也是一个值，它存储的是一个 内存地址。
+var t1 = t  // 拷贝指针 // t1 只是拷贝了 t 里面的指针值
+
+
+通过SIL代码，分析t的引用计数，当t赋值给t1、t2时，触发了copy_addr
+//SIL中的main
+alloc_global @main.t1 : main.CJLTeacher       // id: %8
+%9 = global_addr @main.t1 : main.CJLTeacher : $*CJLTeacher // user: %11
+%10 = begin_access [read] [dynamic] %3 : $*CJLTeacher // users: %12, %11
+copy_addr %10 to [initialization] %9 : $*CJLTeacher // id: %11 // 拷贝的是指针地址
+
+//其中copy_addr等价于
+- %new = load s*LGTeacher
+- strong_retain %new
+- store %new to %9
+
+其中的strong_retain对应的就是 swift_retain，其内部是一个宏定义，内部是_swift_retain_，其实现是对object的引用计数作+1操作
+
+
+查看SIL文档，copy_addr内部又触发了strong_retain
+回到源码，来到strong_retain的定义，它其实就是swift_retain，其内部是一个宏定义CALL_IMPL，调用的是_swift_retain_，
+然后在_swift_retain_内部又调用了object->refCounts.increment(1)
+
+
+//内部是一个宏定义
+HeapObject *swift::swift_retain(HeapObject *object) {
+  CALL_IMPL(swift_retain, (object));
+}
+//本质调用的就是 _swift_retain_
+static HeapObject *_swift_retain_(HeapObject *object) {
+  SWIFT_RT_TRACK_INVOCATION(object, swift_retain);
+  if (isValidPointerForNativeRetain(object))
+    object->refCounts.increment(1);
+  return object;
+}
+void increment(uint32_t inc = 1) {
+  auto oldbits = refCounts.load(SWIFT_MEMORY_ORDER_CONSUME);
+  
+  // constant propagation will remove this in swift_retain, it should only
+  // be present in swift_retain_n
+  if (inc != 1 && oldbits.isImmortal(true)) {
+    return;
+  }
+  //64位bits
+  RefCountBits newbits;
+  do {
+    newbits = oldbits;
+    bool fast = newbits.incrementStrongExtraRefCount(inc);
+    if (SWIFT_UNLIKELY(!fast)) {
+      if (oldbits.isImmortal(false))
+        return;
+      return incrementSlow(oldbits, inc);
+    }
+  } while (!refCounts.compare_exchange_weak(oldbits, newbits,
+                                            std::memory_order_relaxed));
+}
+
+进入increment方法，里面的newbits是模板函数，其实就是64位整形。
+回退到HeapObject,从InlineRefCounts进入,其中是c++中的模板定义,在其中查找bits（即decrementStrongExtraRefCount方法）
+
+LLVM_NODISCARD LLVM_ATTRIBUTE_ALWAYS_INLINE
+bool incrementStrongExtraRefCount(uint32_t inc) {
+// This deliberately overflows into the UseSlowRC field.
+// 对inc做强制类型转换为 BitsType
+// 其中 BitsType(inc) << Offsets::StrongExtraRefCountShift 等价于 1<<33位，16进制为 0x200000000
+//这里的 bits += 0x200000000，将对应的33-63转换为10进制，为
+bits += BitsType(inc) << Offsets::StrongExtraRefCountShift;
+return (SignedBitsType(bits) >= 0);
+}
+
+通过BitsType方法将inc类型转换为uint64_t，通过Offsets偏移StrongExtraRefCountShift，等同于1<<33，十进制的1左移33位，再转换为十六进制，得到结果0x200000000
+故此上述代码相当于bits += 0x200000000，左移33位后，在33-62位上，强引用计数+1
+
+例如以t的refCounts为例（其中62-33位是strongCount，每次增加强引用计数增加都是在33-62位上增加的，固定的增量为1左移33位，即0x200000000）
+只有t时的refCounts是 0x0000000200000003
+t + t1时的refCounts是 0x0000000400000003 = 0x0000000200000003 + 0x200000000
+t + t1 + t2 时的refCounts是 0x0000000600000003 = 0x0000000400000003 + 0x200000000
+
+为什么是0x200000000
+因为1左移33位，其中4位为一组，计算成16进制。33-32位为0x10，转换为10进制为2，转换为16进制为0x2
+1 << 33 = 0x200000000
+其实际增加引用计数就是1
+
+
+class LGTeacher{
+    var age: Int = 18
+    var name: String = "Zang"
+}
+
+var t=LGTeacher()
+print(CFGetRetainCount(t))
+
+var t1=t
+print(CFGetRetainCount(t))
+
+var t2=t
+print(CFGetRetainCount(t))
+
+//输出以下内容：
+//2
+//3
+//4
+
+###
+原本t的引用计数为3，使用CFGetRetainCount方法会导致t的引用计数+1
+###
+
+
+==================================================弱引用
+class LGTeacher{
+    var age: Int = 18
+    var name: String = "Zang"
+    var stu: LGStudent?
+}
+
+class LGStudent {
+    var age = 20
+    var teacher: LGTeacher?
+}
+
+func test(){
+    var t=LGTeacher()
+    weak var t1=t
+    print(CFGetRetainCount(t))
+}
+
+test()
+
+//输出以下内容：
+//2
+
+t创建实例对象引用计数默认为1，使用CFGetRetainCount查看引用计数+1，打印结果为2。
+显然将t赋值给使用weak修饰的t1，并没有增加t的强引用计数
+
+弱引用声明的变量是一个可选值
+weak修饰的变量必须为可选类型
+
+在t1处加断点，查看汇编
+查看 swift_weakInit函数，这个函数是由WeakReference来调用的，相当于weak字段在编译器声明过程中就自定义了一个WeakReference的对象，其目的在于管理弱引用
+WeakReference *swift::swift_weakInit(WeakReference *ref, HeapObject *value) {
+  ref->nativeInit(value);
+  return ref;
+}
+
+进入nativeInit:
+void nativeInit(HeapObject *object) {
+  auto side = object ? object->refCounts.formWeakReference() : nullptr;
+  nativeValue.store(WeakReferenceBits(side), std::memory_order_relaxed);
+}
+
+
+进入formWeakReference，创建sideTable:
+template <>
+HeapObjectSideTableEntry* RefCounts<InlineRefCountBits>::formWeakReference()
+{
+  //创建 sideTable
+  auto side = allocateSideTable(true);
+  if (side)
+  // 如果创建成功，则增加弱引用
+    return side->incrementWeak();
+  else
+    return nullptr;
+}
+
+
+进入allocateSideTable:
+template <>
+HeapObjectSideTableEntry* RefCounts<InlineRefCountBits>::allocateSideTable(bool failIfDeiniting)
+{
+  // 1、先拿到原本的引用计数
+  auto oldbits = refCounts.load(SWIFT_MEMORY_ORDER_CONSUME);
+  
+  // Preflight failures before allocating a new side table.
+  if (oldbits.hasSideTable()) {
+    // Already have a side table. Return it.
+    return oldbits.getSideTable();
+  } 
+  else if (failIfDeiniting && oldbits.getIsDeiniting()) {
+    // Already past the start of deinit. Do nothing.
+    return nullptr;
+  }
+
+  // Preflight passed. Allocate a side table.
+  
+  // FIXME: custom side table allocator
+  //2、创建sideTable
+  HeapObjectSideTableEntry *side = new HeapObjectSideTableEntry(getHeapObject());
+  // 3、将创建的地址给到InlineRefCountBits
+  auto newbits = InlineRefCountBits(side);
+  
+  do {
+    if (oldbits.hasSideTable()) {
+      // Already have a side table. Return it and delete ours.
+      // Read before delete to streamline barriers.
+      auto result = oldbits.getSideTable();
+      delete side;
+      return result;
+    }
+    else if (failIfDeiniting && oldbits.getIsDeiniting()) {
+      // Already past the start of deinit. Do nothing.
+      return nullptr;
+    }
+    
+    side->initRefCounts(oldbits);
+    
+  } while (! refCounts.compare_exchange_weak(oldbits, newbits,
+                                             std::memory_order_release,
+                                             std::memory_order_relaxed));
+  return side;
+}
+
+进入allocateSideTable方法，先通过refCounts拿到原有的引用计数，
+再通过getHeapObject创建SideTable，将地址传入InlineRefCountBits方法
+
+###
+typedef RefCounts<InlineRefCountBits> InlineRefCounts;
+typedef RefCounts<SideTableRefCountBits> SideTableRefCounts;
+
+typedef RefCountBitsT<RefCountIsInline> InlineRefCountBits;
+###
+
+进入InlineRefCountBits方法:
+将参数SideTable的地址，直接进行偏移，然后存储到内存中
+相当于将SideTable直接存储到uint64_t的变量中
+template <RefCountInlinedness refcountIsInline>// refcountIsInline 是模板参数，非类型模板参数（Non-Type Template Parameter）
+class RefCountBitsT {
+
+  friend class RefCountBitsT<RefCountIsInline>;
+  friend class RefCountBitsT<RefCountNotInline>;
+  
+  static const RefCountInlinedness Inlinedness = refcountIsInline;
+
+  typedef typename RefCountBitsInt<refcountIsInline, sizeof(void*)>::Type
+    BitsType;
+  typedef typename RefCountBitsInt<refcountIsInline, sizeof(void*)>::SignedType
+    SignedBitsType;
+  typedef RefCountBitOffsets<sizeof(BitsType)>
+    Offsets;
+
+  BitsType bits;
+
+  LLVM_ATTRIBUTE_ALWAYS_INLINE
+  RefCountBitsT(HeapObjectSideTableEntry* side)
+    : bits((reinterpret_cast<BitsType>(side) >> Offsets::SideTableUnusedLowBits)
+           | (BitsType(1) << Offsets::UseSlowRCShift)
+           | (BitsType(1) << Offsets::SideTableMarkShift))
+  {
+    assert(refcountIsInline);
+  }
+}
+reinterpret_cast<BitsType> 把指针 side 转换成 uint64_t，本质上是把指针的地址作为整数值处理。
+Offsets::UseSlowRCShift = 63;
+Offsets::SideTableMarkShift = 62;
+
+之前查看t的refCounts，打印出0xc0000000200d1d6e这串奇怪的地址，去掉62位和63位保留字段，
+剩余的就是偏移后的HeapObjectSideTableEntry实例对象的内存地址，即散列表的地址
+
+
+##### HeapObjectSideTableEntry
+class HeapObjectSideTableEntry {
+  // FIXME: does object need to be atomic?
+  std::atomic<HeapObject*> object;
+  SideTableRefCounts refCounts;
+
+  public:
+  HeapObjectSideTableEntry(HeapObject *newObject)
+    : object(newObject), refCounts()
+  { }
+}
+
+回到源码分析，进入HeapObjectSideTableEntry定义，里面有object对象和refCounts，refCounts是一个SideTableRefCounts类型
+进入SideTableRefCounts定义，它是RefCounts类型的别名，和之前分析的InlineRefCountBits类似，这里传入的是SideTableRefCountBits类型
+
+
+class alignas(sizeof(void*) * 2) SideTableRefCountBits : public RefCountBitsT<RefCountNotInline>
+{
+  uint32_t weakBits;
+}
+进入SideTableRefCountBits定义，它继承于RefCountBitsT
+
+RefCountBitsT存储的是uint64_t类型的64位的信息，用于记录原有引用计数。
+除此之外SideTableRefCountBits自身还有一个uint32_t的weakBits，用于记录弱引用计数
+
+64位 用于记录 原有引用计数
+32位 用于记录 弱引用计数
+
+还原散列表地址，查看弱引用refCounts:
+将0xc0000000200d1d6e地址62位和63位的保留字段清零，得到地址0x200D1D6E
+将0x200D1D6E左移3位，还原成HeapObjectSideTableEntry对象地址0x10068EB70，也就是散列表地址
+通过x/8g读取地址0x10068EB70
+
+
+假设 bits = 0xc000000020809a6c
+bits = (reinterpret_cast<BitsType>(side) >> 3)
+       | (BitsType(1) << 63)
+       | (BitsType(1) << 62);
+bits = (reinterpret_cast<BitsType>(side) >> 3) | 0xC000000000000000
+0xC000000000000000 来自 (1 << 63) | (1 << 62) = 0x8000000000000000 | 0x4000000000000000 = 0xC000000000000000
+0xc000000020809a6c = (reinterpret_cast<BitsType>(side) >> 3) | 0xC000000000000000
+
+右移 3 位相当于丢弃最低 3 位的二进制数值，相当于除以 8
+(reinterpret_cast<BitsType>(side) >> 3) 可能等于 0x20809a6c
+
+在无符号整数运算（例如 uint64_t）中，x >> 3 = y 等价于 x = y << 3.对有符号数 (int64_t) 可能会出错
+所以，side = 0x20809a6c << 3 ，side = 0x10404d360
+0x10404D360 = 0001 0000 0100 0000 0100 1101 0011 0110 0000
+变成0x10404D360即HeapObjectSideTableEntry对象地址，即散列表地址
+然后通过x/8g读取
+
+
+只有当 A 的 最低 3 位原本都是 0 时，才有:
+(A>>3)<<3=A
+
+
+func test(){
+    var t=LGTeacher()
+    weak var t1=t
+    print(CFGetRetainCount(t))
+}
+在这个基础上添加
+var t2 = t// t2是执行了strong_retain的
+源码查看 _swift_retain_ -> increment -> incrementSlow -> incrementStrong
+
+static HeapObject *_swift_retain_(HeapObject *object) {
+  SWIFT_RT_TRACK_INVOCATION(object, swift_retain);
+  if (isValidPointerForNativeRetain(object))
+    object->refCounts.increment(1);
+  return object;
+}
+
+void increment(uint32_t inc = 1) {
+  auto oldbits = refCounts.load(SWIFT_MEMORY_ORDER_CONSUME);
+  
+  // constant propagation will remove this in swift_retain, it should only
+  // be present in swift_retain_n
+  if (inc != 1 && oldbits.isImmortal(true)) {
+    return;
+  }
+  
+  RefCountBits newbits;
+  do {
+    newbits = oldbits;
+    bool fast = newbits.incrementStrongExtraRefCount(inc);
+    if (SWIFT_UNLIKELY(!fast)) {
+      if (oldbits.isImmortal(false))
+        return;
+      return incrementSlow(oldbits, inc);
+    }
+  } while (!refCounts.compare_exchange_weak(oldbits, newbits,
+                                            std::memory_order_relaxed));
+}
+
+
+template <typename RefCountBits>
+void RefCounts<RefCountBits>::incrementSlow(RefCountBits oldbits,
+                                            uint32_t n) {
+  if (oldbits.isImmortal(false)) {
+    return;
+  }
+  else if (oldbits.hasSideTable()) {
+    // Out-of-line slow path.
+    auto side = oldbits.getSideTable();
+    side->incrementStrong(n);
+  }
+  else {
+    // Retain count overflow.
+    swift::swift_abortRetainOverflow();
+  }
+}
+
+
+void incrementStrong(uint32_t inc) {
+  refCounts.increment(inc);
+}
+
+
+对于HeapObject来说，其refCounts有两种:
+无弱引用：strongCount + unownedCount
+有弱引用：object + xxx + （strongCount + unownedCount） + weakCount
+
+HeapObject {
+    InlineRefCountBit {strong count + unowned count }
+    
+    HeapObjectSideTableEntry{
+        HeapObject *object
+        xxx
+        strong Count + unowned Count（uint64_t）//64位
+        weak count（uint32_t)//32位
+    }
+}
+
+
+==================================================
+
+与weak的区别在于unowned不允许被设置为nil，在运行期间假定它是有值的，所以使用unowned修饰要注意野指针的情况
+
+野指针（Dangling Pointer） 指的是指向无效或已释放内存的指针，它可能导致未定义行为（Undefined Behavior），引发程序崩溃或不可预测的错误。
+指针指向已释放的内存：
+int* p = new int(10);
+delete p;  // 释放内存
+*p = 20;   // 访问已释放的内存，p 变成野指针

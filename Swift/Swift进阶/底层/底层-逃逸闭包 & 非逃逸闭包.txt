@@ -1,0 +1,121 @@
+逃逸闭包:
+当闭包作为一个实际参数传递给一个函数时，并且是在函数返回之后调用，我们就说这个闭包逃逸了。
+当声明一个接受闭包作为形式参数的函数时，可以在形式参数前写@escaping来明确闭包是允许逃逸的
+
+如果用@escaping修饰闭包后，我们必须显示的在闭包中使用self
+
+swift3.0之后，系统默认闭包参数就是被@nonescaping，可以通过SIL来验证
+
+逃逸闭包的两种调用情况
+1、延迟调用
+2、作为属性存储，在后面进行调用
+
+(1)延迟调用
+class CJLTeacher {
+    //定义一个闭包属性
+    var complitionHandler: ((Int)->Void)?
+    //函数参数使用@escaping修饰，表示允许函数返回之后调用
+    func makeIncrementer(amount: Int, handler: @escaping (Int)->Void){
+        var runningTotal = 0
+        runningTotal += amount
+        //赋值给属性
+        self.complitionHandler = handler
+        
+        //延迟调用
+        DispatchQueue.global().asyncAfter(deadline: .now()+0.1) {
+            print("逃逸闭包延迟执行")
+            handler(runningTotal)
+        }
+        print("函数执行完了")
+    }
+
+    func doSomething(){
+        self.makeIncrementer(amount: 10) {
+            print($0)
+        }
+    }
+
+    deinit {
+        print("CJLTeacher deinit")
+    }
+}
+//使用
+var t = CJLTeacher()
+t.doSomething()
+
+<!--打印结果-->
+函数执行完了
+逃逸闭包延迟执行
+10
+
+当前方法执行的过程中不会等待闭包执行完成后再执行，而是直接返回，所以当前闭包的生命周期要比方法长
+
+
+(2)作为属性
+当闭包作为存储属性时，主要有以下几点说明：
+1、定义一个闭包属性
+2、在方法中对闭包属性进行赋值
+3、在合适的时机调用
+
+//*********1、闭包作为属性
+class CJLTeacher {
+    //定义一个闭包属性
+    var complitionHandler: ((Int)->Void)?
+    //函数参数使用@escaping修饰，表示允许函数返回之后调用
+    func makeIncrementer(amount: Int, handler: @escaping (Int)->Void){
+        var runningTotal = 0
+        runningTotal += amount
+        //赋值给属性
+        self.complitionHandler = handler
+    }
+
+    func doSomething(){
+        self.makeIncrementer(amount: 10) {
+            print($0)
+        }
+    }
+
+    deinit {
+        print("CJLTeacher deinit")
+    }
+}
+//使用
+var t = CJLTeacher()
+t.doSomething()
+t.complitionHandler?(10)
+
+<!--打印结果-->
+10
+
+当前的complitionHandler作为CJLTeacher的属性，是在方法makeIncrementer调用完成后才会调用，这时，闭包的生命周期要比当前方法的生命周期长
+
+
+==================================================逃逸闭包 vs 非逃逸闭包 区别
+非逃逸闭包：一个接受闭包作为参数的函数，闭包是在这个函数结束前内被调用，即可以理解为闭包是在函数作用域结束前被调用
+1、不会产生循环引用，因为闭包的作用域在函数作用域内，在函数执行完成后，就会释放闭包捕获的所有对象
+2、针对非逃逸闭包，编译器会做优化：省略内存管理调用
+3、非逃逸闭包捕获的上下文保存在栈上，而不是堆上（官方文档说明）。
+
+逃逸闭包：一个接受闭包作为参数的函数，逃逸闭包可能会在函数返回之后才被调用，即闭包逃离了函数的作用域
+1、可能会产生循环引用，因为逃逸闭包中需要显式的引用self（猜测其原因是为了提醒开发者，这里可能会出现循环引用了），而self可能是持有闭包变量的（与OC中block的的循环引用类似）
+2、一般用于异步函数的返回，例如网络请求
+
+
+==================================================自动闭包
+可以通过@autoclosure将当前的闭包声明成一个自动闭包
+
+func debugOutPrint(_ condition: Bool, _ message: @autoclosure () -> String){
+    if condition {
+        print("cjl_debug: \(message())")
+    }
+}
+
+debugOutPrint(true, "Application Error Occured")
+所以当传入一个String时，其实就是将String放入一个闭包表达式中，在调用的时候返回
+
+自动闭包就相当于:
+相当于用{}包裹传入的对象，然后返回{}内的值
+{
+    //表达式里的值
+    return "Network Error Occured"
+}

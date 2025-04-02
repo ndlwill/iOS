@@ -1,0 +1,338 @@
+SwiftUI 的布局是从外向内进行的。
+建议尺寸 Proposal Size
+需求尺寸
+布局尺寸
+视图尺寸
+理想尺寸 ideal size
+
+“理想尺寸”通常可以理解为它的 固有尺寸（Intrinsic Content Size）
+
+未指定模式的建议尺寸是指在布局过程中，父视图未为子视图提供明确的尺寸约束。
+具体表现为某些维度上的建议尺寸为 .infinity 或 nil。
+
+struct ContentView: View {
+    var body: some View {
+        VStack {
+            Text("Hello, World!")
+                .background(Color.blue)
+        }
+        .frame(width: 200) // 仅指定宽度
+    }
+}
+VStack 的宽度为 200，因此子视图（Text）会接收到宽度建议为 200。
+VStack 没有限制高度，Text 会接收到高度的建议值为 .infinity，即未指定模式。
+
+
+调试未指定尺寸:
+可以通过以下方式检查视图的实际尺寸
+struct ContentView: View {
+    var body: some View {
+        Text("Hello, World!")
+            .background(Color.blue)
+            .frame(width: nil, height: nil)
+            .border(Color.red)
+    }
+}
+
+
+fixedSize():
+它的作用是 强制视图使用其固有尺寸（intrinsic content size）来决定大小，而忽略父视图的建议尺寸
+.fixedSize(horizontal: Bool, vertical: Bool)
+horizontal: true：表示视图的宽度固定为固有尺寸。
+vertical: true：表示视图的高度固定为固有尺寸。
+
+==================================================
+
+
+在 iOS 16 中，SwiftUI 增加了一个新的自适应布局容器 ViewThatFits
+
+它的作用是在给定的多个视图中找出最合适的视图并使用
+ViewThatFits evaluates its child views in the order you provide them to the initializer. 
+It selects the first child whose ideal size on the constrained axes fits within the proposed size. 
+This means that you provide views in order of preference. 
+Usually this order is largest to smallest, but since a view might fit along one constrained axis but not the other, 
+this isn’t always the case. 
+By default, ViewThatFits constrains in both the horizontal and vertical axes.
+
+
+ViewThatFits(in: .horizontal) {
+    Text("Hello Beautiful World") // 100 < width < 200
+    Text("Hello World") //  20 < width < 100
+    Text("Hi") // 10 < width < 20
+}
+.border(.blue) // required size of ViewThatFits
+.frame(width:100)
+.border(.red) // proposed size from parent View
+
+
+###
+ViewThatFits(in: .horizontal) {
+    Text("Hello Beautiful World") // 100 < width < 200
+    Text("Hello World") //  20 < width < 100
+    Text("Hi") // 10 < width < 20
+}
+.border(.blue) // required size of ViewThatFits
+.frame(width:10)
+.border(.red) // proposed size from parent View
+
+ViewThatFits 经过逐个比对，发现闭包中没有任何一个 Text 的理想尺寸宽度不大于 10 ，因此它选择了最后一个 Text("Hi") 。
+此时 Text("Hi") 只获得了宽度为 10 的建议尺寸。根据 Text 的默认显示规则（显示不下就折行），它用了两行才能将 Hi 全部显示完。
+
+ViewThatFits 本身在最终呈现时，并不对子视图施加理想尺寸的限制。
+它只在检查阶段使用子视图的理想尺寸进行判断，在最终呈现阶段，它将向子视图提交有值的建议尺寸，并使用子视图的需求尺寸作为自身的需求尺寸。
+
+
+为了应对这种极端情况（文字折行），我们需要对子视图进行特别的设定，例如通过 fixedSize 强制展示完整内容（最终的显示尺寸可能会超过父视图给出的建议尺寸）：
+Text("Hi")
+    .fixedSize(horizontal: true, vertical: false)
+###
+
+
+
+就布局而言，“理想尺寸”指的是当父视图以未指定的模式提供建议尺寸时，视图返回的需求尺寸。
+用更容易理解的语言来说，理想尺寸就是一个视图在不给其任何尺寸限定（理想的外部环境）的情况下，其最理想的呈现结果所占用的尺寸。
+对于不同种类的视图，它们的理想呈现处理规则是不同的。
+例如：
+Rectangle：在理想状态的轴上只使用 10（所有 Shape 都遵循该规则）。
+Text：在理想状态的轴上占用尽可能多的空间，展示全部文本（不进行任何截取）。
+ScrollView：如果理想状态的轴与滚动方向一致，则在滚动方向上一次性展示所有的子视图而无视父视图的建议尺寸。
+VStack、HStack、ZStack：所有子视图在理想状态下的整体呈现。
+
+我们可以通过 fixedSize 来强制一个视图以理想尺寸进行呈现
+struct IdealSizeDemo: View {
+    var body: some View {
+        VStack {
+            Text("GeometryReader has been present since the birth of SwiftUI, playing a crucial role in many scenarios.")
+                .fixedSize()
+            Rectangle().fill(.orange)
+                .fixedSize()
+            Circle().fill(.red)
+                .fixedSize()
+            ScrollView(.horizontal) {
+                HStack {
+                    ForEach(0 ..< 50) { i in
+                        Rectangle().fill(.blue).frame(width: 30, height: 30)
+                            .overlay(Text("\(i)").foregroundStyle(.white))
+                    }
+                }
+            }
+            .fixedSize()
+            VStack {
+                Text("GeometryReader has been present since the birth of SwiftUI, playing a crucial role in many scenarios.")
+                Rectangle().fill(.yellow)
+            }
+            .fixedSize()
+        }
+    }
+}
+
+
+VStack {
+    Text("GeometryReader has been present since the birth of SwiftUI, playing a crucial role in many scenarios.")
+    Rectangle().fill(.yellow)
+}
+.fixedSize()
+对于这种视图，其“理想呈现”是一个复合的状态：
+宽度：VStack 将逐个询问子视图的理想尺寸，使用其中宽度的最大值作为它的需求尺寸，并在最终布局时（placeSubviews）将其作为建议尺寸传递给子视图。
+高度：VStack 将所有子视图的理想尺寸高度和 Spacing 的和作为自己的需求尺寸。
+
+
+这种fixedSize对理想尺寸在单个轴向上的限制与 ViewThatFits 构造方法中的受限轴设置完全对应。
+struct IdealSizeDemo3: View {
+    var body: some View {
+        HStack {
+            // ViewThatFits result
+            ViewThatFits(in: .vertical) {
+                Text("1: GeometryReader has been present since the birth of SwiftUI, playing a crucial role in many scenarios.")
+                Text("2: In addition, some views believe that:")
+            }
+            .border(.blue)
+            .frame(width: 200, height: 100, alignment: .top)
+            .border(.red)
+
+            // Text1's ideal size ,only vetical fixed
+            Text("1: GeometryReader has been present since the birth of SwiftUI, playing a crucial role in many scenarios.")
+                .fixedSize(horizontal: false, vertical: true)
+                .border(.blue)
+                .frame(width: 200, height: 100, alignment: .top)
+                .border(.red)
+
+            // Text2's ideal size ,only vetical fixed
+            Text("2: In addition, some views believe that:")
+                .fixedSize(horizontal: false, vertical: true)
+                .border(.blue)
+                .frame(width: 200, height: 100, alignment: .top)
+                .border(.red)
+        }
+    }
+}
+根据 ViewThatFits 的判断规则，在所有子视图都不满足条件的情况下，它也会默认选择最后一个子视图
+
+###
+ViewThatFits 是基于理想尺寸来进行判断，但在最终呈现时，被选择的子视图并不是按照理想状态来呈现的。
+由于 ViewThatFits 能够提供的高度只有 30，在 Text 2 最终呈现时，它将根据其默认显示规则对文字进行截断处理。
+###
+
+
+struct SetIdealSize: View {
+    @State var useIdealSize = false
+    var body: some View {
+        VStack {
+            Button("Use Ideal Size") {
+                useIdealSize.toggle()
+            }
+            .buttonStyle(.bordered)
+
+            Rectangle()
+                .fill(.orange)
+                .frame(width: 100, height: 100)
+                .fixedSize(horizontal: useIdealSize ? true : false, vertical: useIdealSize ? true : false)
+
+            Rectangle()
+                .fill(.cyan)
+                .frame(idealWidth: 100, idealHeight: 100)
+                .fixedSize(horizontal: useIdealSize ? true : false, vertical: useIdealSize ? true : false)
+
+            Rectangle()
+                .fill(.green)
+                .fixedSize(horizontal: useIdealSize ? true : false, vertical: useIdealSize ? true : false)
+        }
+        .animation(.easeInOut, value: useIdealSize)
+    }
+}
+
+###
+.frame(width: 100, height: 100) 与 .frame(idealWidth: 100, idealHeight: 100) 之间的不同在于前者在任何场景下（理想状态或非理想状态）均被视为视图的需求尺寸，后者仅在理想状态下作为需求尺寸。
+###
+
+
+自适应滚动:
+struct ScrollViewDemo: View {
+    @State var step: CGFloat = 3
+    var count: Int {
+        Int(step)
+    }
+
+    var body: some View {
+        VStack(alignment:.leading) {
+            Text("Count: \(count)")
+            Slider(value: $step, in: 3 ... 20, step: 1)
+
+            ViewThatFits {
+                content
+                ScrollView(.horizontal,showsIndicators: true) {
+                    content
+                }
+            }
+        }
+        .frame(width: 300)
+        .border(.red)
+    }
+
+    var content: some View {
+        HStack {
+            ForEach(0 ..< count, id: \.self) { i in
+                Rectangle()
+                    .fill(.orange.gradient)
+                    .frame(width: 30, height: 30)
+                    .overlay(
+                        Text(i, format: .number).foregroundStyle(.white)
+                    )
+            }
+        }
+    }
+}
+
+
+
+ViewThatFits 的判断和呈现逻辑:
+首先，ViewThatFits 需要获取它所能使用的空间，也就是其父视图给出的建议尺寸。
+判断顺序根据 ViewBuilder 闭包中的顺序，从上至下逐个对子视图进行。
+ViewThatFits 向子视图查询其理想尺寸（根据未指定建议尺寸返回的需求尺寸）。
+根据受限轴的设置，在选择的受限轴上，比较子视图的理想尺寸和 ViewThatFits 的父视图给出的建议尺寸。
+如果在所有设置的受限轴上，理想尺寸都小于等于建议尺寸，那么选择该子视图，并停止对后续子视图进行判断。
+如果所有的子视图都不满足条件，则选择闭包中的最后一个子视图。
+ViewThatFits 将父视图给出的建议尺寸作为自己的建议尺寸传递给选择的子视图，并获得该子视图在明确建议尺寸下的需求尺寸。
+ViewThatFits 将上一步获得的需求尺寸作为自己的需求尺寸返回给父视图。
+
+一个 ViewThatFits 最终会选择那个子视图，取决于以下几个因素：
+ViewThatFits 可用的空间（它的父视图给它的建议尺寸）
+ViewThatFits 设定的受限轴
+子视图的在受限轴上的理想尺寸
+子视图的排列顺序
+任何一个因素发生变化，最终呈现的结果都可能会不同。
+
+
+
+
+创建 ViewThatFits 的复刻版本:
+struct _MyViewThatFitsLayout: Layout {
+    let axis: Axis.Set
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Int?) -> CGSize {
+        // 没有子视图，返回 zero
+        guard !subviews.isEmpty else { return .zero }
+        // 一个子视图，返回该子视图的需求尺寸
+        guard subviews.count > 1 else {
+            cache = subviews.endIndex - 1
+            return subviews[subviews.endIndex - 1].sizeThatFits(proposal)
+        }
+        // 从第一个到倒数第二个子视图逐个在限定的轴向上获取其理想尺寸进行判断
+        for i in 0..<subviews.count - 1 {
+            let size = subviews[i].dimensions(in: .unspecified)
+            switch axis {
+            case [.horizontal, .vertical]:
+                if size.width <= proposal.replacingUnspecifiedDimensions().width && size.height <= proposal.replacingUnspecifiedDimensions().height {
+                    cache = i
+                    // 满足判断条件，返回该子视图的需求尺寸（ 用正常的建议尺寸询问 ）
+                    return subviews[i].sizeThatFits(proposal)
+                }
+            case .horizontal:
+                if size.width <= proposal.replacingUnspecifiedDimensions().width {
+                    cache = i
+                    return subviews[i].sizeThatFits(proposal)
+                }
+            case .vertical:
+                if size.height <= proposal.replacingUnspecifiedDimensions().height {
+                    cache = i
+                    return subviews[i].sizeThatFits(proposal)
+                }
+            default:
+                break
+            }
+        }
+        // 上述都不满足，则使用最后一个子视图
+        cache = subviews.endIndex - 1
+        return subviews[subviews.endIndex - 1].sizeThatFits(proposal)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Int?) {
+        for i in subviews.indices {
+            if let cache, i == cache {
+                subviews[i].place(at: bounds.origin, anchor: .topLeading, proposal: proposal)
+            } else {
+                // 将不需要显示的子视图，放置在一个无法显示的位置
+                subviews[i].place(at: .init(x: 100_000, y: 100_000), anchor: .topLeading, proposal: .zero)
+            }
+        }
+    }
+
+    func makeCache(subviews _: Subviews) -> Int? {
+        nil
+    }
+}
+
+public struct MyViewThatFitsByLayout<Content>: View where Content: View {
+    let axis: Axis.Set
+    let content: Content
+
+    public init(axis: Axis.Set = [.horizontal, .vertical], @ViewBuilder content: @escaping () -> Content) {
+        self.axis = axis
+        self.content = content()
+    }
+
+    public var body: some View {
+        _MyViewThatFitsLayout(axis: axis) {
+            content
+        }
+    }
+}

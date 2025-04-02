@@ -1,0 +1,396 @@
+像素: 图像的基本元素。
+举个例子：将一张图片放到PS中尽可能的放大，那么我们可以看到一个个的小格子，其中每个小格子就是一个像素点，每个像素点有且仅有一个颜色。 
+像素由四种不同的向量组成，即我们熟悉的RGBA（red，green，blue，alpha）。
+
+位图: 位图就是一个像素数组，数组中的每个像素都代表图片中的一个点。
+我们经常用到的JPEG和PNG图片就是位图。（压缩过的图片格式）。
+
+帧缓冲区: 帧缓冲区(显存)：是由像素组成的二维数组，每一个存储单元对应屏幕上的一个像素，整个帧缓冲对应一帧图像即当前屏幕画面。
+我们知道iOS设备屏幕是一秒刷新60次，如果帧缓冲区的内容有改变，那么我们看到的屏幕显示内容就会改变。
+
+
+图片加载流程：
+从磁盘读入缓冲区（得到图片的二进制数据：databutter）
+从缓存区拷贝到用户空间
+解压缩（将压缩过的数据还原成原始的二进制数据：imagebuffer）
+图片处理（CPU: 计算视图frame，图片解码，需要绘制纹理图片通过数据总线交给GPU）
+图像渲染（纹理混合，顶点变换与计算,像素点的填充计算（framebuffer），渲染到帧缓冲区。）
+
+
+YYImage源码分析:
+重写了imageNamed方法避免了将图片加入内存
++ (YYImage *)imageNamed:(NSString *)name {
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    if (data.length == 0) return nil;
+    
+    return [[self alloc] initWithData:data scale:scale];
+}
+- (instancetype)initWithData:(NSData *)data scale:(CGFloat)scale {
+    if (data.length == 0) return nil;
+    if (scale <= 0) scale = [UIScreen mainScreen].scale;
+   
+    _preloadedLock = dispatch_semaphore_create(1);
+    
+    @autoreleasepool {
+        //获取图片的一些信息、图片宽高、帧数、图片类型，即获取databuffer
+        YYImageDecoder *decoder = [YYImageDecoder decoderWithData:data scale:scale];
+        //得到了图片（解压缩过的， CGImageRef，imagebuffer）
+        YYImageFrame *frame = [decoder frameAtIndex:0 decodeForDisplay:YES];
+        //
+        UIImage *image = frame.image;
+        if (!image) return nil;
+        self = [self initWithCGImage:image.CGImage scale:decoder.scale orientation:image.imageOrientation];
+        if (!self) return nil;
+        _animatedImageType = decoder.type;
+        if (decoder.frameCount > 1) {
+            _decoder = decoder;
+            _bytesPerFrame = CGImageGetBytesPerRow(image.CGImage) * CGImageGetHeight(image.CGImage);
+            _animatedImageMemorySize = _bytesPerFrame * decoder.frameCount;
+        }
+        self.yy_isDecodedForDisplay = YES;
+    }
+    return self;
+}
+
+
+获取databuffer的方法:
++ (instancetype)decoderWithData:(NSData *)data scale:(CGFloat)scale {
+    if (!data) return nil;
+    //初始化参数，_framesLock，递归锁等等
+    YYImageDecoder *decoder = [[YYImageDecoder alloc] initWithScale:scale];
+    [decoder updateData:data final:YES];
+    return decoder;
+}
+//最终会执行到
+- (BOOL)_updateData:(NSData *)data final:(BOOL)final {
+    if (_finalized) return NO;
+    if (data.length < _data.length) return NO;
+    _finalized = final;
+    _data = data;
+    //如何检测图片的格式
+    YYImageType type = YYImageDetectType((__bridge CFDataRef)data);// 检测图片的格式
+    if (_sourceTypeDetected) {
+        if (_type != type) {
+            return NO;
+        } else {
+            [self _updateSource];
+        }
+    } else {
+        if (_data.length > 16) {
+            _type = type;
+            _sourceTypeDetected = YES;
+            [self _updateSource];
+        }
+    }
+    return YES;
+}
+
+每一个图片格式都有对应的十六进制数据（十六进制也是从二进制转换过来的），也可以说就是这些十六进制数据组成了一张图片，
+然后再通过计算机内部的渲染等一系列算法从而显示了一张图片，而往往前面的4~8个字节往往都代表了这张图片的格式
+举个例子，对一张图片获取到其NSData信息，打印如下，这就是该图片对应的十六进制
+
+<47494638 39615802 5802f700 00d6ccd4 0c0c0dcc ccd4dcdc e40c141c ccd4d4e3 e5e5c4c5 c4ccd4c9 0c140414 1c0cd8d9 d76c9932 8cb55679 a6397ba1 4783ac4c 8ab54882 ac446b89......
+然后取出其中前8位：47，49，46，38，分别对应的ASCII码为G,I,F,8,标明其格式为GIF。
+
+YYImageType YYImageDetectType(CFDataRef data) {
+    if (!data) return YYImageTypeUnknown;
+    //uint64_t = 8个字节，拿到data数据中前8个字节长度的数据
+    uint64_t length = CFDataGetLength(data);
+    if (length < 16) return YYImageTypeUnknown;
+    
+    const char *bytes = (char *)CFDataGetBytePtr(data);
+    //前四个字节
+    uint32_t magic4 = *((uint32_t *)bytes);
+    switch (magic4) {
+        case YY_FOUR_CC(0x4D, 0x4D, 0x00, 0x2A): { // big endian TIFF
+            return YYImageTypeTIFF;
+        } break;
+            
+        case YY_FOUR_CC(0x49, 0x49, 0x2A, 0x00): { // little endian TIFF
+            return YYImageTypeTIFF;
+        } break;
+            
+        case YY_FOUR_CC(0x00, 0x00, 0x01, 0x00): { // ICO
+            return YYImageTypeICO;
+        } break;
+            
+        case YY_FOUR_CC(0x00, 0x00, 0x02, 0x00): { // CUR
+            return YYImageTypeICO;
+        } break;
+            
+        case YY_FOUR_CC('i', 'c', 'n', 's'): { // ICNS
+            return YYImageTypeICNS;
+        } break;
+            
+        case YY_FOUR_CC('G', 'I', 'F', '8'): { // GIF
+            return YYImageTypeGIF;
+        } break;
+        // 89 50 4E 47 (. P  N  G)
+        case YY_FOUR_CC(0x89, 'P', 'N', 'G'): {  // PNG
+            uint32_t tmp = *((uint32_t *)(bytes + 4));
+            //其实这里已经可以判断是PNG了，这里作者又加了一重判断，来确认一下
+            if (tmp == YY_FOUR_CC('\r', '\n', 0x1A, '\n')) {
+                return YYImageTypePNG;
+            }
+        } break;
+            
+        case YY_FOUR_CC('R', 'I', 'F', 'F'): { // WebP
+            uint32_t tmp = *((uint32_t *)(bytes + 8));
+            if (tmp == YY_FOUR_CC('W', 'E', 'B', 'P')) {
+                return YYImageTypeWebP;
+            }
+        } break;
+        /*
+        case YY_FOUR_CC('B', 'P', 'G', 0xFB): { // BPG
+            return YYImageTypeBPG;
+        } break;
+        */
+    }
+    
+    uint16_t magic2 = *((uint16_t *)bytes);
+    switch (magic2) {
+        case YY_TWO_CC('B', 'A'):
+        case YY_TWO_CC('B', 'M'):
+        case YY_TWO_CC('I', 'C'):
+        case YY_TWO_CC('P', 'I'):
+        case YY_TWO_CC('C', 'I'):
+        case YY_TWO_CC('C', 'P'): { // BMP
+            return YYImageTypeBMP;
+        }
+        case YY_TWO_CC(0xFF, 0x4F): { // JPEG2000
+            return YYImageTypeJPEG2000;
+        }
+    }
+    
+    // JPG             FF D8 FF
+    if (memcmp(bytes,"\377\330\377",3) == 0) return YYImageTypeJPEG;
+    
+    // JP2
+    if (memcmp(bytes + 4, "\152\120\040\040\015", 5) == 0) return YYImageTypeJPEG2000;
+    
+    return YYImageTypeUnknown;
+}
+
+判断完图片格式后，开始执行_updateSource，根据当前的type类型去获取图片的源数据信息：比如：width、height、loopCount（GIF参数）、orientation（方向）、拍摄时间等等
+
+- (void)_updateSource {
+    switch (_type) {
+        case YYImageTypeWebP: {
+            [self _updateSourceWebP];
+        } break;
+            
+        case YYImageTypePNG: {
+            [self _updateSourceAPNG];    //里面也调用了_updateSourceImageIO
+        } break;
+            
+        default: {
+            [self _updateSourceImageIO];
+        } break;
+    }
+}
+
+我们主要来看普通的图片的处理，这里的普通指的是格式是 Gif，jpg，icon 等的图片。
+定位到_updateSourceImageIO方法，该方法内会使用到 <ImageIO/ImageIO.h>这个框架
+
+- (void)_updateSourceImageIO {
+    //初始化数据
+    _width = 0;
+    _height = 0;
+    _orientation = UIImageOrientationUp;
+    _loopCount = 0; //GIF图片
+    dispatch_semaphore_wait(_framesLock, DISPATCH_TIME_FOREVER);
+    _frames = nil;
+    dispatch_semaphore_signal(_framesLock);
+
+
+    //ImageIO 生成CGImage对象
+    if (!_source) {
+        if (_finalized) {
+            _source = CGImageSourceCreateWithData((__bridge CFDataRef)_data, NULL);
+        } else {
+            _source = CGImageSourceCreateIncremental(NULL);
+            if (_source) CGImageSourceUpdateData(_source, (__bridge CFDataRef)_data, false);
+        }
+    } else {
+        CGImageSourceUpdateData(_source, (__bridge CFDataRef)_data, _finalized);
+    }
+    if (!_source) return;
+
+
+    //获取图片帧数
+    _frameCount = CGImageSourceGetCount(_source);
+    if (_frameCount == 0) return;
+    
+    if (!_finalized) { // ignore multi-frame before finalized
+        _frameCount = 1;
+    } else {
+        if (_type == YYImageTypePNG) { // use custom apng decoder and ignore multi-frame
+            _frameCount = 1;
+        }
+        if (_type == YYImageTypeGIF) { // get gif loop count
+            CFDictionaryRef properties = CGImageSourceCopyProperties(_source, NULL);
+            if (properties) {
+                CFDictionaryRef gif = CFDictionaryGetValue(properties, kCGImagePropertyGIFDictionary);
+                if (gif) {
+                    //需要循环的次数
+                    CFTypeRef loop = CFDictionaryGetValue(gif, kCGImagePropertyGIFLoopCount);
+                    if (loop) CFNumberGetValue(loop, kCFNumberNSIntegerType, &_loopCount);
+                }
+                CFRelease(properties);
+            }
+        }
+    }
+
+    /*
+      使用CGImageSourceCopyProperties获取图片原信息，如果多个帧的图片可以通过  
+      CGImageSourceCopyPropertiesAtIndex来获取每一帧的图片信息，这里有几个 key 可以注意一下。
+
+      kCGImagePropertyPixelWidth：宽的像素
+      kCGImagePropertyPixelHeight：高的像素
+      kCGImagePropertyGIFDictionary：GIF相关的属性
+      kCGImagePropertyGIFUnclampedDelayTime：Gif的duration
+      kCGImagePropertyOrientation：图片的方向
+
+      并把收集的信息封装成_YYImageDecoderFrame对象。并封装到内部 frame 集合中
+     */
+    NSMutableArray *frames = [NSMutableArray new];
+    for (NSUInteger i = 0; i < _frameCount; i++) {
+        _YYImageDecoderFrame *frame = [_YYImageDecoderFrame new];
+        frame.index = i;
+        frame.blendFromIndex = i;
+        frame.hasAlpha = YES;
+        frame.isFullSize = YES;
+        [frames addObject:frame];
+        
+        CFDictionaryRef properties = CGImageSourceCopyPropertiesAtIndex(_source, i, NULL);
+        if (properties) {
+            NSTimeInterval duration = 0;
+            NSInteger orientationValue = 0, width = 0, height = 0;
+            CFTypeRef value = NULL;
+            
+            value = CFDictionaryGetValue(properties, kCGImagePropertyPixelWidth);
+            if (value) CFNumberGetValue(value, kCFNumberNSIntegerType, &width);
+            value = CFDictionaryGetValue(properties, kCGImagePropertyPixelHeight);
+            if (value) CFNumberGetValue(value, kCFNumberNSIntegerType, &height);
+            if (_type == YYImageTypeGIF) {
+                CFDictionaryRef gif = CFDictionaryGetValue(properties, kCGImagePropertyGIFDictionary);
+                if (gif) {
+                    // Use the unclamped frame delay if it exists.
+                    // 获取该帧图片的播放时间(key=kCGImagePropertyGIFUnclampedDelayTime)；
+                    value = CFDictionaryGetValue(gif, kCGImagePropertyGIFUnclampedDelayTime);
+                    if (!value) {
+                        // Fall back to the clamped frame delay if the unclamped frame delay does not exist.
+                        //如果通过kCGImagePropertyGIFUnclampedDelayTime没有获取到播放时长，就通过kCGImagePropertyGIFDelayTime来获取，两者的含义是相同的
+                        value = CFDictionaryGetValue(gif, kCGImagePropertyGIFDelayTime);
+                    }
+                    if (value) CFNumberGetValue(value, kCFNumberDoubleType, &duration);
+                }
+            }
+            
+            frame.width = width;
+            frame.height = height;
+            frame.duration = duration;
+            
+            if (i == 0 && _width + _height == 0) { // init first frame
+                _width = width;
+                _height = height;
+                value = CFDictionaryGetValue(properties, kCGImagePropertyOrientation);
+                if (value) {
+                    CFNumberGetValue(value, kCFNumberNSIntegerType, &orientationValue);
+                    _orientation = YYUIImageOrientationFromEXIFValue(orientationValue);
+                }
+            }
+            CFRelease(properties);
+        }
+    }
+    dispatch_semaphore_wait(_framesLock, DISPATCH_TIME_FOREVER);
+    _frames = frames;
+    dispatch_semaphore_signal(_framesLock);
+}
+
+至此，我们的图片加载就完成了Load这步操作，此时，我们获取到了图片的一些信息，比如宽、高、方向、拍摄时间等等，并存到为YYImageDecoderFrame。
+
+下一步，将根据保存的这些信息开始进行decode操作。
+YYImageFrame *frame = [decoder frameAtIndex:0 decodeForDisplay:YES]，最终会调用到（返回值YYImageFrame里有一个image属性，就是我们要用来显示的image）
+
+
+//只贴出了核心代码部分
+- (YYImageFrame *)_frameAtIndex:(NSUInteger)index decodeForDisplay:(BOOL)decodeForDisplay {
+    if (index >= _frames.count) return 0;
+    //获取到有关图片信息的类
+    _YYImageDecoderFrame *frame = [(_YYImageDecoderFrame *)_frames[index] copy];
+    BOOL decoded = NO;
+    BOOL extendToCanvas = NO;     //是否需要混合，一般为NO，WEBP和APNG的格式需要做混合
+
+
+    if (!_needBlend) {
+        //解压缩图片
+        CGImageRef imageRef = [self _newUnblendedImageAtIndex:index extendToCanvas:extendToCanvas decoded:&decoded];
+
+        if (!imageRef) return nil;
+        //生成解压后的image，即用来显示的image
+        UIImage *image = [UIImage imageWithCGImage:imageRef scale:_scale orientation:_orientation];
+        CFRelease(imageRef);
+        if (!image) return nil;
+        image.yy_isDecodedForDisplay = decoded;
+        frame.image = image;
+        return frame;
+    }
+    
+    if (!imageRef) return nil;
+    UIImage *image = [UIImage imageWithCGImage:imageRef scale:_scale orientation:_orientation];
+    CFRelease(imageRef);
+    if (!image) return nil;
+    
+    frame.image = image;
+    return frame;
+}
+
+
+- (CGImageRef)_newUnblendedImageAtIndex:(NSUInteger)index
+                         extendToCanvas:(BOOL)extendToCanvas
+                                decoded:(BOOL *)decoded CF_RETURNS_RETAINED {
+    
+    if (!_finalized && index > 0) return NULL;
+    if (_frames.count <= index) return NULL;
+    _YYImageDecoderFrame *frame = _frames[index];
+    
+    if (_source) {
+        //CGImageRef
+        CGImageRef imageRef = CGImageSourceCreateImageAtIndex(_source, index, (CFDictionaryRef)@{(id)kCGImageSourceShouldCache:@(YES)});
+        {
+                //创建一个包含了图片各种信息的上下文
+                //RGBA ( 4 * 8位)
+                //解压缩图片 w * h * s
+                //data : 内存空间 （）,NULL 则系统会自动分配
+                //w h:像素的宽度和高度
+                //bitmapINfo ： 位图布局信息
+                //ARGB RGBA (指定向量顺序) kCGImageAlphaPremultipliedFirst
+                //大小端模式：小端
+                CGContextRef context = CGBitmapContextCreate(NULL, _width, _height, 8, 0, YYCGColorSpaceGetDeviceRGB(), kCGBitmapByteOrder32Host | kCGImageAlphaPremultipliedFirst);
+                if (context) {
+                  //根据上下文绘制图片
+                    CGContextDrawImage(context, CGRectMake(0, _height - height, width, height), imageRef);  
+                //得到了需要用来显示的CGImage
+                    CGImageRef imageRefExtended = CGBitmapContextCreateImage(context);
+                    CFRelease(context);
+                    if (imageRefExtended) {
+                        CFRelease(imageRef);
+                        imageRef = imageRefExtended;
+                        if (decoded) *decoded = YES;
+                    }
+                }
+            }
+        }
+        return imageRef;
+    }
+
+大致分为以下三步（图片解压的三步）：
+使用 CGBitmapContextCreate 函数创建一个位图上下文；
+使用 CGContextDrawImage 函数将原始位图绘制到上下文中；
+使用 CGBitmapContextCreateImage 函数创建一张新的解压缩后的位图。
+
+
+根据上面的信息，我们就可以在图片解压时通过控制像素点来对图片进行处理，比如打马赛克或者把彩色图片变为黑白什么的。
+大致原理：通过建立一个二维像素数组，然后进行遍历每个像素点，将周围的几个像素都设置成同一个就可以大概实现一个马赛克的功能，
+取到每个像素的rgb并进行灰度设置则可以大致实现图片的黑白效果。

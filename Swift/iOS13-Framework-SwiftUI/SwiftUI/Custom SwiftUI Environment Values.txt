@@ -1,0 +1,321 @@
+https://www.fivestars.blog/articles/swiftui-environment-values/
+
+
+Creating a new environment value takes two steps:
+define a new EnvironmentKey
+extend EnvironmentValues with our new value
+
+
+1. Define a new EnvironmentKey
+public protocol EnvironmentKey {
+  associatedtype Value
+  static var defaultValue: Self.Value { get }
+}
+This key has three main roles:
+it defines the type of the associated environment value (via associatedtype)
+it helps SwiftUI identify the storage of the environment value
+it defines the environment default value, used when the environment value has not been explicitly set
+
+
+struct FSNumberKey: EnvironmentKey {
+  static let defaultValue: Int = 5
+}
+
+…of type Int (as per defaultValue type)
+…whose storage is identified by FSNumberKey
+…with default value 5
+
+EnvironmentValues is now able to get and set any environment value that uses this FSNumberKey as its storage.
+
+
+
+2. Extend EnvironmentValues with our new value
+If the environment was just a place to store values, we would only need the first step. 
+However, if we take a look at the @Environment property wrapper definition, we'd see the following:
+
+@propertyWrapper public struct Environment<Value>: DynamicProperty {
+  public init(_ keyPath: KeyPath<EnvironmentValues, Value>)
+  public var wrappedValue: Value { get }
+}
+
+we take a look at the environment(_:,_:) view modifier definition
+extension View {
+  public func environment<V>(_ keyPath: WritableKeyPath<EnvironmentValues, V>, _ value: V) -> some View
+}
+
+In both cases, we don't use the associated EnvironmentKey to access or write an environment value. 
+Instead, both @Environment and the environment(_:,_:) view modifier ask for a KeyPath to a EnvironmentValues property.
+
+This seems like an unnecessary step at first, but it unlocks all sorts of extra functionality.
+
+extension EnvironmentValues {
+  public var fsNumber: Int {
+    get {
+      self[FSNumberKey.self]
+    } set {
+      self[FSNumberKey.self] = newValue
+    }
+  }
+}
+
+we can now set and read the FSNumberKey's value via EnvironmentValues's new fsNumber definition.
+
+Setting FSNumberKey:
+VStack {
+  ViewA()
+    .environment(\.fsNumber, 1) 
+  ViewB()
+}
+
+
+Reading FSNumberKey:
+struct ViewA: View {
+  @Environment(\.fsNumber) private var fsNumber: Int 
+
+  var body: some View {
+    Text("\(fsNumber)")
+  }
+}
+
+
+most common custom value types we might define.
+1. Struct, Enums, and primitives
+Replace Int with any other primitive, struct, or enum definition, and it will work the same way.
+
+2. Bindings
+The @Environment property wrapper gives us a read-only value, 
+thus it makes sense to think about environment values as something set by a parent and read by a child.
+
+However, we can use bindings to allow children to modify environment values, with the new changes bubbling up to their ancestors.
+
+struct FSBoolBindingKey: EnvironmentKey {
+  static var defaultValue: Binding<Bool> = .constant(false)
+}
+
+extension EnvironmentValues {
+  var fsBoolBinding: Binding<Bool> {
+    get { self[FSBoolBindingKey.self] }
+    set { self[FSBoolBindingKey.self] = newValue }
+  }
+}
+This is very similar to any other environment value type, but it lets child views both read and modify the value:
+
+struct ContentView: View {
+  @State var myBool = false
+
+  var body: some View {
+    VStack {
+      Text(myBool ? "true" : "false")
+      NestedView()
+        .environment(\.myBoolBinding, $myBool) // 👈🏻 we inject myBool binding into the environment
+    }
+  }
+}
+
+struct NestedView: View {
+  @Environment(\.myBoolBinding) @Binding var myBool: Bool // 👈🏻 we read the binding from the environment
+
+  var body: some View {
+    Toggle(isOn: _myBool.wrappedValue, label: EmptyView.init) // 👈🏻 we read/write the environment value!
+  }
+}
+
+Here's another we way we could have defined the NestedView:
+
+struct NestedView: View {
+  @Environment(\.myBoolBinding) var myBool: Binding<Bool> // 👈🏻 different type
+
+  var body: some View {
+    Toggle(isOn: myBool, label: EmptyView.init) // 👈🏻 different isOn parameter
+  }
+}
+
+This is equivalent to passing a binding as a parameter of a view, but via environment.
+
+SwiftUI built-in binding environment values: presentationMode.
+
+3. Optional bindings
+struct ContentView: View {
+  @State var myBool = false
+
+  var body: some View {
+    ...
+    NestedView()
+      .environment(\.myBoolBinding, $myBool) // 👈🏻 
+    ...
+  }
+}
+
+If we forget to set this value into the environment, NestedView (or any other view) won't be able to modify the myBoolBinding environment value.
+
+struct FSBoolBindingKey: EnvironmentKey {
+  static var defaultValue: Binding<Bool>?
+}
+
+extension EnvironmentValues {
+  var fsBoolBinding: Binding<Bool>? {
+    get { self[FSBoolBindingKey.self] }
+    set { self[FSBoolBindingKey.self] = newValue }
+  }
+}
+
+At this point, views using this value will have to deal with a binding that might or might not be there. In the following example, NestedView will use the environment value when present and, 
+alternatively, will use a private state (that doesn't affect the environment):
+struct NestedView: View {
+  @Environment(\.fsBoolBinding) var myBool
+  @State private var privateBool = false // 👈🏻 
+
+  var body: some View {
+    Toggle(isOn: myBool ?? $privateBool, label: EmptyView.init) // 👈🏻 
+  }
+}
+SwiftUI built-in optional binding environment values: editMode.
+
+
+4. Actions
+To define a new action, we first define a struct accepting a closure
+
+struct FSAction {
+  var action: () -> Void
+
+  init(action: @escaping () -> Void = { }) {
+    self.action = action
+  }
+}
+
+We might have extra logic in this struct that we probably don't want to expose to other developers. 
+Hence we set our action as private and, instead, we make the struct type callable via Swift's special callAsFunction method:
+
+struct FSAction {
+  private var action: () -> Void // 👈🏻 private
+
+  func callAsFunction() { // 👈🏻 
+    action()
+  }
+
+  init(action: @escaping () -> Void = { }) {
+    self.action = action
+  }
+}
+
+struct FSActionKey: EnvironmentKey {
+  static var defaultValue: FSAction = FSAction()
+}
+
+extension EnvironmentValues {
+  var fsAction: FSAction {
+    get { self[FSActionKey.self] }
+    set { self[FSActionKey.self] = newValue }
+  }
+}
+
+// Read:
+
+struct ContentView: View {
+  @Environment(\.fsAction) var action: FSAction // 👈🏻
+
+  var body: some View {
+    Button("Tap me") { action() } // 👈🏻 
+  }
+}
+
+// Set:
+
+someView()
+  .environment(\.fsAction, FSAction { // 👈🏻 
+    ...
+  })
+
+Thanks to FSAction's callAsFunction we don't need to reach for the FSAction.action property (and we can't, as it's private). 
+Instead, we call the function directly on the FSAction instance. This helps hide any implementation detail of our FSAction struct.
+
+SwiftUI built-in actions: dismissSearch (DismissSearchAction), openURL (OpenURLAction), refresh (RefreshAction). resetFocus (ResetFocusAction), dismiss (DismissAction).
+
+
+5. Closures
+If we want our environment value to be just a closure and nothing else, we can skip the action struct definition, and use a closure directly:
+
+struct ClosureKey: EnvironmentKey {
+  static let defaultValue: () -> Void = { }
+}
+
+extension EnvironmentValues {
+  public var fsAction: () -> Void {
+    get { self[ClosureKey.self] }
+    set { self[ClosureKey.self] = newValue }
+  }
+}
+
+// Read:
+
+struct ContentView: View {
+  @Environment(\.fsAction) var action: () -> Void // 👈🏻
+
+  var body: some View {
+    Button("Tap me") { action() } // 👈🏻 
+  }
+}
+
+// Set:
+
+someView()
+  .environment(\.fsAction) { // 👈🏻 
+    ...
+  }
+
+Unlike SwiftUI views, which must be value types, environment values can also be reference types.
+Swift closures are reference types.
+
+
+6. Classes
+Speaking of reference types, we can also define environment values with an associated class type.
+
+There are important implications when using a class rather than a struct:
+(1)we can alter a class instance, and the exact change will be reflected anywhere else that same instance is referenced in the view hierarchy.
+(2)views do not observe changes within classes defined in EnvironmentValues, regardless of whether the class is marked ObservableObject. 
+If we're trying to do something similar to this, we should use environment objects instead.
+
+public class FSClass {
+  var x: Int
+
+  init(x: Int = 5) {
+    self.x = x
+  }
+}
+
+private struct FSClassKey: EnvironmentKey {
+  static let defaultValue = FSClass()
+}
+
+extension EnvironmentValues {
+  public var fsClass: FSClass {
+    get { self[FSClassKey.self] }
+    set { self[FSClassKey.self] = newValue }
+  }
+}
+
+// Read:
+
+struct ContentView: View {
+  @Environment(\.fsClass) private var fsClass // 👈🏻
+
+  var body: some View {
+    VStack {
+      Text("\(fsClass.x)") // 👈🏻
+
+      Button("change") {
+        fsClass.x = Int.random(in: 1...99) 
+        // 👆🏻 fsClass is a class, we can modify its properties
+      }
+    }
+  }
+}
+
+// Set:
+
+someView()
+  .environment(\.fsClass, FSClass(x: 1))
+
+There are very few reasons why we'd ever define a class-type environment value, but it's good to know that it's supported.
+
+SwiftUI built-in class environment values: managedObjectContext (NSManagedObjectContext) and undoManager (UndoManager).

@@ -1,0 +1,120 @@
+1. map函数
+map函数作用于Collection中的每一个元素，然后返回一个新的Collection
+
+map函数本质是创建新的数组，对集合内的每个元素进行transform操作（闭包表达式），然后返回新数组
+
+let number: String? = String(20)
+let restult = number.map{Int($0)}// Int??
+
+/// - Parameter transform: A closure that takes the unwrapped value
+///   of the instance.
+/// - Returns: The result of the given closure. If this instance is `nil`,
+///   returns `nil`.
+@inlinable
+public func map<U>(
+_ transform: (Wrapped) throws -> U
+) rethrows -> U? {
+switch self {
+case .some(let y):
+    return .some(try transform(y))
+case .none:
+    return .none
+}
+}
+
+
+2. flatMap函数
+flatMap函数会将Sequence中的元素进行“压平”，返回的类型会是Sequence中元素类型的数组，而map函数返回的是闭包返回类型T的数组
+
+let number: String? = String(20)
+let restult = number.flatMap{Int($0)}// Int?
+使用map函数，数组内元素变为Optional类型，同时nil值也被保留。使用flatMap函数，会把数组内元素进行Optional解包，并且过滤nil值
+
+
+/// - Parameter transform: A closure that takes the unwrapped value
+///   of the instance.  
+/// - Returns: The result of the given closure. If this instance is `nil`,
+///   returns `nil`.
+@inlinable
+public func flatMap<U>(
+_ transform: (Wrapped) throws -> U?
+) rethrows -> U? {
+switch self {
+case .some(let y):
+    return try transform(y)
+case .none:
+    return .none
+}
+}
+
+
+3. compactMap函数
+使用compactMap函数将nil值过滤
+
+
+4. reduce函数
+reduce函数可以将数组元素组合计算为一个值，并且会接受一个初始值，这个初始值的类型可以和数组元素类型不同
+
+
+5. LazySequence
+假设我们有一个非常庞大的数组，想要通过map函数对每一个元素进行*2，这将是一个非常耗时的操作
+
+let numbers = Array(1...100000)
+let mapNumbers = numbers.map{ $0 * 2 }
+
+合理的逻辑，应该使用懒加载，在元素被访问的时候进行*2操作。
+
+let numbers = Array(1...100000)
+let mapNumbers = numbers.lazy.map{ $0 * 2 }
+print(mapNumbers)// 直接输出mapNumbers，可以看到里面的元素没有发生任何变化
+
+
+let numbers = Array(1...100000)
+let mapNumbers = numbers.lazy.map{ $0 * 2 }
+
+print(mapNumbers[0])
+print(mapNumbers[1])
+print(mapNumbers[2])
+
+//输出以下结果：
+//2
+//4
+//6
+当数组内指定元素被访问，这时该元素才会进行*2操作
+
+###
+当使⽤Lazy关键字后，得到的mapNumbers保留的还是原来的数据，只不过在访问指定元素时，才会执⾏对应的闭包操作，产⽣新值给我们
+###
+
+当使用lazy关键字后，返回的是一个LazySequence的结构体
+@inlinable public var lazy: LazySequence<Array<Element>> { get }
+
+打开LazySequence.swift文件，找到LazySequenceProtocol协议的定义
+LazySequenceProtocol协议遵循了Sequence协议
+
+extension Sequence {
+  /// A sequence containing the same elements as this sequence,
+  /// but on which some operations, such as `map` and `filter`, are
+  /// implemented lazily.
+  @inlinable // protocol-only
+  public var lazy: LazySequence<Self> {
+    return LazySequence(_base: self)
+  }
+}
+lazy是一个计算属性，返回一个LazySequence对象
+
+@frozen // lazy-performance
+public struct LazySequence<Base: Sequence> {
+  @usableFromInline
+  internal var _base: Base
+
+  /// Creates a sequence that has the same elements as `base`, but on
+  /// which some operations such as `map` and `filter` are implemented
+  /// lazily.
+  @inlinable // lazy-performance
+  internal init(_base: Base) {
+    self._base = _base
+  }
+}
+
+所以Lazy的本质，其实就是保存当前集合和对应的操作，然后在访问具体元素的时候，执⾏对应的操作

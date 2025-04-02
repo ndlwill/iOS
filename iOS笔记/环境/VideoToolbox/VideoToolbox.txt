@@ -24,6 +24,7 @@ PPS（Picture Parameter Set）：PPS包含了图像的参数信息，如图像�
 SPS和PPS通常会在视频编码的开头部分作为独立的NALU进行传输，接收端收到这些信息后，会将其存储起来供解码器使用
 在解码视频时，解码器会根据SPS和PPS的参数配置来正确地解码视频数据。
 
+
 H.264数据的结构:
 通常所说的H.264裸流，指的是由StartCode分割开来的一个个NALU组成的二进制序列，每个NALU一般来说就是一帧视频图像的数据（也有可能是多个NALU组成一帧图像，或者该NALU是SPS、PPS等数据）
 0x00 00 00 01四个字节为StartCode，在两个StartCode之间的内容即为一个完整的NALU。
@@ -44,6 +45,7 @@ VideoToolbox可接收的数据格式:
 
 IDR 的全称是 "Instantaneous Decoding Refresh"，它是视频编码中的一种图像类型，用于视频序列的恢复和同步。
 在 H.264/AVC 编码中，IDR 图像是一个完整的、独立的图像，可以作为视频序列中的关键帧。
+
 
 ==================================================实践
 1. SPS和PPS的获取:
@@ -69,3 +71,44 @@ StartCode可以是4个字节的00 00 00 01，也可以是3个字节的00 00 01�
 4. 分辨率的变化
 flv和ts格式的流都支持中途改变分辨率，所以在分辨率变化后需要重新初始化VideoToolbox的session，否则将会产生解码错误。
 码流的分辨率发生变化（或者说编码参数发生变化时），都会有SPS和PPS数据的更新，需要根据新的SPS和PPS信息重新建立解码session。
+ts流中更新的SPS和PPS数据和普通视频数据一样，正常解析数据即可获取到新的SPS和PPS数据。
+
+flv流或者rtmp流中的SPS和PPS数据的更新，位于FLV结构中一个叫做AVC sequence header的tag中，其中存储的为一个AVCDecoderConfigurationRecord结构，
+需要从中提取出SPS和PPS数据。该数据在使用FFmpeg的av_read_frame获取数据时，依然保存在AVPacket的side_data中。
+获取到SPS和PPS数据后，可以创建一个CMFormatDescriptionRef结构，然后使用VTDecompressionSessionCanAcceptFormatDescription函数判定原有session是否能解码新的数据，
+如果返回值为假，则需要重建解码session。
+而新的视频分辨率可以通过解析SPS数据来获取。
+
+
+==================================================SPS解析
+根据SPS信息计算视频分辨率如下
+
+width = ((pic_width_in_mbs_minus1 +1)*16) - frame_crop_left_offset*2 - frame_crop_right_offset*2;
+height = ((2 - frame_mbs_only_flag)* (pic_height_in_map_units_minus1 +1) * 16) - (frame_crop_top_offset * 2) - (frame_crop_bottom_offset * 2);
+
+descriptor中的描述意义如下
+u(N) - 长度为N个bit的无符号数字
+s(N) - 长度为N个bit的有符号数字
+ue(v) - 无符号的指数哥伦布编码
+se(v) - 有符号的指数哥伦布编码
+其中的难点是指数哥伦布编码的解析，原理请搜索指数哥伦布编码，具体实现可以参考ijkplayer中解析SPS信息时的实现
+
+https://github.com/Bilibili/ijkplayer/blob/master/ios/IJKMediaPlayer/IJKMediaPlayer/ijkmedia/ijkplayer/ios/pipeline/h264_sps_parser.h
+
+其中未实现se(v)的解析，它的实现如下
+static int64_t
+nal_bs_read_se(nal_bitstream *bs)
+{
+    int64_t ueVal = nal_bs_read_ue(bs);
+    double k = ueVal;
+    int64_t nValue = ceil(k/2);
+    if(ueVal%2 == 0)
+    {
+        nValue = -nValue;
+    }
+    return nValue;
+}
+
+
+或者参考ffmpeg中对SPS解析的实现
+https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_ps.c#L334

@@ -1,0 +1,395 @@
+// import ObjectiveC.runtime
+
+func test(){
+    print("test run start")
+
+    var methodCount: UInt32 = 0
+    let methodList = class_copyMethodList(LGTeacher.self, &methodCount)
+    
+    for i in 0..<numericCast(methodCount) {
+        if let method = methodList?[i]{
+            let methodName = method_getName(method)
+            print("方法列表：\(methodName)")
+        }else{
+            print("not found method")
+        }
+    }
+    
+    var count: UInt32 = 0
+    let proList = class_copyPropertyList(LGTeacher.self, &count)
+    
+    for i in 0..<numericCast(count) {
+        if let property = proList?[i]{
+            let propertyName = property_getName(property)
+            print("成员属性：\(property)")
+        }else{
+            print("not found property")
+        }
+    }
+    
+    print("test run end")
+}
+
+
+因为在main函数执行前，dyld会执行+load方法，一般load里面做methodSwizzling，
+所以runtime机制在main之前就启动了。（运行时系统的某些机制已经被激活）
+
+@objc 仅仅是暴露给 Objective-C 运行时
+dynamic 仅仅是启用 Objective-C 消息发送
+
+dynamic 的作用是 强制方法或属性走 Objective-C 的 runtime 机制，即它们不会被 Swift 的编译时优化（如静态分派）所影响。
+dynamic 的作用：强制使用 objc_msgSend
+
+==================================================以验证
+oc调swift:
+创建TestOC项目
+
+class TestSwift {
+    var age = 10
+}
+
+#import "TestOC-Swift.h"
+###
+想要在oc中使用这个swift类，必须继承NSObject
+###
+如果@objc class TestSwift这样，报 Only classes that inherit from NSObject can be declared @objc
+所以继承NSObject，也就不需要在类前面加@objc，class TestSwift: NSObject
+
+TestSwift *test = [[TestSwift alloc] init];
+如果age前面不加@objc，test.age 报 Property 'age' not found on object of type 'TestSwift *'
+###
+必须使用 @objc 修饰，属性、方法等才会公开给OC
+###
+
+
+swift调oc:
+创建项目名-Bridging-Header.h的桥接文件
+此文件中要将想要使用的 OC的.h文件导入
+
+NS_SWIFT_NAME(替换名)：重命名在Swift中的名称，可用来进行方法名隐藏
+NS_SWIFT_UNAVAILABLE(_msg)：Swift中不可见，不能使用
+
+// 将method1方法在Swift中替换成swiftMethod()方法
+- (void)method1 NS_SWIFT_NAME(swiftMethd());
+// 将method2方法再Swift中隐藏
+- (void)method2 NS_SWIFT_UNAVAILABLE("Swift中该方法不可调用");
+
+
+NS_REFINED_FOR_SWIFT 可用于方法和属性，添加了 NS_REFINED_FOR_SWIFT 的 Objective-C API 在导入到 Swift 时，具体的 API 重命名规则如下：
+对于 初始化方法，在其第一个参数标签前面加 "__"
+// Objective-C API
+- (instancetype)initWithClassName:(NSString *)name NS_REFINED_FOR_SWIFT;
+// In Swift
+init(__className: String)
+
+对于 其它方法，在其方法名前面加 "__"
+// Objective-C API
+- (NSString *)displayNameForMode:(DisplayMode)mode NS_REFINED_FOR_SWIFT;
+// In Swift
+func __displayNameForMode(mode: DisplayMode) -> String
+
+其他声明将在其名称前加上 "__"，例如属性
+// Objective-C API
+@property DisplayMode mode NS_REFINED_FOR_SWIFT;
+// In Swift
+var __mode: DisplayMode { get set }
+
+
+注意：NS_REFINED_FOR_SWIFT 和 NS_SWIFT_NAME 一起用的话，NS_REFINED_FOR_SWIFT 不生效，而是以 NS_SWIFT_NAME 指定的名称重命名 Objective-C API
+
+
+
+class LGTeacher: NSObject {
+    var age: Int = 18
+    func teach(){
+        print("teach")
+    }
+}
+如果 teach 方法没有 @objc
+#selector(LGTeacher.teach)
+报 Argument of '#selector' refers to instance method 'teach()' that is not exposed to Objective-C
+
+
+==================================================理解@objc & dynamic
+
+/*
+#selector 是一种 编译时检查，表示一个方法的选择器。
+在编译时，编译器会检查这个方法是否存在于指定的类（这里是 LGTeacher）中。用于 确保方法存在.这个过程是 静态检查。
+
+而 class_getInstanceMethod(vc, swizzled) 会在 运行时 通过 vc 找到类的方法。
+这些是 运行时 的 API，用于 动态查找类的方法实现。class_getInstanceMethod 会根据传入的 vc 类和选择器（如 original 或 swizzled）查找该方法的实现。
+
+let originalSel: Selector = #selector(LGTeacher.teach)
+let swizzledSel: Selector = NSSelectorFromString("hoge_teach") // Selector("hoge_teach") 会警告,它不会在编译时进行检查。
+*/
+private func swizzle(_ vc: LGTeacher.Type) {
+  [
+    (#selector(vc.teach), Selector("hoge_teach")) // #selector(vc.hoge_teach)
+  ]
+  .forEach { original, swizzled in
+
+    guard let originalMethod = class_getInstanceMethod(vc, original),
+      let swizzledMethod = class_getInstanceMethod(vc, swizzled) else { return }
+
+    let didAddViewDidLoadMethod = class_addMethod(
+      vc,
+      original,
+      method_getImplementation(swizzledMethod),
+      method_getTypeEncoding(swizzledMethod)
+    )
+
+    if didAddViewDidLoadMethod {
+      class_replaceMethod(
+        vc,
+        swizzled,
+        method_getImplementation(originalMethod),
+        method_getTypeEncoding(originalMethod)
+      )
+    } else {
+      method_exchangeImplementations(originalMethod, swizzledMethod)
+    }
+  }
+}
+
+private var hasSwizzled = false
+
+extension LGTeacher {
+  public final class func doBadSwizzleStuff() {
+    guard !hasSwizzled else { return }
+
+    hasSwizzled = true
+    swizzle(self)
+  }
+
+    @objc private func hoge_teach() {
+    self.hoge_teach()
+    let instanceType = type(of: self)
+    let name = String(reflecting: instanceType)
+    print("====####====", name)
+  }
+}
+
+LGTeacher.doBadSwizzleStuff()
+test()
+let teacher = LGTeacher()
+teacher.teach()
+
+（1）
+class LGTeacher: NSObject {
+    @objc var age: Int = 18
+    @objc func teach(){// 不加 dynamic，走vtable，上面的方法swizzl就没有意义
+        print("teach")
+    }
+}
+
+test run start
+方法列表：hoge_teach
+方法列表：age
+方法列表：setAge:
+方法列表：teach
+方法列表：init
+成员属性：0x00000001045dc370
+test run end
+teach
+
+（2）
+class LGTeacher: NSObject {
+    @objc var age: Int = 18
+    @objc dynamic func teach(){// 加 dynamic，走 objc_msgSend，最终找的是方法的 IMP，上面的方法swizzl就起作用了，实际调的hoge_teach
+        print("teach")
+    }
+}
+
+test run start
+方法列表：hoge_teach
+方法列表：age
+方法列表：setAge:
+方法列表：teach
+方法列表：init
+成员属性：0x00000001024d4370
+test run end
+teach
+====####==== TestSwift.LGTeacher
+
+
+Method Swizzling 依赖 @objc dynamic:
+method_exchangeImplementations 本质上是 交换两个 IMP 指针。
+但 Swift 的方法默认不存储在 method_list 里，而是静态绑定的，无法被 Runtime API 操作。
+@objc dynamic 让方法在 运行时可修改。
+
+
+==================================================什么修饰符也不加
+class LGTeacher {
+    var age: Int = 18
+    func teach(){
+        print("teach")
+    }
+}
+
+let t = LGTeacher()
+
+test()
+
+//输出以下内容：
+//test run
+
+⽅法列表和成员属性都没有打印出来
+
+
+==================================================给方法和属性添加@objc修饰
+class LGTeacher {
+    @objc var age: Int = 18
+    @objc func teach(){
+        print("teach")
+    }
+}
+
+//输出以下内容：
+//方法列表：teach
+//方法列表：age
+//方法列表：setAge:
+//成员属性:0x0000000100008510
+//test run
+
+⽅法列表及成员属性全部被打印出来，但Class没有继承NSObject，所以并不能暴漏给OC使用
+
+
+==================================================将Class继承于NSObject，去掉@objc修饰
+class LGTeacher : NSObject {
+    var age: Int = 18
+    func teach(){
+        print("teach")
+    }
+}
+
+//输出以下内容：
+//方法列表：init
+//test run
+
+
+只有init方法被打印出来。因为继承NSObject后，默认只有init方法暴露
+
+
+==================================================Class继承于NSObject，同时给方法和属性添加@objc修饰
+class LGTeacher : NSObject {
+    @objc var age: Int = 18
+    @objc func teach(){
+        print("teach")
+    }
+}
+
+//输出以下内容：
+//方法列表：teach
+//方法列表：init
+//方法列表：age
+//方法列表：setAge:
+//成员属性:0x0000000100008518
+
+⽅法列表及成员属性全部被打印出来，同时可供OC使用
+但对于teach()方法，依然是V_table函数表调度。
+无法使用Runtime的方法交换，因为方法此时还不具备动态特性(见上面的 理解@objc & dynamic)
+
+###
+不加@objc，OC代码都没发调这个Swift类的方法属性，也就相当于这边没有暴露给oc，当然也就无法通过 class_copyMethodList 获取这个方法
+###
+
+==================================================Class继承于NSObject，将@objc修饰改为dynamic修饰
+class LGTeacher : NSObject {
+    dynamic var age: Int = 18
+    dynamic func teach(){
+        print("teach")
+    }
+}
+
+//输出以下内容：
+//方法列表：init
+//test run
+
+只有init方法被打印出来。因为dynamic修饰只给方法和属性增加了动态特性，它们依然不能被OC使用（没暴露）
+
+
+==================================================objc源码分析
+进入class_copyMethodList源码,断住，查看此时的cls，其中data()存储类的信息
+进入data定义，在objc_class里打印superclass，输出的是Swift中有默认基类_SwiftObject
+
+swift中有默认基类，即_SwiftObject
+它实现了NSObject协议。本质上Swift为了和OC进行交互，它保留了OC的数据结构
+
+
+// swift源码
+// Source code: "SwiftObject"
+// Real class name: mangled "Swift._SwiftObject"
+#define SwiftObject _TtCs12_SwiftObject
+
+#if __has_attribute(objc_root_class)
+__attribute__((__objc_root_class__))
+#endif
+SWIFT_RUNTIME_EXPORT @interface SwiftObject<NSObject> {
+ @private
+  Class isa;
+  SWIFT_HEAPOBJECT_NON_OBJC_MEMBERS;
+}
+
+- (BOOL)isEqual:(id)object;
+- (NSUInteger)hash;
+
+- (Class)superclass;
+- (Class)class;
+- (instancetype)self;
+- (struct _NSZone *)zone;
+
+- (id)performSelector:(SEL)aSelector;
+- (id)performSelector:(SEL)aSelector withObject:(id)object;
+- (id)performSelector:(SEL)aSelector withObject:(id)object1 withObject:(id)object2;
+
+- (BOOL)isProxy;
+
++ (BOOL)isSubclassOfClass:(Class)aClass;
+- (BOOL)isKindOfClass:(Class)aClass;
+- (BOOL)isMemberOfClass:(Class)aClass;
+- (BOOL)conformsToProtocol:(Protocol *)aProtocol;
+
+- (BOOL)respondsToSelector:(SEL)aSelector;
++ (BOOL)instancesRespondToSelector:(SEL)aSelector;
+- (IMP)methodForSelector:(SEL)aSelector;
++ (IMP)instanceMethodForSelector:(SEL)aSelector;
+
+- (instancetype)retain;
+- (oneway void)release;
+- (instancetype)autorelease;
+- (NSUInteger)retainCount;
+
+- (id /* NSString */)description;
+- (id /* NSString */)debugDescription;
+@end
+
+
+已知：
+TargetAnyClassMetadata继承自TargetHeapMetaData，其中只有一个属性kind，
+TargetAnyClassMetadata有四个属性：isa、superclass、cacheData、data即bits
+
+
+struct swift_class_t : objc_class {
+    uint32_t flags;
+    uint32_t instanceAddressOffset;
+    uint32_t instanceSize;
+    uint16_t instanceAlignMask;
+    uint16_t reserved;
+
+    uint32_t classSize;
+    uint32_t classAddressOffset;
+    void *description;
+    // ...
+
+    void *baseAddress() {
+        return (void *)((uint8_t *)this - classAddressOffset);
+    }
+};
+在objc源码中找到swift_class_t，继承自objc_class，保留了父类isa、superclass、cacheData、data四个属性，其次才是自己的属性
+
+
+必须继承NSObject的原因：
+Swift在底层数据结构和OC只保持了部分一致，###通过NSObject的声明，标记了当前类是一个和OC交互的类。###
+
+
+

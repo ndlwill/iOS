@@ -1,0 +1,254 @@
+在表达式 typename std::enable_if<std::is_integral<T>::value, T>::type 中，
+::value 和 ::type 是用来访问 std::is_integral 和 std::enable_if 模板中的静态成员的。
+
+std::is_integral<T>::value
+std::is_integral<T> 是一个类型萃取（type trait），用于检查 T 是否是一个整数类型（如 int、long 等）。
+::value 是 std::is_integral<T> 的一个静态成员常量，返回一个布尔值，表示 T 是否为整数类型。如果 T 是整数类型，value 就是 true，否则是 false。
+
+std::is_integral<int>::value;    // true，因为 int 是整数类型
+std::is_integral<float>::value;  // false，因为 float 不是整数类型
+
+如果 T 是整数类型，它的 value 为 true，则 std::enable_if 可以继续执行，否则编译器会忽略该模板。
+
+std::enable_if<std::is_integral<T>::value, T>::type
+std::enable_if 是一个条件性启用模板的工具，通常用于实现 SFINAE（Substitution Failure Is Not An Error），即在特定条件下启用或禁用模板。
+当第一个参数 std::is_integral<T>::value 为 true 时，std::enable_if 会定义一个名为 type 的成员，表示第二个模板参数 T。
+如果条件为 false，则 std::enable_if 不会定义 type，导致编译器忽略该模板。
+
+::type 是 std::enable_if 中的一个类型成员，只有当第一个参数为 true 时才有效。在这种情况下，type 实际上就是第二个参数（在此处为 T）。
+这意味着 std::enable_if<std::is_integral<T>::value, T>::type 只有在 T 是整数类型时有效，并且将成为类型 T。否则，编译器会跳过这个模板。
+
+==================================================
+
+c++14之前:
+1. 类模板和函数模板
+
+类模板:
+template<typename T>
+class MyContainer {
+public:
+    void add(const T& element) {
+        // 添加元素的实现
+    }
+private:
+    T data;
+};
+
+MyContainer<int> intContainer; // 用 int 实例化 MyContainer 类
+MyContainer<double> doubleContainer; // 用 double 实例化 MyContainer 类
+
+
+函数模板:
+template<typename T>
+T add(T a, T b) {
+    return a + b;
+}
+
+int main() {
+    int result = add(3, 5);    // int 类型
+    double result2 = add(3.5, 5.5); // double 类型
+}
+
+
+2. 非类型模板参数
+除了类型参数（typename 或 class）外，还可以使用非类型参数,比如整数、指针或引用。
+template<typename T, int Size>
+class FixedArray {
+public:
+    T data[Size];
+};
+
+FixedArray<int, 10> intArray; // 创建一个包含 10 个整数的数组
+
+
+3. 模板特化（Template Specialization）用于为特定类型提供不同的实现。这通常在类模板中使用
+template<typename T>
+class MyType {
+public:
+    static void print() { std::cout << "Generic type" << std::endl; }
+};
+
+template<>
+class MyType<int> { // 对 int 类型的特化
+public:
+    static void print() { std::cout << "Int type" << std::endl; }
+};
+
+int main() {
+    MyType<double>::print(); // 输出 "Generic type"
+    MyType<int>::print();    // 输出 "Int type"
+}
+
+
+4. 参数包 (C++11 引入)
+参数包（Parameter Pack）是一种允许模板接受可变数量参数的特性。
+template<typename... Args>
+void print(Args... args) {
+    (std::cout << ... << args) << std::endl; // 使用折叠表达式（C++17引入）
+}
+
+int main() {
+    print(1, 2.5, "hello"); // 打印: 1 2.5 hello
+}
+
+
+5. 可变参数模板 (C++11 引入)
+可变参数模板允许模板接受任意数量和类型的参数，主要用于函数模板。
+通过递归展开参数包，可以处理任意数量的参数。
+template<typename T>
+void printSingle(T value) {
+    std::cout << value << std::endl;
+}
+
+template<typename T, typename... Args>
+void print(T first, Args... rest) {
+    printSingle(first); // 打印第一个参数
+    print(rest...);     // 递归展开其余参数
+}
+
+int main() {
+    print(1, 2.5, "hello"); // 打印: 1 2.5 hello
+}
+
+
+6. decltype 和 std::declval (C++11 引入)
+decltype 用于根据表达式的类型自动推导变量的类型
+std::declval 是一个辅助工具，允许我们在不构造对象的情况下获得其类型。这在泛型代码中很有用，例如声明函数返回值类型。
+#include <utility>
+
+template<typename T, typename U>
+auto multiply(const T& a, const U& b) -> decltype(a * b) {
+    return a * b;
+}
+
+int main() {
+    int result = multiply(2, 3);    // 返回 int
+    double result2 = multiply(2.5, 3.5); // 返回 double
+}
+
+
+7. std::enable_if 与 SFINAE (C++11 引入)
+std::enable_if 用于启用模板的条件性编译，而 SFINAE（Substitution Failure Is Not An Error）规则则允许编译器忽略模板实例化中的失败。
+这对于在编译期限制模板参数的类型非常有用。
+
+#include <type_traits>
+
+template<typename T>
+typename std::enable_if<std::is_integral<T>::value, T>::type
+square(T value) {
+    return value * value;
+}
+
+int main() {
+    int result = square(5); // OK，5 是整数类型
+    // double result2 = square(5.5); // 错误，5.5 不是整数类型
+}
+
+
+8. 类型萃取 (Type Traits) (C++11 引入)
+类型萃取是一种用于检测和操作类型信息的模板工具。C++11 引入了标准库中的类型萃取，例如 std::is_integral、std::is_floating_point 等，用于在模板中实现类型推导和条件编译。
+#include <type_traits>
+#include <iostream>
+
+template<typename T>
+void checkType() {
+    if (std::is_integral<T>::value) {
+        std::cout << "Integral type" << std::endl;
+    } else {
+        std::cout << "Not an integral type" << std::endl;
+    }
+}
+
+int main() {
+    checkType<int>();    // 输出 "Integral type"
+    checkType<double>(); // 输出 "Not an integral type"
+}
+
+
+
+c++14:
+C++14 对模板（Templates）进行了几项改进和增强
+这些改进包括变量模板、泛型 lambda 表达式、返回类型推导等
+
+1. 变量模板 (Variable Templates)
+template<typename T>
+constexpr T pi = T(3.1415926535897932385); // 定义通用的 π 常量
+
+int main() {
+    double doublePi = pi<double>; // double 类型的 pi
+    float floatPi = pi<float>;    // float 类型的 pi
+}
+
+
+2. 泛型 Lambda 表达式 (Generic Lambda Expressions)
+lambda 表达式可以使用 auto 作为参数类型，从而变成泛型 lambda。
+
+auto add = [](auto a, auto b) { return a + b; };
+
+int main() {
+    int result1 = add(1, 2);         // 结果为 3
+    double result2 = add(1.5, 2.5);  // 结果为 4.0
+}
+
+
+3. 返回类型推导 (Return Type Deduction)
+C++14 支持在函数模板中使用 auto 作为返回类型，这样编译器会自动推导出返回类型。
+
+template<typename T, typename U>
+auto add(T a, U b) {
+    return a + b; // 自动推导返回类型
+}
+
+int main() {
+    auto result = add(1, 2.5); // 返回类型为 double
+}
+
+
+4. std::enable_if 简化 (std::enable_if_t)
+在 C++14 中，std::enable_if 增加了 std::enable_if_t 别名模板，避免了写出冗长的 typename std::enable_if<...>::type
+
+#include <type_traits>
+
+template<typename T>
+std::enable_if_t<std::is_integral<T>::value, T> square(T x) {
+    return x * x;
+}
+
+int main() {
+    int result = square(5); // OK，int 是整数类型
+    // double result = square(5.5); // 错误，double 不是整数类型
+}
+
+
+5. std::integer_sequence 和 std::index_sequence
+C++14 提供了 std::integer_sequence 和 std::index_sequence，使处理参数包的整数序列更加方便，通常用于模板元编程。
+
+#include <utility>
+#include <iostream>
+
+
+template<typename... Args>
+void printIndices() {
+    auto indices = std::index_sequence_for<Args...>{};
+    // 用法：可以用 indices 进行索引操作
+    std::cout << sizeof...(indices) << std::endl;
+}
+
+
+6. decltype(auto) 
+decltype(auto) 允许在不改变原始类型的情况下推导返回类型，包括返回引用类型。
+它使得返回类型与实际类型完全一致
+
+int x = 10;
+decltype(auto) foo() {
+    return (x); // 返回 x 的引用
+}
+
+
+7. 模板别名简化 (Alias Templates)
+C++11 引入了模板别名（using），而 C++14 继续支持这一特性，用于更简单和直观的类型定义和重用
+
+template<typename T>
+using Vec = std::vector<T>; // Vec<T> 是 std::vector<T> 的别名
+
+Vec<int> numbers = {1, 2, 3, 4};

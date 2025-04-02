@@ -9,17 +9,88 @@
 
 
 视图状态的构成:
-可以驱动视图进行更新的源被称之为 Source of Truth，它的类型有:
-使用 @State、@StateObject 这类属性包装器声明的变量
-视图类型（ 符合 View 协议 ）的构造参数
-例如 onReceive 这类的事件源
+可以驱动视图进行更新的源被称之为 Source of Truth，它的类型有: // 对应下面的 =====x. 板块
+1. 使用 @State、@StateObject 这类属性包装器声明的变量
+2. 视图类型（ 符合 View 协议 ）的构造参数
+3. 例如 onReceive 这类的事件源
+
 一个视图可以包含多个不同种类的 Source of Truth，它们共同构成了视图状态（ 视图的状态是个复合体 ）。
 
 
-==================================================符合 DynamicProperty 协议的属性包装器:
+==================================================
+A push B（只有Text）
+body 计算 = 视图即将进入视图树
+Text 进入视图树的时机：
+用户点击 A 中的按钮，SwiftUI 准备 push B。
+B 的 body 计算，Text 作为 B 的子视图，即将加入视图树。
+B 被 push 到屏幕上，Text 真正进入视图树，并开始渲染。
+"B 被 push 到屏幕上" 指的就是 B 视图真正出现在屏幕上，并触发 onAppear
+
+完整的生命周期过程：
+当 A push B 时，SwiftUI 发生的事件顺序如下：
+用户点击 NavigationLink，SwiftUI 准备 push BView。
+SwiftUI 计算 BView.body：
+BView.body 方法会被调用。
+Text("Hello, B!") 被创建，但还未出现在屏幕上。
+BView 被 push 到屏幕上：
+BView 加入视图树。
+Text 开始渲染。
+触发 onAppear：
+BView 和 Text 完全出现在屏幕上，SwiftUI 触发 onAppear。
+onAppear 触发时，代表 BView 已经成功 push，并且完全出现在屏幕上。
+BView.body 可能会更早计算
+
+
+在 SwiftUI 中，"将视图加载到视图树时" 的意思是 SwiftUI 正在构建或更新 UI 视图层级，并将视图及其相关的数据 整合 到 SwiftUI 的内部系统
+
+
+"加载到视图树" 具体指什么？
+1.首次创建
+视图首次出现在 UI 层级中（比如 ContentView 在 @main 入口处加载）。
+SwiftUI 解析 body 并创建视图结构。
+2.状态变更时更新
+视图的 @State 或 @Binding 发生变化时，SwiftUI 可能会 重新计算 body 并更新视图树。
+3.数据驱动的更新
+依赖 @ObservedObject、@EnvironmentObject 等数据时，数据变化也会触发视图重新构建。
+
+
+SwiftUI 采用 声明式 UI，每个 View 都是一个 结构体，SwiftUI 需要 递归地 解析它们，并构建一个 视图树（View Hierarchy） 来管理 UI 的层级关系
+struct ContentView: View {
+    var body: some View {
+        VStack {
+            Text("Hello")
+            Button("Tap Me") { print("Tapped") }
+        }
+    }
+}
+SwiftUI 会解析 ContentView 并构建一棵视图树：
+ContentView
+ ├── VStack
+ │    ├── Text("Hello")
+ │    ├── Button("Tap Me")
+
+每次 body 计算时，SwiftUI 重新生成视图描述，然后比对视图树，决定哪些部分需要更新。
+
+
+==================================================1. 符合 DynamicProperty 协议的属性包装器:
 这些会引发视图更新的属性包装器。
+
+已知的有（ 截至 SwiftUI 4.0）：
+@AccessibilityFocusState、@AppStorage、@Binding、@Environment、@EnvironmentObject、
+@FetchRequest、@FocusState、@FocusedBinding、@FocusedObject、@FocusedValue、
+@GestureState、@NSApplicationDelegateAdaptor、@Namespace、@ObservadObject、
+@ScaledMetric、@SceneStorage、@SectionedFetchRequest、@State、
+@StateObject、@UIApplicationDelegateAdaptor、@WKApplicationDelegateAdaptor、
+@WKExtentsionDelegateAdaptor 等。
 所有可以让变量成为 Source of Truth 的属性包装器都有一个特点 —— 符合 DynamicProperty 协议。
 
+了解 DynamicProperty 协议的运作机制对于优化因该种类 Source of Truth 造成的重复计算尤为重要。
+
+// 苹果并没有提供太多有关 DynamicProperty 协议的资料，公开的协议方法只有 update
+// Xcode
+public protocol DynamicProperty {
+    mutating func update()
+}
 
 DynamicProperty 的工作原理:
 public protocol DynamicProperty {
@@ -27,12 +98,20 @@ public protocol DynamicProperty {
   static var _propertyBehaviors: UInt32 { get }
   mutating func update()
 }
+
+#####
 其中 _makeProperty 方法是整个协议的灵魂所在。
 通过 _makeProperty 方法，SwiftUI 得以实现在将视图加载到视图树时，把所需的数据（ 值、方法、引用等 ）保存在 SwiftUI 的托管数据池中
 并在属性图（ AttributeGraph ）中将视图与该 Source of Truth 关联起来，让视图响应其变化（ 当 SwiftUI 数据池中的数据给出变化信号时，更新视图 ）。
+#####
 
-
-以 @State 为例:
+以 @State 为例:// @State 只是一个 代理，真正的值存储在 SwiftUI 内部。
+// 尽管 @State 的 wrappedValue 是值类型，Binding 让它看起来像 引用类型，因为它在 Binding 内部持有了一组 get/set 方法，所有用 Binding 访问的组件，实际上都在操作同一份数据。
+/*
+@State 并不存储在 View 里，而是存储在 SwiftUI 的内部状态管理系统中。
+Binding 只是一个访问 @State 的代理，它通过 get/set 直接操作 SwiftUI 内部的 @State 存储值。
+这就是 Binding 能够在值类型的 @State 上实现双向绑定的核心机制
+*/
 @propertyWrapper public struct State<Value> : DynamicProperty {
   internal var _value: Value
   internal var _location: SwiftUI.AnyLocation<Value>? // SwiftUI 托管数据池中的数据引用
@@ -60,7 +139,8 @@ public protocol DynamicProperty {
 wrappedValue 的 get 和 set 方法都是针对 _location 操作的（ projectedValue 也一样 ）。
 
 当 SwiftUI 将视图从视图树上删除时，会一并完成对 SwiftUI 数据池以及关联的清理工作。
-如此，使用 State 包装的变量，其存续期将与视图的存续期保持完全一致。并且 SwiftUI 会在其变化时自动更新（ 重新计算 ）对应的视图。
+如此，使用 State 包装的变量，其存续期将与视图的存续期保持完全一致。
+并且 SwiftUI 会在其变化时自动更新（ 重新计算 ）对应的视图。
 
 为什么无法在视图的构造函数中，更改 State 包装的变量值？
 struct TestView: View {
@@ -75,9 +155,12 @@ struct TestView: View {
 在构造函数中使用 self.number = 11 赋值时，视图尚未加载，_location 为 nil , 因此赋值对应的 wrappedValue set 操作并不会起作用。
 
 
+#####
 对于像 @StateObject 这类针对引用类型的属性包装器，SwiftUI 会在属性图中将视图与包装对象实例（ 符合 ObservableObject 协议 ）的 objectWillChange（ ObjectWillChangePublisher ）关联起来
 在该 Publisher 发送数据时，更新视图。
 任何通过 objectWillChange.send 进行的操作都将导致视图被刷新，无论实例中的属性内容是否被修改。
+#####
+
 
 @propertyWrapper public struct StateObject<ObjectType> : DynamicProperty where ObjectType : ObservableObject {
   internal enum Storage { // 通过内部定义的枚举来标注视图是否已经被加载、数据是否已被数据池托管
@@ -99,7 +182,8 @@ struct TestView: View {
   public static func _makeProperty<V>(in buffer: inout _DynamicPropertyBuffer, container: _GraphValue<V>, fieldOffset: Int, inputs: inout _GraphInputs)
 }
 
-@ObservedObject 与 @StateObject 最大的区别是，ObservedObject 并不会在 SwiftUI 托管数据池中保存引用对象的实例（ @StateObject 会将实例保存在托管数据池中 ）
+@ObservedObject 与 @StateObject 最大的区别是，
+ObservedObject 并不会在 SwiftUI 托管数据池中保存引用对象的实例（ @StateObject 会将实例保存在托管数据池中 ）
 仅会在属性图中创建视图与视图类型实例中的引用对象的 objectWillChange 之间的关联。
 
 
@@ -112,14 +196,20 @@ struct TestView: View {
 因此假设使用上面的代码（ 用 @ObservedObject 创建实例 ），让 @ObservedObject 指向一个不稳定的引用实例时，很容易出现一些怪异的现象。
 
 
-任何可以在当前视图之外进行改动的 Source of Truth（ 符合 DynamicProperty 协议的属性包装器 ），只要在视图类型中声明了，无论是否在视图 body 中被使用，在它给出刷新信号时，当前视图都将被刷新。
+
+==================================================避免非必要的声明
+
+任何可以在当前视图之外进行改动的 Source of Truth（ 符合 DynamicProperty 协议的属性包装器 ），只要在视图类型中声明了，
+无论是否在视图 body 中被使用，在它给出刷新信号时，当前视图都将被刷新。
 struct EnvObjectDemoView:View{
     @EnvironmentObject var store:Store
     var body: some View{
         Text("abc")
     }
 }
-虽然当前的视图中并没有调用 store 实例的属性或方法，但无论在任何场合，但只要该实例的 objectWillChange. send 方法被调用（ 例如修改了使用 @Published 包装的属性 ），所有与之相关联的视图（ 包括当前视图 ）都会被刷新（ 对 body 求值 ）。
+虽然当前的视图中并没有调用 store 实例的属性或方法，但无论在任何场合，
+但只要该实例的 objectWillChange. send 方法被调用（ 例如修改了使用 @Published 包装的属性 ），
+所有与之相关联的视图（ 包括当前视图 ）都会被刷新（ 对 body 求值 ）。
 
 
 类型的情况在 @ObservedObject、@Environment 上也会出现
@@ -171,9 +261,12 @@ struct EnvSubView: View {
 
 
 
-==================================================视图的构造参数:
+==================================================2. 视图的构造参数
+#####
 SwiftUI 会将视图类型的构造参数作为 Source of Truth 对待。
-与符合 DynamicProperty 协议的属性包装器主动驱动视图更新的机制不同，SwiftUI 在更新视图时，会通过检查子视图的实例是否发生变化（ 绝大多数都由构造参数值的变化导致 ）来决定对子视图更新与否。
+与符合 DynamicProperty 协议的属性包装器主动驱动视图更新的机制不同，
+SwiftUI 在更新视图时，会通过检查子视图的实例是否发生变化（ 绝大多数都由构造参数值的变化导致 ）来决定对子视图更新与否。
+#####
 
 例如：当 SwiftUI 在更新 ContentView 时，如果 SubView 的构造参数（ name 、age ）的内容发生了变化，SwiftUI 会对 SubView 的 body 重新求值（ 更新视图 ）。
 struct SubView{
@@ -194,13 +287,16 @@ struct ContentView {
     }
 }
 
+简单、粗暴、高效的比对策略：
 在视图的存续期中，SwiftUI 通常会多次地创建视图类型的实例。
 在这些创建实例的操作中，绝大多数的目的都是为了检查视图类型的实例是否发生了变化
 （ 绝大多数的情况下，变化是由构造参数的值发生了变化而导致 ）。
+###
 创建新实例
 将新实例与 SwiftUI 当前使用的实例进行比对
 如实例发生变化，用新实例替换当前实例，对实例的 body 求值，并用新的视图值替换老的视图值
 视图的存续期不会因为实体的更替有所改变
+###
 
 由于 SwiftUI 并不要求视图类型必须符合 Equatable 协议，因此采用了一种简单、粗暴但十分高效地基于 Block 的比对操作（ 并非基于参数或属性 ）。
 比对结果仅能证明两个实例之间是否不同，但 SwiftUI 无法确定这种不同是否会导致 body 的值发生变化，因此，它会无脑地对 body 进行求值。
@@ -210,7 +306,7 @@ struct ContentView {
 另外，不要在视图的构造函数中为属性（ 没有使用符合 DynamicProperty 协议的包装器 ）设置不稳定值（ 例如随机值 ）。
 不稳定值会导致每次创建的实例都不同，从而造成非必要的刷新
 
-
+（1）
 上述的比对操作是在视图类型实例中进行的，这意味着将视图切分成多个小视图（ 视图结构体 ）可以获得更加精细的比对结果，并会减少部分 body 的计算。
 struct Student {
     var name: String
@@ -268,7 +364,7 @@ struct RootView:View{
 }
 
 struct StudentNameView:View{
-    let name:String // 需要的数据
+    let name:String // 需要的数据，这是构造参数
     var body: some View{
         let _ = Self._printChanges()
         Text(name)
@@ -285,10 +381,13 @@ struct StudentAgeView:View{
 经过上面的改动后，仅当 name 属性发生变化时，StudentNameView 才会更新，同理，StudentAgeView 也只会在 age 发生变化时更新。
 
 
+（2）
 让视图符合 Equatable 协议以自定义比对规则:
 也许由于某种原因，你无法采用上面的方法来优化构造参数，SwiftUI 还提供了另外一种通过调整比对规则的方式用以实现相同的结果。
+###
 让视图符合 Equatable 协议
 为视图自定义判断相等的比对规则
+###
 
 在早期的 SwiftUI 版本中，我们需要使用 EquatableView 包装符合 Equatable 协议的视图以启用自定义比较规则，近期的版本已经无需使用
 
@@ -331,7 +430,7 @@ struct StudentAgeView: View, Equatable {
 
 此种方法仅会影响视图类型实例的比对，并不会影响因符合 DynamicProperty 协议的属性包装器产生的刷新
 
-
+（3）
 闭包 —— 容易被忽略的突破点:
 当构造参数的类型为函数时，稍不注意，就可以导致重复计算。
 
@@ -380,8 +479,11 @@ class MyStore: ObservableObject {
 
 当点击某一个 CellView 视图的按钮后，所有的 CellView （ 当前 List 显示区域 ）都会重新计算。
 
+
+#####
 我们并没有在 CellView 中引入会导致更新的 Source of Truth，但由于我们将 store 放置在闭包当中，点击按钮后，
 因为 store 发生了变动，从而导致 SwiftUI 在对 CellView 实例进行比对时认定其发生了变化。
+#####
 
 
 解决的方法有两种：
@@ -453,18 +555,23 @@ closure1()  // 输出 "Hello, Swift!"
 在这个例子中，closure1 和 closure2 最初都引用同一个闭包。但当你改变 closure1 引用的闭包后，closure2 仍然引用原来的闭包。
 
 
-==================================================事件源:
+==================================================3. 事件源
 苹果为 SwiftUI 提供了一系列可以直接在视图中处理事件的视图修饰器
 例如：onReceive、onChange、onOpenURL、onContinueUserActivity 等
 这些触发器被称为事件源，它们也被视为 Source of Truth ，是视图状态的组成部分。
 
+###
 这些触发器是以视图修饰器的形式存在的，因此触发器的生命周期同与其关联的视图的存续期完全一致。
+###
 当触发器接收到事件后，无论其是否更改当前视图的其他状态，当前的视图都会被更新。
 因此，为了减少因事件源导致的重复计算，我们可以考虑采用如下的优化思路:
+#####
 控制生命周期
 只在需要处理事件时才加载与其关联的视图，用关联视图的存续期来控制触发器的生命周期
+
 减小影响范围
 为触发器创建单独的视图，将其对视图更新的影响范围降至最低
+#####
 
 
 struct EventSourceTest: View {
@@ -516,6 +623,49 @@ extension Notification.Name {
 SwiftUI 会在主线程上运行触发器闭包，如果闭包中的操作比较昂贵，可以考虑将闭包发送到后台队列
 
 
+如果 .task 里面的代码想要回到主线程怎么办？
+.task {
+    while !Task.isCancelled {
+        try? await Task.sleep(nanoseconds: 1000000000)
+        let date = Date()
+        await MainActor.run { // 切换到主线程
+            NotificationCenter.default.post(name: .test, object: date)
+        }
+    }
+}
+或者
+.task {
+    while !Task.isCancelled {
+        try? await Task.sleep(nanoseconds: 1000000000)
+        let date = Date()
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .test, object: date)
+        }
+    }
+}
+
+
+
+
 可以考虑使用第三方库，对状态进行切分，减少视图刷新几率
 TCA 是当下正火的项目，它提供了对 State 进行切分( scope ) 以及其他众多的功能。不过，它也是一个巨大的项目
 https://github.com/pointfreeco/swift-composable-architecture
+
+
+
+"阻塞线程" 和 "挂起任务" 这两个概念，它们是不一样的：
+Task.sleep(nanoseconds:) 只是挂起任务，不会阻塞线程
+Task.sleep(nanoseconds:) 是 async 挂起 操作，它不会占用线程，而是让出执行权，等到时间到了再恢复执行。
+在挂起期间，该线程是自由的，可以被其他任务使用，不会被这个 sleep 占着不放。
+print("Before sleep: \(Thread.current)")// thread id = 1
+try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 秒
+print("After sleep: \(Thread.current)")// thread id = 3
+
+
+传统的 Thread.sleep(_:) 是阻塞线程
+如果换成 Thread.sleep(forTimeInterval:)，就会 真正阻塞线程，不允许其他任务使用这个线程
+
+
+操作	是否阻塞线程	作用
+Task.sleep(nanoseconds:)	❌ 不阻塞	让出线程，任务挂起，线程可执行其他任务
+Thread.sleep(forTimeInterval:)	✅ 阻塞	线程停滞，无法执行其他任务

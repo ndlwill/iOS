@@ -1,0 +1,357 @@
+SIL（Swift Intermediate Language）
+
+https://github.com/swiftlang/swift/blob/main/docs/SIL.rst
+
+==================================================SIL 函数定义
+sil [可见性] @函数名 : $@convention(调用约定) (参数类型列表) -> 返回类型 {
+    bb0(%0: 参数类型, %1: 参数类型):
+        // 函数体 (SIL 指令)
+}
+
+
+组件	说明
+sil	关键字，表示 SIL 函数定义。
+[可见性]	public、hidden、shared 等，控制函数的可见性。
+@函数名	Swift 中的函数名，经过 mangling（名称重整）。
+: $@convention(调用约定) (...) -> 返回类型	指定函数的调用约定和类型签名。
+bb0(...)	基本块，表示代码的入口，bb0 是函数的第一个基本块。
+SIL 指令	具体的 SIL 代码，例如 struct_extract、return 等。
+
+
+可见性（Visibility）：
+可见性	作用
+public	公开可用，可能被其他模块调用。
+hidden	仅在当前模块内可见（默认）。
+shared	用于 @inlinable 或 @transparent 的函数，允许跨模块内联。
+private	仅在当前文件内可见。
+
+
+调用约定（Calling Convention）：决定了函数的调用方式
+调用约定	说明
+thin	适用于普通 Swift 函数，无额外上下文。
+method	Swift 方法（带 self）。
+witness_method	协议方法。
+closure	闭包。
+c	兼容 C 语言的函数。
+
+
+参数与返回值：
+参数修饰符	作用
+@owned	该值的所有权转移到当前函数。
+@guaranteed	该值保证在当前作用域内有效，不增加引用计数。
+@inout	传入参数的可变地址（类似 & 传递）。
+
+
+==================================================例子
+
+%1 = function_ref @$s4main3addyySi_Si_SiF
+%2 = apply %1(%5, %6)
+解析：
+function_ref @$s4main3addyySi_Si_SiF：这行表示一个 function_ref，它引用了名为 add 的函数。@$s4main3addyySi_Si_SiF 是该函数在 SIL 中的名称。
+%1：function_ref 的结果是一个对 add 函数的引用，存储在 %1 中。
+apply %1(%5, %6)：使用 apply 操作符调用 %1 引用的函数，并传入 %5 和 %6 作为参数。
+
+
+==================================================function_ref
+
+function_ref 是一种指令（指示符），用于引用一个静态已知的函数或方法。它的作用是在 SIL 代码中获取一个函数的指针，以便后续调用。
+function_ref 指向的是编译时已知的函数，而不会进行动态查找（不像 Objective-C 的 objc_msgSend 那样依赖运行时）。它通常与 apply 指令配合使用，以执行具体的函数调用。
+
+func add(_ a: Int, _ b: Int) -> Int {
+    return a + b
+}
+
+sil @add : $@convention(thin) (Int, Int) -> Int
+
+sil hidden [ossa] @$s4main3addyS2i_SitF : $@convention(thin) (Int, Int) -> Int {
+bb0(%0 : $Int, %1 : $Int):
+  %2 = builtin "add_Int64"(%0 : $Int, %1 : $Int) : $Int
+  return %2 : $Int
+}
+
+sil hidden @$s4main5testFyyF : $@convention(thin) () -> () {
+bb0:
+  %0 = function_ref @$s4main3addyS2i_SitF : $@convention(thin) (Int, Int) -> Int
+  %1 = integer_literal $Int, 3
+  %2 = integer_literal $Int, 5
+  %3 = apply %0(%1, %2) : $@convention(thin) (Int, Int) -> Int
+  return
+}
+
+解析：
+function_ref @$s4main3addyS2i_SitF
+这是 function_ref 指令，它引用了 add(_:_:) 这个函数。
+其中 @$s4main3addyS2i_SitF 是 Swift 编译器生成的 符号名称（mangled name），用于唯一标识 add 函数。
+apply %0(%1, %2)
+apply 指令调用了 function_ref 指向的 add 函数，并传入两个整数 3 和 5。
+
+function_ref vs dynamic_method_ref
+function_ref：用于静态已知的函数（编译时可解析）。
+dynamic_method_ref：用于动态方法查找（通常用于类方法或协议方法）。
+
+
+==================================================index_addr
+index_addr 是一个用于计算数组或缓冲区中元素地址的指令。
+即基于一个起始地址和索引值计算某个元素的具体地址。
+
+index_addr %base_addr, %index : $*T
+%base_addr：基地址，通常是某个数组或缓冲区的地址。
+%index：索引（Int 类型），表示偏移量。
+$*T：目标类型，表示元素类型的指针。
+该指令不会进行内存访问，只是计算一个新的地址。
+
+
+==================================================@
+主要用于标识和引用不同的实体，比如全局变量、函数、类型等。它的作用取决于上下文
+
+1. 用于全局变量
+@globalNumber : $Int  // 声明全局变量
+
+2. 用于函数
+func add(a: Int, b: Int) -> Int {
+    return a + b
+}
+
+sil @add : $@convention(thin) (Int, Int) -> Int {// @add 表示 add(a:b:) 这个函数的符号名
+bb0(%0 : $Int, %1 : $Int):
+  %2 = builtin "add_Int64"(%0, %1) : $Int  // 执行加法
+  return %2
+}
+
+3. 用于类型
+struct Point {
+    var x: Int
+    var y: Int
+}
+let p = Point(x: 3, y: 4)
+
+@Point : $@metadata 
+@Point.x : $Int
+@Point.y : $Int
+
+4. 用于特殊属性
+Swift 的 @convention 也会在 SIL 里用 @ 标识
+
+函数调用约定
+sil @someFunction : $@convention(thin) () -> () { ... }
+@convention(thin) 代表函数的调用约定。
+例如 @convention(c) 代表 C 语言风格的调用约定。
+
+convention 代表调用约定（Calling Convention），即函数如何被调用、参数如何传递、返回值如何处理等。
+它用于指定 函数的调用方式，不同的 convention 影响 Swift 代码的性能和 ABI 兼容性。
+
+
+==================================================%
+前缀 % 表示 SIL 值（SIL value），即指令生成的值或变量。
+
+
+==================================================$
+%value = function_argument 0 : $Int
+$ 在 SIL 中用于表示 类型（type）。它类似于 Swift 代码中的类型标注 :，但在 SIL 里显式地标明变量或值的类型
+$Int 表示 %value 的类型是 Int
+
+
+==================================================*
+* 在 SIL 类型中表示 指针类型（地址类型），即这个值是一个指向某个对象的指针，而不是直接存储的值。
+$Int → 代表 Int 类型的值
+$*Int → 代表 指向 Int 的指针，即 Int 的地址
+
+
+==================================================$Builtin.Word
+$Builtin.Word 是 一种底层整数类型，表示 指针宽度的整数（通常等同于 Int 或 UInt，具体取决于目标架构）
+
+
+==================================================$Builtin.RawPointer
+$Builtin.RawPointer：表示该参数的 类型 是 Builtin.RawPointer，即一个 底层指针，类似于 C 语言的 void * 或 Swift 的 UnsafeRawPointer。
+
+
+==================================================function_argument
+function_argument 表示一个函数的 参数
+%变量名 = function_argument 参数索引 : $类型 // （索引从 0 开始）
+
+
+==================================================pointer_to_address
+是一个指令，用于 将 Builtin.RawPointer（底层指针）转换为 Builtin.NativeObject 或某种具体的指针类型（如 $*T）
+
+%指针地址 = pointer_to_address %原始指针 : $Builtin.RawPointer to $*T
+
+
+==================================================load
+%typed_ptr = pointer_to_address %ptr : $Builtin.RawPointer to $*Int  // 转换为 Int 指针
+%value = load %typed_ptr : $*Int  // 读取 Int 值
+
+
+==================================================store
+%typed_ptr = pointer_to_address %ptr : $Builtin.RawPointer to $*Int  // 转为 Int 指针
+store %value to %typed_ptr : $*Int  // 存储值。将 %value 存储到 %typed_ptr 指向的内存中，相当于 Swift 代码中的 赋值操作
+
+
+==================================================struct_extract
+是一种指令（Instruction），用于从一个结构体（struct）实例中提取某个字段的值。它本质上是一种优化后的直接字段访问操作。
+
+struct_extract %struct_instance : $StructType, #StructType.fieldName
+
+%struct_instance：一个 struct 类型的值（即要访问的结构体实例）。
+$StructType：该结构体的类型。
+#StructType.fieldName：要提取的字段。
+
+struct Person {
+    let age: Int
+}
+
+func getAge(p: Person) -> Int {
+    return p.age
+}
+
+sil hidden @$s4main6getAge1pS2iAA6PersonV_tF : $@convention(thin) (Person) -> Int {
+bb0(%0 : $Person):
+    %1 = struct_extract %0 : $Person, #Person.age  // 提取 age 字段
+    return %1
+}
+
+
+==================================================#
+#StructType.fieldName 里的 # 符号用于 标识类型的字段引用（field reference），它表示某个结构体（struct）类型的特定字段
+
+
+==================================================cond_br
+条件分支（conditional branch） 指令，类似于 Swift 代码中的 if-else 语句。它根据一个布尔条件跳转到不同的基本块（bbX）
+
+cond_br %条件值, 基本块1, 基本块2
+%条件值：一个 Bool 类型的 SIL 值，决定跳转方向。
+基本块1：如果条件为 true，跳转到这个块。
+基本块2：如果条件为 false，跳转到这个块。
+
+
+==================================================alloc_box
+alloc_box 是一个指令（instruction），用于在堆上（heap）分配一个可变的（mutable）值类型，通常用于捕获变量或存储 inout 参数。
+
+Swift 默认情况下，值类型（如 struct、enum）是存储在栈上（stack）的，但在某些情况下，它们必须存储到堆上（heap），比如：
+闭包捕获（Closure Capture）：当闭包捕获一个可变变量时，需要在堆上分配存储。
+inout 参数：当值类型以 inout 方式传递时，Swift 可能会在堆上存储它，以确保共享修改。
+类（Class）中存储的值类型：如果类的某些属性需要在对象生命周期内动态修改，可能会使用 alloc_box。
+
+%0 = alloc_box $Int         // 在堆上分配一个 `Int` 变量（count）
+%1 = project_box %0         // 获取 `count` 的地址
+alloc_box 分配一个堆上的存储空间，用于存放 count。
+project_box 获取这个存储空间的地址，这样 count 变量可以在闭包中访问。
+
+指令	作用
+alloc_stack	在栈上分配局部变量，函数结束时自动释放。
+alloc_box	在堆上分配变量，允许变量逃逸出作用域（比如闭包捕获）。
+
+
+func test() -> () -> Void {
+    var x = 10
+    return { x += 1 }
+}
+%0 = alloc_box $Int     // `x` 在堆上分配
+%1 = project_box %0     // 获取 `x` 的地址
+store 10 to %1
+因为 x 需要在 test() 返回后仍然存在，所以它必须存储到堆上，而不是栈上。
+
+
+func makeCounter() -> () -> Int {
+    var count = 0  // 需要被闭包捕获
+    return {
+        count += 1
+        return count
+    }
+}
+%box = alloc_box ${ var Int }    // 在堆上分配 count 变量
+%count = project_box %box        // 访问 box 内的值
+
+
+==================================================partial_apply
+partial_apply 是一个指令，表示对函数进行部分应用（Partial Application）。
+它的作用类似于 Swift 语言层面上的 闭包捕获 或 柯里化（Currying）。
+
+func multiply(_ a: Int, _ b: Int) -> Int {
+    return a * b
+}
+
+let multiplyBy3 = { multiply(3, $0) }
+let result = multiplyBy3(4)
+
+
+sil hidden @$s4main8multiplyyS2iF : $@convention(thin) (Int, Int) -> Int {
+bb0(%0 : $Int, %1 : $Int):
+  %2 = integer_literal $Int, 3
+  %3 = builtin "mul_Int64"(%0 : $Int, %1 : $Int) : $Int
+  return %3 : $Int
+}
+
+sil hidden @$s4main12multiplyBy3S2icvpfP : $@convention(thin) (@guaranteed @callee_guaranteed (Int, Int) -> Int) -> @owned @callee_guaranteed (Int) -> Int {
+bb0(%0 : @guaranteed @callee_guaranteed (Int, Int) -> Int):
+  %1 = integer_literal $Int, 3
+  %2 = partial_apply [callee_guaranteed] %0(%1) : $@callee_guaranteed (Int, Int) -> Int
+  return %2 : $@callee_guaranteed (Int) -> Int
+}
+
+@callee_guaranteed (Int, Int) -> Int 是原始 multiply 函数类型。
+partial_apply 绑定 3，生成新的 @callee_guaranteed (Int) -> Int。
+
+
+==================================================柯里化的核心思想
+把多参数函数转换成一系列的单参数函数
+返回一个新函数，而不是直接计算结果
+最终得到的函数可以按需部分应用（Partial Application）
+
+func curryAdd(_ a: Int) -> (Int) -> (Int) -> Int {
+    return { b in { c in a + b + c } }
+}
+
+// 调用方式
+let add1 = curryAdd(1) // 返回 (Int) -> (Int) -> Int
+let add1And2 = add1(2) // 返回 (Int) -> Int
+let result = add1And2(3) // 计算最终结果 6
+print(result) // 输出 6
+
+或者直接调用：
+
+let result = curryAdd(1)(2)(3)
+print(result) // 输出 6
+
+
+==================================================alloc_global
+是一个指令，用于分配（allocate）全局变量的存储空间
+
+alloc_global @varName 仅仅声明一个全局变量在某个位置存储，并不会直接返回它的地址
+需要使用 global_addr 来获取这个全局变量的地址，然后再进行 load（读取）或 store（存储）操作。
+
+==================================================global_addr
+global_addr 是一个 指令（instruction），用于访问 全局变量（global variable）的地址
+
+global_addr 主要用于获取 全局变量的地址，用于 load 或 store 操作
+
+var globalNumber: Int = 42
+func test() {
+    print(globalNumber)
+}
+
+
+@globalNumber : $Int // 定义全局变量
+
+sil @test : $@convention(thin) () -> () {
+bb0:
+  %0 = global_addr @globalNumber : $*Int  // 获取全局变量的地址
+  %1 = load %0 : $*Int                    // 读取全局变量的值
+  %2 = function_ref @$sSS10descriptionSSvp  // print 的参数转换
+  apply %2(%1) : $@convention(method) (Int) -> String
+  return
+}
+
+
+==================================================begin_access
+begin_access 用于管理对内存的访问，特别是在 Swift 的访问控制（Exclusive Access to Memory） 规则下。它确保在多线程或并发环境中，变量的读写不会发生数据竞争。
+
+%access = begin_access [read] [static]? %variable : $Type// 返回的 %access 是对变量的访问地址
+[read] / [modify]：表示访问类型（只读 read 或可修改 modify）。
+[static]（可选）：表示静态访问，优化编译器行为。
+%variable：被访问的变量。
+$Type：变量的类型。
+
+
+对应的 end_access
+end_access %access
+end_access 用于标记访问的结束。

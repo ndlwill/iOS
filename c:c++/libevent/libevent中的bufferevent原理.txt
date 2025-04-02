@@ -1,0 +1,628 @@
+libevent用bufferevent来负责管理缓冲区与buffer读写事件。
+使用bufferevent处理事件的数据，是buffer和event的综合。
+
+struct bufferevent {
+    struct event_base *ev_base;
+
+    //读事件
+    struct event ev_read;
+    //写事件
+    struct event ev_write;
+    //读缓冲区，输入缓冲
+    struct evbuffer *input;
+    //写缓冲区，输出缓冲
+    struct evbuffer *output;
+
+    //读水位
+    struct event_watermark wm_read;
+    //写水位
+    struct event_watermark wm_write;
+
+    //发生读触发用户设置的回调
+    evbuffercb readcb;
+    //发生写触发用户设置的回调
+    evbuffercb writecb;
+    //发生错误触发用户设置的回调
+    everrorcb errorcb;
+    //当前设置的回调函数传递的参数，和上面3个回调配合使用
+    void *cbarg;
+
+    //设置读超时时间，默认为0
+    int timeout_read;    /* in seconds */
+    //设置写超时时间，默认为0
+    int timeout_write;    /* in seconds */
+
+    //当前事件是否可用
+    short enabled;    /* events that are currently enabled */
+};
+//水位
+struct event_watermark {
+    //低水位
+    size_t low;
+    //高水位
+    size_t high;
+};
+
+evbuffer中有2个缓冲区，一个是读缓冲区，一个写缓冲区。分别用来处理读写事件的数据。
+evbuffer中有读水位和写水位，分别对应了读缓冲区和写缓冲区。
+里面有个水位的概念。其实很好理解。水位有一个高水位，一个低水位。
+如果水位达到高水位时，不能再往里面灌水了。如果水位达到低水位，不能再从中取水了。
+
+读操作发生时：如果高于高水位，那就不能再读入数据了，等待数据被读掉然后再开始读入数据。低水位只做判断。低水位不为0，如果缓冲区低于低水位，可以继续直接读数据到缓冲区。
+写操作发生时：如果写缓冲区数据长度小于等于低水位，触发用户写事件，通知用户。写数据高水位没用。因为写数据是把缓冲区的数据读出写到对应的文件描述符中，所以水位肯定是下降的。
+我的理解：水位控制了信息的颗粒度，多少数据触发次用户事件。数据缓冲区降低了频繁申请内存带来的开销。
+
+1.bufferevent_new
+进行一些初始化。最重要的是指定了eventbuffer内部读写事件的回调，bufferevent_readcb与bufferevent_writecb。当前也可以通过后面的bufferevent_setcb实现。
+
+struct bufferevent *
+bufferevent_new(int fd, evbuffercb readcb, evbuffercb writecb,
+    everrorcb errorcb, void *cbarg)
+{
+    struct bufferevent *bufev;
+
+    //申请内存空间并且初始化，使用calloc
+    if ((bufev = calloc(1, sizeof(struct bufferevent))) == NULL)
+        return (NULL);
+
+    if ((bufev->input = evbuffer_new()) == NULL) {
+        free(bufev);
+        return (NULL);
+    }
+
+    if ((bufev->output = evbuffer_new()) == NULL) {
+        evbuffer_free(bufev->input);
+        free(bufev);
+        return (NULL);
+    }
+    //读事件关联回调，传递参数
+    event_set(&bufev->ev_read, fd, EV_READ, bufferevent_readcb, bufev);
+
+    //写事件关联回调，传递参数
+    event_set(&bufev->ev_write, fd, EV_WRITE, bufferevent_writecb, bufev);
+
+    //设置bufferevent的读、写和出错事件回调，并且传递cbarg参数。
+    bufferevent_setcb(bufev, readcb, writecb, errorcb, cbarg);
+
+    /*
+     * Set to EV_WRITE so that using bufferevent_write is going to
+     * trigger a callback.  Reading needs to be explicitly enabled
+     * because otherwise no data will be available.
+     */
+    //开启可写，否则无法执行写入回调
+    bufev->enabled = EV_WRITE;
+
+    return (bufev);
+}
+
+2.bufferevent_readcb
+读事件，最先接触到数据，读出数据然后写入缓冲区
+
+//读事件，最先接触到数据，读出数据然后写入缓冲区
+static void
+bufferevent_readcb(int fd, short event, void *arg)
+{
+    struct bufferevent *bufev = arg;
+    int res = 0;
+    short what = EVBUFFER_READ;
+    size_t len;
+    int howmuch = -1;
+    //超时事件，报错
+    if (event == EV_TIMEOUT) {
+        what |= EVBUFFER_TIMEOUT;
+        goto error;
+    }
+
+    /*
+     * If we have a high watermark configured then we don't want to
+     * read more data than would make us reach the watermark.
+     */
+    //查看高水位，如果缓冲区数据已经高于高水位，不应该再写入。
+    if (bufev->wm_read.high != 0) {
+        howmuch = bufev->wm_read.high - EVBUFFER_LENGTH(bufev->input);
+        /* we might have lowered the watermark, stop reading */
+        if (howmuch <= 0) {
+            struct evbuffer *buf = bufev->input;
+            //达到高水位，删除读入事件，不再读入数据到缓冲区
+            event_del(&bufev->ev_read);
+            //设置bufev->input变化需要调用的回调函数和回调参数
+            evbuffer_setcb(buf,
+                bufferevent_read_pressure_cb, bufev);
+            return;
+        }
+    }
+    //没达到高水位，读取数据到input缓冲区中
+    res = evbuffer_read(bufev->input, fd, howmuch);
+    if (res == -1) {
+        //信号中断等一些原因，goto reschedule，可以继续。
+        if (errno == EAGAIN || errno == EINTR)
+            goto reschedule;
+        /* error case */
+        what |= EVBUFFER_ERROR;
+    } else if (res == 0) {
+        /* eof case */
+        what |= EVBUFFER_EOF;
+    }
+
+    if (res <= 0)
+        goto error;
+    //读事件加入事件队列
+    bufferevent_add(&bufev->ev_read, bufev->timeout_read);
+
+    /* See if this callbacks meets the water marks */
+    len = EVBUFFER_LENGTH(bufev->input);
+    if (bufev->wm_read.low != 0 && len < bufev->wm_read.low)
+        return;
+    //如果高水位不为0，并且缓冲区数据长度已经不小于高水位了，触发事件。
+    if (bufev->wm_read.high != 0 && len >= bufev->wm_read.high) {
+        //缓冲区数据已经不小于高水位，不能再进数据了，删除读缓冲区的读外部数据事件
+        struct evbuffer *buf = bufev->input;
+        event_del(&bufev->ev_read);
+
+        /* Now schedule a callback for us when the buffer changes */
+        //缓冲区大小发生变化，触发回调
+        //设置回调函数和回调参数
+        evbuffer_setcb(buf, bufferevent_read_pressure_cb, bufev);
+    }
+
+    /* Invoke the user callback - must always be called last */
+    //触发用户回调事件
+    if (bufev->readcb != NULL)
+        (*bufev->readcb)(bufev, bufev->cbarg);
+    return;
+
+reschedule:
+    //读事件加入事件队列，继续进行读取
+    bufferevent_add(&bufev->ev_read, bufev->timeout_read);
+    return;
+
+ error:
+    (*bufev->errorcb)(bufev, what, bufev->cbarg);
+}
+
+
+3.bufferevent_writecb
+static void
+bufferevent_writecb(int fd, short event, void *arg)
+{
+    //事件缓冲区管理
+    struct bufferevent *bufev = arg;
+    int res = 0;
+    short what = EVBUFFER_WRITE;
+
+    //超时事件，报错
+    if (event == EV_TIMEOUT) {
+        what |= EVBUFFER_TIMEOUT;
+        goto error;
+    }
+
+    if (EVBUFFER_LENGTH(bufev->output)) {
+        //将缓冲区数据读出，写入到fd文件描述符对应的文件中
+        res = evbuffer_write(bufev->output, fd);
+        if (res == -1) {
+#ifndef WIN32
+/*todo. evbuffer uses WriteFile when WIN32 is set. WIN32 system calls do not
+ *set errno. thus this error checking is not portable*/
+            if (errno == EAGAIN ||
+            errno == EINTR ||
+            errno == EINPROGRESS)
+                goto reschedule;
+            /* error case */
+            what |= EVBUFFER_ERROR;
+
+#else
+                goto reschedule;
+#endif
+
+        } else if (res == 0) {
+            /* eof case */
+            what |= EVBUFFER_EOF;
+        }
+        if (res <= 0)
+            goto error;
+    }
+    //缓冲区不为0，写事件加入执行队列
+    if (EVBUFFER_LENGTH(bufev->output) != 0)
+        bufferevent_add(&bufev->ev_write, bufev->timeout_write);
+
+    /*
+     * Invoke the user callback if our buffer is drained or below the
+     * low watermark.
+     */
+    //缓冲区数据长度低于低水位，用户写事件触发。
+    if (bufev->writecb != NULL &&
+        EVBUFFER_LENGTH(bufev->output) <= bufev->wm_write.low)
+        (*bufev->writecb)(bufev, bufev->cbarg);
+    return;
+
+ reschedule:
+    if (EVBUFFER_LENGTH(bufev->output) != 0)
+        bufferevent_add(&bufev->ev_write, bufev->timeout_write);
+    return;
+
+ error:
+    (*bufev->errorcb)(bufev, what, bufev->cbarg);
+}
+
+==================================================
+server.c
+/*
+* libevent echo server example using buffered events.
+*/
+evbuffer读缓冲区对应水位设置为高水位10，低水位0。
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+/* Required by event.h. */
+#include <sys/time.h>
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+#include <err.h>
+
+/* Libevent. */
+#include <event.h>
+
+/* Port to listen on. */
+#define SERVER_PORT 5555
+
+/**
+* A struct for client specific data, also includes pointer to create
+* a list of clients.
+*/
+struct client {
+    /* The clients socket. */
+    int fd;
+
+    /* The bufferedevent for this client. */
+    struct bufferevent *buf_ev;
+};
+
+/**
+* Set a socket to non-blocking mode.
+*/
+//用于设置非阻塞
+int
+setnonblock(int fd)
+{
+    int flags;
+
+    flags = fcntl(fd, F_GETFL);
+    if (flags < 0)
+        return flags;
+    flags |= O_NONBLOCK;
+    if (fcntl(fd, F_SETFL, flags) < 0)
+        return -1;
+
+    return 0;
+}
+
+/**
+* Called by libevent when there is data to read.
+*/
+void
+buffered_on_read(struct bufferevent *bev, void *arg)
+{
+    /* Write back the read buffer. It is important to note that
+    * bufferevent_write_buffer will drain the incoming data so it
+    * is effectively gone after we call it. */
+    char msg[4096];
+
+    size_t len = bufferevent_read(bev, msg, sizeof(msg));
+
+    msg[len] = '\0';
+    printf("recv the client msg: %s\n", msg);
+
+    char reply_msg[4096] = "I have recvieced the msg: ";
+    strcat(reply_msg + strlen(reply_msg), msg);
+    bufferevent_write(bev, reply_msg, strlen(reply_msg));
+
+}
+
+/**
+* Called by libevent when the write buffer reaches 0.  We only
+* provide this because libevent expects it, but we don't use it.
+*/
+//当写缓冲区达到低水位时触发调用，我们这边不用
+void
+buffered_on_write(struct bufferevent *bev, void *arg)
+{
+
+}
+
+/**
+* Called by libevent when there is an error on the underlying socket
+* descriptor.
+*/
+void
+buffered_on_error(struct bufferevent *bev, short what, void *arg)
+{
+    struct client *client = (struct client *)arg;
+
+    if (what & EVBUFFER_EOF) {
+        /* Client disconnected, remove the read event and the
+        * free the client structure. */
+        printf("Client disconnected.\n");
+    }
+    else {
+        warn("Client socket error, disconnecting.\n");
+    }
+    bufferevent_free(client->buf_ev);
+    close(client->fd);
+    free(client);
+}
+
+/**
+* This function will be called by libevent when there is a connection
+* ready to be accepted.
+*/
+void
+on_accept(int fd, short ev, void *arg)
+{
+    int client_fd;
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    struct client *client;
+
+    client_fd = accept(fd, (struct sockaddr *)&client_addr, &client_len);
+    if (client_fd < 0) {
+        warn("accept failed");
+        return;
+    }
+
+    /* Set the client socket to non-blocking mode. */
+    if (setnonblock(client_fd) < 0)
+        warn("failed to set client socket non-blocking");
+
+    /* We've accepted a new client, create a client object. */
+    client = calloc(1, sizeof(*client));
+    if (client == NULL)
+        err(1, "malloc failed");
+    client->fd = client_fd;
+
+    /* Create the buffered event.
+    *
+    * The first argument is the file descriptor that will trigger
+    * the events, in this case the clients socket.
+    *
+    * The second argument is the callback that will be called
+    * when data has been read from the socket and is available to
+    * the application.
+    *
+    * The third argument is a callback to a function that will be
+    * called when the write buffer has reached a low watermark.
+    * That usually means that when the write buffer is 0 length,
+    * this callback will be called.  It must be defined, but you
+    * don't actually have to do anything in this callback.
+    *
+    * The fourth argument is a callback that will be called when
+    * there is a socket error.  This is where you will detect
+    * that the client disconnected or other socket errors.
+    *
+    * The fifth and final argument is to store an argument in
+    * that will be passed to the callbacks.  We store the client
+    * object here.
+    */
+    client->buf_ev = bufferevent_new(client_fd, buffered_on_read,
+        buffered_on_write, buffered_on_error, client);
+    client->buf_ev->wm_read.high = 10;
+    client->buf_ev->wm_read.low = 0;
+    /* We have to enable it before our callbacks will be
+    * called. */
+    bufferevent_enable(client->buf_ev, EV_READ);
+
+    printf("Accepted connection from %s\n",
+        inet_ntoa(client_addr.sin_addr));
+}
+
+int
+main(int argc, char **argv)
+{
+    int listen_fd;
+    struct sockaddr_in listen_addr;
+    struct event ev_accept;
+    int reuseaddr_on;
+
+    /* Initialize libevent. */
+    event_init();
+
+    /* Create our listening socket. */
+    listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_fd < 0)
+        err(1, "listen failed");
+    memset(&listen_addr, 0, sizeof(listen_addr));
+    listen_addr.sin_family = AF_INET;
+    listen_addr.sin_addr.s_addr = INADDR_ANY;
+    listen_addr.sin_port = htons(SERVER_PORT);
+    if (bind(listen_fd, (struct sockaddr *)&listen_addr,
+        sizeof(listen_addr)) < 0)
+        err(1, "bind failed");
+    if (listen(listen_fd, 5) < 0)
+        err(1, "listen failed");
+    reuseaddr_on = 1;
+    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_on,
+        sizeof(reuseaddr_on));
+
+    /* Set the socket to non-blocking, this is essential in event
+    * based programming with libevent. */
+    if (setnonblock(listen_fd) < 0)
+        err(1, "failed to set server socket to non-blocking");
+
+    /* We now have a listening socket, we create a read event to
+    * be notified when a client connects. */
+    event_set(&ev_accept, listen_fd, EV_READ | EV_PERSIST, on_accept, NULL);
+    event_add(&ev_accept, NULL);
+
+    /* Start the event loop. */
+    event_dispatch();
+
+    return 0;
+}
+
+
+client.c
+#include<sys/types.h>
+#include<sys/socket.h>
+#include<netinet/in.h>
+#include<arpa/inet.h>
+#include<errno.h>
+#include<unistd.h>
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <fcntl.h>
+#include <err.h>
+
+#include<event.h>
+
+#define SERVER_PORT 5555
+
+
+//服务端信息
+struct server {
+    /* The server socket. */
+    int fd;
+
+    /* The bufferedevent for this server. */
+    struct bufferevent *buf_ev;
+};
+
+//全局server数据
+struct server *serv;
+
+//设置文件状态标记
+int setnonblock(int fd)
+{
+    int flags;
+    flags = fcntl(fd, F_GETFL);
+    if (flags < 0)
+        return flags;
+    flags |= O_NONBLOCK;
+    if (fcntl(fd, F_SETFL, flags) < 0)
+        return -1;
+    return 0;
+}
+
+//键盘事件
+void cmd_msg_cb(int fd, short events, void* arg)
+{
+    printf("cmd_msg_cb\n");
+    char msg[1024];
+
+    int ret = read(fd, msg, sizeof(msg));
+    if (ret < 0)
+    {
+        perror("read fail ");
+        exit(1);
+    }
+    struct bufferevent* bev = (struct bufferevent*)arg;
+    //把终端的消息发送给服务器端
+    bufferevent_write(bev, msg, ret);
+}
+
+//读服务端发来的数据
+void read_msg_cb(struct bufferevent* bev, void* arg)
+{
+    printf("read_msg_cb\n");
+    char msg[1024];
+
+    size_t len = bufferevent_read(bev, msg, sizeof(msg));
+    msg[len] = '\0';
+    printf("recv %s from server", msg);
+}
+
+//连接断开或者出错回调
+void event_error(struct bufferevent *bev, short event, void *arg)
+{
+    printf("event_error\n");
+    if (event & EVBUFFER_EOF)
+        printf("connection closed\n");
+    else if (event & EVBUFFER_ERROR)
+        printf("some other error\n");
+    struct event *ev = (struct event*)arg;
+    //因为socket已经没有，所以这个event也没有存在的必要了
+    free(ev);
+    //当发生错误退出事件循环
+    event_loopexit(0);
+    bufferevent_free(bev);
+}
+
+//连接到server
+typedef struct sockaddr SA;
+int tcp_connect_server(const char* server_ip, int port)
+{
+    int sockfd, status, save_errno;
+    struct sockaddr_in server_addr;
+
+    memset(&server_addr, 0, sizeof(server_addr));
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    status = inet_aton(server_ip, &server_addr.sin_addr);
+
+    if (status == 0) //the server_ip is not valid value
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd == -1)
+        return sockfd;
+    status = connect(sockfd, (SA*)&server_addr, sizeof(server_addr));
+
+    if (status == -1)
+    {
+        save_errno = errno;
+        close(sockfd);
+        errno = save_errno; //the close may be error
+        return -1;
+    }
+
+    setnonblock(sockfd);
+
+    return sockfd;
+}
+
+
+int main(int argc, char** argv)
+{
+
+    event_init();
+    //测试用直接连接本地server
+    int sockfd = tcp_connect_server("127.0.0.1", SERVER_PORT);
+    if (sockfd == -1)
+    {
+        perror("tcp_connect error ");
+        return -1;
+    }
+
+    printf("connect to server successful\n");
+    serv = calloc(1, sizeof(*serv));
+    if (serv == NULL)
+        err(1, "malloc failed");
+    serv->fd = sockfd;
+    serv->buf_ev = bufferevent_new(sockfd, read_msg_cb,
+        NULL, NULL, (void *)serv);
+
+    //监听终端输入事件
+    struct event *ev_cmd = calloc(1,sizeof(*ev_cmd));
+    event_set(ev_cmd, STDIN_FILENO,
+        EV_READ | EV_PERSIST, cmd_msg_cb,
+        (void*)serv->buf_ev);
+    event_add(ev_cmd, NULL);
+    //设置下read和发生错误的回调函数。（当socket关闭时会用到回调参数，删除键盘事件）
+    bufferevent_setcb(serv->buf_ev, read_msg_cb, NULL, event_error, (void*)ev_cmd);
+    bufferevent_enable(serv->buf_ev, EV_READ| EV_PERSIST);
+    event_dispatch();
+    printf("finished \n");
+    return 0;
+}

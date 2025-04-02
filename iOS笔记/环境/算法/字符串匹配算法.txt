@@ -1,0 +1,156 @@
+主串 S = {a,b,c,a,c,a,b,d,c},模式串 T = {a,b,d}
+请找到模式串在主串中第一次出现的位置
+
+1. BF算法，即暴力(Brute Force)算法
+
+将主串和模式串逐个比较
+从下标1开始，s[1] = a,T[1] = a，相同就接着往后比较，直到s[3] = c,T[3] = d,说明匹配不成功，需要对主串下标进行回退到下标2，子串回退到下标1，重新新一轮的比较，此时s[2] != T[1],匹配不成功，此时主串下标指向3，子串又回退到下标1，继续比较，直到完全匹配成功。
+
+缺点：时间复杂度高，有很多无意义的遍历，例如主串为“0000000000”，子串为“000000001”
+
+2. RK算法 （Rabin-Karp 算法）
+思想是将主串S拆解为与子串长度相同的子串，然后设计一个哈希算法计算出哈希值来表示每一个拆分后的子串
+需要设计一个哈希算法来让每一个子串经过计算后变为一个数字（因为数字的比较总是比字符的比较来得容易），并且要尽可能的降低哈希冲突出现的概率。
+
+通过ASCII的差来表示每一个字母:
+a - a = 0
+b - a = 1
+c - a = 2
+d - a = 3
+...
+
+看一个例子：比如数字 657 可以设计为 6 * 10² + 5 * 10¹ + 7 * 10º，参考这个设计思想，因为数字只有0-9十个数字，所以用的是十进制的次方，而字母有26个数字，所以应该用26进制来表示
+cbd = 2 * 26² + 1 * 26¹ + 3 * 26º = 1381
+这样通过哈希公式的计算，1381就代表的是"cbd"。
+
+按照哈希公式，来计算模式串的哈希值：
+abd = 0 * 26² + 1 * 26¹ + 3 * 26º = 29
+
+3. KMP 算法（Knuth-Morris-Pratt 算法）
+是一种用于字符串匹配的高效算法，通过预处理模式串来加速匹配过程，避免了不必要的回溯操作。
+它是 O(n + m) 时间复杂度的算法，其中 n 是文本的长度，m 是模式串的长度。
+
+KMP模式匹配算法原理:
+主串为“abcdefgab”，模式串为“abcdex”(模式串的每一位都不一样)
+后面我们用i来表示对主串的遍历（i从1开始），j来表示对模式串的遍历（j从1开始）。
+KMP算法的精髓就是：利用已知信息(模式串)，根据其重复值来修改回朔值（主串并不会进行回朔),
+得到一个最恰当的位置来跟主串进行下一轮的比较
+这种情况的前提是模式串每一位都并不一样
+
+
+(模式串有重复)： 假设主串为“abcababca”模式串为“abcabx”,那么应该怎样来比较呢？
+第一轮比较 i=6&&j=6时，匹配失败，因为前三位abc（即模式串中的第4位才是重复的a）互不相同，所以 i=2&&j=1 i=3&&j=1是无意义的比较
+来思考一下，第四步是不是有必要的？
+根据模式串信息，前两位“ab”与第四五位"ab"是相同的，因为第一轮比较已经到了第六位，所以前两位肯定跟主串里的第四五位也是相等的，所以这一步也可以优化（直接从 i=6 j=3比较）
+
+
+KMP模式匹配算法——next数组推导
+我们把模式串各个位置j值变化定义为一个next数组,那么next的长度就是模式串的长度，next下标也是从1开始，默认第一位是0，
+即next[1] = 0。KMP中i是不往回走的，i要么是不动，要么是跟j一起往后移。
+
+
+KMP 之所以高效，是因为在匹配失败时，它不会回溯主串，而是利用 前缀表（next 数组） 来跳过已经匹配的部分。
+前缀表（Next 数组）： 记录模式串的 前缀与后缀的最长公共部分 的长度，帮助在匹配失败时跳过不必要的字符，避免重复比较。
+Next 数组的作用是：在模式匹配失败时，提供模式串的一个新的起始位置，以避免重复匹配。
+
+
+
+前缀：从头开始的子串（不包含最后一个字符）。
+后缀：从尾开始的子串（不包含第一个字符）。
+next[i] 的值：前缀和后缀的最大匹配长度。
+
+主串 abcdefgab 和 模式串 abcabx 的匹配过程:
+
+第一步：计算 Next 数组
+模式串：abcabx
+索引： 0 1 2 3 4 5
+字符： a b c a b x
+
+我们计算 next[i] 的方式是：
+取 pattern[0...i] 这个子串。
+计算它的最长相等的前后缀长度。
+
+i	pattern[0...i]	前缀（不包含 i）	后缀（不包含 0）	最长匹配长度 next[i]
+0	a	无	无	0
+1	ab	a	b	0
+2	abc	a, ab	c, bc	0
+3	abca	a, ab, abc	a, ca, bca	1 （"a"）
+4	abcab	a, ab, abc, abca	b, ab, cab, bcab	2 （"ab"）
+5	abcabx	a, ab, abc, abca, abcab	x, bx, abx, cabx, bcabx	0
+
+next = [0, 0, 0, 1, 2, 0]
+
+
+第二步：进行匹配
+主串：abcdefgab（长度 n=8）
+模式串：abcabx（长度 m=6）
+我们使用 i 遍历主串，j 遍历模式串。
+
+主串索引 i	主串 text[i]	模式串索引 j	模式串 pattern[j]	匹配情况	操作
+0	a	0	a	✅ 匹配	i++，j++
+1	b	1	b	✅ 匹配	i++，j++
+2	c	2	c	✅ 匹配	i++，j++
+3	d	3	a	❌ 不匹配	j = next[j - 1] = next[2] = 0，不回退 i
+3	d	0	a	❌ 不匹配	i++
+4	e	0	a	❌ 不匹配	i++
+5	f	0	a	❌ 不匹配	i++
+6	g	0	a	❌ 不匹配	i++
+7	a	0	a	✅ 匹配	i++，j++
+8	b	1	b	✅ 匹配	i++，j++
+结束	超出主串	-	-	匹配失败	结束
+
+
+
+func computeNext(_ pattern: String) -> [Int] {
+    let chars = Array(pattern)
+    var next = Array(repeating: 0, count: chars.count)
+    var j = 0
+    
+    for i in 1..<chars.count {
+        while j > 0 && chars[i] != chars[j] {
+            j = next[j - 1]
+        }
+        if chars[i] == chars[j] {
+            j += 1
+        }
+        next[i] = j
+    }
+    return next
+}
+
+func KMP(_ text: String, _ pattern: String) -> [Int] {
+    let textChars = Array(text)
+    let patternChars = Array(pattern)
+    let next = computeNext(pattern)
+    var result = [Int]()
+    
+    var j = 0
+    for i in 0..<textChars.count {
+        while j > 0 && textChars[i] != patternChars[j] {
+            j = next[j - 1]
+        }
+        if textChars[i] == patternChars[j] {
+            j += 1
+        }
+        if j == patternChars.count {
+            result.append(i - j + 1)
+            j = next[j - 1]
+        }
+    }
+    return result
+}
+
+// 测试
+let text = "ABABABCABABABCABABC"
+let pattern = "ABABC"
+let matches = KMP(text, pattern)
+print("Pattern found at indices:", matches)
+
+
+匹配过程：
+设 i = 0, j = 0，遍历主串 text。
+若 text[i] == pattern[j]，则 i++, j++。
+若 text[i] != pattern[j]：
+若 j > 0，则 j = next[j-1]，即模式串回退。
+若 j == 0，则 i++，继续遍历主串。
+当 j == m 时，说明匹配成功。

@@ -1,0 +1,92 @@
+https://fatbobman.github.io/zh/posts/exploring-swiftui-property-wrappers-2/
+
+
+==================================================@AppStorage 
+
+可以将多个 @AppStorage 实例放在遵循 ObservableObject 协议的类中，以便进行统一管理
+class Settings:ObservableObject {
+    @AppStorage("count") var count = 100
+    @AppStorage("isLogin") var isLogin = false
+}
+@StateObject var settings = Settings()
+Toggle("Login", isOn: $settings.isLogin)
+
+
+
+使用 UserDefaults 的 register 方法设置的默认值可以适用于 @AppStorage
+struct DefaultValue: View {
+    @AppStorage("count") var count = 100
+    var body: some View {
+        Button("Count") {
+            print(count) // 50
+        }
+    }
+}
+DefaultValue()
+    .onAppear {
+        UserDefaults.standard.register(defaults: ["count": 50])
+    }
+
+
+
+在 @AppStorage 中设置的默认值仅适用于其本身，不适用于直接访问 UserDefaults 的方式
+@AppStorage("count") var count  = 100
+// in View
+print(count) // 100
+print(UserDefaults.standard.value(forKey: "count")) // nil
+
+
+
+使用 defaultAppStorage 可以为视图设置默认的 UserDefaults suite，从而免去在每个 @AppStorage 中重复设置
+ContentView()
+    .defaultAppStorage(.appGroup)
+@AppStorage("isLogin") var isLogin: Bool = false // in ContentView, store in appGroup suit
+
+
+
+public extension UserDefaults {
+    static let appGroup = UserDefaults(suiteName: "group.com.fatbobman.myApp")!
+}
+@AppStorage("isLogin",store: .appGroup) var isLogin: Bool = false
+
+
+
+==================================================@GestureState
+@GestureState 是 SwiftUI 中用于简化手势处理的属性包装器，主要用于临时存储与手势相关的状态。当手势活动结束时，这些状态会自动重置。
+
+@GestureState 的基本使用示例（在手势取消后，isPressed 会被重置为 false）
+struct ContentView: View {
+    @GestureState var isPressed = false
+    var body: some View {
+        VStack {
+            Rectangle()
+                .fill(.orange).frame(width: 200, height: 200)
+                .gesture(DragGesture(minimumDistance: 0).updating($isPressed) { _, state, _ in
+                    state = true
+                })
+                .overlay(
+                    Text(isPressed ? "Pressing" : "")
+                )
+        }
+    }
+}
+
+与此等价的基于 @State 的方式
+
+struct ContentView: View {
+    @State var isPressed = false
+    var body: some View {
+        VStack {
+            Rectangle()
+                .fill(.orange).frame(width: 200, height: 200)
+                .gesture(DragGesture(minimumDistance: 0).onChanged{ _ in
+                    isPressed = true
+                }.onEnded{ _ in
+                    isPressed = false
+                })
+                .overlay(
+                    Text(isPressed ? "Pressing" : "")
+                )
+        }
+    }
+}

@@ -1,0 +1,102 @@
+LLVM IR（Intermediate Representation）
+
+数组
+[<elementnumber> x <elementtype>]
+
+结构体
+%T = type {<type list>}
+
+指针类型
+<type> *
+
+
+==================================================getelementptr
+getelementptr（简称 GEP）是一个计算指针偏移量的指令，常用于数组、结构体和指针运算。
+它的全称是 Get Element Pointer，用于计算某个元素在内存中的地址，但不会实际访问该内存。
+
+
+getelementptr <pointee_type>, <pointer_type> <base_ptr>, <index1>, <index2>, ...
+<pointee_type>：指向的基础类型（不影响计算，只是提供类型信息）。
+<pointer_type>：基础指针类型。
+<base_ptr>：起始指针（即计算偏移量的基地址）。
+<index1>, <index2>, ...：索引值，可用于数组、结构体等。
+GEP 返回的是 偏移后的指针，而不是该地址上的值。
+
+
+数组中的 GEP:
+int arr[5] = {10, 20, 30, 40, 50};
+int *p = &arr[2]; // 取数组的第 3 个元素
+LLVM IR 表示：
+%arr = alloca [5 x i32], align 4
+%p = getelementptr [5 x i32], [5 x i32]* %arr, i32 0, i32 2 // getelementptr（简称 GEP）的返回类型取决于输入指针的类型以及索引后的类型。所以它返回的是 i32*（即 int*）。
+
+alloca [5 x i32]：在栈上分配一个 i32 类型的数组，共 5 个元素。// alloca 在 LLVM IR 中用于 在栈上分配内存，而 不是堆上。如果要在 堆上分配，需要使用 malloc 或其他动态分配函数。
+第一个索引 (0)：用于访问整个数组（因为 arr 是一个数组指针）。
+第二个索引 (2)：偏移到第 2 个元素（从 0 开始计数）。
+结果是 arr[2] 的地址。
+* %arr 代表 %arr 是一个指针，指向 [5 x i32] 类型的数组。
+
+
+结构体中的 GEP:
+struct Data {
+    int a;
+    double b;
+} d;
+int *p = &d.a;
+
+%struct.Data = type { i32, double }
+%ptr = getelementptr %struct.Data, %struct.Data* %d, i32 0, i32 0
+
+%struct.Data = type { i32, double }：定义一个结构体 Data，包含 int a 和 double b。
+getelementptr %struct.Data, %struct.Data* %d, i32 0, i32 0
+第一个索引 (0)：访问整个结构体实例 d。
+第二个索引 (0)：偏移到 a，即 d.a 的地址。
+
+
+指针中的 GEP:
+int *p = malloc(10 * sizeof(int));
+int *q = p + 3;
+
+%p = call i32* @malloc(i32 40)
+%q = getelementptr i32, i32* %p, i32 3
+
+getelementptr i32, i32* %p, i32 3：
+i32：基础类型是 int。
+i32* %p：基指针 p。
+i32 3：偏移 3 个 int，即 p + 3
+
+
+==================================================%swift.refcounted
+%swift.refcounted = type { %swift.type*, i64 }
+
+%swift.refcounted 代表 Swift 运行时的堆对象 (HeapObject)，它的结构如下：
+%swift.type*: 这个字段指向 类型元数据 (metadata)，即 Swift 运行时用来存储类型信息的指针。
+i64: 这个字段通常是 引用计数 (refcount)，用于 Swift ARC（自动引用计数）来管理对象生命周期。
+所以，这个结构等价于 Swift 运行时中的 HeapObject：
+struct HeapObject {
+    Metadata *type;
+    int64_t refCount;
+};
+
+
+==================================================%swift.function
+%swift.function = type { i8*, %swift.refcounted* }
+i8* 可能表示 函数指针 或 对象指针（类似 void*）。
+%swift.refcounted* 代表 引用计数对象（类实例）。
+
+void* ptr;
+SwiftObject* obj = (SwiftObject*)ptr;
+类似于
+%obj = bitcast i8* %ptr to %swift.refcounted*
+
+
+%swift.function = type { i8*, %swift.refcounted* }
+这里 %swift.function 可能是某种 Swift 运行时的函数指针包装。
+它包含：
+i8*：一个通用的指针
+%swift.refcounted*：指向 HeapObject 的指针
+
+
+==================================================%swift.type
+%swift.type = type { i64 }
+%swift.type 是 Swift 运行时的元数据结构，它至少包含一个 i64 字段

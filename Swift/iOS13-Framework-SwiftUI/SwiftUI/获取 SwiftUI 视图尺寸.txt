@@ -1,0 +1,117 @@
+1. GeometryReader
+GeometryReader 是适配性最强的方式，适用于所有版本的 SwiftUI。通常结合 overlay 或 background 使用，以避免影响主视图的尺寸。
+
+Rectangle()
+.background(GeometryReader(content: { geometry in
+                    Color.clear // 创建与主视图尺寸一致的透明视图
+                        .task(id: geometry.size) {
+                            print(geometry.size) // 获取尺寸并监听变化
+                        }
+                }))
+
+使用 task(id:) 确保视图加载时立即获取尺寸，并在 proxy.size 变化时更新
+
+
+2. onGeometryChange
+从 iOS 16 开始，onGeometryChange 提供了更简洁的方式来监听尺寸变化。
+
+struct SizeDemo: View {
+    @State var size: CGSize?
+    var body: some View {
+        Rectangle()
+            .onGeometryChange(for: CGSize.self) { proxy in
+                proxy.size
+            } action: {
+                size = $0
+            }
+    }
+}
+
+iOS 18+ 新特性
+支持同时获取新旧尺寸值，方便处理尺寸变化逻辑。
+
+.onGeometryChange(for: CGSize.self) { proxy in
+    proxy.size
+} action: { old, new in
+    size = new // 获取新尺寸
+    print("Old size: \(old), New size: \(new)")
+}
+
+
+3. visualEffect
+如果目标是根据视图尺寸应用视觉效果（如 offset、scaleEffect 等），visualEffect (iOS 17+) 提供了更直接的方式。
+
+struct SizeDemo: View {
+    var body: some View {
+        Rectangle()
+            .foregroundStyle(.red)
+            .visualEffect { effect, proxy in
+                effect
+                    .offset(y: proxy.size.height / 3) // 视图向下偏移自身高度的 1/3
+            }
+    }
+}
+
+
+4. containerRelativeFrame
+containerRelativeFrame (iOS 17+) 是 GeometryReader 与 frame 的结合体，用于获取当前视图所在的特定容器（如窗口、NavigationStack、ScrollView）的尺寸，并将该尺寸作为自身的约束。
+
+以下代码将矩形设置为窗口宽度的 1/2 和高度的 1/4:
+struct TransformsDemo: View {
+    var body: some View {
+        Rectangle()
+            .containerRelativeFrame([.horizontal, .vertical]) { length, axis in
+                if axis == .vertical {
+                    return length / 4
+                } else {
+                    return length / 2
+                }
+            }
+    }
+}
+containerRelativeFrame 将沿 Rectangle 向上寻找第一个满足条件的容器，当前为窗口
+
+
+容器适应性
+containerRelativeFrame 会自动选择合适的容器。例如，当矩形放置在 NavigationStack 中时，计算的尺寸基于 NavigationStack 的尺寸。
+struct TransformsDemo: View {
+    var body: some View {
+        NavigationStack {
+            Rectangle()
+                .containerRelativeFrame([.horizontal, .vertical]) { length, axis in
+                    if axis == .vertical {
+                        return length / 4
+                    } else {
+                        return length / 2
+                    }
+                }
+        }
+        .frame(width: 300, height: 300) // 指定 NavigationStack 的尺寸
+        .border(.red, width: 4)
+    }
+}
+
+
+ScrollView 中的应用
+containerRelativeFrame 还能用来动态调整滚动视图中的子视图尺寸。例如，将子视图宽度设置为滚动视图宽度的 1/3
+struct ScrollViewDemo: View {
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 10) {
+                ForEach(0..<10) { _ in
+                    Rectangle()
+                        .fill(.purple)
+                        .aspectRatio(3 / 2, contentMode: .fit)
+                        .containerRelativeFrame(.horizontal, count: 3, span: 1, spacing: 0)
+                }
+            }
+        }
+    }
+}
+
+
+方法	适用场景	特点
+GeometryReader	适用于所有 SwiftUI 版本	灵活性强，但需要开发者构建更多的代码
+onGeometryChange	iOS 16+ 简化监听尺寸变化	语义清晰，支持监听新旧尺寸（iOS 18+）
+visualEffect	iOS 17+ 用于动态调整渲染效果	简洁高效，直接使用视图的 GeometryProxy 信息
+containerRelativeFrame	iOS 17+ 适用于相对容器计算的场景，如窗口、滚动视图等	自动匹配容器上下文，便于对子视图进行动态尺寸调整

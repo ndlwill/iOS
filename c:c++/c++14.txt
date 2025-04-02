@@ -1,0 +1,181 @@
+==================================================变量模板（Variable Templates）
+常量变量模板:
+template<typename T>
+constexpr T pi = T(3.1415926535897932385);
+
+std::cout << pi<int> << std::endl;      // 输出 3
+std::cout << pi<double> << std::endl;   // 输出 3.141592653589793
+
+
+==================================================泛型 Lambda 表达式
+允许在 Lambda 表达式中使用自动类型推导
+
+auto add = [](auto a, auto b) { return a + b; };
+std::cout << add(3, 4) << std::endl; // 输出 7
+std::cout << add(3.5, 4.5) << std::endl; // 输出 8
+
+
+==================================================Lambda 捕获 by reference (捕获外部变量的引用)
+以前，Lambda 表达式只能捕获外部变量的副本。C++14 允许通过引用捕获外部变量。
+
+int x = 10;
+auto lambda = [&x]() { std::cout << x << std::endl; };
+lambda(); // 输出 10
+x = 20;
+lambda(); // 输出 20
+
+
+==================================================返回类型推导
+C++14 允许函数推导返回类型，而不必显式指定返回类型。
+
+auto square(int x) { return x * x; }
+std::cout << square(4) << std::endl; // 输出 16
+
+
+==================================================二进制字面量
+int a = 0b10101001110;
+
+
+==================================================std::shared_timed_mutex
+https://en.cppreference.com/w/cpp/thread
+
+std::shared_timed_mutex 是 C++14 引入的一种新的互斥量类型，它支持“共享锁”以及“独占锁”，并且可以与时间相关的功能一起使用，例如设置超时来等待锁。
+共享锁：允许多个线程同时读取共享数据，但不允许修改。
+独占锁：只有一个线程可以拥有锁并修改共享数据。
+
+当你需要支持多个线程同时读取数据，并且只有在没有其他线程读或写时才允许写的场景下特别有用。
+#include <iostream>
+#include <shared_mutex>
+#include <thread>
+#include <chrono>
+
+std::shared_timed_mutex mtx;
+int shared_data = 0;
+
+// 读线程：获取共享锁
+void read_data(int thread_id) {
+    std::shared_lock<std::shared_timed_mutex> lock(mtx);  // 共享锁
+    std::cout << "Thread " << thread_id << " is reading shared_data: " << shared_data << std::endl;
+}
+
+// 写线程：获取独占锁
+void write_data(int thread_id) {
+    std::unique_lock<std::shared_timed_mutex> lock(mtx);  // 独占锁
+    shared_data++;
+    std::cout << "Thread " << thread_id << " is writing shared_data: " << shared_data << std::endl;
+}
+
+int main() {
+    std::thread t1(read_data, 1);
+    std::thread t2(read_data, 2);
+    std::thread t3(write_data, 3);
+    std::thread t4(read_data, 4);
+
+    t1.join();
+    t2.join();
+    t3.join();
+    t4.join();
+
+    return 0;
+}
+读操作：
+线程通过 std::shared_lock 获得共享锁，可以同时由多个线程共享这个锁并读取数据。
+这意味着 read_data 函数可以并发执行，只要没有线程在写数据。
+写操作：
+线程通过 std::unique_lock 获得独占锁，这样可以保证在写数据时，其他线程不能读取或修改数据。
+写操作会阻塞其他读写操作，直到它释放锁。
+
+
+#include <iostream>
+#include <shared_mutex>
+#include <thread>
+#include <chrono>
+
+std::shared_timed_mutex mtx;
+int shared_data = 0;
+
+void try_lock_with_timeout(int thread_id) {
+    if (mtx.try_lock_for(std::chrono::milliseconds(100))) {
+        shared_data++;
+        std::cout << "Thread " << thread_id << " successfully locked and updated shared_data: " << shared_data << std::endl;
+        mtx.unlock();
+    } else {
+        std::cout << "Thread " << thread_id << " failed to lock, timeout occurred!" << std::endl;
+    }
+}
+
+int main() {
+    std::thread t1(try_lock_with_timeout, 1);
+    std::thread t2(try_lock_with_timeout, 2);
+    std::thread t3(try_lock_with_timeout, 3);
+
+    t1.join();
+    t2.join();
+    t3.join();
+
+    return 0;
+}
+try_lock_for 会尝试在指定的时间内获取锁。如果在超时时间内没有成功获取锁，它会返回 false。
+在这个示例中，多个线程尝试在 100 毫秒内获取锁。如果某个线程未能获得锁，它会输出超时信息。
+
+
+==================================================std::make_unique
+用于创建 std::unique_ptr 的工厂函数
+
+#include <iostream>
+#include <memory>
+
+class MyClass {
+public:
+    MyClass(int x) : value(x) {
+        std::cout << "MyClass constructed with value: " << value << std::endl;
+    }
+    void printValue() const {
+        std::cout << "Value: " << value << std::endl;
+    }
+private:
+    int value;
+};
+
+int main() {
+    // 使用 std::make_unique 创建 unique_ptr
+    std::unique_ptr<MyClass> ptr = std::make_unique<MyClass>(42);
+
+    // 使用 ptr
+    ptr->printValue();
+
+// ptr 超出作用域时会自动释放 MyClass 对象的内存
+    // 不需要显式删除，unique_ptr 会自动释放资源
+    return 0;
+}
+
+std::unique_ptr它是一个独占所有权的智能指针，即在任何时刻，只有一个 std::unique_ptr 可以拥有某个资源的所有权
+
+std::unique_ptr 拥有指向对象的唯一所有权，不能被复制，只能被移动。
+这确保了不会有多个智能指针共享同一个对象
+
+unique_ptr 不支持复制，只支持移动。尝试复制 unique_ptr 会导致编译错误：
+std::unique_ptr<MyClass> ptr2 = ptr; // 错误，不能复制
+
+可以通过 std::move 来移动 unique_ptr：
+std::unique_ptr<MyClass> ptr2 = std::move(ptr); // 正确，ptr2 现在拥有 MyClass 对象的所有权
+
+
+std::move并不实际移动任何数据，而是通过类型转换让一个对象支持移动语义。
+这意味着该对象的资源所有权可以从一个对象转移到另一个对象，而不会进行深拷贝。
+std::move 本身不做任何数据移动，它只是标记该对象可以被移动，实际的移动操作发生在后续的移动构造函数或移动赋值操作中。
+int main() {
+    std::unique_ptr<MyClass> ptr1 = std::make_unique<MyClass>(42);
+
+    // 使用 std::move 将资源从 ptr1 移动到 ptr2
+    std::unique_ptr<MyClass> ptr2 = std::move(ptr1);
+
+    // 此时 ptr1 变为 nullptr，ptr2 拥有 MyClass 对象的所有权
+    if (ptr1 == nullptr) {
+        std::cout << "ptr1 is now null." << std::endl;
+    }
+
+    ptr2->printValue();
+
+    return 0;
+}

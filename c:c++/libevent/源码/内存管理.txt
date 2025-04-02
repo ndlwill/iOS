@@ -1,0 +1,122 @@
+malloc与calloc的区别
+初始化:
+malloc()分配给定大小（以字节为单位）的内存块，并返回一个指向块开头的指针。malloc()不会初始化分配的内存。如果在初始化之前我们尝试访问内存块的内容，那么我们将得到分段错误
+void* malloc(size_t size);
+calloc()分配内存并将分配的内存块初始化为零。如果我们尝试访问这些块的内容，那么我们将得到 0。
+void* calloc(size_t num, size_t size);
+1) 要分配的块数。
+2) 每个块的大小。
+
+返回值:
+在 malloc() 和 calloc() 中成功分配后，返回指向内存块的指针，否则返回 NULL 值，表示分配失败。
+
+// C program to demonstrate the use of calloc()
+// and malloc()
+#include <stdio.h>
+#include <stdlib.h>
+
+int main()
+{
+	int* arr;
+
+	// malloc() allocate the memory for 5 integers
+	// containing garbage values
+	arr = (int*)malloc(5 * sizeof(int)); // 5*4bytes = 20 bytes
+
+	// Deallocates memory previously allocated by malloc() function
+	free(arr);
+
+	// calloc() allocate the memory for 5 integers and
+	// set 0 to all of them
+	arr = (int*)calloc(5, sizeof(int));
+
+	// Deallocates memory previously allocated by calloc() function
+	free(arr);
+
+	return (0);
+}
+
+我们可以通过使用 malloc() 和 memset() 来实现与 calloc() 相同的功能：
+ptr = malloc(size);
+memset(ptr, 0, size);
+
+注意：最好使用 malloc 而不是 calloc，除非我们想要初始化为0，因为 malloc 比 calloc 快。
+
+==================================================
+libevent的内存管理函数不是很多也不复杂，函数的声明放在mm-internal.h下面
+
+内存管理函数主要有5个：event_mm_malloc_、event_mm_calloc_、event_mm_strdup_、event_mm_realloc_和event_mm_free_
+
+所有内存管理函数的声明都是放在一个条件编译体内的，其编译条件为没有定义_EVENT_DISABLE_MM_REPLACEMENT
+libevent中的大多数.c文件都包含了event-config.h头文件。从这个头文件名字来看，这应当是用来进行配置的
+event-config.h实际上就是对程序中可能会用到的宏定义进行#define或者#undef，从而来控制编译行为。
+
+那么如何设置是否允许替换libevent提供的内存管理函数呢？这是由一开始安装libevent库时./configure的选项决定的，
+在libevent库安装一文中，通过指定./configure的prefix来指定安装路径，当然，还有很多选项，直接打开configure文件(下载下来的文件中，非最终安装的文件中)
+执行./configure时可附加的选项 --disable-malloc-replacement，根据该选项的说明“disable support for replacing the memory mgt functions”可以知道，它就是用来设置是否允许替换内存管理函数的。
+
+如果在./configure进行配置的时候添加了--disable-malloc-replacement选项，那么无法调用内存管理函数的。
+
+函数定义:
+void *
+event_mm_malloc_(size_t sz)
+{
+	if (_mm_malloc_fn)
+		return _mm_malloc_fn(sz);
+	else
+		return malloc(sz);
+}
+
+这里先对_mm_malloc_fn进行了判断
+这与libevent库日志及错误处理中所用到的log_fn和fatal_fn是类似的
+_mm_malloc_fn的定义为：static void *(*_mm_malloc_fn)(size_t sz) = NULL;
+
+
+event_mm_strdup_:
+char *
+event_mm_strdup_(const char *str)
+{
+	if (_mm_malloc_fn) {
+		size_t ln = strlen(str);
+		void *p = _mm_malloc_fn(ln+1);
+		if (p)
+			memcpy(p, str, ln+1);
+		return p;
+	} else
+#ifdef WIN32
+		return _strdup(str);
+#else
+		return strdup(str);
+#endif
+}
+strdup是指新开辟一段空间，并将传入的字符串复制到新开辟的空间中，并返回这段空间的指针。
+
+这里实现的方法是：先获取字符串长度，再加上一个终止符作为总长度，开辟该长度的空间，并取得指向该空间的指针，然后将字符串复制到这段空间。
+
+
+event_mm_realloc_:
+void *
+event_mm_realloc_(void *ptr, size_t sz)
+{
+	if (_mm_realloc_fn)
+		return _mm_realloc_fn(ptr, sz);
+	else
+		return realloc(ptr, sz);
+}
+
+realloc用来改变一段内存的大小，传入两个参数，一个指向原空间的指针ptr，以及需要开辟的新空间的大小sz。一般情况下sz会比ptr本身指向的连续空间的大小大
+realloc会先判断当前的指针是否有足够的连续空间，如果有，扩大ptr指向的地址，并且将ptr返回，如果空间不够，先按照sz指定的大小分配空间，将原有数据从头到尾拷贝到新分配的内存区域，而后释放原来ptr所指内存区域
+（注意：ptr是自动释放，不需要使用free）同时返回新分配的内存区域的首地址。即重新分配的空间的地址。
+
+
+event_set_mem_functions设置自定义内存管理函数:
+void
+event_set_mem_functions(void *(*malloc_fn)(size_t sz),
+			void *(*realloc_fn)(void *ptr, size_t sz),
+			void (*free_fn)(void *ptr))
+{
+	_mm_malloc_fn = malloc_fn;
+	_mm_realloc_fn = realloc_fn;
+	_mm_free_fn = free_fn;
+}
+该函数与设置自定义的日志及错误处理函数相似，只不过这里需要同时设置三个函数，对应于_mm_malloc_fn、_mm_realloc_fn和_mm_free_fn。

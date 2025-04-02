@@ -1,0 +1,1020 @@
+缓冲区抽象bufferevent
+
+evbuffer结构是用来描述一个缓冲区的，而对于每一个fd来说，都对应于两个缓冲区——一个用于读，一个则用于写。
+而对于每一个fd来说，要想对其缓冲区描述清楚，仅仅通过一个evbuffer结构是完全不够的
+因此，bufferevent就从fd的层面对缓冲区进行了抽象并封装，用户只需操作fd相应的bufferevent即可完成对fd的读写了
+
+如果直接对fd进行读写，那么这种方式属于“不带缓冲”的读写fd；而如果对fd相应的bufferevent进行读写，那么这种方式就属于“带读写缓冲”的读写fd。
+
+bufferevent从原则上来说是不应该把这些信息暴露给用户的，
+但是为了兼容之前版本的libevent，才将bufferevent的信息暴露出来。
+不过bufferevent也做了一些工作来避免用户访问一部分信息，这就是bufferevent_private结构体
+
+/** Parts of the bufferevent structure that are shared among all bufferevent
+ * types, but not exposed in bufferevent_struct.h. */
+struct bufferevent_private {
+	/** The underlying bufferevent structure. */
+	struct bufferevent bev;  //bufferevent_private对应的bufferevent
+ 
+	/** Evbuffer callback to enforce watermarks on input. */
+	struct evbuffer_cb_entry *read_watermarks_cb;   //输入缓冲区达到高水位回调函数
+ 
+	/** If set, we should free the lock when we free the bufferevent. */
+	unsigned own_lock : 1;   
+ 
+	/** Flag: set if we have deferred callbacks and a read callback is
+	 * pending. */
+	unsigned readcb_pending : 1;   //为1表示bufferevent的readcb被延迟回调
+	/** Flag: set if we have deferred callbacks and a write callback is
+	 * pending. */
+	unsigned writecb_pending : 1;  //为1表示bufferevent的writecb被延迟回调
+	/** Flag: set if we are currently busy connecting. */
+	unsigned connecting : 1; //置为1说明connect成功连接或者需要重试
+	/** Flag: set if a connect failed prematurely; this is a hack for
+	 * getting around the bufferevent abstraction. */
+	unsigned connection_refused : 1;  //置为1说明发生了connect发生了ECONNREFUSED错误
+	/** Set to the events pending if we have deferred callbacks and
+	 * an events callback is pending. */
+	short eventcb_pending; //如果被设置，表示bufferevent的errorcb被延迟回调，eventcb_pending可能是多种事件的合成
+	//可为BEV_EVENT_READING、BEV_EVENT_WRITING、BEV_EVENT_EOF、
+	//BEV_EVENT_ERROR、BEV_EVENT_TIMEOUT、BEV_EVENT_CONNECTED
+	
+	/** If set, read is suspended until one or more conditions are over.
+	 * The actual value here is a bitfield of those conditions; see the
+	 * BEV_SUSPEND_* flags above. */
+	bufferevent_suspend_flags read_suspended; //如果被设置，表明bufferevent的读事件监听被挂起，设置的值表示读事件监听被挂起的原因
+ 
+	/** If set, writing is suspended until one or more conditions are over.
+	 * The actual value here is a bitfield of those conditions; see the
+	 * BEV_SUSPEND_* flags above. */
+	bufferevent_suspend_flags write_suspended;//如果被设置，表明bufferevent的写事件监听被挂起，设置的值表示写事件监听被挂起的原因
+ 
+	/** Set to the current socket errno if we have deferred callbacks and
+	 * an events callback is pending. */
+	int errno_pending;// socket出错时的错误信息
+ 
+	/** The DNS error code for bufferevent_socket_connect_hostname */
+	int dns_error;
+ 
+	/** Used to implement deferred callbacks */
+	struct deferred_cb deferred; //用于插入到base的延迟回调队列，用于延迟回调readcb、writecb和errorcb
+ 
+	/** The options this bufferevent was constructed with */
+	enum bufferevent_options options; //bufferevent的属性
+ 
+	/** Current reference count for this bufferevent. */
+	int refcnt;//多线程情况下可能多个线程中同时使用bufferevent，为了防止在某一个线程释放bufferevent导致其它线程不能正常工作，就设置一个引用计数，当引用计数为0表明没有线程使用这个bufferevent了就可以释放了
+ 
+	/** Lock for this bufferevent.  Shared by the inbuf and the outbuf.
+	 * If NULL, locking is disabled. */
+	void *lock;//锁变量
+ 
+	/** Rate-limiting information for this bufferevent */
+	struct bufferevent_rate_limit *rate_limiting;
+};
+
+struct bufferevent {
+	/** Event base for which this bufferevent was created. */
+	struct event_base *ev_base;
+	/** Pointer to a table of function pointers to set up how this
+	    bufferevent behaves. */
+	const struct bufferevent_ops *be_ops; //bufferevent的操作函数
+ 
+	/** A read event that triggers when a timeout has happened or a socket
+	    is ready to read data.  Only used by some subtypes of
+	    bufferevent. */
+	struct event ev_read;
+	/** A write event that triggers when a timeout has happened or a socket
+	    is ready to write data.  Only used by some subtypes of
+	    bufferevent. */
+	struct event ev_write;
+ 
+	/** An input buffer. Only the bufferevent is allowed to add data to
+	    this buffer, though the user is allowed to drain it. */
+	struct evbuffer *input;   //输入缓冲区
+ 
+	/** An input buffer. Only the bufferevent is allowed to drain data
+	    from this buffer, though the user is allowed to add it. */
+	struct evbuffer *output;   //输出缓冲区
+ 
+	struct event_watermark wm_read;   //输入缓冲区的高低水位
+	struct event_watermark wm_write;  //输出缓冲区的高低水位
+ 
+	bufferevent_data_cb readcb;  //每次读取结束后，如果输入缓冲区的长度高于低水位，则调用readcb
+	bufferevent_data_cb writecb; //每次写出结束后，如果输出缓冲区的长度低于低水位，则调用writecb
+	/* This should be called 'eventcb', but renaming it would break
+	 * backward compatibility */
+	bufferevent_event_cb errorcb; //如果读取或者写入发生错误，就调用errorcb 
+	void *cbarg; //readcb、writecb和errorcb的共用参数
+ 
+	struct timeval timeout_read;  //ev_read的超时值
+	struct timeval timeout_write;  //ev_write的超时值
+ 
+	/** Events that are currently enabled: currently EV_READ and EV_WRITE
+	    are supported. */
+	short enabled;    //反映当前的bufferevent是可读还是可写
+};
+
+主要有以下几个非常重要的成员变量:
+1.ev_read和ev_write：用来分别监听读事件和写事件的event变量。bufferevent并没有用一个成员变量去存储它对应监听的fd，这是没有必要的，因为event类型的ev_read和ev_write变量内部本身就需要指定监听的fd
+2.input和output：evbuffer类型的两个成员变量，分别对应于读缓冲区和写缓冲区
+3.wm_read和wm_write：event_watermark结构体类型变量，用来描述缓冲区的高低水位值，因此这两个变量分别对应于读缓冲区的高低水位以及写缓冲区的高低水位
+4.readcb、writecb和errorcb：三者各自对应了一个回调函数，分别对应于读缓冲区发生一次读操作、写缓冲区发生一次写操作以及发生特殊事件这三种情况
+
+==============================创建一个基于socket的bufferevent
+创建一个基于socket的bufferevent，是通过bufferevent_socket_new函数实现的
+struct bufferevent *
+bufferevent_socket_new(struct event_base *base, evutil_socket_t fd,
+    int options)
+{
+	struct bufferevent_private *bufev_p;
+	struct bufferevent *bufev;
+ 
+#ifdef WIN32
+	if (base && event_base_get_iocp(base))
+		return bufferevent_async_new(base, fd, options);
+#endif
+ 
+	if ((bufev_p = mm_calloc(1, sizeof(struct bufferevent_private)))== NULL)//分配一个新的bufferevent_private
+		return NULL;
+	//为buffevent_pri中的bufferevent创建输入输出缓冲区，绑定event_base，设置bufferevent为可写状态，保存bufferevent_ops_socket到bufferevent的options
+	if (bufferevent_init_common(bufev_p, base, &bufferevent_ops_socket,
+				    options) < 0) {//初始化绑定base和ops等信息到bufferevent_pri上
+		mm_free(bufev_p);
+		return NULL;
+	}
+	bufev = &bufev_p->bev;
+	evbuffer_set_flags(bufev->output, EVBUFFER_FLAG_DRAINS_TO_FD);//添加flag
+	//读写事件均关联同一文件描述符
+	event_assign(&bufev->ev_read, bufev->ev_base, fd,
+	    EV_READ|EV_PERSIST, bufferevent_readcb, bufev);//设置读事件回调函数等信息
+	event_assign(&bufev->ev_write, bufev->ev_base, fd,
+	    EV_WRITE|EV_PERSIST, bufferevent_writecb, bufev);//设置写事件回调函数等信息
+ 
+	evbuffer_add_cb(bufev->output, bufferevent_socket_outbuf_cb, bufev);//向输出缓冲区的回调函数队列中插入bufferevent_socket_outbuf_cb
+ 
+	evbuffer_freeze(bufev->input, 0);//禁止从输入缓冲区尾部添加数据，即不能从fd中读取数据
+	evbuffer_freeze(bufev->output, 1);//禁止从输出缓冲区的头部删除或添加数据，即不能向fd中写入数据
+ 
+	return bufev;
+}
+ 
+int
+bufferevent_init_common(struct bufferevent_private *bufev_private,
+    struct event_base *base,
+    const struct bufferevent_ops *ops,
+    enum bufferevent_options options)
+{
+	struct bufferevent *bufev = &bufev_private->bev;//bufferevent包含在bufferevent_pri中
+ 
+	if (!bufev->input) {//如果bufev_private中的bufferevent的输入缓冲区没有分配，那么就重新分配
+		if ((bufev->input = evbuffer_new()) == NULL)
+			return -1;
+	}
+ 
+	if (!bufev->output) {//如果bufev_private中的bufferevent的输出缓冲区没有分配，那么就重新分配
+		if ((bufev->output = evbuffer_new()) == NULL) {
+			evbuffer_free(bufev->input);//如果输出缓冲区分配失败，那么就把销毁刚才分配成功的输入缓冲区
+			return -1;
+		}
+	}
+ 
+	bufev_private->refcnt = 1;//bufferevent_pri的引用计数初始化为1
+	bufev->ev_base = base;//将base绑定到bufferevent上
+ 
+	/* Disable timeouts. *///清空读写事件的定时器
+	evutil_timerclear(&bufev->timeout_read);
+	evutil_timerclear(&bufev->timeout_write);
+ 
+	bufev->be_ops = ops;//绑定调用函数结构体
+ 
+	/*
+	 * Set to EV_WRITE so that using bufferevent_write is going to
+	 * trigger a callback.  Reading needs to be explicitly enabled
+	 * because otherwise no data will be available.
+	 */
+	bufev->enabled = EV_WRITE;//初始化为可写状态
+ 
+#ifndef _EVENT_DISABLE_THREAD_SUPPORT
+	if (options & BEV_OPT_THREADSAFE) {//如果支持多线程并且设置了options为线程安全
+		if (bufferevent_enable_locking(bufev, NULL) < 0) {//为bufferevent分配锁
+			/* cleanup */
+			evbuffer_free(bufev->input);
+			evbuffer_free(bufev->output);
+			bufev->input = NULL;
+			bufev->output = NULL;
+			return -1;
+		}
+	}
+#endif
+	if ((options & (BEV_OPT_DEFER_CALLBACKS|BEV_OPT_UNLOCK_CALLBACKS))
+	    == BEV_OPT_UNLOCK_CALLBACKS) {//BEV_OPT_DEFER_CALLBACKS和BEV_OPT_UNLOCK_CALLBACKS必须都设置
+		event_warnx("UNLOCK_CALLBACKS requires DEFER_CALLBACKS");
+		return -1;
+	}
+	if (options & BEV_OPT_DEFER_CALLBACKS) {//如果开启延迟调用readcb、writecb和errorcb
+		if (options & BEV_OPT_UNLOCK_CALLBACKS)
+			event_deferred_cb_init(&bufev_private->deferred,
+			    bufferevent_run_deferred_callbacks_unlocked,
+			    bufev_private);//设置bufev_private->deferred的回调函数fn和参数arg
+		else
+			event_deferred_cb_init(&bufev_private->deferred,
+			    bufferevent_run_deferred_callbacks_locked,
+			    bufev_private);
+	}
+ 
+	bufev_private->options = options;
+	//绑定buffevent到输入输出缓冲区的parent成员上
+	evbuffer_set_parent(bufev->input, bufev);
+	evbuffer_set_parent(bufev->output, bufev);
+ 
+	return 0;
+}
+
+在bufferevent_socket_new中，主要对bufferevent中的成员进行了一系列初始化，并且该函数需要传入一个fd，而这个fd，就应当是socket的fd了
+bufferevent监听的fd实际上是体现在ev_read和ev_write中的，也就是说会把传入的socket的fd用来设置到ev_read和ev_write中
+
+1.设置bufferevent_private的成员deferred的回调函数为bufferevent_run_deferred_callbacks_locked/unlocked。
+这里的deferred变量其实和evbuffer中的deferred变量的作用是相同的，都是用于开启延迟回调时，deferred被添加到event_base的defer_queue中，
+当主循环处理defer_queue中的deferred时就会调用这里的bufferevent_run_deferred_callbacks_locked/unlocked函数。
+2.设置ev_read和ev_write的回调函数分别为bufferevent_readcb和bufferevent_writecb，
+也就是说，当bufferevent监听的fd发送可读事件或可写事件时，就会去调用bufferevent_readcb或bufferevent_writecb函数
+3.为输出缓冲区outbuf的回调函数队列中添加了bufferevent_socket_outbuf_cb函数，也就是说，当输出缓冲区outbuf发生改变时，就总是会去处理回调队列中的函数，bufferevent_socket_outbuf_cb也得以调用
+
+static void
+bufferevent_socket_outbuf_cb(struct evbuffer *buf,
+    const struct evbuffer_cb_info *cbinfo,
+    void *arg)//输出缓冲区的回调函数
+{
+	struct bufferevent *bufev = arg;
+	struct bufferevent_private *bufev_p =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+ 
+	if (cbinfo->n_added &&
+	    (bufev->enabled & EV_WRITE) &&
+	    !event_pending(&bufev->ev_write, EV_WRITE, NULL) &&
+	    !bufev_p->write_suspended) {//如果输出缓冲区增加了字符，并且输出缓冲区可写，并且没有监听ev_write的可写事件，bufferevent的可写事件监听也没有被挂起
+		/* Somebody added data to the buffer, and we would like to
+		 * write, and we were not writing.  So, start writing. */
+		//如果向输出缓冲区中写入了数据，但是此时并没有监听fd的可写事件，那么现在就开始监听可写事件
+		if (be_socket_add(&bufev->ev_write, &bufev->timeout_write) == -1) {
+		    /* Should we log this? */
+		}
+	}
+}
+
+该函数的主要作用是：由于在写缓冲区写出所有数据后会取消对可写事件的监听，因此该函数就可以在用户向写缓冲区中写入数据后重新开始监听可写事件。
+
+4.bufferevent的使能/禁用/销毁等功能都集合在一个函数集合结构体bufferevent_ops_socket中
+它包含了7个函数，当然这些函数都是内部使用的，并不对外开放
+①evutil_offsetof(struct bufferevent_private, bev)：获取bufferevent_private结构体中bufferevent类型成员的偏移量；
+②be_socket_enable：启动bufferevent；
+③be_socket_disable：禁用bufferevent；
+④be_socket_destruct：销毁bufferevent；
+⑤be_socket_adj_timeouts：设置ev_read和ev_write的监听超时；
+⑥be_socket_flush：无任何作用；
+⑦be_socket_ctrl：传入BEV_CTRL_SET_FD或BEV_CTRL_GET_FD参数可设置或获取bufferevent监听的fd。  
+
+5.bufferevent_socket_new还需要指定options，这是一个枚举类型bufferevent_options，options有以下几种选项:
+①BEV_OPT_CLOSE_ON_FREE = (1<<0),   //是否在关闭bufferevent的时候也关闭bufferevent对应的fd
+②BEV_OPT_THREADSAFE = (1<<1),  //是否使用锁
+③BEV_OPT_DEFER_CALLBACKS = (1<<2),  //是否延迟调用readcb、writecb和errorcb
+④BEV_OPT_UNLOCK_CALLBACKS = (1<<3)    //延迟回调时，是否取消锁，该项必须与③共同使用
+一旦为bufferevent_socket_new设置了BEV_OPT_DEFER_CALLBACKS，那么bufferevent的readcb、writecb和errorcb都会被延迟调用，这与bufferevent的deferred成员息息相关
+
+==============================启动bufferevent
+通过bufferevent_socket_new，只是创建并初始化了一个bufferevent
+bufferevent实际上也是基于ev_read和ev_write这两个事件通知来进行的。因此要想启动bufferevent，那么就必须要让这两个event处于监听状态，这就需要用到bufferevent_enable函数了
+int
+bufferevent_enable(struct bufferevent *bufev, short event)//event参数可以为EV_READ和EV_WRITE的组合，根据event来启动相应的bufferevent监听
+{	//调用该函数后，bufferevent才正式开始工作
+	struct bufferevent_private *bufev_private =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);//获得bufferevent对应的bufferevent_pri
+	short impl_events = event;
+	int r = 0;
+ 
+	_bufferevent_incref_and_lock(bufev);//上锁并增加引用计数
+	if (bufev_private->read_suspended)//如果是读挂起，就取消读事件监听
+		impl_events &= ~EV_READ;
+	if (bufev_private->write_suspended)//如果是写挂起，就取消写事件监听
+		impl_events &= ~EV_WRITE;
+ 
+	bufev->enabled |= event;
+ 
+	if (impl_events && bufev->be_ops->enable(bufev, impl_events) < 0)//根据impl_events的结果来启动bufferevent的监听
+		r = -1;
+ 
+	_bufferevent_decref_and_unlock(bufev);//使用结束，解锁并减少引用计数
+	return r;
+}
+ 
+ 
+static int
+be_socket_enable(struct bufferevent *bufev, short event)//添加读监听或写监听
+{
+	if (event & EV_READ) {//
+		if (be_socket_add(&bufev->ev_read,&bufev->timeout_read) == -1)//添加读事件监听
+			return -1;
+	}
+	if (event & EV_WRITE) {
+		if (be_socket_add(&bufev->ev_write,&bufev->timeout_write) == -1)//添加写事件监听
+			return -1;
+	}
+	return 0;
+}
+ 
+#define be_socket_add(ev, t)			\
+	_bufferevent_add_event((ev), (t))
+ 
+int
+_bufferevent_add_event(struct event *ev, const struct timeval *tv)
+{
+	if (tv->tv_sec == 0 && tv->tv_usec == 0)
+		return event_add(ev, NULL);
+	else
+		return event_add(ev, tv);
+}
+
+在bufferevent_enable函数中会调用bufev->be_ops->enable
+这实际上就是前面为bufferevent绑定的操作函数集合中的enable函数
+它被设置为be_socket_enable，在该函数中又会分别以ev_read和ev_write作为参数来调用be_socket_add函数，
+可以看到，这个函数最终还是调用的event_add函数来把ev_read和ev_write添加到event_base的事件监听中。
+
+在此之后，bufferevent才开始监听fd的可读和可写事件，缓冲区的作用才能真正发挥出来
+
+==============================EVUTIL_UPCAST宏函数
+struct bufferevent_private *bufev_p = EVUTIL_UPCAST(bev, struct bufferevent_private, bev);
+这里传入的三个参数分别为bev,、struct bufferevent_private和bev，需要注意的是，第一个和第三个参数同名不同意，前者是传入的bufferevent类型的参数bev，而后者是指的bufferevent_private中bufferevent类型的成员bev。
+该宏函数的作用是：将bufferevent类型的变量向上转换，转换为bufferevent_private类型。
+
+#define EVUTIL_UPCAST(ptr, type, field)				\
+	((type *)(((char*)(ptr)) - evutil_offsetof(type, field)))
+ 
+#ifdef offsetof
+#define evutil_offsetof(type, field) offsetof(type, field)
+#else
+#define evutil_offsetof(type, field) ((off_t)(&((type *)0)->field))
+#endif
+
+先来看evutil_offsetof函数。传入evutil_offsetof函数的两个参数为struct bufferevent_private和它的成员bev。
+这里主要考虑#define evutil_offsetof(type, field) ((off_t)(&((type *)0)->field))的情况。宏定义替换后，evutil_offsetof宏函数内部就变成了((off_t)(&((struct bufferevent_private *)0)->bev))
+
+首先，(struct bufferevent_private *)0就把0这个地址强制转换为了bufferevent_private 类型的指针，
+这那么就可以通过这个指针去访问bufferevent_private类型下的各个成员。接着再对成员bev取地址，那么得到的就是这个bufferevent类型的成员bev的地址。
+而由于整个结构体的首地址是0，那么bev的地址实际上也就是bev相对于整个bufferevent_private结构体的偏移量。
+因此，evutil_offsetof宏函数实际上就是得到bufferevent_private结构体中，bufferevent类型的成员bev的偏移量。
+前面已经得到了evutil_offsetof的结果，接下来就需要用(char *)(ptr)减去这个结果，而ptr是传入参数bufferevent *类型的bev
+这个ptr就是bev所指向的bufferevent类型变量的地址
+假设这个bufferevent变量是从属于某一个bufferevent_private变量（Libevent中就是这样），
+那么用这个bufferevent类型变量的地址减去前面得到的bufferevent_private结构体中bufferevent类型成员的偏移量，
+得到的就是这个bufferevent类型变量对应的bufferevent_private变量的地址了。
+
+由于ptr本身是bufferevent *类型的，而前面evutil_offsetof的结果是一个off_t类型，在linux中，它实际上就是long类型。
+如果用ptr直接去减去这个off_t类型的值，那么得到的结果实际上是ptr - sizeof(bufferevent) * evutil_offsetof，这个结果显然不是我们想要的
+因此就在做减运算之前将ptr临时转换为char *类型，这样计算结果就是ptr - sizeof(char) * evutil_offsetof
+这样就得到了bufferevent_private类型变量的地址，但是这只是值相同而已，要想对相应的变量进行操作，那么就还需要对前面的结果执行(bufferevent_private *)强制转换
+这就是为什么EVUTIL_UPCAST宏前面会加上(type *)
+
+EVUTIL_UPCAST宏的作用实际上就是根据一个bufferevent类型的变量，获取指向其所对应的bufferevent_private变量的指针，实现了向上转换。
+不过需要注意的是，由于在Libevent中，在创建每个bufferevent之前都是先创建bufferevent_private的，
+因此这样的向上转换是安全的；而在很多实际情况下，子结构体都是单独定义，而不是从父结构体定义中得到的，这时如果执行向上转换是非常不安全的。
+
+==============================bufferevent水位设置
+虽说是设置bufferevent的水位，实际上是设置bufferevent中读写缓冲区的水位
+bufferevent的水位设置，是通过bufferevent_setwatermark函数实现的
+
+void
+bufferevent_setwatermark(struct bufferevent *bufev, short events,
+    size_t lowmark, size_t highmark)//events可以是读或写，设置相应读/写的高低水位，可以同时设置读和写的水位
+{
+	struct bufferevent_private *bufev_private =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);//获得bufferevent对应的bufferevent_pri
+ 
+	BEV_LOCK(bufev);
+	if (events & EV_WRITE) {//设置写高低水位
+		bufev->wm_write.low = lowmark;
+		bufev->wm_write.high = highmark;
+	}
+ 
+	if (events & EV_READ) {//设置读高低水位
+		bufev->wm_read.low = lowmark;
+		bufev->wm_read.high = highmark;
+ 
+		if (highmark) {//如果设置了读高水位
+			/* There is now a new high-water mark for read.
+			   enable the callback if needed, and see if we should
+			   suspend/bufferevent_wm_unsuspend. */
+ 
+			if (bufev_private->read_watermarks_cb == NULL) {
+				bufev_private->read_watermarks_cb =
+				    evbuffer_add_cb(bufev->input,
+						    bufferevent_inbuf_wm_cb,
+						    bufev);//添加bufferevent_inbuf_wm_cb到输入缓冲区的回调函数队列中
+			}
+			evbuffer_cb_set_flags(bufev->input,
+				      bufev_private->read_watermarks_cb,
+				      EVBUFFER_CB_ENABLED|EVBUFFER_CB_NODEFER);
+ 
+			if (evbuffer_get_length(bufev->input) > highmark)
+				bufferevent_wm_suspend_read(bufev);//如果输入缓冲区的长度以及超过了高水位就挂起buffrevent的读事件监听
+			else if (evbuffer_get_length(bufev->input) < highmark)
+				bufferevent_wm_unsuspend_read(bufev);//如果输入缓冲区的长度还未达到高水位就恢复bufferevent的读事件监听
+		} else {//如果设置高水位为0
+			/* There is now no high-water mark for read. */
+			if (bufev_private->read_watermarks_cb)
+				evbuffer_cb_clear_flags(bufev->input,
+				    bufev_private->read_watermarks_cb,
+				    EVBUFFER_CB_ENABLED);//取消EVBUFFER_CB_ENABLED，回调时就不会调用了
+			bufferevent_wm_unsuspend_read(bufev);//恢复读事件监听
+		}
+	}
+	BEV_UNLOCK(bufev);
+}
+
+该函数只是对读缓冲区的高水位进行了特殊处理，它主要做了以下几件事:
+1.向读缓冲区的回调队列中添加bufferevent_inbuf_wm_cb函数，并将其绑定到bufferevent_private中的read_watermarks_cb成员，并设置read_watermarks_cb的flag为NODEFER，表明该回调函数不会被延迟调用
+2.如果读缓冲区的数据量高于高水位，就调用bufferevent_wm_suspend_read函数；
+3.如果读缓冲区的数据量低于高水位，就调用bufferevent_wm_unsuspend_read函数；
+4.如果设置高水位为0，就会直接调用bufferevent_wm_unsuspend_read函数。
+
+#define bufferevent_wm_suspend_read(b) \
+	bufferevent_suspend_read((b), BEV_SUSPEND_WM)
+#define bufferevent_wm_unsuspend_read(b) \
+	bufferevent_unsuspend_read((b), BEV_SUSPEND_WM)
+ 
+ 
+void
+bufferevent_suspend_read(struct bufferevent *bufev, bufferevent_suspend_flags what)
+{
+	struct bufferevent_private *bufev_private =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);//获取bufferevent对应的bufferevent_pri
+	BEV_LOCK(bufev);
+	if (!bufev_private->read_suspended)//如果没有挂起读事件监听，就调用disable函数挂起，停止从fd中read
+		bufev->be_ops->disable(bufev, EV_READ);
+	bufev_private->read_suspended |= what;//记录挂起的原因
+	BEV_UNLOCK(bufev);
+}
+ 
+void
+bufferevent_unsuspend_read(struct bufferevent *bufev, bufferevent_suspend_flags what)
+{
+	struct bufferevent_private *bufev_private =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	BEV_LOCK(bufev);
+	bufev_private->read_suspended &= ~what;//删除导致挂起的该原因
+	//如果此时read_suspended为0，说明当前bufferevent读事件监听挂起，并且挂起原因是what，没有其他原因导致挂起，此时就可以重新恢复读事件监听了
+	//如果bufferevent是可监听读的状态，就恢复读事件监听
+	if (!bufev_private->read_suspended && (bufev->enabled & EV_READ))
+		bufev->be_ops->enable(bufev, EV_READ);
+	BEV_UNLOCK(bufev);
+}
+ 
+static int
+be_socket_disable(struct bufferevent *bufev, short event)//删除读监听或写监听
+{
+	struct bufferevent_private *bufev_p =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	if (event & EV_READ) {//如果是由读事件引起的
+		if (event_del(&bufev->ev_read) == -1)//删除读事件的监听
+			return -1;
+	}
+	/* Don't actually disable the write if we are trying to connect. */
+	if ((event & EV_WRITE) && ! bufev_p->connecting) {//如果是由写事件引起的并且没有连接
+		if (event_del(&bufev->ev_write) == -1)//删除写事件的监听
+			return -1;
+	}
+	return 0;
+}
+
+bufferevent_wm_suspend_read和bufferevent_wm_unsuspend_read函数会分别调用bufferevent操作函数集合中的disable和enable函数，
+enable函数前面说过，就是通过event_add来添加对相应事件的监听，而disable函数则是相反，通过event_del来取消对相应事件的监听。
+
+当调用bufferevent_wm_suspend_read函数时，不仅会需要对ev_read事件的监听，还会设置read_suspended， 如果是由水位导致的挂起，那么就会设置read_suspended为BEV_SUSPEND_WM。
+通过bufferevent_private的read_suspended成员可以知道是否挂起了读事件的监听，如果挂起了则read_suspended则记录了挂起的原因。
+
+==============================bufferevent从fd中读取数据
+bufferevent通过ev_read来监听fd的可读事件，当可读事件发生后，就会调用bufferevent_readcb函数，这个函数就会将数据从fd中读取到缓冲区中
+
+static void
+bufferevent_readcb(evutil_socket_t fd, short event, void *arg)//fd可读就触发该函数
+{
+	struct bufferevent *bufev = arg;
+	struct bufferevent_private *bufev_p =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	//向上转换，bufferevent类型转换为bufferevent_pri类型，
+	
+	struct evbuffer *input;
+	int res = 0;
+	short what = BEV_EVENT_READING;
+	ev_ssize_t howmuch = -1, readmax=-1;
+ 
+	_bufferevent_incref_and_lock(bufev);//bufferevent引用计数加1并且加锁
+ 
+	if (event == EV_TIMEOUT) {//如果是超时激活就进行错误处理
+		/* Note that we only check for event==EV_TIMEOUT. If
+		 * event==EV_TIMEOUT|EV_READ, we can safely ignore the
+		 * timeout, since a read has occurred */
+		what |= BEV_EVENT_TIMEOUT;
+		goto error;
+	}
+ 
+	input = bufev->input;
+ 
+	/*
+	 * If we have a high watermark configured then we don't want to
+	 * read more data than would make us reach the watermark.
+	 */
+	if (bufev->wm_read.high != 0) {//如果设置了读高水位
+		howmuch = bufev->wm_read.high - evbuffer_get_length(input);//计算高水位与当前读缓冲区的大小
+		/* we somehow lowered the watermark, stop reading */
+		if (howmuch <= 0) {//如果读缓冲区的buffer大小已经达到了高水位
+			bufferevent_wm_suspend_read(bufev);//挂起读监听事件后结束
+			goto done;
+		}
+	}
+	readmax = _bufferevent_get_read_max(bufev_p);//获取最多能读取的字节数，如果用户设置了限速则以限速大小为准，如果没有设置，则默认为16384
+	if (howmuch < 0 || howmuch > readmax) /* The use of -1 for "unlimited"
+					       * uglifies this code. XXXX */
+		howmuch = readmax;//如果没有设置读高水位，或者是设置了高水位但是读缓冲区的空间比readmax还大，那就以readmax为准
+	if (bufev_p->read_suspended)//如果读事件被挂起，那就直接结束
+		goto done;
+	//接下来就开始从fd中读取数据到输入缓冲区中
+	evbuffer_unfreeze(input, 0);//打开输入缓冲区的尾部，即可以从fd中读取数据到输入缓冲区
+	res = evbuffer_read(input, fd, (int)howmuch); /* XXXX evbuffer_read would do better to take and return ev_ssize_t */
+	evbuffer_freeze(input, 0);//关闭输入缓冲区的尾部，不可以从fd中读取数据到输入缓冲区了
+ 
+	......
+}
+
+该函数会通过_bufferevent_get_read_max来获取最多可读入的字节数，如果没有设置限速的话，那么默认为16K。
+根据这个值去设置howmuch，不过最终并不一定就从fd中读取howmuch个字节，具体读取了多少，会由evbuffer_read函数返回。
+
+==============================bufferevent向fd中写入数据
+bufferevent通过ev_write来监听fd的可写事件，当可写事件发生，那么就会调用bufferevent_write_cb函数
+static void
+bufferevent_writecb(evutil_socket_t fd, short event, void *arg)
+{
+	struct bufferevent *bufev = arg;
+	struct bufferevent_private *bufev_p =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	int res = 0;
+	short what = BEV_EVENT_WRITING;
+	int connected = 0;
+	ev_ssize_t atmost = -1;
+ 
+	_bufferevent_incref_and_lock(bufev);
+ 
+	......
+	atmost = _bufferevent_get_write_max(bufev_p);//获取由读写速率限制的最多一次能写入的字节数，最多为16K
+ 
+	if (bufev_p->write_suspended)
+		goto done;
+ 
+	if (evbuffer_get_length(bufev->output)) {//如果输出缓冲区中有数据
+		evbuffer_unfreeze(bufev->output, 1);//打开输出缓冲区的头部
+		res = evbuffer_write_atmost(bufev->output, fd, atmost);//按照最多能写的字节数将输出缓冲区的数据写出到fd中
+		evbuffer_freeze(bufev->output, 1);//关闭输出缓冲区的头部
+		......
+	}
+ 
+	......
+}
+在bufferevent_write_cb函数中，调用的_bufferevent_get_write_max与读回调中相同，都是获取最多一次能写入的字节数，
+如果没有设置限速，那么就为16K，然后再调用evbuffer_write_atmost把数据从缓冲区写到fd中
+
+==============================从bufferevent中读出数据
+bufferevent的存在，使得用户读入数据时不再直接从fd中读入数据，而是直接从读缓冲区中读取数据
+
+size_t
+bufferevent_read(struct bufferevent *bufev, void *data, size_t size)//从缓冲区中读出数据到data
+{
+	return (evbuffer_remove(bufev->input, data, size));
+}
+ 
+int
+evbuffer_remove(struct evbuffer *buf, void *data_out, size_t datlen)//从buf中读取datlen个字节到data_out中
+{
+	ev_ssize_t n;
+	EVBUFFER_LOCK(buf);
+	n = evbuffer_copyout(buf, data_out, datlen);//从buf的头部开始拷贝datlen个数据到data_out中
+	if (n > 0) {
+		if (evbuffer_drain(buf, n)<0)//从buf中抽取出刚刚拷贝了的数据，相当于删除了这些数据
+			n = -1;
+	}
+	EVBUFFER_UNLOCK(buf);
+	return (int)n;
+}
+bufferevent_read只是简单调用了evbuffer_remove函数，而在evbuffer_remove函数中，
+会先调用evbuffer_copyout函数来把需要读取的数据读出来，然后再调用evbuffer_drain函数来把缓冲区中被读取的数据删除掉。
+
+==============================向bufferevent中写入数据
+用户写出数据时不再直接写到fd中，而是把数据先写到写缓冲区中，然后再由写缓冲区把数据写出，接口函数为bufferevent_write
+
+int
+bufferevent_write(struct bufferevent *bufev, const void *data, size_t size)//向缓冲区中写入data
+{
+	if (evbuffer_add(bufev->output, data, size) == -1)
+		return (-1);
+ 
+	return 0;
+}
+
+==============================bufferevent的回调机制
+bufferevent的回调机制，实际上和evbuffer的回调机制是相同的，只不过bufferevent除了两个缓冲区各自处理回调队列之外，还需要处理三个回调函数：readcb、writecb和errorcb。
+
+static void
+bufferevent_readcb(evutil_socket_t fd, short event, void *arg)//fd可读就触发该函数
+{
+	......
+	if (res == -1) { //如果从fd中读取数据时出错
+		int err = evutil_socket_geterror(fd);
+		if (EVUTIL_ERR_RW_RETRIABLE(err))//判断出错原因是否为EINTR或者EAGAIN
+			goto reschedule;
+		/* error case */
+		what |= BEV_EVENT_ERROR;  //如果不是以上两种就需要进行错误处理
+	} else if (res == 0) {//如果连接关闭
+		/* eof case */
+		what |= BEV_EVENT_EOF;
+	}
+ 
+	if (res <= 0)
+		goto error;
+ 
+	......
+	if (evbuffer_get_length(input) >= bufev->wm_read.low)//如果输入缓冲区的长度高于低水位，那么就应该调用readcb了
+		_bufferevent_run_readcb(bufev);
+ 
+	goto done;
+ 
+ reschedule:
+	goto done;
+ 
+ error:
+	......
+	_bufferevent_run_eventcb(bufev, what);//根据what来调用bufferevent的错误处理函数errorcb
+        ......
+}
+如果在一次数据读取结束后，读缓冲区的数据量低于低水位，说明此次读取的数据太少，就忽略本次读取；否则就会调用_bufferevent_run_readcb函数
+
+void
+_bufferevent_run_readcb(struct bufferevent *bufev)
+{
+	/* Requires that we hold the lock and a reference */
+	struct bufferevent_private *p =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	if (bufev->readcb == NULL)
+		return;
+	if (p->options & BEV_OPT_DEFER_CALLBACKS) {//如果选择延迟回调
+		p->readcb_pending = 1;//表示readcb延迟回调
+		if (!p->deferred.queued)//如果bufferevent_pri的deferred不在base的defer_cb中
+			SCHEDULE_DEFERRED(p);//就把bufferevent_pri的deferred添加到defer_cb中
+	} else {//如果不选择延迟回调
+		bufev->readcb(bufev, bufev->cbarg);//立刻调用readcb
+	}
+}
+ 
+#define SCHEDULE_DEFERRED(bevp)						\
+	do {								\
+		bufferevent_incref(&(bevp)->bev);			\
+		event_deferred_cb_schedule(				\
+			event_base_get_deferred_cb_queue((bevp)->bev.ev_base), \
+			&(bevp)->deferred);				\
+	} while (0)
+
+如果bufferevent设置了BEV_OPT_DEFER_CALLBACKS，那么就会启动延迟回调，由SCHEDULE_DEFERRED宏函数来把bufferevent_private的deferred成员放到event_base中
+这一点和evbuffer的做法是几乎一样的。如果没有开启延迟回调，那么就会立刻调用readcb函数。
+
+在错误处理方面，如果读取数据出错，那么what变量还会记录出错的类型。
+该变量在开头设置为BEV_EVENT_READING，如果读取出错时因为对端连接关闭，那么what就被设置为BEV_EVENT_READING|BEV_EVENT_EOF
+此时通过what变量就可以知道这是在读取数据时发生了对端关闭的错误。
+最终会将what变量作为参数调用_bufferevent_run_eventcb函数
+void
+_bufferevent_run_eventcb(struct bufferevent *bufev, short what)
+{
+	/* Requires that we hold the lock and a reference */
+	struct bufferevent_private *p =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	if (bufev->errorcb == NULL)
+		return;
+	if (p->options & BEV_OPT_DEFER_CALLBACKS) {//如果选择延迟调用errorcb
+		p->eventcb_pending |= what;//事件类型
+		p->errno_pending = EVUTIL_SOCKET_ERROR();//错误信息
+		if (!p->deferred.queued)//如果bufferevent_pri的deferred不在base的defer_cb中就插入
+			SCHEDULE_DEFERRED(p);
+	} else {//如果不选择延迟调用errorcb，就立刻调用
+		bufev->errorcb(bufev, what, bufev->cbarg);
+	}
+}
+
+在bufferevent_writecb中，也是大致相同的
+ 
+static void
+bufferevent_writecb(evutil_socket_t fd, short event, void *arg)
+{
+	......
+	 //输出缓冲区的数据低于低水位，就调用_bufferevent_run_writecb。
+	 //如果是第一次发送，并且还没有数据发出，即使低于低水位，也不会调用_bufferevent_run_writecb
+	if ((res || !connected) &&
+	    evbuffer_get_length(bufev->output) <= bufev->wm_write.low) {
+		_bufferevent_run_writecb(bufev);
+	}
+ 
+	goto done;
+ 
+ reschedule:
+	if (evbuffer_get_length(bufev->output) == 0) { //如果发送缓冲区没有数据了，就取消写事件监听
+		event_del(&bufev->ev_write);
+	}
+	goto done;
+ 
+ error:
+	bufferevent_disable(bufev, EV_WRITE);
+	_bufferevent_run_eventcb(bufev, what);
+ 
+ done:
+	_bufferevent_decref_and_unlock(bufev);
+}
+ 
+void
+_bufferevent_run_writecb(struct bufferevent *bufev)
+{
+	/* Requires that we hold the lock and a reference */
+	struct bufferevent_private *p =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	if (bufev->writecb == NULL)
+		return;
+	if (p->options & BEV_OPT_DEFER_CALLBACKS) {//如果选择延迟回调writecb
+		p->writecb_pending = 1;//表示writecb延迟调用
+		if (!p->deferred.queued)//如果bufferevent_pri的deferred不在base的defer_cb中
+			SCHEDULE_DEFERRED(p);//就把bufferevent_pri的deferred添加到defer_cb中
+	} else {
+		bufev->writecb(bufev, bufev->cbarg);//如果不选择延迟回调，就立刻调用writecb
+	}
+}
+对于bufferevent_writecb，则是当一次写入操作结束后，
+如果写缓冲区的数据量高于低水位，那么说明此次写出量太少，就忽略此次写出，否则就会调用bufferevent_private的writecb函数，在该函数中，也会进行延迟回调判断然后再进行处理。
+
+当添加到event_base延迟回调队列中的deferred激活后，就会调用bufferevent_socket_new中为其设置的回调函数bufferevent_run_deferred_callbacks_locked/unlocked，这里以locked为例
+static void
+bufferevent_run_deferred_callbacks_locked(struct deferred_cb *_, void *arg)
+{
+	struct bufferevent_private *bufev_private = arg;
+	struct bufferevent *bufev = &bufev_private->bev;
+ 
+	BEV_LOCK(bufev);
+	if ((bufev_private->eventcb_pending & BEV_EVENT_CONNECTED) &&
+	    bufev->errorcb) {
+		/* The "connected" happened before any reads or writes, so
+		   send it first. */
+		bufev_private->eventcb_pending &= ~BEV_EVENT_CONNECTED;
+		bufev->errorcb(bufev, BEV_EVENT_CONNECTED, bufev->cbarg);
+	}
+	if (bufev_private->readcb_pending && bufev->readcb) {
+		bufev_private->readcb_pending = 0;
+		bufev->readcb(bufev, bufev->cbarg);
+	}
+	if (bufev_private->writecb_pending && bufev->writecb) {
+		bufev_private->writecb_pending = 0;
+		bufev->writecb(bufev, bufev->cbarg);
+	}
+	if (bufev_private->eventcb_pending && bufev->errorcb) {
+		short what = bufev_private->eventcb_pending;
+		int err = bufev_private->errno_pending;
+		bufev_private->eventcb_pending = 0;
+		bufev_private->errno_pending = 0;
+		EVUTIL_SET_SOCKET_ERROR(err);
+		bufev->errorcb(bufev, what, bufev->cbarg);
+	}
+	_bufferevent_decref_and_unlock(bufev);
+}
+在该函数中，就对readcb、writecb和errorcb进行调用。
+如果为bufferevent开启延迟调用，那么就只是延迟调用了readcb、writecb和errorcb三个函数，并不会影响读写缓冲区各自的回调函数队列中的函数。
+如果要让读写缓冲区中的回调函数也延迟回调，那么就还需要每个缓冲区都调用evbuffer_defer_callbacks才行。
+
+==============================设置bufferevent的回调函数
+bufferevent特有的三个回调函数readcb、writecb和errorcb，这是留给用户自定义的。
+当读缓冲区从fd中读取数据后，如果读取是有效的，那么就会自动回调用户设置的readcb函数
+从逻辑上来说在readcb函数中应该使用bufferevent_read来读取缓冲区中的数据，从另一方面也可以看到，只有当fd可读时，读缓冲区才会从fd中读取数据，数据读取结束后才会触发readcb函数
+如果在readcb中没有将读缓冲区读干净，那么也不会再触发readcb函数了，只有等到fd下一次可读的时候，才有可能再次触发readcb函数。
+因此，bufferevent的读是一个边沿触发行为。相同的写也是一样
+
+由bufferevent_setcb函数设置:
+void
+bufferevent_setcb(struct bufferevent *bufev,
+    bufferevent_data_cb readcb, bufferevent_data_cb writecb,
+    bufferevent_event_cb eventcb, void *cbarg)
+{
+	BEV_LOCK(bufev);
+ 
+	bufev->readcb = readcb;
+	bufev->writecb = writecb;
+	bufev->errorcb = eventcb;
+ 
+	bufev->cbarg = cbarg;
+	BEV_UNLOCK(bufev);
+}
+
+==============================为bufferevent的socket建立连接
+通过bufferevent_socket_connect可以将bufferevent监听的socket与对端进行连接，该函数需要传入对端的相关信息，调用该函数后，如果未出错，那么bufferevent所监听的fd将自动与对端连接。
+int
+bufferevent_socket_connect(struct bufferevent *bev,
+    struct sockaddr *sa, int socklen)  //对bufferevent监听的socket发起连接，如果传入的bufferevent的socket为负数非法，就重新创建一个socket再进行连接
+{//不仅会对socket发起连接，还会添加监听，包含了bufferevent_enable的功能
+	struct bufferevent_private *bufev_p =
+	    EVUTIL_UPCAST(bev, struct bufferevent_private, bev);
+ 
+	evutil_socket_t fd;
+	int r = 0;
+	int result=-1;
+	int ownfd = 0;
+ 
+	_bufferevent_incref_and_lock(bev);
+ 
+	if (!bufev_p)
+		goto done;
+ 
+	fd = bufferevent_getfd(bev);  //获取bufferevent监听的文件描述符
+	if (fd < 0) { //如果fd不合法，就重新创建一个socket
+		if (!sa)
+			goto done;
+		fd = socket(sa->sa_family, SOCK_STREAM, 0);
+		if (fd < 0)
+			goto done;
+		if (evutil_make_socket_nonblocking(fd)<0) //设置为非阻塞
+			goto done;
+		ownfd = 1;
+	}
+	if (sa) {
+ 
+		r = evutil_socket_connect(&fd, sa, socklen);  //将socket与对端进行连接
+		if (r < 0)//r为-1表示发生了其他错误
+			goto freesock;
+	}
+ 
+	bufferevent_setfd(bev, fd);  //设置bufferevent的fd
+	if (r == 0) {//表示连接的握手请求已经发起
+		if (! be_socket_enable(bev, EV_WRITE)) {//添加ev_write进行可写事件监听，由于握手请求已经发起，如果fd可写调用writecb，说明已经连接成功了
+			bufev_p->connecting = 1;
+			result = 0;
+			goto done;
+		}
+	} else if (r == 1) {//表示连接成功
+		/* The connect succeeded already. How very BSD of it. */
+		result = 0;
+		bufev_p->connecting = 1;
+		event_active(&bev->ev_write, EV_WRITE, 1); //激活可写事件
+	} else {//表示连接被拒绝（发生了ECONNREFUSED错误）
+		/* The connect failed already.  How very BSD of it. */
+		bufev_p->connection_refused = 1;//表示发生了ECONNREFUSED错误
+		bufev_p->connecting = 1;
+		result = 0;
+		event_active(&bev->ev_write, EV_WRITE, 1); //激活可写事件
+	}
+	//都需要在writecb中检查是否真的连接成功，再进行数据写入操作
+ 
+	goto done;
+ 
+freesock:
+	_bufferevent_run_eventcb(bev, BEV_EVENT_ERROR);//执行事件处理函数errorcb
+	if (ownfd)
+		evutil_closesocket(fd);
+	/* do something about the error? */
+done:
+	_bufferevent_decref_and_unlock(bev);
+	return result;
+}
+ 
+int
+evutil_socket_connect(evutil_socket_t *fd_ptr, struct sockaddr *sa, int socklen)
+{
+	int made_fd = 0;
+ 
+	if (*fd_ptr < 0) { //如果传入的文件描述符非法，就重新创建一个非阻塞的socket
+		if ((*fd_ptr = socket(sa->sa_family, SOCK_STREAM, 0)) < 0)
+			goto err;
+		made_fd = 1;
+		if (evutil_make_socket_nonblocking(*fd_ptr) < 0) {
+			goto err;
+		}
+	}
+ 
+	if (connect(*fd_ptr, sa, socklen) < 0) {  //进行连接
+		int e = evutil_socket_geterror(*fd_ptr); //连接失败获取错误
+		if (EVUTIL_ERR_CONNECT_RETRIABLE(e)) //表明只是发起了连接
+			return 0;
+		if (EVUTIL_ERR_CONNECT_REFUSED(e)) //发生ECONNREFUSED错误
+			return 2;
+		goto err;
+	} else {
+		return 1;
+	}
+ 
+err:
+	if (made_fd) {
+		evutil_closesocket(*fd_ptr); //关闭套接字
+		*fd_ptr = -1;
+	}
+	return -1;
+}
+ 
+#define EVUTIL_ERR_CONNECT_RETRIABLE(e)			\ 
+	((e) == EINTR || (e) == EINPROGRESS)
+ 
+#define EVUTIL_ERR_CONNECT_REFUSED(e)					\
+	((e) == ECONNREFUSED)
+
+###
+当我们以非阻塞的方式来进行连接的时候，返回的结果如果是 -1,这并不代表这次连接发生了错误，
+如果它的返回结果是 EINPROGRESS，那么就代表连接还在进行中。 后面可以通过poll或者select来判断socket是否可写，如果可以写，说明连接完成了。
+###
+
+在bufferevent_socket_connect函数内部，是通过evutil_socket_connect来进行socket连接的。
+在Libevent中，使用的文件描述符大多数都是非阻塞的，这里的socket也不例外。
+对于非阻塞connect来说，如果返回0，说明连接已经建立；如果返回-1，那么就需要注意以下几点:
+如果socket error为EINPROGRESS，说明连接已经发起，不过还没有建立，在这种情况下应该重新尝试连接
+如果error为EINTR，说明连接被其他信号中断，也应该重新尝试连接
+如果error为ECONNREFUSED，那么说明连接被拒绝
+前面两个都对应于EVUTIL_ERR_CONNECT_RETRIABLE宏，最后一个则对应于ECONNREFUSED，因此，当evutil_socket_connect函数返回1时，说明连接已经成功，返回0时说明连接已经发起不过还没有成功，返回2时，则说明连接失败
+
+因此，对于前面所说的连接已经发起，不过还未成功建立的情况（r=0），此时就会对fd的可写事件进行监听，如果可写事件触发，说明连接建立,此时就可以从缓冲区向对端写入数据了
+如果连接已经成功建立（r=1），那么说明此时可以直接写数据，因此直接激活写事件即可
+如果连接被拒绝（r=2），依然是手动激活写事件（这里只是为了在bufferevent_writecb中对连接错误进行统一处理，即删除可写事件监听）。
+
+当socket发生可写事件时，由于连接遇到错误时socket也可写，因此可写不一定就说明此时的socket连接上了。
+还要对可写状态下的socket进行进一步的判断，而这一步判断则是在可写事件回调函数中进行。
+在前面说过，bufferevent监听可写事件是通过ev_write来实现的，ev_write的回调函数是bufferevent_writecb
+static void
+bufferevent_writecb(evutil_socket_t fd, short event, void *arg)
+{
+	struct bufferevent *bufev = arg;
+	struct bufferevent_private *bufev_p =
+	    EVUTIL_UPCAST(bufev, struct bufferevent_private, bev);
+	int res = 0;
+	short what = BEV_EVENT_WRITING;
+	int connected = 0;
+	ev_ssize_t atmost = -1;
+ 
+	_bufferevent_incref_and_lock(bufev);
+ 
+	......
+ 
+	if (bufev_p->connecting) {//如果需要检查是否建立连接了
+		int c = evutil_socket_finished_connecting(fd);
+		//返回1说明没有错误，也就是连接成功了
+		//返回0说明发生了
+		/* we need to fake the error if the connection was refused
+		 * immediately - usually connection to localhost on BSD */
+		if (bufev_p->connection_refused) {//如果发生了ECONNREFUSED错误，就设置c为-1，就可以直接结束了
+		  bufev_p->connection_refused = 0;  //重置为0
+		  c = -1;
+		}
+ 
+		if (c == 0) //表示连接还没完成
+			goto done;  //不重置bufev_p->connecting直接结束
+		//c=0说明连接可能还在进行但是并没有完成，那么bufev_p->connecting就不重置，在下次writecb中重新判断是否连接成功
+		//c=1说明连接被拒绝，就会把bufev_p->connecting重置为0，后面writecb也不会再重新判断了
+		bufev_p->connecting = 0;
+		if (c < 0) {  //如果还有其它错误说明连接失败就删除读写事件的监听
+			event_del(&bufev->ev_write);
+			event_del(&bufev->ev_read);
+			_bufferevent_run_eventcb(bufev, BEV_EVENT_ERROR);
+			goto done;
+		} else {  //连接成功
+			connected = 1; //表示首次连接成功
+ 
+			_bufferevent_run_eventcb(bufev,
+					BEV_EVENT_CONNECTED);//调用bufferevent的事件处理函数，表示首次连接成功
+			if (!(bufev->enabled & EV_WRITE) ||
+			    bufev_p->write_suspended) {//如果bufferevent不是可写的状态或者写事件监听被挂起，就删除写监听
+				event_del(&bufev->ev_write);
+				goto done;
+			}
+		}
+	}
+	......
+}
+ 
+int
+evutil_socket_finished_connecting(evutil_socket_t fd)
+{
+	int e;
+	ev_socklen_t elen = sizeof(e);
+ 
+	if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (void*)&e, &elen) < 0)//获取套接字的错误状态，放到e中
+		return -1;
+ 
+	if (e) {//如果检测到错误
+		if (EVUTIL_ERR_CONNECT_RETRIABLE(e))//如果错误为EINTR或者是EINPROGRESS，也不能说明连接失败，那么连接应该重试
+			return 0;
+		EVUTIL_SET_SOCKET_ERROR(e);//非EINTR或EINPROGRESS的其他错误
+		return -1;
+	}
+ 
+	return 1;//没有检测到错误，说明连接已经成功了
+}
+
+调用bufferevent_writecb，说明此时fd可写，应该向其写入数据了。
+而在写入数据之前，则还要对socket的连接状态进行确认。
+这里就会使用evutil_socket_finished_connecting再次来判断连接状态，返回0和返回-1都表示连接没有成功
+不过前者表明连接应该重试，并不会删除可写事件的监听，而后者则表明连接出现错误（包括前面的ECONNREFUSED），会立刻删除可写事件的监听
+如果返回1，说明连接成功建立，此时就只需要查看bufferevent是否处于可写状态（enable变量）或者写事件监听是否被挂起（write_suspend），如果允许执行写操作，那么接下来才会进行数据写入操作。

@@ -1,0 +1,244 @@
+Libevent API 提供了一种机制，可以在文件描述符上发生特定事件或达到超时后执行回调函数。此外，Libevent 还支持由于信号或定期超时而引起的回调。
+libevent旨在替换事件驱动网络服务器中的事件循环。应用程序只需要调用 event_dispatch()，然后动态添加或删除事件，而无需更改事件循环。
+http://www.wangafu.net/~nickm/libevent-book/00_about.html
+openssl:  可以disable掉 EVENT__DISABLE_OPENSSL
+MBEDTLS默认是开的: -DEVENT__DISABLE_MBEDTLS=ON 
+
+#####
+https://blog.csdn.net/Move_now/article/details/77823592
+#####
+
+介绍bufferevent_readcb、bufferevent_writecb等函数,了解它工作的全过程
+
+==================================================bufferevent_readcb
+static void
+bufferevent_readcb(int fd, short event, void *arg)  
+{
+    struct bufferevent *bufev = arg;
+    int res = 0;
+    short what = EVBUFFER_READ;
+    size_t len;
+    int howmuch = -1;
+
+    /* Note that we only check for event==EV_TIMEOUT. If
+    * event==EV_TIMEOUT|EV_READ, we can safely ignore the
+    * timeout, since a read has occurred */
+    /* 这个回调函数只有当缓冲区可读时才应被触发
+     * 如果是因为超时被触发,则直接跳转到error处
+     */
+    if (event == EV_TIMEOUT) {     
+        what |= EVBUFFER_TIMEOUT;
+        goto error;
+    }
+
+    /*
+     * If we have a high watermark configured then we don't want to   
+     * read more data than would make us reach the watermark.
+     */                              //先检测input缓冲区已有的数据
+    /* 不为0代表高水位被设置了(默认高水位是0(代表无限))
+     * 既然高水位被设置了,那么就需要检测是否超过水位了
+     */
+    if (bufev->wm_read.high != 0) {   //如果读取高水位不为0
+        howmuch = bufev->wm_read.high - EVBUFFER_LENGTH(bufev->input);   //到达高水位剩余的值
+        /* we might have lowered the watermark, stop reading */
+        //小于0,则代表越水位了,bufferevent停止读取
+        if (howmuch <= 0) {   
+            struct evbuffer *buf = bufev->input;
+            //将可读事件删掉
+            event_del(&bufev->ev_read);   
+            evbuffer_setcb(buf,
+                bufferevent_read_pressure_cb, bufev);   
+            return;  //直接返回
+        }
+    }
+    //从fd读取数据到输入缓冲区
+    res = evbuffer_read(bufev->input, fd, howmuch);   
+    if (res == -1) {
+        /* 这两种错误返回都可以进行再一次尝试,而不用退出
+         * EAGAIN是因为在非阻塞操作中,产生了阻塞(比如read函数,如果将fd设置为非阻塞,但是无数据可读,就会返回EAGAIN)
+         * EINTR是因为操作被信号中断了等原因而产生
+         */
+        if (errno == EAGAIN || errno == EINTR)   
+            goto reschedule;    //重新调度
+        /* error case */
+        //因为其它原因出错了,则直接加上EVBUFFER_ERROR标记证明出错
+        what |= EVBUFFER_ERROR;    
+    } else if (res == 0) {
+        /* eof case */
+        what |= EVBUFFER_EOF;  //缓冲区到尾了
+    }
+
+    if (res <= 0)
+        goto error;
+    //注册读事件
+    bufferevent_add(&bufev->ev_read, bufev->timeout_read);
+
+    /* See if this callbacks meets the water marks */
+    len = EVBUFFER_LENGTH(bufev->input);
+    if (bufev->wm_read.low != 0 && len < bufev->wm_read.low)  
+        return;
+    /* 最高水位线不为默认值(无限)，且长度大于最高水位线(从fd读取数据之后的情况)
+     * 这证明越位了,当重新恢复成没越过高水位的情况时才能重新将该事件注册
+     * 所以我们先将该事件从注册链表中删除
+     * 接着设置evbuffer的回调函数(这个是在分析evbuffer的时候讲解的)
+     * 将其设置成bufferevent_read_pressure_cb
+     * 别忘了该函数的作用是当没有越水位的时候,注册读事件
+     * 这样就完成了对越过高水位停止读取的控制
+     */
+    if (bufev->wm_read.high != 0 && len >= bufev->wm_read.high) {
+        struct evbuffer *buf = bufev->input;  
+        event_del(&bufev->ev_read);      //将该读事件从注册链表中删除
+
+        /* Now schedule a callback for us when the buffer changes */
+        evbuffer_setcb(buf, bufferevent_read_pressure_cb, bufev);   
+    }
+
+    /* Invoke the user callback - must always be called last */
+    //用户设置的回调函数,最后才调用
+    if (bufev->readcb != NULL)
+        (*bufev->readcb)(bufev, bufev->cbarg);  
+    return;
+ //重新调度
+ reschedule:
+    bufferevent_add(&bufev->ev_read, bufev->timeout_read);   
+    return;
+ //error情况
+ error:
+    (*bufev->errorcb)(bufev, what, bufev->cbarg);
+}
+
+可能有点难懂的地方:当越过读取高水位时,停止读取的操作。
+首先,当高水位为0的时候,这是代表高水位是无穷大,并不是没有字节,千万不要误解
+然后当检测到高水位不是无限大的时候,就需要检测当前是否越过了高水位
+如果越过了,则将该事件从注册链表中删除,然后给缓冲区设置bufferevent_read_pressure_cb回调函数(该函数会检测当前缓冲区大小是否越位,如果没有越位,则重新注册读事件),然后不用进行下面的读取操作了,直接返回
+如果没越过,则进行读取
+
+还有一点想再提一下,当缓冲区的读事件触发时,先调用的是bufferevent_readcb而不是用户注册的读回调函数,在bufferevent_readcb函数中,末尾(此时数据已经读入了缓冲区)才会调用用户注册的函数(所以用户可以直接对缓冲区进行操作)。
+这一点务必理解,
+
+==================================================bufferevent_writecb
+static void
+bufferevent_writecb(int fd, short event, void *arg)
+{
+    struct bufferevent *bufev = arg;
+    int res = 0;
+    short what = EVBUFFER_WRITE;
+
+    if (event == EV_TIMEOUT) {
+        what |= EVBUFFER_TIMEOUT;   
+        goto error;
+    }
+    /* 有数据直接读取即可
+     * 写入低水位默认是0,意思是只有当输出缓冲区为空时才会回调
+     */
+    if (EVBUFFER_LENGTH(bufev->output)) {  
+      //将缓冲区中的数据写到fd
+      res = evbuffer_write(bufev->output, fd);  
+        if (res == -1) {
+#ifndef WIN32
+/*todo. evbuffer uses WriteFile when WIN32 is set. WIN32 system calls do not
+ *set errno. thus this error checking is not portable*/
+            if (errno == EAGAIN ||
+            errno == EINTR ||
+            errno == EINPROGRESS)
+                goto reschedule;
+            /* error case */
+            what |= EVBUFFER_ERROR;
+
+#else
+                goto reschedule;
+#endif
+
+        } else if (res == 0) {
+            /* eof case */
+            what |= EVBUFFER_EOF;
+        }
+        if (res <= 0)
+            goto error;
+    }
+  /* 如果输出缓冲区还剩有数据(一次没读完)
+   * 则将该读事件重新注册到事件链表上
+   */
+    if (EVBUFFER_LENGTH(bufev->output) != 0)  
+        bufferevent_add(&bufev->ev_write, bufev->timeout_write);
+
+    /*
+     * Invoke the user callback if our buffer is drained or below the
+     * low watermark.
+     */
+    //只有到达低水位及以下,才会回调
+    if (bufev->writecb != NULL &&
+        EVBUFFER_LENGTH(bufev->output) <= bufev->wm_write.low)
+        (*bufev->writecb)(bufev, bufev->cbarg);
+
+    return;
+
+ reschedule:
+    if (EVBUFFER_LENGTH(bufev->output) != 0)  
+        bufferevent_add(&bufev->ev_write, bufev->timeout_write);
+    return;
+
+ error:
+    (*bufev->errorcb)(bufev, what, bufev->cbarg);
+}
+
+留给用户的读取/写入缓冲区的外部接口bufferevent_write以及bufferevent_read这些函数
+
+==================================================写入缓冲区: bufferevent_write
+int
+bufferevent_write(struct bufferevent *bufev, const void *data, size_t size)
+{
+    int res;
+    //将data开始size大小的字节接到输出缓冲区的尾部
+    res = evbuffer_add(bufev->output, data, size);   
+    //调用失败
+    if (res == -1)
+        return (res);
+
+    /* If everything is okay, we need to schedule a write */
+    //注册写事件
+    if (size > 0 && (bufev->enabled & EV_WRITE))     
+        bufferevent_add(&bufev->ev_write, bufev->timeout_write);
+
+    return (res);
+}
+
+bufferevent_write_buffer: 这个函数对上一个进行了一层封装,如果调用失败,会清除缓冲区
+int
+bufferevent_write_buffer(struct bufferevent *bufev, struct evbuffer *buf)
+{
+    int res;
+
+    res = bufferevent_write(bufev, buf->buffer, buf->off);
+    if (res != -1)
+        evbuffer_drain(buf, buf->off);  
+
+    return (res);
+}
+
+==================================================evbuffer和bufferevent的关系
+https://blog.csdn.net/yusiguyuan/article/details/20482675
+
+evbuffer是一个缓冲区，用户可以向evbuffer添加数据，evbuffer和bufferevent经常一起使用，或者说bufferevent使用了evbuffer，bufferevent有两个evbuffer缓冲，还有event。
+
+用户可以通过bufferevent相关的函数往evbuffer缓冲区中添加需要发送的内同，内部机制可以保证发送。当有数据在bufferevent上的套接字上时，数据被读入到bufferevent内部的evbuffer缓冲区！
+
+==================================================读出缓冲区: bufferevent_read
+size_t
+bufferevent_read(struct bufferevent *bufev, void *data, size_t size)
+{
+    struct evbuffer *buf = bufev->input;
+    /* 如果小于要读的字节数
+     * 就读实际有的数据
+     */
+    if (buf->off < size)     
+        size = buf->off;   
+
+    /* Copy the available data to the user buffer */
+    memcpy(data, buf->buffer, size);
+    //调整缓冲区大小
+    if (size)
+        evbuffer_drain(buf, size);
+
+    return (size);
+}

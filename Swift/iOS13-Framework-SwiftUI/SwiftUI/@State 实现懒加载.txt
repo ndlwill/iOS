@@ -1,0 +1,160 @@
+@preconcurrency 是一个 属性（attribute），用于处理 并发性（Concurrency） 相关的 API 兼容性问题
+
+@preconcurrency 主要用于 抑制 Swift 并发相关的警告或错误，特别是在 旧代码、Objective-C 代码或未标记 Sendable 的类型 上。
+适用于 import 语句、类、结构体、协议、扩展 等。
+它是一个临时兼容方案，更推荐正确使用 Sendable 进行显式声明，而不是长期依赖 @preconcurrency。
+
+@preconcurrency 允许我们告诉编译器: 这个代码是在 Swift 并发特性引入之前定义的，不要对它施加新的并发检查。
+
+
+==================================================
+
+
+在 SwiftUI 中，视图实例的创建与加载到视图树中并非一一对应。在许多情况下，视图实例可能会被提前或多次创建。
+比如以下例子：即便你尚未进入导航容器的下一层（LinkViewUsingObservation），SwiftUI 仍会提前构建该视图中的可观察实例 TestObject。
+import Observation
+import SwiftUI
+
+struct ContentView: View {
+  var body: some View {
+    NavigationStack {
+      NavigationLink {
+        LinkViewUsingObservation()
+      } label: {
+        Text("Hello")
+      }
+    }
+  }
+}
+
+struct LinkViewUsingObservation: View {
+  @State var object = TestObject()
+  var body: some View {
+    Text("State Observation")
+  }
+}
+
+@Observable
+class TestObject {
+  init() {
+    print("init")
+  }
+}
+
+NavigationLink 会提前创建 LinkViewUsingObservation 的实例。设想在使用 List 展示大量 LinkViewUsingObservation 时，这种提前构建将不可避免地带来性能损失。
+若将实现改为基于 ObservableObject，则提前构建实例的问题便不会出现，因为 TestObject 只会在导航进入 LinkViewUsingStateObject 视图后才被构造：
+struct ContentView: View {
+  var body: some View {
+    NavigationStack {
+      NavigationLink {
+        LinkViewUsingStateObject()
+      } label: {
+        Text("Hello")
+      }
+    }
+  }
+}
+
+struct LinkViewUsingStateObject: View {
+  @StateObject var object = TestObject()
+  var body: some View {
+    Text("StateObject")
+  }
+}
+
+class TestObject: ObservableObject {
+  init() {
+    print("init")
+  }
+}
+
+
+==================================================StateObject 的懒加载机制
+StateObject 之所以不会在视图实例创建时立即构建 TestObject，是因为它采用了懒加载策略。其构造方法如下所示
+
+@inlinable nonisolated public init(wrappedValue thunk: @autoclosure @escaping () -> ObjectType)
+
+在视图真正加载时，StateObject 才会调用 thunk 闭包来创建并持有 ObservableObject 实例，从而避免了不必要的提前构建。
+然而，当将原有的 ObservableObject 实现替换为 Observable 时，由于 @State 并未提供类似的懒加载机制，开发者便无法享受延迟构造的优势。
+
+
+==================================================@LazyState：支持懒加载的 @State 实现
+在苹果未作出修改之前，我们可以通过自定义属性包装器来实现这一功能
+
+@MainActor // 确保属性包装器在主线程操作，保证在调用 wrappedValue 前完成 setup 
+@propertyWrapper
+public struct LazyState<T: Observable>: @preconcurrency DynamicProperty { // 限定使用在 Observable 类型上
+  @State private var holder: Holder
+
+  // 保持与 State 和 StateObject 的一致性，实例只能创建一次，不可修改（ 不创建 setter ）
+  public var wrappedValue: T {
+    holder.wrappedValue
+  }
+
+  public var projectedValue: Binding<T> {
+    // 只需要通过 keyPath 修改数据，因此忽略 setter，
+    return Binding(get: { wrappedValue }, set: { _ in })
+  }
+
+  // 当视图加载时调用，创建实例
+  public func update() {
+    guard !holder.onAppear else { return }
+    holder.setup()
+  }
+
+  public init(wrappedValue thunk: @autoclosure @escaping () -> T) {
+    _holder = State(wrappedValue: Holder(wrappedValue: thunk()))
+  }
+}
+
+extension LazyState {
+  // 用于持有实例的助手类
+  final class Holder {
+    private var object: T!
+    private let thunk: () -> T
+    // 标记实例是否已初始化，避免重复创建
+    var onAppear = false
+    var wrappedValue: T {
+      object
+    }
+
+    func setup() {
+      object = thunk() // 延迟初始化实例
+      onAppear = true // 标记为已初始化，防止重复调用
+    }
+
+    init(wrappedValue thunk: @autoclosure @escaping () -> T) {
+      self.thunk = thunk
+    }
+  }
+}
+
+
+现在你便可以使用 @LazyState 来声明 Observable 实例。待苹果对 @State 进行增强后，我们只需简单地切换回来即可
+
+
+struct ContentView: View {
+  var body: some View {
+    NavigationStack {
+      NavigationLink {
+        LinkViewUsingLazyState()
+      } label: {
+        Text("Hello")
+      }
+    }
+  }
+}
+
+struct LinkViewUsingLazyState: View {
+  @LazyState var object = TestObject()
+  var body: some View {
+    Text("LazyState")
+  }
+}
+
+@Observable
+class TestObject {
+  init() {
+    print("init")
+  }
+}

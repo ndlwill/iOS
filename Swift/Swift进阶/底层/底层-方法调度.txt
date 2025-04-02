@@ -1,0 +1,473 @@
+lldb: cat address 地址
+
+全局静态区：
+c语言测试:
+int a = 10;
+int b;
+static int c = 20;
+po &a // __DATA.__data
+po &b // __DATA.__common
+po &c // __DATA.__data
+a、b、c都在全局静态区
+从低地址往高地址分配空间
+已初始化的全局变量，存储在__DATA.__data段
+未初始化的全局变量，存储在__DATA.__common段
+未初始化比已初始化的全局变量地址更高
+
+swift和c的差异:
+var age1 = 10
+let age2 = 20
+age1可以正常获取地址并打印，它存储在__DATA.__common段
+age2由于是不可变，不允许使用withUnsafePointer获取地址
+查看汇编代码寻找age2的地址
+通过首地址+偏移地址，找到 age2地址并打印，它同样存储在__DATA.__common段
+
+
+常量区：
+使用c语言测试
+const int a = 10;
+po &a
+cat address &a的地址 // 常量全局变量a通常会存放在__TEXT.__const
+常量存储在__DATA.__const段
+
+
+char *str="hello";// C String Literals
+查看Mach-O文件，"hello"存储在__TEXT.__cstring段，内存分区中的常量区
+字符串字面量 "hello"
+这是一个 不可变的字符串常量，会被存储在 __TEXT.__cstring 段（只读）。
+指针变量 str
+str 是一个指针，它存储的是 "hello" 字符串的地址，它本身需要存储在一个变量区域，而不是 __cstring 段。
+代码	存储段	说明
+str（全局变量）	__DATA.__data	指针变量，存放 "hello" 的地址
+
+
+代码区:
+__TEXT.__text
+函数的机器代码（Machine Code of a Function）存在 __TEXT.__text 段
+函数的机器代码指的是 CPU 实际执行的指令，它是编译器将 C/C++/Swift/Objective-C 等高级语言代码编译后生成的 二进制指令序列
+C 代码->编译成汇编->机器代码（十六进制表示）（也就是 CPU 指令）
+
+
+段名	作用	读/写/执行权限
+__TEXT	存放代码和只读数据	只读、可执行（r-x）
+__DATA	存放可变数据（变量）	读写（rw-）
+
+
+在全局区中，未初始化变量地址 比 已初始化变量地址 高
+
+==================================================汇编指令
+mov：将某一寄存器的值复制到另一寄存器（只能用于寄存器与寄存器或者 寄存器与常量之间 传值，不能用于内存地址）
+mov x1, x0 将寄存器x0的值复制到寄存器x1中
+
+ldr：将内存中的值读取到寄存器中
+ldr x0, [x1, x2] 将寄存器x1和寄存器x2 相加作为地址，取该内存地址的值翻入寄存器x0中
+
+str：将寄存器中的值写入到内存中
+str x0, [x0, x8] 将寄存器x0的值保存到内存[x0 + x8]处
+
+bl：跳转到某地址
+
+blr：带返回的跳转指令，跳转到指令后边跟随寄存器中保存的地址
+
+some_func:
+    add x0, x0, #1  // x0 = x0 + 1
+    ret             // 返回（跳转到 x30）
+caller:
+    mov x0, #10
+    ldr x1, =some_func  // 加载函数地址
+    blr x1              // 调用函数
+    // 返回后 x0 变成 11
+
+
+==================================================Swift 默认的几种分派方式
+1. 静态分派（Static Dispatch）
+发生在编译时，方法地址直接嵌入到代码里，不涉及 runtime。
+适用于 struct 或 final class 中的方法
+
+struct Animal {
+    func speak() { print("Animal speaks") }
+}
+let a = Animal()
+a.speak()  // 直接调用，不涉及 runtime
+
+
+2. 虚表分派（V-Table Dispatch）
+适用于 普通的 Swift 类（非 final），方法地址存储在类的虚表（V-Table）中，运行时从 V-Table 里查找方法地址再调用。
+适用于非 final 的 class 方法
+
+class Animal {
+    func speak() { print("Animal speaks") }
+}
+class Dog: Animal {
+    override func speak() { print("Dog barks") }
+}
+let a: Animal = Dog()
+a.speak()  // 从 V-Table 查找方法地址
+
+
+3. 消息分派（Message Dispatch / objc_msgSend）
+适用于 Objective-C 运行时 里的方法调用（所有 @objc dynamic 方法）。
+方法调用不通过 V-Table，而是用 objc_msgSend 在运行时查找方法：
+
+class Animal: NSObject {
+    @objc dynamic func speak() { print("Animal speaks") }
+}
+let a: Animal = Animal()
+a.speak()  // 调用 objc_msgSend(a, @selector(speak))
+
+当一个方法或属性标记了 dynamic，Swift 不会使用静态分派或虚表分派，而是 强制走 Objective-C 运行时的 objc_msgSend 进行方法调用。
+objc_msgSend 在运行时查找 speak 方法的 IMP（实现）。
+如果有 Method Swizzling，IMP 可能被替换。
+
+
+
+==================================================结构体和类的方法存储在哪里？
+==================================================静态派发:
+值类型对象的函数的调用方式是静态调用，即直接地址调用，调用函数指针
+这个函数指针在编译、链接完成后就已经确定了，存放在代码段__TEXT.__text，而结构体内部并不存放方法。
+因此可以直接通过地址直接调用
+
+汇编里面可以看到 callq 地址 // 直接地址调用
+
+Mach-O可执行文件，其中的__text段，就是所谓的代码段，需要执行的汇编指令都在这里
+
+###
+还有个疑问：在汇编中可以看到，直接地址调用后面是符号，这个符号哪里来的？
+是从Mach-O文件中的符号表Symbol Tables，里面存储的是符号位于String Table字符串表的偏移地址.
+但是符号表中并不存储字符串，字符串存储在String Table（字符串表，存放了所有的变量名和函数名，以字符串形式存储）
+然后根据符号表中的偏移值到字符串中查找对应的字符，然后进行命名重整：包含工程名、类名、函数名、参数、参数类型等信息
+###
+
+Symbol Table：存储符号位于字符串表的位置
+Dynamic Symbol Table：动态库函数位于符号表的偏移信息
+
+
+可以通过终端命令nm，获取项目中的符号表
+查看符号表：nm mach-o文件路径
+通过命令还原符号名称：xcrun swift-demangle 符号
+
+
+###
+如果将edit scheme -> run中的debug改成release，编译后查看，在可执行文件目录下，多一个后缀为dSYM的文件，
+此时，再去Mach-O文件中查找teach，发现是找不到，其主要原因是因为静态链接的函数，实际上是不需要符号的，一旦编译完成，其地址确定后，
+当前的符号表就会删除当前函数对应的符号，这样可以减小Mach-O文件的大小。在release环境下，符号表中存储的只是不能确定地址的符号
+
+Release模式编译后的Mach-O文件，符号表中的符号少了很多，只保留不能确定地址的符号
+###
+
+
+什么是不能确定地址的符号?
+打开Mach-O文件，来到Lazy Symbol
+Lazy Symbol：懒加载符号表，里面存储不能确定地址的符号。它们是在运行时才能确定，即函数第一次调用时。
+对于不能确定地址的符号，是在运行时确定的，即函数第一次调用时（相当于懒加载），例如print，是通过dyld_stub_bind确定地址的
+
+
+函数符号命名规则:
+对于C函数来说，命名的重整规则就是在函数名之前加_（注意：C中不允许函数重载，因为没有办法区分）
+void test(){    }// _test
+
+对于OC来说，也不支持函数重载，其符号命名规则是-[类名 函数名]
+
+对于Swift来说，是允许函数重载，主要是因为swift中的重整命名规则比较复杂，可以确保函数符号的唯一性
+原函数func test(abc : Int)，重整后函数符号：_$s4demo4test3abcySi_tF
+原函数func test(abc : String)，重整后函数符号：_$s4demo4test3abcySS_tF
+swift支持函数重载，它的命名重整规则也比c和oc复杂得多，包含工程名、类名、函数名、参数名、参数类型等信息，目的是确保函数符号的唯一性。
+
+
+ASLR: Address Space Layout Randomization，地址空间布局随机化
+ASLR 是一种安全机制，旨在通过随机化进程的内存地址来防止攻击者利用固定地址的漏洞
+每次APP启动，都会随机生成一个地址偏移值。造成编译后Mach-O文件中的地址与App运行时的地址产生偏差。
+
+下面是针对函数地址的一个验证:
+通过运行发现，Mach-O中的地址与调试时直接获取的地址是由一定偏差的，其主要原因是实际调用时地址多了一个ASLR
+可以通过image list查看，其中0x0000000100000000是程序运行的首地址，后8位是随机偏移00000000（即ASLR）
+将Mach-O中的文件地址0x0000000100003D50 + 0x00000000 = 0x100003D50，正好对应上面调用的地址
+
+在test方法上设置断点，使用真机运行，可以看到运行时test函数地址：0x100ab2cf8
+打开Mach-O文件，来到Symbol Table，搜索test，可以看到编译时test函数地址：0x0100006CF8
+可以看到test函数地址，在运行时和编译时有明显的差异
+
+公式：
+ASLR随机偏移值 = 运行时基地址 - 编译时基地址
+运行时函数地址 = 编译时函数地址 + ASLR随机偏移值
+
+首先找到App运行时基地址，使用image list打印镜像文件的地址。第一个镜像文件地址就是App运行时的基地址：0x100aac000
+再打开Mach-O文件，通过Load Comands->LC_SEGMENT_64(__TEXT)->VM Address，找到App编译时的基地址：0x100000000
+通过刚才的公式进行验证：
+ASLR随机偏移值：0x100aac000 - 0x100000000 = 0x000aac000
+运行时函数地址：0x0100006CF8 + 0x000aac000 = 0x100ab2cf8
+通过公式计算出的结果，和断点里输出的运行时函数地址完全一致
+
+
+==================================================动态派发
+探索class的调度方式:
+
+V_Table在SIL文件中的格式:
+//声明sil vtable关键字
+decl ::= sil-vtable
+//sil vtable中包含 关键字、标识（即类名）、所有的方法
+sil-vtable ::= 'sil_vtable' identifier '{' sil-vtable-entry* '}'
+//方法中包含了声明以及函数名称
+sil-vtable-entry ::= sil-decl-ref ':' sil-linkage? sil-function-name
+
+
+以CJLTacher为例:
+class CJLTeacher{
+    func teach(){}
+    func teach2(){}
+    func teach3(){}
+    func teach4(){}
+    @objc deinit{}
+    init(){}
+}
+
+swiftc -emit-sil xx.swift
+
+sil_vtable CJLTeacher {
+  #CJLTeacher.teach: (CJLTeacher) -> () -> () : @$s10CJLTeacherAAC5teachyyF	// CJLTeacher.teach()
+  #CJLTeacher.teach2: (CJLTeacher) -> () -> () : @$s10CJLTeacherAAC6teach2yyF	// CJLTeacher.teach2()
+  #CJLTeacher.teach3: (CJLTeacher) -> () -> () : @$s10CJLTeacherAAC6teach3yyF	// CJLTeacher.teach3()
+  #CJLTeacher.teach4: (CJLTeacher) -> () -> () : @$s10CJLTeacherAAC6teach4yyF	// CJLTeacher.teach4()
+  #CJLTeacher.init!allocator: (CJLTeacher.Type) -> () -> CJLTeacher : @$s10CJLTeacherAACABycfC	// CJLTeacher.__allocating_init()
+  #CJLTeacher.deinit!deallocator: @$s10CJLTeacherAACfD	// CJLTeacher.__deallocating_deinit
+}
+sil_vtable：关键字
+CJLTeacher：表示是CJLTeacher类的函数表
+其次就是当前方法的声明对应着方法的名称
+函数表 可以理解为 数组，声明在 class内部的方法在不加任何关键字修饰的过程中，是连续存放在我们当前的地址空间中的。
+可以发现方法是连续存放的，正好对应V-Table函数表中的排放顺序，即是按照定义顺序排放在函数表中
+
+
+xcrun --find swift-demangle // demangle 的意思是 “去混淆” 或 “还原”。
+xcrun swift-demangle s10CJLTeacherAAC5teachyyF  // 推荐使用xcrun，否则需要配置 PATH，并且多个xcode版本，他能自动匹配 Xcode 版本
+@$ 的含义
+@ —— 这是 LLDB（或者其他调试工具）用于区分符号的前缀，表示后面是一个符号（symbol）。
+$ —— 这是 Swift 符号的起始标识，表示 后面是一个 Swift 经过符号混淆（mangling）的名称。
+$s10CJLTeacherAAC5teachyyF ---> CJLTeacher.CJLTeacher.teach() -> ()
+
+
+(CJLTeacher) -> () -> ():
+是 Swift 方法签名的底层表示
+在 Swift 中，实例方法的底层本质是：
+(Self) -> (Parameters) -> ReturnType
+Self：方法所属的类型（在这里是 CJLTeacher）。
+(Parameters) -> ReturnType：函数类型。
+这个签名表示方法绑定到某个实例，然后返回一个可以调用的函数
+(CJLTeacher): 表示这个方法属于 CJLTeacher 类实例（即是一个实例方法）。
+
+
+Swift 编译器会对符号（函数、类、方法等）进行名称混淆（name mangling），让它们在底层可以:
+避免命名冲突（多个模块可能有同名方法）。
+包含更多信息（比如命名空间、泛型等）。
+和 C/Objective-C 兼容。
+
+
+==================================================函数表源码探索
+initClassVTable
+其内部是通过for循环编码，然后offset+index偏移，然后获取method，将其存入到偏移后的内存中，从这里可以印证函数是连续存放的
+对于class中函数来说，类的方法调度是通过V-Taable，其本质就是一个连续的内存空间（数组结构）。
+
+
+问题：如果更改方法声明的位置呢？例如extension中的函数，此时的函数调度方式还是函数表调度吗？
+extension CJLTeacher{
+    func teach5(){ print("teach5") }
+}
+在定义一个子类CJLStudent继承自CJLTeacher,查看SIL中的V-Table
+class CJLStudent: CJLTeacher{}
+
+查看SIL文件，发现子类只继承了class中定义的函数，即函数表中的函数
+
+其原因是因为子类将父类的函数表全部继承了，如果此时子类增加函数，会继续在连续的地址中插入
+假设extension函数也是在函数表中，则意味着子类也有，但是子类无法并没有相关的指针记录函数 是父类方法 还是 子类方法，
+所以不知道方法该从哪里插入，导致extension中的函数无法安全的放入子类中。
+所以在这里可以侧面证明extension中的方法是直接调用的，且只属于类，子类是无法继承的
+
+
+class LGTeacher {
+    func test1() {}
+    func test2() {}
+    func test3() {}
+    @objc deinit{}
+    init() {}
+}
+
+class LGChild : LGTeacher {
+    override func test2() {}
+    func test5() {}
+}
+
+extension LGTeacher{
+    func test4() {}
+}
+在sil_vtable LGChild中，由子类声明的函数，被追加到父类函数下面。
+被子类重写的父类函数，位置不变，但被记录为子类函数。
+未被子类重写的父类函数，位置不变，依旧记录为父类函数。
+extension中的函数，并不是通过V-table函数表进行调度，也不能被子类重写，只能被子类调用。
+
+
+extension中的函数，不通过V-table函数表调度而是直接地址调用，其原因在于编译时无法将extension中的函数插入到该类函数表的正确位置。
+
+
+注意点：
+继承方法和属性，不能写extension中。
+而extension中创建的函数，一定是只属于自己类，但是其子类也有其访问权限，只是不能继承和重写
+extension CJLTeacher{
+    var age: Int{
+        get{
+            return 18
+        }
+    }
+    func teach(){
+        print("teach")
+    }
+}
+
+class CJLMiddleTeacher: CJLTeacher{
+    override func study() {
+        print("CJLMiddleTeacher study")
+    }
+}
+
+var t = CJLMiddleTeacher()
+//子类有父类extension中方法的访问权限，只是不能继承和重写
+t.teach()
+t.study()
+print(t.age)
+
+<!--运行结果-->
+teach
+CJLMiddleTeacher study
+18
+
+
+==================================================final、@objc、dynamic修饰函数
+1. final 修饰
+final 修饰的方法是 直接调度的,可以通过SIL验证 + 断点验证
+
+class CJLTeacher {
+    final func teach(){ print("teach") }
+    func teach2(){ print("teach2") }
+    func teach3(){ print("teach3") }
+    func teach4(){ print("teach4") }
+    @objc deinit{}
+    init(){}
+}
+
+final修饰的方法是直接地址调用。其他方法首地址+偏移，是通过V-table函数表进行调度。
+
+2. @objc 修饰
+使用@objc关键字是将swift中的方法暴露给OC
+
+class CJLTeacher{
+    @objc func teach(){ print("teach") }
+    func teach2(){ print("teach2") }
+    func teach3(){ print("teach3") }
+    func teach4(){ print("teach4") }
+    @objc deinit{}
+    init(){}
+}
+
+通过SIL+断点调试，发现@objc修饰的方法是 函数表调度
+
+
+技巧:
+混编头文件查看方式：查看项目名-Swift.h头文件
+
+如果只是通过@objc修饰函数，OC还是无法调用swift方法的，因此如果想要OC访问swift，class需要继承NSObject
+
+<!--swift类-->
+class CJLTeacher: NSObject {
+    @objc func teach(){ print("teach") }
+    func teach2(){ print("teach2") }
+    func teach3(){ print("teach3") }
+    func teach4(){ print("teach4") }
+    @objc deinit{}
+    override init(){}
+}
+
+<!--桥接文件中的声明-->
+SWIFT_CLASS("_TtC9_3_指针10CJLTeacher")
+@interface CJLTeacher : NSObject
+- (void)teach;
+- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;
+@end
+
+<!--OC调用-->
+//1、导入swift头文件
+#import "CJLOCTest-Swift.h"
+//2、调用
+CJLTeacher *t = [[CJLTeacher alloc] init];
+[t teach];
+
+查看SIL文件发现被@objc修饰的函数声明有两个：swift + OC（内部调用的swift中的teach函数）
+即在SIL文件中生成了两个方法:
+swift原有的函数
+@objc标记暴露给OC来使用的函数： 内部调用swift的
+
+
+3. dynamic 修饰
+class CJLTeacher: NSObject {
+    dynamic func teach(){ print("teach") }
+    func teach2(){ print("teach2") }
+    func teach3(){ print("teach3") }
+    func teach4(){ print("teach4") }
+    @objc deinit{}
+    override init(){}
+}
+
+其中teach函数的调度还是 函数表调度，可以通过断点调试验证，使用dynamic的意思是可以动态修改，意味着当类继承自NSObject时，可以使用method-swizzling
+
+@objc + dynamic:
+class CJLTeacher{
+    @objc dynamic func teach(){ print("teach") }
+    func teach2(){ print("teach2") }
+    func teach3(){ print("teach3") }
+    func teach4(){ print("teach4") }
+    @objc deinit{}
+    init(){}
+}
+
+通过断点调试，走的是objc_msgSend流程
+
+
+
+场景：swift中实现方法交换
+在swift中的需要交换的函数前，使用dynamic修饰，然后通过：@_dynamicReplacement(for: 函数符号)进行交换
+class CJLTeacher: NSObject {
+    dynamic func teach(){ print("teach") }
+    func teach2(){ print("teach2") }
+    func teach3(){ print("teach3") }
+    func teach4(){ print("teach4") }
+    @objc deinit{}
+    override init(){}
+}
+
+extension CJLTeacher{
+    @_dynamicReplacement(for: teach)// 在 Swift 5.9 之后不再被支持
+    func teach5(){
+        print("teach5")
+    }
+}
+
+将teach方法替换成了teach5
+
+如果teach没有实现 / 如果去掉dynamic修饰符，会报错
+
+
+==================================================Witness Table（协议方法的派发）
+当类或结构体实现协议方法时，Swift 采用 Witness Table（见证表）派发，它类似于 V-Table 但用于协议方法解析。
+
+protocol Speaker {
+    func speak()
+}
+
+class Human: Speaker {
+    func speak() {
+        print("Human speaks")
+    }
+}
+
+let speaker: Speaker = Human()
+speaker.speak() // 通过 Witness Table 进行派发
+
+这里 speak() 方法在编译期不能确定，因此通过 Witness Table 进行动态派发。

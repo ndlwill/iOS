@@ -1,0 +1,53 @@
+install Certificate and decrypt HTTPS Request/response in macOS device.
+
+Proxyman supports Custom Root Certificate, Server Certificates, and Client Certificates that allow you to add your certificate that Proxyman uses to establish the SSL-Connection between your clients, servers, and Proxyman app.
+
+Custom Certificate Type     Purpose     How Proxyman uses
+Server Certificate      For intercepting HTTPS Traffic from clients that use SSL-Pinning       Use this certificate for SSL-Handshake to your Clients
+Client Certificate      For intercepting HTTPS Traffic from clients that use Mutual Authentication      Use this certificate for SSL-Handshake to specific Server
+Root Certificate        For intercepting HTTPS Traffic from clients and servers without using local Proxyman certificates       SSL Handshake for both clients & servers
+
+
+服务器证书 包含了服务器的公钥、CA 的签名、服务器的身份信息等。
+
+
+SSL Pinning（也称为 Certificate Pinning）是一种增强 SSL/TLS 安全性的技术，它通过将服务器的公钥或证书“钉住”（pin）到客户端中，防止中间人攻击（MITM）和证书伪造。
+工作原理:
+在正常的 SSL/TLS 握手过程中，客户端会验证服务器的证书是否由可信的证书颁发机构（CA）签发。
+但是，这种验证机制存在风险，攻击者可能通过伪造证书或利用不可信的证书颁发机构来进行中间人攻击。
+SSL Pinning 通过 将服务器的公钥或证书直接嵌入客户端代码中，使客户端仅信任与预先存储的公钥或证书匹配的服务器。
+
+
+
+客户端怎么验证服务器的证书是否由可信的证书颁发机构（CA）签发？
+1. 服务器证书链验证
+当客户端与服务器建立 SSL/TLS 连接时，服务器会发送自己的证书（通常是一个 X.509 格式的证书）。客户端会执行以下步骤来验证该证书:
+(1)证书链的构建
+服务器的证书通常不是由根证书直接签发的，而是由中间证书（Intermediate Certificate）签发的。根证书（Root Certificate）是最上层的证书，它由一个受信任的证书颁发机构（CA）签发。
+服务器会将其证书和任何中间证书一起发送给客户端，形成一个 证书链。
+客户端需要验证证书链中的每个证书是否由一个可信的 CA 签发。
+
+(2)证书签名验证
+客户端会检查每个证书的 签名。证书签名是通过公钥加密算法生成的，签名由 CA 使用其私钥生成。
+客户端使用 CA 的 公钥 来验证证书的签名。如果签名有效，则说明该证书是由该 CA 签发的，并且证书的内容未被篡改。
+
+2. 验证根证书（Root Certificate）
+客户端有一个预安装的受信任根证书列表，通常由操作系统、浏览器或应用程序维护。这个列表包含了受信任的证书颁发机构（CA）的根证书。
+客户端会检查证书链中的最终证书（通常是根证书或中间证书）是否与预安装的受信任根证书匹配。如果根证书匹配且签名有效，则证明证书由受信任的 CA 签发。
+
+3. 验证证书的有效期
+客户端还会检查证书的 有效期，确保当前日期在证书的有效期范围内。如果证书已过期或未生效，客户端会拒绝该证书。
+
+4. 域名验证（Hostname Verification）
+客户端会验证证书中的 主题备用名称（SAN, Subject Alternative Name） 或 CN（Common Name） 是否与服务器的主机名（域名）匹配。
+例如，如果服务器证书的 CN 或 SAN 中的域名为 example.com，而客户端连接的是 example.net，则验证会失败，客户端会拒绝证书。
+
+5. 检查证书吊销状态
+客户端可以通过检查 证书吊销列表（CRL, Certificate Revocation List） 或 OCSP（在线证书状态协议） 来确认证书是否已经被吊销。如果证书在吊销列表中，客户端会拒绝该证书。
+
+6. 证书链的验证顺序
+客户端会从服务器收到证书链，包含服务器证书和任何中间证书。
+客户端验证中间证书的签名是否有效，确保它由上级 CA 签发。
+客户端继续验证上级中间证书，直到最终验证到根证书。
+客户端检查根证书是否在受信任的根证书列表中。
+如果根证书有效并且签名匹配，客户端信任该证书，并且继续进行 SSL/TLS 握手。

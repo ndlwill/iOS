@@ -1,0 +1,184 @@
+C++11 引入 右值引用（&&），主要用于 移动语义（move semantics） 和 完美转发（perfect forwarding）。
+
+左值引用（&）：只能绑定左值
+int a = 10;
+int& lref = a;  // ✅ 正确
+int& lref2 = 5; // ❌ 错误！5 是右值
+
+
+右值引用（&&）：可以绑定右值
+int&& rref = 5;  // ✅ 正确，右值引用可以绑定右值
+int&& rref2 = a; // ❌ 错误！a 是左值
+
+
+移动语义（std::move）
+#include <iostream>
+#include <vector>
+
+int main() {
+    std::vector<int> v1 = {1, 2, 3};
+    std::vector<int> v2 = std::move(v1);  // 移动所有权
+    std::cout << "v1 size: " << v1.size() << std::endl;  // v1 为空
+}
+
+
+
+没有使用右值引用的情况下进行的拷贝：
+#include <iostream>
+#include <vector>
+using namespace std;
+
+class LargeObject {
+public:
+    LargeObject() {
+        cout << "LargeObject constructed!" << endl;
+    }
+    
+    LargeObject(const LargeObject& other) {
+        cout << "LargeObject copy constructed!" << endl;
+    }
+    
+    ~LargeObject() {
+        cout << "LargeObject destructed!" << endl;
+    }
+};
+
+void process(LargeObject obj) {
+    cout << "Processing LargeObject..." << endl;
+}
+
+int main() {
+    LargeObject obj1;  // 默认构造
+    process(obj1);      // 这里会进行拷贝构造
+    return 0;
+}
+
+LargeObject constructed!
+LargeObject copy constructed!
+Processing LargeObject...
+LargeObject destructed!
+LargeObject destructed!
+
+在 process(obj1) 调用时，obj1 被 拷贝构造
+
+
+
+使用右值引用优化：避免不必要的拷贝
+使用右值引用后，我们可以避免拷贝操作，直接“移动”对象
+
+#include <iostream>
+#include <vector>
+using namespace std;
+
+class LargeObject {
+public:
+    LargeObject() {
+        cout << "LargeObject constructed!" << endl;
+    }
+    
+    LargeObject(const LargeObject& other) {
+        cout << "LargeObject copy constructed!" << endl;
+    }
+    
+    LargeObject(LargeObject&& other) noexcept {// noexcept 表示这个 移动构造函数 不会抛出任何异常。
+        cout << "LargeObject move constructed!" << endl;
+    }
+    
+    ~LargeObject() {
+        cout << "LargeObject destructed!" << endl;
+    }
+};
+
+void process(LargeObject&& obj) {  // 使用右值引用
+    cout << "Processing LargeObject..." << endl;
+}
+
+int main() {
+    LargeObject obj1;  // 默认构造
+    process(std::move(obj1));  // 通过 std::move 显式转为右值引用
+    return 0;
+}
+
+LargeObject constructed!
+LargeObject move constructed!
+Processing LargeObject...
+LargeObject destructed!
+
+在 process(std::move(obj1)) 中，std::move 将 obj1 转换为右值引用
+使用 LargeObject(LargeObject&& other) 构造函数（移动构造函数）避免了拷贝，而是通过移动语义将 obj1 的资源“转移”给 obj。
+这避免了不必要的拷贝，提高了性能。
+
+
+
+右值引用的典型应用：标准库的 std::vector
+在 C++ 标准库中，容器类（如 std::vector）经常使用右值引用来优化内存管理：
+#include <iostream>
+#include <vector>
+using namespace std;
+
+int main() {
+    vector<int> vec1 = {1, 2, 3, 4, 5};
+    vector<int> vec2 = std::move(vec1);  // 右值引用，避免了 vec1 的拷贝
+    cout << "Size of vec2: " << vec2.size() << endl;  // 5
+    cout << "Size of vec1: " << vec1.size() << endl;  // 0, vec1 已经被移动
+}
+std::move(vec1) 将 vec1 转换为右值引用，从而触发 std::vector 的移动构造函数，而不是拷贝构造。
+vec1 资源被移动到 vec2 中，vec1 变为空容器，而没有进行拷贝操作。
+
+
+
+示例：一个典型的移动构造函数：
+#include <iostream>
+#include <cstring>  // For memcpy
+using namespace std;
+
+class LargeObject {
+public:
+    LargeObject(int size) {
+        mSize = size;
+        mData = new int[size];  // 动态分配内存
+        cout << "LargeObject constructed with size " << mSize << endl;
+    }
+
+    ~LargeObject() {
+        delete[] mData;  // 释放内存
+        cout << "LargeObject destructed!" << endl;
+    }
+
+    // 移动构造函数
+    LargeObject(LargeObject&& other) noexcept {
+        cout << "LargeObject move constructed!" << endl;
+        mSize = other.mSize;             // 转移大小信息
+        mData = other.mData;             // 转移资源（指针）
+        other.mData = nullptr;           // 让源对象的指针为空，避免析构时释放资源
+        other.mSize = 0;                 // 让源对象的大小归零
+    }
+
+    // 显示数据（用于演示）
+    void showData() const {
+        if (mData != nullptr) {
+            for (int i = 0; i < mSize; ++i) {
+                cout << mData[i] << " ";
+            }
+            cout << endl;
+        } else {
+            cout << "Data is null!" << endl;
+        }
+    }
+
+private:
+    int* mData;  // 指向动态分配的内存
+    int mSize;   // 数据的大小
+};
+
+int main() {
+    LargeObject obj1(5);  // 创建一个大小为 5 的对象
+    obj1.showData();  // 打印 obj1 中的数据
+
+    LargeObject obj2 = std::move(obj1);  // 移动构造
+
+    obj2.showData();  // 打印 obj2 中的数据
+    obj1.showData();  // 打印 obj1，应该是空的（mData 是 nullptr）
+    
+    return 0;
+}

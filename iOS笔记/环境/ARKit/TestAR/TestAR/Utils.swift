@@ -6,6 +6,7 @@
 //
 
 import ARKit
+import VideoToolbox
 
 // MARK: - UIColor
 extension UIColor {
@@ -80,7 +81,9 @@ extension CIImage {
                                          options as CFDictionary,
                                          &buffer)
         
-        if status == kCVReturnSuccess, let device = MTLCreateSystemDefaultDevice(), let pixelBuffer = buffer {
+        if status == kCVReturnSuccess,
+           let device = MTLCreateSystemDefaultDevice(),
+           let pixelBuffer = buffer {
             let ciContext = CIContext(mtlDevice: device)
             ciContext.render(self, to: pixelBuffer)
         } else {
@@ -93,5 +96,32 @@ extension CIImage {
     func resize(to size: CGSize) -> CIImage? {
         return self.transformed(by: CGAffineTransform(scaleX: size.width / extent.size.width,
                                                       y: size.height / extent.size.height))
+    }
+}
+
+// MARK: - CVPixelBuffer
+extension CVPixelBuffer {
+    // Returns a Core Graphics image from the pixel buffer's current contents.
+    func toCGImage() -> CGImage? {
+        var cgImage: CGImage?
+        // VideoToolbox
+        VTCreateCGImageFromCVPixelBuffer(self, options: nil, imageOut: &cgImage)
+        if cgImage == nil { print("Error: Converting CVPixelBuffer to CGImage failed.") }
+        return cgImage
+    }
+}
+
+// MARK: - MLMultiArray
+extension MLMultiArray {
+    /// Zeros out all indexes in the array except for the argument index, which is set to one.
+    func setOnlyThisIndexToOne(_ index: Int) {
+        if index > self.count - 1 {
+            print("Error: Invalid index #\(index)")
+            return
+        }
+        for i in 0...self.count - 1 {
+            self[i] = Double(0) as NSNumber
+        }
+        self[index] = Double(1) as NSNumber
     }
 }

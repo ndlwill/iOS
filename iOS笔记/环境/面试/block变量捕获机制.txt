@@ -1,4 +1,290 @@
-如何修改变量值的三种方式：使用static、指针和__block关键字
+block 的变量捕获机制，是为了保证 block 内部能够正常访问外部的变量
+
+libclousure 源码:
+通常我们对Block的copy实际是调用了NSBlock的copy方法
+
+auto 类型的局部变量:
+访问方式为值传递
+
+static 类型的局部变量:
+访问方式为指针传递
+
+对象类型的局部变量:
+访问方式为指针传递
+block 会连同它的所有权修饰符一起捕获
+如果 block 被拷贝到堆上，将会调用 block 内部的 copy(__funcName_block_copy_num)函数，copy 函数内部又会调用 assign(_Block_object_assign)函数，assign 函数将会根据变量的所有权修饰符做出相应的操作，形成强引用（retain）或者弱引用。
+如果 block 从堆上移除，也就是被释放的时候，会调用 block 内部的 dispose(_Block_object_dispose)函数，dispose 函数会自动释放引用的变量（release）。
+
+__block 修饰的变量:
+对于 __block（可用于解决 block 内部无法修改 auto 变量值的问题） 修饰的变量，编译器会将 __block 变量包装成一个 __Block_byref_varName_num 对象。
+它的内存管理几乎等同于访问对象类型的 auto 变量，但还是有差异。
+如果 block 被拷贝到堆上，将会调用 block 内部的 copy 函数，copy 函数内部又会调用 assign 函数，assign 函数将会直接对 __block 变量形成强引用（retain）。
+如果 block 从堆上移除，也就是被释放的时候，会调用 block 内部的 dispose 函数，dispose 函数会自动释放引用的 __block 变量（release）。
+
+如果 __block 变量被拷贝到堆上，将会调用 __block 变量内部的 copy(__Block_byref_id_object_copy)函数，copy 函数内部会调用 assign 函数，assign 函数又会根据变量的所有权修饰符做出相应的操作，形成强引用（retain）或者弱引用。（注意：这里仅限于 ARC 下会 retain，MRC 下不会 retain，所以在 MRC 下还可以通过 __block 解决循环引用的问题）
+如果 __block 变量从堆上移除，会调用 __block 变量内部的 dispose 函数，dispose 函数会自动释放指向的对象（release）。
+
+__block int val = 10;
+struct __Block_byref_val_0 {
+  void *__isa;                      //isa指针
+__Block_byref_val_0 *__forwarding;  //初始化传递的是自身结构体实例的指针
+ int __flags;                       //标记flag
+ int __size;                        //大小
+ int val;                           //对应原自动变量val的值
+};
+__Block_byref_val_0 *val; // by ref
+
+##################################################
+
+//__block存储域修饰符
+int main(int argc, const char * argv[]) {
+    __block int val = 10;
+    void (^myBlock)(void) = ^{ val = 20;};
+
+    val = 30;
+    myBlock();
+    NSLog(@"val: %@",val);
+    return 0;
+}
+
+struct __Block_byref_val_0 {
+  void *__isa;
+__Block_byref_val_0 *__forwarding;
+ int __flags;
+ int __size;
+ int val;
+};
+
+struct __main_block_impl_0 {
+  struct __block_impl impl;
+  struct __main_block_desc_0* Desc;
+  __Block_byref_val_0 *val; // by ref
+  __main_block_impl_0(void *fp, struct __main_block_desc_0 *desc, __Block_byref_val_0 *_val, int flags=0) : val(_val->__forwarding) {
+    impl.isa = &_NSConcreteStackBlock;
+    impl.Flags = flags;
+    impl.FuncPtr = fp;
+    Desc = desc;
+  }
+};
+static void __main_block_func_0(struct __main_block_impl_0 *__cself) {
+  __Block_byref_val_0 *val = __cself->val; // bound by ref
+ (val->__forwarding->val) = 20;}
+ 
+static void __main_block_copy_0(struct __main_block_impl_0*dst, struct __main_block_impl_0*src) {_Block_object_assign((void*)&dst->val, (void*)src->val, 8/*BLOCK_FIELD_IS_BYREF*/);}
+
+static void __main_block_dispose_0(struct __main_block_impl_0*src) {_Block_object_dispose((void*)src->val, 8/*BLOCK_FIELD_IS_BYREF*/);}
+
+static struct __main_block_desc_0 {
+  size_t reserved;
+  size_t Block_size;
+  void (*copy)(struct __main_block_impl_0*, struct __main_block_impl_0*);
+  void (*dispose)(struct __main_block_impl_0*);
+} __main_block_desc_0_DATA = { 0, sizeof(struct __main_block_impl_0), __main_block_copy_0, __main_block_dispose_0};
+
+int main(int argc, const char * argv[]) {
+    __attribute__((__blocks__(byref))) __Block_byref_val_0 val = {(void*)0,(__Block_byref_val_0 *)&val, 0, sizeof(__Block_byref_val_0), 10};
+    void (*myBlock)(void) = ((void (*)())&__main_block_impl_0((void *)__main_block_func_0, &__main_block_desc_0_DATA, (__Block_byref_val_0 *)&val, 570425344));
+
+    (val.__forwarding->val) = 30;
+    ((void (*)(__block_impl *))((__block_impl *)myBlock)->FuncPtr)((__block_impl *)myBlock);
+    NSLog((NSString *)&__NSConstantStringImpl__var_folders_wd_fhcn9bn91v56nlzv9mt5z8ym0000gn_T_main_a9f88e_mi_0,(val.__forwarding->val));
+    return 0;
+}
+
+捕获的过程如下：
+1.自动变量__block int varl被封装为__Block_byref_val_0结构体;
+2.__Block_byref_val_0结构体包含一个与__block变量同名的成员变量val，对应外部自动变量的值；
+3.__Block_byref_val_0结构体包含一个__forwarding指针，初始化传递的是自己的地址;
+4.在Block初始化的过程中，调用__main_block_impl_0结构体构造函数时，会将__block变量的__Block_byref_val_0结构体实例的指针作为参数；
+
+
+为什么要使用多余的__forwarding指针来间接访问变量？
+编译器会自动将Block从栈拷贝到堆上，而Block中的用到的__block变量也会被一并拷贝，并且被堆上的Block持有。
+这样即使Block语法所在的作用域结束，堆上的Block和__block变量依然继续存在
+
+当__block变量结构体实例在从栈上被拷贝到堆上时，会将成员变量的__forwarding的值替换为复制目标堆上的__block变量结构体实例的地址。
+通过这种功能，无论是在Block语法中、Block语法外使用__block变量，还是__block变量配置在栈上或堆上，都可以顺利访问同__block变量。
+这就是__forwarding指针存在的意义。
+
+__block修饰的自动变量被封装为结构体，作为一个对象随着Block被拷贝到了堆上，解决了自动变量容易因作用域结束而释放的问题。
+而__block变量结构体中的__forwarding则保证了无论在栈上还是堆上访问的都是同一个__block变量；
+我们能够成功修改__block变量的值，其实是修改了堆上被Block持有的__block变量的内部成员变量val。
+
+使用__block变量的Block从栈上拷贝到堆上时，__block变量也会受到影响。
+
+
+多个Block使用__block变量:
+多个Block使用__block变量时，任何一个Block从栈上拷贝到堆上，__block变量就会一并从栈上拷贝到堆上并被该Block所持有。
+当剩下的Block从栈拷贝到堆上时，被拷贝的Block持有__block变量，并增加__block变量的引用计数。
+
+
+__block变量的释放:
+如果拷贝到堆上的Block被释放，那么它使用的__block变量的引用计数会减一，如果引用计数为0就会被释放。
+
+
+无论是对基本类型还是对象使用__block修饰符,它们都会被转化为对应的结构体实例来使用，具有引用类型数据的特性。
+因此__block变量随着Block被拷贝到堆上后，它们的内存管理与普通的OC对象引用计数内存管理模式完全相同。
+
+
+##################################################
+
+
+case 1 //  1级copy  struct __main_block_impl_0 需要copy 
+int age = 6;
+void(^block)(void) = ^{
+   
+    NSLog(@"a==%d",age);
+};
+
+case 2 // 2级copy struct __main_block_impl_0 需要copy  NSObject *obj需要copy
+NSObject *obj = [NSObject new];
+void(^block)(void) = ^{
+   
+    NSLog(@"a==%@",obj);
+};
+
+case 3  // 2级copy struct __main_block_impl_0 需要copy struct __Block_byref_age_0 需要copy 
+__block int age = 6;
+void(^block)(void) = ^{
+   
+    NSLog(@"a==%d",age);
+};
+
+case 4 // 3级copy struct __main_block_impl_0 需要copy  struct __Block_byref_obj_0 需要copy  NSObject *obj需要copy  
+__block NSObject *obj = [NSObject new];
+void(^block)(void) = ^{
+   
+    NSLog(@"a==%@",obj);
+};
+
+
+
+==================================================理解Block对对象的捕获
+Block捕获对象类型和__block类型的变量(在底层被封装为结构体，也属于对象)明显比基本类型要复杂多
+
+函数	调用时机
+copy 函数	栈上的 block 复制到堆时
+dispose 函数	堆上的 block 被废弃时
+
+如果 block 被拷贝到堆上:
+当Block捕获对象类型的变量时，此处的__main_block_desc_0结构体中多了copy与dispose两个成员变量，
+block 内部的 desc 结构体会新增两个函数：
+copy（__main_block_copy_0，函数名命名规范同__main_block_impl_0）
+dispose（__main_block_dispose_0）
+而且它们的初始化分别使用了__main_block_copy_0和__main_block_dispose_0的函数指针；
+_Block_object_assign函数会根据 auto 变量的修饰符（__strong、__weak、__unsafe_unretained）做出相应的操作，形成强引用（retain）或者弱引用
+
+
+1.__main_block_copy_0函数
+结构体__main_block_desc_0中的copy成员变量对应了__main_block_copy_0函数。
+当Block从栈上拷贝到堆上时，__main_block_copy_0函数会被调用，然后再调用其内部的_Block_object_assign函数。
+_Block_object_assign函数就相当于retain操作，会自动根据__main_block_impl_0结构体内部的mArr是什么类型的指针，对mArr对象产生强引用或者弱引用。
+如果mArr指针是__strong类型，则为强引用，引用计数+1，如果mArr指针是__weak类型，则为弱引用，引用计数不变。
+
+2.__main_block_dispose_0函数
+结构体__main_block_desc_0中的dispose成员变量对应了__main_block_dispose_0函数。
+当Block被废弃时，__main_block_dispose_0函数会被调用，__main_block_dispose_0函数就相当于release操作，将mArr对象的引用计数减1，
+如果此时引用计数为0，那么遵循引用计数的规则mArr也就被释放了。
+
+3.Block捕获对象与__block变量的区别
+其实Block捕获对象与__block变量后，对于它们的内存管理的方式相同，也都是使用copy函数持有和disposde函数释放；两者体现在源码上的不同
+
+static void __main_block_copy_0(struct __main_block_impl_0*dst, struct __main_block_impl_0*src) {_Block_object_assign((void*)&dst->mArr, (void*)src->mArr, 3/*BLOCK_FIELD_IS_OBJECT*/);}
+_Block_object_assign函数中的最后一个参数用于区分Block捕获的是对象还是__block变量。
+
+对象变量  __block变量
+BLOCK_FIELD_IS_OBJECT BLOCK_FIELD_IS_BYREF
+
+
+==================================================Block的循环引用问题
+
+@interface MyObject : NSObject
+@property(nonatomic,copy) MyBlock block;
+@end
+
+@implementation MyObject
+- (instancetype)init {
+    self = [super init];
+    return self;
+}
+
+- (void)dealloc {
+    NSLog(@"MyObject dealloc!");
+}
+@end
+
+解决ARC环境下的循环引用问题
+方法1：使用弱引用修饰符__weak、和__unsafe_unretained修饰符；
+int main(int argc, char * argv[]) {
+    @autoreleasepool {
+        MyObject *myObject = [[MyObject alloc] init];
+        __weak typeof(myObject) weakObject = myObject;
+        myObject.block = ^{
+            NSLog(@"捕获对象:%@", weakObject );
+        };
+    }
+    NSLog(@"myObject的作用域结束了");
+    return 0;
+}
+使用弱引用修饰符__weak ，在block内部对 myObject设置为弱引用，弱引用不会导致Block捕获对象的引用计数增加
+__weak：iOS4之后才提供使用，而且比__unsafe_unretained更加安全，因为当它指向的对象销毁时，会自动将指针置为nil；推荐使用。
+__unsafe_unretained：在__weak出现以前常用修饰符，其指向的对象销毁时，指针存储的地址值不变，所以没有__weak安全。
+
+方法2：使用__block说明符
+__block修饰对象时其实也会封装一个结构体类型，而这个结构体中会持有自动变量对象
+
+block对象持有__block变量对象 __block变量对象持有oc对象 oc对象持有block对象 构成3角循环引用
+
+int main(int argc, char * argv[]) {
+    @autoreleasepool {
+        MyObject *myObject = [[MyObject alloc] init];
+        __block MyObject *tempObject = myObject;
+        myObject.block = ^{
+            NSLog(@"捕获对象:%@", tempObject );
+            tempObject = nil;  //关键代码1
+        };
+        myObject.block();      //关键代码2：执行持有的block；
+    }
+    NSLog(@"myObject的作用域结束了");
+    return 0;
+}
+上述代码有两句关键，已经通过注释标注；在block中通过tempObject = nil这句代码，__block变量tempObject对于MyObject类对象的强引用失效了，而这句代码生效的前提又是block被调用了(关键代码2)；
+特别注意：如果关键代码2没有被调用，同样会造成循环引用。
+使用__block变量相比弱引用修饰符的优缺点:
+优点：
+1.通过执行block的方式，可动态决定__block变量可以控制对象的持有时间；
+2.在不能使用__weak修饰符的环境下，避免使用__unsafe_unretained(因为要考虑野指针问题)；
+缺点：
+为了避免循环引用，必须执行Block;
+
+
+
+==================================================
+
+Block 底层数据结构就是一个__main_block_impl_0结构体对象，其中有__block_impl和__main_block_desc_0两个结构体对象成员。
+main：表示 block 所在的函数
+block：表示这个一个 block
+impl：表示实现（implementation）
+0：表示这是该函数中的第一个 block
+
+__main_block_func_0结构体封装了 block 里的代码；
+__block_impl结构体才是真正定义 block 的结构，其中的FuncPtr指针指向__main_block_func_0
+__main_block_desc_0是 block 的描述对象，存储着 block 的内存大小等
+
+struct __block_impl {
+  void *isa;
+  int Flags;
+  int Reserved;
+  void *FuncPtr;
+};
+
+
+Block中所有的代码封装为函数，以待被调用
+
+Block相当于函数加上函数执行的上下文环境(捕获外部变量)
+
+
+==================================================如何修改变量值的三种方式：使用static、指针和__block关键字
 
 int a = 3;
 void (^yang)(void) = ^{
@@ -234,7 +520,8 @@ void(^block)(void) = ^{
 };
 
 
-对Block的copy实际是调用了NSBlock的copy方法，而它的copy方法也很简单，直接调用了libsystem_blocks.dylib中的_Block_copy，libsystem_blocks.dylib是专门来处理block的框架，代码是开源的。
+对Block的copy实际是调用了NSBlock的copy方法，而它的copy方法也很简单，
+直接调用了libsystem_blocks.dylib中的_Block_copy，libsystem_blocks.dylib是专门来处理block的框架，代码是开源的。
 
 
 blocks库提供的几个核心函数都在 runtime.cpp 文件中:
@@ -286,6 +573,10 @@ https://www.galloway.me.uk/2013/05/a-look-inside-blocks-episode-3-block-copy/
 
 
 ==================================================__block
+在 MRC 下使用 __block 修饰对象类型，在 block 内部不会对该对象进行 retain 操作，
+所以在 MRC 环境下可以通过 __block 解决循环引用的问题。
+
+
 1.普通非对象的变量
 #import <Foundation/Foundation.h>
 
@@ -752,4 +1043,140 @@ Object* objects = (Object*)malloc(10 * sizeof(Object));
 代码区
 存放二进制代码的区域
 
+
+==================================================__block 的__forwarding指针
+__block 的__forwarding是指向自己本身的指针， 为了不论在任何内存位置，都可以顺利的访问同一个 __block 变量。
+
+block 对象 copy 到堆上时，内部的 __block 变量也会 copy 到堆上去。为了防止 age 的值赋值给栈上的 __block 变量，就使用了__forwarding；
+当 __block 变量在栈上的时候，__block 变量的结构体中的__forwarding指针指向自己，这样通过__forwarding取到结构体中的 age 给它赋值没有问题；
+当 __block 变量 copy 到堆上后，栈上的__forwarding指针会指向 copy 到堆上的 _block 变量结构体，而堆上的__forwarding指向自己；
+
+这样不管我们访问的是栈上还是堆上的 __block 变量结构体，只要是通过__forwarding指针访问，都是访问到堆上的 __block 变量结构体；
+给 age 赋值，就肯定会赋值给堆上的那个 __block 变量中的 age。
+
+
+==================================================#####__block 修饰对象类型#####
+
+int main(int argc, char * argv[]) {
+    NSString * appDelegateClassName;
+    @autoreleasepool {
+        // Setup code that might create autoreleased objects goes here.
+        appDelegateClassName = NSStringFromClass([AppDelegate class]);
+        
+        __block NSObject *object = [[NSObject alloc] init];
+        void(^block)(void) = ^{
+            object = [[NSObject alloc] init];
+        };
+    }
+    return UIApplicationMain(argc, argv, nil, appDelegateClassName);
+}
+
+// __block
+struct __Block_byref_object_0 {
+    void *__isa;
+    __Block_byref_object_0 *__forwarding;
+    int __flags;
+    int __size;
+    void (*__Block_byref_id_object_copy)(void*, void*); // copy
+    void (*__Block_byref_id_object_dispose)(void*);     // dispose
+    NSObject *__strong object;
+};
+
+// block: 封装了函数调用以及调用环境的 OC 对象。
+struct __main_block_impl_0 {
+    struct __block_impl impl;
+    struct __main_block_desc_0* Desc;
+    __Block_byref_object_0 *object; // by ref
+    __main_block_impl_0(void *fp, struct __main_block_desc_0 *desc, __Block_byref_object_0 *_object, int flags=0) : object(_object->__forwarding) {
+        impl.isa = &_NSConcreteStackBlock;
+        impl.Flags = flags;
+        impl.FuncPtr = fp;
+        Desc = desc;
+    }
+};
+
+static void __main_block_func_0(struct __main_block_impl_0 *__cself) {
+    __Block_byref_object_0 *object = __cself->object; // bound by ref
+    (object->__forwarding->object) = ((NSObject *(*)(id, SEL))(void *)objc_msgSend)((id)((NSObject *(*)(id, SEL))(void *)objc_msgSend)((id)objc_getClass("NSObject"), sel_registerName("alloc")), sel_registerName("init"));
+}
+static void __main_block_copy_0(struct __main_block_impl_0*dst, struct __main_block_impl_0*src) {_Block_object_assign((void*)&dst->object, (void*)src->object, 8/*BLOCK_FIELD_IS_BYREF*/);}
+
+static void __main_block_dispose_0(struct __main_block_impl_0*src) {_Block_object_dispose((void*)src->object, 8/*BLOCK_FIELD_IS_BYREF*/);}
+
+static struct __main_block_desc_0 {
+    size_t reserved;
+    size_t Block_size;
+    void (*copy)(struct __main_block_impl_0*, struct __main_block_impl_0*);
+    void (*dispose)(struct __main_block_impl_0*);
+} __main_block_desc_0_DATA = { 0, sizeof(struct __main_block_impl_0), __main_block_copy_0, __main_block_dispose_0};
+
+int main(int argc, char * argv[]) {
+    NSString * appDelegateClassName;
+    /* @autoreleasepool */ { __AtAutoreleasePool __autoreleasepool; 
+        appDelegateClassName = NSStringFromClass(((Class (*)(id, SEL))(void *)objc_msgSend)((id)objc_getClass("AppDelegate"), sel_registerName("class")));
+
+        __attribute__((__blocks__(byref))) __Block_byref_object_0 object = {
+            (void*)0,
+            (__Block_byref_object_0 *)&object, 
+            33554432, 
+            sizeof(__Block_byref_object_0), 
+            __Block_byref_id_object_copy_131,
+            __Block_byref_id_object_dispose_131, 
+            ((NSObject *(*)(id, SEL))(void *)objc_msgSend)((id)((NSObject *(*)(id, SEL))(void *)objc_msgSend)((id)objc_getClass("NSObject"), sel_registerName("alloc")), sel_registerName("init"))
+        };
+        void(*block)(void) = ((void (*)())&__main_block_impl_0((void *)__main_block_func_0, &__main_block_desc_0_DATA, (__Block_byref_object_0 *)&object, 570425344));
+    }
+    return UIApplicationMain(argc, argv, __null, appDelegateClassName);
+}
+
+static void __Block_byref_id_object_copy_131(void *dst, void *src) {
+    // __block 对象结构体的地址+40个字节，即为结构体中 object 对象的地址
+    _Block_object_assign((char*)dst + 40, *(void * *) ((char*)src + 40), 131);
+}
+static void __Block_byref_id_object_dispose_131(void *src) {
+    _Block_object_dispose(*(void * *) ((char*)src + 40), 131);
+}
+
+
+当 block 拷贝到堆上时，都会通过 copy 函数来处理它们
+对象类型的 auto 变量（假设变量名叫做p）   __block 变量（假设变量名叫做a）
+_Block_object_assign((void*)&dst->p, (void*)src->p, 3/*BLOCK_FIELD_IS_OBJECT*/);    _Block_object_assign((void*)&dst->a, (void*)src->a, 8/*BLOCK_FIELD_IS_BYREF*/);
+_Block_object_assign函数会根据 auto 变量的修饰符（__strong、__weak、__unsafe_unretained）做出相应的操作，形成强引用（retain）或者弱引用   _Block_object_assign函数会对 __block 变量形成强引用（retain）
+
+
+当 __block 变量被 copy 到堆时
+①__Block_byref_object_0即 __block 变量内部会新增两个函数：
+ copy（__Block_byref_id_object_copy）
+ dispose（__Block_byref_id_object_dispose）
+② 会调用 __block 变量内部的 copy 函数
+③ copy 函数内部会调用_Block_object_assign函数
+④ _Block_object_assign函数会根据所指向对象的修饰符（__strong、__weak、__unsafe_unretained）做出相应的操作，形成强引用（retain）或者弱引用
+
+如果 __block 变量从堆上移除
+① 会调用 __block 变量内部的 dispose 函数
+② dispose 函数内部会调用_Block_object_dispose函数
+③ _Block_object_dispose函数会自动释放指向的对象（release）
+
+
+==================================================Block 的 copy
+在 ARC 环境下，编译器会根据情况自动将栈上的 block 复制到堆上，比如以下几种情况：
+
+手动调用 block 的 copy 方法时；
+block 作为函数返回值时（Masonry 框架中用很多）；
+将 block 赋值给__strong指针时；
+block 作为 Cocoa API 中方法名含有usingBlock的方法参数时；
+block 作为 GCD API 的方法参数时。
+
+
+block 作为属性:
+ARC 下写strong或者copy都会对 block 进行强引用，都会自动将 block 从栈 copy 到堆上
+
+
+==================================================循环引用
+① 相互循环引用： 如果当前 block 对当前对象的某一成员变量进行捕获的话，可能会对它产生强引用。而当前 block 又由于当前对象对其有一个强引用，就产生了相互循环引用的问题；
+② 大环引用： 我们如果使用__block的话，在 ARC 下可能会产生循环引用（MRC 则不会），在 ARC 下可以通过断环的方式去解除循环引用。但是有一个弊端，如果该 block 一直得不到调用，循环引用就一直存在。
+
+
+==================================================self 会不会捕获到 block 内部？
+会捕获。 OC 方法都有两个隐式参数，方法调用者self和方法名_cmd。 参数也是一种局部变量。
 

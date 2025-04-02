@@ -40,10 +40,17 @@ class TrackingAndAlteringImagesViewController: UIViewController {
     
     // The timer for message presentation.
     private var messageHideTimer: Timer?
+    
+    static var instance: TrackingAndAlteringImagesViewController?
 
     override func viewDidLoad() {
         super.viewDidLoad()
         
+        /**
+         ARSession:
+         
+         The session that the view uses to update the scene.
+         */
         rectangleDetector = RectangleDetector(with: self.arscnView.session)
         rectangleDetector.delegate = self
 
@@ -52,6 +59,8 @@ class TrackingAndAlteringImagesViewController: UIViewController {
     
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        
+        TrackingAndAlteringImagesViewController.instance = self
         
         UIApplication.shared.isIdleTimerDisabled = true
         
@@ -87,7 +96,8 @@ class TrackingAndAlteringImagesViewController: UIViewController {
                                          runOptions: ARSession.RunOptions = [.removeExistingAnchors]) {
         // MARK: - Track the image using ARKit
         /**
-         
+         Provide the reference image to ARKit to get updates on where the image lies in the camera feed when the user moves their device. 
+         Do that by creating an image tracking session and passing the reference image in to the configuration’s trackingImages property.
          */
         let configuration = ARImageTrackingConfiguration()
         configuration.maximumNumberOfTrackedImages = 1
@@ -97,7 +107,10 @@ class TrackingAndAlteringImagesViewController: UIViewController {
     
     private func setMessageHidden(_ hide: Bool) {
         DispatchQueue.main.async {
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
+            UIView.animate(withDuration: 0.25,
+                           delay: 0,
+                           options: [.beginFromCurrentState],
+                           animations: {
                 self.messagePanel.alpha = hide ? 0 : 1
             })
         }
@@ -106,22 +119,80 @@ class TrackingAndAlteringImagesViewController: UIViewController {
     @IBAction func didTap(_ sender: Any) {
         print(#function)
         
-        
+        alteredImage?.pauseOrResumeFade()
     }
     
 }
 
+// MARK: - ARSCNViewDelegate
 extension TrackingAndAlteringImagesViewController: ARSCNViewDelegate {
     // ImageWasRecognized
     func renderer(_ renderer: SCNSceneRenderer, didAdd node: SCNNode, for anchor: ARAnchor) {
+        print(#function)
         
+        alteredImage?.add(anchor, node: node)
+        setMessageHidden(true)
+    }
+    
+    // MARK: - Respond to image tracking updates
+    /**
+     从相机的视角来看：平移手机可以看作相机位置固定，但追踪物体的坐标改变。
+     从世界坐标系的角度来看：追踪物体的位置固定，而相机在移动。
+     
+     anchor 位置或方向的更新（变换更新），调用此代理
+     
+     As part of the image tracking feature, ARKit continues to look for the image throughout the AR session.
+     If the image itself moves, ARKit updates the ARImageAnchor with its corresponding image’s new location in the physical environment, and calls your delegate’s renderer(_:didUpdate:for:) to notify your app of the change.
+     */
+    func renderer(_ renderer: any SCNSceneRenderer, didUpdate node: SCNNode, for anchor: ARAnchor) {
+        print(#function)
+        
+        alteredImage?.update(anchor)
+    }
+    
+    
+    func session(_ session: ARSession, didFailWithError error: any Error) {
+        guard let arError = error as? ARError else { return }
+        
+        if arError.code == .invalidReferenceImage {
+            /**
+             Restart the experience, as otherwise the AR session remains stopped.
+             There's no benefit in surfacing this error to the user.
+             */
+            print("Error: The detected rectangle cannot be tracked.")
+            searchForNewImageToTrack()
+            return
+        }
+        
+        let errorWithInfo = arError as NSError
+        let messages = [
+            errorWithInfo.localizedDescription,
+            errorWithInfo.localizedFailureReason,
+            errorWithInfo.localizedRecoverySuggestion
+        ]
+        
+        let errorMessage = messages.compactMap({ $0 }).joined(separator: "\n")
+        
+        DispatchQueue.main.async {
+            
+            // Present an alert informing about the error that just occurred.
+            let alertController = UIAlertController(title: "The AR session failed.",
+                                                    message: errorMessage,
+                                                    preferredStyle: .alert)
+            let restartAction = UIAlertAction(title: "Restart Session", style: .default) { _ in
+                alertController.dismiss(animated: true, completion: nil)
+                self.searchForNewImageToTrack()
+            }
+            alertController.addAction(restartAction)
+            self.present(alertController, animated: true, completion: nil)
+        }
     }
 }
 
 // MARK: - RectangleDetectorDelegate
 extension TrackingAndAlteringImagesViewController: RectangleDetectorDelegate {
     
-    // Called when the app recognized a rectangular shape in the user's envirnment.
+    // MARK: - Called when the app recognized a rectangular shape in the user's envirnment.
     func rectangleFound(rectangleContent: CIImage) {
         print(#function, Thread.current)
         
@@ -138,7 +209,8 @@ extension TrackingAndAlteringImagesViewController: RectangleDetectorDelegate {
             
             // MARK: - Create a reference image
             /**
-             To prepare to track the cropped image, you create an ARReferenceImage, which provides ARKit with everything it needs, like its look and physical size, to locate that image in the physical environment.
+             To prepare to track the cropped image, you create an ARReferenceImage, which provides ARKit with everything it needs, 
+             like its look and physical size, to locate that image in the physical environment.
              
              ARKit requires that reference images contain sufficient detail to be recognizable;
              for example, ARKit can’t track an image that is a solid color with no features.
@@ -159,12 +231,13 @@ extension TrackingAndAlteringImagesViewController: RectangleDetectorDelegate {
                 }
 
                 // Try tracking the image that lies within the rectangle which the app just detected.
-                guard let newAlteredImage = AlteredImage(rectangleContent, referenceImage: possibleReferenceImage) else { return }
+                guard let newAlteredImage = AlteredImage(rectangleContent,
+                                                         referenceImage: possibleReferenceImage) else { return }
                 newAlteredImage.delegate = self
                 self?.alteredImage = newAlteredImage
                 
                 // Start the session with the newly recognized image.
-//                self?.runImageTrackingSession(with: [newAlteredImage.referenceImage])
+                self?.runImageTrackingSession(with: [newAlteredImage.referenceImage])
             }
         }
     }

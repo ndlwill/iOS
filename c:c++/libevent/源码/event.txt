@@ -1,0 +1,581 @@
+有了event_base作为Reactor事件处理模型的基础，接着就还需要有event。
+将event与event_base组合起来，就能构建起整个事件处理的框架
+
+每一个event_base都定义了以下几种事件集合：已添加事件队列（eventqueue）、已激活事件队列（activequeues）、定时器（min_heap）、公用超时事件队列（common_timeout_queues）、io事件集合以及signal事件集合
+struct event_base {
+	......
+	/** An array of nactivequeues queues for active events (ones that
+	 * have triggered, and whose callbacks need to be called).  Low
+	 * priority numbers are more important, and stall higher ones.
+	 */
+	struct event_list *activequeues;   //激活的事件队列
+ 
+	/** An array of common_timeout_list* for all of the common timeout
+	 * values we know. */
+	struct common_timeout_list **common_timeout_queues; //公用超时事件队列
+ 
+	/** Mapping from file descriptors to enabled (added) events */
+	struct event_io_map io; //io事件集合
+ 
+	/** Mapping from signal numbers to enabled (added) events. */
+	struct event_signal_map sigmap; //signal事件集合
+ 
+	/** All events that have been enabled (added) in this event_base */
+	struct event_list eventqueue; //已添加事件队列
+ 
+	/** Priority queue of events with timeouts. */
+	struct min_heap timeheap; //定时器
+	......
+};
+
+激活事件队列：所有感兴趣事件发生或者已经超时的event的集合
+公用超时事件队列：具有相同超时时长的event的集合
+io事件集合：所有已添加的读/写event的集合
+signal事件集合：所有已添加的信号event的集合
+已添加事件队列：所有调用了event_add进行添加的event的集合
+定时器：所有添加了并设置超时时间的event集合
+
+任何一个event，一旦通过event_add进行了添加，那么它就会存在于以上几个集合中的一个或多个中， 而存在于这些集合中的event与event之间，大多都是通过双向链表相连接的
+除了定时器中是按照小顶堆的方式存储event
+既然是双向链表，那么每个event就应该有相应的前后指针来描述event在双向链表中的位置，而在定时器中，则需要一个索引来描述在堆中的位置即可。
+
+
+event结构体:
+struct event {
+	TAILQ_ENTRY(event) ev_active_next;   //该event在激活队列中的前后指针
+	TAILQ_ENTRY(event) ev_next;  //该event在添加队列中的前后指针
+	/* for managing timeouts */
+	//如果使用min_heap那么就使用min_heap_idx，
+	//如果使用min_heap+common_timeout那么就是用ev_next_with_common_timeout
+	//二者只会使用其中一个，因此用联合体存储更加节约空间
+	union {
+		TAILQ_ENTRY(event) ev_next_with_common_timeout;  //该event在common_timeout_list的event链表中的前后指针
+		int min_heap_idx;  //event设置的超时结构体在定时器堆中的索引
+	} ev_timeout_pos;
+	evutil_socket_t ev_fd;  //io事件的文件描述符/signal事件的信号值
+ 
+	struct event_base *ev_base; //与event对应的event_base
+	//event要么是io event要么是signal event，二者只会使用其中一个，因此用联合体
+	union {
+		/* used for io events */
+		struct {
+			TAILQ_ENTRY(event) ev_io_next;//该event在event_io_map中的前后指针
+			struct timeval ev_timeout;//如果event是永久事件，那么该变量就存储设置的超时时长，这是一个相对超时值  
+		} ev_io;
+ 
+		/* used by signal events */
+		struct {
+			TAILQ_ENTRY(event) ev_signal_next;//该event在event_signal_map中的前后指针
+			short ev_ncalls;//当signal事件激活时，调用回调函数的次数
+			/* Allows deletes in callback */
+			short *ev_pncalls;//指向ev_ncalls
+		} ev_signal;
+	} _ev;
+ 
+	short ev_events;   //关注的事件类型 超时、读、写、永久
+	short ev_res;		/* result passed to event callback */ //事件激活的类型
+	short ev_flags;   //反映event目前的状态，是处于超时队列、已添加队列、激活队列、信号队列等
+	ev_uint8_t ev_pri;	/* smaller numbers are higher priority */  //优先级，数字越小优先级越高
+	ev_uint8_t ev_closure;  //关闭方式  SIGNAL、PERSIST、NONE
+	struct timeval ev_timeout;  //超时时间，存储的是一个绝对超时值（从1970年1月1日开始）
+ 
+	/* allows us to adopt for different types of events */
+	void (*ev_callback)(evutil_socket_t, short, void *arg);  //该event发生时的回调函数
+	void *ev_arg;  //传给回调函数的参数
+};
+
+ev_active_next：TAILQ_ENTRY类型，带有前后指针，用于描述event在激活队列双向链表中的位置；
+ev_next：用于描述event在已添加事件队列双向链表中的位置；
+ev_timeout_pos：这是一个联合体，由于libevent中超时管理的方法有min_heap和min_heap+common_timeout两种，如果是前者则只需要一个min_heap_idx来描述event在定时器堆中的位置；如果是后者则只需要一个TAILQ_ENTRY的前后指针来描述event在common_timeout_list中的位置
+不管是哪种方法，二者只会取其一，因此可以定义一个联合体来节省内存；
+ev_fd：对于io事件，该变量用于存储event监听的文件描述符值；对于signal事件，该变量用于存储event监听的信号值；
+ev_base：指向event_base的指针，用于描述该event所属的base；
+_ev：联合体，event要么是io事件要么就是signal事件，因此只会取ev_io和ev_signal之一
+ev_io：ev_io_next含前后指针，用于描述io event在event_io_map中的位置；ev_timeout用来保存相对超时时长；
+ev_signal：ev_signal_next描述signal event在event_signal_map中的位置；ev_ncalls用于描述当event激活后调用多少次回调函数；ev_pncalls为指向ev_ncalls的指针；
+
+ev_events：event感兴趣的事件类型:
+/** Indicates that a timeout has occurred.  It's not necessary to pass
+ * this flag to event_for new()/event_assign() to get a timeout. */
+#define EV_TIMEOUT	0x01   //超时事件
+/** Wait for a socket or FD to become readable */
+#define EV_READ		0x02   //读事件
+/** Wait for a socket or FD to become writeable */
+#define EV_WRITE	0x04   //写事件
+/** Wait for a POSIX signal to be raised*/
+#define EV_SIGNAL	0x08   //信号事件
+/**
+ * Persistent event: won't get removed automatically when activated. //激活后永久事件也不会被移除
+ *
+ * When a persistent event with a timeout becomes activated, its timeout  
+ * is reset to 0. 
+ */
+#define EV_PERSIST	0x10   //永久事件
+/** Select edge-triggered behavior, if supported by the backend. */
+#define EV_ET       0x20   //边沿触发
+
+ev_res：event的激活类型，由libevent内部设置。比如说event可以设置为EV_READ|EV_WRITE来监听读和写事件，如果最终event被读事件激活，那么ev_res就是EV_READ。
+
+ev_flags：描述event的状态，由libevent内部设置。比如说event被初始化，那么flags就会设置为EVLIST_INIT，有如下几种状态:
+#define EVLIST_TIMEOUT	0x01  //说明event的超时结构体已处于timer小根堆上
+#define EVLIST_INSERTED	0x02  //说明event已经被添加，在base的event队列中
+#define EVLIST_SIGNAL	0x04  //event属于信号队列
+#define EVLIST_ACTIVE	0x08  //说明event已经被激活，在base的active队列中
+#define EVLIST_INTERNAL	0x10  //event为内部使用
+#define EVLIST_INIT	0x80  //event已被初始化
+
+ev_pri：描述event的优先级。实际上就是event激活时在激活队列中的索引值
+
+ev_closure：描述event在激活时的处理方式。
+比如说对于永久事件来说就需要重新添加到定时器中并调用回调函数，而对于一般的事件来说则是直接调用回调函数。ev_closure可以设置为以下三种
+/* Possible values for ev_closure in struct event. *///这些标志决定了事件在激活后调用回调函数前需要实行的行为
+#define EV_CLOSURE_NONE 0    //一般事件标志
+#define EV_CLOSURE_SIGNAL 1  //信号事件标志
+#define EV_CLOSURE_PERSIST 2 //永久事件标志
+
+ev_timeout：与前面的ev_io中的ev_timeout不同，ev_io中的ev_timeout保存的是相对超时时长，而这里的ev_timeout保存的是绝对超时时间。
+比如说现在8:00，设置event的超时时长为3分钟中，那么这个3分钟实际上是相对于现在来说的，也就是相对超时时长
+而event最终会在8:03时超时，这个8:03就是绝对超时时间。
+libevent中绝对超时时间是相对于1970年1月1日0时来说的。
+
+ev_callback及ev_arg：event激活后调用的回调函数以及传递给回调函数的参数
+
+
+==============================创建/注册一个event
+event结构体成员分为两类：一类是event本身的属性，另一类则是用于描述event在某些event集合中的位置。
+前者既然是属性，那么就应当在event创建时就制定好，而后者则应该是当event被添加到event_base之后才进行设置的。
+struct event *    //创建一个新的event，这个event由参数设置回调函数、事件类型并且直接绑定到base上
+event_new(struct event_base *base, evutil_socket_t fd, short events, void (*cb)(evutil_socket_t, short, void *), void *arg)
+{
+	struct event *ev;
+	ev = mm_malloc(sizeof(struct event));
+	if (ev == NULL)
+		return (NULL);
+	if (event_assign(ev, base, fd, events, cb, arg) < 0) { //内部实际调用event_assign，对event做一系列的初始化设置
+		mm_free(ev);
+		return (NULL);
+	}
+ 
+	return (ev);  //返回这个event指针
+}
+在event_new函数内部主要还是调用event_assign函数来完成对event的初始化
+
+int
+event_assign(struct event *ev, struct event_base *base, evutil_socket_t fd, short events, void (*callback)(evutil_socket_t, short, void *), void *arg)//为event注册回调函数、事件类型等信息
+{
+	if (!base)
+		base = current_base;
+ 
+	_event_debug_assert_not_added(ev);   //确保event没有被添加到event_base中
+ 
+	ev->ev_base = base;
+ 
+	ev->ev_callback = callback;
+	ev->ev_arg = arg;
+	ev->ev_fd = fd;
+	ev->ev_events = events;   //event感兴趣事件类型
+	ev->ev_res = 0;
+	ev->ev_flags = EVLIST_INIT;  //初始化event的状态为“已初始化”
+	ev->ev_ncalls = 0;
+	ev->ev_pncalls = NULL;
+    //设置为信号事件就不能设置为读事件或写事件了
+	if (events & EV_SIGNAL) {
+		if ((events & (EV_READ|EV_WRITE)) != 0) {
+			event_warnx("%s: EV_SIGNAL is not compatible with "
+			    "EV_READ or EV_WRITE", __func__);
+			return -1;
+		}
+		ev->ev_closure = EV_CLOSURE_SIGNAL;  //signal事件的激活处理方式为EV_CLOSURE_SIGNAL
+	} else {//非信号事件
+		if (events & EV_PERSIST) {  //如果设置为永久事件
+			evutil_timerclear(&ev->ev_io_timeout);  //设置ev_io_timeout超时时间为0
+			ev->ev_closure = EV_CLOSURE_PERSIST;  //永久事件的激活处理方式为EV_CLOSURE_PERSIST
+		} else {
+			ev->ev_closure = EV_CLOSURE_NONE; //普通io事件的激活处理方式为EV_CLOSURE_NONE
+		}
+	}
+ 
+	min_heap_elem_init(ev);  //初始化event_base中的定时器min_heap
+ 
+	if (base != NULL) {
+		/* by default, we put new events into the middle priority */
+		ev->ev_pri = base->nactivequeues / 2;  //设置event的默认优先级
+	}
+ 
+	_event_debug_note_setup(ev);
+ 
+	return 0;
+}
+
+signal事件的激活处理方式为EV_CLOSURE_SIGNAL，永久事件的激活处理方式为EV_CLOSURE_PERSIST，一般的io事件激活处理方式则为EV_CLOSURE_NONE。
+如果一个event的感兴趣事件类型设置为了EV_SIGNAL，那么它就不能再同时设置读或写事件为感兴趣事件，反之亦然。
+创建好一个event之后，接着就需要将其添加到event_base中的相关集合中，以供后续进行监听和处理。
+
+==============================向event_base中添加一个event
+libevent向用户提供的添加接口是event_add函数
+实际上这个函数内部主要是调用event_add_internal函数来完成event的添加
+
+int
+event_add(struct event *ev, const struct timeval *tv)
+{
+	int res;
+ 
+	if (EVUTIL_FAILURE_CHECK(!ev->ev_base)) {
+		event_warnx("%s: event has no event_base set.", __func__);
+		return -1;
+	}
+ 
+	EVBASE_ACQUIRE_LOCK(ev->ev_base, th_base_lock);
+ 
+	res = event_add_internal(ev, tv, 0);
+ 
+	EVBASE_RELEASE_LOCK(ev->ev_base, th_base_lock);
+ 
+	return (res);
+}
+
+static inline int
+event_add_internal(struct event *ev, const struct timeval *tv,
+    int tv_is_absolute)  //根据event的类型events来将其放到对应的queue中，并且设置相应的flag，如果还设置了超时，就将event的超时结构体放到定时器堆中
+{   
+	struct event_base *base = ev->ev_base;
+	int res = 0;
+	int notify = 0;
+ 
+	......
+	EVUTIL_ASSERT(!(ev->ev_flags & ~EVLIST_ALL));  //确保event的flags是给定的几种的合法组合
+ 
+	 //如果event设置了超时，并且event所设超时结构体不在time小根堆上，则在time小根堆中预留空间
+	if (tv != NULL && !(ev->ev_flags & EVLIST_TIMEOUT)) {  
+		if (min_heap_reserve(&base->timeheap,
+			1 + min_heap_size(&base->timeheap)) == -1)
+			return (-1);  /* ENOMEM == errno */
+	}
+	......
+	//ev_events可由多种类型组合而成，但是最终激活的类型保存在res中。
+	//如果事件类型为读、写或信号，并且事件未被添加也未被激活就添加到已注册事件链表中
+	//先不管事件是否设置超时，都需要添加到evbase的已添加事件链表中，如果还设置了超时就再添加到定时器堆中
+	if ((ev->ev_events & (EV_READ|EV_WRITE|EV_SIGNAL)) &&
+	    !(ev->ev_flags & (EVLIST_INSERTED|EVLIST_ACTIVE))) {
+		if (ev->ev_events & (EV_READ|EV_WRITE)) //如果是读写事件就添加到event_io_map中
+			res = evmap_io_add(base, ev->ev_fd, ev);
+		else if (ev->ev_events & EV_SIGNAL)  //如果是信号事件就添加到event_signal_map中
+			res = evmap_signal_add(base, (int)ev->ev_fd, ev);
+		if (res != -1)
+			event_queue_insert(base, ev, EVLIST_INSERTED); //添加到base的注册事件中
+		if (res == 1) {
+			/* evmap says we need to notify the main thread. */
+			notify = 1;
+			res = 0;
+		}
+	}
+ 
+	if (res != -1 && tv != NULL) { //如果设置了超时
+		struct timeval now;
+		int common_timeout;
+ 
+		 //如果是相对时间，并且是永久事件，那么就将tv赋值给ev_io.ev_timeout成员，记录下该永久事件的相对超时时长
+		if (ev->ev_closure == EV_CLOSURE_PERSIST && !tv_is_absolute)
+			ev->ev_io_timeout = *tv;  //ev->ev_io.ev_timeout = *tv
+ 
+		if (ev->ev_flags & EVLIST_TIMEOUT) { //如果event本身就在定时器堆中
+			
+			event_queue_remove(base, ev, EVLIST_TIMEOUT);  //移除定时器堆中的event，下面再按照新的超时重新添加event到定时器堆中
+		}
+ 
+		if ((ev->ev_flags & EVLIST_ACTIVE) &&  //如果是由超时导致的激活（说明感兴趣事件并没有发生）
+		    (ev->ev_res & EV_TIMEOUT)) { //ev_res是指事件激活的类型
+ 
+			event_queue_remove(base, ev, EVLIST_ACTIVE);  //从激活列表中移除
+		}
+		gettime(base, &now); //获取系统时间
+ 
+		common_timeout = is_common_timeout(tv, base);
+		if (tv_is_absolute) {  //如果是绝对时间 就直接用ev_timeout存储
+			ev->ev_timeout = *tv;
+		} else if (common_timeout) {   
+                ......
+		} else {
+			evutil_timeradd(&now, tv, &ev->ev_timeout); //如果只是一个普通的相对时间，就直接用绝对时间加上该值作为超时时间
+		}
+		//执行到这里，ev->ev_timeout中存放的就是绝对时间了。
+		event_queue_insert(base, ev, EVLIST_TIMEOUT); //插入到超时队列中
+        ......
+}
+
+在event_add_internal中，主要做了以下几件事:
+1.如果event感兴趣的事件中设置了读或写事件，那么就把event添加到event_io_map中
+2.如果event感兴趣的事件中设置了信号事件，那么就把event添加到event_signal_map中
+3.如果前面的添加都成功，那么就把event添加到“已添加事件队列”中
+4.如果event还设置了超时时间，那么就把event添加到超时队列中（实际上就是定时器堆）
+
+event的ev_timeout存储的传入的超时值对应的绝对超时时间，而ev_io.ev_timeout存储的则是相对超时时长
+由于调用event_add时，传递给event_add_internal的第三个参数为0，因此通过event_add添加event时，设置的超时timeval都是相对超时时长
+
+
+static void //向base中添加事件event
+event_queue_insert(struct event_base *base, struct event *ev, int queue)
+{
+	EVENT_BASE_ASSERT_LOCKED(base); //确保base已上锁
+ 
+	if (ev->ev_flags & queue) {  //如果queue是event设置的flag中的一种，相当于重复添加了
+		/* Double insertion is possible for active events */
+		if (queue & EVLIST_ACTIVE)  //仅允许多次激活一个event
+			return;
+ 
+		event_errx(1, "%s: %p(fd "EV_SOCK_FMT") already on queue %x", __func__,
+		    ev, EV_SOCK_ARG(ev->ev_fd), queue);
+		return;
+	}
+ 
+	if (~ev->ev_flags & EVLIST_INTERNAL) //如果flags中没有设置EVLIST_INTERNAL
+		base->event_count++;   //base中的普通event计数+1
+ 
+	ev->ev_flags |= queue;   //将queue作为event的状态flags
+	switch (queue) {
+	case EVLIST_INSERTED:   //如果是希望添加事件
+		TAILQ_INSERT_TAIL(&base->eventqueue, ev, ev_next);  //将事件插入到已添加事件队列eventqueue末尾
+		break;
+	case EVLIST_ACTIVE:   //如果是激活事件
+		base->event_count_active++;  //已激活事件数+1
+		TAILQ_INSERT_TAIL(&base->activequeues[ev->ev_pri],
+		    ev,ev_active_next);   //按照事件的优先级将事件插入到已激活事件队列activequeues中
+		break;
+	case EVLIST_TIMEOUT: {   //如果是设置超时事件
+		if (is_common_timeout(&ev->ev_timeout, base)) {
+			struct common_timeout_list *ctl =
+			    get_common_timeout_list(base, &ev->ev_timeout);
+			insert_common_timeout_inorder(ctl, ev);
+		} else
+			min_heap_push(&base->timeheap, ev);
+		break;
+	}
+	default:
+		event_errx(1, "%s: unknown queue %x", __func__, queue);
+	}
+}
+
+通过event_queue_insert函数可以将event插入到event_base的相应集合中，至于具体插入到哪一个集合中，则是由该函数的第3个参数queue决定的
+event_queue_insert函数并不对用户开放
+
+如果queue设置的是EVLIST_INSERTED，那么就会把event插入到event_base中的eventqueue的尾部，这个eventqueue也就是已添加队列
+如果queue设置的是EVLIST_ACTIVE，那么就会把event插入到event_base中的activequeues[ev->evpri]的尾部，这里的ev->evpri是event的优先级，根据event的优先级将其插入到相应的激活事件队列中
+如果queue设置的是EVLIST_TIMEOUT，那么就会把event添加到定时器堆或公用超时事件队列中
+
+==============================设置event的优先级
+当把event添加到激活队列中时，是通过优先级对应的激活队列索引来进行event插入的
+event_base的激活队列activequeues实际上是一个数组，数组中每一个元素都是一个event的双向链表，event的优先级就对应了该数组中的索引，event也就属于该索引下的那一个event双向链表。
+回到前面event_assign函数的最后，会设置event的默认优先级为nactivequeues / 2，这里的nactivequeues就是event_base中activequeues数组的元素个数，也就是说，每个event的默认优先级是在中间
+
+int
+event_priority_set(struct event *ev, int pri)//设置事件优先级
+{
+	_event_debug_assert_is_setup(ev);
+ 
+	if (ev->ev_flags & EVLIST_ACTIVE)  //如果事件已经在激活队列则无法设置
+		return (-1);
+	if (pri < 0 || pri >= ev->ev_base->nactivequeues)  //传入的pri不合理
+		return (-1);
+ 
+	ev->ev_pri = pri;   //设置event的优先级
+ 
+	return (0);
+}
+
+==============================激活一个event
+event的自动激活方式是在事件主循环中激活
+激活一个event，实际上就是将这个event添加到激活队列中去等待被处理
+libevent提供给用户一个手动激活event的接口函数event_active
+
+void
+event_active(struct event *ev, int res, short ncalls)
+{
+	if (EVUTIL_FAILURE_CHECK(!ev->ev_base)) {
+		event_warnx("%s: event has no event_base set.", __func__);
+		return;
+	}
+ 
+	EVBASE_ACQUIRE_LOCK(ev->ev_base, th_base_lock);
+ 
+	_event_debug_assert_is_setup(ev);
+ 
+	event_active_nolock(ev, res, ncalls);
+ 
+	EVBASE_RELEASE_LOCK(ev->ev_base, th_base_lock);
+}
+ 
+void
+event_active_nolock(struct event *ev, int res, short ncalls)//res是event激活的类型，根据res设置event的激活类型，并将event插入到激活队列中
+{
+	struct event_base *base;
+ 
+ 
+	/* We get different kinds of events, add them together */
+	if (ev->ev_flags & EVLIST_ACTIVE) {   //如果event本身就位于激活队列中
+		ev->ev_res |= res;  //事件激活的类型
+		return;
+	}
+ 
+	base = ev->ev_base;
+ 
+	EVENT_BASE_ASSERT_LOCKED(base);   //确保持有锁
+ 
+	ev->ev_res = res;  //记录event的激活类型
+ 
+	if (ev->ev_pri < base->event_running_priority)  //如果当前event的优先级高于正在执行的event的优先级
+		base->event_continue = 1;
+ 
+	if (ev->ev_events & EV_SIGNAL) {  
+#ifndef _EVENT_DISABLE_THREAD_SUPPORT
+		if (base->current_event == ev && !EVBASE_IN_THREAD(base)) {
+			++base->current_event_waiters;
+			EVTHREAD_COND_WAIT(base->current_event_cond, base->th_base_lock);
+		}
+#endif
+		ev->ev_ncalls = ncalls;
+		ev->ev_pncalls = NULL;
+	}
+ 
+	event_queue_insert(base, ev, EVLIST_ACTIVE); //将event插入到激活队列中
+}
+
+event_active共有3个参数，第一个参数是需要激活的event，第二个参数指明激活的类型，第三个参数当且仅当激活signal事件有用，指定激活该signal事件时调用回调函数的次数
+对于激活的event，其激活的事件类型保存在ev_res成员中
+通过手动激活可以使得event的激活类型并不一定就是event感兴趣的事件类型，比如说设置event感兴趣事件类型是EV_READ，那么完全可以通过EV_WRITE来激活这个event，然后将激活的event插入到激活队列中。
+
+
+==============================删除一个event
+删除一个event是通过event_del函数实现的，和event_add类似，event_del函数内部调用event_del_internal函数实现
+int
+event_del(struct event *ev)
+{
+	......
+	res = event_del_internal(ev);
+    ......
+}
+ 
+static inline int
+event_del_internal(struct event *ev)
+{
+	......
+	if (ev->ev_flags & EVLIST_TIMEOUT) { //如果事件在超时队列中
+ 
+		event_queue_remove(base, ev, EVLIST_TIMEOUT);//从定时器堆中删除
+	}
+ 
+	if (ev->ev_flags & EVLIST_ACTIVE)   //如果事件已激活
+		event_queue_remove(base, ev, EVLIST_ACTIVE);//从激活队列中删除
+ 
+	if (ev->ev_flags & EVLIST_INSERTED) {  //如果事件已添加
+		event_queue_remove(base, ev, EVLIST_INSERTED);//从已添加队列中删除
+		if (ev->ev_events & (EV_READ|EV_WRITE))//对于读写事件，从event_io_map中删除
+			res = evmap_io_del(base, ev->ev_fd, ev);
+		else//对于信号事件，从event_signal_map中删除
+			res = evmap_signal_del(base, (int)ev->ev_fd, ev);
+	}
+    ......
+}
+
+event的删除实际上是将event从event_base上相应的event集合中删除
+
+static void
+event_queue_remove(struct event_base *base, struct event *ev, int queue)
+{
+	......
+	if (~ev->ev_flags & EVLIST_INTERNAL)
+		base->event_count--;   //base上的event减1
+ 
+	ev->ev_flags &= ~queue;
+	switch (queue) {
+	case EVLIST_INSERTED:
+		TAILQ_REMOVE(&base->eventqueue, ev, ev_next);
+		break;
+	case EVLIST_ACTIVE:
+		base->event_count_active--;
+		TAILQ_REMOVE(&base->activequeues[ev->ev_pri],
+		    ev, ev_active_next);
+		break;
+	case EVLIST_TIMEOUT:
+		if (is_common_timeout(&ev->ev_timeout, base)) {
+			struct common_timeout_list *ctl =
+			    get_common_timeout_list(base, &ev->ev_timeout);
+			TAILQ_REMOVE(&ctl->events, ev,
+			    ev_timeout_pos.ev_next_with_common_timeout);
+		} else {
+			min_heap_erase(&base->timeheap, ev);
+		}
+		break;
+	default:
+		event_errx(1, "%s: unknown queue %x", __func__, queue);
+	}
+}
+
+event_queue_remove实际上执行的就是event_queue_insert的逆操作，将event从相应的超时队列（定时器或公用超时事件队列）、已添加事件队列或激活事件队列中删除。
+对于读写事件和信号事件，还会将其从相应的event_io_map或event_signal_map中删除。
+event_del函数其实就是event_add函数的逆操作，经过event_del后event还是存在的，不需要重新去创建一个event也可以直接再通过event_add来将event添加到event_base中。
+
+==============================获取指定event的状态
+通过event_initialized函数来确定event是否已经初始化
+int
+event_initialized(const struct event *ev)
+{
+	if (!(ev->ev_flags & EVLIST_INIT))
+		return 0;
+ 
+	return 1;
+}
+
+可以通过event_pending函数来获取指定的事件类型在event中的状态
+int
+event_pending(const struct event *ev, short event, struct timeval *tv)
+{
+	int flags = 0;
+ 
+	if (EVUTIL_FAILURE_CHECK(ev->ev_base == NULL)) {
+		event_warnx("%s: event has no event_base set.", __func__);
+		return 0;
+	}
+ 
+	EVBASE_ACQUIRE_LOCK(ev->ev_base, th_base_lock);
+	_event_debug_assert_is_setup(ev);
+	//对于因超时激活的事件，它只会存在于激活队列或者存在于添加队列和定时器堆中
+	if (ev->ev_flags & EVLIST_INSERTED)  //如果event在已添加事件队列
+		flags |= (ev->ev_events & (EV_READ|EV_WRITE|EV_SIGNAL));  //flags记录事件的监听事件类型
+	if (ev->ev_flags & EVLIST_ACTIVE)  //如果在已激活队列，则用flag记录下激活的原因
+		flags |= ev->ev_res;
+	if (ev->ev_flags & EVLIST_TIMEOUT)  //如果在超时队列中，则记录下EV_TIMEOUT
+		flags |= EV_TIMEOUT;
+ 
+	event &= (EV_TIMEOUT|EV_READ|EV_WRITE|EV_SIGNAL);  //确保event是这4种的组合
+ 
+	/* See if there is a timeout that we should report */
+	if (tv != NULL && (flags & event & EV_TIMEOUT)) {  //如果需要检查的事件类型有EV_TIMEOUT,那么就会把超时时间保存到tv中
+		struct timeval tmp = ev->ev_timeout;
+		tmp.tv_usec &= MICROSECONDS_MASK;  //取出低20位
+#if defined(_EVENT_HAVE_CLOCK_GETTIME) && defined(CLOCK_MONOTONIC)
+		/* correctly remamp to real time */
+		evutil_timeradd(&ev->ev_base->tv_clock_diff, &tmp, tv);
+#else
+		*tv = tmp;
+#endif
+	}
+ 
+	EVBASE_RELEASE_LOCK(ev->ev_base, th_base_lock);
+	
+	return (flags & event);  
+}
+通过event_pending函数，如果ev位于base中，就可以判断events是否为ev感兴趣的事件类型。如果该函数返回0，说明ev本身就不在base中，或者events不是ev感兴趣的事件类型
+event_pending函数的一个作用是可以判断一个event是否已经从event_base中删除了
+
+
+==============================纯超时event
+所谓纯超时event，也就是event不设置任何感兴趣事件，当且仅当event超时的时候才被激活
+纯超时的event相当于特殊的event，它也对应了一系列的创建、添加、删除等函数，都定义为的宏函数
+
+#define evtimer_assign(ev, b, cb, arg) \
+	event_assign((ev), (b), -1, 0, (cb), (arg))
+#define evtimer_new(b, cb, arg)	       event_new((b), -1, 0, (cb), (arg))
+#define evtimer_add(ev, tv)		event_add((ev), (tv))
+#define evtimer_del(ev)			event_del(ev)
+#define evtimer_pending(ev, tv)		event_pending((ev), EV_TIMEOUT, (tv))
+#define evtimer_initialized(ev)		event_initialized(ev)

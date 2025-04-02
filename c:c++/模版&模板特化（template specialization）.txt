@@ -1,0 +1,429 @@
+模板特化（template specialization）,它在 C++ 中常用于根据模板参数的不同提供不同的实现
+
+
+模板参数分为：类型形参 和 非类型形参
+类型形参：出现在模板参数列表中，跟在class或者typename之类的参数类型名称。
+非类型形参：就是用一个常量作为类（函数）模板的一个参数，在类（函数）模板中可将该参数当成常量来使用。
+
+==================================================类型形参（type parameter）
+1. 
+void PrintVector(const vector<int>& v)
+{
+	vector<int>::const_iterator it = v.begin();
+	while (it != v.end())
+	{
+		cout << *it << " ";
+		++it;
+	}
+	cout << endl;
+}
+
+
+/*
+在 template<class T> 这个模板定义中，vector<T> 是一个 依赖类型（dependent type），因为 T 是一个模板参数，具体类型在实例化时才确定。
+*/
+// 函数模板（function template）
+template<class T>
+void PrintVector(const vector<T>& v)
+{
+    /*
+    typename vector<T>::const_iterator 是 类型形参（type parameter）的写法
+    模板没实例化时，不去里面查细节的东西，无法确认是类型还是静态变量
+    当编译器解析 vector<T>::const_iterator 时，它无法知道 const_iterator 是一个 类型 还是一个 静态成员变量，
+    所以必须用 typename 显式告诉编译器
+    */
+	typename vector<T>::const_iterator it = v.begin();
+	while (it != v.end())
+	{
+		cout << *it << " ";
+		++it;
+	}
+	cout << endl;
+}
+ 
+int main()
+{
+	vector<int> v1 = { 1,2,3,4,5,6,7 };
+	vector<double> v2  { 1.1,2.2,3.3,4.4,5.5,6.6,7.7 };
+	PrintVector(v1);
+	PrintVector(v2);
+ 
+	return 0;
+}
+
+
+如果 vector<T> 不是一个模板依赖的类型，比如：
+std::vector<int>::const_iterator it;  // ✅ 不需要 typename
+
+decltype(v.begin()) it = v.begin();  // ✅ 不需要 typename
+
+在模板代码中，如果一个类型是 依赖类型（dependent type），需要加 typename 来显式声明它是 类型，否则编译器会报错。
+
+
+2. 类模板的成员类型
+template <typename T>
+class Container {
+public:
+    typedef T ValueType; // C++11 的类型别名
+
+    void Print(const ValueType& value) {
+        std::cout << value << std::endl;
+    }
+};
+
+ValueType 依赖 T，但因为 typedef 定义在类内部，所以外部可以用 Container<int>::ValueType 直接访问，而不需要 typename。
+
+int main() {
+    Container<int> c;
+    c.Print(42);
+    return 0;
+}
+
+
+template <typename T>
+class Container { // ✅ 这里不用再加 <T>
+public:
+    void Print(const T& value) {
+        std::cout << value << std::endl;
+    }
+};
+这样写也行，但上面的更好
+
+
+在类模板中使用 using ValueType = T; 这样的类型别名，相比直接使用 T，主要有以下几个好处:
+(1) 提高代码可读性
+(2) 兼容 typedef,在 C++98/03 中，使用 typedef 定义类型别名 typedef T ValueType;
+(3) 方便继承和特化
+template <typename T>
+class Base {
+public:
+    using ValueType = T; // 统一使用 ValueType
+};
+
+template <typename T>
+class Derived : public Base<T> {
+public:
+    using typename Base<T>::ValueType; // 继承 ValueType
+};
+如果 Base<T> 直接用 T 而没有 ValueType，则 Derived 需要显式指定 T，而 ValueType 让代码更清晰。
+(4) 适用于 std::enable_if 和 SFINAE
+使用 using 定义别名后，可以方便地进行SFINAE（Substitution Failure Is Not An Error） 以及 std::enable_if 判断。
+#include <iostream>
+#include <type_traits>
+
+template <typename T>
+class Container {
+public:
+    using ValueType = T;
+
+    template <typename U = T, typename std::enable_if<std::is_integral<U>::value, int>::type = 0>
+    void Print(const ValueType& value) {
+        std::cout << "Integral type: " << value << std::endl;
+    }
+
+    template <typename U = T, typename std::enable_if<std::is_floating_point<U>::value, int>::type = 0>
+    void Print(const ValueType& value) {
+        std::cout << "Floating-point type: " << value << std::endl;
+    }
+};
+
+int main() {
+    Container<int> c1;
+    c1.Print(42); // 输出 "Integral type: 42"
+
+    Container<double> c2;
+    c2.Print(3.14); // 输出 "Floating-point type: 3.14"
+
+    return 0;
+}
+这里用 std::enable_if 进行条件重载，区分整数类型和浮点数类型。
+
+(5) 便于 decltype 和 template<typename U = T> 推导
+
+
+3. 类模板内部访问类型别名
+template <typename T>
+class Wrapper {
+public:
+    using Type = T;  // 类型别名
+};
+
+template <typename T>
+void PrintType() {
+    typename Wrapper<T>::Type value;  // 依赖类型，需加 typename
+    std::cout << "Type size: " << sizeof(value) << std::endl;
+}
+Wrapper<T>::Type 是依赖 T 的类型，所以 PrintType 里要加 typename
+
+
+==================================================非类型参数
+N 是 size_t 类型的 模板非类型参数（non-type template parameter），它在模板实例化时就已经确定，不能在类成员函数中修改，因为它是一个编译期常量。
+template<class T, size_t N = 10>
+class Stack
+{
+public:
+    void func() { }
+private:
+    int _a[N];  // ✅ N 是模板参数，确定数组大小
+    int _top;
+};
+
+
+==================================================例子
+类型参数（Type Template Parameter）
+template <typename T>
+class MyClass {};
+这里 T 是一个类型参数，必须传入一个类型，比如 int 或 std::string。
+
+
+非类型参数（Non-Type Template Parameter, NTTP）
+template <int N>
+class MyClass {};
+这里 N 是一个非类型参数，必须传入一个编译期常量，比如 10 或 20。
+
+
+==================================================模板的特化
+//函数模板---参数匹配
+template<class T>
+bool Less(T left, T right)
+{
+	return left < right;
+}
+ 
+int main()
+{
+	cout << Less(1, 2) << endl;//可以比较，结果正确
+ 
+	Date d1(2022, 7, 7);
+	Date d2(2022, 7, 8);
+	cout << Less(d1, d2) << endl;//可以比较，结果正确
+ 
+	Date* p1 = &d1;
+	Date* p2 = &d2;
+	cout << Less(p1, p2) << endl;//可以比较，结果错误
+    //比较的是地址的大小，地址的大小并不是说先实例化的地址小，后实例化的地址大，地址的大小是随机的
+	return 0;
+}
+
+Less多数情况下都可以正常比较，但是在特殊场景下就得到错误的结果。
+上面的例子中，p1指向的d1的对象显然小于p2指向的对象，但是Less内部并没有比较p1和p2指向的对象内容，而比较的是p1和p2指针的地址， 这就无法达到预期而导致错误。
+
+此时，就需要对模板进行特化。即：在原模版类的基础上，针对特殊类型所进行特殊化的实现方式。模板特化中分为 函数模板特化 和 类模板特化 。 
+
+
+函数模板特化:
+必须要先有一个基础的函数模板
+关键字template后面接一对空的尖括号<>
+函数名后跟一对尖括号，尖括号中指定需要特化的类型
+函数形参表: 必须要和模板函数的基础参数类型完全相同，如果不同编译器可能会报一些奇 怪的错误。
+
+template<class T>
+bool Less(const T& left, const T& right)
+{
+	return left < right;
+}
+
+//函数模板特化
+template<>
+bool Less<Date*>(Date* const& left, Date* const& right)
+{
+	return *left < *right;
+}
+
+
+类模板特化:
+1. 全特化
+全特化即是 将模板参数列表中所有的参数都确定化。
+
+template<class T1,class T2>//原模版
+class Data
+{
+public:
+	Data()
+	{
+		cout << "Date<T1,T2>-原模版" << endl;
+	}
+private:
+	T1 _d1;
+	T2 _d2;
+};
+ 
+//特化：针对某些特殊类型，进行特殊化处理
+//全特化
+template<>
+class Data<int, char>
+{
+public:
+	Data()
+	{
+		cout << "Data<int,char>-全特化" << endl;
+	}
+};
+class Data<int, char>   所有的参数都是确定的。
+
+2. 偏特化
+偏特化：任何对模板参数进一步进行条件限制设计的特化版本。
+
+(1)部分特化：将模板参数表中的一部分参数特化。
+//偏特化/半特化
+template<class T1>
+class Data<T1, int>
+{
+public:
+	Data()
+	{
+		cout << "Data<T1,int>-偏特化" << endl;
+	}
+private:
+	T1 _d1;
+	int _d2;
+};
+
+(2)参数更进一步的限制：针对模板参数更进一步的条件限制所设计出来的一个特化版本。
+两个参数偏特化为指针类型：
+//对指针进行特化
+template<typename T1, typename T2>
+class Data<T1*, T2*>
+{                   
+public:
+	Data()
+	{
+		cout << "Data<T1*,T2*>-偏特化" << endl << endl;	
+	}
+};
+T1、T2 只要是指针的类型就用这个特化，无论是什么数据类型，但是实例化出来的 T1、T2 是原类型
+
+两个参数偏特化位引用类型：
+template<typename T1,typename T2>
+class Data<T1&, T2&>
+{
+public:
+	Data()
+	{
+		cout << typeid(T1).name() << endl;
+		cout << typeid(T2).name() << endl;
+		cout << "Data<T1&,T2&>-偏特化引用" << endl<<endl;
+	}
+};
+ 
+//Data<int&, int&> d6;
+
+一个参数偏特化为引用，一个偏特化为指针：
+//一个引用 一个指针
+template<typename T1, typename T2>
+class Data<T1&, T2*>
+{
+public:
+	Data()
+	{
+		cout << typeid(T1).name() << endl;
+		cout << typeid(T2).name() << endl;
+		cout << "Data<T1&,T2&>-偏特化引用" << endl;
+	}
+};
+ 
+//Data<int&, int*> d7;
+
+
+==================================================什么时候 ClassName<T> 形式是合法的？
+ClassName<T> 形式通常用于模板特化（Specialization），比如全特化或部分特化。
+
+1. 全特化
+// 通用模板
+template <typename T>
+class Container {
+public:
+    void Print(const T& value) {
+        std::cout << "General: " << value << std::endl;
+    }
+};
+
+// 针对 int 类型的特化
+template <>
+class Container<int> {  // ✅ 这里的 `Container<int>` 是全特化
+public:
+    void Print(const int& value) {
+        std::cout << "Specialized for int: " << value << std::endl;
+    }
+};
+
+int main() {
+    Container<double> c1;
+    c1.Print(3.14); // 输出 "General: 3.14"
+
+    Container<int> c2;
+    c2.Print(42); // 输出 "Specialized for int: 42"
+
+    return 0;
+}
+
+2. 部分特化
+// 主模板
+template <typename T, typename U>
+class Container {
+public:
+    void Print() {
+        std::cout << "General template" << std::endl;
+    }
+};
+
+// 部分特化，当 U = int 时
+template <typename T>
+class Container<T, int> { // ✅ 这里的 `Container<T, int>` 是部分特化
+public:
+    void Print() {
+        std::cout << "Partial specialization where U=int" << std::endl;
+    }
+};
+
+int main() {
+    Container<double, float> c1;
+    c1.Print();  // 输出 "General template"
+
+    Container<double, int> c2;
+    c2.Print();  // 输出 "Partial specialization where U=int"
+
+    return 0;
+}
+
+
+==================================================template<typename U = T>
+template<typename U = T> 是 C++ 模板默认参数的用法，允许 U 默认等于 T，但可以在实例化时覆盖。
+
+template <typename T, typename U = T>
+class Container {
+public:
+    void Print(const U& value) {
+        std::cout << value << std::endl;
+    }
+};
+
+int main() {
+    Container<int> c1;       // U 默认为 T，即 Container<int, int>
+    c1.Print(42);           // ✅ 正常输出 42
+
+    Container<int, double> c2; // U 被指定为 double
+    c2.Print(3.14);         // ✅ 正常输出 3.14
+
+    return 0;
+}
+
+
+==================================================初始化的多种形式
+int main()
+{
+	vector<int> v1 = { 1,2,3,4,5,6,7,8,9 };// 采用拷贝初始化（copy initialization）。{} 提供了一个 std::initializer_list<int>，然后 vector<int> 通过拷贝它来初始化对象。
+	vector<double> v2{ 1.1,2.2,3.,4.4 };// （推荐）采用列表初始化（list initialization，也称统一初始化）。它调用 std::vector<double> 的 initializer_list<double> 构造函数，直接初始化。
+ 
+	int i = 1;// 拷贝初始化。
+	int j = { 1 };// 拷贝列表初始化
+	int k{ 1 };// 采用直接列表初始化（direct list initialization），推荐这种方式，避免隐式类型转换。（推荐）
+	return 0;
+}
+
+但推荐尽量使用列表初始化（{}），因为它可以防止窄化转换（narrowing conversion）
+double d = 3.14;
+int x{ d };  // ❌ 编译错误，防止丢失精度
+int y = d;   // ✅ 可能导致隐式转换，可能会丢失精度
+
+这些用 {} 的是 C++11+ 开始支持 std::initializer_list

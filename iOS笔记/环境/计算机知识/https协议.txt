@@ -1,0 +1,273 @@
+HTTPS（HyperText Transfer Protocol Secure），超文本传输安全协议。常称为HTTP over TLS、HTTP over SSL、HTTP Secure。
+
+HTTPS的默认端口号是443（HTTP是80）
+
+在浏览器中输入http://www.baidu.com，会自动跳转到https://www.baidu.com，这个跳转指向不是浏览器自己决定的，是访问http://www.baidu.com后，所在服务器返回了重定向地址。
+
+如果不加协议头，浏览器默认域名使用HTTPS。
+
+HTTPS的成本：证书的费用、加解密的计算等、降低了访问速度。
+有些企业的做法是：包含敏感数据的请求才使用HTTPS，其他仍让使用HTTP
+
+
+HTTPS的通信过程，总的可以分为3大阶段：
+TCP的3次握手
+TLS的连接
+HTTP请求和响应
+
+SSL/TLS也可以用在其他协议上，比如FTP -> FTPS、SMTP -> SMTPS。
+
+###
+SSL/TLS是在应用层和传输层之间，因为SSL是为HTTP的数据包进行加密的，所在必须在数据包到达传输层前介入。
+###
+
+OpenSSL是SSL/TLS协议的开源实现
+
+常用命令：
+生成私钥：openssl genrsa -out 姓名.key
+生成公钥：openssl rsa -in 姓名.key -pubout -out 姓名.pem
+
+
+可以使用OpenSSL构建一套属于自己的CA，自己给自己颁发证书，称为“自签名证书”。
+1. 生成 CA（根证书）
+
+(1)生成 CA 的私钥
+openssl genrsa -out ca.key 4096
+(2)生成 CA 的自签名根证书
+openssl req -x509 -new -nodes -key ca.key -sha256 -days 3650 -out ca.crt
+-x509：生成自签名证书。
+-new：创建新的证书签名请求（CSR）。
+-nodes：不加密私钥（如果你希望私钥加密，请去掉）。
+-key ca.key：使用前面生成的私钥。
+-sha256：使用 SHA-256 哈希算法。
+-days 3650：证书有效期 10 年。
+-out ca.crt：生成根证书。
+运行后，它会提示你输入一些信息，比如国家、组织等。
+
+2. 生成服务器证书
+(1)生成服务器私钥
+openssl genrsa -out server.key 2048
+(2)生成服务器的证书签名请求（CSR）
+openssl req -new -key server.key -out server.csr
+运行后，你需要输入：
+Common Name（CN）：填入服务器的域名或 IP 地址，例如 example.com 或 192.168.1.1
+(3)用 CA 给服务器证书签名
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 365 -sha256
+-in server.csr：指定证书签名请求文件。
+-CA ca.crt -CAkey ca.key：用自己的 CA 给它签名。
+-CAcreateserial：创建 ca.srl，记录 CA 的序列号（避免重复）。
+-out server.crt：生成服务器证书。
+-days 365：有效期 1 年。
+
+3. 测试证书
+如果是 HTTPS 服务器，可以用 openssl s_server 进行测试：
+openssl s_server -cert server.crt -key server.key -WWW
+然后在浏览器访问 https://localhost:4433/，可能会看到不受信任的提示（因为 CA 不是公认的）。
+如果是客户端测试，可以使用：
+openssl s_client -connect localhost:4433 -CAfile ca.crt
+
+4. 安装 CA 证书（可选）
+如果你希望你的 CA 证书被系统信任：
+macOS：将 ca.crt 拖入 钥匙串访问（Keychain Access），设置为“始终信任”。
+
+
+ca.crt 是 CA 的根证书（通常是 X.509 格式），它包含 CA 的公钥，以及一些其他信息，例如，ca.crt 主要内容是：
+CA 的公钥（Public Key）
+由 ca.key 生成，后续用于验证由 CA 签发的证书。
+
+证书持有者信息（Subject）
+CA 的组织名称、国家、电子邮件等。
+
+证书颁发者信息（Issuer）
+由于是自签名证书，这里和 Subject 一致。
+
+证书的有效期
+证书的起始时间、过期时间。
+
+证书的签名
+由 CA 私钥（ca.key）计算并附加，用于验证证书的完整性。
+
+
+你可以用 openssl 查看 ca.crt 里面的具体信息:
+openssl x509 -in ca.crt -noout -text
+Certificate:
+    Data:
+        Version: 3 (0x2)
+        Serial Number: 12345678 (0xabcdef)
+        Signature Algorithm: sha256WithRSAEncryption
+        Issuer: C=CN, O=My CA, CN=My Root CA
+        Validity
+            Not Before: Mar 31 12:00:00 2025 GMT
+            Not After : Mar 31 12:00:00 2035 GMT
+        Subject: C=CN, O=My CA, CN=My Root CA
+        Subject Public Key Info:
+            Public Key Algorithm: rsaEncryption
+                Public-Key: (4096 bit)
+
+你会看到 Issuer 和 Subject 是一样的（因为 CA 证书是自签名的），并且 Public Key 里面就是 CA 的公钥。
+证书的签发机构（Issuer）
+
+
+CA 证书的作用:
+客户端/服务器可以使用 ca.crt 验证由 CA 签发的其他证书（如 server.crt）。
+不能用于解密！ 因为它只包含公钥，而解密需要私钥（ca.key）。
+可以用于信任链，如果你把 ca.crt 添加到系统的信任列表，那么任何由它签发的证书都会被认为是可信的。
+
+客户端如何信任服务器证书？
+如果服务器证书是由知名 CA（如 Let's Encrypt、DigiCert）签发，浏览器会自动信任，绿色锁🔒 显示“安全”。
+如果服务器证书是由自建 CA 签发：
+需要手动安装 ca.crt 到客户端的受信任证书列表，否则会报 "证书不受信任" 错误。
+
+
+
+TLS 连接:
+第一步：Client Hello // Handshake Protocol
+TLS的版本号 -　支持的加密组件列表（Cipher Suite） -　加密组件是指所使用的加密算法及密钥长度等 -　一个随机数（Client Random）
+
+random 是生成 Pre-Master Secret 和最终的 Session Key 的一个组成部分。TLS 握手中，会话密钥是由客户端和服务器共同生成的，确保了后续数据传输的加密安全。
+客户端的 random 与服务器的 random（在 Server Hello 中）一起，参与了 Pre-Master Secret 的生成。
+这两个随机数（客户端和服务器的 random）与服务器的证书等信息一同用于推导出会话密钥（Session Key）。
+
+第二步：Server Hello
+TLS的版本号 -　选择的加密组件 -　是从接收到的客户端加密组件列表中挑选出来的 -　一个随机数（Server Random）
+
+第三步：Certificate
+服务器的公钥证书（被CA签名过的）
+
+第四步：Server Key Exchange
+用以实现ECDHE算法的其中一个参数（Server Params） -　ECDHE是一种密钥交换算法 -　#####为了防止伪造，Server Params经过了服务器私钥签名#####
+
+服务端的临时公钥（Ephemeral Public Key）：
+临时公钥是由服务端的私钥和基点 G 计算出来的公钥。这个公钥会在每次新的握手中生成，并且是临时的（即，"Ephemeral"）。
+服务端会使用自己的私钥（d_s）与椭圆曲线的基点 G 计算出一个临时的公钥（Q_s = d_s * G）。这个临时公钥会发送给客户端，客户端用来计算共享密钥。
+
+如果服务器用的是 RSA 进行密钥交换，则不需要这个步骤
+因为 RSA 可以直接用服务器证书的公钥进行密钥加密，不需要额外的密钥交换。
+
+第五步：Server Hello Done
+告知客户端：协商部分结束
+到第五步为止，客户端和服务器之间都是通过明文共享了：Client Random、Server Random、Server Params。
+而且客户端也拿到了服务器的公钥证书，接下来客户端会验证证书的真实有效性。
+
+第六步：Client Key Exchange
+用以实现ECDHE算法的另一个参数（Client Params）
+到目前为止，客户端和服务器都拥有了ECDHE算法需要的2个参数：Server Params、Client Params。
+此时客户端和服务器都可以使用ECDHE算法，根据Server Params、Client Params计算出一个新的随机密钥串（Pre-master secret）。
+然后结合Client Random、Server Random、Pre-master secret生成一个主密钥，最后利用主密钥衍生出其他密钥：客户端发送用的会话密钥、服务器发送用的会话密钥等。
+
+Client Key Exchange 详细解析
+1. RSA 密钥交换（TLS_RSA）
+如果服务器使用 RSA 密钥交换：
+客户端生成Pre-Master Secret（随机密钥，用于后续密钥推导）。
+用 服务器公钥（server.crt） 加密 Pre-Master Secret。
+发送加密后的 Pre-Master Secret 给服务器。
+服务器收到后：
+用自己的 私钥解密，得到 Pre-Master Secret。
+然后双方用 Pre-Master Secret 计算 会话密钥（Session Key），用于加密通信。
+
+Handshake Protocol: Client Key Exchange
+    Encrypted PreMaster Secret: <加密数据>
+
+RSA 密钥交换的缺点：
+
+如果服务器私钥泄露，历史通信内容可能被解密
+TLS 1.3 已经移除 RSA 密钥交换，建议使用 ECDHE。
+
+2. ECDHE 密钥交换（TLS_ECDHE）
+如果服务器使用 ECDHE（椭圆曲线 Diffie-Hellman Ephemeral）：
+(1)服务器在 Server Key Exchange 阶段，发送 ECDH 公钥。
+(2)客户端：
+生成自己的 ECDH 公钥。
+计算共享密钥（通过 Diffie-Hellman 计算）。
+发送自己的 ECDH 公钥 给服务器。
+(3)服务器计算相同的共享密钥，双方生成 会话密钥（Session Key）。
+
+Handshake Protocol: Client Key Exchange
+    Key Exchange Algorithm: ECDHE
+    Public Key: <客户端 ECDH 公钥>
+
+ECDHE 的优势：
+支持前向安全性（PFS），即使服务器私钥泄露，也不会影响过去的会话。
+TLS 1.3 默认使用 ECDHE，不支持 RSA 密钥交换。
+ECDHE（Elliptic Curve Diffie-Hellman Ephemeral） 是一种密钥交换算法，用于在通信双方之间安全地生成共享密钥，而不会直接传输密钥本身。
+ECDHE 的全称
+ECDH：Elliptic Curve Diffie-Hellman（椭圆曲线 Diffie-Hellman）
+E：Ephemeral（临时的，表示每次会话都会生成新的密钥）
+ECDHE 是 ECDH 的增强版，它使用临时密钥对，确保前向安全性（Perfect Forward Secrecy, PFS）。
+
+ECDHE 的密钥交换过程:
+假设 客户端 和 服务器 需要建立安全连接：
+(1)服务器生成一个 ECDH 私钥（d_s）和公钥（Q_s = d_s * G）
+(2)客户端生成一个 ECDH 私钥（d_c）和公钥（Q_c = d_c * G）
+(3)交换公钥 Q_s 和 Q_c
+(4)双方计算共享密钥：
+服务器计算：K = d_s * Q_c = d_s * (d_c * G) = d_c * d_s * G
+客户端计算：K = d_c * Q_s = d_c * (d_s * G) = d_c * d_s * G
+G 是椭圆曲线的基点（base point）。它是一个固定的预定义点，通常由椭圆曲线标准定义，并且在所有使用该曲线的通信中保持一致。
+
+关键点：
+私钥（d_s, d_c）不会被传输，只交换公钥 Q_s 和 Q_c。
+计算共享密钥 K 需要私钥，即使攻击者截获公钥 Q_s 和 Q_c，也无法计算出 K，因为椭圆曲线离散对数问题（ECDLP）极难破解。
+由于椭圆曲线上的点乘具有交换性，所以最终双方得到相同的共享密钥 K，但攻击者无法直接计算 K。
+
+Cipher Suite: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+其中：
+TLS_ECDHE_RSA：使用 ECDHE 进行密钥交换，RSA 进行身份验证。// TLS_ECDHE_RSA 是一种加密协议组合，涉及两个不同的算法：ECDHE 和 RSA。
+在 TLS_ECDHE_RSA 中，RSA 用于服务端身份验证。通常，服务器会使用 RSA 私钥对某些数据进行签名，客户端使用服务器的 RSA 公钥 来验证签名，从而确认服务器的身份。
+私钥 是用来进行 签名 的，而 公钥 则用于 验证签名。这是 非对称加密 系统（如 RSA）的基本原理。
+RSA加密 通常使用 公钥加密。私钥用于解密。
+AES_128_GCM：对称加密算法。
+SHA256：消息认证码（MAC）。// （Message Authentication Code）。它是一种用于验证消息完整性和身份认证的加密技术。
+
+
+常见的 TLS 密钥交换算法:
+RSA 密钥交换（TLS_RSA）
+不支持 PFS，TLS 1.3 已移除。
+
+DHE（Diffie-Hellman Ephemeral）
+比 RSA 更安全，但计算开销大。
+
+ECDHE（椭圆曲线 Diffie-Hellman Ephemeral）
+当前最常用，默认支持 PFS，TLS 1.3 主要使用 ECDHE。
+
+
+
+第七步：Change Cipher Spec // 更改密码规范, 只有Change Cipher Spec是 Change Cipher Spec Protocol，而不是 Handshake Protocol
+告知服务器：之后的通信会采用计算出来的客户端会话密钥进行加密。
+
+
+第八步：Finished 包含连接至今全部报文的整体校验值（摘要），加密之后（用会话密钥进行加密）发送给服务器。这次握手协商是否成功，要以服务器是否能够正确解密该报文作为判定标准
+
+
+第九步：Change Cipher Spec 服务器通知客户端，可以进行加密通信（服务器使用服务器会话密钥）。
+
+
+第十步：Finished 告知客户端：服务器收到的报文加密后的校验值。
+
+到此为止，客户端服务器都验证加密解密没问题，握手正式结束。
+
+开始加密传输 // Application Data Protocol: http-over-tls
+
+
+会话密钥的生成：
+会话密钥通常在 TLS 握手过程中由客户端和服务器共同生成。
+非对称加密（例如 RSA 或 ECDHE）用于密钥交换，确保双方能够安全地共享一个会话密钥，但会话密钥本身是对称的。
+
+
+会话密钥在 TLS/SSL 中的使用
+握手阶段（非对称加密）：
+在 TLS 握手过程中，客户端和服务器使用非对称加密（如 RSA、ECDHE 等）交换信息。
+这些信息（例如 Pre-Master Secret）与客户端和服务器生成的 random 值一起，经过 密钥派生函数（如 TLS PRF）计算出会话密钥。
+
+数据传输阶段（对称加密）：
+一旦会话密钥确定，后续的所有通信数据都使用 对称加密算法（如 AES、ChaCha20）加密。
+对称加密的效率比非对称加密更高，因此大多数 TLS/SSL 通信都依赖于会话密钥进行加密和解密。
+
+
+操作	使用密钥	功能	作用
+加密	公钥	加密数据	任何人都可以用公钥加密数据，但只有私钥持有者能解密
+解密	私钥	解密数据	只有私钥持有者能解密由公钥加密的数据
+签名	私钥	对数据签名	私钥持有者对数据进行签名，证明数据来源
+验证签名	公钥	验证签名的有效性	任何人都可以用公钥验证数据是否由私钥持有者签名
+
+ECDHE（椭圆曲线 Diffie-Hman Ephemeral）算法的确在 客户端 和 服务器端 之间进行密钥交换时，使用各自生成的 私钥 和 公钥，并将 公钥 传递给对方，以便双方能够共同生成一个 共享密钥。这个共享密钥会用于加密后续的通信。

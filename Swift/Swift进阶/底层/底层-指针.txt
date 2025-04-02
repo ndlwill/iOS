@@ -1,0 +1,383 @@
+swift中的指针分为两类:
+typed pointer 指定数据类型指针，即 UnsafePointer<T>,其中T表示泛型
+raw pointer 未指定数据类型的指针（原生指针） ，即UnsafeRawPointer
+
+Swift	OC	说明
+unsafePointer<T>	const T *	指针及所指向的内容都不可变
+unsafeMutablePointer	T *	指针及其所指向的内存内容均可变
+unsafeRawPointer	const void *	指针指向未知类型
+unsafeMutableRawPointer	void *	指针指向未知类型
+
+withMemoryRebound: 临时更改内存绑定类型
+
+bindMemory(to: Capacity:): 更改内存绑定的类型，如果之前没有绑定，那么就是首次绑定，如果绑定过了，会被重新绑定为该类型
+
+assumingMemoryBound假定内存绑定，这里就是告诉编译器：我的类型就是这个，你不要检查我了,其实际类型还是原来的类型
+
+==================================================原生指针
+对于指针的内存管理是需要手动管理的
+指针在使用完需要手动释放
+
+
+//原生指针
+//对于指针的内存管理是需要手动管理的
+//定义一个未知类型的指针：本质是分配32字节大小的空间，指定对齐方式是8字节对齐
+let p = UnsafeMutableRawPointer.allocate(byteCount: 32, alignment: 8)
+
+//存储
+for i in 0..<4 {
+    p.storeBytes(of: i + 1, as: Int.self)
+}
+//读取
+for i in 0..<4 {
+    //p是当前内存的首地址，通过内存平移来获取值
+    let value = p.load(fromByteOffset: i * 8, as: Int.self)
+    print("index: \(i), value: \(value)")
+}
+
+//使用完成需要dealloc，即需要手动释放
+p.deallocate()
+
+通过运行发现，在读取数据时有问题，原因是因为读取时指定了每次读取的大小，但是存储是直接在8字节的p中存储了i+1，即可以理解为并没有指定存储时的内存大小
+修改：通过advanced(by:)指定存储时的步长
+//存储
+for i in 0..<4 {
+    //指定当前移动的步数，即i * 8
+    p.advanced(by: i * 8).storeBytes(of: i + 1, as: Int.self)
+}
+
+
+==================================================type pointer
+我们获取基本数据类型的地址是通过withUnsafePointer(to:)方法获取的
+
+@inlinable public func withUnsafePointer<T, Result>(to value: inout T, _ body: (UnsafePointer<T>) throws -> Result) rethrows -> Result
+
+//其中p1的类型是 UnsafePointer<Int>
+var age = 10
+let p1 = withUnsafePointer(to: &age) { ptr in
+    return ptr
+}
+
+
+可以通过指针的pointee属性访问变量值:
+var age = 10
+let p = withUnsafePointer(to: &age) { $0 }
+print(p.pointee)// 10
+
+
+如何改变age变量值？
+改变变量值的方式有两种，一种是间接修改，一种是直接修改
+
+间接修改：需要在闭包中直接通过ptr.pointee修改并返回。类似于char *p = “CJL” 中的 *p，因为访问CJL通过 *p
+var age = 10
+age = withUnsafePointer(to: &age) { ptr in
+    //返回Int整型值
+    return ptr.pointee + 12
+}
+print(age)
+
+直接修改-方式1：也可以通过withUnsafeMutablePointer方法
+var age = 10
+withUnsafeMutablePointer(to: &age) { ptr in
+    ptr.pointee += 12
+}
+
+直接修改方式2：通过allocate创建UnsafeMutablePointer，需要注意的是
+initialize 与 deinitialize是成对的
+deinitialize中的count与申请时的capacity需要一致
+需要deallocate
+
+var age = 10
+//分配容量大小，为8字节
+let ptr = UnsafeMutablePointer<Int>.allocate(capacity: 1)
+//初始化
+ptr.initialize(to: age)
+ptr.deinitialize(count: 1)
+
+ptr.pointee += 12
+print(ptr.pointee)
+
+//释放
+ptr.deallocate()
+
+
+==================================================访问结构体实例对象
+struct CJLTeacher {
+    var age = 10
+    var height = 1.85
+}
+var t = CJLTeacher()
+
+使用UnsafeMutablePointer创建指针，并通过指针访问CJLTeacher实例对象，有以下三种方式：
+方式一：下标访问
+方式二：内存平移
+方式三：successor
+
+
+//分配两个CJLTeacher大小的空间
+let ptr = UnsafeMutablePointer<CJLTeacher>.allocate(capacity: 2)
+//初始化第一个空间
+ptr.initialize(to: CJLTeacher())
+//移动，初始化第2个空间
+ptr.successor().initialize(to: CJLTeacher(age: 20, height: 1.75))
+
+//访问方式一
+print(ptr[0])
+print(ptr[1])
+
+//访问方式二
+print(ptr.pointee)
+print((ptr+1).pointee)
+
+//访问方式三
+print(ptr.pointee)
+//successor 往前移动
+print(ptr.successor().pointee)
+
+//必须和分配是一致的
+ptr.deinitialize(count: 2)
+//释放
+ptr.deallocate()
+
+
+###
+需要注意的是，第二个空间的初始化不能通过advanced(by: MemoryLayout<CJLTeacher>.stride)去访问
+###
+
+可以通过ptr + 1或者successor() 或者advanced(by: 1)
+
+(ptr + 1).initialize(to: CJLTeacher(age: 20, height: 1.75))
+
+ptr.successor().initialize(to: CJLTeacher(age: 20, height: 1.75))
+
+ptr.advanced(by: 1).initialize(to:  CJLTeacher(age: 20, height: 1.75))
+
+
+
+对比:
+这里p使用advanced(by: i * 8)，是因为此时并不知道 p 的具体类型，必须指定每次移动的步长
+
+let p = UnsafeMutableRawPointer.allocate(byteCount: 32, alignment: 8)
+//存储
+for i in 0..<4 {
+    //指定当前移动的步数，即i * 8
+    p.advanced(by: i * 8).storeBytes(of: i + 1, as: Int.self)
+}
+
+
+==================================================实例对象绑定到struct内存
+struct HeapObject {
+    var kind: Int
+    var strongRef: UInt32
+    var unownedRef: UInt32
+}
+
+class CJLTeacher{
+    var age = 18
+}
+
+var t = CJLTeacher()
+po t // <CJLTeacher: 0x60000020ccc0>
+let stackPointer = withUnsafePointer(to: t) { $0 }// 指向的是 t 变量在栈上的存储地址
+po stackPointer
+0x000000016f383800
+x/2g 0x000000016f9cb800
+0x16f383800: 0x000060000020ccc0 0x000000016f383800// 0x000060000020ccc0 就是t的堆地址
+
+let stackPointer1 = withUnsafePointer(to: &t) { $0 }
+po stackPointer1
+0x000000016f383810
+0x16f383810: 0x000060000020ccc0 0x000000010260b1a0
+
+po Unmanaged.passUnretained(t as AnyObject).toOpaque() // 0x000060000020ccc0
+
+针对引用类型：
+withUnsafePointer(to: t) { ptr in // t 作为值传递，Swift 会创建一个临时的不可变拷贝。它不会返回 t 变量本身的地址，只是一个临时拷贝的地址。
+    print("withUnsafePointer(to: t) 地址:", ptr)
+    print("withUnsafePointer(to: t) 存储的值（堆地址）:", ptr.pointee)
+
+###
+class 类型是引用类型，实例分配在堆上。
+但是，class 类型的变量（比如 t）本身存储在栈上，它的值是指向堆上实例的指针。
+即使 t 变量被复制，复制的只是指向堆对象的指针，而不是堆对象本身。
+
+withUnsafePointer(to: t) 会创建 t 变量的临时拷贝
+ptr 指向这个拷贝的地址（位于栈上）
+###
+}
+withUnsafePointer(to: &t) { ptr in // &t 取的是 t 变量的真实地址，而不是一个拷贝,它不会创建临时拷贝，直接指向 t 本身。
+    print("withUnsafePointer(to: &t) 地址:", ptr)
+    print("withUnsafePointer(to: &t) 存储的值（堆地址）:", ptr.pointee)
+}
+
+代码	传递的是什么？	ptr 指向的地址	ptr.pointee 值
+withUnsafePointer(to: t)	拷贝 t 变量	t 变量的拷贝（栈上的新地址）	CJLTeacher 的堆地址
+withUnsafePointer(to: &t)	t 变量的真实地址	t 变量的实际地址（栈上）	CJLTeacher 的堆地址
+
+在 Swift 中，class 是引用类型，这意味着 t 并不直接存储 CJLTeacher 实例的内容，而是存储了一个指向堆上 CJLTeacher 实例的指针。
+ptr.pointee 访问的都是 t 变量存储的值，而 t 存储的值就是 CJLTeacher 实例的地址（堆地址）。
+
+使用 po（仅打印对象地址，不显示栈地址）
+frame variable -L t 直接打印的是 t 变量的值。而 t 是一个 class 实例的引用（存储的是 堆对象的地址）
+
+
+（1）类的实例对象如何绑定到 结构体内存中？
+1、获取实例变量的内存地址
+2、绑定到结构体内存,返回值是UnsafeMutablePointer<T>
+3、访问成员变量 pointee.kind
+
+
+//将t绑定到结构体内存中
+//1、获取实例变量的内存地址，声明成了非托管对象
+/*
+ 通过Unmanaged指定内存管理，类似于OC与CF的交互方式（所有权的转换 __bridge）
+ - passUnretained 不增加引用计数，即不需要获取所有权
+ - passRetained 增加引用计数，即需要获取所有权
+ - toOpaque 不透明的指针
+ */
+// toOpaque()：将 Unmanaged<CJLTeacher> 转换为 UnsafeRawPointer，即真正的内存地址
+let ptr = Unmanaged.passUnretained(t as AnyObject).toOpaque()
+//2、绑定到结构体内存,返回值是UnsafeMutablePointer<T>
+/*
+ - bindMemory 更改当前 UnsafeMutableRawPointer 的指针类型，绑定到具体的类型值
+    - 如果没有绑定，则绑定
+    - 如果已经绑定，则重定向到 HeapObject类型上
+ */
+let heapObject = ptr.bindMemory(to: HeapObject.self, capacity: 1)
+//3、访问成员变量
+print(heapObject.pointee.kind)
+print(heapObject.pointee.strongRef)
+print(heapObject.pointee.unownedRef)
+
+
+Unmanaged 提供了一种方式来获取 class 实例的原始指针
+
+create\copy 需要使用retain
+不需要获取所有权 使用unretain
+###
+将kind的类型改成UnsafeRawPointer，kind的输出就是地址了
+###
+
+
+（2）绑定到类结构
+将swift中的类结构定义成一个结构体
+
+struct cjl_swift_class {
+    var kind: UnsafeRawPointer
+    var superClass: UnsafeRawPointer
+    var cachedata1: UnsafeRawPointer
+    var cachedata2: UnsafeRawPointer
+    var data: UnsafeRawPointer
+    var flags: UInt32
+    var instanceAddressOffset: UInt32
+    var instanceSize: UInt32
+    var flinstanceAlignMask: UInt16
+    var reserved: UInt16
+    var classSize: UInt32
+    var classAddressOffset: UInt32
+    var description: UnsafeRawPointer
+}
+将t改成绑定到cjl_swift_class
+
+
+let ptr = Unmanaged.passUnretained(t as AnyObject).toOpaque()
+
+let heapObject = ptr.bindMemory(to: HeapObject.self, capacity: 1)
+
+print(heapObject.pointee)
+
+let metaPtr = heapObject.pointee.kind.bindMemory(to: cjl_swift_class.self, capacity: 1)
+
+print(metaPtr.pointee)
+
+
+==================================================元组指针类型转换
+如果将元组传给 函数testPointer
+
+var tul = (10, 20)
+
+//UnsafePointer<T>
+func testPointer(_ p : UnsafePointer<Int>){
+    print(p)
+}
+
+withUnsafePointer(to: &tul) { (tulPtr: UnsafePointer<(Int, Int)>) in
+    //不能使用bindMemory，因为已经绑定到具体的内存中了 // 表示 tul 的内存已经被 Swift 绑定为 (Int, Int) 类型。
+    /*
+    UnsafeRawPointer(tulPtr).bindMemory(to: Int.self, capacity: 2)
+    这相当于 重新绑定内存，但 Swift 运行时会检查并报错⚠️（因为你不能重新绑定已绑定的内存）。
+    */
+    // 使用assumingMemoryBound，假定内存绑定，目的是告诉编译器ptr已经绑定过Int类型了，不需要再检查memory绑定
+    // 这样不会修改已有的内存绑定，而是 假设 这块内存已经正确绑定到 Int 类型，并让 Swift 跳过运行时检查。
+    testPointer(UnsafeRawPointer(tulPtr).assumingMemoryBound(to: Int.self))
+}
+
+或者告诉编译器转换成具体的类型
+func testPointer(_ p: UnsafeRawPointer){
+    p.assumingMemoryBound(to: Int.self)
+}
+
+
+bindMemory(to:) 用于原始内存（UnsafeRawPointer）的 类型绑定。
+只能用于未绑定的原始内存，用于更改或初始化类型绑定。
+
+assumingMemoryBound(to:)用于已绑定内存的类型转换。
+不会改变原始内存的类型绑定，只是告诉编译器假定内存已经绑定为某个类型。
+用于绕过类型检查，避免 Swift 运行时安全检查的开销。
+
+
+也可以使用 withMemoryRebound(to:capacity:) 来代替 UnsafeRawPointer(tulPtr).assumingMemoryBound(to: Int.self)
+var tul = (10, 20)
+
+func testPointer(_ ptr : UnsafePointer<Int>) {
+    print(ptr.pointee)
+    print(ptr.successor().pointee)
+}
+
+withUnsafePointer(to: &tul) { (tulPtr: UnsafePointer<(Int, Int)>) in
+    tulPtr.withMemoryRebound(to: Int.self, capacity: 2) { intPtr in
+        testPointer(intPtr)
+    }
+}
+这里 tulPtr 原本是 UnsafePointer<(Int, Int)>，由于 (Int, Int) 在内存中的布局实际上就是两个 Int 挨着存储，所以可以安全地转换为 UnsafePointer<Int> 并按数组方式访问。
+#####
+assumingMemoryBound(to:) 仅仅是一个无检查的类型转换，它假定内存已经被正确地绑定为目标类型（但它不会改变实际的绑定）。
+withMemoryRebound(to:capacity:) 是 Swift 推荐的方式，它在指定的作用域内临时改变绑定，并保证在离开作用域后恢复原始绑定。
+#####
+
+==================================================如何获取结构体的属性的指针
+1、定义实例变量
+2、获取实例变量的地址，并将strongRef的属性值传递给函数
+
+struct HeapObject {
+    var strongRef: UInt32 = 10
+    var unownedRef: UInt32 = 20
+}
+
+func testPointer(_ p: UnsafePointer<Int>){
+   print(p)
+}
+//实例化
+var  t = HeapObject()
+//获取结构体属性的指针传入函数
+withUnsafePointer(to: &t) { (ptr: UnsafePointer<HeapObject>) in
+    //获取变量
+    let strongRef = UnsafeRawPointer(ptr) + MemoryLayout<HeapObject>.offset(of: \HeapObject.strongRef)!
+    //传递strongRef属性的值
+    testPointer(strongRef.assumingMemoryBound(to: UInt32.self))
+}
+
+
+==================================================通过 withMemoryRebound 临时绑定内存类型
+如果方法的类型与传入参数的类型不一致，会报错
+
+解决办法：通过withMemoryRebound临时绑定内存类型
+
+var age = 10
+func testPointer(_ p: UnsafePointer<Int64>){
+   print(p)
+}
+let ptr = withUnsafePointer(to: &age) {$0}
+ptr.withMemoryRebound(to: Int64.self, capacity: 1) { (ptr: UnsafePointer<Int64>)  in
+    testPointer(ptr)
+}
