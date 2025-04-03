@@ -1,0 +1,221 @@
+远离 dismiss.谨慎对待 dismiss，优先采用更加明确、可控且状态驱动的管理方案。
+
+
+将 dismiss 操作从视图中解耦:
+三种常用且高效的解耦方案
+
+通过自定义 dismiss 逻辑，我们可以进一步打破原生 dismiss 操作的局限性，从而实现更灵活、更丰富的视图管理策略。
+
+1. 通过 Binding 解耦
+struct PresentView: View {
+  let item: Item
+  @Binding var isPresented: Bool
+  var body: some View {
+    VStack {
+      Text(item.id, format: .number)
+      Button("Dismiss") {
+        isPresented = false
+      }
+    }
+  }
+}
+
+Binding 本质上是一对 getter 和 setter 方法的封装。它并非一定要绑定到具体的状态变量，因此我们不需要刻意确保与 dismiss 对应的状态一定为布尔型。
+我们可以巧妙地将 Optional 状态映射为一个更便于操作的布尔值
+
+struct ParentView: View {
+  @State var item: Item?
+  var body: some View {
+    Button("Pop Sheet") {
+      item = Item(id: 123)
+    }
+    .sheet(item: $item) { item in
+      let binding = Binding<Bool>(
+        get: { self.item != nil },
+        set: {
+          if !$0 {
+            self.item = nil
+          }
+        }
+      )
+      PresentView(item: item, isPresented: binding)
+    }
+  }
+}
+
+.sheet(item:) 依赖 item 是否为 nil 来决定 sheet 是否显示。
+Binding<Bool> 让 PresentView 可以通过 isPresented 控制 ParentView 里的 item 状态，实现 双向数据绑定。
+
+这个方式可以避免 SwiftUI sheet 默认的 dismiss 行为，而是让 ParentView 自己决定何时隐藏 sheet。这种方法在 需要手动管理 sheet 关闭逻辑 时很有用。
+
+为了进一步简化上述转换过程，我们还可以为 Binding 添加一个扩展方法，使代码更清晰易读：
+extension Binding {
+  /// 从一个 Optional 类型的 Binding 创建一个表示“是否为非 nil”的 Bool Binding
+  static func isPresent<T: Sendable>(_ binding: Binding<T?>) -> Binding<Bool> {
+    Binding<Bool>(
+      get: { binding.wrappedValue != nil },
+      set: { isPresented in
+        if !isPresented {
+          binding.wrappedValue = nil
+        }
+      }
+    )
+  }
+}
+
+// 使用
+.sheet(item: $item) { item in
+    PresentView(item: item, isPresent: .isPresent($item))
+}
+
+通过这种方式，PresentView 就完全摆脱了对具体状态变量的依赖，实现了对 dismiss 操作的彻底解耦，只需简单地将 isPresented 设置为 false 即可。
+
+@Binding var isPresented: Bool 在 SwiftUI 内部等价于使用 Binding<Bool> 来显式声明一个绑定
+struct PresentView: View {
+    let item: Item
+    var isPresented: Binding<Bool> // 直接使用 Binding<Bool> 而不是 @Binding
+
+    var body: some View {
+        VStack {
+            Text(item.id, format: .number)
+            Button("Dismiss") {
+                isPresented.wrappedValue = false // 使用 wrappedValue 来修改绑定的值
+            }
+        }
+    }
+}
+
+
+2. 通过函数解耦
+既然上述的 Binding 中 getter 方法在 dismiss 场景中并无实际作用，我们可以更直接地通过函数传递 dismiss 操作，从而使代码更为明确
+struct PresentView: View {
+  let item: Item
+  var dismiss: () -> Void
+  var body: some View {
+    VStack {
+      Text(item.id, format: .number)
+      Button("Dismiss") {
+        dismiss()
+      }
+    }
+  }
+}
+
+struct ParentView: View {
+  @State var item: Item?
+  var body: some View {
+    Button("Pop Sheet") {
+      item = Item(id: 123)
+    }
+    .sheet(item: $item) { item in
+      PresentView(item: item, dismiss: { self.item = nil })
+    }
+  }
+}
+
+
+3. 通过自定义环境值解耦
+当 dismiss 操作需要跨越多个视图或层次时，使用自定义的环境值会是更便捷和更优雅的方案。这种方法特别适用于集中管理模态视图的场景
+
+extension EnvironmentValues {
+  @Entry var dismissAction: () -> Void = {}
+}
+
+struct PresentView: View {
+  let item: Item
+  @Environment(\.dismissAction) private var dismiss
+  var body: some View {
+    VStack {
+      Text(item.id, format: .number)
+      Button("Dismiss") {
+        dismiss()
+      }
+    }
+  }
+}
+
+struct ParentView: View {
+  @State var item: Item?
+  var body: some View {
+    Button("Pop Sheet") {
+      item = Item(id: 123)
+    }
+    .sheet(item: $item) { item in
+      PresentView(item: item)
+        .environment(\.dismissAction, { self.item = nil})
+    }
+  }
+}
+
+
+以上三种解耦方法各有优势，可根据具体的开发场景自由选择。关键是我们要坚持将 dismiss 操作与视图本身的逻辑清晰分离，以提高代码的可读性、可测试性和长期可维护性。
+
+
+==================================================状态优化:
+由于视图的 dismiss 操作通常是在父视图的 body 中声明的，因此当模态视图展示之后，父视图的状态发生变化并触发重新计算时，
+使用 Binding 或环境值注入的展示视图也会跟随父视图一并重新计算，这在某些场景下可能带来性能问题。
+
+
+1. 优化 Binding 场景
+在使用 Binding 管理 dismiss 的场景中，可以通过让展示视图（如 PresentView）遵循 Equatable 协议，并自定义比较逻辑来避免不必要的重复计算
+扩展 PresentView 以实现选择性状态比较
+// 只针对与视图展示相关的状态进行比较
+extension PresentView: Equatable {
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.item == rhs.item
+  }
+}
+避免 SwiftUI 视图的重复计算
+在 SwiftUI 中，当 View 发生变化时，SwiftUI 会重新计算 body，但它会 尝试避免不必要的 UI 更新
+如果 SwiftUI 能 检测到 View 没有发生实际变化，就可以跳过 body 计算，从而提升性能。
+
+这个 Equatable 让 SwiftUI 知道：
+PresentView 只依赖 item，如果 item 没变，就不需要重新计算 body。
+SwiftUI 在对比 PresentView 时会调用 ==，如果返回 true，就不会触发 UI 重新渲染。
+
+
+2. 优化 EnvironmentValues 场景
+对于采用环境值传递 dismiss 操作的场景，使用transformEnvironment 来进行环境值的选择性修改。
+extension EnvironmentValues {
+  @Entry var dismissAction: (() -> Void)? = nil
+}
+
+.sheet(item: $item) { item in
+  PresentView(item: item)
+    .transformEnvironment(\.dismissAction) { dismissAction in
+      guard dismissAction == nil else { return }
+      dismissAction = { self.item = nil }
+    }
+}
+
+// 视图内调用 dismiss 操作的方式：
+Button("Dismiss") {
+  dismiss?()
+}
+
+
+==================================================扩展 dismiss 的应用场景
+我们可以定义一个枚举类型，代表不同的 dismiss 操作
+
+
+enum DismissAction {
+  case dismiss       // 关闭当前视图
+  case dismissAll    // 关闭所有层级的视图
+}
+
+extension EnvironmentValues {
+  @Entry var dismissAction: (DismissAction) -> Void = { _ in}
+}
+
+// 使用举例
+.sheet(item: $item) { item in
+    PresentView(item: item)
+      .environment(\.dismissAction, { _ in
+        self.item = nil
+      })
+ }
+
+通过这种方式，我们不仅可以轻松处理单层模态视图的关闭，还可以扩展到更复杂的视图层级管理：
+单一视图的快速关闭
+一次性关闭多个堆叠的模态视图
+在复杂导航结构中快速返回根视图
