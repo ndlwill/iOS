@@ -1,0 +1,227 @@
+The load message is sent to classes and categories that are both dynamically loaded and statically linked, but only if the newly loaded class or category implements a method that can respond.
+
+The order of initialization is as follows:
+
+1.All initializers in any framework you link to.
+
+2.All +load methods in your image.(这个image指的就是二进制可执行文件)
+
+3.All C++ static initializers and C/C++ __attribute__(constructor) functions in your image.
+
+4.All initializers in frameworks that link to you.
+
+In addition:
+
+1.A class’s +load method is called after all of its superclasses’ +load methods.
+
+2.A category +load method is called after the class’s own +load method.
+
+In a custom implementation of load you can therefore safely message other unrelated classes from the same image, but any load methods implemented by those classes may not have run yet.
+
+load函数是当类或分类（Category）被加载到 Objective-C runtime 时被调用的
+只执行一次
+
+Objective-C runtime 就是 Objective-C 的运行时系统
+Objective-C runtime 它负责让 Objective-C 拥有许多“动态语言特性”
+Objective-C Runtime 是一套 C 语言实现的运行时库，负责 消息传递、类/对象管理、方法调用、动态特性等一切运行时行为。
+
+1、当父类和子类都实现 load 函数时，二者的 load 方法都会被调用，父类的 load 方法执行顺序要优先于子类。
+2、当子类未实现 load 方法时，在加载该子类时，不会去调用其父类 load 方法。
+3、类中的 load 方法执行顺序要优先于类别（Category）
+4、当有多个类别（Category）都实现了 load 方法，这几个 load 方法都会执行
+
+dyld也是开源的(dynamic link editor，动态链接器)
+
+load函数其实是在main函数之前就回被调用
+
+
+/***********************************************************************
+* load_images
+* Process +load in the given images which are being mapped in by dyld.
+* Calls ABI-agnostic code after taking ABI-specific locks.
+*
+* Locking: write-locks runtimeLock and loadMethodLock
+**********************************************************************/
+PRIVATE_EXTERN const char *
+load_images(enum dyld_image_states state, uint32_t infoCount,
+            const struct dyld_image_info infoList[])
+{
+    BOOL found;
+
+    recursive_mutex_lock(&loadMethodLock);
+
+    // Discover load methods
+    rwlock_write(&runtimeLock);
+    found = load_images_nolock(state, infoCount, infoList);
+    rwlock_unlock_write(&runtimeLock);
+
+    // Call +load methods (without runtimeLock - re-entrant)
+    if (found) {
+        call_load_methods();
+    }
+
+    recursive_mutex_unlock(&loadMethodLock);
+
+    return NULL;
+}
+
+
+
+/***********************************************************************
+* load_images_nolock
+* Prepares +load in the given images which are being mapped in by dyld.
+* Returns YES if there are now +load methods to be called by call_load_methods.
+*
+* Locking: loadMethodLock(both) and runtimeLock(new) acquired by load_images
+**********************************************************************/
+PRIVATE_EXTERN BOOL 
+load_images_nolock(enum dyld_image_states state,uint32_t infoCount,
+                   const struct dyld_image_info infoList[])
+{
+    BOOL found = NO;
+    uint32_t i;
+
+    i = infoCount;
+    while (i--) {
+        header_info *hi;
+        for (hi = FirstHeader; hi != NULL; hi = hi->next) {
+            const headerType *mhdr = (headerType*)infoList[i].imageLoadAddress;
+            if (hi->mhdr == mhdr) {
+                prepare_load_methods(hi);
+                found = YES;
+            }
+        }
+    }
+
+    return found;
+}
+
+
+
+PRIVATE_EXTERN void prepare_load_methods(header_info *hi)
+{
+    size_t count, i;
+
+    rwlock_assert_writing(&runtimeLock);
+
+    class_t **classlist = 
+        _getObjc2NonlazyClassList(hi, &count);
+    for (i = 0; i < count; i++) {
+        schedule_class_load(remapClass(classlist[i]));
+    }
+
+    category_t **categorylist = _getObjc2NonlazyCategoryList(hi, &count);
+    for (i = 0; i < count; i++) {
+        category_t *cat = categorylist[i];
+        // Do NOT use cat->cls! It may have been remapped.
+        class_t *cls = remapClass(cat->cls);
+        if (!cls) continue;  // category for ignored weak-linked class
+        realizeClass(cls);
+        assert(isRealized(cls->isa));
+        add_category_to_loadable_list((Category)cat);
+    }
+}
+
+
+
+/***********************************************************************
+* prepare_load_methods
+* Schedule +load for classes in this image, any un-+load-ed 
+* superclasses in other images, and any categories in this image.
+**********************************************************************/
+// Recursively schedule +load for cls and any un-+load-ed superclasses.
+// cls must already be connected.
+static void schedule_class_load(class_t *cls)
+{
+    if (!cls) return;
+    assert(isRealized(cls));  // _read_images should realize
+
+    if (cls->data()->flags & RW_LOADED) return;
+
+    // Ensure superclass-first ordering
+    schedule_class_load(getSuperclass(cls));
+
+    add_class_to_loadable_list((Class)cls);
+    changeInfo(cls, RW_LOADED, 0); 
+}
+
+
+
+/***********************************************************************
+* call_load_methods
+* Call all pending class and category +load methods.
+* Class +load methods are called superclass-first. 
+* Category +load methods are not called until after the parent class's +load.
+* 
+* This method must be RE-ENTRANT, because a +load could trigger 
+* more image mapping. In addition, the superclass-first ordering 
+* must be preserved in the face of re-entrant calls. Therefore, 
+* only the OUTERMOST call of this function will do anything, and 
+* that call will handle all loadable classes, even those generated 
+* while it was running.
+*
+* The sequence below preserves +load ordering in the face of 
+* image loading during a +load, and make sure that no 
+* +load method is forgotten because it was added during 
+* a +load call.
+* Sequence:
+* 1. Repeatedly call class +loads until there aren't any more
+* 2. Call category +loads ONCE.
+* 3. Run more +loads if:
+*    (a) there are more classes to load, OR
+*    (b) there are some potential category +loads that have 
+*        still never been attempted.
+* Category +loads are only run once to ensure "parent class first" 
+* ordering, even if a category +load triggers a new loadable class 
+* and a new loadable category attached to that class. 
+*
+* Locking: loadMethodLock must be held by the caller 
+*   All other locks must not be held.
+**********************************************************************/
+PRIVATE_EXTERN void call_load_methods(void)
+{
+    static BOOL loading = NO;
+    BOOL more_categories;
+
+    recursive_mutex_assert_locked(&loadMethodLock);
+
+    // Re-entrant calls do nothing; the outermost call will finish the job.
+    if (loading) return;
+    loading = YES;
+
+    do {
+        // 1. Repeatedly call class +loads until there aren't any more
+        while (loadable_classes_used > 0) {
+            call_class_loads();
+        }
+
+        // 2. Call category +loads ONCE
+        more_categories = call_category_loads();
+
+        // 3. Run more +loads if there are classes OR more untried categories
+    } while (loadable_classes_used > 0  ||  more_categories);
+
+    loading = NO;
+}
+
+
+
+/***********************************************************************
+* _objc_init
+* Static initializer. Registers our image notifier with dyld.
+**********************************************************************/
+static __attribute__((constructor))
+void _objc_init(void)
+{
+    // fixme defer initialization until an objc-using image is found?
+    environ_init();
+    tls_init();
+    lock_init();
+    exception_init();
+        
+    // Register for unmap first, in case some +load unmaps something
+    _dyld_register_func_for_remove_image(&unmap_image);
+    dyld_register_image_state_change_handler(dyld_image_state_bound,
+                                             1/*batch*/, &map_images);
+    dyld_register_image_state_change_handler(dyld_image_state_dependents_initialized, 0/*not batch*/, &load_images);
+}

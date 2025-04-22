@@ -1,0 +1,432 @@
+APNS推送给手机
+1.手机先去APNS注册，获取deviceToken
+2.手机把deviceToken发送给公司服务器
+3.公司服务器把要推送的数据告诉APNS
+4.APNS根据token把数据推送给手机
+
+
+
+if ([[[UIDevice currentDevice] systemVersion] floatValue] >= 8.0)
+{
+    [application registerUserNotificationSettings:[UIUserNotificationSettings settingsForTypes:(UIUserNotificationTypeSound | UIUserNotificationTypeAlert | UIUserNotificationTypeBadge) categories:nil]];
+        
+        [application registerForRemoteNotifications];
+}else {
+// NS_DEPRECATED_IOS(3_0, 8_0)
+    [application registerForRemoteNotificationTypes:
+         (UIUserNotificationTypeBadge | UIUserNotificationTypeSound | UIUserNotificationTypeAlert)];
+}
+
+===============================================
+// iOS10.0
+#import <UserNotifications/UserNotifications.h>
+@interface AppDelegate ()<UNUserNotificationCenterDelegate>
+//注册通知
+UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+center.delegate = self;
+[center requestAuthorizationWithOptions:(UNAuthorizationOptionBadge | UNAuthorizationOptionSound | UNAuthorizationOptionAlert) completionHandler:^(BOOL granted, NSError * _Nullable error) {
+    if (granted) {
+        NSLog(@"request authorization successed!");
+        [[UIApplication sharedApplication] registerForRemoteNotifications];
+    }
+}];
+
+//之前注册推送服务，用户点击了同意还是不同意，以及用户之后又做了怎样的更改我们都无从得知，现在 apple 开放了这个 API，我们可以直接获取到用户的设定信息了。
+[center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings * _Nonnull settings) {
+    NSLog(@"%@",settings);
+}];
+
+------------------
+在appDeletgate 文件里面需要先导入 UNUserNotificationCenterDelegate 这个代理
+实现下面实现3个方法, 用于处理点击通知时的不同情况的处理
+willPresentNotification:withCompletionHandler 用于前台运行
+didReceiveNotificationResponse:withCompletionHandler 用于后台及程序退出
+
+didReceiveRemoteNotification:fetchCompletionHandler用于静默推送
+
+
+
+@property (nonatomic, strong) UNMutableNotificationContent *notiContent;
+
+// 本地普通通知
+- (void)regiterLocalNotification:(UNMutableNotificationContent *)content{
+    
+    content.title = @"iOS10通知";
+    content.subtitle = @"新通知学习笔记";
+    content.body = @"新通知变化很大，之前本地通知和远程推送是两个类，现在合成一个了。";
+    content.badge = @1;
+    UNNotificationSound *sound = [UNNotificationSound soundNamed:@"caodi.m4a"];
+    content.sound = sound;
+    
+    //重复提醒，时间间隔要大于60s
+    UNTimeIntervalNotificationTrigger *trigger1 = [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:2.0 repeats:NO];
+    NSString *requertIdentifier = @"RequestIdentifier";
+    UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:requertIdentifier content:content trigger:trigger1];
+    [[UNUserNotificationCenter currentNotificationCenter] addNotificationRequest:request withCompletionHandler:^(NSError * _Nullable error) {
+        NSLog(@"Error:%@",error.localizedDescription);
+    }];
+    
+}
+
+// 图片通知
+UNNotificationAttachment *imageAttachment = [UNNotificationAttachment attachmentWithIdentifier:@"iamgeAttachment" URL:[NSURL fileURLWithPath:imageFile] options:nil error:nil];
+    self.notiContent.attachments = @[imageAttachment];
+[self regiterLocalNotification:self.notiContent];
+
+
+#pragma mark - delegate
+//只有当前处于前台才会走，加上返回方法，使在前台显示信息
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)notification withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler{
+    
+    NSLog(@"执行willPresentNotificaiton");
+    completionHandler(UNNotificationPresentationOptionBadge|
+                      UNNotificationPresentationOptionSound|
+                      UNNotificationPresentationOptionAlert);
+}
+
+
+/*
+ * 添加交互通知
+ */
+#define REPLYACTION @"replyAction"
+#define ENTERACTION @"enterAction"
+#define CANCELTION  @"cancelAction"
+
+
+- (IBAction)addInteractionNotification:(id)sender {
+    // Identifier:标识，通过Identifier来确定点击的是哪个按钮
+    
+    UNTextInputNotificationAction *action1 = [UNTextInputNotificationAction actionWithIdentifier:REPLYACTION title:@"文字回复" options:UNNotificationActionOptionNone];
+    
+    UNNotificationAction *action2 = [UNNotificationAction actionWithIdentifier:ENTERACTION title:@"进入应用" options:UNNotificationActionOptionForeground];
+    
+    UNNotificationAction *action3 = [UNNotificationAction actionWithIdentifier:CANCELTION title:@"取消" options:UNNotificationActionOptionDestructive];
+    UNNotificationCategory *categroy = [UNNotificationCategory categoryWithIdentifier:@"Categroy" actions:@[action1,action2,action3] intentIdentifiers:@[] options:UNNotificationCategoryOptionAllowInCarPlay];
+    
+    [[UNUserNotificationCenter currentNotificationCenter] setNotificationCategories:[NSSet setWithObject:categroy]];
+    [[UNUserNotificationCenter currentNotificationCenter] setDelegate:self];
+    self.notiContent.categoryIdentifier = @"Categroy";
+    
+    [self regiterLocalNotification:self.notiContent];
+    
+}
+
+
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center didReceiveNotificationResponse:(UNNotificationResponse *)response withCompletionHandler:(void (^)())completionHandler {
+    
+    
+    NSString *categoryIdentifier = response.notification.request.content.categoryIdentifier;
+    NSLog(@"收到通知：%@",response.notification.request.content);
+    
+    if ([categoryIdentifier isEqualToString:@"Categroy"]) {
+        //识别需要被处理的拓展
+        if ([response.actionIdentifier isEqualToString:@"replyAction"]){
+            //识别用户点击的是哪个 action
+            UNTextInputNotificationResponse *textResponse = (UNTextInputNotificationResponse*)response;
+            //获取输入内容
+            NSString *userText = textResponse.userText;
+            //发送 userText 给需要接收的方法
+            NSLog(@"要发送的内容是：%@",userText);
+            //[ClassName handleUserText: userText];
+        }else if([response.actionIdentifier isEqualToString:@"enterAction"]){
+            NSLog(@"点击了进入应用按钮");
+        }else{
+            NSLog(@"点击了取消");
+        }
+        
+    }
+    completionHandler();
+    
+}
+
+=========================适配
+
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+
+  7     /**
+  8 
+  9      注册远程推送和本地通知，适配至最新系统，目前是 iOS10
+ 10 
+ 11      */
+ 13     [self registerRemoteNotificationsForAlliOSSystemVersion];
+
+ 20 
+ 21     return YES;
+ 22 
+ 23 }
+
+ 27 /**
+ 28 
+ 29     注册远程推送和本地通知，适配至最新系统，目前是 iOS10
+ 30 
+ 31  */
+ 32 
+ 33 -(void)registerRemoteNotificationsForAlliOSSystemVersion{
+
+ 43     //导入文件 #import <UserNotifications/UserNotifications.h>
+ 44 
+ 45     //去capabilities(功能)设置这边打开 pushNotifications，并且打开  backgroundModes 中的backgroundFentch，Remote Notifications
+ 46 
+ 47     CGFloat version = [[[UIDevice currentDevice] systemVersion] floatValue];
+ 48 
+ 49     if (version >= 10.0) {//10.0及其以上
+ 50 
+ 51         UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+ 52 
+ 53         //请求通知权限, 本地和远程共用
+ 54 
+ 55         //                                      设定通知可选提示类型
+ 56 
+ 57         [center requestAuthorizationWithOptions:UNAuthorizationOptionCarPlay | UNAuthorizationOptionSound | UNAuthorizationOptionBadge | UNAuthorizationOptionAlert completionHandler:^(BOOL granted, NSError * _Nullable error) {
+ 58 
+ 59             if (error) {
+ 60 
+ 61                 NSLog(@"iOS10请求 接受远程和本地通知 授权失败:<%@>",[error description]);
+ 62 
+ 63             }
+ 64 
+ 65             
+ 66 
+ 67             if (granted) {
+ 68 
+ 69                 NSLog(@" iOS 10 request notification success");
+ 70 
+ 71                 NSLog(@"请求成功");
+ 72 
+ 73             }else{
+ 74 
+ 75                 NSLog(@" iOS 10 request notification fail");
+ 76 
+ 77                 NSLog(@"请求失败");
+ 78 
+ 79             }
+ 80 
+ 81         }];
+ 82 
+ 83         
+ 84 
+ 85         //设置通知的代理
+ 86 
+ 87         center.delegate = self;//1.遵守UNUserNotificationCenterDelegate协议，2.成为代理；3.实现代理回调方法
+ 88 
+ 89     }else if (version>=8.0){//8.0--->10.0
+ 90 
+ 91         //请求用户授权                                                                       授权收到推送时有哪些提醒方式可以选
+ 92 
+ 93         // 声音、角标、弹窗
+ 94 
+ 95         UIUserNotificationSettings *setting = [UIUserNotificationSettings settingsForTypes:UIUserNotificationTypeSound | UIUserNotificationTypeBadge | UIUserNotificationTypeAlert categories:nil];
+ 96 
+ 97         [[UIApplication sharedApplication] registerUserNotificationSettings:setting];
+ 98 
+ 99     }else{//8.0以下
+100 
+101         UIRemoteNotificationType type =  UIRemoteNotificationTypeSound| UIRemoteNotificationTypeAlert | UIRemoteNotificationTypeBadge;
+102 
+103         [[UIApplication sharedApplication] registerForRemoteNotificationTypes:type];
+104 
+105     }
+106 
+107     
+108 
+109     //注册通知
+110 
+111     [[UIApplication sharedApplication] registerForRemoteNotifications];
+112 
+113     
+114 
+115     
+116 
+117  
+118 
+119 }
+120 
+121 #pragma mark-推送通知
+122 
+123 //注册成功
+124 
+125 -(void)application:(UIApplication *)application didRegisterForRemoteNotificationsWithDeviceToken:(NSData *)deviceToken{
+126 
+127     
+128 
+129     NSString *token = [deviceToken description]; //获取
+130 
+131     
+132 
+133     token =  [token stringByReplacingOccurrencesOfString:@" " withString:@""];
+134 
+135     token =  [token stringByReplacingOccurrencesOfString:@"<" withString:@""];
+136 
+137     token =  [token stringByReplacingOccurrencesOfString:@">" withString:@""];
+138 
+139     
+140 
+141     NSLog(@"request notificatoin token success. %@",token);
+142 
+143     
+144 
+145  
+146 
+147  
+148 
+149 }
+150 
+151 //注册失败
+152 
+153 - (void)application:(UIApplication *)application didFailToRegisterForRemoteNotificationsWithError:(NSError *)error
+154 
+155 {
+156 
+157     NSLog(@"request notification Token fail. %@",error.localizedDescription);
+158 
+159 }
+160 
+161  
+162 
+163 #pragma mark  iOS 10 获取推送信息 UNUserNotificationCenter---Delegate
+164 
+165  
+166 
+167 //APP在前台的时候收到推送的回调
+168 
+169 - (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)notification withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler
+170 
+171 {
+172 
+173     
+174 
+175      
+176 
+177     UNNotificationContent *content =  notification.request.content;
+178 
+179     NSDictionary *userInfo = content.userInfo;
+180 
+181     
+182 
+183     [self handleRemoteNotificationContent:userInfo];
+184 
+185     
+186 
+187     //前台运行推送 显示红色Label
+188 
+189     [self showLabelWithUserInfo:userInfo color:[UIColor redColor]];
+190 
+191     
+192 
+193     
+194 
+195     //可以设置当收到通知后, 有哪些效果呈现(提醒/声音/数字角标)
+196 
+197     //可以执行设置 弹窗提醒 和 声音
+198 
+199     completionHandler(UNNotificationPresentationOptionAlert | UNNotificationPresentationOptionSound|UNNotificationPresentationOptionBadge);
+200 
+201 }
+202 
+203 //APP在后台，点击推送信息，进入APP后执行的回调
+204 
+205 - (void)userNotificationCenter:(UNUserNotificationCenter *)center didReceiveNotificationResponse:(UNNotificationResponse *)response withCompletionHandler:(void (^)())completionHandler
+206 
+207 {
+208 
+209    
+210 
+211     
+212 
+213     UNNotificationContent *content  = response.notification.request.content;
+214 
+215     NSDictionary *userInfo = content.userInfo;
+216 
+217     
+218 
+219     [self handleRemoteNotificationContent:userInfo];
+220 
+221     //后台及退出推送 显示绿色Label
+222 
+223     [self showLabelWithUserInfo:userInfo color:[UIColor greenColor]];
+224 
+225     
+226 
+227     completionHandler();
+228 
+229 }
+230 
+231  
+232 
+233 - (void)handleRemoteNotificationContent:(NSDictionary *)userInfo
+234 
+235 {
+236 
+237     NSLog(@" iOS 10 after Notificatoin message:\n %@",userInfo);
+238 
+239 }
+240 
+
+
+
+#pragma mark iOS 10 之前 获取通知的信息
+242 
+243 - (void)application:(UIApplication *)application didReceiveRemoteNotification:(NSDictionary *)userInfo fetchCompletionHandler:(void (^)(UIBackgroundFetchResult))completionHandler{
+244 
+245     
+246 
+247     //静默推送 显示蓝色Label
+248 
+249     [self showLabelWithUserInfo:userInfo color:[UIColor blueColor]];
+250 
+251     
+252 
+253     completionHandler(UIBackgroundFetchResultNewData);
+
+
+// 或者
+Log(@"userInfo: %@", userInfo.description);
+
+if ( application.applicationState == UIApplicationStateActive) {// 程序在运行过程中受到推送通知
+
+// TODO
+
+} else { //在background状态受到推送通知
+
+// TODO
+
+}
+
+completionHandler(UIBackgroundFetchResultNewData);
+
+254 
+255 }
+256 
+257 - (void)application:(UIApplication *)application didReceiveRemoteNotification:(NSDictionary *)userInfo
+258 
+259 {
+260 
+261     NSLog(@"iOS 10 before Notification message。\n  %@",userInfo);
+262 
+263 }
+264 
+265  
+266 
+267  
+268 
+269 - (void)showLabelWithUserInfo:(NSDictionary *)userInfo color:(UIColor *)color
+270 
+271 {
+272 
+273     UILabel *label = [UILabel new];
+274 
+275     label.backgroundColor = color;
+276 
+277     label.frame = CGRectMake(0, 250, [UIScreen mainScreen].bounds.size.width, 300);
+278 
+279     label.text = userInfo.description;
+280 
+281     label.numberOfLines = 0;
+282 
+283     [[UIApplication sharedApplication].keyWindow addSubview:label];
+284 
+285 }
+286 
+287  
+288 
+289  

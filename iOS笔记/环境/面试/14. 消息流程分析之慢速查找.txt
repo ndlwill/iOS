@@ -11,8 +11,9 @@ UNWIND __objc_msgSend_uncached, FrameWithNoSaves
 
 // THIS IS NOT A CALLABLE C FUNCTION
 // Out-of-band p16 is the class to search
-    
+#####
 MethodTableLookup // 开始查询方法列表
+#####
 TailCallFunctionPointer x17
 
 END_ENTRY __objc_msgSend_uncached
@@ -42,7 +43,10 @@ END_ENTRY __objc_msgSend_uncached
     // receiver and selector already in x0 and x1
     mov x2, x16
     mov x3, #3
+
+    #####
     bl  _lookUpImpOrForward //核心源码
+    #####
 
     // IMP in x0
     mov x17, x0
@@ -69,11 +73,14 @@ END_ENTRY __objc_msgSend_uncached
 在main中，例如[person sayHello]对象方法调用处加一个断点，并且开启汇编调试【Debug -- Debug worlflow -- 勾选Always show Disassembly】，运行程序
 汇编中objc_msgSend加一个断点，执行断住，按住control + stepinto，进入objc_msgSend的汇编
 在_objc_msgSend_uncached加一个断点，执行断住，按住control + stepinto，进入汇编
-从上可以看出最后走到的就是lookUpImpOrForward，此时并不是汇编实现
+从上可以看出最后走到的就是lookUpImpOrForward（在 objc-runtime-new.mm 文件），此时并不是汇编实现
 
+
+#####
 注：
 1、C/C++中调用 汇编 ，去查找汇编时，C/C++调用的方法需要多加一个下划线
 2、汇编 中调用 C/C++方法时，去查找C/C++方法，需要将汇编调用的方法去掉一个下划线
+#####
 
 
 慢速查找-C/C++部分:
@@ -81,18 +88,22 @@ END_ENTRY __objc_msgSend_uncached
 IMP lookUpImpOrForward(id inst, SEL sel, Class cls, int behavior)
 {
     // 定义的消息转发
+    #####
     const IMP forward_imp = (IMP)_objc_msgForward_impcache; 
+    #####
     IMP imp = nil;
     Class curClass;
 
     runtimeLock.assertUnlocked();
 
+#####
     // 快速查找，如果找到则直接返回imp
     //目的：防止多线程操作时，刚好调用函数，此时缓存进来了
     if (fastpath(behavior & LOOKUP_CACHE)) { 
         imp = cache_getImp(cls, sel);
         if (imp) goto done_nolock;
     }
+#####
     
     //加锁，目的是保证读取的线程安全
     runtimeLock.lock();
@@ -232,7 +243,9 @@ findMethodInSortedMethodList(SEL key, const method_list_t *list)
 
 
 cache_getImp方法：父类缓存查找
-cache_getImp方法是通过汇编_cache_getImp实现，传入的$0 是 GETIMP
+#####
+cache_getImp方法是通过汇编_cache_getImp实现，传入的$0 是 GETIMP，即执行汇编 CacheLookup GETIMP
+#####
 如果父类缓存中找到了方法实现，则跳转至CacheHit即命中，则直接返回imp
 如果在父类缓存中，没有找到方法实现，则跳转至CheckMiss 或者 JumpMiss，通过判断$0 跳转至LGetImpMiss，直接返回nil
 

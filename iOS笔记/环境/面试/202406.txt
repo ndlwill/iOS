@@ -738,7 +738,10 @@ cls 与 类 的关联原理:
 结构体内存 >= 所有成员占用的内存总和（成员之间可能会有缝隙）
 共用体占用的内存等于最大的成员占用的内存
 
-isa的类型 isa_t
+
+
+
+isa的类型 isa_t：
 以下是isa指针的类型isa_t的定义，从定义中可以看出是通过联合体（union）定义的。
 union isa_t { //联合体
     isa_t() { }
@@ -756,8 +759,27 @@ union isa_t { //联合体
 isa_t类型使用联合体的原因也是基于内存优化的考虑，这里的内存优化是指在isa指针中通过char + 位域（即二进制中每一位均可表示不同的信息）的原理实现。
 通常来说，isa指针占用的内存大小是8字节，即64位，已经足够存储很多的信息了，这样可以极大的节省内存，以提高性能
 
+
+nonpointer isa（非指针 isa）
+从 iOS 7（64 位）开始，Apple 对 isa 做了优化 —— nonpointer isa，顾名思义就是 它不再仅仅是一个指针，而是一个“位域结构”
+虽然 isa 变量依然是一个 64 位的值（类似指针），但 它并不只是一个纯粹的指针，而是 将多个 flag 信息编码在指针的高位中
+Apple 使用了一种叫 ISA_MASK 的方式从中提取真实的类地址
+#define ISA_MASK 0x0000000ffffffff8ULL
+通过位运算提取 class 指针：
+Class realClass = (Class)(isa & ISA_MASK);
+
+如果是“单纯的类指针”（nonpointer isa 未启用）
+此时对象的 isa 成员就只是一个标准的 C 指针，指向这个对象所属的 Class 结构体（也就是类对象）
+NSObject *obj = [[NSObject alloc] init];
+Class cls = object_getClass(obj);
+如果 isa 是“纯指针”，那么：
+obj->isa == cls
+也就是 isa 就是一个指向类对象的指针（这个类对象中包含方法列表、父类信息、元类信息等）——这才是早期 Objective-C 的运行机制（比如 32 位系统中就是这样的）。
+
+
 从isa_t的定义中可以看出:
-提供了两个成员，cls 和 bits，由联合体的定义所知，这两个成员是互斥的，也就意味着，当初始化isa指针时，有两种初始化方式
+提供了两个成员，cls 和 bits，由联合体的定义所知，这两个成员是互斥的，
+也就意味着，当初始化isa指针时，有两种初始化方式：
 通过cls初始化，bits无默认值
 通过bits初始化，cls有默认值
 还提供了一个结构体定义的位域，用于存储类信息及其他信息，结构体的成员ISA_BITFIELD，这是一个宏定义，有两个版本 __arm64__（对应ios 移动端） 和 __x86_64__（对应macOS）
@@ -794,16 +816,21 @@ objc_object::initInstanceIsa(Class cls, bool hasCxxDtor)
     //初始化isa
     initIsa(cls, true, hasCxxDtor); 
 }
+
+#####
 进入initIsa方法的源码实现，主要是初始化isa指针
 该方法的逻辑主要分为两部分
 通过 cls 初始化 isa
 通过 bits 初始化 isa
+#####
+
 
 苹果引入了优化过的 isa 指针，即 non-pointer isa（非指针 isa），该指针不仅仅用于存储类的地址，还包含其他信息。
 纯 isa 指针:
 一个纯 isa 指针指的是这个指针只存储了对象的类的内存地址，没有包含其他信息。在这种情况下，isa 指针完全是一个指向类对象的指针。
 Non-pointer isa:
-为了优化内存和性能，苹果在 64 位架构上引入了 non-pointer isa，即在 isa 指针中嵌入了额外的标志位和数据。这种设计利用了 64 位指针中的一些位来存储其他信息，而不仅仅是类的地址。
+为了优化内存和性能，苹果在 64 位架构上引入了 non-pointer isa，即在 isa 指针中嵌入了额外的标志位和数据。
+这种设计利用了 64 位指针中的一些位来存储其他信息，而不仅仅是类的地址。
 
 Non-pointer isa 的结构
 在 64 位架构下，isa 指针包含如下字段：
@@ -817,13 +844,17 @@ deallocating: 标志对象是否正在被析构。
 has_assoc: 标志对象是否有关联引用（associated references）。
 has_sidetable_rc: 标志对象是否有旁路引用计数（sidetable refcounts）。
 
+
+
 验证 isa指针 位域（0-64）:
 通过main中的LGPerson 断点 --> initInstanceIsa --> initIsa --> 走到else中的 isa初始化
 执行lldb命令：p newisa，得到newisa的详细信息
 继续往下执行，走到newisa.bits = ISA_MAGIC_VALUE;下一行，表示为isa的bits成员赋值，重新执行lldb命令p newisa
+（这边initIsa中涉及到是否是#if SUPPORT_INDEXED_ISA, 走newisa.bits = ISA_MAGIC_VALUE就不是）
 
 isa指针中有这些位域（目前是处于macOS，所以使用的是x86_64）:
 其中magic是59是由于将isa指针地址转换为二进制，从47（因为前面有4个位域，共占用47位，地址是从0开始）位开始读取6位，再转换为十进制
+
 
 
 isa 与 类 的关联:
@@ -1000,12 +1031,25 @@ typedef struct objc_class *Class;
 
 在objc4源码中搜索objc_class的定义，源码中对其的定义有两个版本
 旧版 位于 runtime.h中，已经被废除
+（旧版objc_class包含 isa、super_class、name、version、。。。、ivars、methodLists等等）
+###
 新版 位于objc-runtime-new.h
 从新版的定义中，可以看到 objc_class 结构体类型是继承自 objc_object的
+（新版objc_class包含 superclass、cache、bits、data()等等）
+###
 
 在objc4源码中搜索objc_object (或者 objc_object {,这个类型也有两个版本
 一个位于 objc.h，没有被废除，从编译的main.cpp中可以看到，使用的这个版本的objc_object
+struct objc_object {
+    Class isa;// typedef struct objc_class *Class;
+}
 一个位于 objc-privat.h
+struct objc_object {
+    private:
+    isa_t isa;
+    public:
+    Class ISA();
+}
 
 以下是编译后的main.cpp中的objc_object的定义
 struct objc_object {
@@ -1380,3 +1424,128 @@ B: supClass
 C: cache_t
 D: bit
 解析： 实例对象的大小由成员变量决定。其中BCD是类的结构
+
+3. 下面 sizeof(struct3)大小等于
+struct LGStruct1 {
+    char b;
+    int c;
+    double a; -- 逢8归零
+    short d;
+}struct1;  -- 24
+
+struct LGStruct2 {
+    double a; 
+    int b;
+    char c;
+    short d;
+}struct2; -- 16
+
+
+struct LGStruct3 {
+    double a;
+    int b;
+    char c;
+    struct LGStruct1 str1;// 结构体的最大对齐单位并不是由某个成员结构体的总大小决定的，而是由它所有成员中对齐要求最大的那个成员的对齐值决定的。
+    short d;
+    int e;
+    struct LGStruct2 str2;
+}struct3;// 64
+
+
+
+union kc_t {
+    uintptr_t bits;
+    struct {
+        int a;
+        char b;
+    };
+}// 8
+
+4. (x + 7) & ~7 这个算法是几字节对齐： 8
+带入实际数据计算，例如（8+7）& ~7
+8+7 => 1111
+~7 => 1000
+& => 1000
+
+
+5. 消息的流程是
+cache快速查找 - 慢速继承链递归查找 - 动态方法决议 - 消息转发（快速转发 + 慢速转发）
+
+
+6. 对象地址怎么确认对象是否存在关联对象
+可以通过isa判断关联对象的标识
+
+7. 内存偏移
+int c[4] = {1,2,3,4}; int *d = c; c[2] = *(d+2)
+
+8. 类也是对象
+
+9. ISA_MASK = 0x00007ffffffffff8ULL 那么这个 ISA_MASK 的算法意义是什么
+目的是为了得到isa中存储的class信息。
+大部分isa都是不纯的isa，即nonpointIsa，是一个64位的联合体位域数据，而存储class信息的部分只有其中的部分位，剩余的位置存储了其他信息
+读取class信息时，需要将其他位的信息清零，此时就需要用到掩码
+任何数据与isa_mask进行按位与操作，都只保留isa_mask对应位的信息。其目的就是遮盖不需要的位
+
+
+10. 类的结构里面为什么会有 rw 和 ro 以及 rwe
+ro属于clean memory，即在编译时期确定的内存空间，只读，加载后不会再改变的内存
+rw属于dirty memory，是运行时产生的内存，可读可写，可以向类中添加属性、方法等，即在运行时可以改变的内存
+rwe相当于类的额外信息，因为在使用过程中，只有很少的类会真正改变其内容，所以为了避免资源浪费就有了rwe
+运行时如果需要动态向类中添加方法、协议等，会创建rwe，并将ro的数据优先attach到rwe中。在读取时会优先返回rwe的数据，如果rwe中没有被初始化，则返回ro
+有扩展，从rwe获取
+没有扩展，从ro获取
+
+rw中包含ro、rwe，其目的是为了让dirty memory占用更少的空间，将rw中可变的部分抽取出来作为rwe
+
+clean memory越多越好，dirty memory越少越好。因为iOS 系统底层是虚拟内存机制，在内存不足时，会将一部分内容回收掉，后面使用时需要再次从磁盘中加载的。
+而clean memory是可以从磁盘中重新加载的内存，例如mach-o文件、动态库。
+dirty memory是运行时产生的数据，是不能从磁盘中重新加载的，所以必须一直占用内存
+当系统物理内存紧张时会回收clean memory，如果dirty memory过大则会直接回收掉
+
+设计ro、rwe、rw的目的是为了更好更细致的区分clean memory和dirty memory
+
+
+11. cache 在什么时候开始扩容
+一般情况下：如果当前方法cache后，缓存的使用容量超过总容量的3/4，需要先进行扩容，扩容为原来的2倍，然后再插入本次的方法
+某些特殊预处理宏定义编译命令下，首次会存储满之后在进行扩容
+扩展选择3/4作为负载因子，是和hash表中使用的链表和红黑树数据结构有关，0.75是最符合泊松分布概率计算得出的数值，此时的hash表的空间和时间效率是最高的
+
+12. objc_msgSend 为什么用汇编写 , objc_msgSend 是如何递归找到imp?
+使用汇编响应速度快
+
+使用了两个循环
+循环1：通过获取的mask与要查找的_cmd进行hash运行，获取下表，从而获取_cmd对应的bucket；然后通过向前平移查找，每次平移16位，如果找到对应的sel，则cacheHit；当平移到bucket的首地址时，如果还没有找到，则进入循环2
+循环2：首先获取末尾bucket地址，同样采用向前查找方式，向_cmd对应的地址进行平移查找
+
+13. 一个类的类方法没有实现为什么可以调用 NSObject 同名对象方法
+类的isa指向元类，在方法快速查找过程中，会根据类的isa找到元类，
+
+如果元类中没有该方法，怎会走到lookUpImpOrForward慢速查找流程中，会根据元类的继承链进行递归查找。
+其中元类的父类是根元类，根元类的父类指向NSObject，所以会找到NSObject的同名对象方法
+
+@interface TestObject : NSObject
++ (void)test;
+- (void)test;
+@end
+
+@implementation TestObject
+- (void)test {
+    NSLog(@"===test===");
+}
+@end
+
+@interface NSObject (NSObjectExt)
+- (void)test;
+@end
+
+@implementation NSObject (NSObjectExt)
+
+- (void)test {
+    NSLog(@"===NSObject test===");
+}
+
+@end
+
+
+
+[TestObject test];// ===NSObject test===

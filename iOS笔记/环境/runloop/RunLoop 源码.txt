@@ -1,0 +1,1757 @@
+Mach:
+在 iOS 中，Mach 是操作系统内核的一个重要组成部分。
+它最初是由卡内基梅隆大学开发的微内核（Microkernel），并被 Apple 用作 macOS 和 iOS 的内核基础 —— 也就是 XNU（X is Not Unix）内核的一部分。
+Mach 主要负责以下几个核心系统功能：
+功能	说明
+线程和任务管理	Mach 将进程抽象为任务（task），将执行单元抽象为线程（thread）。
+虚拟内存管理	提供分页（paging）、内存映射（memory mapping）等高级内存功能。
+消息传递（IPC）机制	Mach 提供轻量级、可靠的进程间通信（Inter-Process Communication）机制。
+系统调用入口	用户空间和内核空间之间的通信很多是通过 Mach 接口完成的。
+
+NSThread、GCD（DispatchQueue）底层就是基于 Mach 的线程模型；
+CFRunLoop/NSRunLoop ###底层用到了 Mach ports 来监听事件###
+App 通知、XPC 服务、系统调用底层都用 Mach ports 和 IPC 通信；
+
+
+GCD（Grand Central Dispatch）属于 libdispatch 库
+主要通过队列（dispatch queues）来管理任务
+
+
+==================================================Input Sources
+RunLoop 中的输入源（Input Sources）有两种主要类型
+Source 类型	用途	是否立即触发	常见场景
+Source0	用户事件、performSelector、如 CFRunLoopSourceCreate 创建的 source	需要主动唤醒RunLoop	performSelector:, touch event（自定义的事件触发（无端口））
+Source1	基于 Mach port 的事件	内核会自动唤醒RunLoop	GCD、CFMachPort、NSPort、CFMessagePort 等 【GCD 主队列、系统 IO、触摸事件等（有端口）】
+
+
+==================================================button 点击
+IOHID 是 Apple 平台上的 输入输出人机接口（Input/Output Human Interface Device） 系统的缩写。
+它是 macOS 和 iOS 操作系统中用于与各种输入设备（如鼠标、键盘、触摸板、游戏控制器等）进行通信的一部分。
+从技术上讲，IOHID 是 IOKit 框架的一部分，负责和 HID 设备进行交互的驱动和用户空间桥梁。
+
+
+Button 的 action 注册通常发生在页面或视图控制器加载时
+当你点击按钮时，系统会将触摸事件转化为 UIEvent。触摸事件并不会立刻触发按钮的 action，而是通过 RunLoop 处理
+Source1：系统会处理与设备相关的低级别事件（比如触摸屏事件），这通常会涉及到 IOHIDEvent（即从硬件事件中获取的触摸信息），然后系统会将其转换为 UIEvent。
+Source0：处理 UIEvent 事件时，RunLoop 会将这些事件传递给相应的视图（比如按钮），并最终触发按钮的 action。
+所以，按钮的 action 触发时，是在 UIEvent 被分发后通过 RunLoop 处理的。
+UIEvent 会经过事件队列，然后进入到 RunLoop 中等待处理。
+在 RunLoop 中，UIKit 会在 source0 中处理事件队列。source0 会处理所有的用户输入事件（如触摸事件、滚动事件等），并将这些事件分发给相应的视图、控制器或视图层次结构。
+
+
+当runloop处于休眠，然后点击屏幕一个按钮时，这个按钮的执行流程:
+点击按钮 -> 是系统 IO -> 事件来源是系统内核态，由内核通过 mach port 发送消息 给 App，这属于 Source1。
+所以，事件从内核发送到 App，RunLoop 在监听 port 时唤醒，收到消息后执行 __CFRunLoopDoSource1 处理。
+mach_msg() 等待 -> 收到触摸事件 (mach port) -> __CFRunLoopDoSource1
+整个触摸事件的 RunLoop 层级流程：
+1. 事件源头：IOKit/Quartz 的触摸事件
+当用户点击屏幕时，硬件通过 IOHID 机制生成一个 IOHIDEvent。
+然后这个事件通过 mach port 发送给主线程的 RunLoop。
+这一步会唤醒 RunLoop —— 是通过 Source1（mach port 类型）唤醒的。
+
+2. RunLoop 被 Source1 唤醒
+Source1 是 RunLoop 用来监听系统消息
+所以真正唤醒 RunLoop 的，是系统底层送来的消息（比如 IOHIDEvent）
+
+3. UIKit 在 Source0 中注册了一个事件处理回调
+
+4. RunLoop 醒来后，处理 Source0
+__CFRunLoopDoSources0
+   ↓
+__dispatchPreprocessedEventFromEventQueue
+这个 Source0 才是真正处理 UI 事件队列的。
+把前面 Source1 收到的触摸事件，从 IOHIDEvent 转换成 UIEvent，并分发给 UI 控件。
+
+5.
+UIApplication → UIWindow → UIButton → action 方法
+
+
+[触摸事件发生]
+    ↓
+IOKit → IOHIDEvent
+    ↓
+mach port 事件 → RunLoop Source1 唤醒主线程
+    ↓
+下一轮 RunLoop 检查 Source0（比如 UIKit 的 UI 事件处理器）
+    ↓
+__dispatchPreprocessedEventFromEventQueue
+    ↓
+UIApplication 分发事件
+
+
+frame #0: 0x00000001029ab5d4 TestOC.debug.dylib`-[ViewController didclicked:](self=0x000000010360cb20, _cmd="didclicked:", sender=0x0000000103611960) at ViewController.m:110:1
+frame #1: 0x0000000185b3e5e0 UIKitCore`-[UIApplication sendAction:to:from:forEvent:] + 96
+frame #2: 0x000000018541217c UIKitCore`-[UIControl sendAction:to:forEvent:] + 108
+frame #3: 0x00000001854124c0 UIKitCore`-[UIControl _sendActionsForEvents:withEvent:] + 268
+frame #4: 0x000000018540ef38 UIKitCore`-[UIButton _sendActionsForEvents:withEvent:] + 120
+frame #5: 0x0000000185411158 UIKitCore`-[UIControl touchesEnded:withEvent:] + 392
+frame #6: 0x0000000185b721b4 UIKitCore`-[UIWindow _sendTouchesForEvent:] + 972
+frame #7: 0x0000000185b735c4 UIKitCore`-[UIWindow sendEvent:] + 2840
+frame #8: 0x0000000185b52fb0 UIKitCore`-[UIApplication sendEvent:] + 376
+frame #9: 0x0000000185bdd420 UIKitCore`__dispatchPreprocessedEventFromEventQueue + 1156
+### UIKit 处理事件队列
+frame #10: 0x0000000185be03b0 UIKitCore`__processEventQueue + 5592
+###
+frame #11: 0x0000000185bd86c0 UIKitCore`updateCycleEntry + 156
+frame #12: 0x00000001850ab55c UIKitCore`_UIUpdateSequenceRun + 76
+frame #13: 0x0000000185a67cec UIKitCore`schedulerStepScheduledMainSection + 168
+frame #14: 0x0000000185a67124 UIKitCore`runloopSourceCallback + 80
+frame #15: 0x000000018041d2a4 CoreFoundation`__CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE0_PERFORM_FUNCTION__ + 24
+frame #16: 0x000000018041d1ec CoreFoundation`__CFRunLoopDoSource0 + 172
+frame #17: 0x000000018041c950 CoreFoundation`__CFRunLoopDoSources0 + 232
+frame #18: 0x0000000180416e94 CoreFoundation`__CFRunLoopRun + 788
+frame #19: 0x0000000180416704 CoreFoundation`CFRunLoopRunSpecific + 552
+frame #20: 0x0000000190604b10 GraphicsServices`GSEventRunModal + 160
+frame #21: 0x0000000185b39180 UIKitCore`-[UIApplication _run] + 796
+frame #22: 0x0000000185b3d378 UIKitCore`UIApplicationMain + 124
+frame #23: 0x00000001029aac68 TestOC.debug.dylib`main(argc=1, argv=0x000000016d75dad0) at main.m:17:12
+frame #24: 0x00000001026b5410 dyld_sim`start_sim + 20
+frame #25: 0x00000001027f2274 dyld`start + 2840
+
+
+==================================================Mach port
+Mach port 就是一个通信接口，它用于发送和接收消息，允许不同的进程或线程相互协作。
+
+
+typedef struct {
+	mach_msg_bits_t               msgh_bits;
+	mach_msg_size_t               msgh_size;
+	mach_port_t                   msgh_remote_port;
+	mach_port_t                   msgh_local_port;
+	mach_port_name_t              msgh_voucher_port;
+	mach_msg_id_t                 msgh_id;
+} mach_msg_header_t;
+
+
+Mach Port 的核心功能
+进程间通信（IPC）：
+使用 Mach port，不同的进程或线程可以通过发送消息来互相通信。
+比如，系统服务和应用程序之间通过 Mach port 进行数据交换。
+
+消息传递：
+Mach port 用于消息传递的过程中，可以支持同步和异步操作。
+比如，操作系统内部使用 Mach ports 来实现事件的通知（如触摸事件、系统通知等）。
+
+线程间通信：
+不仅仅是不同进程之间，线程也可以通过 Mach port 进行通信，这对于并发和多线程程序非常重要。
+
+
+Mach port 可以分为几种不同的类型，常见的包括：
+Send port：用于发送消息的端口。
+Receive port：用于接收消息的端口。
+Send/Receive port：同时既能发送也能接收消息的端口。
+
+
+Mach Port 和 iOS 的关系：
+异步任务通知：许多系统服务或框架（如 XPC 服务、网络框架）依赖于 Mach ports 来通知应用程序新的事件或请求。
+系统消息传递：在后台，很多系统级消息（如通知、网络事件等）通过 Mach ports 传递。
+与 RunLoop 结合：在 RunLoop 中，Mach ports 是一种接收事件的方式。比如，当你使用 NSRunLoop 时，Mach ports 用于监听和处理来自操作系统的事件。
+
+
+extern mach_msg_return_t        mach_msg(
+	mach_msg_header_t *msg,// 发送或接收的消息结构体
+	mach_msg_option_t option,// 控制操作类型：发送、接收、超时、是否附加 voucher 等
+	mach_msg_size_t send_size,// 要发送的消息大小
+	mach_msg_size_t rcv_size,// 可接收的消息最大大小
+	mach_port_name_t rcv_name,// 从哪个 port 接收消息
+	mach_msg_timeout_t timeout,// 超时时间（毫秒）
+	mach_port_name_t notify);// 通常传 MACH_PORT_NULL
+设置 timeout = 0 的意思是让 mach_msg() 变成 非阻塞（non-blocking）调用 —— 如果没法立刻完成接收或发送，它会马上返回，不会阻塞当前线程。
+
+
+mach_msg() 是 macOS/iOS 系统中最底层、最核心的 消息通信系统调用，是 Mach 内核的用户态接口之一
+mach_msg() 是用来在任务（进程）之间，或者任务内部，通过 Mach port 发送或接收消息的通用函数。
+
+背后其实都用了 mach_msg()：比如 RunLoop 等待 Mach port 的事件
+
+       Task A                          Task B
+    +------------+                +-------------+
+    |            |                |             |
+    | mach_msg() |  ========>     | mach_msg()  |
+    | 发送消息     |   via port     | 接收消息       |
+    |            |                |             |
+    +------------+                +-------------+
+它是面向消息（message-based）的通信模型，不同于 Unix 的 pipe、socket 等。
+
+pipe 和 socket 是字节流（byte stream）模型
+它们传输的是一串原始的字节，没有结构。
+如果你发送了多个数据包，对方读的时候并不知道原始的边界在哪里，需要靠协议来解析。
+例如 socket 通信中你可能需要定义包头或长度字段，才能正确地“切割”数据。
+
+
+mach_msg 是面向消息（message-based）模型：
+它传输的是一个结构化的“消息（message）”，就像你封装好了的一份快递。
+这个消息通常是一个结构体，包含消息头（如目的端口、消息大小、消息类型等）+ 消息体（你真正的数据）。
+操作系统级别保证了这是一整个“消息”单位地送达，而不是像 socket 那样需要你自己在字节流中划分。
+
+
+模型	类比	描述
+pipe/socket	水管	把数据当成水流一样输送，接收方接到的是原始水流，需要自己理解哪一段是哪里来的。
+mach_msg	快递系统	你打包好一个快递（消息），里面写明了寄件人、收件人、内容，一整个包被送到对方手中，结构清晰。
+
+
+举个例子：接收消息
+mach_msg_header_t msg;
+msg.msgh_local_port = somePort;
+msg.msgh_size = sizeof(msg);
+
+kern_return_t ret = mach_msg(
+    &msg,
+    MACH_RCV_MSG,
+    0,
+    sizeof(msg),
+    somePort,
+    0,
+    MACH_PORT_NULL
+);
+等价于：从 somePort 上 阻塞地 接收一个消息。
+
+
+是否阻塞，取决于你传入的参数 —— 特别是 option 和 timeout
+使用方式	是否阻塞	描述
+mach_msg(..., MACH_RCV_MSG, ..., timeout=0, ...)	❌ 非阻塞	立即返回，不等待
+mach_msg(..., MACH_RCV_MSG, ..., timeout=100, ...)	⏳ 阻塞（最多100ms）	最多等 100ms
+mach_msg(..., MACH_RCV_MSG, ..., timeout=TIMEOUT_INFINITY, ...)	✅ 阻塞	一直等，直到收到消息或出错
+mach_msg(..., MACH_SEND_MSG, ...)	✅ 发送也可能阻塞	如果目标 port 队列满了，发送方也可能阻塞
+
+mach_msg() 默认是阻塞的，除非你明确指定非阻塞行为（比如设置 timeout = 0）。
+
+
+==================================================
+RunLoop源码的下载地址
+https://github.com/apple-oss-distributions/CF/tags
+
+RunLoop是事件接收和分发机制的一个实现
+一个RunLoop就是一个事件处理的循环，用来不停的调度工作以及处理输入事件。
+
+
+RunLoop本质是一个 do-while循环，没事做就休息，来活了就干活。
+与普通的while循环是有区别的，普通的while循环会导致CPU进入忙等待状态，即一直消耗cpu，而RunLoop则不会，RunLoop是一种闲等待，即RunLoop具备休眠功能。
+
+
+RunLoop的作用:
+保持程序的持续运行
+处理App中的各种事件（触摸、定时器、performSelector）
+节省cpu资源，提供程序的性能，该做事就做事，该休息就休息
+
+
+Mode类型:
+其中mode在苹果文档中提及的有五个，而在iOS中公开暴露出来的只有 NSDefaultRunLoopMode 和 NSRunLoopCommonModes。 
+NSRunLoopCommonModes 实际上是一个 Mode 的集合，默认包括 NSDefaultRunLoopMode 和 NSEventTrackingRunLoopMode。
+NSDefaultRunLoopMode：默认的mode，正常情况下都是在这个mode
+NSConnectionReplyMode// 系统内部使用，这个 mode 表明 NSConnection 对象等待 reply
+NSModalPanelRunLoopMode
+NSEventTrackingRunLoopMode：使用这个Mode去跟踪来自用户交互的事件（比如UITableView上下滑动）
+/*
+滚动模式，在UIScrollView 滚动时，RunLoop 会切换到这个模式。
+为了保持流畅的滚动效果，这个模式下会屏蔽默认模式下的一些事件（比如耗时任务或定时器）
+*/
+NSRunLoopCommonModes// 其中kCFRunLoopCommonModes 不是一种模式，是一种抽象的伪模式，比defaultMode更加灵活
+
+
+###
+runloop在运行时的mode只有一个
+
+获取mainRunloop的所有模式，即po CFRunLoopCopyAllModes(mainRunloop)
+// default、tracking、eventReceive
+runloop 和 CFRunloopMode 具有 一对多的关系
+###
+
+
+Source & Timer & Observer:
+Source表示可以唤醒RunLoop的一些事件，例如用户点击了屏幕，主要分为Source0和Source1
+Source0 表示 非系统事件，即用户自定义的事件
+Source1 表示系统事件，主要负责底层的通讯，具备唤醒能力
+Timer 就是常用NSTimer定时器这一类
+Observer 主要用于监听RunLoop的状态变化，并作出一定响应，主要有以下一些状态
+typedef CF_OPTIONS(CFOptionFlags, CFRunLoopActivity) {
+    //进入RunLoop
+    kCFRunLoopEntry = (1UL << 0),
+    //即将处理Timers
+    kCFRunLoopBeforeTimers = (1UL << 1),
+    //即将处理Source
+    kCFRunLoopBeforeSources = (1UL << 2),
+    //即将进入休眠
+    kCFRunLoopBeforeWaiting = (1UL << 5),
+    //被唤醒
+    kCFRunLoopAfterWaiting = (1UL << 6),
+    //退出RunLoop
+    kCFRunLoopExit = (1UL << 7),
+    kCFRunLoopAllActivities = 0x0FFFFFFFU
+};
+
+
+###
+mode和Item也是一对多
+
+查看Item类型，有以下几种：
+block应用:__CFRUNLOOP_IS_CALLING_OUT_TO_A_BLOCK__
+调用timer:__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__
+响应source0: __CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE0_PERFORM_FUNCTION__
+响应source1: __CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE1_PERFORM_FUNCTION__
+GCD主队列:__CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__
+observer源: __CFRUNLOOP_IS_CALLING_OUT_TO_AN_OBSERVER_CALLBACK_FUNCTION__
+###
+
+
+进入__CFRunLoopRun源码，针对不同的对象，有不同的处理
+如果有observer，则调用 __CFRunLoopDoObservers
+如果有block，则调用__CFRunLoopDoBlocks
+如果有timer，则调用 __CFRunLoopDoTimers
+如果是source0，则调用__CFRunLoopDoSources0
+如果是source1，则调用__CFRunLoopDoSource1
+
+
+##### CFRunLoopRun
+void CFRunLoopRun(void) {	/* DOES CALLOUT */
+    int32_t result;
+    do {
+        result = CFRunLoopRunSpecific(CFRunLoopGetCurrent(), kCFRunLoopDefaultMode, 1.0e10, false);// 1.0e10 秒大约是 317 年左右
+        CHECK_FOR_FORK();
+    } while (kCFRunLoopRunStopped != result && kCFRunLoopRunFinished != result);
+}
+
+
+##### CFRunLoopRunSpecific
+SInt32 CFRunLoopRunSpecific(CFRunLoopRef rl, CFStringRef modeName, CFTimeInterval seconds, Boolean returnAfterSourceHandled) {     /* DOES CALLOUT */
+    CHECK_FOR_FORK();
+    if (__CFRunLoopIsDeallocating(rl)) return kCFRunLoopRunFinished;
+    __CFRunLoopLock(rl);
+    CFRunLoopModeRef currentMode = __CFRunLoopFindMode(rl, modeName, false);
+    if (NULL == currentMode || __CFRunLoopModeIsEmpty(rl, currentMode, rl->_currentMode)) {
+	Boolean did = false;
+	if (currentMode) __CFRunLoopModeUnlock(currentMode);
+	__CFRunLoopUnlock(rl);
+	return did ? kCFRunLoopRunHandledSource : kCFRunLoopRunFinished;
+    }
+    volatile _per_run_data *previousPerRun = __CFRunLoopPushPerRunData(rl);
+    CFRunLoopModeRef previousMode = rl->_currentMode;
+    rl->_currentMode = currentMode;
+    int32_t result = kCFRunLoopRunFinished;
+
+	if (currentMode->_observerMask & kCFRunLoopEntry ) __CFRunLoopDoObservers(rl, currentMode, kCFRunLoopEntry);
+	result = __CFRunLoopRun(rl, currentMode, seconds, returnAfterSourceHandled, previousMode);
+	if (currentMode->_observerMask & kCFRunLoopExit ) __CFRunLoopDoObservers(rl, currentMode, kCFRunLoopExit);
+
+        __CFRunLoopModeUnlock(currentMode);
+        __CFRunLoopPopPerRunData(rl, previousPerRun);
+	rl->_currentMode = previousMode;
+    __CFRunLoopUnlock(rl);
+    return result;
+}
+
+
+##### CFRunLoopGetCurrent
+CFRunLoopRef CFRunLoopGetCurrent(void) {
+    CHECK_FOR_FORK();
+    CFRunLoopRef rl = (CFRunLoopRef)_CFGetTSD(__CFTSDKeyRunLoop);
+    if (rl) return rl;
+    return _CFRunLoopGet0(pthread_self());
+}
+
+
+##### CFRunLoopGetMain
+CFRunLoopRef CFRunLoopGetMain(void) {
+    CHECK_FOR_FORK();
+    static CFRunLoopRef __main = NULL; // no retain needed
+    //pthread_main_thread_np 主线程
+    if (!__main) __main = _CFRunLoopGet0(pthread_main_thread_np()); // no CAS needed
+    return __main;
+}
+
+// should only be called by Foundation
+// t==0 is a synonym for "main thread" that always works
+CF_EXPORT CFRunLoopRef _CFRunLoopGet0(pthread_t t) {}
+
+
+
+typedef struct CF_BRIDGED_MUTABLE_TYPE(id) __CFRunLoop * CFRunLoopRef;
+typedef struct CF_BRIDGED_MUTABLE_TYPE(id) __CFRunLoopSource * CFRunLoopSourceRef;
+typedef struct CF_BRIDGED_MUTABLE_TYPE(id) __CFRunLoopObserver * CFRunLoopObserverRef;
+typedef struct CF_BRIDGED_MUTABLE_TYPE(NSTimer) __CFRunLoopTimer * CFRunLoopTimerRef;
+
+
+
+struct __CFRunLoop {
+    CFRuntimeBase _base;
+    pthread_mutex_t _lock;			/* locked for accessing mode list */
+    __CFPort _wakeUpPort;			// used for CFRunLoopWakeUp 
+    Boolean _unused;
+    volatile _per_run_data *_perRunData;              // reset for runs of the run loop
+    pthread_t _pthread;
+    uint32_t _winthread;
+    CFMutableSetRef _commonModes;
+    CFMutableSetRef _commonModeItems;
+    CFRunLoopModeRef _currentMode;
+    CFMutableSetRef _modes;
+    struct _block_item *_blocks_head;
+    struct _block_item *_blocks_tail;
+    CFAbsoluteTime _runTime;
+    CFAbsoluteTime _sleepTime;
+    CFTypeRef _counterpart;
+};
+
+
+typedef struct __CFRunLoopMode *CFRunLoopModeRef;
+struct __CFRunLoopMode {
+    CFRuntimeBase _base;
+    pthread_mutex_t _lock;	/* must have the run loop locked before locking this */
+    CFStringRef _name;
+    Boolean _stopped;
+    char _padding[3];
+    CFMutableSetRef _sources0;
+    CFMutableSetRef _sources1;
+    CFMutableArrayRef _observers;
+    CFMutableArrayRef _timers;
+    CFMutableDictionaryRef _portToV1SourceMap;
+    __CFPortSet _portSet;
+    CFIndex _observerMask;
+#if USE_DISPATCH_SOURCE_FOR_TIMERS
+    dispatch_source_t _timerSource;
+    dispatch_queue_t _queue;
+    Boolean _timerFired; // set to true by the source when a timer has fired
+    Boolean _dispatchTimerArmed;
+#endif
+#if USE_MK_TIMER_TOO
+    mach_port_t _timerPort;
+    Boolean _mkTimerArmed;
+#endif
+#if DEPLOYMENT_TARGET_WINDOWS
+    DWORD _msgQMask;
+    void (*_msgPump)(void);
+#endif
+    uint64_t _timerSoftDeadline; /* TSR */
+    uint64_t _timerHardDeadline; /* TSR */
+};
+
+
+struct __CFRunLoopSource {
+    CFRuntimeBase _base;
+    uint32_t _bits;
+    pthread_mutex_t _lock;
+    CFIndex _order;			/* immutable */
+    CFMutableBagRef _runLoops;
+    union {
+	CFRunLoopSourceContext version0;	/* immutable, except invalidation */
+        CFRunLoopSourceContext1 version1;	/* immutable, except invalidation */
+    } _context;
+};
+
+
+struct __CFRunLoopObserver {
+    CFRuntimeBase _base;
+    pthread_mutex_t _lock;
+    CFRunLoopRef _runLoop;
+    CFIndex _rlCount;
+    CFOptionFlags _activities;		/* immutable */
+    CFIndex _order;			/* immutable */
+    CFRunLoopObserverCallBack _callout;	/* immutable */
+    CFRunLoopObserverContext _context;	/* immutable, except invalidation */
+};
+
+
+struct __CFRunLoopTimer {
+    CFRuntimeBase _base;
+    uint16_t _bits;
+    pthread_mutex_t _lock;
+    CFRunLoopRef _runLoop;
+    CFMutableSetRef _rlModes;
+    CFAbsoluteTime _nextFireDate;
+    CFTimeInterval _interval;		/* immutable */
+    CFTimeInterval _tolerance;          /* mutable */
+    uint64_t _fireTSR;			/* TSR units */
+    CFIndex _order;			/* immutable */
+    CFRunLoopTimerCallBack _callout;	/* immutable */
+    CFRunLoopTimerContext _context;	/* immutable, except invalidation */
+};
+
+
+struct _block_item {
+    struct _block_item *_next;
+    CFTypeRef _mode;	// CFString or CFSet
+    void (^_block)(void);
+};
+
+
+/*
+关注
+sourceHandledThisLoop
+
+didDispatchPortLastTime
+的作用
+*/
+// 简约核心代码
+__CFRunLoopRun {
+
+
+    #if USE_DISPATCH_SOURCE_FOR_TIMERS
+        mach_port_name_t modeQueuePort = MACH_PORT_NULL;
+        if (rlm->_queue) {
+            modeQueuePort = _dispatch_runloop_root_queue_get_port_4CF(rlm->_queue);// get port
+            if (!modeQueuePort) {
+                CRASH("Unable to get port for run loop mode queue (%d)", -1);
+            }
+        }
+    #endif
+
+
+    dispatch_source_t timeout_timer = NULL;
+    struct __timeout_context *timeout_context = (struct __timeout_context *)malloc(sizeof(*timeout_context));
+    if (seconds <= 0.0) { // instant timeout
+        seconds = 0.0;
+        timeout_context->termTSR = 0ULL;
+    } else if (seconds <= TIMER_INTERVAL_LIMIT) {
+	dispatch_queue_t queue = pthread_main_np() ? __CFDispatchQueueGetGenericMatchingMain() : __CFDispatchQueueGetGenericBackground();
+	timeout_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+        dispatch_retain(timeout_timer);
+	timeout_context->ds = timeout_timer;
+	timeout_context->rl = (CFRunLoopRef)CFRetain(rl);
+	timeout_context->termTSR = startTSR + __CFTimeIntervalToTSR(seconds);
+	dispatch_set_context(timeout_timer, timeout_context); // source gets ownership of context
+	dispatch_source_set_event_handler_f(timeout_timer, __CFRunLoopTimeout);
+        dispatch_source_set_cancel_handler_f(timeout_timer, __CFRunLoopTimeoutCancel);
+        uint64_t ns_at = (uint64_t)((__CFTSRToTimeInterval(startTSR) + seconds) * 1000000000ULL);
+        dispatch_source_set_timer(timeout_timer, dispatch_time(1, ns_at), DISPATCH_TIME_FOREVER, 1000ULL);
+        dispatch_resume(timeout_timer);
+    } else { // infinite timeout
+        seconds = 9999999999.0;
+        timeout_context->termTSR = UINT64_MAX;
+    }
+
+    Boolean didDispatchPortLastTime = true;
+    int32_t retVal = 0;
+
+    // ###do-while###
+    do {
+        __CFPortSet waitSet = rlm->_portSet;
+
+        if (rlm->_observerMask & kCFRunLoopBeforeTimers) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeTimers);
+        if (rlm->_observerMask & kCFRunLoopBeforeSources) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeSources);
+
+        __CFRunLoopDoBlocks(rl, rlm);
+
+        Boolean sourceHandledThisLoop = __CFRunLoopDoSources0(rl, rlm, stopAfterHandle);
+        if (sourceHandledThisLoop) {
+            __CFRunLoopDoBlocks(rl, rlm);
+        }
+
+        Boolean poll = sourceHandledThisLoop || (0ULL == timeout_context->termTSR);
+
+        if (MACH_PORT_NULL != dispatchPort && !didDispatchPortLastTime) {
+        #if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+                    msg = (mach_msg_header_t *)msg_buffer;
+                    if (__CFRunLoopServiceMachPort(dispatchPort, &msg, sizeof(msg_buffer), &livePort, 0, &voucherState, NULL)) {
+                        goto handle_msg;
+                    }
+        #elif DEPLOYMENT_TARGET_WINDOWS
+                    // DEPLOYMENT_TARGET_WINDOWS
+        #endif
+                }
+
+        didDispatchPortLastTime = false;
+
+        if (!poll && (rlm->_observerMask & kCFRunLoopBeforeWaiting)) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeWaiting);
+
+        CFAbsoluteTime sleepStart = poll ? 0.0 : CFAbsoluteTimeGetCurrent();
+
+
+        // ###do-while###
+        #if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+        #if USE_DISPATCH_SOURCE_FOR_TIMERS
+            do {
+                if (kCFUseCollectableAllocator) {
+                    // objc_clear_stack(0);
+                    // <rdar://problem/16393959>
+                    memset(msg_buffer, 0, sizeof(msg_buffer));
+                }
+                msg = (mach_msg_header_t *)msg_buffer;
+                
+                __CFRunLoopServiceMachPort(waitSet, &msg, sizeof(msg_buffer), &livePort, poll ? 0 : TIMEOUT_INFINITY, &voucherState, &voucherCopy);
+                
+                if (modeQueuePort != MACH_PORT_NULL && livePort == modeQueuePort) {
+                    // Drain the internal queue. If one of the callout blocks sets the timerFired flag, break out and service the timer.
+                    while (_dispatch_runloop_root_queue_perform_4CF(rlm->_queue));// perform: 执行队列中的任务
+                    if (rlm->_timerFired) {
+                        // Leave livePort as the queue port, and service timers below
+                        rlm->_timerFired = false;
+                        break;
+                    } else {
+                        if (msg && msg != (mach_msg_header_t *)msg_buffer) free(msg);
+                    }
+                } else {
+                    // Go ahead and leave the inner loop.
+                    break;
+                }
+            } while (1);
+        #else
+            // !USE_DISPATCH_SOURCE_FOR_TIMERS
+        #endif
+            
+
+        if (!poll && (rlm->_observerMask & kCFRunLoopAfterWaiting)) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopAfterWaiting);
+
+        handle_msg:;
+
+        if (MACH_PORT_NULL == livePort) {
+            CFRUNLOOP_WAKEUP_FOR_NOTHING();
+            // handle nothing
+        } else if (livePort == rl->_wakeUpPort) {
+            CFRUNLOOP_WAKEUP_FOR_WAKEUP();
+            // do nothing on Mac OS
+        }
+#if USE_DISPATCH_SOURCE_FOR_TIMERS
+        else if (modeQueuePort != MACH_PORT_NULL && livePort == modeQueuePort) {
+            CFRUNLOOP_WAKEUP_FOR_TIMER();
+            if (!__CFRunLoopDoTimers(rl, rlm, mach_absolute_time())) {
+                // Re-arm the next timer, because we apparently fired early
+                __CFArmNextTimerInMode(rlm, rl);
+            }
+        }
+#endif
+        else if (livePort == dispatchPort) {
+            CFRUNLOOP_WAKEUP_FOR_DISPATCH();
+            __CFRunLoopModeUnlock(rlm);
+            __CFRunLoopUnlock(rl);
+            _CFSetTSD(__CFTSDKeyIsInGCDMainQ, (void *)6, NULL);
+            __CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__(msg);
+            _CFSetTSD(__CFTSDKeyIsInGCDMainQ, (void *)0, NULL);
+            __CFRunLoopLock(rl);
+            __CFRunLoopModeLock(rlm);
+            sourceHandledThisLoop = true;
+            didDispatchPortLastTime = true;
+        } else {
+            CFRUNLOOP_WAKEUP_FOR_SOURCE();
+            
+            // If we received a voucher from this mach_msg, then put a copy of the new voucher into TSD. CFMachPortBoost will look in the TSD for the voucher. By using the value in the TSD we tie the CFMachPortBoost to this received mach_msg explicitly without a chance for anything in between the two pieces of code to set the voucher again.
+            voucher_t previousVoucher = _CFSetTSD(__CFTSDKeyMachMessageHasVoucher, (void *)voucherCopy, os_release);
+
+            // Despite the name, this works for windows handles as well
+            CFRunLoopSourceRef rls = __CFRunLoopModeFindSourceForMachPort(rl, rlm, livePort);
+            if (rls) {
+#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+                mach_msg_header_t *reply = NULL;
+                sourceHandledThisLoop = __CFRunLoopDoSource1(rl, rlm, rls, msg, msg->msgh_size, &reply) || sourceHandledThisLoop;
+                if (NULL != reply) {
+                    (void)mach_msg(reply, MACH_SEND_MSG, reply->msgh_size, 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
+                    CFAllocatorDeallocate(kCFAllocatorSystemDefault, reply);
+                }
+	        }
+            
+            // Restore the previous voucher
+            _CFSetTSD(__CFTSDKeyMachMessageHasVoucher, previousVoucher, os_release);
+            
+        }
+
+        __CFRunLoopDoBlocks(rl, rlm);
+        
+
+        if (sourceHandledThisLoop && stopAfterHandle) {
+            retVal = kCFRunLoopRunHandledSource;
+            } else if (timeout_context->termTSR < mach_absolute_time()) {
+                retVal = kCFRunLoopRunTimedOut;
+        } else if (__CFRunLoopIsStopped(rl)) {
+                __CFRunLoopUnsetStopped(rl);
+            retVal = kCFRunLoopRunStopped;
+        } else if (rlm->_stopped) {
+            rlm->_stopped = false;
+            retVal = kCFRunLoopRunStopped;
+        } else if (__CFRunLoopModeIsEmpty(rl, rlm, previousMode)) {
+            retVal = kCFRunLoopRunFinished;
+        }
+
+
+    } while (0 == retVal);
+
+    return retVal;
+}
+
+
+##### 核心代码 __CFRunLoopRun 里面2层循环，do-while嵌套do-while
+static int32_t __CFRunLoopRun(CFRunLoopRef rl, CFRunLoopModeRef rlm, CFTimeInterval seconds, Boolean stopAfterHandle, CFRunLoopModeRef previousMode) {
+    uint64_t startTSR = mach_absolute_time();
+
+    if (__CFRunLoopIsStopped(rl)) {
+        __CFRunLoopUnsetStopped(rl);
+	return kCFRunLoopRunStopped;
+    } else if (rlm->_stopped) {
+	rlm->_stopped = false;
+	return kCFRunLoopRunStopped;
+    }
+    
+    mach_port_name_t dispatchPort = MACH_PORT_NULL;
+    Boolean libdispatchQSafe = pthread_main_np() && ((HANDLE_DISPATCH_ON_BASE_INVOCATION_ONLY && NULL == previousMode) || (!HANDLE_DISPATCH_ON_BASE_INVOCATION_ONLY && 0 == _CFGetTSD(__CFTSDKeyIsInGCDMainQ)));
+    if (libdispatchQSafe && (CFRunLoopGetMain() == rl) && CFSetContainsValue(rl->_commonModes, rlm->_name)) dispatchPort = _dispatch_get_main_queue_port_4CF();
+    
+
+    /*
+    用于获取与给定队列（rlm->_queue）关联的 Mach port
+    */
+#if USE_DISPATCH_SOURCE_FOR_TIMERS
+    mach_port_name_t modeQueuePort = MACH_PORT_NULL;
+    if (rlm->_queue) {
+        modeQueuePort = _dispatch_runloop_root_queue_get_port_4CF(rlm->_queue);
+        if (!modeQueuePort) {
+            CRASH("Unable to get port for run loop mode queue (%d)", -1);
+        }
+    }
+#endif
+    
+
+    /*
+    __CFRunLoopTimeout 是 RunLoop 等待时设置的超时回调函数
+    如果这个最大等待时间到了，但 RunLoop 还没被别的事件唤醒（如 Source、Timer、Port、Observer 等），就会触发这个超时回调 __CFRunLoopTimeout 来唤醒 RunLoop
+
+    触发条件：
+    当你调用 CFRunLoopRun()（或主线程的 RunLoop.run()）进入某个 mode 之后，如果当前没有任何事件要处理，那么 RunLoop 会去休眠。但：
+    它会根据你设置的最长 timeout（比如 RunUntilDate:）设置一个定时器
+    如果这个 timeout 到了，而且期间没有被其他事件唤醒
+    就会由 GCD 定时器异步调用 __CFRunLoopTimeout()，它里面会调用 CFRunLoopWakeUp() 唤醒主 RunLoop
+
+    RunLoop 会进入 mach_msg() 或 kevent() 等系统调用，进入休眠
+    如果没有人为唤醒，它就一直睡着，不会自己醒
+
+    “超时唤醒”最终的目的就是：让 RunLoop 在没有事件触发的情况下，也能按预期地醒来并 结束运行。
+    */
+    dispatch_source_t timeout_timer = NULL;
+    struct __timeout_context *timeout_context = (struct __timeout_context *)malloc(sizeof(*timeout_context));
+    if (seconds <= 0.0) { // instant timeout
+        seconds = 0.0;
+        timeout_context->termTSR = 0ULL;
+    } else if (seconds <= TIMER_INTERVAL_LIMIT) {
+	dispatch_queue_t queue = pthread_main_np() ? __CFDispatchQueueGetGenericMatchingMain() : __CFDispatchQueueGetGenericBackground();
+	timeout_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+        dispatch_retain(timeout_timer);
+	timeout_context->ds = timeout_timer;
+	timeout_context->rl = (CFRunLoopRef)CFRetain(rl);
+	timeout_context->termTSR = startTSR + __CFTimeIntervalToTSR(seconds);
+	dispatch_set_context(timeout_timer, timeout_context); // source gets ownership of context
+	dispatch_source_set_event_handler_f(timeout_timer, __CFRunLoopTimeout);
+        dispatch_source_set_cancel_handler_f(timeout_timer, __CFRunLoopTimeoutCancel);
+        uint64_t ns_at = (uint64_t)((__CFTSRToTimeInterval(startTSR) + seconds) * 1000000000ULL);
+        dispatch_source_set_timer(timeout_timer, dispatch_time(1, ns_at), DISPATCH_TIME_FOREVER, 1000ULL);
+        dispatch_resume(timeout_timer);
+    } else { // infinite timeout
+        seconds = 9999999999.0;
+        timeout_context->termTSR = UINT64_MAX;
+    }
+
+    Boolean didDispatchPortLastTime = true;
+    int32_t retVal = 0;
+
+
+    /*
+    do-while循环
+    */
+    do {
+#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+        voucher_mach_msg_state_t voucherState = VOUCHER_MACH_MSG_STATE_UNCHANGED;
+        voucher_t voucherCopy = NULL;
+#endif
+        uint8_t msg_buffer[3 * 1024];
+#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+        mach_msg_header_t *msg = NULL;
+        mach_port_t livePort = MACH_PORT_NULL;
+#elif DEPLOYMENT_TARGET_WINDOWS
+        HANDLE livePort = NULL;
+        Boolean windowsMessageReceived = false;
+#endif
+	__CFPortSet waitSet = rlm->_portSet;
+
+        __CFRunLoopUnsetIgnoreWakeUps(rl);
+
+        if (rlm->_observerMask & kCFRunLoopBeforeTimers) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeTimers);
+        if (rlm->_observerMask & kCFRunLoopBeforeSources) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeSources);
+
+	__CFRunLoopDoBlocks(rl, rlm);
+
+        Boolean sourceHandledThisLoop = __CFRunLoopDoSources0(rl, rlm, stopAfterHandle);
+        if (sourceHandledThisLoop) {
+            __CFRunLoopDoBlocks(rl, rlm);
+	}
+
+        Boolean poll = sourceHandledThisLoop || (0ULL == timeout_context->termTSR);
+
+        /*
+        这段逻辑的主要目的是 监听 GCD（Grand Central Dispatch）事件的 Mach port，从而使 RunLoop 能够被 GCD 触发并处理任务。
+
+        - `dispatchPort`：这是 GCD 用来唤醒 RunLoop 的 Mach port。
+        - `didDispatchPortLastTime`：一个布尔标记，表示上一次是否是 GCD 触发唤醒 RunLoop。
+
+        调用 __CFRunLoopServiceMachPort 来 监听 dispatchPort，看是否有 GCD 发来的任务事件。
+        如果该函数返回了 true，说明有 GCD 消息，就跳到 handle_msg 标签，进入消息处理流程。
+
+        ###
+        这块代码的逻辑是，runloop循环进来，默认 didDispatchPortLastTime = true，不会监听是否有主队列任务需要处理，标记下次监听（didDispatchPortLastTime = false）。
+        再下去，runloop就休眠了。
+        如果dispatchPort有消息唤醒runloop，就会处理主队列任务，重置 didDispatchPortLastTime = true，下次runloop循环还是不会监听是否有主队列任务需要处理
+        如果dispatchPort没有消息唤醒runloop，那下次runloop循环就会监听是否有主队列任务需要处理
+        ###
+        */
+        if (MACH_PORT_NULL != dispatchPort && !didDispatchPortLastTime) {
+#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+            msg = (mach_msg_header_t *)msg_buffer;
+            if (__CFRunLoopServiceMachPort(dispatchPort, &msg, sizeof(msg_buffer), &livePort, 0, &voucherState, NULL)) {
+                goto handle_msg;
+            }
+#elif DEPLOYMENT_TARGET_WINDOWS
+            if (__CFRunLoopWaitForMultipleObjects(NULL, &dispatchPort, 0, 0, &livePort, NULL)) {
+                goto handle_msg;
+            }
+#endif
+        }
+
+        didDispatchPortLastTime = false;
+
+	if (!poll && (rlm->_observerMask & kCFRunLoopBeforeWaiting)) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopBeforeWaiting);
+	__CFRunLoopSetSleeping(rl);
+	// do not do any user callouts after this point (after notifying of sleeping)
+
+        // Must push the local-to-this-activation ports in on every loop
+        // iteration, as this mode could be run re-entrantly and we don't
+        // want these ports to get serviced.
+
+        __CFPortSetInsert(dispatchPort, waitSet);
+        
+	__CFRunLoopModeUnlock(rlm);
+	__CFRunLoopUnlock(rl);
+
+        CFAbsoluteTime sleepStart = poll ? 0.0 : CFAbsoluteTimeGetCurrent();
+
+#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+#if USE_DISPATCH_SOURCE_FOR_TIMERS
+
+        /*
+        
+        */
+        do {
+            if (kCFUseCollectableAllocator) {
+                // objc_clear_stack(0);
+                // <rdar://problem/16393959>
+                memset(msg_buffer, 0, sizeof(msg_buffer));
+            }
+            msg = (mach_msg_header_t *)msg_buffer;
+            
+            __CFRunLoopServiceMachPort(waitSet, &msg, sizeof(msg_buffer), &livePort, poll ? 0 : TIMEOUT_INFINITY, &voucherState, &voucherCopy);
+            
+            if (modeQueuePort != MACH_PORT_NULL && livePort == modeQueuePort) {
+                // Drain the internal queue. If one of the callout blocks sets the timerFired flag, break out and service the timer.
+                while (_dispatch_runloop_root_queue_perform_4CF(rlm->_queue));
+                if (rlm->_timerFired) {
+                    // Leave livePort as the queue port, and service timers below
+                    rlm->_timerFired = false;
+                    break;
+                } else {
+                    if (msg && msg != (mach_msg_header_t *)msg_buffer) free(msg);
+                }
+            } else {
+                // Go ahead and leave the inner loop.
+                break;
+            }
+        } while (1);
+#else
+        if (kCFUseCollectableAllocator) {
+            // objc_clear_stack(0);
+            // <rdar://problem/16393959>
+            memset(msg_buffer, 0, sizeof(msg_buffer));
+        }
+        msg = (mach_msg_header_t *)msg_buffer;
+        __CFRunLoopServiceMachPort(waitSet, &msg, sizeof(msg_buffer), &livePort, poll ? 0 : TIMEOUT_INFINITY, &voucherState, &voucherCopy);
+#endif
+        
+        
+#elif DEPLOYMENT_TARGET_WINDOWS
+        // Here, use the app-supplied message queue mask. They will set this if they are interested in having this run loop receive windows messages.
+        __CFRunLoopWaitForMultipleObjects(waitSet, NULL, poll ? 0 : TIMEOUT_INFINITY, rlm->_msgQMask, &livePort, &windowsMessageReceived);
+#endif
+        
+        __CFRunLoopLock(rl);
+        __CFRunLoopModeLock(rlm);
+
+        rl->_sleepTime += (poll ? 0.0 : (CFAbsoluteTimeGetCurrent() - sleepStart));
+
+        // Must remove the local-to-this-activation ports in on every loop
+        // iteration, as this mode could be run re-entrantly and we don't
+        // want these ports to get serviced. Also, we don't want them left
+        // in there if this function returns.
+
+        __CFPortSetRemove(dispatchPort, waitSet);
+        
+        __CFRunLoopSetIgnoreWakeUps(rl);
+
+        // user callouts now OK again
+	__CFRunLoopUnsetSleeping(rl);
+	if (!poll && (rlm->_observerMask & kCFRunLoopAfterWaiting)) __CFRunLoopDoObservers(rl, rlm, kCFRunLoopAfterWaiting);
+
+
+        /*
+        它处理了不同类型的消息事件，并根据不同的条件执行相应的操作。
+        功能是响应不同的 livePort（活动的 Mach 端口），然后根据不同的情况执行相应的操作。
+        */
+        handle_msg:;
+        __CFRunLoopSetIgnoreWakeUps(rl);
+
+#if DEPLOYMENT_TARGET_WINDOWS
+        if (windowsMessageReceived) {
+            // These Win32 APIs cause a callout, so make sure we're unlocked first and relocked after
+            __CFRunLoopModeUnlock(rlm);
+	    __CFRunLoopUnlock(rl);
+
+            if (rlm->_msgPump) {
+                rlm->_msgPump();
+            } else {
+                MSG msg;
+                if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE | PM_NOYIELD)) {
+                    TranslateMessage(&msg);
+                    DispatchMessage(&msg);
+                }
+            }
+            
+            __CFRunLoopLock(rl);
+	    __CFRunLoopModeLock(rlm);
+ 	    sourceHandledThisLoop = true;
+            
+            // To prevent starvation of sources other than the message queue, we check again to see if any other sources need to be serviced
+            // Use 0 for the mask so windows messages are ignored this time. Also use 0 for the timeout, because we're just checking to see if the things are signalled right now -- we will wait on them again later.
+            // NOTE: Ignore the dispatch source (it's not in the wait set anymore) and also don't run the observers here since we are polling.
+            __CFRunLoopSetSleeping(rl);
+            __CFRunLoopModeUnlock(rlm);
+            __CFRunLoopUnlock(rl);
+            
+            __CFRunLoopWaitForMultipleObjects(waitSet, NULL, 0, 0, &livePort, NULL);
+            
+            __CFRunLoopLock(rl);
+            __CFRunLoopModeLock(rlm);            
+            __CFRunLoopUnsetSleeping(rl);
+            // If we have a new live port then it will be handled below as normal
+        }
+        
+        
+#endif
+        
+        if (MACH_PORT_NULL == livePort) {// 如果 livePort 为 MACH_PORT_NULL，这意味着没有有效的消息或端口在等待处理。
+            CFRUNLOOP_WAKEUP_FOR_NOTHING();
+            // handle nothing
+        } else if (livePort == rl->_wakeUpPort) {// 如果 livePort 是唤醒端口 rl->_wakeUpPort
+            CFRUNLOOP_WAKEUP_FOR_WAKEUP();
+            // do nothing on Mac OS
+#if DEPLOYMENT_TARGET_WINDOWS
+            // Always reset the wake up port, or risk spinning forever
+            ResetEvent(rl->_wakeUpPort);
+#endif
+        }
+#if USE_DISPATCH_SOURCE_FOR_TIMERS
+        else if (modeQueuePort != MACH_PORT_NULL && livePort == modeQueuePort) {// 如果 livePort 是定时器端口，程序会处理定时器。
+            CFRUNLOOP_WAKEUP_FOR_TIMER();
+            if (!__CFRunLoopDoTimers(rl, rlm, mach_absolute_time())) {
+                // Re-arm the next timer, because we apparently fired early
+                __CFArmNextTimerInMode(rlm, rl);
+            }
+        }
+#endif
+#if USE_MK_TIMER_TOO
+        else if (rlm->_timerPort != MACH_PORT_NULL && livePort == rlm->_timerPort) {
+            CFRUNLOOP_WAKEUP_FOR_TIMER();
+            // On Windows, we have observed an issue where the timer port is set before the time which we requested it to be set. For example, we set the fire time to be TSR 167646765860, but it is actually observed firing at TSR 167646764145, which is 1715 ticks early. The result is that, when __CFRunLoopDoTimers checks to see if any of the run loop timers should be firing, it appears to be 'too early' for the next timer, and no timers are handled.
+            // In this case, the timer port has been automatically reset (since it was returned from MsgWaitForMultipleObjectsEx), and if we do not re-arm it, then no timers will ever be serviced again unless something adjusts the timer list (e.g. adding or removing timers). The fix for the issue is to reset the timer here if CFRunLoopDoTimers did not handle a timer itself. 9308754
+            if (!__CFRunLoopDoTimers(rl, rlm, mach_absolute_time())) {
+                // Re-arm the next timer
+                __CFArmNextTimerInMode(rlm, rl);
+            }
+        }
+#endif
+        else if (livePort == dispatchPort) {// 如果 livePort 是 dispatchPort（###表示接受到的是 dispatchPort 的消息###），这表示当前需要处理 GCD 主队列的任务
+            CFRUNLOOP_WAKEUP_FOR_DISPATCH();
+            __CFRunLoopModeUnlock(rlm);
+            __CFRunLoopUnlock(rl);
+            _CFSetTSD(__CFTSDKeyIsInGCDMainQ, (void *)6, NULL);
+#if DEPLOYMENT_TARGET_WINDOWS
+            void *msg = 0;
+#endif
+            __CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__(msg);
+            _CFSetTSD(__CFTSDKeyIsInGCDMainQ, (void *)0, NULL);
+            __CFRunLoopLock(rl);
+            __CFRunLoopModeLock(rlm);
+            sourceHandledThisLoop = true;
+            didDispatchPortLastTime = true;
+        } else {// 处理其他端口（source1），程序会通过 CFRUNLOOP_WAKEUP_FOR_SOURCE() 来标识接收到一个源端口的消息。
+            CFRUNLOOP_WAKEUP_FOR_SOURCE();
+            
+            // If we received a voucher from this mach_msg, then put a copy of the new voucher into TSD. CFMachPortBoost will look in the TSD for the voucher. By using the value in the TSD we tie the CFMachPortBoost to this received mach_msg explicitly without a chance for anything in between the two pieces of code to set the voucher again.
+            voucher_t previousVoucher = _CFSetTSD(__CFTSDKeyMachMessageHasVoucher, (void *)voucherCopy, os_release);
+
+            // Despite the name, this works for windows handles as well
+            // 然后，程序会查找与 livePort 关联的 CFRunLoopSourceRef，并通过 __CFRunLoopDoSource1 处理该源。
+            CFRunLoopSourceRef rls = __CFRunLoopModeFindSourceForMachPort(rl, rlm, livePort);
+            if (rls) {
+#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+		mach_msg_header_t *reply = NULL;
+		sourceHandledThisLoop = __CFRunLoopDoSource1(rl, rlm, rls, msg, msg->msgh_size, &reply) || sourceHandledThisLoop;
+		if (NULL != reply) {
+		    (void)mach_msg(reply, MACH_SEND_MSG, reply->msgh_size, 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
+		    CFAllocatorDeallocate(kCFAllocatorSystemDefault, reply);
+		}
+#elif DEPLOYMENT_TARGET_WINDOWS
+                sourceHandledThisLoop = __CFRunLoopDoSource1(rl, rlm, rls) || sourceHandledThisLoop;
+#endif
+	    }
+            
+            // Restore the previous voucher
+            _CFSetTSD(__CFTSDKeyMachMessageHasVoucher, previousVoucher, os_release);
+            
+        } 
+
+#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+        if (msg && msg != (mach_msg_header_t *)msg_buffer) free(msg);
+#endif
+        
+	__CFRunLoopDoBlocks(rl, rlm);
+        
+
+	if (sourceHandledThisLoop && stopAfterHandle) {
+	    retVal = kCFRunLoopRunHandledSource;
+        } else if (timeout_context->termTSR < mach_absolute_time()) {
+            retVal = kCFRunLoopRunTimedOut;
+	} else if (__CFRunLoopIsStopped(rl)) {
+            __CFRunLoopUnsetStopped(rl);
+	    retVal = kCFRunLoopRunStopped;
+	} else if (rlm->_stopped) {
+	    rlm->_stopped = false;
+	    retVal = kCFRunLoopRunStopped;
+	} else if (__CFRunLoopModeIsEmpty(rl, rlm, previousMode)) {
+	    retVal = kCFRunLoopRunFinished;
+	}
+        
+#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+        voucher_mach_msg_revert(voucherState);
+        os_release(voucherCopy);
+#endif
+
+    } while (0 == retVal);
+
+    if (timeout_timer) {
+        dispatch_source_cancel(timeout_timer);
+        dispatch_release(timeout_timer);
+    } else {
+        free(timeout_context);
+    }
+
+    return retVal;
+}
+
+
+##### __CFRunLoopTimeout
+static void __CFRunLoopTimeout(void *arg) {
+    struct __timeout_context *context = (struct __timeout_context *)arg;
+    context->termTSR = 0ULL;
+    CFRUNLOOP_WAKEUP_FOR_TIMEOUT();
+    CFRunLoopWakeUp(context->rl);
+    // The interval is DISPATCH_TIME_FOREVER, so this won't fire again
+}
+
+
+##### CFRunLoopWakeUp
+void CFRunLoopWakeUp(CFRunLoopRef rl) {
+    CHECK_FOR_FORK();
+    // This lock is crucial to ignorable wakeups, do not remove it.
+    __CFRunLoopLock(rl);
+    if (__CFRunLoopIsIgnoringWakeUps(rl)) {
+        __CFRunLoopUnlock(rl);
+        return;
+    }
+#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+    kern_return_t ret;
+    /* We unconditionally try to send the message, since we don't want
+     * to lose a wakeup, but the send may fail if there is already a
+     * wakeup pending, since the queue length is 1. */
+
+    // 这里使用了 Mach 消息机制 来唤醒 RunLoop
+    // RunLoop 可能在 mach_msg() 阻塞状态下等待消息，通过往 _wakeUpPort 发送消息可以打断这个阻塞，从而“唤醒”它。
+    ret = __CFSendTrivialMachMessage(rl->_wakeUpPort, 0, MACH_SEND_TIMEOUT, 0);
+    if (ret != MACH_MSG_SUCCESS && ret != MACH_SEND_TIMED_OUT) CRASH("*** Unable to send message to wake up port. (%d) ***", ret);
+#elif DEPLOYMENT_TARGET_WINDOWS
+    SetEvent(rl->_wakeUpPort);
+#endif
+    __CFRunLoopUnlock(rl);
+}
+
+
+mach_msg() 是 macOS 和 iOS 系统底层的 消息传递函数，是 Mach 内核（XNU 内核的一部分）中的核心通信机制。
+在 macOS/iOS 的底层世界里，线程不是直接调用函数来通信，而是：
+通过消息，把数据扔进一个“端口（Mach Port）”，对方监听这个端口，然后取走消息。
+
+在 CFRunLoop 内部，系统会调用 mach_msg()
+mach_msg(..., MACH_RCV_MSG, ..., runLoop->_port, ...);
+这表示：RunLoop 线程正在监听某个 Mach Port，如果没人发消息，它就一直挂起（阻塞），节省 CPU。
+而当你调用 CFRunLoopWakeUp() 的时候，底层会发送一个空消息：
+mach_msg(..., MACH_SEND_MSG, ..., runLoop->_port, ...);
+这样 RunLoop 被唤醒，继续往下执行。
+
+Thread A:                          Thread B (RunLoop)
+----------                        ---------------------
+CFRunLoopWakeUp() ──▶           [mach_msg: block on port]
+                             ◀── receive wakeup message
+                             ▶── wake up and process events
+
+
+
+##### __CFRunLoopDoObservers
+static void __CFRunLoopDoObservers(CFRunLoopRef rl, CFRunLoopModeRef rlm, CFRunLoopActivity activity) {	/* DOES CALLOUT */
+    CHECK_FOR_FORK();
+
+    // 拿出当前 mode 中的所有 observers
+    CFIndex cnt = rlm->_observers ? CFArrayGetCount(rlm->_observers) : 0;
+    if (cnt < 1) return;
+
+    /* Fire the observers */
+    STACK_BUFFER_DECL(CFRunLoopObserverRef, buffer, (cnt <= 1024) ? cnt : 1);
+    // 分配临时数组收集当前匹配的 observers
+    CFRunLoopObserverRef *collectedObservers = (cnt <= 1024) ? buffer : (CFRunLoopObserverRef *)malloc(cnt * sizeof(CFRunLoopObserverRef));
+    CFIndex obs_cnt = 0;
+
+    /*
+    遍历所有 observer，判断是否满足触发条件
+
+    rlo->_activities & activity：这个 observer 监听当前这个 RunLoop activity 吗？
+    __CFIsValid(rlo)：这个 observer 还有效吗？
+    !__CFRunLoopObserverIsFiring(rlo)：当前是否已经在触发中？避免重复
+
+    满足这三个条件才会被收集
+    */
+    for (CFIndex idx = 0; idx < cnt; idx++) {
+        CFRunLoopObserverRef rlo = (CFRunLoopObserverRef)CFArrayGetValueAtIndex(rlm->_observers, idx);
+        if (0 != (rlo->_activities & activity) && __CFIsValid(rlo) && !__CFRunLoopObserverIsFiring(rlo)) {
+            collectedObservers[obs_cnt++] = (CFRunLoopObserverRef)CFRetain(rlo);
+        }
+    }
+    __CFRunLoopModeUnlock(rlm);
+    __CFRunLoopUnlock(rl);
+
+    // 遍历所有收集到的 observer 并执行回调
+    for (CFIndex idx = 0; idx < obs_cnt; idx++) {
+        CFRunLoopObserverRef rlo = collectedObservers[idx];
+        __CFRunLoopObserverLock(rlo);
+        if (__CFIsValid(rlo)) {
+            Boolean doInvalidate = !__CFRunLoopObserverRepeats(rlo);
+            __CFRunLoopObserverSetFiring(rlo);
+            __CFRunLoopObserverUnlock(rlo);
+            // 调用回调
+            __CFRUNLOOP_IS_CALLING_OUT_TO_AN_OBSERVER_CALLBACK_FUNCTION__(rlo->_callout, rlo, activity, rlo->_context.info);
+            if (doInvalidate) {
+                CFRunLoopObserverInvalidate(rlo);
+            }
+            __CFRunLoopObserverUnsetFiring(rlo);
+        } else {
+            __CFRunLoopObserverUnlock(rlo);
+        }
+        CFRelease(rlo);
+    }
+    __CFRunLoopLock(rl);
+    __CFRunLoopModeLock(rlm);
+
+    if (collectedObservers != buffer) free(collectedObservers);
+}
+
+
+##### __CFRunLoopDoBlocks
+/*
+每次你调用 CFRunLoopPerformBlock(...)，就会把 block 封装成 _block_item，加入到 rl->_blocks_head 和 rl->_blocks_tail 的链表中。
+
+RunLoop block: CFRunLoopPerformBlock
+
+知道函数符号，可以打断点，通过Xcode调试: 添加Symbolic Breakpoint
+CFRunLoopPerformBlock
+就能看到你写的哪些代码最终会调用底层的CFRunLoopPerformBlock
+
+[[NSRunLoop currentRunLoop] performBlock:^{
+    // 这边的回调是由 __CFRUNLOOP_IS_CALLING_OUT_TO_A_BLOCK__ 调用
+
+    /*
+    * frame #0: 0x0000000104e8b7d8 TestOC.debug.dylib`__32-[ViewController viewDidAppear:]_block_invoke(.block_descriptor=0x0000000104e94370) at ViewController.m:91:5
+    frame #1: 0x00000001069f006c CoreFoundation`__CFRUNLOOP_IS_CALLING_OUT_TO_A_BLOCK__ + 20
+    frame #2: 0x00000001069ef7a4 CoreFoundation`__CFRunLoopDoBlocks + 352
+    frame #3: 0x00000001069e9eac CoreFoundation`__CFRunLoopRun + 812
+    frame #4: 0x00000001069e9704 CoreFoundation`CFRunLoopRunSpecific + 552
+    frame #5: 0x000000011b73bb10 GraphicsServices`GSEventRunModal + 160
+    frame #6: 0x0000000141718180 UIKitCore`-[UIApplication _run] + 796
+    frame #7: 0x000000014171c378 UIKitCore`UIApplicationMain + 124
+    frame #8: 0x0000000104e8aec4 TestOC.debug.dylib`main(argc=1, argv=0x000000016b085b60) at main.m:17:12
+    frame #9: 0x00000001050f1410 dyld_sim`start_sim + 20
+    frame #10: 0x0000000104fce274 dyld`start + 2840
+    */
+}];
+*/
+static Boolean __CFRunLoopDoBlocks(CFRunLoopRef rl, CFRunLoopModeRef rlm) { // Call with rl and rlm locked
+    if (!rl->_blocks_head) return false;
+    if (!rlm || !rlm->_name) return false;
+    Boolean did = false;
+    struct _block_item *head = rl->_blocks_head;
+    struct _block_item *tail = rl->_blocks_tail;
+    rl->_blocks_head = NULL;
+    rl->_blocks_tail = NULL;
+    CFSetRef commonModes = rl->_commonModes;
+    CFStringRef curMode = rlm->_name;
+    __CFRunLoopModeUnlock(rlm);
+    __CFRunLoopUnlock(rl);
+    struct _block_item *prev = NULL;
+    struct _block_item *item = head;
+
+    // 遍历 block 链表，一个个判断要不要执行
+    // 如果匹配，就执行这个 block。如果不匹配，就保留这个 block。核心判断逻辑是：这个 block 是否注册在当前 mode 下？
+    while (item) {
+        struct _block_item *curr = item;
+        item = item->_next;
+	Boolean doit = false;
+	if (CFStringGetTypeID() == CFGetTypeID(curr->_mode)) {
+	    doit = CFEqual(curr->_mode, curMode) || (CFEqual(curr->_mode, kCFRunLoopCommonModes) && CFSetContainsValue(commonModes, curMode));
+        } else {
+	    doit = CFSetContainsValue((CFSetRef)curr->_mode, curMode) || (CFSetContainsValue((CFSetRef)curr->_mode, kCFRunLoopCommonModes) && CFSetContainsValue(commonModes, curMode));
+	}
+	if (!doit) prev = curr;
+	if (doit) {
+	    if (prev) prev->_next = item;
+	    if (curr == head) head = item;
+	    if (curr == tail) tail = prev;
+	    void (^block)(void) = curr->_block;
+            CFRelease(curr->_mode);
+            free(curr);
+	    if (doit) {
+                __CFRUNLOOP_IS_CALLING_OUT_TO_A_BLOCK__(block);
+	        did = true;
+	    }
+            Block_release(block); // do this before relocking to prevent deadlocks where some yahoo wants to run the run loop reentrantly from their dealloc
+	}
+    }
+    __CFRunLoopLock(rl);
+    __CFRunLoopModeLock(rlm);
+    if (head) {
+	tail->_next = rl->_blocks_head;
+	rl->_blocks_head = head;
+        if (!rl->_blocks_tail) rl->_blocks_tail = tail;
+    }
+    return did;
+}
+
+
+特性	GCD block（dispatch_async）	RunLoop block（CFRunLoopPerformBlock）
+添加方式	dispatch_async(queue, ^{...})	CFRunLoopPerformBlock(rl, mode, ^{...})
+调度机制	由 GCD 调度器 控制	由 RunLoop 在某个时机主动执行
+存储结构	GCD 维护自己的 dispatch queue 队列	RunLoop 的 _blocks_head/_blocks_tail 链表
+线程切换	可跨线程调度 block 到别的队列	block 必须在某个 RunLoop 特定线程中执行
+使用场景	一般并发、异步任务调度	让某个 block 在 RunLoop 的生命周期中执行
+是否走 __CFRunLoopDoBlocks	❌ 不会	✅ 会走
+
+
+
+block 类型	是否走 __CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__
+主队列 block	✅ 是，GCD 通过 RunLoop 的 wakeup port 唤醒并在 RunLoop 中执行
+非主队列 block（global/custom queue）	❌ 否，直接在线程上下文中由 GCD 调度器处理，不依赖 RunLoop
+非主队列的 block（包括 global queue 和你手动创建的 custom queue）都是通过 libdispatch（也就是 GCD） 自己的线程调度机制来处理的，它们 完全不依赖 RunLoop。
+
+
+GCD 的核心调度流程大致是这样：
+你调用 dispatch_async(queue, ^{ ... })
+libdispatch 把这个 block 封装成 dispatch_continuation_t，入队到目标 queue 中
+如果该 queue 没有正在执行的 worker 线程，libdispatch：
+从自己的 线程池 中复用一个线程 或者创建一个新的线程（受线程上限限制）
+block 在这个线程中被执行（直接执行，不需要 RunLoop）
+
+
+==================================================__CFRunLoopDoSources0
+
+/*
+###版本 0 来源### 通常是基于信号触发的任务，类似于基于事件驱动的机制。
+
+__CFRunLoopDoSources0 的目的是遍历并处理 RunLoop 中注册的所有 版本 0 来源（sources0）。
+这些源通常是在系统中由某些外部事件或任务触发的，例如用户输入、button点击事件等。
+
+// __CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE0_PERFORM_FUNCTION__
+[self performSelector:@selector(performEvent) onThread:NSThread.mainThread withObject:nil waitUntilDone:NO];// source0
+
+- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
+    // 这个回调通过 sources0 触发
+}
+
+dispatch_block_t myBlock = ^{
+    
+};
+myBlock();// 这样执行block，通过 sources0 触发  
+        
+dispatch_async(dispatch_get_main_queue(), myBlock);// 这样执行block，通过 __CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__
+*/
+static Boolean __CFRunLoopDoSources0(CFRunLoopRef rl, CFRunLoopModeRef rlm, Boolean stopAfterHandle) {	/* DOES CALLOUT */
+    CHECK_FOR_FORK();
+    CFTypeRef sources = NULL;
+    Boolean sourceHandled = false;
+
+    /* Fire the version 0 sources */
+    if (NULL != rlm->_sources0 && 0 < CFSetGetCount(rlm->_sources0)) {
+	CFSetApplyFunction(rlm->_sources0, (__CFRunLoopCollectSources0), &sources);
+    }
+    if (NULL != sources) {
+	__CFRunLoopModeUnlock(rlm);
+	__CFRunLoopUnlock(rl);
+	// sources is either a single (retained) CFRunLoopSourceRef or an array of (retained) CFRunLoopSourceRef
+	if (CFGetTypeID(sources) == CFRunLoopSourceGetTypeID()) {
+	    CFRunLoopSourceRef rls = (CFRunLoopSourceRef)sources;
+	    __CFRunLoopSourceLock(rls);
+            if (__CFRunLoopSourceIsSignaled(rls)) {
+	        __CFRunLoopSourceUnsetSignaled(rls);
+	        if (__CFIsValid(rls)) {
+	            __CFRunLoopSourceUnlock(rls);
+                    __CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE0_PERFORM_FUNCTION__(rls->_context.version0.perform, rls->_context.version0.info);
+	            CHECK_FOR_FORK();
+	            sourceHandled = true;
+	        } else {
+	            __CFRunLoopSourceUnlock(rls);
+	        }
+            } else {
+                __CFRunLoopSourceUnlock(rls);
+            }
+	} else {
+	    CFIndex cnt = CFArrayGetCount((CFArrayRef)sources);
+	    CFArraySortValues((CFMutableArrayRef)sources, CFRangeMake(0, cnt), (__CFRunLoopSourceComparator), NULL);
+	    for (CFIndex idx = 0; idx < cnt; idx++) {
+		CFRunLoopSourceRef rls = (CFRunLoopSourceRef)CFArrayGetValueAtIndex((CFArrayRef)sources, idx);
+		__CFRunLoopSourceLock(rls);
+                if (__CFRunLoopSourceIsSignaled(rls)) {
+		    __CFRunLoopSourceUnsetSignaled(rls);
+		    if (__CFIsValid(rls)) {
+		        __CFRunLoopSourceUnlock(rls);
+                        __CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE0_PERFORM_FUNCTION__(rls->_context.version0.perform, rls->_context.version0.info);
+		        CHECK_FOR_FORK();
+		        sourceHandled = true;
+		    } else {
+		        __CFRunLoopSourceUnlock(rls);
+		    }
+                } else {
+                    __CFRunLoopSourceUnlock(rls);
+                }
+		if (stopAfterHandle && sourceHandled) {
+		    break;
+		}
+	    }
+	}
+	CFRelease(sources);
+	__CFRunLoopLock(rl);
+	__CFRunLoopModeLock(rlm);
+    }
+    return sourceHandled;
+}
+
+
+==================================================
+
+
+###
+@property (nonatomic, strong) dispatch_source_t timer;
+dispatch_queue_t queue = dispatch_get_main_queue();  // 使用主队列
+self.timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+
+使用dispatch_get_main_queue:
+通过 __CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__ 回调
+frame #1: 0x0000000104d5e5d0 libdispatch.dylib`_dispatch_client_callout + 16
+frame #2: 0x0000000104d61a80 libdispatch.dylib`_dispatch_continuation_pop + 752
+frame #3: 0x0000000104d7744c libdispatch.dylib`_dispatch_source_invoke + 1740
+frame #4: 0x0000000104d6e2d0 libdispatch.dylib`_dispatch_main_queue_drain + 896
+frame #5: 0x0000000104d6df40 libdispatch.dylib`_dispatch_main_queue_callback_4CF + 40
+frame #6: 0x000000018041cdbc CoreFoundation`__CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__ + 12
+
+如果queue换成global:
+就和runloop没关系，通过 libdispatch 调度
+###
+
+
+###
+NSURLSessionDataTask *dataTask = [session dataTaskWithRequest:request completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+    // 网络请求，回调由 libdispatch 调度。
+    dispatch_async(dispatch_get_main_queue(), {
+        // 这边的由 __CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__ 调用
+    });
+}];
+
+frame #2: 0x000000018481f7dc CFNetwork`__49-[__NSCFLocalSessionTask _task_onqueue_didFinish]_block_invoke_2 + 152
+frame #3: 0x000000010324ccd8 libdispatch.dylib`_dispatch_call_block_and_release + 24
+frame #4: 0x000000010324e5d0 libdispatch.dylib`_dispatch_client_callout + 16
+frame #5: 0x00000001032568b8 libdispatch.dylib`_dispatch_lane_serial_drain + 896
+frame #6: 0x0000000103257628 libdispatch.dylib`_dispatch_lane_invoke + 420
+frame #7: 0x00000001032642cc libdispatch.dylib`_dispatch_root_queue_drain_deferred_wlh + 324
+frame #8: 0x0000000103263838 libdispatch.dylib`_dispatch_workloop_worker_thread + 732
+frame #9: 0x0000000102adfb74 libsystem_pthread.dylib`_pthread_wqthread + 284
+###
+
+
+###
+self.timer1 = [NSTimer timerWithTimeInterval:2.0 repeats:NO block:^(NSTimer * _Nonnull timer) {
+    // 这边的回调通过 __CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__ 调用
+}];
+[[NSRunLoop currentRunLoop] addTimer:self.timer1 forMode:NSDefaultRunLoopMode];
+###
+
+
+
+==================================================__CFRunLoopServiceMachPort
+/*
+等待并接收来自指定 Mach port 的消息，并进行处理或返回状态。
+
+port 是 等待消息的 Mach port —— 也就是你要监听的端口。
+livePort 是 接收到消息之后被激活的实际端口 —— 可能是某个具体的 Source 的 port。
+
+port	要等待的 目标 Mach port，即监听对象	由 CFRunLoop 传入
+livePort	实际收到消息的 活跃 port，作为返回值输出	由 mach_msg() 接收消息后设置
+
+当有消息到来时，mach_msg 返回成功，并且：
+msg->msgh_local_port 记录了是哪一个 port 收到了消息。
+函数就会将这个 port 赋值给 *livePort，方便上层知道是哪个 port 被激活了（比如哪个 Source 被触发）。
+
+
+举个例子更好理解：
+假设 RunLoop 要监听多个 Source1 的 Mach port，它可能这样做：
+mach_port_t ports[] = { portA, portB, portC };
+
+然后它会循环调用 __CFRunLoopServiceMachPort 传入某个 portX，等待这个端口上是否有消息。
+当有消息到来时，mach_msg 返回成功，并且：
+msg->msgh_local_port 记录了是哪一个 port 收到了消息。
+函数就会将这个 port 赋值给 *livePort，方便上层知道是哪个 port 被激活了（比如哪个 Source 被触发）。
+*/
+static Boolean __CFRunLoopServiceMachPort(mach_port_name_t port, mach_msg_header_t **buffer, size_t buffer_size, mach_port_t *livePort, mach_msg_timeout_t timeout, voucher_mach_msg_state_t *voucherState, voucher_t *voucherCopy) {
+    Boolean originalBuffer = true;
+    kern_return_t ret = KERN_SUCCESS;
+
+    // for (;;) {} 是一种 无限循环（infinite loop） 的写法
+    for (;;) {		/* In that sleep of death what nightmares may come ... */
+        mach_msg_header_t *msg = (mach_msg_header_t *)*buffer;
+        msg->msgh_bits = 0;
+        msg->msgh_local_port = port;
+        msg->msgh_remote_port = MACH_PORT_NULL;
+        msg->msgh_size = buffer_size;
+        msg->msgh_id = 0;
+        if (TIMEOUT_INFINITY == timeout) { CFRUNLOOP_SLEEP(); } else { CFRUNLOOP_POLL(); }
+        ret = mach_msg(msg, MACH_RCV_MSG|(voucherState ? MACH_RCV_VOUCHER : 0)|MACH_RCV_LARGE|((TIMEOUT_INFINITY != timeout) ? MACH_RCV_TIMEOUT : 0)|MACH_RCV_TRAILER_TYPE(MACH_MSG_TRAILER_FORMAT_0)|MACH_RCV_TRAILER_ELEMENTS(MACH_RCV_TRAILER_AV), 0, msg->msgh_size, port, timeout, MACH_PORT_NULL);
+
+        // Take care of all voucher-related work right after mach_msg.
+        // If we don't release the previous voucher we're going to leak it.
+        voucher_mach_msg_revert(*voucherState);
+        
+        // Someone will be responsible for calling voucher_mach_msg_revert. This call makes the received voucher the current one.
+        *voucherState = voucher_mach_msg_adopt(msg);
+        
+        if (voucherCopy) {
+            if (*voucherState != VOUCHER_MACH_MSG_STATE_UNCHANGED) {
+                // Caller requested a copy of the voucher at this point. By doing this right next to mach_msg we make sure that no voucher has been set in between the return of mach_msg and the use of the voucher copy.
+                // CFMachPortBoost uses the voucher to drop importance explicitly. However, we want to make sure we only drop importance for a new voucher (not unchanged), so we only set the TSD when the voucher is not state_unchanged.
+                *voucherCopy = voucher_copy();
+            } else {
+                *voucherCopy = NULL;
+            }
+        }
+
+        CFRUNLOOP_WAKEUP(ret);
+        if (MACH_MSG_SUCCESS == ret) {
+            *livePort = msg ? msg->msgh_local_port : MACH_PORT_NULL;
+            return true;
+        }
+        if (MACH_RCV_TIMED_OUT == ret) {
+            if (!originalBuffer) free(msg);
+            *buffer = NULL;
+            *livePort = MACH_PORT_NULL;
+            return false;
+        }
+        if (MACH_RCV_TOO_LARGE != ret) break;
+        buffer_size = round_msg(msg->msgh_size + MAX_TRAILER_SIZE);
+        if (originalBuffer) *buffer = NULL;
+        originalBuffer = false;
+        *buffer = realloc(*buffer, buffer_size);
+    }
+    HALT;
+    return false;
+}
+
+
+==================================================__CFRunLoopDoTimers
+static Boolean __CFRunLoopDoTimers(CFRunLoopRef rl, CFRunLoopModeRef rlm, uint64_t limitTSR) {	/* DOES CALLOUT */
+    Boolean timerHandled = false;
+    CFMutableArrayRef timers = NULL;
+    for (CFIndex idx = 0, cnt = rlm->_timers ? CFArrayGetCount(rlm->_timers) : 0; idx < cnt; idx++) {
+        CFRunLoopTimerRef rlt = (CFRunLoopTimerRef)CFArrayGetValueAtIndex(rlm->_timers, idx);
+        
+        if (__CFIsValid(rlt) && !__CFRunLoopTimerIsFiring(rlt)) {
+            if (rlt->_fireTSR <= limitTSR) {
+                if (!timers) timers = CFArrayCreateMutable(kCFAllocatorSystemDefault, 0, &kCFTypeArrayCallBacks);
+                CFArrayAppendValue(timers, rlt);
+            }
+        }
+    }
+    
+    for (CFIndex idx = 0, cnt = timers ? CFArrayGetCount(timers) : 0; idx < cnt; idx++) {
+        CFRunLoopTimerRef rlt = (CFRunLoopTimerRef)CFArrayGetValueAtIndex(timers, idx);
+        Boolean did = __CFRunLoopDoTimer(rl, rlm, rlt);
+        timerHandled = timerHandled || did;
+    }
+    if (timers) CFRelease(timers);
+    return timerHandled;
+}
+
+
+==================================================__CFRunLoopDoTimer
+static Boolean __CFRunLoopDoTimer(CFRunLoopRef rl, CFRunLoopModeRef rlm, CFRunLoopTimerRef rlt) {	/* DOES CALLOUT */
+    Boolean timerHandled = false;
+    uint64_t oldFireTSR = 0;
+
+    /* Fire a timer */
+    CFRetain(rlt);
+    __CFRunLoopTimerLock(rlt);
+
+    if (__CFIsValid(rlt) && rlt->_fireTSR <= mach_absolute_time() && !__CFRunLoopTimerIsFiring(rlt) && rlt->_runLoop == rl) {
+        void *context_info = NULL;
+        void (*context_release)(const void *) = NULL;
+        if (rlt->_context.retain) {
+            context_info = (void *)rlt->_context.retain(rlt->_context.info);
+            context_release = rlt->_context.release;
+        } else {
+            context_info = rlt->_context.info;
+        }
+        Boolean doInvalidate = (0.0 == rlt->_interval);
+	__CFRunLoopTimerSetFiring(rlt);
+        // Just in case the next timer has exactly the same deadlines as this one, we reset these values so that the arm next timer code can correctly find the next timer in the list and arm the underlying timer.
+        rlm->_timerSoftDeadline = UINT64_MAX;
+        rlm->_timerHardDeadline = UINT64_MAX;
+        __CFRunLoopTimerUnlock(rlt);
+	__CFRunLoopTimerFireTSRLock();
+	oldFireTSR = rlt->_fireTSR;
+	__CFRunLoopTimerFireTSRUnlock();
+
+        __CFArmNextTimerInMode(rlm, rl);
+
+	__CFRunLoopModeUnlock(rlm);
+	__CFRunLoopUnlock(rl);
+	__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__(rlt->_callout, rlt, context_info);
+	CHECK_FOR_FORK();
+        if (doInvalidate) {
+            CFRunLoopTimerInvalidate(rlt);      /* DOES CALLOUT */
+        }
+        if (context_release) {
+            context_release(context_info);
+        }
+	__CFRunLoopLock(rl);
+	__CFRunLoopModeLock(rlm);
+        __CFRunLoopTimerLock(rlt);
+	timerHandled = true;
+	__CFRunLoopTimerUnsetFiring(rlt);
+    }
+    if (__CFIsValid(rlt) && timerHandled) {
+        /* This is just a little bit tricky: we want to support calling
+         * CFRunLoopTimerSetNextFireDate() from within the callout and
+         * honor that new time here if it is a later date, otherwise
+         * it is completely ignored. */
+        if (oldFireTSR < rlt->_fireTSR) {
+            /* Next fire TSR was set, and set to a date after the previous
+            * fire date, so we honor it. */
+            __CFRunLoopTimerUnlock(rlt);
+            // The timer was adjusted and repositioned, during the
+            // callout, but if it was still the min timer, it was
+            // skipped because it was firing.  Need to redo the
+            // min timer calculation in case rlt should now be that
+            // timer instead of whatever was chosen.
+            __CFArmNextTimerInMode(rlm, rl);
+        } else {
+	    uint64_t nextFireTSR = 0LL;
+            uint64_t intervalTSR = 0LL;
+            if (rlt->_interval <= 0.0) {
+            } else if (TIMER_INTERVAL_LIMIT < rlt->_interval) {
+        	intervalTSR = __CFTimeIntervalToTSR(TIMER_INTERVAL_LIMIT);
+            } else {
+        	intervalTSR = __CFTimeIntervalToTSR(rlt->_interval);
+            }
+            if (LLONG_MAX - intervalTSR <= oldFireTSR) {
+                nextFireTSR = LLONG_MAX;
+            } else {
+                if (intervalTSR == 0) {
+                    // 15304159: Make sure we don't accidentally loop forever here
+                    CRSetCrashLogMessage("A CFRunLoopTimer with an interval of 0 is set to repeat");
+                    HALT;
+                }
+                uint64_t currentTSR = mach_absolute_time();
+                nextFireTSR = oldFireTSR;
+                while (nextFireTSR <= currentTSR) {
+                    nextFireTSR += intervalTSR;
+                }
+            }
+            CFRunLoopRef rlt_rl = rlt->_runLoop;
+            if (rlt_rl) {
+                CFRetain(rlt_rl);
+		CFIndex cnt = CFSetGetCount(rlt->_rlModes);
+		STACK_BUFFER_DECL(CFTypeRef, modes, cnt);
+		CFSetGetValues(rlt->_rlModes, (const void **)modes);
+		// To avoid A->B, B->A lock ordering issues when coming up
+		// towards the run loop from a source, the timer has to be
+		// unlocked, which means we have to protect from object
+		// invalidation, although that's somewhat expensive.
+		for (CFIndex idx = 0; idx < cnt; idx++) {
+		    CFRetain(modes[idx]);
+		}
+		__CFRunLoopTimerUnlock(rlt);
+		for (CFIndex idx = 0; idx < cnt; idx++) {
+		    CFStringRef name = (CFStringRef)modes[idx];
+		    modes[idx] = (CFTypeRef)__CFRunLoopFindMode(rlt_rl, name, false);
+		    CFRelease(name);
+		}
+		__CFRunLoopTimerFireTSRLock();
+		rlt->_fireTSR = nextFireTSR;
+                rlt->_nextFireDate = CFAbsoluteTimeGetCurrent() + __CFTimeIntervalUntilTSR(nextFireTSR);
+		for (CFIndex idx = 0; idx < cnt; idx++) {
+		    CFRunLoopModeRef rlm = (CFRunLoopModeRef)modes[idx];
+		    if (rlm) {
+                        __CFRepositionTimerInMode(rlm, rlt, true);
+		    }
+		}
+		__CFRunLoopTimerFireTSRUnlock();
+		for (CFIndex idx = 0; idx < cnt; idx++) {
+		    __CFRunLoopModeUnlock((CFRunLoopModeRef)modes[idx]);
+		}
+		CFRelease(rlt_rl);
+	    } else {
+		__CFRunLoopTimerUnlock(rlt);
+		__CFRunLoopTimerFireTSRLock();
+		rlt->_fireTSR = nextFireTSR;
+                rlt->_nextFireDate = CFAbsoluteTimeGetCurrent() + __CFTimeIntervalUntilTSR(nextFireTSR);
+		__CFRunLoopTimerFireTSRUnlock();
+            }
+        }
+    } else {
+        __CFRunLoopTimerUnlock(rlt);
+    }
+    CFRelease(rlt);
+    return timerHandled;
+}
+
+
+==================================================__CFRunLoopDoSource1
+static Boolean __CFRunLoopDoSource1(CFRunLoopRef rl, CFRunLoopModeRef rlm, CFRunLoopSourceRef rls
+#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+                                    , mach_msg_header_t *msg, CFIndex size, mach_msg_header_t **reply
+#endif
+                                    ) {	/* DOES CALLOUT */
+    CHECK_FOR_FORK();
+    Boolean sourceHandled = false;
+
+    /* Fire a version 1 source */
+    CFRetain(rls);
+    __CFRunLoopModeUnlock(rlm);
+    __CFRunLoopUnlock(rl);
+    __CFRunLoopSourceLock(rls);
+    if (__CFIsValid(rls)) {
+	__CFRunLoopSourceUnsetSignaled(rls);
+	__CFRunLoopSourceUnlock(rls);
+        __CFRunLoopDebugInfoForRunLoopSource(rls);
+        __CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE1_PERFORM_FUNCTION__(rls->_context.version1.perform,
+#if DEPLOYMENT_TARGET_MACOSX || DEPLOYMENT_TARGET_EMBEDDED || DEPLOYMENT_TARGET_EMBEDDED_MINI
+            msg, size, reply,
+#endif
+            rls->_context.version1.info);
+	CHECK_FOR_FORK();
+	sourceHandled = true;
+    } else {
+        if (_LogCFRunLoop) { CFLog(kCFLogLevelDebug, CFSTR("%p (%s) __CFRunLoopDoSource1 rls %p is invalid"), CFRunLoopGetCurrent(), *_CFGetProgname(), rls); }
+	__CFRunLoopSourceUnlock(rls);
+    }
+    CFRelease(rls);
+    __CFRunLoopLock(rl);
+    __CFRunLoopModeLock(rlm);
+    return sourceHandled;
+}
+
+
+==================================================UI更新
+UI 更新的时机:
+UIKit 会在 RunLoop 即将休眠前，通知 Core Animation 提交并渲染需要刷新的图层（layer）。
+这个时机对应的是 RunLoop 的 kCFRunLoopBeforeWaiting 阶段。
+直到当前 RunLoop 快要休眠时，系统会通知 Core Animation 统一处理所有 pending 的 UI 更新，然后再渲染到屏幕。
+原因：
+避免在事件处理中频繁绘制 UI，降低性能开销。
+等到所有任务处理完，再一次性把屏幕更新提交给 GPU，效率更高。
+确保 UI 更新不会阻塞用户交互事件。
+
+
+
+想验证 UI 更新是否真的在 RunLoop 即将休眠（kCFRunLoopBeforeWaiting）时触发:
+UI 更新是由系统在后台合成并提交的，不是你直接触发绘制的。
+解决方案:重写 myView 的 draw(_:) 或 layoutSubviews 并打印日志.这些方法都是 UIKit 在渲染时调用的，所以你可以在这里插入日志，观察它们的调用时机。
+配合设置的 RunLoop Observer:
+let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, true, 0) { _, _ in
+    print("RunLoop 即将休眠，UI 更新此时将进行")
+}
+CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+
+
+系统什么时候提交 UI 改变，可以尝试监控：
+CATransaction 的提交时机（CATransaction.flush() 是在 RunLoop 快休眠前触发的）
+Instruments 工具中用 Time Profiler 跟踪 Core Animation 的提交调用栈
+
+
+==================================================“逻辑上的更新”，不是“立即绘制”
+UI 渲染是分层的：
+你写的 UIView、UILabel、UIButton 等这些 UIKit 控件，本质上是对底层 Core Animation 的 Layer（图层）系统的封装。
+每个 UIView 都有一个对应的 CALayer。
+你对 View 的修改（位置、颜色、透明度等），其实是 在修改它背后的 Layer 的属性。
+
+
+myView.frame = CGRect(x: 50, y: 50, width: 100, height: 100)
+myView.backgroundColor = .red
+这些调用并没有立即绘制到屏幕，只是告诉系统：“我这里有个变化需要更新”。
+
+
+系统做了什么？
+UIKit 或 Core Animation 会把这个变化记录下来，比如标记这个 view 的 layer 需要重新布局或重绘（dirty 标记）。
+然后它不会立刻做任何事情，而是等待 主线程的 RunLoop 准备休眠之前，统一发起一次更新请求。
+这时候 Core Animation 会：
+汇总所有脏的 Layer 信息（包括 frame、transform、opacity、contents 等）
+调用底层的 render server（iOS 中的 Backboardd + WindowServer）
+把这些 layer 树打包好，通过 IPC（跨进程通信）传给系统的合成器
+GPU 接收到图层信息之后，才开始真正“画图”和显示。
+
+
+生活中类比：
+你在写 UIView 的时候，就像是在装修设计图纸（写代码，修改属性）；
+但真正装修（渲染到屏幕）是在你“提交”之后，由施工队（Core Animation + GPU）在后台干的。
+
+
+==================================================“RunLoop 正在休眠，点击按钮后，是如何唤醒 RunLoop，并把事件交给按钮响应？”
+手指触摸屏幕，硬件检测到触摸 → 生成触摸事件（IOKit 层）
+内核通过 Mach Port 通知应用进程（SpringBoard（苹果设备的桌面） → App）
+应用进程的主线程 RunLoop 被唤醒
+RunLoop 处理 Source0 / Source1 事件
+UIKit 捕获事件，封装为 UIEvent
+通过 UIApplication → UIWindow → UIView 分发事件
+UIButton 响应事件（回调触发）
+
+1. 触摸事件的产生（系统底层）
+你触摸屏幕时，触控硬件通过 IOKit 记录坐标数据；
+内核层（IOHID）把数据发送给系统的 window server；
+系统将触摸数据通过 Mach Port（端口消息） 发给前台 App。
+
+2. 唤醒 RunLoop
+App 中主线程的 RunLoop 此时可能在 .sleep 状态；
+系统在 CFRunLoopSource1 中注册了监听 Mach port 的 source；
+有事件到达时，系统通过 mach_msg 将事件发送进来，唤醒主线程的 RunLoop。
+
+3. RunLoop 被唤醒并开始处理事件
+唤醒后，RunLoop 开始进入工作流程：
+RunLoop 轮询 source → 发现 source1（Mach Port 消息）有事件 → 处理
+iOS 把原始的触摸事件包装成一个 IOHIDEvent
+UIKit 捕获后会再包装成一个 UIEvent 对象
+将其交由 UIApplication 处理
+
+4. UIApplication → UIWindow → UIView 分发事件
+UIApplication.shared.sendEvent(event)
+↓
+UIWindow.sendEvent(event)
+↓
+UIView.hitTest → 找到最精确的 view（例如 UIButton）
+↓
+view.touchesBegan / touchesEnded / sendAction 被调用
+
+
+小技巧：调试 RunLoop 的休眠和唤醒
+可以在主线程加上如下 RunLoop Observer：
+CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+观察进入 .beforeWaiting 和 .afterWaiting 时机，你会发现触摸屏会唤醒 RunLoop。

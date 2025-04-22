@@ -9,6 +9,39 @@
 main中 分别调用LGPerson的实例方法say666 和类方法sayNB，运行程序，均会报错，提示方法未实现
 
 
+方法未实现报错源码:
+根据慢速查找的源码，我们发现，其报错最后都是走到__objc_msgForward_impcache方法
+STATIC_ENTRY __objc_msgForward_impcache
+
+// No stret specialization.
+b   __objc_msgForward
+
+END_ENTRY __objc_msgForward_impcache
+
+//👇
+ENTRY __objc_msgForward
+
+adrp    x17, __objc_forward_handler@PAGE
+ldr p17, [x17, __objc_forward_handler@PAGEOFF]
+TailCallFunctionPointer x17
+    
+END_ENTRY __objc_msgForward
+汇编实现中查找__objc_forward_handler，并没有找到，在源码中去掉一个下划线进行全局搜索_objc_forward_handler，有如下实现
+本质是调用的objc_defaultForwardHandler方法
+// Default forward handler halts the process.
+__attribute__((noreturn, cold)) void
+objc_defaultForwardHandler(id self, SEL sel)
+{
+    _objc_fatal("%c[%s %s]: unrecognized selector sent to instance %p "
+                "(no message forward handler is installed)", 
+                class_isMetaClass(object_getClass(self)) ? '+' : '-', 
+                object_getClassName(self), sel_getName(sel), self);
+}
+void *_objc_forward_handler = (void*)objc_defaultForwardHandler;
+这就是我们在日常开发中最常见的错误
+
+
+
 如何在崩溃前，如何操作，可以防止方法未实现的崩溃:
 根据苹果的两个建议，我们一共有三次挽救的机会:
 【第一次机会】动态方法决议
@@ -48,8 +81,9 @@ resolveMethod_locked(id inst, SEL sel, Class cls, int behavior)
 }
 
 主要分为以下几步:
-如果是类，执行实例方法的动态方法决议resolveInstanceMethod
-如果是元类，执行类方法的动态方法决议resolveClassMethod，如果在元类中没有找到或者为空，则在元类的实例方法的动态方法决议resolveInstanceMethod中查找，
+如果是类，执行动态方法决议resolveInstanceMethod
+如果是元类，执行动态方法决议resolveClassMethod，如果在元类中没有找到或者为空，
+则在元类的实例方法的动态方法决议resolveInstanceMethod中查找，
 主要是因为类方法在元类中是实例方法，所以还需要查找元类中实例方法的动态方法决议
 如果动态方法决议中，将其实现指向了其他方法，则继续查找指定的imp，即继续慢速查找lookUpImpOrForward流程
 
@@ -95,6 +129,12 @@ static void resolveInstanceMethod(id inst, SEL sel, Class cls)
     }
 }
 
+IMP lookUpImpOrNil() {
+    IMP imp = lookUpImpOrForward();
+    if(imp == _objc_msgForward_impcache) return nil;
+    else return imp
+}
+
 主要分为以下几个步骤:
 在发送resolveInstanceMethod消息前，需要查找cls类中是否有该方法的实现，即通过lookUpImpOrNil方法又会进入lookUpImpOrForward慢速查找流程查找resolveInstanceMethod方法
 如果没有，则直接返回
@@ -124,6 +164,7 @@ static void resolveInstanceMethod(id inst, SEL sel, Class cls)
 【第二次动态决议】第二次“来了”是在慢速转发流程中调用了CoreFoundation框架中的NSObject(NSObject) methodSignatureForSelector:后，会再次进入动态决议
 
 
+
 类方法:
 针对类方法，与实例方法类似，同样可以通过重写resolveClassMethod类方法来解决前文的崩溃问题，即在LGPerson类中重写该方法，并将sayNB类方法的实现指向类方法lgClassMethod
 
@@ -140,7 +181,8 @@ static void resolveInstanceMethod(id inst, SEL sel, Class cls)
     
     return [super resolveClassMethod:sel];
 }
-resolveClassMethod类方法的重写需要注意一点，传入的cls不再是类，而是元类，可以通过objc_getMetaClass方法获取类的元类，原因是因为类方法在元类中是实例方法
+resolveClassMethod类方法的重写需要注意一点，传入的cls不再是类，而是元类，
+可以通过objc_getMetaClass方法获取类的元类，原因是因为类方法在元类中是实例方法
 
 
 优化:
@@ -171,7 +213,8 @@ resolveClassMethod类方法的重写需要注意一点，传入的cls不再是�
     return NO;
 }
 
-当然，上面这种写法还是会有其他的问题，比如系统方法也会被更改，针对这一点，是可以优化的，即我们可以针对自定义类中方法统一方法名的前缀，根据前缀来判断是否是自定义方法，然后统一处理自定义方法
+当然，上面这种写法还是会有其他的问题，比如系统方法也会被更改，针对这一点，是可以优化的，即我们可以针对自定义类中方法统一方法名的前缀，
+根据前缀来判断是否是自定义方法，然后统一处理自定义方法
 
 
 消息转发流程:
@@ -289,28 +332,32 @@ objc_msgSend发送消息的流程就分析完成了，在这里简单总结下
 如果转发之后也没有，则程序直接报错崩溃unrecognized selector sent to instance
 
 
-动态方法决议为什么执行两次？
+
+
+==================================================动态方法决议为什么执行两次？
 在慢速查找流程中，我们了解到resolveInstanceMethod方法的执行是通过lookUpImpOrForward --> resolveMethod_locked --> resolveInstanceMethod来到resolveInstanceMethod源码，在源码中通过发送resolve_sel消息触发
 
 所以可以在resolveInstanceMethod方法中IMP imp = lookUpImpOrNil(inst, sel, cls);处加一个断点，通过bt打印堆栈信息来看到底发生了什么
 
 在resolveInstanceMethod方法中IMP imp = lookUpImpOrNil(inst, sel, cls);处加一个断点，运行程序，直到第一次“来了”，通过bt查看第一次动态方法决议的堆栈信息，此时的sel是say666
 
-继续往下执行，直到第二次“来了”打印，查看堆栈信息，在第二次中，我们可以看到是通过CoreFoundation的-[NSObject(NSObject) methodSignatureForSelector:]方法，然后通过class_getInstanceMethod再次进入动态方法决议
+继续往下执行，直到第二次“来了”打印，查看堆栈信息，在第二次中，我们可以看到是通过CoreFoundation的-[NSObject(NSObject) methodSignatureForSelector:]方法，
+然后通过class_getInstanceMethod再次进入动态方法决议
 
 通过上一步的堆栈信息，我们需要去看看CoreFoundation中到底做了什么？通过Hopper反汇编CoreFoundation的可执行文件，查看methodSignatureForSelector方法的伪代码
 通过methodSignatureForSelector伪代码进入___methodDescriptionForSelector的实现
-进入 ___methodDescriptionForSelector的伪代码实现，结合汇编的堆栈打印，可以看到，在___methodDescriptionForSelector这个方法中调用了objc4-781的class_getInstanceMethod
+进入 ___methodDescriptionForSelector的伪代码实现，结合汇编的堆栈打印，
+可以看到，在___methodDescriptionForSelector这个方法中调用了objc4-781的class_getInstanceMethod
 
-在objc中的源码中搜索class_getInstanceMethod
+在objc中的源码中搜索class_getInstanceMethod，其中调用 lookUpImpOrForward
 这一点可以通过代码调试来验证，如下所示，在class_getInstanceMethod方法处加一个断点，在执行了methodSignatureForSelector方法后，返回了签名，说明方法签名是生效的，
 苹果在走到invocation之前，给了开发者一次机会再去查询，所以走到class_getInstanceMethod这里，又去走了一遍方法查询say666,然后会再次走到动态方法决议
 所以，上述的分析也印证了前文中resolveInstanceMethod方法执行了两次的原因
 
 
-==================================================
-也可以通过代码来推导在哪里再次调用了动态方法决议
 
+
+也可以通过代码来推导在哪里再次调用了动态方法决议：
 #####
 LGPerson中重写resolveInstanceMethod方法，并加上class_addMethod操作即赋值IMP，此时resolveInstanceMethod会走两次吗？
 【结论】：通过运行发现，如果赋值了IMP，动态方法决议只会走一次，说明不是在这里走第二次动态方法决议

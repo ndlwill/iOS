@@ -1,0 +1,82 @@
+When you work with bitmap images, you typically work with Core Graphics CGImage instances. 
+The vImage library provides functionality that allows you to work with Core Graphics bitmap images. 
+Typically, you convert a CGImage instance to a vImage buffer, apply operations to the vImage buffer, 
+and convert the transformed data to a new CGImage instance.
+
+
+iOS16.0
+vImage.PixelBuffer:
+init(
+    cgImage: CGImage,
+    cgImageFormat: inout vImage_CGImageFormat,
+    pixelFormat: Format.Type = Format.self
+) throws
+The init(cgImage:cgImageFormat:pixelFormat:) initializer creates a pixel buffer from a CGImage instance and converts the source image data to the format that the vImage_CGImageFormat describes.
+
+
+vImage_Buffer:
+If you’re working with vImage_Buffer structures, the vImageBuffer_InitWithCGImage(_:_:_:_:_:) function performs the same conversion and creates a buffer that’s suitable for working with ARGB8888 operations, 
+such as vImageConvolve_ARGB8888(_:_:_:_:_:_:_:_:_:_:_:).
+
+
+
+The code below creates a buffer from a CGImage instance named cgImage and prints the values of the first two pixels. 
+The opaque alpha values (255) are the first value in each pixel as CGImageAlphaInfo.noneSkipFirst defines.
+
+let buf = try vImage.PixelBuffer(
+    cgImage: cgImage,
+    cgImageFormat: &format,
+    pixelFormat: vImage.Interleaved8x4.self)
+// Prints:
+// "[255, 115, 136, 165,  255, 115, 136, 165]"
+//    A    R    G    B  |  A    R    G    B
+print(buf.array[0 ..< 2 * format.componentCount])
+
+let result = buf.makeCGImage(cgImageFormat: format)
+
+
+==================================================
+
+
+比如有两个像素，每个像素是 RGBA 四通道、每通道 1 字节
+Interleaved 格式:
+[R1, G1, B1, A1, R2, G2, B2, A2]
+每个像素的数据挨在一起，通道交错排列。
+像素为单位，每个像素是连续的 4 字节。
+
+Planar 格式（非交错）:
+[R1, R2, G1, G2, B1, B2, A1, A2]
+每个通道成一整块，所有 R 在一起，所有 G 在一起，以此类推
+
+
+==================================================Initialize a 32-bit Core Graphics image format
+let bitmapInfo = CGBitmapInfo(
+    rawValue: kCGBitmapByteOrder32Host.rawValue |
+    CGBitmapInfo.floatComponents.rawValue |
+    CGImageAlphaInfo.none.rawValue)
+
+
+var format = vImage_CGImageFormat(bitsPerComponent: 32,
+                                  bitsPerPixel: 32,// 灰度只有一个通道
+                                  colorSpace: CGColorSpaceCreateDeviceGray(),
+                                  bitmapInfo: bitmapInfo)!
+
+
+==================================================Initialize a Core Graphics image format from an image during pixel buffer initialization
+You can pass an empty vImage_CGImageFormat structure to the init(cgImage:cgImageFormat:pixelFormat:) initializer to instruct the initializer to populate the format with an image’s properties. 
+In this case, the initializer returns nil if the image’s and the pixel buffer’s bit depths aren’t equal.
+
+guard cgImage.bitsPerComponent == 8,
+      cgImage.bitsPerPixel == 8 * 4 else {
+    fatalError("Unsupported `bitsPerComponent` and `bitsPerPixel`.")
+}
+
+
+var format = vImage_CGImageFormat()
+
+
+let buf = try vImage.PixelBuffer(cgImage: cgImage,
+                                 cgImageFormat: &format,
+                                 pixelFormat: vImage.Interleaved8x4.self)
+
+On return, the mutable format variable contains the image properties.

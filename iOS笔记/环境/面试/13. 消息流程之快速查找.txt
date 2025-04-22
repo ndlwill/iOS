@@ -1,6 +1,8 @@
 分析了cache的写入流程，在写入流程之前，还有一个cache读取流程，即objc_msgSend 和 cache_getImp
 
+###
 本文的主要目的是理解objc_msgSend的方法查找流程
+###
 
 runtime称为运行时，它区别于编译时
 运行时 是代码跑起来，被装载到内存中的过程，如果此时出错，则程序会崩溃，是一个动态阶段
@@ -44,11 +46,15 @@ objc_msgSendSuper(&lgsuper, sel_registerName("sayHello"));
 
 objc_msgSendSuper方法中有两个参数（结构体，sel），其结构体类型是objc_super定义的结构体对象，且需要指定receiver 和 super_class两个属性
 发现不论是[person sayHello]还是objc_msgSendSuper都执行的是父类中sayHello的实现
+###
 方法调用，首先是在类中查找，如果类中没有找到，会到类的父类中查找。
+###
 
 
 objc_msgSend 快速查找流程分析:
 在objc4-781源码中，搜索objc_msgSend，由于我们日常开发的都是架构是arm64，所以需要在arm64.s后缀的文件中查找objc_msgSend源码实现，发现是汇编实现
+
+
 
 objc_msgSend 汇编源码:
 objc_msgSend是消息发送的源码的入口，其使用汇编实现的，_objc_msgSend源码实现如下
@@ -118,7 +124,8 @@ LReturnZero:
         如果小对象不为空，则处理小对象的isa，走到【第二步】
     如果即不是小对象，receiver也不为空，有以下两步
         从receiver中取出isa存入p13寄存器，
-        通过 GetClassFromIsa_p16中，arm64架构下通过 isa & ISA_MASK 获取shiftcls位域的类信息，即class，GetClassFromIsa_p16的汇编实现如下，然后走到【第二步】
+        通过 GetClassFromIsa_p16中，arm64架构下通过 isa & ISA_MASK 获取shiftcls位域的类信息，
+        即class，GetClassFromIsa_p16的汇编实现如下，然后走到【第二步】
 
 .macro GetClassFromIsa_p16 /* src */
 //---- 此处用于watchOS
@@ -153,8 +160,8 @@ LReturnZero:
 
 【第二步】获取isa完毕，进入CacheLookup NORMAL
 
-CacheLookup 缓存查找汇编源码
-//！！！！！！！！！重点！！！！！！！！！！！！
+
+CacheLookup 缓存查找汇编源码：
 .macro CacheLookup 
     //
     // Restart protocol:
@@ -340,7 +347,9 @@ LLookupRecover$1:
 比较获取的bucket中sel 与 objc_msgSend的第二个参数的_cmd(即p1)是否相等
 如果相等，则直接跳转至CacheHit，即缓存命中，返回imp
 如果不相等，有以下两种情况:
+#####
 如果一直都找不到，直接跳转至CheckMiss，因为$0是normal，会跳转至__objc_msgSend_uncached，即进入慢速查找流程
+#####
 如果根据index获取的bucket 等于 buckets的第一个元素，则人为的将当前bucket设置为buckets的最后一个元素（通过buckets首地址+mask右移44位（等同于左移4位）直接定位到bucker的最后一个元素），然后继续进行递归循环（第一个递归循环嵌套第二个递归循环），即【第六步】
 如果当前bucket不等于buckets的第一个元素，则继续向前查找，进入第一次递归循环
 
