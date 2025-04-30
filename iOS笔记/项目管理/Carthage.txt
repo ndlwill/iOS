@@ -1,108 +1,246 @@
-https://github.com/Carthage/Carthage
+==========Convert a Universal (FAT) Framework to an XCFramework==========
 
-carthage会为你下载和编译所需要的第三方库，当命令执行完毕，在你的项目文件夹中会创建一个名为Carthage的文件夹， 在～/Carthage/Build/iOS里会出现xxx.framework
+These frameworks are 
+either built from an Xcode project stored in a Github repository (Carthage’s github directive in the Cartfile) 
+or distributed as prebuilt artifacts (Carthage’s binary directive in the Cartfile)
+
+The binary dependencies are typically distributed as universal (AKA fat) binaries.
+
+these universal frameworks are a multi-architecture binary that is the result of lipo-ing together multiple binaries to form a single framework binary. 
+
+This multi-architecture binary would have some device slices (perhaps for both iOS and watchOS) and a simulator slice.
+
+|-----------|
+|   x86_64  | \
+|-----------|  \                    |---------------|
+                \     |------|      |               |
+                 ---> | lipo | ---> | x86_64, arm64 |
+                /     |------|      |               |
+|-----------|  /                    |---------------|
+|   arm64   | /
+|-----------|
+
+For the Carthage artifacts stored in Carthage/Build/iOS (for example), the architectures can be shown using lipo -i.
+xcrun lipo -i Carthage/Build/iOS/Foo.framework/Foo
+
+lipo是管理Fat File的工具, 可以查看cpu架构, 提取特定架构，整合和拆分库文件。
+lipo -info xxxx.framework/xxxx或/xxxx.a
+查看信息,支持的cpu架构列表
+
+lipo -create xxxx xxxx -output xxxx
+整合成Fat文件
+
+lipo xxxx -thin cpu(armv7/arm64等) -output xxxx
+提取特定的cpu架构的thin文件
+
+lipo -remove cpu(armv7/arm64等) xxxx -output xxxx
+移除掉特定的cpu架构的文件
 
 
-Carthage的优点:
-1.使用了CocoaPods的项目是高度集成的，而Carthage更灵活强调尽可能将任务委托给Xcode和Git。
-CocoaPods在使用中会自动创建和更新workspace、依赖和Pod项目并进行整合;
-Carthage在使用中不需要创建和集成相应的workspace和project,只需要依赖打包好的framework文件即可。
-总结一下，CocoaPods的方法更容易使用，而Carthage更灵活且对项目没有侵入性。
-2.CocoaPods相对来说功能要比Carthage多很多，因此也更复杂,而CocoaPods配置简单项目干净。
-3.CocoaPods有一个中心仓库，而Carthage是去中心化的，没有中心服务器也就避免了可能因中心节点错误而带来的失败，即Carthage每次配置和更新环境，只会去更新具体的库，时间更快。
-4.Carthage 管理的依赖只需编译一次，项目干净编译时，不会再去重新编译依赖，节省时间
-5.与 CocoaPods 无缝集成，一个项目能同时拥有 CocoaPods 和 Carthage
-
-Carthage的不足:
-仅支持 iOS8 +
-它只支持框架，所以不能用来针对 iOS 8 以前的系统版本进行开发
-支持的 Carthage 安装的第三方框架和依赖不如 CocoaPods 丰富
-无法在 Xcode 里定位到第三方库源码
+x86_64 will be the slice that engineers use when working with the binary in the iPhone simulator shipped with macOS. 
+arm64 will be the slice that engineers (and our athletes) use when running the code on a modern device.
 
 
-Carthage与CocoaPods的区别:
-（1）使用 CocoaPods 我们只需要修改 Podfile 文件，CocoaPods 会直接创建和修改项目的 workspace 配置。
-而 Carthage不会创建新的 workspace
-（2）虽然CocoaPods 功能更加强大，但因为国内网络问题，很多库更新不下来
-Carthage 只需要从 github 上下载项目即可，配置简单，使用的第三方库的时候就像使用苹果原生的 framework 一样，干净简洁。
+To make the multi-architecture binary smaller on the filesystem, we can do a couple things:
+Remove the armv7 slice since it isn’t used by our Strava application and is wasting bytes in our repository.
+Separate the simulator and device architectures into separate binaries such that the size of each sliced up binary is less than the whole. 
+This is easy to do using the new-ish XCFramework packaging.
 
-Carthage (只支持 iOS 8+)
+                                         |-----------|
+                                      /> |   x86_64  |
+                                     /   |-----------|
+|---------------|                   /
+| x86_64        |      |------|    /     |-----------|
+| armv7         | ---> | lipo | --- >    | armv7 🗑  |
+| arm64         |      |------|    \     |-----------|
+|---------------|                   \   
+                                     \   |-----------|
+                                      \> |   arm64   |
+                                         |-----------|
 
-Written in Swift! (v.s. CocoaPods in Ruby)
-Carthage 是一个去中心化的第三方依赖库管理工具，它自动帮你编译所依赖的第三方库并以 framework 形式提供给你
-非入侵式：不会修改 Xcode 相关配置，耦合性低
+First, create duplicates of the original framework for the device and simulator portion of the XCFramework. This gives a slice-specific sandbox to run the lipo commands to the unnecessary architectures.
+Foo.framework (Device)   Foo.framework (Simulator)
+  |---------------|          |---------------|
+  | x86_64        |          | x86_64        |
+  | armv7         |          | armv7         |
+  | arm64         |          | arm64         |
+  |---------------|          |---------------|
 
-brew update
-brew install carthage
-以后如果需要更新Carthage版本，则执行下面命令：
-brew upgrade carthage
+Next, remove the unnecessary architectures from each framework depending on the goal (iOS device vs. iOS simulator, in this case). 
+the device framework needs just arm64 and simulator framework needs just x86_64.
 
-1.首先进入到工程的根目录下，创建空白的 Cartfile 文件
-2.打开 Cartfile 文件，写入如下内容
-github "Alamofire/Alamofire" ~> 3.0
-github "SwiftyJSON/SwiftyJSON"
-3.carthage update --platform iOS
-4.命令执行完毕后，在项目文件夹中会创建一个名为 Carthage 的文件夹
-5.而在 Carthage/Build/iOS 文件夹下就是刚创建好的 framework 文件
-6.打开我们的工程项目，将上面的两个 framework 拖到 General -> Linked Frameworks and Libraries 中
-7.点击配置页的 Build Phases 标签坐上角的加号，添加一个 Run Script
-8.将新增的 Run Script 做如下修改
-Shell 下方文本区域输入：/usr/local/bin/carthage copy-frameworks
-input Files 中添加需要导入的库：
-$(SRCROOT)/Carthage/Build/iOS/Alamofire.framework
-$(SRCROOT)/Carthage/Build/iOS/SwiftyJSON.framework
-9.最后开发时，我们只需要在使用的时候 import 一下需要的库就可以了
+Foo.framework (Device)   Foo.framework (Simulator)
+  |---------------|          |---------------|
+  | arm64         |          | x86_64        |
+  |               |          |               |
+  |               |          |               |
+  |---------------|          |---------------|
 
-想要将这些库更新到最新版本，则执行 update 命令即可:
+Finally, combine the two frameworks together using the XCFramework creation process outlined at WWDC 2019.
+https://developer.apple.com/videos/play/wwdc2019/416/
+
+Foo.xcframework
+  |------------------------------------|
+  |  ios-arm64   ios-x86_64-simulator  |
+  |  |-------|         |--------|      |
+  |  | arm64 |         | x86_64 |      |
+  |  |-------|         |--------|      |
+  |------------------------------------|
+
+The resulting XCFramework will not require the usage of the carthage copy-frameworks script anymore since the architectures are already properly sliced into the device and simulator slices.
+
+Commands:
+Prepare the directory for creation of the various XCFramework slices.
+# Create directories
+$ cd Carthage/Build/iOS
+$ mkdir -p iphoneos
+$ mkdir -p iphonesimulator
+
+# Copy framework into the platform specific directories
+$ cp -R Foo.framework/ iphoneos/Foo.framework
+$ cp -R Foo.framework/ iphonesimulator/Foo.framework
+
+# Look at the architectures in the original binary
+$ xcrun lipo -i Foo.framework/Foo
+
+Architectures in the fat file: Foo.framework/Foo are: i386 x86_64 armv7 arm64
+
+Remove the architectures (using lipo -remove) that aren’t necessary for the device slice of the XCFramework.
+# Remove slices that aren't relevant to the device slice of the xcframework
+$ xcrun lipo -remove i386 -remove x86_64 -remove armv7 ./iphoneos/Foo.framework/Foo -o ./iphoneos/Foo.framework/Foo
+
+# Confirm the binary has the proper (arm64) slice
+$ xcrun lipo -i iphoneos/Foo.framework/Foo
+
+Architectures in the fat file: iphoneos/Foo.framework/Foo are: arm64
+
+Remove the architectures (using lipo -remove) that aren’t necessary for the simulator slice of the XCFramework.
+# Remove slices that aren't relevant to the simulator slice of the xcframework
+$ xcrun lipo -remove i386 -remove arm64 -remove armv7 ./iphonesimulator/Foo.framework/Foo -o ./iphonesimulator/Foo.framework/Foo
+
+# Confirm the binary has the proper (x86_64) slice.
+$ xcrun lipo -i iphonesimulator/Foo.framework/Foo
+
+Architectures in the fat file: iphonesimulator/Foo.framework/Foo are: x86_64
+
+Combine the two slices into an XCFramework using xcodebuild -create-xcframework.
+# Create xcframework from the platform slices
+$ xcodebuild -create-xcframework -framework iphoneos/Foo.framework/ -framework iphonesimulator/Foo.framework/ -output "Foo.xcframework"
+
+xcframework successfully written out to: /Users/mattrobinson/Developer/FrameworkDecomposition/Carthage/Build/iOS/Foo.xcframework
+
+
+Confirm that the debugging symbols can still be paired up to the original dSYM bundle
+$ xcrun dwarfdump --uuid Foo.framework.dSYM/Contents/Resources/DWARF/Foo
+
+UUID: 4573511F-DFDD-3E4B-8027-2293CDDE953A (armv7) Foo.framework.dSYM/Contents/Resources/DWARF/Foo
+UUID: CDFDFEC2-999B-3B7E-996E-EE5E99893136 (i386) Foo.framework.dSYM/Contents/Resources/DWARF/Foo
+UUID: C4161E2F-F4FB-3817-AAA4-820BA661238A (x86_64) Foo.framework.dSYM/Contents/Resources/DWARF/Foo
+UUID: 5065A484-E5D3-304E-B8C5-2CEEDCEEAE36 (arm64) Foo.framework.dSYM/Contents/Resources/DWARF/Foo
+
+$ xcrun dwarfdump --uuid Foo.xcframework/ios-x86_64-simulator/Foo.framework/Foo
+
+UUID: C4161E2F-F4FB-3817-AAA4-820BA661238A (x86_64) Foo.xcframework/ios-x86_64-simulator/Foo.framework/Foo
+
+$ xcrun dwarfdump --uuid Foo.xcframework/ios-arm64/Foo.framework/Foo
+
+UUID: 5065A484-E5D3-304E-B8C5-2CEEDCEEAE36 (arm64) Foo.xcframework/ios-arm64/Foo.framework/Foo
+
+
+
+==================================================Carthage
+It doesn’t change your Xcode project or force you to use a workspace.
+You don’t need Podspecs or a centralized repository where library authors submit their pods.
+
+Carthage uses dynamic frameworks to achieve its simplicity. This means your project must support iOS 8 or later.
+
+If you want to have a closed-source library, you can’t use SPM.
+
+open -a Xcode Cartfile
+
+----------The Cartfile Format:
+Dependency origin: This tells Carthage where to fetch a dependency. Carthage supports two types of origins:
+
+github for GitHub-hosted projects (the clue’s in the name!). You specify a GitHub project in the Username/ProjectName format, as you did with the Cartfile above.
+git for generic Git repositories hosted elsewhere. You use the git keyword followed by the path to the git repository, whether that’s a remote URL using git://, http://, or ssh:// or a local path to a Git repository on your development machine.
+
+Dependency version: 
+you tell Carthage which version of a dependency you want to use. There are several options at your disposal, depending on how specific you want to be:
+== 1.0: Indicates “Use exactly version 1.0.”
+>= 1.0: Means “Use version 1.0 or higher.”
+~> 1.0: Translates to “Use any version that’s compatible with 1.0,” meaning any version up to the next major release.
+Branch name / tag name / commit name means “Use this specific git branch / tag / commit”. For example, you could specify master, or a commit hash like 5c8a74a.
+
+If you specify ~> 1.7.5, Carthage considers any version from 1.7.5 up to, but not including 2.0, compatible.
+Carthage uses semantic versioning to determine compatibility.
+https://semver.org/
+If you don’t specify a version, Carthage will use the latest version that’s compatible with your other dependencies. 
+
+----------Building Dependencies:
+This Carthage tutorial uses Swift 5. At the time of writing, Swift 5 is only available in Xcode 11. 
+Ensure you’ve configured your command line tools to use Xcode 11 by running the following command from Terminal:
+
+sudo xcode-select -s <path to Xcode 11>/Xcode.app/Contents/Developer 
+
 carthage update --platform iOS
 
-如果要新增第三方库，或是删除原有的库。我们先编辑修改 Cartfile 文件。再执行执行 update 命令:
-carthage update --platform iOS
-最后打开项目，修改 General -> Linked Frameworks and Libraries 中的库引用。 以及 Run Script 中的 input Files 里相关内容即可。 
+// v0.38.0
+carthage update --platform iOS --use-xcframeworks
 
-carthage version 命令可查看版本
+This instructs Carthage to clone the Git repositories from the Cartfile, then to build each dependency into a framework.
+*** Cloning AlamofireImage
+*** Cloning Alamofire
+*** Checking out Alamofire at "4.9.0"
+*** Checking out AlamofireImage at "3.6.0"
+*** xcodebuild output can be found in /var/folders/bj/3hftn5nn0qlfrs2tqrydgjc80000gn/T/carthage-xcodebuild.7MbtQO.log
+*** Building scheme "Alamofire iOS" in Alamofire.xcworkspace
+*** Building scheme "AlamofireImage iOS" in AlamofireImage.xcworkspace
 
-Carthage中管理依赖的文件为Carfile
-我们可以创建一个名为Cartfile的文件来容纳我们工程中所依赖的三方库
+--platform iOS ensures that Carthage only builds frameworks for iOS.
+If you don’t specify a platform, Carthage will build frameworks for all platforms — often both Mac and iOS 
 
-成功安装完 Carthage 后，在你工程的 Cartfile 文件中添加如下一行：
-github "AFNetworking/AFNetworking" ~> 3.0
-github "kangzubin/XMNetworking" ~> 1.1.0
-github "ndl/TestCarthage" // 一个并没有支持Carthage的私有库
+If you’d like to take a look at further options, run carthage help update
 
-在终端环境输入 carthage update，Carthage 将自动下载所有相依模组至 Carthage/Checkouts 资料夹中，并编译成 frameworks
+By default, Carthage performs its checkouts and builds in a new directory named Carthage, which you’ll find in the same location as your Cartfile.
 
-执行完carthage update命令后，会生成一个Cartfile.resoved的文件和一个Carthage的文件夹
-.resolved的文件与CocoaPods中的lock文件功能一致，都是用来锁版本的
-Carthage文件夹下存放的就是Carthage为我们提供的动态库framework
+Building Artifacts:
+When you use CocoaPods, it makes several changes to your Xcode project and binds the result, along with a special Pods project, into an Xcode workspace.
 
-添加引入framework的相关脚本
+Carthage is a little different. It checks the code for your dependencies and builds the result into binary frameworks. 
+It’s then up to you to integrate the frameworks into your project.
+
+Cartfile.resolved: 
+This file serves as a companion to the Cartfile. It defines exactly which versions of your dependencies Carthage selected for installation. It’s strongly recommended to commit this file to your version control repository. Its presence ensures that other developers can get started quickly by using the exact same dependency versions.
+Carthage directory, containing two subdirectories:
+Build: 
+This contains the built framework for each dependency. You can integrate these into your project, and you’ll do so shortly. Carthage either builds each framework from source or downloads it from the project’s Releases page on GitHub.
+Checkouts: 
+This is where Carthage checks out the source code for each dependency that’s ready to build into frameworks. Carthage maintains its own
+
+
+Avoiding Problems With Your Artifacts:
+If you must modify your dependencies, run carthage update using the --use-submodules option.
+With this option, Carthage adds each dependency in the Checkouts folder to your Git repository as a submodule, 
+meaning you can change the dependencies’ source, and commit and push those changes elsewhere, without fear of an overwrite.
+
+Adding Frameworks to Your Project:
+In the Carthage Finder window, navigate to Build/iOS. 
+Drag both Alamofire.framework and AlamofireImage.framework into the Linked Frameworks and Libraries section in Xcode
+This tells Xcode to link your app to these frameworks, allowing you to make use of them in your code.
+Next, switch to Build Phases. Click the + icon in the top-left of the editor and select New Run Script Phase. 
+Add the following command to the block of code under Run Script:
 /usr/local/bin/carthage copy-frameworks
+Click the + icon under Input Files and add an entry for each framework:
+$(SRCROOT)/Carthage/Build/iOS/Alamofire.framework
+$(SRCROOT)/Carthage/Build/iOS/AlamofireImage.framework
+
+Strictly speaking, this build phase isn’t required for your project to run. However, 
+it’s a slick workaround for an App Store submission bug where apps with frameworks that contain binary images for the iOS simulator are automatically rejected.
+App Store submission bug:
+http://www.openradar.me/radar?id=6409498411401216
+The carthage copy-frameworks command strips out these extra architectures.
 
 
-Carthage/Build: 打包好的 framework（pre-built 或是从 checkouts build 出来的）
-Carthage/Checkouts: 所有相依模组的 source code
-
-============================================自己的仓库关联Carthage
-
-============================================版号语法
-# 版号 >= 3.1.2
-github "ReactiveX/RxSwift" >= 3.1.2
-
-# 版号 3.x (3.0 <= ver < 4.0)
-github "SnapKit/SnapKit" ~> 3.0
-
-# 仅匹配版号 0.4.1
-github "jspahrsummers/libextobjc" == 0.4.1
-
-# 最新版
-github "jspahrsummers/xcconfigs"
-
-# 指定 Git branch
-github "jspahrsummers/xcconfigs" "branch"
-
-# 其他 Git Server Repository 的 develop 分支
-git "https://agitserver.com/swift-test/swift-test.git" "develop"
-
-# 本地 local Git Repository
-git "file:///directory/to/project" "branch"
+Upgrading Frameworks:
+github "Alamofire/Alamofire" ~> 4.9.0
+carthage update --platform iOS

@@ -24,50 +24,97 @@
 # ===end profile===
 # ===end bash_profile===
 
+# 废弃的关键字:
+# only / except. rules 是控制何时向流水线添加作业的首选关键字。
+# 使用 rules 来包含或排除流水线中的作业。
+# rules 替换了 only/except，并且它们不能在同一个作业中一起使用。
+# 创建流水线时会评估规则，并按顺序评估，直到第一次匹配。找到匹配项后，该作业将包含在流水线中或从流水线中排除，具体取决于配置。
+# 作业被添加到流水线中：
+# 如果 if、changes 或 exists 规则匹配并且还具有 when: on_success（默认）、when: delay 或 when: always。
+# 如果达到的规则只有 when: on_success、when: delay 或 when: always。
+# 作业未添加到流水线中：
+# 如果没有规则匹配。
+# 如果规则匹配并且有 when: never。
+
 stages: # List of stages for jobs, and their order of execution
   - debug
+  - prepare
   - build
   - test
   - deploy
 
 variables:
+  LC_ALL: en_US.UTF-8
   LANG: "en_US.UTF-8"
   GIT_CLONE_PATH: $CI_BUILDS_DIR/TestDemo
+  ECHO_WHAT_VAR: "111"
 
+# 不推荐在全局范围内定义 image、services、cache、before_script 和 after_script。使用 default: 代替。这边暂时还用全局调试
 before_script:
   # - echo "=====before_script test cd====="
   # - cd DebugDir
   # - pwd # /Users/youdun-ndl/gitlab_builds/builds/TestDemo/DebugDir
   # - ls -la
-
   - echo "=====before_script env====="
   - echo $SHELL # /bin/zsh
   - pwd # /Users/youdun-ndl/gitlab_builds/builds/TestDemo
+  - ls -la
   - which bundle
   - which pod
+  - which fastlane
   - command which rvm
   - echo "=====before_script====="
   - bundle install
   - bundle exec pod install
 
+# default:
+#   before_script:
+#     - echo "=====default before_script====="
+
 debug-job:
   stage: debug
   tags:
     - apple
+  before_script: [] # 这里覆盖全局的 before_script，什么都不执行
   variables:
     DEBUG_JOB_VAR: "debug-job var"
   script:
     - echo "=====debug start====="
-    - echo "variables = '$DEBUG_JOB_VAR'"
+    - echo "DEBUG_JOB_VAR = '$DEBUG_JOB_VAR'"
+    - echo "ECHO_WHAT_VAR = '$ECHO_WHAT_VAR'"
+    - |
+      if [ "$ECHO_WHAT_VAR" = "test" ]; then
+        echo "test"
+      else
+        echo "$ECHO_WHAT_VAR"
+      fi
+    - ls -la # 有 Pods 文件夹，因为执行了 bundle exec pod install
     - echo "PROJECT_DIR = $CI_PROJECT_DIR" # /Users/youdun-ndl/gitlab_builds/builds/TestDemo
     - echo "CI_BUILDS_DIR = $CI_BUILDS_DIR" # /Users/youdun-ndl/gitlab_builds/builds
+    - echo "debug something" > debug.txt
     - echo "=====debug end====="
+  artifacts:
+    paths:
+      - debug.txt
+
+prepare-job:
+  stage: prepare
+  before_script: []
+  script:
+    - echo "=====prepare start====="
 
 build-job: # This job runs in the build stage, which runs first.
   stage: build
   script:
     - echo "Compiling the code..."
+    - bundle exec fastlane build
     - echo "Compile complete."
+  artifacts:
+    name: "$CI_JOB_NAME"
+    paths: # 路径相对于项目目录 ($CI_PROJECT_DIR)，不能直接链接到项目目录之外。
+      - BuildArtifacts/ # 保留编译结果,比如 build 后产物
+    exclude:
+      - BuildArtifacts/*.o
 
 unit-test-job: # This job runs in the test stage.
   stage: test # It only starts when the job in the build stage completes successfully.
@@ -85,7 +132,17 @@ lint-test-job: # This job also runs in the test stage.
 
 deploy-job: # This job runs in the deploy stage.
   stage: deploy # It only runs when *both* jobs in the test stage complete successfully.
-  environment: production
+  before_script:
+    - echo "=====deploy-job before_script=====" # 全局的 before_script 就被覆盖了，不会执行了
+  variables:
+    ECHO_WHAT_VAR: "222"
+  environment: production # 常见的环境名称是 qa、staging 和 production，但您可以使用任何名称。
   script:
+    - echo "ECHO_WHAT_VAR = '$ECHO_WHAT_VAR'"
+    - ls -la # 没有 Pods 文件夹，因为没有执行 全局的 before_script （每次都会重新 Getting source from Git repository）
+    - cat debug.txt
     - echo "Deploying application..."
     - echo "Application successfully deployed."
+  dependencies:
+    - debug-job
+    - build-job

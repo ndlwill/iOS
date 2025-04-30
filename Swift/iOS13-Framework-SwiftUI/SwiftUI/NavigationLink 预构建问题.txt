@@ -1,0 +1,223 @@
+https://fatbobman.github.io/zh/posts/using-equatable-to-avoid-the-navigationlink-pre-build-pitfall/
+
+
+
+通常 .id 写在 List 上 // id: \.self是告诉List：“我的数据源里的元素 i 本身是有 identity 的”，所以 List 智能 diff，不乱动子View
+List(0 ..< 10000, id: \.self) { i in // 控制台只打印了当前屏幕可见的几十个 LinkView init。
+    LinkView(i: i, path: $path)
+}
+或者：
+List {
+    ForEach(0 ..< 10000, id: \.self) { i in
+        LinkView(i: i, path: $path)
+    }
+}
+
+
+###
+在 SwiftUI 中，如果开发者在 List 的子实体中使用 id 修饰器会破坏 List 的优化机制。
+###
+SwiftUI 会在最初构建时，将所有的子视图（使用了 id）一并构建出来（调用全部的 init），但只会对当前可见区域的子视图调用 body 进行渲染。
+
+
+添加一个 NavigationLink 后,那就是在默认情况下会被预创建。
+这意味着视图实体被创建后，SwiftUI 会直接调用子视图的 body 进行求值。
+尽管所有的 NavigationLink 都在一个惰性容器（List）中，但 SwiftUI 仍然会一次性构建所有子视图（触发 init 和 body 的调用），导致视图渲染严重卡顿。
+
+struct DemoRootView: View {
+    var body: some View {
+        NavigationStack {
+            List(0 ..< 10000) { i in
+                LinkView(i: i)
+                    .id(i) // cause all LinkView init called， // 注意：id 作用在 LinkView 上
+            }
+        }
+    }
+}
+
+struct LinkView: View {
+    let i: Int
+    init(i: Int) {
+        self.i = i
+        print("init \(i)")
+    }
+
+    var body: some View {
+        let _ = print("update \(i)")
+        NavigationLink(value: i) { // cause all LinkView body called
+            Text("\(i)")
+        }
+    }
+}
+
+
+为了避免视图被预创建，通常开发者的选择是完全避开 NavigationLink，而使用如下方案：
+struct DemoRootView: View {
+    @State var path = NavigationPath()
+    var body: some View {
+        NavigationStack(path: $path) {
+            List(0 ..< 10000) { i in
+                LinkView(i: i, path: $path)
+                    .id(i) // cause all LinkView init called
+            }
+            .navigationDestination(for: Int.self) {
+                Text("\($0)")
+            }
+        }
+    }
+}
+
+struct LinkView: View {
+    let i: Int
+    @Binding var path: NavigationPath
+    init(i: Int, path: Binding<NavigationPath>) {
+        self.i = i
+        _path = path
+        print("init \(i)")
+    }
+
+    var body: some View {
+        let _ = print("update \(i)")
+        Button {
+            path.append(i) // avoid using NavigationLink
+        } label: {
+            Text("\(i)")
+        }
+    }
+}
+
+但是，使用 Button 替换 NavigationLink 会失去 SwiftUI 默认提供的跳转按钮样式和交互反馈，这并非最佳方案。
+
+
+==================================================struct & class
+struct 或 enum 遵守 Equatable
+并且：
+所有的属性本身都已经是 Equatable
+没有特别的比较逻辑（比如忽略某些字段）
+那么 Swift 会自动为你合成 == 方法。
+如果你：
+需要自定义比较逻辑（比如只比较某些字段）
+某个属性不是 Equatable
+就必须手动实现 == 方法。
+
+
+对于 class，Swift 默认比较的是引用地址，你需要显式遵守 Equatable，并自己实现 ==
+
+
+==================================================
+一个可以继续使用 NavigationLink 而又不触发预计算（不对非可见项的 body 求值）的方法，那就是使用 equatable() 修饰器。
+
+默认 diff 机制 vs Equatable:
+
+
+先了解 SwiftUI 是如何进行视图 diff 操作的。
+当父视图进行更新时（计算其 body 值），为了判断子视图是否也需要进行递归更新，SwiftUI 会构建一个新的子视图实例，并将其与旧实例进行快速比对，以确定子视图的构造参数是否发生了变化。
+SwiftUI 采用了一种高效的字段逐一比对方式来提升比较性能。这也解释了为什么 SwiftUI 虽然频繁对视图的前后值进行比对，但并不强制要求视图符合 Equatable 协议。
+
+但当我们将视图声明为符合 Equatable 协议后，SwiftUI 会放弃默认的 diff 策略，转而使用 Equatable 提供的自定义比对方法。
+
+struct RootView: View {
+    @State var i = 0
+    var body: some View {
+        VStack {
+            ChildView(i: i, name: "fat")
+            Button("i++") {
+                i += 1
+            }
+        }
+    }
+}
+
+struct ChildView: View {
+    let i: Int
+    let name: String
+    init(i: Int, name: String) {
+        self.i = i
+        self.name = name
+        print("init \(i)")
+    }
+
+    var body: some View {
+        Text("Child View \(i)")
+    }
+    
+    // 声明了比较方法，但没有给 ChildView 声明 Equatbale 协议
+    static func== (lhs: Self, rhs: Self) -> Bool {
+        print("compare")
+        return lhs.i == rhs.i
+    }
+}
+
+尽管我们声明了 func== 方法，但由于没有正式让 ChildView 符合 Equatable 协议，SwiftUI 在比较时仍然使用默认的 diff 方式，不会调用我们自定义的比较方法。
+所以这边不会 print("compare")
+
+
+但如果我们明确让 ChildView 符合 Equatable 协议：
+在上面的基础上添加
+extension ChildView: Equatable {}
+SwiftUI 将会转为使用我们自定义的比较方法来进行视图的前后值比对。
+这边就会 print("compare")
+
+
+#####
+SwiftUI 是直接 diff View 的值结构，不是走虚拟树
+
+这表明 SwiftUI 在进行 diff 时会首先检查当前视图是否符合 Equatable 协议，然后选择适合的 diff 策略。
+
+且 heavily 依赖 Equatable、id 等
+
+这里需要特别注意的是，如果 ChildView 只有一个构造参数，即使声明了 Equatable 协议，SwiftUI 也不会调用我们自定义的比较方法。
+这个逻辑其实很合理——当我们选择让 SwiftUI 使用基于 Equatable 的方式来替代原有的高效 diff 机制时，往往是为了减少需要比较的项目（如上例中，只比较 i 值，而忽略 name 的变化）。
+如果视图只有一个参数，使用 Equatable 不仅没有必要，反而可能导致性能降低。
+
+我们可以推断 SwiftUI 的默认比较方案绝非简单的 memcmp 方式，而是会精确提取视图中需要比对的关键数据，进行有针对性的字段逐一比对。
+
+总结来说，在 SwiftUI 中，除了只有单一构造参数的特殊情况外，如果视图被声明为符合 Equatable 协议，SwiftUI 会使用我们自定义的比较方法而非默认的 diff 机制。
+#####
+
+
+
+用 equatable() 避免 NavigationLink 的预构建:
+在 SwiftUI 的早期版本中，需要对一个符合 Equatable 协议的视图显式使用 equatable() 修饰器，才能切换 diff 模式。
+但在最近几个版本中，SwiftUI 已能自动识别符合 Equatable 的视图并调整比较策略。
+既然 SwiftUI 能够自动切换 diff 模式，那么 equatable() 视图修饰器是否还有实际意义？
+
+根据 equatable() 的官方文档，它只能用于符合 Equatable 协议的视图，并会用 EquatableView 包装原视图类型。
+
+Prevents the view from updating its child view when its new value is the same as its old value.
+
+nonisolated func equatable() -> EquatableView<Self>
+
+
+
+struct DemoRootView: View {
+    @State var path = NavigationPath()
+    var body: some View {
+        NavigationStack(path: $path) {
+            List(0 ..< 10000) { i in
+                LinkView(i: i).equatable() // avoid unVisible LinkView's body called
+                    .id(i) // cause all LinkView init called
+            }
+            .navigationDestination(for: Int.self) {
+                Text("\($0)")
+            }
+        }
+    }
+}
+
+struct LinkView: View, Equatable { // Equatable
+    let i: Int
+    init(i: Int) {
+        self.i = i
+        print("init \(i)")
+    }
+
+    var body: some View {
+        let _ = print("update \(i)")
+        NavigationLink(value: i) {
+            Text("\(i)")
+        }
+    }
+}
+
+虽然官方文档中并未详细介绍 EquatableView 的具体作用机制，但在我们使用了 NavigationLink 的场景中，它确实能有效阻止针对 NavigationLink 的预构建行为。

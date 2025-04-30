@@ -13,396 +13,74 @@
 # Uncomment the line if you want fastlane to automatically update itself
 # update_fastlane
 
-PROJECT_NAME = ENV['PROJECT_NAME']
+XCWORKSPACE_NAME = "TestDemo.xcworkspace"
+SCHEME = "TestDemo"
 
-AJS_SCHEME = ENV['AJS_SCHEME']
-NETWORK_EXTENSION_SCHEME = ENV['NETWORK_EXTENSION_SCHEME']
-CONNECT_WIDGET_EXTENSION_SCHEME = ENV['CONNECT_WIDGET_EXTENSION_SCHEME']
-AJS_TARGET = ENV['AJS_TARGET']
-NETWORK_EXTENSION_TARGET = ENV['NETWORK_EXTENSION_TARGET']
-CONNECT_WIDGET_EXTENSION_TARGET = ENV['CONNECT_WIDGET_EXTENSION_TARGET']
 
-XCODEPROJ_NAME = "#{PROJECT_NAME}.xcodeproj"
-XCWORKSPACE_NAME = "#{PROJECT_NAME}.xcworkspace"
+$APP_VERSION_NUMBER = ""
 
-APP_IDENTIFIER = ENV['APP_IDENTIFIER']
-NETWORK_EXTENSION_IDENTIFIER = ENV['NETWORK_EXTENSION_IDENTIFIER']
-CONNECT_WIDGET_EXTENSION_IDENTIFIER = ENV['CONNECT_WIDGET_EXTENSION_IDENTIFIER']
+$APP_BUILD_NUMBER = ""
 
-# Info.plist文件路径
-INFO_PLIST_PATH = "#{PROJECT_NAME}/Info.plist"
+$BUILD_ARTIFACTS_EXPORT_PATH = "BuildArtifacts"
 
-# whoami
-$WHO_AM_I = ""
-
-# ipa导出路径
-$IPA_OUTPUT_DIRECTORY = ENV['IPA_OUTPUT_DIRECTORY']
-
-# ipa安装包路径
-$IPA_PATH = ""
-
-# 版本号
-$VERSION_NUMBER = ""
-
-# 构建版本号
-$BUILD_NUMBER = ""
-
-# 选择的打包方式
-$selected_method = ''
-
-# 是否准备完成
-$PREPARE_COMPLETED = false
+$GYM_RETURN_PATH = ""
 
 default_platform(:ios)
 
 platform :ios do
 
-  before_all do
-    puts "======before_all====="
-    $WHO_AM_I = sh("whoami").chomp
-  end
-
-  # fastlane test
-  # fastlane test --env test
-  # fastlane also has a --env option that allows loading of environment specific dotenv files. .env and .env.default will be loaded before environment specific dotenv files are loaded
-  desc "=====Test a lane====="
-  lane :test do
-    puts "=====lane: test====="
-    puts "ENV: TEST = #{ENV['TEST']}"
-    puts "ENV: TEST_NAME = #{ENV['TEST_NAME']}"
-    # Lane Variables
-    puts "lane_context.LANE_NAME = #{lane_context[SharedValues::LANE_NAME]}"
-
-    puts "FASTLANE_LANE_NAME = #{ENV["FASTLANE_LANE_NAME"]}"
-
-    # UI.user_error!("#$IPA_OUTPUT_DIRECTORY")
-  end
-
-  desc "=====private lane====="
-  private_lane :private_test do
-
-  end
-
-  desc "=====before_build(不能单独使用)====="
-  lane :before_build do |options|
-    puts "input options = #{options}" # {:export_method=>"app-store"}
-
-    export_method = options[:export_method]
-    if export_method.nil? || export_method.empty?
-      puts "\nSelect Method: \n1. app-store \n2. ad-hoc \nother. Cancel Pack"
-
-      # $selected_method = STDIN.gets.chomp
-      # 如果STDIN.gets 直接按回车 然后#$selected_method.nil?为false #$selected_method.empty?为false
-      # 如果STDIN.gets.chomp 直接按回车 然后#$selected_method.nil?为false #$selected_method.empty?为true
-
-      # $selected_method = STDIN.gets
-      # $selected_method不等于'\n' 等于"\n"
-      
-      $selected_method = STDIN.gets.chomp
-      if $selected_method == '2'
-        UI.user_error!("=====Pack Cancelled [reason: TODO ad-hoc]=====")
-      elsif $selected_method != '1'
-        UI.user_error!("=====Pack Cancelled [reason: manual cancel]=====")
-      end
-    end
-
-    if !$PREPARE_COMPLETED 
-      # $(MARKETING_VERSION)
-      # curVersionNumber = get_info_plist_value(path: "#{INFO_PLIST_PATH}", key: "CFBundleShortVersionString")
-      # $(CURRENT_PROJECT_VERSION)
-      # curBuildNumber = get_info_plist_value(path: "#{INFO_PLIST_PATH}", key: "CFBundleVersion")
-
-      sh 'pwd'
-
-      curContainerVersionNumber = get_version_number_from_xcodeproj(target: "#{AJS_TARGET}")
-      curNetworkExtensionVersionNumber = get_version_number_from_xcodeproj(target: "#{NETWORK_EXTENSION_TARGET}")
-      curConnectWidgetExtensionVersionNumber = get_version_number_from_xcodeproj(target: "#{CONNECT_WIDGET_EXTENSION_TARGET}")
-      
-      curContainerBuildNumber = get_build_number_from_xcodeproj(target: "#{AJS_TARGET}")
-      curNetworkExtensionBuildNumber = get_build_number_from_xcodeproj(target: "#{NETWORK_EXTENSION_TARGET}")
-      curConnectWidgetExtensionBuildNumber = get_build_number_from_xcodeproj(target: "#{CONNECT_WIDGET_EXTENSION_TARGET}")
-
-      UI.important "Current-[version_number]: #{AJS_TARGET}-#{curContainerVersionNumber} #{NETWORK_EXTENSION_TARGET}-#{curNetworkExtensionVersionNumber} #{CONNECT_WIDGET_EXTENSION_TARGET}-#{curConnectWidgetExtensionVersionNumber}"
-      UI.important "Current-[build_number]: #{AJS_TARGET}-#{curContainerBuildNumber} #{NETWORK_EXTENSION_TARGET}-#{curNetworkExtensionBuildNumber} #{CONNECT_WIDGET_EXTENSION_TARGET}-#{curConnectWidgetExtensionBuildNumber}"
-
-      $VERSION_NUMBER = UI.input "Modify Version Number(Enter return using current_version_number): "
-      if $VERSION_NUMBER != ''
-        puts "start modify version number"
-        increment_version_number_in_xcodeproj(version_number: "#$VERSION_NUMBER")
-      else
-        $VERSION_NUMBER = curContainerVersionNumber
-        puts "using current version number: #{curContainerVersionNumber}"
-      end
-      
-      $BUILD_NUMBER = UI.input "Modify Build Number(Enter return using current_build_number): "
-      if $BUILD_NUMBER != ''
-        puts "start modify build number"
-        increment_build_number_in_xcodeproj(build_number: "#$BUILD_NUMBER")
-      else
-        $BUILD_NUMBER = curContainerBuildNumber
-        puts "using current build number: #{curContainerBuildNumber}"
-      end
-    end
-    $PREPARE_COMPLETED = true
-  end
-
-  desc "=====Confirm Info(不能单独使用)====="
-  lane :confirm_info do |options|
-    UI.important "===============Confirm Info==============="
-    UI.important "VersionNumber: #$VERSION_NUMBER"
-    UI.important "BuildNumber: #$BUILD_NUMBER"
-    UI.important "ExportMethod: #{options[:export_method]}"
-    UI.important "IpaOutputDirectory: #$IPA_OUTPUT_DIRECTORY"
-    result = UI.confirm "check confirm info, enter 'y' to continue" # result = true 如果enter y
-    if !result
-      UI.user_error!("=====Pack Cancelled=====")
-    end
-
-    puts "start packing after 3 seconds"
-    sleep(3)
-  end
-
-  # app-store, ad-hoc
-  # bundle exec fastlane ios_release
-  # bundle exec fastlane ios_release export_method:app-store
-  desc "=====iOS Release(可单独使用)====="
-  lane :ios_release do |options|
-    before_build(options)
-
-    case $selected_method
-    when '1'
-      options[:export_method] = 'app-store'
-      confirm_info(options)
-      build(options)
-      deliver_appstore
-    when '2'
-      options[:export_method] = 'ad-hoc'
-      confirm_info(options)
-    end
-  end
-
-  desc "=====To AppStore(可单独使用)====="
-  lane :ios_appstore do |options|
-    options[:export_method] = 'app-store'
-    before_build(options)
-    confirm_info(options)
-    build(options)
-    deliver_appstore
-  end
-
 =begin
-gym:
-##Export options##
-Since Xcode 7, gym is using new Xcode API which allows us to specify export options using plist file. 
-By default gym creates this file for you and you are able to modify some parameters by using export_method, export_team_id, include_symbols or include_bitcode.
-If you want to have more options, like creating manifest file for app thinning, you can provide your own plist, ExportOptions.plist
-or
-you can provide hash of values directly in the Gymfile
-Optional: If gym can't automatically detect the provisioning profiles to use, you can pass a mapping of bundle identifiers to provisioning profiles:
+bundle exec fastlane build
 
-使用了match:
-Note: If you use fastlane with match you don't need to provide those values manually, unless you pass a plist file into export_options
-不写export_options的Generated plist file with the following values:
------------------------------------------
-{
-  "provisioningProfiles": {
-    "com.aijiasuinc.AiJiaSuClient": "match AppStore com.aijiasuinc.AiJiaSuClient",
-    "com.aijiasuinc.AiJiaSuClient.PacketTunnel": "match AppStore com.aijiasuinc.AiJiaSuClient.PacketTunnel"
-  },
-  "method": "app-store",
-  "uploadSymbols": true,
-  "signingStyle": "manual"
-}
------------------------------------------
-
-If gym can't automatically detect the provisioning profiles to use, you can pass a mapping of bundle identifiers to provisioning profiles:
-Detected provisioning profile mapping: 
-{:"com.aijiasuinc.AiJiaSuClient"=>"match AppStore com.aijiasuinc.AiJiaSuClient", :"com.aijiasuinc.AiJiaSuClient.PacketTunnel"=>"match AppStore com.aijiasuinc.AiJiaSuClient.PacketTunnel"}
+Step: gym
+$ xcodebuild -resolvePackageDependencies -workspace TestDemo.xcworkspace -scheme TestDemo -configuration Release
+$ xcodebuild -showBuildSettings -workspace TestDemo.xcworkspace -scheme TestDemo -configuration Release 2>&1
+Archive Succeeded
+Successfully stored the archive. You can find it in the Xcode Organizer.
+Successfully exported and compressed dSYM file
+Successfully exported and signed the ipa file
 =end
-  desc "=====Build(不能单独使用)====="
+  desc "=====build====="
   lane :build do |options|
     puts "[lane :build] input options = #{options}"
 
-    output_directory = ''
-    # pp文件
-    provisioning_profiles = ''
+    # 默认 app-store
+    export_method = options[:export_method] ||= 'app-store'
+
+    appIdentifier = CredentialsManager::AppfileConfig.try_fetch_value(:app_identifier)
+    puts "appIdentifier = #{appIdentifier}"
+
     build_time = Time.now.strftime("%Y-%m-%d %H-%M-%S")
-    export_method = options[:export_method]
-    case export_method
-    when 'app-store'
-      output_directory = "#$IPA_OUTPUT_DIRECTORY/AJS/AppStore/#{AJS_SCHEME}_#{build_time}"
-    when 'ad-hoc' # 需要pp描述文件
-      # provisioning_profiles
-      output_directory = "#$IPA_OUTPUT_DIRECTORY/AJS/AD-HOC/#{AJS_SCHEME}_#{build_time}"
-    end
 
-    ipa_output_name = "#{AJS_SCHEME}_v#{$VERSION_NUMBER}_b#{$BUILD_NUMBER}_#{export_method}.ipa"
+    appTargetVersionNumber = get_version_number_from_xcodeproj(target: "TestDemo")
+    appTargetBuildNumber = get_build_number_from_xcodeproj(target: "TestDemo")
 
-    # Debug
-    configuration = 'Release'
+    $APP_VERSION_NUMBER = appTargetVersionNumber
+    $APP_BUILD_NUMBER = appTargetBuildNumber
 
-    # http://docs.fastlane.tools/actions/gym/#gym
-    # For the list of available options run xcodebuild -help
-    $IPA_PATH = gym(
-      project: "#{XCODEPROJ_NAME}",
-      scheme: "#{AJS_SCHEME}",
-      clean: 'true',
-      configuration: "#{configuration}",
-      output_directory: "#{output_directory}",
-      output_name: "#{ipa_output_name}",
-      buildlog_path: "#{output_directory}",
-      include_symbols: 'true',
-      # include_bitcode: 'false',
-      # export_xcargs: "-allowProvisioningUpdates",
-      silent: true
-      # 使用match 不需要export_options
-=begin
-      # 使用Xcode的Automatically manage signing 需要export_options
-      export_options: {
+    provisioning_profile_name = export_method == 'app-store' ? 'Dis-TestDemo' : 'Dev-TestDemo'
+    
+    $GYM_RETURN_PATH = gym(
+      workspace: XCWORKSPACE_NAME, # Path to the workspace file
+      scheme: SCHEME,
+      clean: true,
+      configuration: 'Release',
+      output_directory: "#$BUILD_ARTIFACTS_EXPORT_PATH/ipa/#{SCHEME}_#{build_time}", # The directory in which the ipa file should be stored in. (默认值 = .)
+      output_name: "#{SCHEME}_v#{$APP_VERSION_NUMBER}_b#{$APP_BUILD_NUMBER}_#{export_method}.ipa", # The name of the resulting ipa file
+      buildlog_path: "#$BUILD_ARTIFACTS_EXPORT_PATH/buildlog", # The directory where to store the build log
+      build_path: "#$BUILD_ARTIFACTS_EXPORT_PATH/build/#{SCHEME}_#{build_time}", # The directory in which the archive should be stored in
+      archive_path: "#$BUILD_ARTIFACTS_EXPORT_PATH/archive/#{SCHEME}_#{build_time}", # The path to the created archive
+      include_symbols: true,
+      silent: true,
+      export_options: { # By default gym creates this file for you and you are able to modify some parameters by using export_method, export_team_id, include_symbols or include_bitcode.
         method: "#{export_method}",
-        # signingStyle: "", # "automatic", "manual",
-        # provisioningProfiles: {"#{APP_IDENTIFIER}"=>"match AppStore com.aijiasuinc.AiJiaSuClient", "#{NETWORK_EXTENSION_IDENTIFIER}"=>"match AppStore com.aijiasuinc.AiJiaSuClient.PacketTunnel", "#{CONNECT_WIDGET_EXTENSION_IDENTIFIER}"=>"match AppStore com.aijiasuinc.AiJiaSuClient.ConnectWidget"},
-        thinning: "<none>"
+        provisioningProfiles: {
+          appIdentifier => provisioning_profile_name # export_method为app-store，就需要Distribution的描述文件
+        },
+        thinning: "<none>" # Defaults to <none>
       }
-=end
     )
-    UI.important "IPA_PATH: #$IPA_PATH"
+
+    UI.important "GYM_RETURN_PATH = #$GYM_RETURN_PATH"
   end
-
-  # app_version: $VERSION_NUMBER,
-  desc "=====Deliver AppStore(不能单独使用)====="
-  lane :deliver_appstore do |options|
-    deliver(
-      username: ENV['APPLE_ID'],
-      app_identifier: ENV['APP_IDENTIFIER'],
-      app_version: $BUILD_NUMBER,
-      ipa: $IPA_PATH,
-      team_id: ENV['ITC_TEA_ID'],
-      dev_portal_team_id: ENV['TEAM_ID'],
-      run_precheck_before_submit: false,
-      skip_screenshots: true,
-      skip_metadata: true,
-      force: false
-      # release_notes: {}
-    )
-  end
-
-  # match type: development, appstore, adhoc, enterprise
-
-  # bundle exec fastlane match_generate_development readonly:false
-  desc "=====match_generate_development====="
-  lane :match_generate_development do |options|
-    puts "match_generate_development: input options = #{options}"
-    certs_output_path = "/Users/#$WHO_AM_I/Desktop/cert_output"
-
-    match(
-      type: "development",
-      readonly: false,
-      # app_identifier: [ENV['APP_IDENTIFIER'], ENV['NETWORK_EXTENSION_IDENTIFIER'], ENV['CONNECT_WIDGET_EXTENSION_IDENTIFIER']],
-      # username: ENV['APPLE_ID'],
-      team_id: ENV['TEAM_ID'],
-      force: false,
-      force_for_new_devices: true,
-      output_path: "#{certs_output_path}",
-      verbose: true
-    )
-  end
-
-  desc "=====match_generate_appstore====="
-  lane :match_generate_appstore do |options|
-    certs_output_path = "/Users/#$WHO_AM_I/Desktop/cert_output"
-
-    match(
-      type: "appstore",
-      readonly: false,
-      # app_identifier: [ENV['APP_IDENTIFIER'], ENV['NETWORK_EXTENSION_IDENTIFIER'], ENV['CONNECT_WIDGET_EXTENSION_IDENTIFIER']],
-      # username: ENV['APPLE_ID'],
-      team_id: ENV['TEAM_ID'],
-      force: false,
-      force_for_new_devices: true,
-      output_path: "#{certs_output_path}",
-      verbose: true
-    )
-  end
-
-  # 如果仓库为空，则fetch报错
-  desc "=====match_fetch_development====="
-  lane :match_fetch_development do |options|
-    certs_output_path = "/Users/#$WHO_AM_I/Desktop/cert_output"
-
-    match(
-      type: "development",
-      readonly: true,
-      # app_identifier: [ENV['APP_IDENTIFIER'], ENV['NETWORK_EXTENSION_IDENTIFIER'], ENV['CONNECT_WIDGET_EXTENSION_IDENTIFIER']],
-      # username: ENV['APPLE_ID'],
-      team_id: ENV['TEAM_ID'],
-      force: false,
-      force_for_new_devices: true,
-      output_path: "#{certs_output_path}",
-      verbose: true
-    )
-  end
-
-  desc "=====match_fetch_appstore====="
-  lane :match_fetch_appstore do |options|
-    certs_output_path = "/Users/#$WHO_AM_I/Desktop/cert_output"
-
-    match(
-      type: "appstore",
-      readonly: true,
-      # app_identifier: [ENV['APP_IDENTIFIER'], ENV['NETWORK_EXTENSION_IDENTIFIER'], ENV['CONNECT_WIDGET_EXTENSION_IDENTIFIER']],
-      # username: ENV['APPLE_ID'],
-      team_id: ENV['TEAM_ID'],
-      force: false,
-      force_for_new_devices: true,
-      output_path: "#{certs_output_path}",
-      verbose: true
-    )
-  end
-
-
-# fastlane 自动生成的lane upload_to_app_store
-=begin
-  desc "Push a new release build to the App Store"
-  lane :release do
-    increment_build_number(xcodeproj: "AiJiaSuClientIos.xcodeproj")
-    build_app(scheme: "AiJiaSuClientIos")
-    upload_to_app_store
-  end
-=end
-
-# fastlane 自动生成的lane upload_to_testflight
-=begin
-  desc "Push a new beta build to TestFlight"
-  lane :beta do
-    build_app(scheme: "TestFastlane")
-    upload_to_testflight
-  end
-=end
-
-  after_all do
-    puts "======after_all====="
-  end
-
 end
-
-=begin
-##xcodebuild##
-
--allowProvisioningUpdates                        
-Allow xcodebuild to communicate with the Apple Developer website. For automatically signed targets, xcodebuild will create and update profiles, app IDs, and certificates. For manually signed targets, xcodebuild will download missing or updated provisioning profiles. Requires a developer account to have been added in Xcode's Accounts preference pane.
-
-Available keys for -exportOptionsPlist:
-signingStyle: String
-The signing style to use when re-signing the app for distribution. Options are manual or automatic. 
-Apps that were automatically signed when archived can be signed manually or automatically during distribution, and default to automatic. 
-Apps that were manually signed when archived must be manually signed during distribtion, so the value of signingStyle is ignored.
-=end
-
-=begin
-##match##
-
-force_for_new_devices:
-Renew the provisioning profiles if the device count on the developer portal has changed. Ignored for profile type 'appstore'
-
-=end
