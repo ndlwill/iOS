@@ -1,0 +1,262 @@
+NSString *file = [[NSBundle mainBundle] pathForResource:name ofType:nil];
+用来获取 file 的完全路径
+
+NSBundle:
+代表了 app 中代码和资源的文件在文件系统里所在的位置，通俗的说，就是定位了程序使用的资源（代码，图形，音乐等数据）在文件系统里的位置
+
+我们的程序是一个bundle
+在Finder中,一个应用程序看上去和其他文件没有什么区别. 但是实际上它是一个包含了nib文件,编译代码,以及其他资源的目录. 我们把这个目录叫做程序的main bundle
+
++ (NSBundle *)mainBundle
+返回一个 NSBundle类的对象，这个对象就是一个完全path，这个 path 保存的当前可执行的app路径，或者是 返回nil
+NSBundle *bundle = [NSBundle mainBundle];
+NSLog(@"bundle = %@", bundle);
+// bundle = NSBundle </Users/ndl/Library/Developer/CoreSimulator/Devices/89555224-5B1C-4B9D-A220-174FA28D4692/data/Containers/Bundle/Application/B588250E-D621-44E7-9C46-23E0A5C02C0E/TestRotate.app> (loaded)
+
+app Build之后， 资源文件直接就复制到了根目录下，于是读取的方法，应该是这样：
+NSString *earth = [[NSBundle mainBundle] pathForResource:@"Brad Cox" ofType:@"png"]
+编译之后，mainBundle的资源都是放到RootFolder下，所以，可以直接访问，不要指定内部路径。通常来说，这个 mainbundle 就是 当前的可执行app 的在根目录下的绝对路径
+
+资源路径:
+/Users/ndl/Library/Developer/CoreSimulator/Devices/89555224-5B1C-4B9D-A220-174FA28D4692/data/Containers/Bundle/Application/B588250E-D621-44E7-9C46-23E0A5C02C0E/TestRotate.app/Brad Cox.png
+
+
+使用其他的Bundle:
+使用Custom bundle，访问内部的子文件夹，需要指定inDirectory参数
+Resources.bundle包含Images文件夹，Images包含MoreImages文件夹,MoreImages包含Matthijs.png
+NSString *resourceBundle = [[NSBundle mainBundle] pathForResource:@"Resources" ofType:@"bundle"];
+NSString *earth = [[NSBundle bundleWithPath:resourceBundle] pathForResource:@"Matthijs"ofType:@"jpg"inDirectory:@"Images/MoreImages"];
+
+
+
+==================================================
+https://www.jianshu.com/u/977d94d120e0
+
+//主bundle，也就是可执行的工程的bundle
+NSBundle *mainBundle = [NSBundle mainBundle];
+//NSBundle *mainBundle = [NSBundle bundleForClass:[self class]];
+
+//放在主工程中的自定义bundle
+NSString *myBundlePath = [mainBundle pathForResource:@"MyBundle" ofType:@"bundle"];
+NSBundle *myBundle = [NSBundle bundleWithPath:myBundlePath];
+
+//放在自定义bundle中的图片
+NSString *imagePath = [myBundle pathForResource:@"123" ofType:@"png"];
+self.image = [UIImage imageWithContentsOfFile:imagePath];
+
+对于bundle可以理解为一个捆绑包，个人理解bundle为一个独立的空间，而我们的可执行（executable）工程，打包完之后，也是一个捆绑包，我们称之为主bundle，
+这个主bundle包含了可执行代码，如各个viewcontroller的可执行代码，和相关资源例如图片资源等。
+NSBundle这个类其实就是用来定位可执行资源的。获取到具体的可执行文件的位置，然后再加载。
+因此，NSBundle的使用，只限制于拥有独立的bundle空间的。
+对于动态库，也可以看成是拥有独立的bundle的对象。
+
+NSBundle的文档:
+Any executable can use a bundle object to locate resources, either inside an app’s bundle or in a known bundle located elsewhere. 
+You don't use a bundle object to locate files in a container directory or in other parts of the file system.
+
+TARGETS -->Build Settings --> Linking -->Mach-Type:
+Executable类型: 也就是我们的可执行类型，这样的类型，通常都是需要有一个main入口的。也就是我们常规的运行在手机上的每一个APP。
+动态：Dynamic Library
+静态：
+Bundle
+Static Library
+Relocatable Object File
+
+静态和动态的区别，就在于是否是运行时加载，静态的在编译时已经决定了，编译时将静态的文件编译进可执行的工程；而动态的，只有在运行时，可执行工程才会去加载。
+
+mainBundle和bundleForClass:
+mainBundle和bundleForClass都是返回一个NSBundle对象。
+mainBundle:
+对于所有Mach-O Type类型，也就是上面提到的五种类型，mainBundle返回的都是可执行工程的bundle。
+例如：有一个Executable工程Demo，使用到了动态库工程DynamicFramework和静态库的工程StaticFramework，那么无论是在Demo中，还是DynamicFramework和StaticFramework中，
+最终mainBundle返回的都是Demo的bundle！
+bundleForClass:
+Return Value
+The NSBundle object that dynamically loaded aClass (a loadable bundle), the NSBundle object for the framework in which aClass is defined, 
+or the main bundle object if aClass was not dynamically loaded or is not defined in a framework.
+This method creates and returns a new NSBundle object if there is no existing bundle associated with aClass. Otherwise, the existing instance is returned.
+可以通过bundleForClass获取class所在的bundle
+
+可以这样理解：如果是对于Executable类型的工程，或者是静态的工程，无论class是属于可执行Executable类型的工程，还是属于其他的静态库，最终返回的是main bundle，
+相当于我们上面的[NSBundle mainBundle]的返回结果。相反的，对于动态的工程，可以获取到该工程的bundle。
+
+#####对于静态库#####
+#import <UIKit/UIKit.h>
+
+@interface NSBundle (mybundle)
++(instancetype)my_bundle;
++(UIImage *)my_image;
+@end
+
+#import "NSBundle+mybundle.h"
+#import "FrameworkBundleManager.h"
+
+@implementation NSBundle (mybundle)
++(instancetype)my_bundle{
+    static NSBundle *myBundle = nil;
+    if (myBundle == nil) {
+        NSBundle *mainBundle = [NSBundle bundleForClass:[FrameworkBundleManager class]];
+        NSString *myBundlePath = [mainBundle pathForResource:@"MyBundle" ofType:@"bundle"];
+        myBundle = [NSBundle bundleWithPath:myBundlePath];
+    }
+    return myBundle;
+}
++(UIImage *)my_image{
+    static UIImage *myImage = nil;
+    if (myImage == nil) {
+        NSString *path = [[self my_bundle]pathForResource:@"123" ofType:@"png"];
+        myImage = [UIImage imageWithContentsOfFile:path];
+    }
+    return myImage;
+}
+@end
+
+FrameworkBundleManager是静态库内部的文件
+编译后，静态库中的class都归属于主工程，而通过bundleForClass去获取，只能获取主工程的bundle。
+
+静态库中放了一个bundle，可是静态库中通过bundleForClass或者mainBundle去获取，却是主工程（可执行工程）中的bundle，访问不到静态库内部的bundle
+
+#####对于动态库#####
+mainBundle无论写在哪里，都是获取主工程的main bundle。而bundleForClass得区别对待，如果传入的是库中的class，静态库中获取的是主工程的bundle，动态库中获取的是动态库的bundle
+
+怎么才能获取到静态库的resource.bundle文件？
+一般一个项目工程，导入静态库，需要导入静态库的包和属于静态库的资源文件。
+也就是说，静态库中使用的资源，是放在使用它的工程中去的，也就是framework中所使用的资源bundle，除了静态库中的代码是打包在framework中，其他文件都是放在外部的bundle文件中的。
+lib.bundle
+lib.framework
+
+NSString *bundlePath = [[NSBundle mainBundle]pathForResource:@"lib" ofType:@"bundle"];
+NSBundle *bundle = [NSBundle bundleWithPath:bundlePath];
+NSString *file = [bundle pathForResource:"imageName" ofType:@"imageFormat"];
+UIImage *image = [UIImage imageWithContentsOfFile:file];
+
+==================================================SDK1
+静态库:
+.a称为库， .framework称为框架，二者可以统称为库
+.a 库文件和头文件分离，.a 是一个纯二进制文件，不包含资源文件和头文件
+.framework的库文件和头文件打包在一起，可以包含资源文件
+
+之所以称为静态，是因为在编译时候，会直接拷贝一份，复制到目标程序中，目标程序中的这份静态库代码就不再发生改变了。
+静态库中的类名和目标工程中的类名如果重复，会发生编译错误。
+
+动态库:
+系统动态库格式：.tbd、.dylib、.framework
+编译时不会被拷贝到目标程序中，目标程序只会储存指向动态库的引用，等到程序运行时，动态库才会按需加载。
+优点就是，不影目标程序的体积，同一份库多个程序使用，因此也称之为共享库。
+
+在iOS8开始，开放了动态库创建。有人说是开放 APP Extension的缘故，
+Extension 和 App 是两个分开的可执行文件，同时需要共享代码，这种情况下动态库的支持就是必不可少的了。
+但是对于我们自己创建的iOS动态库，确却的说是Embedded Framework，因为它最终会被拷贝到目标程序中。
+因此目标程序中，还是有一个拷贝，跟静态库无差别。在目标程序中的文件，都在打包时候经过苹果证书签名，
+因此，这个打包在目标程序中的Embedded Framework如果被替换，是需要重签目标程序的。
+而且苹果现在已经不允许从沙盒加载Embedded Framework，也就是以前通过程序运行时动态下发动态库到沙盒中，
+加载新的动态库从而达到热更的目的，已经行不通了。在模拟器下，这种方式是被允许的。
+
+对于iOS使用动态库，好处在于：动态库和目标程序，可以包含同样名字的类名、全局变量。
+因此在开发动态库时，无需担心动态库中的类名、全局变量与目标程序的类名、全局变量重复的问题，也不需要对第三方开源库进行任何处理。
+
+------------------------------创建 workspace
+1.创建 workspace, 放入新建的TestWS文件夹
+2.创建 SDK 工程，工程配置修改
+
+如果是 .a 格式的静态库，对外的 .h 是独立于 .a之外的；
+如果是 .framework 格式的静态库，对外的 .h 是包含在.framework中的
+
+工程创建完毕，默认有对外头文件，对外头文件设置的位置有所区别：
+.a 工程，处于Copy Files模块中
+.framework 工程，处于Headers模块中
+
+可以选择编译的是编译类型：
+模拟器 任选一个即可
+真机 选择 Generic iOS Device
+
+库工程配置修改:
+（1）
+PROJECT -> iOS Deployment Target -> SDK支持最低系统版本
+或者SDK的Target
+Build Settings -> iOS Deployment Target -> SDK支持最低系统版本
+（2）
+Other Linker Flags
+Build Settings -> Other Linker Flags - -ObjC
+库工程中使用Category需要添加这个标志。
+（3）
+Enable Bitcode
+Build Settings -> Enable Bitcode - NO
+（4）
+Build Settings -> Skip install - NO 默认就是NO，可不用管
+
+最近项目中接入某第三方SDK后，打包的时候发现有如下报错：xxx.o was build without full bitcode error ：Linker command failed with exit code 1。 
+然后经过搜索，设置Enable Bitcode 为 NO，就没有这个报错了。
+
+How to detect a library if it's contain bitcode?
+what you have do to is to detect LLVM segment in the static library file
+Supposed to have this static library:
+lipo -info libGoogleAnalyticsServices.a
+Architectures in the fat file: libGoogleAnalyticsServices.a are: armv7 armv7s i386 x86_64 arm64
+you then have to:
+otool -lv libGoogleAnalyticsServices.a  | grep __LLVM
+segname __LLVM
+segname __LLVM
+segname __LLVM
+segname __LLVM
+
+otool：object file display tool.
+用于查看object file的工具。
+
+App支持Enable Bitcode的必要条件：
+使用的framework或者.a 文件支持设置 Enable bitcode为YES；
+使用的framework或者.a 文件支持的架构是齐全的；
+
+CPU	iPhone
+armv6	iPhone, iPhone 3G
+armv7	iPhone 3GS, iPhone4(GSM),iPhone 4(CDMA),iPhone 4S
+armv7s	iPhone 5, iPhone 5C
+arm64	iPhone 5S, iPhone SE, iPhone 6, iPhone 6 Plus, iPhone 6s, iPhone 6s Plus, iPhone 7, iPhone 7 Plus, iPhone 8, iPhone 8 Plus, iPhone X
+arm64e	iPhone XS, iPhone XS Max, iPhone XR
+
+模拟器上使用的CPU情况由所用的电脑确定
+CPU	iPhone
+i386	32 位微处理器
+x86_64	64 位微处理器
+
+3.创建 Demo 工程
+就是创建普通的iOS工程，用于测试 SDK 工程的接口。
+
+4.关联 SDK 工程和 Demo 工程
+先打开创建的workspace，拖动 SDK工程文件和 Demo工程文件到workspace中
+此时两个工程已经可以联动编译了
+
+5.接口测试
+在Demo工程中
+General添加libSDK.a
+#import <SDK/SDK.h>
+
+SDK的修改，只要build Demo就行
+
+Undefined symbols for architecture armv7
+Undefined symbols for architecture armv7s
+Undefined symbols for architecture arm64
+Undefined symbols for architecture i386
+Undefined symbols for architecture x86_64
+如果是把其它工程的xcodeproj文件加入到当前项目中，检查Build Phases中的Target Dependencies有没有添加依赖，以及General中的Linked Frameworks and Libraries有没有添加相关的.a文件。
+
+==================================================SDK2
+NSBundle *mainBundle = [NSBundle mainBundle];
+NSString *sdkBundlePath = [mainBundle pathForResource:@"SDK" ofType:@"bundle"];
+NSBundle *sdkBundle =  [NSBundle bundleWithPath: sdkBundlePath];
+NSString *filePath = [sdkBundle pathForResource:imageName ofType:nil];
+UIImage *image = [UIImage imageWithContentsOfFile:filePath];
+
+可以理解为无论是app工程的class还是SDK工程的class编译链接到同一个命名空间（.app/mainBundle）
+这也就是为什么，静态库开发中，静态库工程的class、全局变量都需要加上特殊前缀（或者重命名），以避免跟调用SDK的工程产生重复，导致编译错误。
+
+
+###就是无论静态库还是动态库，我们把自定义的bundle放在***.framework中，这样bundleForClass就通用了###
+NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+NSString *sdkBundlePath = [bundle pathForResource:@"SDK" ofType:@"bundle"];
+NSBundle *sdkBundle = [NSBundle bundleWithPath:sdkBundlePath];
+NSString *filePath = [sdkBundle pathForResource:@"test" ofType:@"png"];
+动态库的资源路径是：
+.../Demo.app/Frameworks/SDK.framework/SDK.bundle/test.png
+静态库的资源路径是：
+.../Demo.app/SDK.bundle/test.png

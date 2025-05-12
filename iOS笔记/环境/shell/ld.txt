@@ -1,0 +1,101 @@
+
+
+ld 的全称是 Link Editor，也叫 Linker，也就是“链接编辑器”。
+
+ld（Link Editor）——「构建阶段」的链接器
+作用：在编译期将多个 .o 文件、静态库、动态库符号链接在一起，生成最终的Mach-O 可执行文件或 .dylib。
+dyld（Dynamic Link Editor）——「运行阶段」的动态链接器
+作用：在程序运行时，系统先加载 dyld，再由 dyld 加载程序本体和所有依赖的动态库（如 libSystem.dylib）。
+所以，当你运行程序 ./my_program，macOS 实际上做的是：
+查看可执行文件的 LC_LOAD_DYLINKER 字段，发现比如是 /usr/lib/dyld
+加载 dyld
+dyld 负责加载主程序、动态库，处理符号绑定、重定位等
+执行你的 main() 函数
+
+
+The ld command combines several object files and libraries, resolves references, and produces an output file.
+ld can produce a final linked image (executable, dylib, or bundle), or with the -r option, produce another object file.
+If the -o option is not used, the output file produced is named "a.out".
+
+
+它是将多个编译后的目标文件（.o 文件）、库（如 .dylib, .a）等，链接成一个最终的可执行文件或动态库的程序。
+在 macOS 上，ld 是 Apple 自己定制的版本，属于 ld64，用于生成 Mach-O 文件格式的二进制。
+
+编译器（如 clang）：负责把 .c/.cpp/.m 源代码编译成 .o 文件（目标文件）
+链接器（ld）：负责把多个 .o 和库文件整合成最终的可执行文件或动态库
+
+如果你手动用 ld，你可以精确控制比如入口点（-e）、加载的 dyld（-dylinker）、链接方式等。
+
+
+which ld
+/usr/bin/ld
+
+ld -v
+
+
+
+如果想修改dyld源码，加一些打印日志，怎么在运行可执行程序时用这个修改过的dyld加载？
+你可以在自己的开发环境中构建一个自定义 dyld，然后让目标程序使用它运行
+
+构建并使用自定义 dyld 的方法
+步骤 1：获取 dyld 源码，选择与你当前系统版本相近的  // https://github.com/apple-oss-distributions
+strings /usr/lib/dyld | grep "@(#)PROGRAM"
+@(#)PROGRAM:dyld  PROJECT:dyld-1245.1
+
+otool -l /usr/lib/dyld | grep LC_ID_DYLINKER -A 5
+cmd LC_ID_DYLINKER
+cmdsize 32
+name /usr/lib/dyld (offset 12)
+Load command 11
+cmd LC_UUID
+cmdsize 24
+
+步骤 2：修改源码（加打印）
+步骤 3：编译 dyld
+步骤 4：运行程序时使用自定义 dyld
+(1)
+使用 自定义构建的 dyld 作为 loader
+./your_custom_dyld /path/to/executable
+但注意：系统默认不会让你直接运行 dyld 本体，除非你满足以下条件：
+目标可执行文件使用的是 LC_LOAD_DYLINKER 指定的路径与你 dyld 匹配
+或者你手动构造可执行文件，并在其 Mach-O header 中指定你的 dyld
+
+例子:
+otool -l /bin/ls | grep -A 2 "cmd LC_LOAD_DYLINKER"
+
+cmd LC_LOAD_DYLINKER
+cmdsize 32
+name /usr/lib/dyld (offset 12)
+你可以用 install_name_tool 修改这个路径（部分系统不允许），或者你构造自己的 Mach-O。
+
+(2)
+因为 macOS 上的可执行文件在启动时，会由 Mach-O 文件中的 LC_LOAD_DYLINKER 指定的 dyld 来加载。
+
+构造自己的 Mach-O 文件
+你可以用 ld64 工具链手动构建一个带有自定义 dyld 路径的测试程序。
+ld -o test_program test.o -e _main -lSystem -syslibroot $(xcrun --show-sdk-path) \
+    -dylinker /absolute/path/to/your/custom/dyld
+这样程序运行时会强制加载你的 dyld（不走系统默认的 /usr/lib/dyld）。
+
+或者通过 Xcode 设置
+方法一：使用 Xcode 的 Build Settings 添加 Linker Flags
+找到 “Other Linker Flags”（链接器其他参数）
+-Wl,-dylinker,/absolute/path/to/your/custom/dyld
+-Wl, 表示“将以下参数传给 linker（ld）”
+-dylinker 是 Mach-O 的 LC_LOAD_DYLINKER 指令
+后面的路径是你自己构建的 dyld 的绝对路径
+
+方法二：直接用 Build Phase 脚本替换 linker 命令
+在 Build Phases 添加一个 "Run Script"：
+ld -o "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}" "${OBJECT_FILE_DIR_normal}/${ARCHS}/main.o" \
+    -e _main -lSystem -syslibroot $(xcrun --show-sdk-path) \
+    -dylinker /absolute/path/to/your/custom/dyld
+
+
+验证是否生效：
+构建后，用 otool 检查程序使用的 dyld 路径：
+otool -l test_program | grep -A 2 LC_LOAD_DYLINKER
+输出应该是你指定的路径，比如：
+cmd LC_LOAD_DYLINKER
+cmdsize 32
+name /Users/you/custom/dyld (offset 12)

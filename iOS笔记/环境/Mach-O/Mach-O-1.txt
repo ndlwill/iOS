@@ -1,0 +1,95 @@
+https://sourceforge.net/projects/machoview/
+
+堆栈信息解析
+Mach-O:
+https://www.jianshu.com/p/8f3d3f6b6af8
+函数地址与符号关联:
+https://www.jianshu.com/p/df5b08330afd
+
+==================================================ABI Mach-O:
+Mach-0(Mach object)是macOS、i0S、iPadOS存储程序和库的文件格式。
+对应系统通过应用二进制接口(application binary interface)， 缩写为ABI来运行该格式的文件。
+
+Mach-O格式用来替代BSD系统的a.out格式。Mach-O文件格式保存了在编译过程和链接过程中产生的机器代码和数据，从而为静态链接和动态链接的代码提供了单一文件格式。
+
+苹果很多文件都采用Mach-O格式，最常见的就是可执行文件和动态库。
+当然，还有.o的目标文件、.a和.framework的静态库以及动态连接器dyld等等。
+
+可执⾏⽂件调⽤过程：
+调⽤fork函数，创建⼀个process（进程）
+调⽤execve或其衍⽣函数，在该进程上加载，执⾏我们的Mach-O⽂件
+当调⽤execve（程序加载器）时，内核实际上在执⾏以下操作：
+将⽂件加载到内存
+开始分析Mach-O中的mach_header，以确认它是有效的Mach-O⽂件
+
+
+               ,-----------------------------,
+    Header     |   Mach header               |
+               |     Segment 1               |
+               |       Section 1 (_ text)    |  --,
+               |-----------------------------|    |
+    Data       |            blob             | <--'
+               '-----------------------------'
+
+启动优化之原理篇：
+https://blog.csdn.net/bytedancetech/article/details/109302510
+
+
+
+使用objdump命令，查看Mach-O文件:
+objdump --macho --private-headers 【Mach-O路径】
+查看Load Commands中入口函数的配置（LC_MAIN）
+objdump --macho --private-headers 【Mach-O路径】 | grep 'LC_MAIN' -A 3
+
+Header包含Mach Header、Segment、Sections三种类型：
+Header内的Sections描述了对应的⼆进制信息
+Mach Header属于Header的⼀部分，它包含了整个⽂件的信息和Segment信息
+
+Segments（segment commands）：指定操作系统应该将Segments加载到内存中的什么位置，以及为该Segments分配的字节数。
+还指定⽂件中的哪些字节属于该Segments，以及⽂件包含多少sections。
+之前段始终是4096字节或4KB的倍数，其中4096字节是最小大小。现在段是16KB的倍数，在macOS_x86_64上是16KB，在iOS上是32KB。
+Segments名称的约定是使⽤全⼤写字⺟，后跟双下划线（例如__TEXT）
+
+Section：所有sections都在每个segment之后⼀个接⼀个地描述。
+sections⾥⾯定义其名称，在内存中的地址、⼤⼩、⽂件中section数据的偏移量和segment名称。
+Section的名称约定是使⽤全⼩写字⺟，再加上双下划线（例如__text）
+
+Header的最开始是Magic Number，表示这是一个Mach-O文件
+
+使用objdump --macho -private-header 【Mach-O路径】命令，查看Mach Header信息
+也可以使用otool -h 【Mach-O路径】命令，这种方式打印的更像是原始数据，开发者难以阅读
+
+Mach-O中Load Commands和Data是分开的：
+Load Commands：二进制⽂件加载进内存要执⾏的⼀些指令
+这⾥的指令主要在负责APP对应进程的创建和基本设置（分配虚拟内
+存，创建主线程，处理代码签名/加密的⼯作），然后对动态链接库（.dylib
+系统库和自定义的动态库）进⾏库加载和符号解析的⼯作
+Data：由多个⼆进制组成，逐一排列。包含__TEXT代码、__DATA代码、符号表，存储实际的代码和数据
+__TEXT段：只读区域，包含可执⾏代码和常量数据
+__DATA段：读/写，包含初始化和未初始化数据和⼀些动态链接专属数据
+
+例如：Load Command __TEXT中，记录了代码起始位置和大小等配置信息，dyld根据这些配置信息读取__TEXT代码段的实际代码
+Mach-O中都是二进制数据，根据结构体内存对齐规则，数据会按照指定方式在二进制中进行排列，dyld按照相同方式逐一读取Load Command
+Mach-O中保存了执行过程中的所有信息：
+Load Command __LINKEDIT：动态连接器需要的信息
+Load Command LC_LOAD_DYLINKER：链接器的位置
+Load Command LC_UUID：Mach-O的唯一标识符
+Load Command LC_BUILD_VERSION：Mach-O的编译信息
+Load Command LC_MAIN：入口函数，默认为main，也可以修改
+Load Command LC_LOAD_DYLIB：加载动态库的信息
+
+
+查看Mach-O文件
+objdump --macho --private-headers 【Mach-O路径】
+查看Load Commands中入口函数的配置（LC_MAIN）
+objdump --macho --private-headers 【Mach-O路径】 | grep 'LC_MAIN' -A 3
+
+__TEXT代码段的格式：
+使用objdump --macho -d 【Mach-O路径】命令，查看__TEXT代码段信息
+在__TEXT段，__text section中，main函数以100003fa0地址开始，至100003fb5地址结束。中间列是机器码，最后列的是汇编代码
+汇编代码转换机器码在底层有类似字典的映射关系；汇编是给开发者提供的，而机器只需要读取最原始的机器码即可
+
+总结：
+Mach-O本质是一个二进制文件，数据按照指定方式在二进制中进行排列，dyld按照相同方式进行读取
+Mach-O文件包含了文件配置 + 二进制代码
+Mach-O文件可读可写，Mach-O文件在苹果签名前、签名后均可修改，但签名后修改需要进行重签名

@@ -1,0 +1,266 @@
+func scene(_ scene: UIScene,
+            willConnectTo session: UISceneSession,
+            options connectionOptions: UIScene.ConnectionOptions) {
+    FVLog(.d,
+            tag: FVConst.LogTag.kLifeCycle,
+            msg: "\(#function): linkedUrl = \(String(describing: connectionOptions.urlContexts.first?.url))")
+    guard let windowScene = (scene as? UIWindowScene) else { return }
+
+    window = UIWindow(windowScene: windowScene)
+    FVLog(.d, tag: FVConst.LogTag.kDebug, msg: "windowScene.screen.bounds = \(windowScene.screen.bounds)")
+    window?.backgroundColor = .white
+    var rootVC: UIViewController?
+    if FVGlobal.readValueString("lastVersionForGuide").isEmpty {
+        let navVC = FVBaseNavigationController(rootViewController: FVGuideViewController())
+        rootVC = navVC
+    } else {
+        rootVC = FVTabBarController()// 3个tab
+    }
+    window?.makeKeyAndVisible()
+    window?.rootViewController = rootVC
+}
+
+
+
+FVTabBarController:
+override func viewDidLoad() {
+    super.viewDidLoad()
+    FVLog(.d, tag: "FVTabBarController", msg: #function)
+    view.backgroundColor = .white
+    
+    self.delegate = self
+    
+    if #available(iOS 18.0, *) {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            traitOverrides.horizontalSizeClass = .compact
+        }
+    }
+
+    let mainVC = FVMainViewController()
+    addChildVC(childVC: mainVC,
+                title: NSLocalizedString("Main_TabBar_TitleSite", comment: ""),
+                image: "tab_btn_site_nor",
+                selectedImage: "tab_btn_site_hl")
+    addChildVC(childVC: FVPaymentViewController(backFlag: false),
+                title: NSLocalizedString("Main_TabBar_TitlePurchase", comment: ""),
+                image: "tab_btn_purchase_nor",
+                selectedImage: "tab_btn_purchase_hl")
+    let mineVC = FVPersonViewController()
+    addChildVC(childVC: mineVC,
+                title: NSLocalizedString("Main_TabBar_TitleMine", comment: ""),
+                image: "tab_btn_me_nor",
+                selectedImage: "tab_btn_me_hl")
+    
+    let lineView = UIView(frame: CGRect(x: 0.0,
+                                        y: 0.0,
+                                        width: FVSizeConst.KScreenWidth,
+                                        height: 0.5))
+    lineView.backgroundColor = UIColor(netHex: 0xE6E6E6)
+    tabBar.addSubview(lineView)
+}
+
+
+FVLoginViewController:
+override func viewWillAppear(_ animated: Bool) {
+    super.viewWillAppear(animated)
+
+    // viewDidAppear执行的话会有一个切换过渡动画
+    if FVGlobal.readValue("RegisterFlag", def: true) {
+        globalNavigator.push(Router.kPath_Login_Register, context: nil, from: navigationController, animated: false)// animated: false 没有过渡动画
+    }
+}
+
+
+改用scene-based life cycle:
+还是能收到UIApplication.willEnterForegroundNotification通知
+
+applicationWillEnterForeground
+applicationDidBecomeActive
+applicationWillResignActive
+applicationDidEnterBackground
+这些不会再走了
+
+didFinishLaunchingWithOptions 这种app launch相关的还是正常走
+
+
+==================================================cold launch: 点击app icon
+----------未登陆:
+
+application(_:didFinishLaunchingWithOptions:): launchOptions = nil
+[LifeCycle] application(_:configurationForConnecting:options:): options = {}
+[LifeCycle] scene(_:willConnectTo:options:): linkedUrl = nil
+windowScene.screen.bounds = (0.0, 0.0, 375.0, 812.0)
+[FVBaseNavigationController] viewDidLoad()
+[FVGuideViewController FVBaseNavigationController] viewWillAppear(_:)
+sceneWillEnterForeground(_:)
+FVGuideViewController viewDidLoad(): frame = (0.0, 0.0, 375.0, 812.0)
+FVGuideViewController viewWillAppear(_:): frame = (0.0, 0.0, 375.0, 812.0)
+sceneDidBecomeActive(_:)
+FVGuideViewController viewDidAppear(_:): frame = (0.0, 0.0, 375.0, 812.0)
+[FVGuideViewController FVBaseNavigationController] viewDidAppear(_:)
+// 注意点
+sceneWillResignActive(_:) // 网络权限弹窗弹出
+sceneDidBecomeActive(_:) // 网络权限弹窗消失
+
+FVGuideViewController到主页面过程: [vc FVBaseNavigationController]表示显示vc的NavigationController
+
+[FVTabBarController] viewDidLoad()
+FVMainViewController init()
+[FVBaseNavigationController] viewDidLoad()
+FVPaymentViewController init()
+[FVBaseNavigationController] viewDidLoad()
+FVPersonViewController init()
+[FVBaseNavigationController] viewDidLoad()
+###1
+FVGuideViewController viewWillDisappear(_:)
+[FVGuideViewController FVBaseNavigationController] viewWillDisappear(_:)
+###1
+[FVMainViewController FVBaseNavigationController] viewWillAppear(_:)
+[FVTabBarController] viewWillAppear(_:)
+FVMainViewController viewDidLoad(): frame = (0.0, 0.0, 586.0, 687.0)
+FVMainViewController viewWillAppear(_:): frame = (0.0, 0.0, 375.0, 729.0)
+###2
+FVGuideViewController viewDidDisappear(_:)
+[FVGuideViewController FVBaseNavigationController] viewDidDisappear(_:)
+FVGuideViewController deinit
+###2
+FVMainViewController viewDidAppear(_:): frame = (0.0, 0.0, 375.0, 729.0)
+[FVMainViewController FVBaseNavigationController] viewDidAppear(_:)
+[FVTabBarController] viewDidAppear(_:)
+
+点击alert弹窗按钮进入注册页:
+
+[FVBaseNavigationController] viewDidLoad()
+FVLoginViewController viewDidLoad(): frame = (0.0, 0.0, 600.0, 725.0)
+FVMainViewController viewWillDisappear(_:)
+[FVMainViewController FVBaseNavigationController] viewWillDisappear(_:)
+[FVTabBarController] viewWillDisappear(_:)
+[FVLoginViewController FVBaseNavigationController] viewWillAppear(_:)
+FVLoginViewController viewWillAppear(_:): frame = (0.0, 0.0, 375.0, 812.0)
+FVLoginViewController viewWillDisappear(_:)
+FVLoginViewController viewDidDisappear(_:)
+FVRegisterViewController viewDidLoad(): frame = (0.0, 0.0, 472.0, 600.0)
+FVRegisterViewController viewWillAppear(_:): frame = (0.0, 0.0, 472.0, 600.0)
+FVRegisterViewController viewDidAppear(_:): frame = (0.0, 0.0, 375.0, 812.0)
+[FVRegisterViewController FVBaseNavigationController] viewDidAppear(_:)
+FVMainViewController viewDidDisappear(_:)
+[FVMainViewController FVBaseNavigationController] viewDidDisappear(_:)
+[FVTabBarController] viewDidDisappear(_:)
+
+
+先上划使app进入显示app截图的状态:
+sceneWillResignActive(_:)
+
+如果再上划杀掉app:
+sceneDidDisconnect(_:)
+FVRegisterViewController viewWillDisappear(_:)
+[FVRegisterViewController FVBaseNavigationController] viewWillDisappear(_:)
+FVRegisterViewController viewDidDisappear(_:)
+[FVRegisterViewController FVBaseNavigationController] viewDidDisappear(_:)
+FVPaymentViewController deinit
+FVPersonViewController deinit
+FVLoginViewController deinit // 如果FVLoginViewController写了deinit，先调自己的，再调BaseVC的
+FVRegisterViewController deinit
+
+如果恢复到前台:
+[LifeCycle] sceneDidBecomeActive(_:)
+
+
+----------已登陆:
+[LifeCycle] application(_:didFinishLaunchingWithOptions:): launchOptions = nil
+[LifeCycle] application(_:configurationForConnecting:options:): linkedUrl = nil userActivity = nil
+[LifeCycle] scene(_:willConnectTo:options:): linkedUrl = nil userActivity = nil
+[Debug] windowScene.screen.bounds = (0.0, 0.0, 375.0, 812.0)
+[FVTabBarController] viewDidLoad()
+FVMainViewController init()
+[FVBaseNavigationController] viewDidLoad()
+FVPaymentViewController init()
+[FVBaseNavigationController] viewDidLoad()
+FVPersonViewController init()
+[FVBaseNavigationController] viewDidLoad()
+[FVMainViewController FVBaseNavigationController] viewWillAppear(_:)
+[FVTabBarController] viewWillAppear(_:)
+[LifeCycle] sceneWillEnterForeground(_:)
+FVMainViewController viewDidLoad(): frame = (0.0, 0.0, 586.0, 687.0)
+FVMainViewController viewWillAppear(_:): frame = (0.0, 0.0, 375.0, 729.0)
+#####重点
+[LifeCycle] sceneDidBecomeActive(_:) 
+FVMainViewController viewDidAppear(_:): frame = (0.0, 0.0, 375.0, 729.0)
+[FVMainViewController FVBaseNavigationController] viewDidAppear(_:)
+[FVTabBarController] viewDidAppear(_:)
+#####
+
+
+==================================================app当前在前台，让它进入后台
+[LifeCycle] sceneWillResignActive(_:)
+[LifeCycle] sceneDidEnterBackground(_:)
+
+==================================================app当前在后台，点击app icon让它进入前台
+[LifeCycle] sceneWillEnterForeground(_:)
+[LifeCycle] sceneDidBecomeActive(_:)
+
+
+==================================================app当前在后台，点击widget让它进入前台
+systemSmall: 只支持widgetURL
+Link：更希望的是不同元素的点击响应
+
+----------点击中型widget
+[AppEvent] scene(_:willContinueUserActivityWithType:): userActivityType = com.aijiasuinc.AiJiaSuClient.ConnectWidget
+[LifeCycle] sceneWillEnterForeground(_:)
+[AppEvent] scene(_:continue:): activityType = com.aijiasuinc.AiJiaSuClient.ConnectWidget 
+title = nil 
+userInfo = Optional([AnyHashable("WGWidgetUserInfoKeyKind"): com.aijiasuinc.AiJiaSuClient.ConnectWidget, AnyHashable("WGWidgetUserInfoKeyFamily"): systemMedium])
+[LifeCycle] sceneDidBecomeActive(_:)
+后续没有mainVC的相关 viewWillAppear，viewDidAppear 调用
+
+
+----------点击中型widget上面的按钮（即Link）
+[AppEvent] scene(_:openURLContexts:): URLContexts = [<UIOpenURLContext: 0x281db9380; URL: widget-aijiasuclient://nodeList; options: <UISceneOpenURLOptions: 0x280e6f980; sourceApp: (null); annotation: (null); openInPlace: NO; _eventAttribution: (null)>>]
+[LifeCycle] sceneWillEnterForeground(_:)
+[LifeCycle] sceneDidBecomeActive(_:)
+后续没有mainVC的相关 viewWillAppear，viewDidAppear 调用
+
+
+==================================================app未launch，点击widget让它打开app
+options:
+activityType = \(String(describing: options.userActivities.first?.activityType))-linkedUrl = \(String(describing: options.urlContexts.first?.url))
+
+----------点击中型widget
+application(_:didFinishLaunchingWithOptions:): launchOptions = nil
+[LifeCycle] application(_:configurationForConnecting:options:): activityType = com.aijiasuinc.AiJiaSuClient.ConnectWidget-linkedUrl = nil
+[LifeCycle] scene(_:willConnectTo:options:): activityType = com.aijiasuinc.AiJiaSuClient.ConnectWidget-linkedUrl = nil
+FVMainViewController init()
+[LifeCycle] sceneWillEnterForeground(_:)
+FVMainViewController viewDidLoad()
+FVMainViewController viewWillAppear
+[LifeCycle] sceneDidBecomeActive(_:)
+FVMainViewController viewDidAppear(_:)
+
+两个options相同的,options.userActivities.first:
+activityType = com.aijiasuinc.AiJiaSuClient.ConnectWidget
+title = nil
+userInfo = Optional([AnyHashable("WGWidgetUserInfoKeyFamily"): systemMedium, AnyHashable("WGWidgetUserInfoKeyKind"): com.aijiasuinc.AiJiaSuClient.ConnectWidget])
+
+
+----------点击中型widget上面的按钮（即Link）
+application(_:didFinishLaunchingWithOptions:): launchOptions = nil
+[LifeCycle] application(_:configurationForConnecting:options:): activityType = nil-linkedUrl = widget-aijiasuclient://nodeList
+[LifeCycle] scene(_:willConnectTo:options:): activityType = nil-linkedUrl = widget-aijiasuclient://nodeList
+FVMainViewController init()
+[LifeCycle] sceneWillEnterForeground(_:)
+FVMainViewController viewDidLoad()
+FVMainViewController viewWillAppear
+[LifeCycle] sceneDidBecomeActive(_:) // 这边执行widget-aijiasuclient://nodeList跳转逻辑的话，FVMainViewController viewDidAppear不会有，只有之前的FVMainViewController viewWillAppear
+#####
+serverVC viewDidLoad()
+serverVC viewWillAppear
+serverVC viewDidAppear
+以上是跳转逻辑的处理结束时生命周期状态显示
+// 如果再点击 serverVC 的返回时
+FVMainViewController viewWillAppear
+FVMainViewController viewDidAppear
+
+如果 [LifeCycle] sceneDidBecomeActive(_:) 不处理 widget-aijiasuclient://nodeList跳转逻辑的话，并且什么也不处理，后续生命周期状态显示为
+FVMainViewController viewDidAppear
+#####
+
