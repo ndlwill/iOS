@@ -1,0 +1,163 @@
+@resultBuilder public struct ViewBuilder {
+    public static func buildBlock() -> EmptyView
+    public static func buildBlock<Content>(_ content: Content) -> Content where Content : View
+}
+https://docs.swift.org/swift-book/documentation/the-swift-programming-language/advancedoperators/#Result-Builders
+
+
+struct ViewBuilder
+A custom parameter attribute that constructs views from closures.
+
+You typically use ViewBuilder as a parameter attribute for child view-producing closure parameters, 
+allowing those closures to provide multiple child views. 
+For example, the following contextMenu function accepts a closure that produces one or more views via the view builder.
+
+
+用于函数参数的用法
+func contextMenu<MenuItems: View>(@ViewBuilder menuItems: () -> MenuItems) -> some View
+myView.contextMenu {
+    Text("Cut")
+    Text("Copy")
+    Text("Paste")
+    if isSymbol {
+        Text("Jump to Definition")
+    }
+}
+
+多个Text是因为 buildBlock 的多参数重载实现，最多到 C9：
+
+static func buildBlock<C0, C1>(C0, C1) -> TupleView<(C0, C1)>
+static func buildBlock<C0, C1, C2>(C0, C1, C2) -> TupleView<(C0, C1, C2)>
+static func buildBlock<C0, C1, C2, C3>(C0, C1, C2, C3) -> TupleView<(C0, C1, C2, C3)>
+static func buildBlock<C0, C1, C2, C3, C4>(C0, C1, C2, C3, C4) -> TupleView<(C0, C1, C2, C3, C4)>
+static func buildBlock<C0, C1, C2, C3, C4, C5>(C0, C1, C2, C3, C4, C5) -> TupleView<(C0, C1, C2, C3, C4, C5)>
+static func buildBlock<C0, C1, C2, C3, C4, C5, C6>(C0, C1, C2, C3, C4, C5, C6) -> TupleView<(C0, C1, C2, C3, C4, C5, C6)>
+static func buildBlock<C0, C1, C2, C3, C4, C5, C6, C7>(C0, C1, C2, C3, C4, C5, C6, C7) -> TupleView<(C0, C1, C2, C3, C4, C5, C6, C7)>
+static func buildBlock<C0, C1, C2, C3, C4, C5, C6, C7, C8>(C0, C1, C2, C3, C4, C5, C6, C7, C8) -> TupleView<(C0, C1, C2, C3, C4, C5, C6, C7, C8)>
+static func buildBlock<C0, C1, C2, C3, C4, C5, C6, C7, C8, C9>(C0, C1, C2, C3, C4, C5, C6, C7, C8, C9) -> TupleView<(C0, C1, C2, C3, C4, C5, C6, C7, C8, C9)>
+
+上面的if支持是因为ViewBuilder实现了buildEither(second:) 静态方法，还有其他更多的写法，比如For循环。
+
+==================================================
+
+Text("Liaoworking")
+.background(Color.red)
+.cornerRadius(5)
+
+MyView()
+.background(Color.red)
+.cornerRadius(5)
+
+extension View {
+    func addRedBGWithRoundCorner() -> some View {
+        self
+        .background(Color.red)
+        .cornerRadius(5)
+    }
+}
+
+//调用：
+Text("111").addRedBGWithRoundCorner()
+
+
+还可以用@ViewBuilder注解来创建你的自定义视图达到相同的效果:
+struct RedBackgroundAndCornerView<Content: View>: View {
+    let content: Content
+    
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+    
+    var body: some View {
+        content
+            .background(Color.red)
+            .cornerRadius(5)
+    }
+}
+
+RedBackgroundAndCornerView {
+    Text("111")
+}
+
+@ViewBuilder 不仅可以标注计算型属性，还可以标注func
+
+==================================================用于返回值的用法
+
+@ViewBuilder 还有一个更好用的地方
+可能你在开发中经常会遇到下面这个编译报错
+Function declares an opaque return type 'some View', 
+but the return statements in its body do not have matching underlying types
+
+struct ContentView: View {
+    var body: some View {
+        content
+    }
+
+    var content: some View {
+        if true {
+            return Text("111")
+        } else {
+            return Image("222")
+        }
+    }
+}
+
+这个时候就可以用神器 @ViewBuilder 去标注你的content属性， 可以顺利的编译
+
+struct ContentView: View {
+    var body: some View {
+        content
+    }
+
+    @ViewBuilder
+    var content: some View {
+        if true {
+            return Text("111")
+        } else {
+            return Image("222")
+        }
+    }
+}
+
+也是@resultBuilder的作用，因为ViewBuilder实现了buildEither(second:)，支持 if-else 语法
+
+
+==================================================用于属性
+当你想实现一个自定义的VStack时，可以这么做:
+
+struct CustomVStack<Content: View>: View {
+    let content: () -> Content
+
+    var body: some View {
+        VStack {
+            // custom stuff here
+            content()
+        }
+    }
+}
+但是这种方式只能接收单个View，无法传入多个 View:
+CustomVStack {
+    Text("Hello")
+}
+
+为了达到原生VStack的效果，就必须增加一个构造函数:
+
+init(@ViewBuilder content: @escaping () -> Content) {
+    self.content = content
+}
+
+每次定义容器 View 时，都得这么写的话就很啰嗦，所以有人向官方提建议，看是否能把@ViewBuilder直接用于属性。
+最终这个提案通过了，发布在 Swift 5.4 版本:
+struct CustomVStack<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack {
+            content
+        }
+    }
+}
+
+
+awesome-result-builders:
+https://github.com/carson-katri/awesome-result-builders

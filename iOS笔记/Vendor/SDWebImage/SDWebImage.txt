@@ -1,0 +1,299 @@
+如何实现？
+利用NSOperationQueue 和 NSOperation下载图片，还使用了gcd的函数解码gif图片
+利用URL为key，NSOperation为value
+利用URL为key，UIImage为value
+
+
+--------------------------------
+gif  用ImageIO框架切出所有帧UIImage
+
+
+
+每次加载图片清空memcache
+[[SDImageCache sharedImageCache] setValue:nil forKey:@"memCache"];
+
+
+// 加载
+NSString *logoString = [_currentDic stringValueForKey:@"team_img"];  
+if(logoString.length>0){  
+[[SDImageCache sharedImageCache] queryDiskCacheForKey:logoString done:^(UIImage *image, SDImageCacheType cacheType) {  
+if (image) {  
+   [_teamImage setImage:image];  
+}else{  
+   [_teamImage sd_setImageWithURL:kNSUrl(logoString)  
+                 placeholderImage:IMGNAMED(@"defaultAvatar2")  
+                          options:SDWebImageRefreshCached  
+                        completed:^(UIImage *image, NSError *error, SDImageCacheType cacheType, NSURL *imageURL) {  
+                            if (image) {  
+                                [[SDImageCache sharedImageCache] storeImage:image forKey:logoString toDisk:YES];  
+                            }  
+                        }];  
+}  
+}];}  
+
+
+- (UIImage *)diskImageForKey:(NSString *)key {  
+    NSData *data = [self diskImageDataBySearchingAllPathsForKey:key];  
+    if (data) {  
+        UIImage *image = [UIImage sd_imageWithData:data];  
+        image = [self scaledImageForKey:key image:image];  
+        image = [UIImage decodedImageWithImage:image];  
+        return image;  
+    }  
+    else {  
+        return nil;  
+    }  
+}  
+
+
+
+//失败后重试
+SDWebImageRetryFailed = 1 << 0,
+
+//最低优先级，当正在进行UI交互时，自动暂停内部的一些下载操作
+SDWebImageLowPriority = 1 << 1,
+
+//只缓存内存
+SDWebImageCacheMemoryOnly = 1 << 2,
+
+//渐进式下载,显示的图像是逐步在下载
+SDWebImageProgressiveDownload = 1 << 3,
+
+// manually set the image in the completion when success
+SDWebImageAvoidAutoSetImage = 1 << 11
+
+
+SDWebImageManager *manager = [SDWebImageManager sharedManager];
+// 取消正在下载的操作
+[manager cancelAll];
+// 清除内存缓存
+[manager.imageCache clearMemory];
+//释放磁盘的缓存
+[manager.imageCache cleanDisk];
+
+
+存储一个图像到缓存是使用方法storeImage: forKey:
+［SDImageCache sharedImageCache] storeImage:myImage forKey:myCacheKey];
+默认情况下，图像将被存储在内存缓存和磁盘缓存中。
+如果仅仅是想内存缓存中，要使用storeImage:forKey:toDisk:方法的第三个参数带一负值来替代
+
+内存层面的相当是个缓存器，以Key-Value的形式存储图片。当内存不够的时候会清除所有缓存图片。用搜索文件系统的方式做管理，文件替换方式是以时间为单位，剔除时间大于一周的图片文件。当SDWebImageManager向SDImageCache要资源时，先搜索内存层面的数据，如果有直接返回，没有的话去访问磁盘，将图片从磁盘读取出来，然后做Decoder，将图片对象放到内存层面做备份，再返回调用层
+
+1、入口 setImageWithURL:placeholderImage:options: 会先把 placeholderImage 显示，然后 SDWebImageManager 根据 URL 开始处理图片。
+
+2、进入 SDWebImageManager-downloadWithURL:delegate:options:userInfo:，交给 SDImageCache 从缓存查找图片是否已经下载 queryDiskCacheForKey:delegate:userInfo:.
+
+3、如果内存中已经有图片缓存，SDImageCacheDelegate 回调 imageCache:didFindImage:forKey:userInfo: 到 SDWebImageManager。
+
+4、SDWebImageManagerDelegate 回调 webImageManager:didFinishWithImage: 到 UIImageView+WebCache 等前端展示图片。
+
+5、如果内存缓存中没有，生成 NSInvocationOperation 添加到队列开始从硬盘查找图片是否已经缓存。
+
+6、根据 URLKey 在硬盘缓存目录下尝试读取图片文件。这一步是在 NSOperation 进行的操作，所以回主线程进行结果回调 notifyDelegate:。
+
+7、如果硬盘中有该图片，将图片添加到内存缓存中（如果空闲内存过小，会先清空内存缓存）。SDImageCacheDelegate 回调 imageCache:didFindImage:forKey:userInfo:。进而回调展示图片。
+
+8、如果从硬盘缓存目录读取不到图片，说明所有缓存都不存在该图片，需要下载图片，回调 imageCache:didNotFindImageForKey:userInfo:。
+
+9、共享或重新生成一个下载器 SDWebImageDownloader 开始下载图片。
+
+10、图片下载由 NSURLConnection 来做，实现相关 delegate 来判断图片下载中、下载完成和下载失败。
+
+11、imageDownloader:didFinishWithImage: 回调给 SDWebImageManager 告知图片下载完成。
+
+12、通知所有的 downloadDelegates 下载完成，回调给需要的地方展示图片。
+
+13、将图片保存到 SDImageCache 中，内存缓存和硬盘缓存同时保存。写文件到硬盘也在以单独 NSInvocationOperation 完成，避免拖慢主线程。SDImageCache 在初始化的时候会注册一些消息通知，在内存警告或退到后台的时候清理内存图片缓存，应用结束的时候清理过期图片。
+
+
+Caches/default/com.hackemist.SDWebImageCache.default
+// 磁盘缓存大小
+[SDImageCache sharedImageCache] getSize];
+
+
+/**
+ //失败后重试
+ SDWebImageRetryFailed = 1 << 0,
+ //UI交互期间开始下载，导致延迟下载比如UIScrollView减速。
+ SDWebImageLowPriority = 1 << 1,
+ //只进行内存缓存
+ SDWebImageCacheMemoryOnly = 1 << 2,
+ //这个标志可以渐进式下载,显示的图像是逐步在下载
+ SDWebImageProgressiveDownload = 1 << 3,
+ //刷新缓存
+ SDWebImageRefreshCached = 1 << 4,
+ //后台下载
+ SDWebImageContinueInBackground = 1 << 5,
+ //NSMutableURLRequest.HTTPShouldHandleCookies = YES;
+ SDWebImageHandleCookies = 1 << 6,
+ //允许使用无效的SSL证书
+ //SDWebImageAllowInvalidSSLCertificates = 1 << 7,
+ //优先下载
+ SDWebImageHighPriority = 1 << 8,
+ //延迟占位符
+ SDWebImageDelayPlaceholder = 1 << 9,
+ //改变动画形象
+ SDWebImageTransformAnimatedImage = 1 << 10,
+ */
+
+
+// 当程序收到内存警告时会调用这个方法
+- (void)didReceiveMemoryWarning {
+    [super didReceiveMemoryWarning];
+    // 清除缓存
+    [[SDWebImageManager sharedManager].imageCache clearDisk]; // clean:删除过期缓存
+    [[SDWebImageManager sharedManager].imageCache cleanDisk]; // clear:直接删除然后重新创建
+    // 取消下载
+    [[SDWebImageManager sharedManager] cancelAll];
+
+}
+
+
+// 取消掉当前所有的下载
+- (void)cancelAll;
+
+// 检查是否有图片在下载
+- (BOOL)isRunning;
+
+// 将图片存入cache的方法
+- (void)saveImageToCache:(UIImage *)image forURL:(NSURL *)url;
+
+// 通过图片的url判断其是否已经存在
+- (BOOL)cachedImageExistsForURL:(NSURL *)url;
+
+// 检测一个image是否已经被缓存到磁盘(是否存且仅存在disk里).
+- (BOOL)diskImageExistsForURL:(NSURL *)url;
+
+// 如果检测到图片已经被缓存,那么执行回调block
+- (void)cachedImageExistsForURL:(NSURL *)url
+                     completion:(SDWebImageCheckCacheCompletionBlock)completionBlock;
+
+ // 如果检测到图片已经在磁盘中,那么执行回调block
+- (void)diskImageExistsForURL:(NSURL *)url
+                   completion:(SDWebImageCheckCacheCompletionBlock)completionBlock;
+
+
+=========================================SDWebImages图片类型识别
+根据文件头来识别，即图片流文件的第一个字节判断。
+
+#import "NSData+ImageContentType.h"
+@implementation NSData (ImageContentType)
+
++ (SDImageFormat)sd_imageFormatForImageData:(nullable NSData *)data {
+    if (!data) {
+        return SDImageFormatUndefined;
+    }
+    uint8_t c;
+    [data getBytes:&c length:1];
+    switch (c) {
+        case 0xFF:
+            return SDImageFormatJPEG;
+        case 0x89:
+            return SDImageFormatPNG;
+        case 0x47:
+            return SDImageFormatGIF;
+        case 0x49:
+        case 0x4D:
+            return SDImageFormatTIFF;
+        case 0x52:
+            // R as RIFF for WEBP
+            if (data.length < 12) {
+                return SDImageFormatUndefined;
+            }
+            NSString *testString = [[NSString alloc] initWithData:[data subdataWithRange:NSMakeRange(0, 12)] encoding:NSASCIIStringEncoding];
+            if ([testString hasPrefix:@"RIFF"] && [testString hasSuffix:@"WEBP"]) {
+                return SDImageFormatWebP;
+            }
+    }
+    return SDImageFormatUndefined;
+}
+@end
+
+
+
+=========================================SDWebImage的下载队列机制
+downloadQueue.maxConcurrentOperationCount = 6;
+downloadTimeout： 15.0;
+executionOrder: SDWebImageDownloaderFIFOExecutionOrder;先进先出
+
+=========================================SDWebImage缓存机制
+两部分组成：内存缓存、磁盘缓存
+内存缓存memCache:
+为了完善内存缓存，SDWebImage实现了NSCache的一个子类AutoPurgeCache，扩充了NSCache，当内存警告时，它会接受UIApplicationDidReceiveMemoryWarningNotification通知，自动执行removeAllObjects操作
+
+SDWebImage做了内存缓存，当我们频繁的使用SDWebImage加载多张图片时，却为何基本不会出现内存暴涨的情况呢？其实这一切归功于自动释放池@autoreleasepool。
+
+
+磁盘缓存:
+图片加载的具体流程如下：
+1.调用sd_setImageWithURL方法时，它首先是通过URL作为key查询内存缓存，即SDImageCache的memCache属性，如果存在直接显示到View上。
+2.反之，将通过md5编码URL作为文件名，去沙盒（即SDImageCache的diskCachePath路径下）中查询有无此文件，如果存在，就把沙盒中的文件加载到内存缓存memCache中，然后通过SDWebImageDecoder解码后，直接显示到View上。
+3.如果沙盒中不存在，则先将占位图片placeholderImage加载到View上，紧接着去SDWebImageDownloader的downloadQueue队列中，查找是否有正在下载该图片的下载任务，如果存在继续该任务。
+4.如果下载队列不存在，创建图片下载任务SDWebImageDownloaderOperation，然后通过lastAddedOperation，根据对应的机制添加到下载并发队列downloadQueue中，下载完毕后，将操作在队列中移除，将图片添加到内存缓存中，直接显示到View，并将该文件压缩编码后存储到沙盒中，将通过md5编码URL作为文件名
+
+SDWebImage缓存图片命名:将图片的URL进行md5编码
+MD5算法具有以下特点：
+1、压缩性：任意长度的数据，算出的MD5值长度都是固定的。
+2、容易计算：从原数据计算出MD5值很容易。
+3、抗修改性：对原数据进行任何改动，哪怕只修改1个字节，所得到的MD5值都有很大区别。
+4、强抗碰撞：已知原数据和其MD5值，想找到一个具有相同MD5值的数据（即伪造数据）是非常困难的
+
+- (nullable NSString *)cachePathForKey:(nullable NSString *)key inPath:(nonnull NSString *)path {
+    NSString *filename = [self cachedFileNameForKey:key];
+    return [path stringByAppendingPathComponent:filename];
+}
+- (nullable NSString *)defaultCachePathForKey:(nullable NSString *)key {
+    return [self cachePathForKey:key inPath:self.diskCachePath];
+}
+- (nullable NSString *)cachedFileNameForKey:(nullable NSString *)key {
+    const char *str = key.UTF8String;
+    if (str == NULL) {
+        str = "";
+    }
+    unsigned char r[CC_MD5_DIGEST_LENGTH];
+    CC_MD5(str, (CC_LONG)strlen(str), r);
+    NSString *filename = [NSString stringWithFormat:@"%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%@",
+                          r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10],
+                          r[11], r[12], r[13], r[14], r[15], [key.pathExtension isEqualToString:@""] ? @"" : [NSString stringWithFormat:@".%@", key.pathExtension]];
+    return filename;
+}
+
+SDWebImage缓存文件保留时长及缓存空间大小:
+默认情况下SDWebImage的缓存时长为一周，并且缓存空间可以自定义
+
+过滤URL，禁用缓存:
+如果想过滤特定URL，不使用缓存机制，可以在对应位置加入如下代码过滤。
+SDWebImageManager.sharedManager.cacheKeyFilter = ^NSString * _Nullable(NSURL * _Nullable url) {
+
+        url = [[NSURL alloc] initWithScheme:url.scheme host:url.host path:url.path];
+        NSLog(@"url.scheme:%@, url.host:%@, url.path: %@", url.scheme, url.host, url.path);
+        // if([[url.host absoluteString] isEqualToString:@"upload-images.jianshu.io"])
+        if ([[url absoluteString] isEqualToString:@"http://upload-images.jianshu.io/upload_images/949086-5d2c51f1e3a9cddd.png"])
+        {
+            return nil;
+        }
+        return [url absoluteString];
+    };
+
+
+
+清除特定图片缓存:
+清除掉图片缓存，重新加载
+NSURL *imageURL = [NSURL URLWithString:@"http://upload-images.jianshu.io/upload_images/949086-5d2c51f1e3a9cddd.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/999"];
+// 获取对应URL链接的key
+    NSString *key = [[SDWebImageManager sharedManager] cacheKeyForURL:imageURL];
+    NSString *pathStr = [[SDImageCache sharedImageCache] defaultCachePathForKey:key];
+    NSLog(@"key存储的路径: %@", pathStr);
+// 删除对应key的文件
+    [[SDImageCache sharedImageCache] removeImageForKey:key withCompletion:^{
+        [self.tempImageView sd_setImageWithURL:imageURL placeholderImage:[UIImage imageNamed:@"placeholderHead.png"]];
+    }];
+
+
+
+清除过期文件的时机:
+清除过期旧文件的时间点有两处：程序切到后台、杀死APP时。
+
+[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(deleteOldFiles) name:UIApplicationWillTerminateNotification object:nil];
+
+[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(backgroundDeleteOldFiles) name:UIApplicationDidEnterBackgroundNotification object:nil];

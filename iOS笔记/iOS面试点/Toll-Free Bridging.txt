@@ -1,0 +1,60 @@
+https://developer.apple.com/library/archive/documentation/General/Conceptual/CocoaEncyclopedia/Toll-FreeBridgin/Toll-FreeBridgin.html
+
+在 Core Foundation 和 Foundation 之间交换使用数据类型的技术就叫 Toll-Free Bridging
+
+// ARC 环境下
+// Bridging from ObjC to CF
+NSString *hello = @"world";
+CFStringRef world = (__bridge CFStringRef)(hello);
+NSLog(@"%ld", CFStringGetLength(world));
+
+// Bridging from CF to ObjC
+CFStringRef hello = CFStringCreateWithCString(kCFAllocatorDefault, "hello", kCFStringEncodingUTF8);
+NSString *world = (__bridge NSString *)(hello);
+NSLog(@"%ld", world.length);
+CFRelease(hello);
+
+ARC 能够管理 Objective-C 对象的内存，却不能管理 CF 对象，CF 对象依然需要我们手动管理内存。
+
+===============================
+类簇（class cluster）:
+https://developer.apple.com/library/archive/documentation/General/Conceptual/CocoaEncyclopedia/ClassClusters/ClassClusters.html#//apple_ref/doc/uid/TP40010810-CH4-SW1
+
+Toll-Free Bridging 是如何实现的？
+每一个能够 bridge 的 ObjC 类，都是一个类簇（class cluster）。类簇是一个公开的抽象类，但其核心功能的是在不同的私有子类中实现的，公开类只暴露一致的接口和实现一些辅助的创建方法。而与该 ObjC 类相对应的 Core Foundation 类的内存结构，正好与类簇的其中一个私有子类相同
+
+NSString是一个类簇，一个公开的抽象类，但每次创建一个NSString的实例时，实际上我们会获得其中一个私有子类的实例。而NSString的其中一个私有子类实现既为NSCFString，其内存的结构与CFString是相同的，CFString的isa指针就指向NSCFString类，即，CFString对象就是一个NSCFString类的实例。
+所以，当NSString的实现刚好是NSCFString的时候，他们两者之间的转换是相当容易而直接的，他们就是同一个类的实例
+
+==============================
+__bridge
+最常用的修饰符，这意味着告诉编译器不做任何内存管理的事情，编译器仍然负责管理好在 Objc 一端的引用计数的事情，开发者也继续负责管理好在 CF 一端的事情
+
+__bridge_retained
+// objc to cf
+NSString *nsStr = [self createSomeNSString];
+CFStringRef cfStr = (__bridge_retained CFStringRef)nsStr;
+CFUseCFString(cfStr);
+CFRelease(cfStr); // 需要
+
+__bridge_transfer
+如果使用__bridge修饰符在cf转objc的时候非常的麻烦，我们既需要一个CFTypeRef的变量，还需要在 bridge 之后负责释放。
+
+// cf to objc
+CFStringRef hello = CFStringCreateWithCString(kCFAllocatorDefault, "hello", kCFStringEncodingUTF8);
+NSString *world = (__bridge_transfer NSString *)(hello);
+// CFRelease(hello); 不需要
+[self useNSString:world];
+
+==============================
+
+
+某些数据类型能够在Core Foundation和Foundation之间互换使用，可被互换使用的数据类型被称为Toll-Free Bridged类型
+NSString与CFStringRef即一对可以相互转换的数据类型
+ARC能够管理Objective-C对象的内存，却不能管理CF对象，CF对象依然需要我们手动管理内存
+
+UIFont和CTFontRef是 toll-free bridged的
+在CoreText中是可以使用UIFont的，但是在UILabel和UITextView中不能使用CTFontRef
+
+
+NSParagraphStype不是toll-free bridged 到CTParagraphStypeRef

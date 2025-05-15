@@ -3,6 +3,10 @@ https://github.com/kudoleh/iOS-Clean-Architecture-MVVM
 https://tech.olx.com/clean-architecture-and-mvvm-on-ios-c9d167d9f5b3
 
 
+Infrastructure: 基础设施
+    Network
+
+
 ==================================================The Clean Architecture:
 https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html
 
@@ -204,6 +208,204 @@ There can only be dependencies from outer layer inward.
 After grouping all layers we have: Presentation, Domain and Data layers.
 
 Domain Layer (Business logic) is the inner-most part of the onion (without dependencies to other layers, it is totally isolated).
+It contains Entities(Business Models), Use Cases, and Repository Interfaces.
+This layer could be potentially reused within different projects.
+Such separation allows for not using the host app within the test target because no dependencies (also 3rd party) are needed — this makes the Domain Use Cases tests take just a few seconds.
+Note: Domain Layer should not include anything from other layers(e.g Presentation — UIKit or SwiftUI or Data Layer — Mapping Codable)
+
+Domain Layer它负责什么？
+处理业务逻辑（Business Logic）
+定义Use Cases（用例）/ Services
+声明抽象接口（protocols / interfaces），让 Data 层去实现
+不依赖 UI 层、不依赖具体的数据实现（如数据库、网络）
+
+==================================================
+The reason that good architecture is centered around Use Cases is so that architects can safely describe the structures that support those Use cases without committing to frameworks, tools, and environment. 
+It is called Screaming Architecture.
+https://blog.cleancoder.com/uncle-bob/2011/09/30/Screaming-Architecture.html
+
+你应该首先问：
+“这个系统要做什么事情？它的核心业务用例是什么？”
+而不是：
+“我要用 SwiftUI / CoreData / Firebase / Alamofire 怎么做这个 app？”
+
+业务用例：AddTaskUseCase（添加一个任务）
+protocol TaskRepository {
+    func save(task: Task) throws
+}
+
+struct AddTaskUseCase {
+    let repository: TaskRepository
+    
+    func execute(title: String, dueDate: Date) throws {
+        let task = Task(title: title, dueDate: dueDate)
+        try repository.save(task: task)
+    }
+}
+
+这个用例不关心你是用 SQLite、CoreData、Realm、CloudKit 还是文件保存。
+它也不关心你是用 UIKit 还是 SwiftUI 来展示 UI。
+它只是定义了“添加任务”的业务逻辑。
+
+这种做法的好处是：
+未来你可以用不同的 UI 框架（SwiftUI → UIKit）而不动 UseCase。
+可以把 CoreData 替换成 SQLite、Realm，而不动 UseCase。
+可以在单元测试中 mock TaskRepository，测试 UseCase 不依赖数据库或 UI。
+
+==================================================Presentation Layer
+Presentation Layer contains UI (UIViewControllers or SwiftUI Views). 
+Views are coordinated by ViewModels (Presenters) which execute one or many Use Cases. Presentation Layer depends only on the Domain Layer.
+
+==================================================Data Layer
+Data Layer contains Repository Implementations and one or many Data Sources. 
+Repositories are responsible for coordinating data from different Data Sources. 
+Data Source can be Remote or Local (for example persistent database). 
+Data Layer depends only on the Domain Layer. 
+In this layer, we can also add mapping of Network JSON Data (e.g. Decodable conformance) to Domain Models.
+
+
+==================================================Data Flow
+1. View(UI) calls method from ViewModel (Presenter).
+2. ViewModel executes Use Case.
+3. Use Case combines data from User and Repositories.
+4. Each Repository returns data from a Remote Data (Network), Persistent DB Storage Source or In-memory Data (Remote or Cached).
+5. Information flows back to the View(UI) where we display the list of items.
+
+
+==================================================Dependency Direction
+Presentation Layer -> Domain Layer <- Data Repositories Layer
+
+Presentation Layer (MVVM) = ViewModels(Presenters) + Views(UI)
+
+Domain Layer = Entities + Use Cases + Repositories Interfaces
+
+Data Repositories Layer = Repositories Implementations + API(Network) + Persistence DB
+
+
+==================================================
+Presentation 层依赖 Domain 层（调用 UseCase、实体等）
+Data 层依赖 Domain 层（实现接口，比如 Repository）
+Domain 层不应该依赖 Presentation 或 Data 层
+
+
+==================================================Domain 层 + Data 层 实现 接口 + 注入：例子
+例如你在 Domain 层这样写
+protocol MovieRepository {
+    func fetchPopularMovies() -> [Movie]
+}
+
+UseCase 用这个协议：
+struct FetchPopularMoviesUseCase {
+    let repository: MovieRepository
+
+    func execute() -> [Movie] {
+        return repository.fetchPopularMovies()
+    }
+}
+
+具体实现是在 Data 层提供的，比如：
+class MovieRepositoryImpl: MovieRepository {
+    func fetchPopularMovies() -> [Movie] {
+        // 实际访问 API 或数据库
+    }
+}
+
+然后你在组装阶段（比如在 App 层）将 Data 层的实现注入给 Domain 层的 UseCase：
+let repo = MovieRepositoryImpl()
+let useCase = FetchPopularMoviesUseCase(repository: repo)
+这叫依赖注入（Dependency Injection），你在外部将实现注入进去。
+
+依赖倒置原则（DIP）：
+高层模块（业务规则）不应该依赖低层模块（数据实现）；它们都应该依赖抽象。
+
+依赖注入（Dependency Injection, 简称 DI）确实是实现“依赖倒置原则（Dependency Inversion Principle）”的一种方式。
+
+
+==================================================让 Data 层负责 Codable，Domain 层用纯模型
+UserDTO 是用于网络传输的 Data Transfer Object（DTO）
+
+Data 层（带 Codable）：
+// Data 层专用
+struct UserDTO: Codable {
+    let id: Int
+    let name: String
+}
+
+Domain 层（不带 Codable）：
+// 领域层纯模型
+struct User {
+    let id: Int
+    let name: String
+}
+
+映射逻辑（Data 层中实现）：
+extension UserDTO {
+    func toDomainModel() -> User {
+        return User(id: self.id, name: self.name)
+    }
+}
+
+==================================================ViewModel（MVVM + Rx）
+举个例子：登录功能（Login）
+
+ViewModel（MVVM + Rx）
+class LoginViewModel {
+    // Input
+    let username = BehaviorRelay<String>(value: "")
+    let password = BehaviorRelay<String>(value: "")
+    let loginTapped = PublishRelay<Void>()
+
+    // Output
+    let isLoading = BehaviorRelay<Bool>(value: false)
+    let loginResult = PublishRelay<Result<User, Error>>()
+
+    private let loginUseCase: LoginUseCase
+    private let disposeBag = DisposeBag()
+
+    init(loginUseCase: LoginUseCase) {
+        self.loginUseCase = loginUseCase
+
+        loginTapped
+            .withLatestFrom(Observable.combineLatest(username, password))
+            .flatMapLatest { username, password in
+                self.isLoading.accept(true)
+                return loginUseCase
+                    .execute(username: username, password: password)
+                    .asObservable()
+                    .materialize()
+            }
+            .subscribe(onNext: { [weak self] event in
+                self?.isLoading.accept(false)
+                switch event {
+                case .next(let user):
+                    self?.loginResult.accept(.success(user))
+                case .error(let error):
+                    self?.loginResult.accept(.failure(error))
+                default: break
+                }
+            })
+            .disposed(by: disposeBag)
+    }
+}
+
+UseCase（Domain 层）
+struct LoginUseCase {
+    let authRepository: AuthRepository
+
+    func execute(username: String, password: String) -> Single<User> {
+        return authRepository.login(username: username, password: password)
+    }
+}
+
+Data 层实现（Repository）
+class AuthRepositoryImpl: AuthRepository {
+    func login(username: String, password: String) -> Single<User> {
+        return networkProvider
+            .request(.login(username, password))
+            .map(UserDTO.self)
+            .map { $0.toDomain() }
+    }
+}
 
 
 ###

@@ -1,0 +1,247 @@
+点击 Xcode 菜单栏 Product > Archive 或使用命令行：
+xcodebuild -scheme YourScheme -configuration Release archive
+
+Xcode 会执行以下几个关键步骤：
+步骤	说明
+✅ 编译	将源文件编译为目标文件
+✅ 链接	链接为可执行文件
+✅ 签名	对可执行文件、框架等进行代码签名 // 可以通过 Xcode 的 command + B 后，查看 Show the report navigator 查看日志，看到 Compiling -> Link -> Sign，这边的 Sign 就是进行 codesign （Xcode 会自动调用 codesign）
+在 Xcode 构建后生成的 .app 包中，_CodeSignature 文件夹是 代码签名（Code Signing） 机制的一部分，目的是确保应用的完整性和身份验证。
+_CodeSignature 文件夹里存放的是一个叫做 CodeResources 的签名文件，用于确保你的 App 没有被篡改。这是 Apple 的安全机制的一部分。
+CodeResources 文件：这是一个二进制格式的资源哈希清单。
+它列出了 .app 包中所有需要签名的文件的 哈希值（SHA1/SHA256）。
+包括可执行文件、资源（图片、xib、plist 等）等。
+代码签名是 Apple 提供的安全机制，目的如下：
+完整性校验：运行时系统（包括 Gatekeeper、App Store、iOS/macOS 系统）可以检查 .app 内部文件是否被篡改。
+身份验证：确认这个 App 是由你（或你团队）签署的。
+权限与沙盒机制：系统基于签名识别 App 身份，从而决定它能不能访问钥匙串、网络、文件系统等资源。
+调试限制：系统可能只允许你调试已签名的 App（或需要使用 codesign --entitlements 签名）。
+codesign 命令中的 --entitlements 参数用来指定一个权限配置文件（Entitlements 文件），这告诉 macOS/iOS 系统你希望 App 拥有哪些特定的“能力”（Capabilities）。
+✅ 包装	将可执行文件与资源、Info.plist 打包进 .app
+✅ 封装	生成 .xcarchive 包（包含 .app、符号文件、dSYMs、签名等）
+
+
+.xcarchive 包含的内容：
+YourApp.xcarchive/
+├── Products/
+│   └── Applications/
+│       └── YourApp.app        ← 最终 .app 可执行文件
+├── dSYMs/                     ← 符号表（用于崩溃日志还原）
+├── Info.plist                 ← 构建信息（签名、身份、平台等）
+└── ...
+这就是提交 App Store、导出 .ipa、做分发或上传的基础产物。
+
+
+普通 Build ≠ Archive
+普通 Build（⌘B）：只是编译 + 签名 + 生成 .app，不会生成 .xcarchive
+Archive（⌘⇧B）：完整打包 + 生成 .xcarchive，可导出 .ipa 或上传到 App Store
+
+###
+阶段名称	是否等价于打包
+Build（构建）	❌ 否，只是中间产物 // 签名是发生在 链接完成之后。链接后才有最终可执行文件，才能计算哈希、签名。
+Archive	✅ 是，完整打包过程 // 这一步 不会改变签名，只是封装成归档格式，供后续导出用。如果 .app 中的签名不正确，xcodebuild archive 会失败或警告
+Export（导出 .ipa）	✅ Archive 的后续动作 // 使用 xcodebuild -exportArchive + ExportOptions.plist。再次验证签名（强制检查）。根据 export 配置决定是否重签名（例如切换 profile）。 .app 打包成 .ipa（只是 zip 封装）
+
+// 实际例子：
+进行 Xcode Archive 时，项目配置的 Release Signing 使用 App Store 的描述文件，这时候 Xcode 此时会用这个 App Store 描述文件 + 对应的发布证书对 .app 做一次签名。然后打包成 .xcarchive。Archive 完成后
+这边导出 .ipa 时(即 Archive 的后续动作) ，比如进行 distribute app 时选择 AD Hoc，这时候提示你选择新的 Provisioning Profile，选择了 Ad Hoc 描述文件，这时 Xcode 会对 .app 进行重签名，并导出为 .ipa。
+签名：使用私钥
+验证：使用公钥
+
+签名首次发生在链接完成之后（Build 阶段），但最终导出 .ipa 阶段可能会对 .app 做重签名或验证签名
+codesign -dvvv Payload/YourApp.app // 可以看到实际使用了哪个证书签名。
+
+Provisioning Profile（描述文件）是一个包含了证书、设备和 App ID 的文件，它允许应用在特定设备上运行或者进行分发（安装）。
+在 Xcode 的导出过程中，ExportOptions.plist 文件用于定义导出的设置，其中包括使用哪个 Provisioning Profile 来签名应用。
+method: 定义导出的方式（app-store、ad-hoc、enterprise、development 等）。
+
+###
+
+
+导出 .ipa 的完整步骤如下：
+第一步：先 Archive 项目
+xcodebuild -workspace YourProject.xcworkspace \
+           -scheme YourScheme \
+           -configuration Release \
+           -archivePath ./build/YourApp.xcarchive \
+           archive
+第二步：导出 .ipa
+xcodebuild -exportArchive \
+           -archivePath ./build/YourApp.xcarchive \
+           -exportOptionsPlist ExportOptions.plist \
+           -exportPath ./build/export
+
+ExportOptions.plist
+这个文件告诉 Xcode 如何导出 .ipa，例如使用哪种签名方式、是否为 Ad Hoc 还是 App Store 分发。
+
+合并为一步的命令：
+xcodebuild -workspace YourProject.xcworkspace \
+           -scheme YourScheme \
+           -configuration Release \
+           -archivePath ./build/YourApp.xcarchive \
+           archive \
+           -exportArchive \
+           -exportOptionsPlist ExportOptions.plist \
+           -exportPath ./build/export
+
+
+
+###
+创建 Provisioning Profile 时会让你选择 Ad Hoc 还是 App Store Connect
+
+Ad Hoc Provisioning Profile 用的也是Distribution证书
+###
+
+
+
+要查看 .mobileprovision 文件的内容
+security cms -D -i your_file.mobileprovision
+
+security cms -D -i /Users/youdun-ndl/Downloads/ADHocAjsClientiOS20250514.mobileprovision
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AppIDName</key>
+	<string>AiJiaSuClient</string>
+	<key>ApplicationIdentifierPrefix</key>
+	<array>
+	<string>N82WKSN6R7</string>
+	</array>
+	<key>CreationDate</key>
+	<date>2025-05-14T03:47:24Z</date>
+	<key>Platform</key>
+	<array>
+		<string>iOS</string>
+		<string>xrOS</string>
+		<string>visionOS</string>
+	</array>
+	<key>IsXcodeManaged</key>
+	<false/>
+	<key>DeveloperCertificates</key>
+	<array>
+		<data>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</data>
+	</array>
+
+	<key>DER-Encoded-Profile</key>
+	<data>MIIThQYJKoZIhvcNAQcCoIITdjCCE3ICAQExDzANBglghkgBZQMEAgEFADCCCT8GCSqGSIb3DQEHAaCCCTAEggksMYIJKDAMDAdWZXJzaW9uAgEBMA8MClRpbWVUb0xpdmUCAUYwEwwOSXNYY29kZU1hbmFnZWQBAQAwGgwJQXBwSUROYW1lDA1BaUppYVN1Q2xpZW50MB0MDENyZWF0aW9uRGF0ZRcNMjUwNTE0MDM0NzI0WjAeDA5UZWFtSWRlbnRpZmllcjAMDApOODJXS1NONlI3MB8MDkV4cGlyYXRpb25EYXRlFw0yNTA3MjMwODA5MDBaMCAMF1Byb2ZpbGVEaXN0cmlidXRpb25UeXBlDAVBREhPQzAhDAhQbGF0Zm9ybTAVDANpT1MMBHhyT1MMCHZpc2lvbk9TMCQMBE5hbWUMHEFESG9jLUFqc0NsaWVudC1pT1MtMjAyNTA1MTQwKwwbQXBwbGljYXRpb25JZGVudGlmaWVyUHJlZml4MAwMCk44MldLU042UjcwLAwEVVVJRAwkMTBlNDM2ZGQtZjI1ZC00NzdlLTlhODItN2FjMjNjNzBlMTc5MDcMCFRlYW1OYW1lDCtTaGFuZ2hhaSBZb3VkdW4gTmV0d29yayBUZWNobm9sb2d5IENvLiwgTHRkMDsMFURldmVsb3BlckNlcnRpZmljYXRlczAiBCA/+IWeej1PBJy8ihl92nCPCuCXdi3ks5lHiadIE8JIczCCAn4MDEVudGl0bGVtZW50c3CCAmwCAQGwggJlMEEMFmFwcGxpY2F0aW9uLWlkZW50aWZpZXIMJ044MldLU042UjcuY29tLmFpamlhc3VpbmMuQWlKaWFTdUNsaWVudDAdDA9hcHMtZW52aXJvbm1lbnQMCnByb2R1Y3Rpb24wKwwmY29tLmFwcGxlLmRldmVsb3Blci5hc3NvY2lhdGVkLWRvbWFpbnMMASowgZgML2NvbS5hcHBsZS5kZXZlbG9wZXIubmV0d29ya2luZy5uZXR3b3JrZXh0ZW5zaW9uMGUMEmFwcC1wcm94eS1wcm92aWRlcgwXY29udGVudC1maWx0ZXItcHJvdmlkZXIMFnBhY2tldC10dW5uZWwtcHJvdmlkZXIMCWRucy1wcm94eQwMZG5zLXNldHRpbmdzDAVyZWxheTAtDChjb20uYXBwbGUuZGV2ZWxvcGVyLm5ldHdvcmtpbmcud2lmaS1pbmZvAQH/MDEMI2NvbS5hcHBsZS5kZXZlbG9wZXIudGVhbS1pZGVudGlmaWVyDApOODJXS1NONlI3MDgMM2NvbS5hcHBsZS5leHRlcm5hbC1hY2Nlc3Nvcnkud2lyZWxlc3MtY29uZmlndXJhdGlvbgEB/zBNDCVjb20uYXBwbGUuc2VjdXJpdHkuYXBwbGljYXRpb24tZ3JvdXBzMCQMImdyb3VwLmNvbS5haWppYXN1aW5jLkFpSmlhU3VDbGllbnQwEwwOZ2V0LXRhc2stYWxsb3cBAQAwOQwWa2V5Y2hhaW4tYWNjZXNzLWdyb3VwczAfDAxOODJXS1NONlI3LioMD2NvbS5hcHBsZS50b2tlbjCCBLYMElByb3Zpc2lvbmVkRGV2aWNlczCCBJ4MKDE1ZWM2NzczZmNmNzVhYTVlMDRmODZkNzBhYTEyZjFlYTc2N2VjZmMMKDQ4N2E2MTMwYzdiMmNkMGExOGUxYjI0ZGM1ZDMyNzJhMGVmMjI5YzMMKDBkMGU2YmQ2NDRhMDhjZDlmZWZhZTljOWUzOGVkN2UwY2Y2YzU0MTAMGTAwMDA4MTEwLTAwMTk2NUFBMDIxMzgwMUUMKGExY2IwYzM5NTdiYTg3YjhlOGRhNTYxZmQ2OTFmZmI1MWEwNWE0ZTEMGTAwMDA4MDMwLTAwMUQ3NDRBMDE4MzgwMkUMKGVjMmJkNGE1YmRkNDk5OGMwMDMwNmRhNDAxMGM2MTU0MTc2YWJjMWMMKDQyNjFjY2ViYzI4MTJmMzM2ZDIwMTkzMjRjYTkwYmNmYWQyNmE5YzAMKDliMzU1ZjBhMmVmMTRhM2YwOGM4YzMwY2JlY2QwN2Y2N2EyMzlmMDkMKDFkMTdkNjRlOWVkNTAzZDc2YmFiYjkwNmIyNmY1NWM0MTBmODZkNGIMKDkxMGE2YTcxODY0NjhiOWQwNzg3ZGU2MGQxODg1OTMyMGFlZmIyMzkMKDc2ZmM2NjdmNGNhNWM5N2I4MDMzMzQyOWU5MDY1MWQyM2FmMzQ2ZTUMGTAwMDA4MTEwLTAwMUExRDJFMDE2QTgwMUUMKGRiNGNlM2RhMGZlODc1NmI3ZjE2OThjNDU2ZDVkN2Q2M2ZkYzVkNGIMKDI1YjIwMWVlMjkzMjg0YTA1NWYwYjQ1MGM4YzMyNTNhODY0MGJjMTkMKDZhNjU2MzY2ZTc0YjI0NWRlZGU1OTc2NjUyZmQ5MGY2N2VmMGE3NWIMKGM4MTkzMzdhYTVhOTk2MTQ1NTE5ZTkwOGI5Y2YyYWQzNjQ4OGIwNDkMKDkxZjljYjY0MDgzZDU0ODRlODQ2MTMxZmJlYzE0ZjhiZTVhNTM0MzQMKDNmMmRkZDU4Y2ZhMGI5ZTQ5YmQzZDQxNmI2OWYxNzRjOTJlMWZmNTAMKGMwZjU2ZGUzNDEwMGZkY2UyMTUzZTc2ZTMyZTVhODU2NjcyZDQ5MjYMKDFlYjVjNDJhODExNzE3YzNkZmNiNTI5N2RlZjRjMWI3ZmRmZjNjOGEMKDRmODRjY2EzNTkyOTk0YjFmYzE2MWE1N2NjZTQyMmJjZTczMzA4ZDkMGTAwMDA4MDIwLTAwMEQwOTM0MEU3ODAwMkUMKGNlMTY2NmY5OTgwOWI4NTE3NDkxNDMxMjk1Y2JkNGRkMzRkNzg3ODcMKDkxODkxZWQ4YjZjZmNmNWE5MzJmNWI3Nzk2ZDgxNzE2NTI0OWIyNGUMKDk3ZmY1YmM5NDYxMmIwNzQ1YjQ1OTM5NmI1M2E4MDI4YjIyY2M3YTQMGTAwMDA4MDIwLTAwMUQzMDEyMDFDMTAwMkUMGTAwMDA4MTIwLTAwMTAwRDhFMTEyOEMwMUUMGTAwMDA4MTAxLTAwMDgxNDMwMUU4ODAwMUUMGTAwMDA4MDIwLTAwMUEzNDU5MzY3ODAwMkUMKDE4Zjk2YmQzNGM4Y2RhMmU2NTY3YzViNWU5NmJkYmM2ZTlkNzI4Y2Ggggg8MIICQzCCAcmgAwIBAgIILcX8iNLFS5UwCgYIKoZIzj0EAwMwZzEbMBkGA1UEAwwSQXBwbGUgUm9vdCBDQSAtIEczMSYwJAYDVQQLDB1BcHBsZSBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTETMBEGA1UECgwKQXBwbGUgSW5jLjELMAkGA1UEBhMCVVMwHhcNMTQwNDMwMTgxOTA2WhcNMzkwNDMwMTgxOTA2WjBnMRswGQYDVQQDDBJBcHBsZSBSb290IENBIC0gRzMxJjAkBgNVBAsMHUFwcGxlIENlcnRpZmljYXRpb24gQXV0aG9yaXR5MRMwEQYDVQQKDApBcHBsZSBJbmMuMQswCQYDVQQGEwJVUzB2MBAG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</data>
+										
+	<key>Entitlements</key>
+	<dict>
+				
+				<key>com.apple.developer.networking.wifi-info</key>
+		<true/>
+				
+				<key>com.apple.security.application-groups</key>
+		<array>
+				<string>group.com.aijiasuinc.AiJiaSuClient</string>
+		</array>
+				
+				<key>com.apple.developer.associated-domains</key>
+		<string>*</string>
+				
+				<key>application-identifier</key>
+		<string>N82WKSN6R7.com.aijiasuinc.AiJiaSuClient</string>
+				
+				<key>keychain-access-groups</key>
+		<array>
+				<string>N82WKSN6R7.*</string>
+				<string>com.apple.token</string>
+		</array>
+				
+				<key>get-task-allow</key>
+		<false/>
+				
+				<key>com.apple.developer.team-identifier</key>
+		<string>N82WKSN6R7</string>
+				
+				<key>com.apple.developer.networking.networkextension</key>
+		<array>
+				<string>app-proxy-provider</string>
+				<string>content-filter-provider</string>
+				<string>packet-tunnel-provider</string>
+				<string>dns-proxy</string>
+				<string>dns-settings</string>
+				<string>relay</string>
+		</array>
+				
+				<key>aps-environment</key>
+		<string>production</string>
+				
+				<key>com.apple.external-accessory.wireless-configuration</key>
+		<true/>
+
+	</dict>
+	<key>ExpirationDate</key>
+	<date>2025-07-23T08:09:00Z</date>
+	<key>Name</key>
+	<string>ADHoc-AjsClient-iOS-20250514</string>
+	<key>ProvisionedDevices</key>
+	<array>
+		<string>15ec6773fcf75aa5e04f86d70aa12f1ea767ecfc</string>
+		<string>487a6130c7b2cd0a18e1b24dc5d3272a0ef229c3</string>
+		<string>0d0e6bd644a08cd9fefae9c9e38ed7e0cf6c5410</string>
+		<string>00008110-001965AA0213801E</string>
+		<string>a1cb0c3957ba87b8e8da561fd691ffb51a05a4e1</string>
+		<string>00008030-001D744A0183802E</string>
+		<string>ec2bd4a5bdd4998c00306da4010c6154176abc1c</string>
+		<string>4261ccebc2812f336d2019324ca90bcfad26a9c0</string>
+		<string>9b355f0a2ef14a3f08c8c30cbecd07f67a239f09</string>
+		<string>1d17d64e9ed503d76babb906b26f55c410f86d4b</string>
+		<string>910a6a7186468b9d0787de60d18859320aefb239</string>
+		<string>76fc667f4ca5c97b80333429e90651d23af346e5</string>
+		<string>00008110-001A1D2E016A801E</string>
+		<string>db4ce3da0fe8756b7f1698c456d5d7d63fdc5d4b</string>
+		<string>25b201ee293284a055f0b450c8c3253a8640bc19</string>
+		<string>6a656366e74b245dede5976652fd90f67ef0a75b</string>
+		<string>c819337aa5a996145519e908b9cf2ad36488b049</string>
+		<string>91f9cb64083d5484e846131fbec14f8be5a53434</string>
+		<string>3f2ddd58cfa0b9e49bd3d416b69f174c92e1ff50</string>
+		<string>c0f56de34100fdce2153e76e32e5a856672d4926</string>
+		<string>1eb5c42a811717c3dfcb5297def4c1b7fdff3c8a</string>
+		<string>4f84cca3592994b1fc161a57cce422bce73308d9</string>
+		<string>00008020-000D09340E78002E</string>
+		<string>ce1666f99809b8517491431295cbd4dd34d78787</string>
+		<string>91891ed8b6cfcf5a932f5b7796d817165249b24e</string>
+		<string>97ff5bc94612b0745b459396b53a8028b22cc7a4</string>
+		<string>00008020-001D301201C1002E</string>
+		<string>00008120-00100D8E1128C01E</string>
+		<string>00008101-000814301E88001E</string>
+		<string>00008020-001A34593678002E</string>
+		<string>18f96bd34c8cda2e6567c5b5e96bdbc6e9d728ca</string>
+	</array>
+	<key>TeamIdentifier</key>
+	<array>
+		<string>N82WKSN6R7</string>
+	</array>
+	<key>TeamName</key>
+	<string>Shanghai Youdun Network Technology Co., Ltd</string>
+	<key>TimeToLive</key>
+	<integer>70</integer>
+	<key>UUID</key>
+	<string>10e436dd-f25d-477e-9a82-7ac23c70e179</string>
+	<key>Version</key>
+	<integer>1</integer>
+</dict>
+</plist>%
+
+
+ProvisionedDevices：列出可安装此 App 的设备 UDID（仅 Ad-Hoc 或 Development 配置文件有）
+如果有 get-task-allow = true，则说明是 Development 配置文件（允许调试）。
+如果有 get-task-allow = false 且有 ProvisionedDevices，则是 Ad-Hoc。
+
+类型	get-task-allow	ProvisionedDevices	ProvisionsAllDevices
+Development	true	✅	❌
+Ad-Hoc	false	✅	❌
+Enterprise	false	❌	✅
+App Store	false	❌	❌
+
+
+
+TestFlight:
+内部测试 vs 外部测试对比
+特性	内部测试	外部测试
+邀请方式	App Store Connect 用户（最多 100 人）	邀请链接或邮箱（最多 10,000 人）
+是否需要 Apple 审核	❌ 不需要	✅ 需要
+描述文件是否限制设备	✅ 设备需包含在开发配置中	❌ 不需要
+使用场景	公司或团队内的快速测试	广泛的公开/半公开测试

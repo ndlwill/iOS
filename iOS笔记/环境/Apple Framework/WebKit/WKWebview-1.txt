@@ -1,0 +1,186 @@
+WKWebView有两个delegate.   WKUIDelegate和WKNavigationDelegate。
+
+WKNavigationDelegate主要处理一些跳转、加载处理操作
+WKUIDelegate主要处理JS脚本，确认框，警告框等。
+
+WKNavigationDelegate:
+// 页面开始加载时调用
+- (void)webView:(WKWebView *)webView didStartProvisionalNavigation:(WKNavigation *)navigation{
+     
+}
+// 当内容开始返回时调用
+- (void)webView:(WKWebView *)webView didCommitNavigation:(WKNavigation *)navigation{
+     
+}
+// 页面加载完成之后调用
+- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation{
+     
+}
+// 页面加载失败时调用
+- (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation{
+     
+}
+
+// 接收到服务器跳转请求之后调用
+- (void)webView:(WKWebView *)webView didReceiveServerRedirectForProvisionalNavigation:(WKNavigation *)navigation{
+     
+}
+// 在收到响应后，决定是否跳转
+- (void)webView:(WKWebView *)webView decidePolicyForNavigationResponse:(WKNavigationResponse *)navigationResponse decisionHandler:(void (^)(WKNavigationResponsePolicy))decisionHandler{
+     
+    NSLog(@"%@",navigationResponse.response.URL.absoluteString);
+    //允许跳转
+    decisionHandler(WKNavigationResponsePolicyAllow);
+    //不允许跳转
+    //decisionHandler(WKNavigationResponsePolicyCancel);
+}
+// 在发送请求之前，决定是否跳转
+- (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler{
+    // 请求的百度地址
+    NSLog(@"%@",navigationAction.request.URL.absoluteString);
+    //允许跳转
+    decisionHandler(WKNavigationActionPolicyAllow);
+    //不允许跳转
+    //decisionHandler(WKNavigationActionPolicyCancel);
+}
+
+
+WKUIDelegate:
+// 创建一个新的WebView
+- (WKWebView *)webView:(WKWebView *)webView createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration forNavigationAction:(WKNavigationAction *)navigationAction windowFeatures:(WKWindowFeatures *)windowFeatures{
+    return [[WKWebView alloc]init];
+}
+// 输入框
+- (void)webView:(WKWebView *)webView runJavaScriptTextInputPanelWithPrompt:(NSString *)prompt defaultText:(nullable NSString *)defaultText initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(NSString * __nullable result))completionHandler{
+    completionHandler(@"http");
+}
+// 确认框
+- (void)webView:(WKWebView *)webView runJavaScriptConfirmPanelWithMessage:(NSString *)message initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(BOOL result))completionHandler{
+    completionHandler(YES);
+}
+// 警告框
+- (void)webView:(WKWebView *)webView runJavaScriptAlertPanelWithMessage:(NSString *)message initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(void))completionHandler{
+    NSLog(@"%@",message);
+    completionHandler();
+}
+
+//协议
+WKScriptMessageHandler:
+// 从web界面中接收到一个脚本时调用
+- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message;
+
+
+WKWebView加载JS:
+// 图片缩放的js代码
+NSString *js = @"var count = document.images.length;for (var i = 0; i < count; i++) {var image = document.images[i];image.style.width=320;};window.alert('找到' + count + '张图');";
+// 根据JS字符串初始化WKUserScript对象
+WKUserScript *script = [[WKUserScript alloc] initWithSource:js injectionTime:WKUserScriptInjectionTimeAtDocumentEnd forMainFrameOnly:YES];
+// 根据生成的WKUserScript对象，初始化WKWebViewConfiguration
+WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
+[config.userContentController addUserScript:script];
+_webView = [[WKWebView alloc] initWithFrame:self.view.bounds configuration:config];
+[_webView loadHTMLString:@"![](http://upload-images.jianshu.io/upload_images/1204112-3c87ed90109ff19f.jpg?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240)"baseURL:nil];
+[self.view addSubview:_webView];
+
+
+
+WKWebView下面添加自定义View:
+当页面加载完成时，在网页下面拼一个空白的div，高度就是你添加的View的高度，让网页多出一个空白区域，自定义的View就添加在这个空白的区域上面
+self.addView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, ScreenWidth, addViewHeight)];
+self.addView.backgroundColor = [UIColor redColor];
+[self.webView.scrollView addSubview:self.addView];
+NSString *js = [NSString stringWithFormat:@"\
+                var appendDiv = document.getElementById(\"AppAppendDIV\");\
+                if (appendDiv) {\
+                    appendDiv.style.height = %@+\"px\";\
+                } else {\
+                    var appendDiv = document.createElement(\"div\");\
+                                                           appendDiv.setAttribute(\"id\",\"AppAppendDIV\");\
+                                                                                  appendDiv.style.width=%@+\"px\";\
+                                                                                  appendDiv.style.height=%@+\"px\";\
+                                                                                  document.body.appendChild(appendDiv);\
+                                                                                  }\
+                                                                                  ", @(addViewHeight), @(self.webView.scrollView.contentSize.width), @(addViewHeight)];
+                                                                                   
+                                                                                  [self.webView evaluateJavaScript:js completionHandler:nil];
+
+
+==================
+使用自带WKUserContentController实现js native交互:
+
+JS调用OC:
+WKWebViewConfiguration * configuration = [[WKWebViewConfiguration alloc]init];
+userContentController =[[WKUserContentController alloc]init];
+configuration.userContentController = userContentController;
+webView = [[WKWebView alloc]initWithFrame:CGRectMake(0, 0, 100, 100) configuration:configuration];
+
+//注册方法
+WKDelegateController * delegateController = [[WKDelegateController alloc]init];
+delegateController.delegate = self;
+[userContentController addScriptMessageHandler:delegateController  name:@"sayhello"];
+
+- (void)dealloc{
+//这里需要注意，前面增加过的方法一定要remove掉。
+[userContentController removeScriptMessageHandlerForName:@"sayhello"];
+}
+
+
+addScriptMessageHandler要和removeScriptMessageHandlerForName配套出现，否则会造成内存泄漏
+oc调用JS:
+- (void)webView:(WKWebView *)tmpWebView didFinishNavigation:(WKNavigation *)navigation{
+//say()是JS方法名，completionHandler是异步回调block
+[webView evaluateJavaScript:@"say()" completionHandler:^(id _Nullable result, NSError * _Nullable error) {
+NSLog(@"%@",result);
+
+}];
+}
+
+==================
+网页的 readyState 属性也可以返回当前加载状态，共有5种。
+1.uninitialized : 还没开始加载
+2.loading : 加载中
+3.loaded : 加载完成
+4.interactive : 结束渲染，用户已经可以与网页进行交互。但内嵌资源还在加载中
+5.complete : 完全加载完成
+
+
+==================UIWebView
+- (void)webViewDidFinishLoad:(UIWebView *)webView {
+    NSString *readyState = [webView stringByEvaluatingJavaScriptFromString:@"document.readyState"];
+    BOOL complete = [readyState isEqualToString:@"complete"];
+    
+    if (complete) {
+        
+    }
+}    
+
+
+===================WK 原生js&oc交互
+OC端接收来着JS端发送的消息
+WKUserContentController *userCC = config.userContentController;
+    //JS调用OC 添加处理脚本
+    [userCC addScriptMessageHandler:self name:@"showMobile_qin"];
+    [userCC addScriptMessageHandler:self name:@"showName"];
+    [userCC addScriptMessageHandler:self name:@"showSendMsg"];
+
+
+
+#pragma mark - WKScriptMessageHandler
+- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
+    NSLog(@"userScripts:%@",userContentController.userScripts);
+    NSLog(@"name:%@,,body:%@",message.name,message.body);
+    if ([message.name isEqualToString:@"showSendMsg"]) {
+        NSDictionary *dic = message.body;
+        NSString *info = [NSString stringWithFormat:@"message是:%@",dic[@"message"]];
+        NSLog(@"info:%@",info);
+    }
+}
+
+
+这是html互通消息端固定的格式写法
+ window.webkit.messageHandlers.<name>.postMessage(<messageBody>) for all
+// JS代码  事件列表
+        function btnClick() {
+            var dic = {"message": "JS发消息给OC", "ls": "李四1" };
+  window.webkit.messageHandlers.showSendMsg.postMessage(dic);
+            }

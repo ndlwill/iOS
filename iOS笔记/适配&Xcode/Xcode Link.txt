@@ -1,0 +1,51 @@
+Xcode build时
+
+日志显示：
+Link 项目名
+
+/Users/youdun-ndl/Library/Developer/Toolchains/swift-6.0.2-RELEASE.xctoolchain/usr/bin/clang 
+-Xlinker -reproducible -target arm64-apple-ios15.6 
+-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.2.sdk 
+-O0 -L/Users/youdun-ndl/Library/Developer/Xcode/DerivedData/TestSwiftToolchain-gvzprnovruezbvcbyetqcrnmvmgd/Build/Products/Debug-iphoneos 
+-F/Users/youdun-ndl/Library/Developer/Xcode/DerivedData/TestSwiftToolchain-gvzprnovruezbvcbyetqcrnmvmgd/Build/Products/Debug-iphoneos 
+-Xlinker -rpath -Xlinker @executable_path -Xlinker -rpath -Xlinker @executable_path/Frameworks -Xlinker -export_dynamic 
+-Xlinker -no_deduplicate -e ___debug_blank_executor_main -Xlinker -sectcreate 
+-Xlinker __TEXT -Xlinker __debug_dylib 
+-Xlinker /Users/youdun-ndl/Library/Developer/Xcode/DerivedData/TestSwiftToolchain-gvzprnovruezbvcbyetqcrnmvmgd/Build/Intermediates.noindex/TestSwiftToolchain.build/Debug-iphoneos/TestSwiftToolchain.build/TestSwiftToolchain-DebugDylibPath-normal-arm64.txt -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __debug_instlnm -Xlinker /Users/youdun-ndl/Library/Developer/Xcode/DerivedData/TestSwiftToolchain-gvzprnovruezbvcbyetqcrnmvmgd/Build/Intermediates.noindex/TestSwiftToolchain.build/Debug-iphoneos/TestSwiftToolchain.build/TestSwiftToolchain-DebugDylibInstallName-normal-arm64.txt -Xlinker -filelist -Xlinker /Users/youdun-ndl/Library/Developer/Xcode/DerivedData/TestSwiftToolchain-gvzprnovruezbvcbyetqcrnmvmgd/Build/Intermediates.noindex/TestSwiftToolchain.build/Debug-iphoneos/TestSwiftToolchain.build/TestSwiftToolchain-ExecutorLinkFileList-normal-arm64.txt /Users/youdun-ndl/Library/Developer/Xcode/DerivedData/TestSwiftToolchain-gvzprnovruezbvcbyetqcrnmvmgd/Build/Products/Debug-iphoneos/TestSwiftToolchain.app/TestSwiftToolchain.debug.dylib 
+-o /Users/youdun-ndl/Library/Developer/Xcode/DerivedData/TestSwiftToolchain-gvzprnovruezbvcbyetqcrnmvmgd/Build/Products/Debug-iphoneos/TestSwiftToolchain.app/TestSwiftToolchain
+    
+
+
+clang -Xlinker 是用于 将参数传递给链接器（linker） 的选项。
+当你使用 clang 编译器时，它在编译流程的最后阶段会调用链接器（比如 ld）来将所有目标文件链接成一个可执行文件或动态库。
+但是，有些 链接器参数 并不是 clang 自己的参数，而是链接器专属的。如果你直接把这些参数传给 clang，它可能不识别。
+为了将参数正确地传递给链接器，可以使用：
+clang -Xlinker <linker_flag>
+
+多个参数的用法：
+如果你有多个参数要传递给链接器，每个参数前都要加 -Xlinker：
+clang -Xlinker -exported_symbol -Xlinker _mySymbol
+或者你也可以用 -Wl, 前缀，这是更常见的简写方式（Wl = pass to linker）：
+clang -Wl,-exported_symbol,_mySymbol
+
+虽然是 clang 命令，但它实际是调用了 Apple 的 ld（链接器） 来完成最终的链接操作。
+在 macOS 和 iOS 上，clang 在链接阶段默认使用的是 Apple 自家的 ld，也叫 ld64，它位于路径类似
+/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld
+或者当你使用 Swift 自定义 toolchain（如日志中所示的 swift-6.0.2-RELEASE.xctoolchain）时，它会使用该 toolchain 中定义的 ld，但通常还是调用系统的 ld64。
+
+如果你想确认当前 toolchain 中使用的 ld 是哪个，可以直接运行：
+xcrun -toolchain swift-6.0.2-RELEASE -find ld
+或者
+clang -### test.o -o test
+它会打印出具体调用了哪个 ld，这个方法对任何 toolchain 都适用。
+
+
+对于上面的/Users/youdun-ndl/Library/Developer/Toolchains/swift-6.0.2-RELEASE.xctoolchain/usr/bin/clang命令
+这是 Clang 的前端工具。但 Clang 本身并不直接执行链接操作，它只是负责：
+编译源代码为目标文件（.o）；
+如果你传入的是多个 .o 文件或 .a 文件并指定了 -o <可执行文件>，那它就会自动调用系统的链接器来完成链接。
+
+重点：clang 是调用 ld 的「驱动程序」
+
+Apple 的 Clang 是这样工作的：
+Clang（编译器驱动） → ld（链接器）

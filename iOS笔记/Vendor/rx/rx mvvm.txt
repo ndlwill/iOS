@@ -1,0 +1,722 @@
+https://beeth0ven.github.io/RxSwift-Chinese-Documentation/
+
+
+protocol ViewModelType {
+    associatedtype Input
+    associatedtype Output
+    
+    func transform(input: Input) -> Output
+}
+
+视图模型将处理输入（用户名和密码），并提供输出（登录按钮是否启用和登录结果）。
+
+import RxSwift
+import RxCocoa
+
+struct LoginViewModel: ViewModelType {
+    struct Input {
+        let username: Observable<String>
+        let password: Observable<String>
+        let loginTapped: Observable<Void>
+    }
+    
+    struct Output {
+        let isLoginButtonEnabled: Observable<Bool>
+        let loginResult: Observable<Bool>
+    }
+    
+    func transform(input: Input) -> Output {
+        let credentialsValid = Observable.combineLatest(input.username, input.password) { username, password in
+            return !username.isEmpty && !password.isEmpty
+        }
+        
+        let isLoginButtonEnabled = credentialsValid
+        
+        let loginResult = input.loginTapped.withLatestFrom(credentialsValid)
+            .flatMapLatest { valid -> Observable<Bool> in
+                guard valid else { return Observable.just(false) }
+                // 模拟登录请求
+                return Observable.just(true).delay(.seconds(2), scheduler: MainScheduler.instance)
+            }
+        
+        return Output(isLoginButtonEnabled: isLoginButtonEnabled, loginResult: loginResult)
+    }
+}
+
+
+import UIKit
+import RxSwift
+import RxCocoa
+
+class LoginViewController: UIViewController {
+    @IBOutlet weak var usernameTextField: UITextField!
+    @IBOutlet weak var passwordTextField: UITextField!
+    @IBOutlet weak var loginButton: UIButton!
+    @IBOutlet weak var resultLabel: UILabel!
+    
+    private let disposeBag = DisposeBag()
+    private let viewModel = LoginViewModel()
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        
+        let input = LoginViewModel.Input(
+            username: usernameTextField.rx.text.orEmpty.asObservable(),
+            password: passwordTextField.rx.text.orEmpty.asObservable(),
+            loginTapped: loginButton.rx.tap.asObservable()
+        )
+        
+        let output = viewModel.transform(input: input)
+        
+        output.isLoginButtonEnabled
+            .bind(to: loginButton.rx.isEnabled)
+            .disposed(by: disposeBag)
+        
+        output.loginResult
+            .map { $0 ? "Login Successful" : "Login Failed" }
+            .bind(to: resultLabel.rx.text)
+            .disposed(by: disposeBag)
+    }
+}
+
+==================================================
+RxSwift：它只是基于 Swift 语言的 Rx 标准实现接口库，所以 RxSwift 里不包含任何 Cocoa 或者 UI 方面的类。 
+RxCocoa：是基于 RxSwift 针对于 iOS 开发的一个库，它通过 Extension 的方法给原生的比如 UI 控件添加了 Rx 的特性，使得我们更容易订阅和响应这些控件的事件
+
+
+// 2024.7.12
+
+被观察者(Observable) 它主要负责产生事件，实质上就是一个可被监听的序列(Sequence)
+Observable<T> 这个类就是Rx框架的基础，我们称它为可观察序列
+Observable ` ==异步产生==>` event(element : T)
+
+----------ObservableConvertibleType
+/// Type that can be converted to observable sequence (`Observable<Element>`).
+public protocol ObservableConvertibleType {
+    /// Type of elements in sequence.
+    associatedtype Element
+
+    /// Converts `self` to `Observable` sequence.
+    ///
+    /// - returns: Observable sequence that represents `self`.
+    func asObservable() -> Observable<Element>
+}
+
+
+----------ObservableType
+/// Represents a push style sequence.
+public protocol ObservableType: ObservableConvertibleType {
+    /**
+    Subscribes `observer` to receive events for this sequence.
+    
+    ### Grammar
+    
+    **Next\* (Error | Completed)?**
+    
+    * sequences can produce zero or more elements so zero or more `Next` events can be sent to `observer`
+    * once an `Error` or `Completed` event is sent, the sequence terminates and can't produce any other elements
+    
+    It is possible that events are sent from different threads, but no two events can be sent concurrently to
+    `observer`.
+    
+    ### Resource Management
+    
+    When sequence sends `Complete` or `Error` event all internal resources that compute sequence elements
+    will be freed.
+    
+    To cancel production of sequence elements and free resources immediately, call `dispose` on returned
+    subscription.
+    
+    - returns: Subscription for `observer` that can be used to cancel production of sequence elements and free resources.
+    */
+    func subscribe<Observer: ObserverType>(_ observer: Observer) -> Disposable where Observer.Element == Element
+}
+
+extension ObservableType {
+    
+    /// Default implementation of converting `ObservableType` to `Observable`.
+    public func asObservable() -> Observable<Element> {
+        // temporary workaround
+        //return Observable.create(subscribe: self.subscribe)
+        Observable.create { o in self.subscribe(o) }
+    }
+}
+
+----------Observable
+public typealias RxObservable<Element> = RxSwift.Observable<Element>
+
+public class Observable<Element> : ObservableType {
+    init() {
+#if TRACE_RESOURCES
+        _ = Resources.incrementTotal()
+#endif
+    }
+    
+    public func subscribe<Observer: ObserverType>(_ observer: Observer) -> Disposable where Observer.Element == Element {
+        rxAbstractMethod()
+    }
+    
+    public func asObservable() -> Observable<Element> { self }
+    
+    deinit {
+#if TRACE_RESOURCES
+        _ = Resources.decrementTotal()
+#endif
+    }
+}
+
+
+----------Producer
+class Producer<Element>: Observable<Element> {
+    override init() {
+        super.init()
+    }
+
+    override func subscribe<Observer: ObserverType>(_ observer: Observer) -> Disposable where Observer.Element == Element {
+        if !CurrentThreadScheduler.isScheduleRequired {
+            // The returned disposable needs to release all references once it was disposed.
+            let disposer = SinkDisposer()
+            let sinkAndSubscription = self.run(observer, cancel: disposer)
+            disposer.setSinkAndSubscription(sink: sinkAndSubscription.sink, subscription: sinkAndSubscription.subscription)
+
+            return disposer
+        }
+        else {
+            return CurrentThreadScheduler.instance.schedule(()) { _ in
+                let disposer = SinkDisposer()
+                let sinkAndSubscription = self.run(observer, cancel: disposer)
+                disposer.setSinkAndSubscription(sink: sinkAndSubscription.sink, subscription: sinkAndSubscription.subscription)
+
+                return disposer
+            }
+        }
+    }
+
+    func run<Observer: ObserverType>(_ observer: Observer, cancel: Cancelable) -> (sink: Disposable, subscription: Disposable) where Observer.Element == Element {
+        rxAbstractMethod()
+    }
+}
+
+
+----------AnonymousObservable
+final private class AnonymousObservable<Element>: Producer<Element> {
+    typealias SubscribeHandler = (AnyObserver<Element>) -> Disposable
+
+    let subscribeHandler: SubscribeHandler
+
+    init(_ subscribeHandler: @escaping SubscribeHandler) {
+        self.subscribeHandler = subscribeHandler
+    }
+
+    override func run<Observer: ObserverType>(_ observer: Observer, cancel: Cancelable) -> (sink: Disposable, subscription: Disposable) where Observer.Element == Element {
+        let sink = AnonymousObservableSink(observer: observer, cancel: cancel)
+        let subscription = sink.run(self)
+        return (sink: sink, subscription: subscription)
+    }
+}
+
+
+观察者(Observer) 它主要负责监听事件然后对这个事件做出响应，或者说任何响应事件的行为都是观察者
+
+
+----------ObserverType
+/// Supports push-style iteration over an observable sequence.
+public protocol ObserverType {
+    /// The type of elements in sequence that observer can observe.
+    associatedtype Element
+
+    /// Notify observer about sequence event.
+    ///
+    /// - parameter event: Event that occurred.
+    func on(_ event: Event<Element>)
+}
+
+/// Convenience API extensions to provide alternate next, error, completed events
+extension ObserverType {
+    
+    /// Convenience method equivalent to `on(.next(element: Element))`
+    ///
+    /// - parameter element: Next element to send to observer(s)
+    public func onNext(_ element: Element) {
+        self.on(.next(element))
+    }
+    
+    /// Convenience method equivalent to `on(.completed)`
+    public func onCompleted() {
+        self.on(.completed)
+    }
+    
+    /// Convenience method equivalent to `on(.error(Swift.Error))`
+    /// - parameter error: Swift.Error to send to observer(s)
+    public func onError(_ error: Swift.Error) {
+        self.on(.error(error))
+    }
+}
+
+----------ObserverBase
+class ObserverBase<Element> : Disposable, ObserverType {
+    private let isStopped = AtomicInt(0)
+
+    func on(_ event: Event<Element>) {
+        switch event {
+        case .next:
+            if load(self.isStopped) == 0 {
+                self.onCore(event)
+            }
+        case .error, .completed:
+            if fetchOr(self.isStopped, 1) == 0 {
+                self.onCore(event)
+            }
+        }
+    }
+
+    func onCore(_ event: Event<Element>) {
+        rxAbstractMethod()
+    }
+
+    func dispose() {
+        fetchOr(self.isStopped, 1)
+    }
+}
+
+----------AnonymousObserver
+final class AnonymousObserver<Element>: ObserverBase<Element> {
+    typealias EventHandler = (Event<Element>) -> Void
+    
+    private let eventHandler : EventHandler
+    
+    init(_ eventHandler: @escaping EventHandler) {
+#if TRACE_RESOURCES
+        _ = Resources.incrementTotal()
+#endif
+        self.eventHandler = eventHandler
+    }
+
+    override func onCore(_ event: Event<Element>) {
+        self.eventHandler(event)
+    }
+    
+#if TRACE_RESOURCES
+    deinit {
+        _ = Resources.decrementTotal()
+    }
+#endif
+}
+
+
+订阅者(Subscriber) 事件的最终处理者
+
+
+管道(Sink) Observer 和 Observable 沟通的桥梁：Sink相当与一个加工者，可以将源事件流转换成一个新的事件流，如果将事件流比作水流，事件的传递过程比作水管，那么Sink就相当于水管中的一个转换头。
+
+
+----------Disposable
+/// Represents a disposable resource.
+public protocol Disposable {
+    /// Dispose resource.
+    func dispose()
+}
+
+
+----------Sink
+class Sink<Observer: ObserverType>: Disposable {
+    fileprivate let observer: Observer
+    fileprivate let cancel: Cancelable
+    private let disposed = AtomicInt(0)
+
+    #if DEBUG
+        private let synchronizationTracker = SynchronizationTracker()
+    #endif
+
+    init(observer: Observer, cancel: Cancelable) {
+#if TRACE_RESOURCES
+        _ = Resources.incrementTotal()
+#endif
+        self.observer = observer
+        self.cancel = cancel
+    }
+
+    final func forwardOn(_ event: Event<Observer.Element>) {
+        #if DEBUG
+            self.synchronizationTracker.register(synchronizationErrorMessage: .default)
+            defer { self.synchronizationTracker.unregister() }
+        #endif
+        if isFlagSet(self.disposed, 1) {
+            return
+        }
+        self.observer.on(event)
+    }
+
+    final func forwarder() -> SinkForward<Observer> {
+        SinkForward(forward: self)
+    }
+
+    final var isDisposed: Bool {
+        isFlagSet(self.disposed, 1)
+    }
+
+    func dispose() {
+        fetchOr(self.disposed, 1)
+        self.cancel.dispose()
+    }
+
+    deinit {
+#if TRACE_RESOURCES
+       _ =  Resources.decrementTotal()
+#endif
+    }
+}
+
+----------Cancelable
+/// Represents disposable resource with state tracking.
+public protocol Cancelable : Disposable {
+    /// Was resource disposed.
+    var isDisposed: Bool { get }
+}
+
+----------AnonymousObservableSink
+final private class AnonymousObservableSink<Observer: ObserverType>: Sink<Observer>, ObserverType {
+    typealias Element = Observer.Element 
+    typealias Parent = AnonymousObservable<Element>
+
+    // state
+    private let isStopped = AtomicInt(0)
+
+    #if DEBUG
+        private let synchronizationTracker = SynchronizationTracker()
+    #endif
+
+    override init(observer: Observer, cancel: Cancelable) {
+        super.init(observer: observer, cancel: cancel)
+    }
+
+    func on(_ event: Event<Element>) {
+        #if DEBUG
+            self.synchronizationTracker.register(synchronizationErrorMessage: .default)
+            defer { self.synchronizationTracker.unregister() }
+        #endif
+        switch event {
+        case .next:
+            if load(self.isStopped) == 1 {
+                return
+            }
+            self.forwardOn(event)
+        case .error, .completed:
+            if fetchOr(self.isStopped, 1) == 0 {
+                self.forwardOn(event)
+                self.dispose()
+            }
+        }
+    }
+
+    func run(_ parent: Parent) -> Disposable {
+        parent.subscribeHandler(AnyObserver(self))
+    }
+}
+
+
+
+==================================================代码解析:
+//1:创建序列
+ let ob = Observable<Any>.create { (observer) -> Disposable in
+            // 3:发送信号
+            observer.onNext("测试OnNext")
+            observer.onCompleted()
+            observer.onError(NSError.init(domain: "error！", code: 000, userInfo: nil))
+            return Disposables.create()
+        }
+ 
+//2:订阅信息
+ let _ = ob.subscribe(onNext: { (text) in
+            print("订阅到:\(text)")    //text从哪里来的？
+        }, onError: { (error) in
+            print("error: \(error)")    //error从哪里来的？
+        }, onCompleted: {
+            print("完成")
+        }) {
+            print("销毁")
+        }
+
+create 闭包什么时候执行， subscribe 闭包又是什么时候执行的
+
+
+Create方法:
+public static func create(_ subscribe: @escaping (AnyObserver<E>) -> Disposable) -> Observable<E> {
+    return AnonymousObservable(subscribe)
+}
+create 函数， 返回了一个AnonymousObservable实例
+
+所有的被观察者都继承于Producer
+对于Producer:
+Observable集（父类） ObservableConvertibleType（完全的抽象）
+ObservableType（ 处理subscribe） 
+Observable（处理 asObservable） 
+Producer（重载subscribe） 
+AnonymousObservable（处理run） （子类）
+
+由上面我们能看出,如果想自定义Observable通常只需要继承Producer， 并实现run方法就可以了。
+Run方法里面涉及了类AnonymousObservableSink,它作为Observer 和 Observable的衔接的桥梁
+我们看到它本身遵守ObseverType协议，与此同时实现了run方法。
+
+总结下create方法主要工作:
+创建AnonymousObservable对象，
+用_subscribeHandler 保存了闭包
+写了run方法在内部创建了AnonymousObservableSink 
+
+
+Subscribe方法:
+public func subscribe(_ on: @escaping (Event<E>) -> Void)
+    -> Disposable {
+        let observer = AnonymousObserver { e in
+            on(e)
+        }
+        return self.asObservable().subscribe(observer)
+}
+
+这只是入口，下面的才是核心（Producer里面）
+// Producer Class
+override func subscribe<O : ObserverType>(_ observer: O) -> Disposable where O.E == Element {
+    if !CurrentThreadScheduler.isScheduleRequired {
+        // The returned disposable needs to release all references once it was disposed.
+        let disposer = SinkDisposer()
+        let sinkAndSubscription = run(observer, cancel: disposer)
+        disposer.setSinkAndSubscription(sink: sinkAndSubscription.sink, subscription: sinkAndSubscription.subscription)
+
+        return disposer
+    }
+    else {
+        return CurrentThreadScheduler.instance.schedule(()) { _ in
+            let disposer = SinkDisposer()
+            let sinkAndSubscription = self.run(observer, cancel: disposer)
+            disposer.setSinkAndSubscription(sink: sinkAndSubscription.sink, subscription: sinkAndSubscription.subscription)
+
+            return disposer
+        }
+    }
+}
+Producer调用了自己的run方法，而AnonymousObservableSink作为其子类重写了该方法
+
+// AnonymousObservable Class
+override func run<O : ObserverType>(_ observer: O, cancel: Cancelable) -> (sink: Disposable, subscription: Disposable) where O.E == Element {
+    let sink = AnonymousObservableSink(observer: observer, cancel: cancel)
+    let subscription = sink.run(self)
+    return (sink: sink, subscription: subscription)
+}
+
+之前提到过AnonymousObservableSink，注意Sink是持有Observer的，从这也可以看出来Observerable的run方法触发Sink的run方法
+
+关注 AnonymousObservableSink 方法
+func run(_ parent: Parent) -> Disposable {
+    return parent._subscribeHandler(AnyObserver(self))
+}
+这个subscribeHandler就是之前最开始的闭包（create的闭包）
+Observable<String>.create { observer -> Disposable in
+    observer.onNext("测试")
+    return Disposables.create()
+}
+至此我们知道了create闭包是什么时候执行的了
+
+实体类AnyObserver，看看它里面究竟是如何实现的
+/// A type-erased `ObserverType`.
+///
+/// Forwards operations to an arbitrary underlying observer with the same `Element` type, hiding the specifics of the underlying observer type.
+public struct AnyObserver<Element> : ObserverType {
+    /// Anonymous event handler type.
+    public typealias EventHandler = (Event<Element>) -> Void
+
+    private let observer: EventHandler
+
+    /// Construct an instance whose `on(event)` calls `eventHandler(event)`
+    ///
+    /// - parameter eventHandler: Event handler that observes sequences events.
+    public init(eventHandler: @escaping EventHandler) {
+        self.observer = eventHandler
+    }
+    
+    /// Construct an instance whose `on(event)` calls `observer.on(event)`
+    ///
+    /// - parameter observer: Observer that receives sequence events.
+    public init<Observer: ObserverType>(_ observer: Observer) where Observer.Element == Element {
+        self.observer = observer.on
+    }
+    
+    /// Send `event` to this observer.
+    ///
+    /// - parameter event: Event instance.
+    public func on(_ event: Event<Element>) {
+        self.observer(event)
+    }
+
+    /// Erases type of observer and returns canonical observer.
+    ///
+    /// - returns: type erased observer.
+    public func asObserver() -> AnyObserver<Element> {
+        self
+    }
+}
+
+其内部的Observer其实是一个EventHandler，并且在初始化的时候把外部传过来的AnonymousObservableSink.on赋值给了这个Observer
+也就是说observer.onNext("测试")最终会触发AnonymousObservableSink.on事件
+
+看下AnonymousObservableSink的on的具体实现
+// AnonymousObservableSink.on
+
+func on(_ event: Event<E>) {
+    #if DEBUG
+        _synchronizationTracker.register(synchronizationErrorMessage: .default)
+        defer { _synchronizationTracker.unregister() }
+    #endif
+    switch event {
+    case .next:
+        if _isStopped == 1 {
+            return
+        }
+        forwardOn(event)
+    case .error, .completed:
+        if AtomicCompareAndSwap(0, 1, &_isStopped) {
+            forwardOn(event)
+            dispose()
+        }
+    }
+}
+
+AnonymousObservableSink的on会调用其内部的forwardOn
+
+// Sink.forwardOn
+final func forwardOn(_ event: Event<O.E>) {
+    #if DEBUG
+        _synchronizationTracker.register(synchronizationErrorMessage: .default)
+        defer { _synchronizationTracker.unregister() }
+    #endif
+    if _disposed {
+        return
+    }
+    _observer.on(event)
+}
+
+这个_observer就是我们最初传进来的subscribe闭包的实体类AnonymousObserver
+public func subscribe(_ on: @escaping (Event<E>) -> Void)
+    -> Disposable {
+        let observer = AnonymousObserver { e in
+            on(e)
+        return self.asObservable().subscribe(observer)
+}
+
+继续看下这个AnonymousObserver的on方法又是如何实现的
+AnonymousObserver->ObserverBase->ObserverType
+
+// ObserverBase.on
+func on(_ event: Event<E>) {
+    switch event {
+    case .next:
+        if _isStopped == 0 {
+            onCore(event)
+        }
+    case .error, .completed:
+        if AtomicCompareAndSwap(0, 1, &_isStopped) {
+            onCore(event)
+        }
+    }
+}
+
+ObserverBase.on会触发onCore方法，看下子类的实现
+
+// AnonymousObserver.onCore
+override func onCore(_ event: Event<Element>) {
+    return _eventHandler(event)
+}
+
+_eventHandler还记得吗？它就是最初传进来的订阅闭包
+.subscribe { event in
+    print(event.element)
+}
+
+
+总结:
+Observable-Create阶段:
+创建AnonymousObservable
+保存闭包(subscribeHandler)
+
+Observable-Subscribe阶段:
+创建AnonymousObserver
+调用自己（AnonymousObservable）的run方法:（AnonymousObserver作为参数） 
+AnonymousObservable重写了run，
+它在方法里面创建了AnonymousObservableSink并在sink里保存了这个刚创建的AnonymousObserver
+调用AnonymousObservableSink的run
+run方法里用到AnonymousObservable的_subscribeHandler并传入AnyObserver
+这里AnonymousObservableSink.on赋值给了AnyObserver内部的EventHandler成员observer
+
+执行阶段:
+AnyObserver.on —-> 
+AnonymousObservableSink.on —-> 
+AnonymousObservableSink.forwardOn —-> 
+AnonymousObserver.on —> 
+AnonymousObserver.onCore —-> 
+_eventHandler(event)
+
+
+Sink在不同的阶段有着不同的身份:
+Sink充当Observable Obsevable.subscribe —> Obsevable.run —-> Sink.run  这个过程通过Sink建立Obsevable和 Observer的联系
+Sink充当Observer AnyObserver.on —-> Sink.on —-> Observer.on —> Observer.OnCore
+
+
+我的理解是，被观察者(Observable) 进行 create 时，会创建 AnonymousObservable 并返回，并将 create 的闭包保存在 AnonymousObservable 的 subscribeHandler。
+subscribeHandler 会在被观察者(Observable) 被 subscribe 时被调用。subscribe 的闭包是最终执行的事件处理。
+
+subscribeHandler，即create 闭包被调用原理:
+因为被观察者(Observable) ，即 AnonymousObservable 被 subscribe 时，subscribe方法内部会执行 Producer（AnonymousObservable的父类） 的 subscribe，
+并将 subscribe 闭包保存在内部创建的 AnonymousObserver 的 eventHandler。
+subscribe内部会调用 run 方法，AnonymousObservable 重写了 run，内部会创建 AnonymousObservableSink 并调用其 run 方法，并把 AnonymousObservable 作为参数传入。
+AnonymousObservableSink 的 run 方法就会调用参数 AnonymousObservable 的 subscribeHandler，subscribeHandler 方法传入的参数是 AnyObserver(AnonymousObservableSink)
+因为 AnonymousObservableSink 实现了 ObserverType。
+
+eventHandler，即subscribe 闭包被调用原理:
+因为实际开发编写的 create 闭包内部会调用 Observer.onXXX，实际就是调用 AnyObserver(AnonymousObservableSink) 的 onXXX。
+AnonymousObservableSink 的 on，内部调用了 forwardOn，就会调用 AnonymousObservableSink 父类 Sink 的 forwardOn(其实就是转发给self.observer，调用self.observer.on())，
+其内部就会调用 self.observer.on(event)。
+其中 self.observer（ObserverType类型） 是 Sink 的 init 方法传入的，即 AnonymousObservableSink 初始化时传入的。
+而 AnonymousObservableSink 是在 AnonymousObservable 的 run 方法中创建的，并且 self.observer 被赋值的 observer 是通过 run 的参数传入的。
+AnonymousObservable 重写了 Producer 的 run 方法，实际就是从 Producer 的 run 方法传入的。
+而 Producer 的 run 方法是在 subscribe 方法内部调用的，也就是通过 subscribe 的 observer 传入的。所以 self.observer 等于包含 eventHandler 的 AnonymousObserver。
+所以 self.observer.on(event) 实际就是调用 AnonymousObserver 的 onXXX。
+因为 AnonymousObserver 继承 ObserverBase，实际调用 ObserverBase 的 on()。
+ObserverBase 的 on()内部又调用了 onCore，并且AnonymousObserver又重写了 onCore，其内部就调用了保存的 eventHandler。
+
+
+==================================================
+
+对现有网络请求的改造
+之前网络请求返回的都是一个对象，接入RxSwift，最好将返回的对象定义为Observable类型，这样我们的业务模块才能方便的订阅返回的数据
+
+extension Reactive where Base: ZPMNetworkAgent {
+    public func request<T: HandyJSON>(_ path: String, params: [String: Any]? = nil, modelType: T.Type) -> Single<T?> {
+        return Single.create { [weak base] single in
+
+            let cancle = base?.getCAPIURL(path, params: params, success: { (request) in
+
+
+                let jsonData = request.responseJSONObject
+                var model: T?
+                if let json = jsonData, let jsonDic = json as? [String: Any] {
+                    model = T.deserialize(from: jsonDic)
+                }
+
+                single(.success(model))
+            }, failure: { (request) in
+                single(.error(ZPMNetError().transError(error: (request.error as! NSError))))
+            })
+
+            return Disposables.create {
+                cancle?.stop()
+            }
+        }
+    }
+}
+
+
+protocol ViewModelType {
+    associatedtype Input
+    associatedtype Output
+    
+    func transform(input: Input) -> Output
+}
