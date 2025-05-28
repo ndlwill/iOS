@@ -1,0 +1,67 @@
+在 Swift 中，=== 是身份运算符（identity operator），用于判断两个 类的实例 是否引用自 同一个对象（内存地址）。
+
+
+/*
+In Swift, only class instances and metatypes have unique identities.
+There is no notion of identity for structs, enums, functions, or tuples.
+*/
+struct ObjectIdentifier : Sendable
+
+
+如果你想比较的是“值是否相等”，用 ==，但这需要类型实现了 Equatable 协议。
+Swift 中 class 类型想要实现 Equatable 协议，必须显式实现，不会自动合成，即使所有属性都符合 Equatable。
+struct 可以自动合成
+
+
+
+线程安全的MessageCenter:
+final class MessageCenter {
+    static let shared = MessageCenter()
+
+    private init() {}
+
+    private var observers: [ObjectIdentifier: [UUID: (Message) -> Void]] = [:]
+    private let queue = DispatchQueue(label: "com.example.messagecenter.queue")
+
+    func subscribe<T: Message>(_ type: T.Type, using handler: @escaping (T) -> Void) -> UUID {
+        let token = UUID()
+        queue.sync {
+            let id = ObjectIdentifier(type)
+            let wrapper: (Message) -> Void = { message in
+                if let typedMessage = message as? T {
+                    handler(typedMessage)
+                }
+            }
+            if observers[id] == nil {
+                observers[id] = [:]
+            }
+            observers[id]?[token] = wrapper
+        }
+        return token
+    }
+
+    func unsubscribe<T: Message>(_ type: T.Type, token: UUID) {
+        queue.sync {
+            let id = ObjectIdentifier(type)
+            observers[id]?.removeValue(forKey: token)
+            if observers[id]?.isEmpty == true {
+                observers.removeValue(forKey: id)
+            }
+        }
+    }
+
+    func post(_ message: Message) {
+        // 先取一份回调，避免在回调执行时阻塞队列
+        var callbacks: [(Message) -> Void] = []
+        queue.sync {
+            let id = ObjectIdentifier(type(of: message))
+            if let dict = observers[id] {
+                callbacks = Array(dict.values)
+            }
+        }
+        // 异步执行回调，避免阻塞调用线程
+        DispatchQueue.global().async {
+            callbacks.forEach { $0(message) }
+        }
+    }
+}

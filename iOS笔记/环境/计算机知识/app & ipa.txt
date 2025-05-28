@@ -1,0 +1,173 @@
+.ipa 是包含 .app 的“压缩包”，用于分发到设备上安装。
+
+格式	说明	用途
+.app	App 的可执行结构目录（bundle），包含所有代码、资源、签名等	用于在设备上运行，macOS 上直接可用，iOS 上在设备内使用
+.ipa	iOS App 的安装包，本质是一个 zip 包，内部包含 .app	用于分发安装（App Store、TestFlight、Ad Hoc）
+
+
+unzip MyApp.ipa
+
+
+.app 本质是一个 目录（Bundle）
+这个 .app 文件夹会最终部署在 iOS/macOS 的应用沙盒目录中运行
+
+
+==================================================.ipa 才是真正的“打包（Archive）
+.ipa 是 iOS 的 安装包格式，可以理解为：
+一个经过签名的 .app 放进 Payload/ 目录，然后 zip 成 .ipa 文件，供安装或发布。
+
+MyApp.ipa (其实是个 zip)
+└── Payload/
+    └── MyApp.app/
+        ├── 可执行文件
+        ├── Info.plist
+        ├── Assets.car
+        ├── embedded.mobileprovision
+        ├── _CodeSignature/
+
+
+
+.app 是“构建（build）”的产物
+生成 .app 文件夹（或 bundle）只是将可执行文件 + 资源 + Info.plist 等组装成一个 可运行单元。
+编译（Compiling）和链接（Linking）这是构建可执行文件的过程,最终产物是一个二进制文件，例如 MyApp，位于 .app/ 目录下。
+MyApp.app/
+├── MyApp              ← 可执行文件 （已经签名）
+├── Info.plist
+├── Assets.car         ← 图标/图片资源
+├── Base.lproj/
+├── embedded.mobileprovision
+├── _CodeSignature/    ← 签名相关文件
+
+Code Signing（代码签名）
+这是一个安全校验过程，不是打包，也不是构建行为的一部分，而是一个附加的安全性标记：
+codesign 做了什么？
+使用你的开发证书（私钥）对 Mach-O 可执行文件、动态库、插件、资源等进行数字签名。
+生成一个签名哈希，嵌入到可执行文件和 .app 包中的 CodeResources 文件等位置。
+如果涉及到 iOS，还会验证和签入描述文件（.mobileprovision）。 // #####重要
+为什么要签名？
+macOS/iOS 在运行 App 时会进行“代码完整性验证”（Code Integrity Check）。
+签名保证你的 App 没有被篡改，且来源可信（有有效的 Apple 签名证书）。
+
+
+#####
+.mobileprovision 是 iOS 的 描述文件（Provisioning Profile），它包含以下关键信息：
+App ID（Bundle ID 限定）
+允许的设备 UUID（仅限开发/Ad-Hoc）
+开发者或发布证书的公钥
+是否允许调试、是否开启 get-task-allow
+有效期
+
+
+"验证" 和 "签入" .mobileprovision（描述文件）在 iOS App 签名过程中的具体含义:
+
+验证（Validate）:
+在签名（codesign）时，系统会验证：
+/*
+这是 Apple 在代码签名验证流程中的一个基本要求。这里的“描述文件”是指 Provisioning Profile，而“证书”是 Code Signing Certificate，包括 .cer 文件和其对应的私钥。
+
+描述文件里授权的开发者身份 即：DeveloperCertificates字段
+<key>DeveloperCertificates</key>
+<array>
+    <data>MIIBIjANBgkq...（base64 编码的证书）</data>
+</array>
+这个数组包含的是 公钥证书（.cer）的 Base64 编码内容，也就是 Apple 授权的那些开发者证书。每个证书对应一个开发者账号，并且会绑定一个私钥。
+*/
+你当前使用的开发/发布证书（签名用的私钥）必须和描述文件里授权的开发者身份匹配。
+描述文件里的 App ID 必须和你 app 的 Info.plist 中的 CFBundleIdentifier 匹配。
+描述文件是否 还在有效期 内。
+对于开发签名，还会验证设备是否在该描述文件的允许设备列表中。// 这个不是在codesign时验证的，而是在安装到 iOS 设备上时 由系统验证的。
+
+
+###
+（1）当你使用 codesign 命令进行签名（build 阶段）时，工具本身并不会去检查你所用的证书是不是由 Apple 官方颁发的。
+（2）如果你提供了 provisioning profile（描述文件），它确实会检查证书是否与描述文件内的开发者证书匹配
+这两个是两个不同层级的检查概念
+
+Apple 证书颁发与否 ≠ 描述文件中能不能匹配：
+codesign 本身不会关心你这个签名证书是不是 Apple 发的，它可以签任意东西
+但只要你指定了 embedded.mobileprovision，或者 app 包里包含它，它就会校验这个签名证书是否在 provision profile 的允许列表里
+这个校验过程只在本地执行，无需联网，也不验证 CA 证书链
+
+例子：
+codesign -s "iPhone Developer: Alice" \
+         --entitlements entitlements.plist \
+         --preserve-metadata=entitlements \
+         --force --timestamp=none \
+         /path/to/MyApp.app
+如果你这个 app 包含了一个 .mobileprovision：
+codesign 会：
+从 app 的 embedded.mobileprovision 中提取证书（里面会有 Base64 编码的开发证书）
+检查你用来签名的证书（-s 指定的那个）是否和里面匹配
+###
+
+
+Xcode 会在签名时验证以下内容：
+1. 描述文件是否匹配你的 App ID
+描述文件中必须包含你正在构建的 App 的 Bundle Identifier；
+否则会出现错误：Provisioning profile does not match bundle identifier。
+
+2. 描述文件是否包含你使用的签名证书（Signing Certificate）
+描述文件中会列出支持的开发者证书；
+如果你选的证书（如 Apple Development）不在其中，构建时会报错。
+
+3. 描述文件的设备列表（仅限开发环境） // 这个不是在codesign时验证的，而是在安装到 iOS 设备上时 由系统验证的。
+对于 Development Profile，会检查设备是否包含在允许列表中；
+真机调试时，设备 UDID 必须在 profile 中。
+
+4. 是否过期
+如果 profile 过期，签名会失败，提示 The provisioning profile has expired。
+
+5. 是否用于正确的用途（开发 vs 发布）// 和 2 类似
+比如你用开发证书 + 发布描述文件，会报错；
+描述文件和证书类型必须一致（Development/Distribution）。
+
+2 & 5:
+Xcode 会验证你选用的签名证书（Signing Certificate）是否与描述文件（Provisioning Profile）中的配置兼容
+是否被该描述文件包含；
+是否属于同一签名类型（Development / Distribution）；
+是否对应 profile 的用途（开发 / 发布 / AdHoc / 企业分发）。
+
+
+Build Target
+   ↓
+Compile
+   ↓
+Code Sign阶段
+   ↓
+[检查 .mobileprovision]
+   - App ID 匹配？
+   - 包含证书？
+   - 没过期？
+   - 类型正确？
+   ↓
+生成签名的 app
+
+
+上传ipa到app store前进行的codesign和build阶段时的codesign进行的验证基本一致，见上
+
+
+签入（Embed）:
+签入指的是：将 .mobileprovision 文件嵌入到 .app 包中。
+嵌入位置：MyApp.app/embedded.mobileprovision
+作用：
+安装到设备后，iOS 系统可以通过这个文件判断：
+这个 App 是不是允许安装
+是否启用调试
+属于哪个开发者/企业
+用于在设备上运行和验证 App 是否符合权限要求。
+
+
+举个例子：签名过程会做这些事
+codesign -f -s "Apple Development: Your Name (TEAMID)" \
+  --entitlements MyApp/MyApp.entitlements \
+  --preserve-metadata=entitlements \
+  --timestamp=none \
+  MyApp.app
+验证你使用的证书是否和 .mobileprovision 匹配。
+验证 App ID 是否一致。
+把 .mobileprovision 签入 .app 中。
+
+
+security cms -D -i embedded.mobileprovision
+查看一个已签名 .app 的 embedded.mobileprovision 内容
+#####

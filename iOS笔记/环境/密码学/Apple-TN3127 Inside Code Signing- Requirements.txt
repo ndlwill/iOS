@@ -1,0 +1,57 @@
+https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements
+
+Explore how macOS uses code signing requirements to reason about code identity.
+
+
+However, in some cases requirements are important, especially on macOS. For example:
+1. If you’re building an XPC service, you might want to restrict it to specific clients. The best way to do this is by setting a code signing requirement on the connection with setCodeSigningRequirement(_:).
+2. When working with privacy-protected resources on macOS, like the microphone, you might find that the system fails to remember your choices during development.
+3. You might find that the keychain presents unexpected authorization alerts when you deploy your app through a new channel, like TestFlight.
+
+
+A code signing requirement is a function that, given a code signature, returns a Boolean value. 
+This function uses traditional expression syntax. 
+For example anchor apple and identifier = "com.apple.TextEdit" is a requirement that returns true if:
+The code was signed by Apple as Apple code.
+The code’s signing identifier is com.apple.TextEdit.
+
+In short, this requirement identifies the TextEdit app.
+
+
+Important
+A code signing identifier is a string chosen by the signer to uniquely identify their code. 
+For bundled code this is typically the bundle identifier. 
+Don’t confuse this with a code signing identity, which is a digital identity used for code signing. 
+This digital identity includes a code signing certificate and its associated private key. 
+Finally, code identity is an abstract user-level concept of the ‘same code’. 
+For example, a user might consider the TextEdit app in macOS 12 to be the same as the TextEdit app in macOS 11 but not the same as the Calculator app. macOS uses code signing requirements to establish code identity.
+
+Use codesign to evaluate a requirement:
+% codesign --verify -v -R '=anchor apple and identifier = "com.apple.TextEdit"' "/System/Applications/TextEdit.app"
+…
+/System/Applications/TextEdit.app: explicit requirement satisfied
+
+% codesign --verify -v -R '=anchor apple and identifier = "com.apple.TextEdit"' "/System/Applications/Calculator.app"
+…
+test-requirement: code failed to satisfy specified code requirement(s)
+
+
+So TextEdit satisfies this requirement but Calculator does not. 
+You can also check requirements programmatically. 
+The following example calls SecStaticCodeCheckValidityWithErrors(::::) to check whether the given file satisfies the anchor apple and identifier = "com.apple.TextEdit" requirement:
+
+func isTextEdit(_ url: URL) throws -> Bool {
+    let req = try secCall { SecRequirementCreateWithString(#"anchor apple and identifier = "com.apple.TextEdit""# as NSString, [], $0) }
+    let code = try secCall { SecStaticCodeCreateWithPath(url as NSURL, [], $0) }
+    var errorQ: Unmanaged<CFError>? = nil
+    let err = SecStaticCodeCheckValidityWithErrors(code, [], req, &errorQ)
+    if err == errSecSuccess {
+        return true
+    } else {
+        let error = errorQ!.takeRetainedValue() as Error
+        guard err == errSecCSReqFailed else {
+            throw error
+        }
+        return false
+    }
+}

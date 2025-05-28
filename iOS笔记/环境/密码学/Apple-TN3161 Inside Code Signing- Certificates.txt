@@ -1,0 +1,826 @@
+https://developer.apple.com/documentation/technotes/tn3161-inside-code-signing-certificates
+
+
+certificate
+/səˈtɪfɪkət/
+sir---提费可特
+
+
+Learn how code signing uses certificates to identify code authors.
+
+
+Provisioning Profiles explains how Apple platforms use provisioning profiles to authorize the execution of third-party code.
+A provisioning profile ties together five criteria: who, what, where, when, and how.
+In the case of the who, TN3125: Inside Code Signing: Provisioning Profiles describes how every profile includes a certificate for each developer covered by that profile.
+However, it doesn’t go into details as to what a certificate is. This technote aims to fill in those details.
+
+
+// Distribution
+https://developer.apple.com/documentation/Xcode/distribution
+// Developer Account Help
+https://developer.apple.com/help/account/
+
+
+
+==================================================Public key infrastructure
+To understand certificates you must first understand a little about public key cryptography and its associated public key infrastructure (PKI).
+
+Note
+Many of the Apple-specific processes described in this section are formally documented on the Apple PKI page.
+https://www.apple.com/certificateauthority/
+
+
+==================================================Public key cryptography
+Modern cryptography uses two different key systems. 
+Symmetric key cryptography has the same key for both encryption and decryption. 
+You encrypt a message with a key and anyone with that key can decrypt it. 
+Public key cryptography uses clever mathematics to create asymmetric key pairs. 
+You publish your public key widely. Anyone can send you a message by encrypting it with that public key. 
+You retain the private key and use that to decrypt the message. 
+As long as you keep the private key secret, only you can read these messages.
+
+
+
+==================================================Digital signatures
+Asymmetric key pairs also allow for digital signatures. 
+You keep the private key to yourself and you publish your public key. 
+If you sign a message with your private key, anyone can verify that signature with your public key.
+
+
+#####
+Note
+With some public key algorithms, signing a message is equivalent to encrypting a hash of that message, 
+but that’s not universally true. It’s best to think of encryption and signing as two conceptually different tasks.
+#####
+
+
+#####
+Digital signatures are central to code signing. 
+Think of your code as a message which you sign and the operating system verifies before execution. 
+This verification has two steps:
+1. Verify the signature itself, that is, nothing has changed since it was signed by your private key.
+2. Evaluate whether your public key is trusted in this context.
+This second step uses certificates.
+#####
+
+
+哈希（Hash）不是加密: 不可逆：你不能通过哈希值还原出原始数据。
+哈希是一种单向的数据摘要函数，用于将任意长度的输入数据映射为固定长度的输出（哈希值）。
+加密（Encryption）是为了保护数据隐私
+加密是一种可逆的变换，其目的是在授权范围内保护数据内容。
+
+
+==================================================Digital certificate
+#####
+In the real world, a certificate is a document where the issuer attests to some facts about the subject. 
+#####
+For example, in your birth certificate:
+The issuer is the regional authority of your birth.
+The subject is you.
+The facts are your name, date of birth, parents, and so on.
+
+
+This system relies on the fact that real world certificates are non-trivial to forge: They’re printed on fancy paper, use special stamps, wax seals, and so on.
+
+#####
+A digital certificate has the same goal as a real certificate: The issuer attests to some facts about the subject.
+However, it can’t use fancy paper to prevent forgeries.
+Instead, a digital certificate relies on public key cryptography.
+#####
+
+#####
+Apple code signing uses the X.509 standard for digital certificates. 
+An X.509 certificate contains five pieces of information:
+#####
+Details of the issuer
+Details of the subject
+The subject’s public key
+Required facts, like the valid date range
+Optional facts, known as extensions
+
+The issuer signs this information with their private key and then bundles it all together to form a certificate.// 这边的私钥不是证书中公钥的对应私钥。
+
+举个例子：
+假设：
+你是一个开发者，要申请 SSL 证书或者代码签名证书。
+你生成了一对密钥（私钥 + 公钥），并创建了一个 CSR（Certificate Signing Request）交给 CA。
+然后：
+你的公钥（和一些信息，比如组织、用途等）被包含在你最终拿到的 X.509 证书中。
+**CA（证书签发者）**使用它自己的私钥对这些信息进行签名，生成一个“签名值”放进这个证书里。
+这样，别人可以用CA 的公钥（也就是CA证书）来验证你这个证书的签名是否可靠。
+
+
+Note
+For a detailed description of the X.509 certificate format, see RFC 5280.
+https://datatracker.ietf.org/doc/html/rfc5280
+
+
+For example, if you download a code-signing certificate(证书) from the Developer website, you can dump the resulting .cer file like so
+// 使用 openssl 来解析并人类可读地显示 DER 格式的 X.509 证书内容。
+1 openssl x509 -in "developerID_application.cer" -inform der -text
+2 Certificate:
+3     Data:
+4         Version: 3 (0x2)
+5         Serial Number: 242040529399961421 (0x35be6944021d74d)
+6     Signature Algorithm: sha256WithRSAEncryption
+7         Issuer: CN=Developer ID Certification Authority, OU=Apple Certi…
+8         Validity
+9             Not Before: Jul 31 16:31:20 2017 GMT
+10             Not After : Aug  1 16:31:20 2022 GMT
+11         Subject: … CN=Developer ID Application: …, OU=SKMME9E2Y8, …
+12         Subject Public Key Info:
+13             …
+14         X509v3 extensions:
+15             …
+16     Signature Algorithm: sha256WithRSAEncryption
+17          cc:73:eb:43:51:a9:d4:d1:dc:5b:5a:fe:9a:d9:fe:eb:ea:c4:
+18          …
+
+Breaking this down:
+Line 7 shows the details of the issuer, in this case the Developer ID Certification Authority.（Certification Authority: 认证机构）
+Line 11 shows the details of the subject. This example shows a Developer ID certificate, used for Mac code that’s distributed directly. 
+For code signing certificates, Apple places the developer’s Team ID into the subject’s Organization Unit (OU) field.
+Lines 12 through 13 are the subject’s public key.
+Lines 3 through 5 and 8 through 10 are the required facts, namely the certificate format version, serial number, and valid date range.
+Lines 14 through 15 are the optional facts. 
+Code-signing certificates contain numerous extensions. 
+Some are industry standard extensions, while others are Apple-specific. The latter are documented on the Apple PKI page.
+https://www.apple.com/certificateauthority/
+Lines 16 through 18 are the issuer’s signature.
+#####
+To condense this into plain English, this certificate says that “Apple certifies that this developer is associated with this public key, and the matching private key can be used to sign Mac code.”
+This is clearly a simplification—it doesn’t touch on the valid date range, serial number, 
+or even how Apple identified the developer in the first place—but it’s a reasonable model to start out with.
+#####
+
+Apple issues a variety of different code-signing certificate types. For a complete list, see Certificate types.
+https://developer.apple.com/help/account/certificates/certificates-overview/
+
+
+#####
+Certificates are usually stored in one of two formats:
+
+DER:
+This stores the binary certificate directly. Apple tools and APIs prefer this format. Files in this format typically have an extension of .cer or .der.
+PEM:
+This is a text rendition of the binary certificate. Non-Apple tools and libraries, most notably OpenSSL, prefer this format. Files in this format typically have the .pem extension.
+
+PEM（Privacy Enhanced Mail）格式是一种文本格式的证书/密钥封装方式，它把二进制数据（如 X.509 证书、RSA 密钥）转成 base64 编码，并加上明确的包裹头和尾。
+-----BEGIN CERTIFICATE-----
+MIIDXTCCAkWgAwIBAgIJAOYt5WrBOS4QMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV
+...
+-----END CERTIFICATE-----
+严格来说：不是人类可读的。
+虽然是文本格式（不像 DER 是纯二进制），
+但其内容是 Base64 编码后的 ASN.1 结构体，
+你看不出实际的签发者、用途、有效期等信息。
+
+Base64 解码后得到的是 ASN.1 DER 格式的二进制结构，依然不是人类可读的。
+#####
+
+
+To convert between these formats, run the openssl command-line tool with the x509 subcommand:
+% openssl x509 -in "developerID_application.cer" -inform der -out "developerID_application.pem"        
+% openssl x509 -in "developerID_application.pem" -out "developerID_application.cer" -outform der
+-inform der & -outform der 它们指定了证书的输入格式和输出格式
+-in & -out 它们分别表示输入文件和输出文件
+
+/*
+certtool d xx.cer 与上面 openssl 的区别
+
+比较项	openssl x509 -text	certtool d
+工具来源	开源工具 OpenSSL（跨平台）	macOS 自带的 Apple 工具
+输出风格	通用格式，偏技术和 RFC 标准	Apple 风格，更适配 macOS 钥匙串格式
+解析范围	更标准，能处理各种 X.509 证书	专注 Apple 证书，兼容性好（钥匙串/签名）
+可移植性	✅ Linux、Windows 也能用	❌ macOS 专用
+易用性	适合脚本、自动化处理	更适合在 Apple 系统手动检查
+
+想分析来自 Apple 的开发证书（例如 .mobileprovision 提取出来的），certtool d 会更贴近你看到的 Xcode 格式。
+想做自动化处理、写脚本跨平台查看证书有效性、公钥、指纹、签名算法等，推荐用 openssl。
+*/
+
+
+
+==================================================Chain of trust
+Certificates often form a chain of trust: the verifier uses the issuer information in a certificate to find the issuer’s certificate, 
+then uses its issuer information to find the next certificate in the chain, and so on, until it hits an anchor, 
+that is, a certificate it trusts as a matter of policy.
+This process can be very complex, but for Apple’s code signing certificates it’s usually quite simple. 
+To view the certificate chain for an app, run the following command:
+
+codesign --display -vvv "MyApp.app" // 显示这个 .app 的代码签名的详细信息。格式：人类可读的详细文本信息
+…
+Authority=Developer ID Application: …
+Authority=Developer ID Certification Authority
+Authority=Apple Root CA
+…
+
+Note
+For a detailed description of the standard algorithm to build a chain of trust, see RFC 5280.
+https://datatracker.ietf.org/doc/html/rfc5280
+
+In this example the Developer ID Application leaf certificate was issued by the Developer ID Certification Authority intermediate certificate which was issued by the Apple Root CA root certificate.
+This three-level chain of trust is standard for Apple code signing, where:
+1. The leaf certificate is issued to a developer by the Apple Developer website.
+2. The intermediate certificate is one of a very limited set used for code signing, 
+including Apple Worldwide Developer Relations Certification Authority and Developer ID Certification Authority. 
+Apple publishes these intermediate certificates on the Apple PKI page.
+3. The root certificate is Apple Root CA. Apple operating systems trust this implicitly.
+
+
+authority 名词
+机构，权威
+
+
+mportant
+Don’t rely on the exact details of this chain of trust; it could change in the future.
+
+The Authority fields in the example above show a short summary of each certificate in the chain. 
+To get the actual certificates, run codesign with the --extract-certificates option:// 提取证书（导出证书）
+codesign --display --extract-certificates "MyApp.app" // 当前所在的路径会生成一堆文件: codesign0, codesign1, codesign2 等
+
+This creates a certificate file for each certificate in the chain, using codesign0 for the leaf, codesign1 for its issuer, and so on. 
+So, to dump the leaf certificate, run this command:
+
+openssl x509 -in codesign0 -inform der -text
+Certificate:
+    Data:
+        Version: 3 (0x2)
+        Serial Number: 242040529399961421 (0x35be6944021d74d)
+    Signature Algorithm: sha256WithRSAEncryption
+        Issuer: CN=Developer ID Certification Authority, OU=Apple Certi…
+        Validity
+            Not Before: Jul 31 16:31:20 2017 GMT
+            Not After : Aug  1 16:31:20 2022 GMT
+        Subject: … CN=Developer ID Application: …
+        …
+
+
+==================================================Digital identity （证书+证书中公钥对应的私钥 的组合）
+Certificates are public data structures used to evaluate trust on the public key that’s, in turn, used to verify the signature.
+
+To sign code you need a certificate and the private key that matches the public key in that certificate. 
+This combination is called a digital identity or, if it’s for signing code, a code-signing identity.
+
+Important
+As a certificate only contains a public key, you can’t use it to sign code.
+
+Many people use the term certificate when they mean digital identity. This industry-wide confusion extends into the Apple ecosystem. 
+For example, Xcode uses the term signing certificate, Keychain Access uses My Certificates, and Apple Mail uses personal certificate.
+
+Apple tools and APIs that work with a digital identity generally prefer the PKCS#12 format. 
+PKCS#12 files usually have the .p12 extension, although .pfx is a common alternative.
+
+Note
+To learn more about PKCS#12, read RFC 7292.
+https://datatracker.ietf.org/doc/html/rfc7292
+
+Non-Apple tools and libraries, most notably OpenSSL, work with digital identities in the PEM format.
+In this case the PEM file contains two separate items: one for the certificate and one for the private key. 
+Such files can have a variety of extensions but one common one is .cer, further increasing the confusion between certificates and digital identities.
+
+To convert between the PKCS#12 and PEM formats, run the openssl command-line tool with the pkcs12 subcommand.
+
+PKCS: Public-Key Cryptography Standards
+常见的 PKCS 标准包括：
+标准编号	名称	用途简述
+PKCS#1	RSA 加密标准	定义了 RSA 加密和签名格式
+PKCS#7	加密消息语法（CMS 的前身）	用于签名、加密的消息封装
+PKCS#8	私钥信息语法标准	描述私钥的存储格式
+PKCS#10	证书签名请求（CSR）	申请证书时使用
+PKCS#12	个人信息交换语法	用于打包私钥 + 证书（如 .p12 或 .pfx 文件）
+
+.p12 文件内容一般包括:  私钥（Private Key） + 公钥证书（X.509 Certificate）
+
+
+==================================================Certificate signing request
+Apple issues code-signing certificates in three different ways:
+Manual certificate signing request (CSR) process
+Xcode’s certificate management
+Cloud-managed certificates
+
+
+It’s important to understand how these issuing processes relate to the private key that, 
+when combined with the certificate, forms your code-signing identity.
+
+identity: 身份
+
+// Developer Account Help
+https://developer.apple.com/help/account/
+
+#####
+Developer Account Help describes the manual CSR process. 
+A key step in that process is using Keychain Access to create a CSR. This does two things:
+1. It creates a public / private key pair in your login keychain.
+2. It takes the public key, wraps it in a CSR structure, and prompts you to save that to a .certSigningRequest file.
+You then submit your CSR to the Developer website, which issues a certificate that contains your public key.
+When you download this certificate and import it into your keychain, it forms a code-signing identity with the private key created in step 1.
+#####
+
+Note
+To learn more about CSRs in general, read RFC 2986.
+https://datatracker.ietf.org/doc/html/rfc2986
+
+This process has some key advantages:
+Your private key never leaves your Mac. As long as you keep that key to yourself, no one can sign code as you.
+You can choose to use a private key that’s stored on a smart card or some other type of hardware token.
+
+However, it does have one notable drawback: It’s easy to miss that your most critical code-signing asset, your private key, is tucked away in your login keychain. 
+And if you do miss that, you might lose your private key, for example, when you migrate to a new Mac. 
+If that happens, follow the advice in Developer > Support > Certificates.
+https://developer.apple.com/support/certificates/
+
+
+Xcode’s certificate management follows the same overall path as the manual CSR process.
+For example, when you create a new code-signing identity using the process described in Synchronizing your code signing identities with Apple Developer Portal, Xcode effectively creates a CSR, 
+submits it to the Developer website, downloads the resulting certificate, and adds that to your keychain. 
+https://developer.apple.com/documentation/Xcode/sharing-your-teams-signing-certificates
+It’s easy to use, but it has the same trap: Xcode automatically generates a private key and stores it in your login keychain.
+
+
+When you use a cloud-managed certificate—for example, when building with Xcode Cloud—both the private key and the certificate are managed by Apple’s cloud signing infrastructure. 
+You don’t have direct access to either of them.
+https://developer.apple.com/help/account/certificates/cloud-managed-certificates
+
+
+==================================================Cryptographic Message Syntax
+Internally, code signing uses Cryptographic Message Syntax (CMS). 
+To extract the CMS structure for a code signature, run codesign with the --dump-cms option:
+
+% codesign --display --dump-cms=cms.asn1 "MyApp.app" // 导出 .app 的签名中包含的 Cryptographic Message Syntax (CMS) 数据结构到一个文件 cms.asn1。
+…
+% openssl asn1parse -in cms.asn1 -inform der -i
+    0:d=0  hl=2 l=inf  cons: SEQUENCE          
+    2:d=1  hl=2 l=   9 prim:  OBJECT            :pkcs7-signedData
+    …
+
+Note
+To learn more about CMS, read RFC 5652.
+https://datatracker.ietf.org/doc/html/rfc5652
+
+
+==================================================Code signing’s PKI operations
+Code signing has three core operations:
+Sign code
+Display a code signature
+Verify a code signature
+The following sections explain how each of these operations interact with Apple’s code signing infrastructure.
+
+#####
+Sign code:
+#####
+When you sign code, you pass codesign the name of a ###code-signing identity### using the --sign subcommand. For example:
+% codesign --sign "Apple Development" "MyApp.app"
+
+Note
+This example uses the codesign command-line tool, but these concepts also apply to Xcode. 
+To see how Xcode invokes codesign, go to the Reports navigator, find your Build report, and look at the CodeSign step in the build transcript.
+
+By default codesign searches all keychains for a code-signing identity whose certificate matches the supplied name. 
+If multiple identities match, codesign complains about the ambiguity. 
+To resolve this, either pass in the full name or pass in the SHA-1 hash of the identity’s certificate.
+
+The codesign man page explains this search process in detail. 
+For general information about man pages, see Reading UNIX Manual Pages.
+https://developer.apple.com/documentation/os/reading-unix-manual-pages
+
+
+#####
+When searching for code-signing identities, codesign checks certain aspects of each identity’s certificate:
+It checks that it can build a chain of trust from the certificate to a trusted root.// 重要
+It checks that the current time is within the certificate’s valid range.
+It checks that the certificate supports code signing. Specifically, it looks for Code Signing within the certificate’s Extended Key Usage extension:
+% openssl x509 -in "developerID_application.cer" -inform der -text
+        …
+        X509v3 extensions:
+            …
+            X509v3 Extended Key Usage: critical
+                Code Signing
+            …
+#####
+
+
+To see all available code-signing identities, run this command:
+% security find-identity -p codesigning
+
+Policy: Code Signing
+  Matching identities
+  1) 8CEF1273B13E1C6E7F6E73EBBEF42278F0D88C97 "Apple Development: …"
+  2) ADC03B244F4C1018384DCAFFC920F26136F6B59B "Developer ID Application: …" (CSSMERR_TP_CERT_EXPIRED)
+  3) 3F8BE319780F84EB2E94ABDFA24E8045A0572A7B "Developer ID Application: …"
+     3 identities found
+
+
+  Valid identities only
+  1) 8CEF1273B13E1C6E7F6E73EBBEF42278F0D88C97 "Apple Development: …"
+  2) 3F8BE319780F84EB2E94ABDFA24E8045A0572A7B "Developer ID Application: …"
+     2 valid identities found
+Note how there are three code-signing identities but one of them has expired leaving only two valid ones.
+The hex string next to each identity is the SHA-1 hash of its certificate, which is a good way to resolve any ambiguities with the name.
+
+Unless you specify a keychain file using the --keychain option, codesign searches all keychains including the data protection keychain. 
+If you do supply a keychain file, codesign searches just that keychain.
+
+Note
+If you’re unfamiliar with the data protection keychain, see TN3137: On Mac keychain APIs and implementations.
+https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains
+
+The codesign tool is able to find and use code-signing identities in the data protection keychain, 
+including ones stored in a smart card or some other type of hardware token. However:
+1. The security find-identity command only searches keychain files; it won’t show identities in the data protection keychain.
+2. If you want to use a code-signing identity stored in the data protection keychain, don’t specify a keychain file using the --keychain option, because that tells codesign to search just that file.
+3. If you sign your code with Xcode, use Xcode 13 or later. Earlier versions of Xcode only work with file-based code-signing identities.
+
+
+概念	keychain files	data protection keychain
+✅ 存储位置	存储在磁盘上，比如 ~/Library/Keychains/login.keychain-db	存储在内存或 Secure Enclave 中，由系统管理
+✅ 作用	常规证书、私钥、密码等	专为 App 沙盒和系统服务中保护敏感数据
+✅ 是否可枚举	✔️ 可以被 security 命令查看	❌ 不可被 security find-identity 枚举
+✅ 使用场景	系统级签名、Xcode 使用的签名证书	iOS/macOS App 中使用 Keychain Services 存储敏感信息（如密码、token）
+✅ 是否能导出	✔️ 可以备份、导入导出 .p12	❌ 通常不可导出（尤其当存在 Secure Enclave 时）
+
+
+keychain file 中的身份（identity）：
+XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX "Apple Distribution: Your Name (Team ID)"
+这些信息来自 login.keychain 等文件，存储在你本地硬盘上。
+
+
+data protection keychain 中的身份：
+比如你写了一个 iOS App，用 Keychain 存储了用户的 token：
+let query = [
+    kSecClass: kSecClassGenericPassword,
+    kSecAttrAccount: "accessToken",
+    kSecValueData: "abc123".data(using: .utf8)!,
+    kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+] as CFDictionary
+
+
+Note
+macOS has built-in support for PIV smart cards. 
+Third-party developers can add support for other types of hardware tokens by creating a CryptoTokenKit app extension.
+
+
+Once codesign has determined the code-signing identity to use, it builds a chain of trust between the identity’s certificate and a trusted anchor. 
+a trusted anchor 指的是：
+✅ 系统已经明确信任的根证书（Trusted Root Certificate Authority, Root CA）
+当 codesign 选定要用哪个证书进行签名（这个证书称为“identity’s certificate”，通常是开发者的 Apple Distribution 证书）之后，
+它会尝试沿着证书的签发路径（证书链）往上找到一个“受系统信任的根证书”作为终点，
+这个终点就是 a trusted anchor
+
+If it’s unable to build that chain, it fails with an error unable to build chain to self-signed root.
+The most common cause of that failure is a missing intermediate certificate. 
+The intermediate certificates used by codesign are automatically installed by Xcode. 
+If you’re not using Xcode, download these intermediate certificates from the Apple PKI page and install them yourself.
+https://www.apple.com/certificateauthority/
+
+
+The codesign tool adds the full chain of trust to the CMS structure within the code signature. 
+When you run code on a device, the system uses the intermediate certificates in this CMS structure to build its chain of trust. 
+That means that user devices don’t have to have the code signing intermediate certificates installed.
+
+
+
+#####
+Display a code signature:
+#####
+To display the chain of trust for a code signature, run the codesign command with the --display subcommand and two -v options:
+% codesign --display -vv "MyApp.app"
+…
+Authority=Apple Development: …
+Authority=Apple Worldwide Developer Relations Certification Authority
+Authority=Apple Root CA
+…
+
+Each Authority field represents a link in the chain of trust.
+This is just a short summary. To see the full certificates, use the --extract-certificates option:
+% codesign --display --extract-certificates "MyApp.app"
+…
+% openssl x509 -in codesign0 -inform der -text
+Certificate:
+    …
+    Signature Algorithm: sha256WithRSAEncryption
+        …
+        Subject: … CN=Apple Development: …
+        …
+
+One oddity of this feature is that codesign doesn’t simply print the list of certificates stored in the CMS structure within the code signature. 
+Rather, it builds the chain of trust from scratch by performing a standard trust evaluation on the CMS leaf certificate.
+It does this using a trust object // https://developer.apple.com/documentation/Security/trust
+In most cases that produces a chain of trust that matches the one in the CMS structure, but that’s not guaranteed to be the case.
+If codesign displays a chain of trust that seems odd (for example, it might show just a single Authority field) extract the CMS structure and look at its certificates.
+
+For instructions on how to extract the CMS structure, see Cryptographic Message Syntax.
+https://developer.apple.com/documentation/technotes/tn3161-inside-code-signing-certificates#Cryptographic-Message-Syntax
+
+
+
+#####
+Verify a code signature:
+#####
+To verify a code signature, run the codesign command with the --verify subcommand:
+% codesign --verify "MyApp.app" ; echo $? // 检查 MyApp.app 的代码签名是否合法和完整。打印上一个命令（也就是 codesign --verify）的退出码（exit code）。
+0
+
+在 Unix 系统中：
+0 表示成功 ✅
+非 0 表示有错误 ❌
+
+That command succeeds silently, only setting the status, so add a few -v options to increase the verbosity:
+% codesign --verify -vvv "MyApp.app"
+MyApp.app: valid on disk
+MyApp.app: satisfies its Designated Requirement
+
+For a more in-depth check, add the --strict and --deep options:
+% codesign --verify -vvv --deep --strict "/Applications/Xcode.app" 
+--prepared:/Applications/Xcode.app/Contents/SharedFrameworks/XCUnit.framew…
+--prepared:/Applications/Xcode.app/Contents/SharedFrameworks/GLToolsInterf…
+…
+/Applications/Xcode.app: valid on disk
+/Applications/Xcode.app: satisfies its Designated Requirement
+
+
+###
+Be careful how you interpret this output. 
+It isn’t saying that the code is fit for some specific purpose, like running on your Mac or installing on your iPhone. 
+Rather, it says that the code is internally consistent, that is:
+（1）All of the expected files are present.
+（2）There are no extra files.
+（3）None of the files have been modified. To learn how code signing checks for changes, read TN3126: Inside Code Signing: Hashes.// https://developer.apple.com/documentation/technotes/tn3126-inside-code-signing-hashes
+（4）A basic X.509 trust evaluation of the leaf certificate succeeded.
+（5）The code satisfies its own designated requirement (DR). 
+To learn more about code signing requirements in general, and the significance of the DR in particular, see TN3127: Inside Code Signing: Requirements.
+https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements
+###
+
+
+上面的 codesign --verify 只是：验证签名完整性校验（Code Signature Check） 和 做了基础信任链验证
+
+下面是验证全部：
+苹果验证签名 App，本质上就是「安装 app 或运行 app 时进行的多重安全校验」。
+iOS 设备安装 App 时的验证：
+当你在 iPhone 上安装一个 .ipa 包（通过 App Store、TestFlight、MDM 或开发者测试），系统会自动执行一系列验证步骤：
+验证点	说明
+✅ 签名是否完整	检查代码内容是否与签名匹配（hash 对比）// codesign --verify
+✅ 签名证书是否有效	检查证书是否过期、吊销、属于 Apple 签发
+✅ 证书链是否可建立到 Apple 根 CA	一定要从开发者证书 → 中间证书 → Apple Root CA
+✅ 描述文件是否匹配证书	App 内嵌的 embedded.mobileprovision 是否匹配签名证书（Team ID）
+✅ 当前设备是否被授权	针对开发构建，需要在描述文件中列出 UDID
+✅ 权限是否合规	Entitlements 是否与描述文件声明的一致，例如推送、VPN 等
+✅ 应用沙盒检查	是否声明访问相册、摄像头、网络等权限，是否有用途说明（Info.plist）
+
+
+Trust Evaluation（信任评估） 指的是系统试图沿着这个证书向上追溯，验证它是否可以通过中间证书连接到一个受信任的“根证书”（Apple Root CA）。
+Succeeded（成功） 表示这个信任链可以完整建立，且系统在本地“受信任根证书列表”中找到了 Apple 的根证书，所以确认这个证书是可信的。
+说明：
+你的签名证书可以被系统建立信任链，最终链到 Apple 的 Root CA，表明这个证书是有效的、可信的。
+
+基础信任链验证（basic trust evaluation）和完整证书链校验（full chain validation）不是同一个概念
+基础信任链验证（Basic Trust Evaluation）：
+只验证**叶子证书（leaf certificate）**本身的格式有效性，能否被解析，没有损坏，是否符合 X.509 标准。
+简单检查该证书是否有合理的结构，没有直接检查它是否真正链到一个系统信任的根证书。
+不检查证书是否过期、是否被吊销（CRL/OCSP）。
+也不保证这张证书是“被信任”的，只是确认证书本身看起来没问题。
+完整证书链校验（Full Chain Validation）：
+从叶子证书开始，沿着证书链逐级往上追溯，直到找到一个系统或用户信任的根证书（trusted anchor）。
+验证所有中间证书都合法，且没有被吊销。
+检查证书的有效期、签名、策略约束等是否满足要求。
+这是操作系统或安全框架实际用来决定是否“信任”这个证书的关键步骤。
+
+基础信任链验证：像是在看身份证照片清晰没破损，但不确认这是不是公安机关签发的真证件。
+完整证书链校验：是真正去公安机关查询这张身份证是不是官方签发、是否有效、没被注销。
+
+
+To check whether the code is fit for a specific purpose, you need some other mechanism:
+（1）For an app you’re submitting to the App Store, use altool with the --validate-app subcommand. 
+For more on this, see the altool man page. This uses the same infrastructure as the Validate App button in the Xcode organizer.
+（2）For Mac apps that you directly distribute using Developer ID code signing, use the syspolicy_check tool.
+To learn more about this tool, see its man page.
+https://developer.apple.com/documentation/os/reading-unix-manual-pages
+
+
+
+==================================================Non-Apple certificates
+/*
+Apple’s code signing support was created before Apple started issuing code signing certificates to third-party developers.含义
+
+苹果在还没有向第三方开发者发放代码签名证书（用于 app 签名）之前，就已经在自己的系统中实现了代码签名机制。
+
+在苹果早期阶段（比如 macOS 初期），苹果自己就已经内部使用代码签名来确保系统组件的完整性和安全性。
+后来，苹果才开放了 Developer Program，让第三方开发者也能获得官方的签名证书，用来开发和发布自己的应用。
+所以苹果的代码签名系统是先于开发者生态建立的。
+
+你设计了一栋“智能大楼”：
+你最初只让自己人（苹果）进去，给他们配发了门禁卡（签名机制已经存在）。
+后来你对外开放，允许外部公司（第三方开发者）进来办公，你才开始发门禁卡给他们（签发开发者证书）。
+
+说明了一个历史顺序：
+先有签名机制 → 后有开发者证书发放。
+苹果在考虑系统安全时，就先做了签名支持，之后才开放给外部开发者使用。
+*/
+Apple’s code signing support was created before Apple started issuing code signing certificates to third-party developers. 
+That results in some behavior that seems odd today:
+/*
+When signing code, codesign doesn’t check that the code-signing identity’s certificate was issued by Apple. 含义:
+只要你提供了一个合法结构的证书（可以是自己用 OpenSSL 创建的自签名证书），codesign 就会完成签名过程。
+它不会去检查这个证书是不是 Apple CA 发的，也不会联网去验证。
+
+你可以自己生成一张自签名证书，然后用它签名一个 app
+签名过程会成功完成，但：
+后果是：
+虽然你签名成功，但这个 app：
+（1）在 macOS Gatekeeper 或 iOS 安装流程中：
+不会被信任（因为证书不是 Apple 发的）
+运行时可能提示“开发者无法验证”或“App 未能通过完整性检查”
+（2）上传到 App Store 或通过 notarization 审核时会失败
+（3）macOS 上可以用 spctl 或 codesign --verify 检查是否被系统信任
+
+这正是苹果文档说的第二点：
+“When verifying code, codesign doesn’t check if the code will be accepted by the target platform.”
+
+也就是说：
+codesign 只是一个签名工具，不代表你签了之后一定能运行在 iOS/macOS 上
+是否真正“被系统接受”要看其他机制：比如 Gatekeeper、notarization、系统的信任链验证等
+
+对于 iOS 设备（iPhone、iPad）上默认内置了 Apple 的根证书（Root CA）和中间证书，用来验证 app 的签名证书是否合法、是否值得信任。
+
+iOS 安全机制基于证书链信任：
+当你把一个 app 安装到 iPhone 上时（无论是通过 App Store、TestFlight 还是企业分发）：
+系统会从 app 的签名中提取出 签名证书链（通常包括：
+    Leaf certificate：也叫最终证书，用于 app 签名
+    Intermediate certificate(s)：中间证书
+    Root certificate：根证书（Apple 自带）
+然后 iOS 会做一件事：
+验证这个证书链是否能追溯到 Apple 的受信根证书（Apple Root CA）
+*/
+1. When signing code, codesign doesn’t check that the code-signing identity’s certificate was issued by Apple.
+2. When verifying code, codesign doesn’t check if the code will be accepted by the target platform.
+
+
+Historically it might have made sense to sign code with a code-signing identity whose certificate wasn’t issued by Apple.
+That’s no longer the case. Most Apple platforms only run code with an Apple-issued certificate. 
+The only exception to this is macOS, which can run code with other certificates, or indeed with no certificate. 
+However, that’s not useful in practice because Gatekeeper blocks code with a non-Apple certificate.
+
+
+For general information about Gatekeeper, see Safely open apps on your Mac.
+https://support.apple.com/en-us/102445
+macOS includes a technology called Gatekeeper（守门人）, that's designed to ensure that only trusted software runs on your Mac.
+
+
+==================================================App Store re-signing
+#####
+When you distribute an app on the App Store, the App Store re-signs your app as part of the distribution process.
+
+阶段	是否签名	使用的证书
+本地打包上传前	✅	你自己的开发者证书（分发证书）
+App Store 接收后	✅ 重签名	Apple 自己的签名证书（Apple iOS Distribution）
+用户下载 App	✅	来自 Apple 签名的版本，已加密并可信
+#####
+It’s easy to confirm this on macOS.
+Imagine you have an app called MyAppStoreApp that’s available on the Mac App Store.
+Install the app and then run this command to display its code signature:
+
+% codesign --display -vv "/Applications/MyAppStoreApp.app"
+…
+Authority=Apple Mac OS Application Signing
+Authority=Apple Worldwide Developer Relations Certification Authority
+Authority=Apple Root CA
+…
+
+The leaf certificate is Apple Mac OS Application Signing.
+This doesn’t match the certificate from the code-signing identity you used to sign your app prior to submission, 
+which is named either Apple Distribution: <Team> or 3rd Party Mac Developer Application: TTT <Team>, where <Team> identifies your team.
+
+###
+Important
+While this example was from macOS, this re-signing happens for all App Store apps on all platforms.
+###
+
+In most cases you don’t notice that your app has been re-signed, but there are a few places where it matters:
+1. App Store apps are signed with credentials that don’t expire. 
+In contrast, your distribution certificate and provisioning profiles can expire. 
+However, this re-signing means that your credentials only need to be valid at the time that you submit your app.
+2. The App Store must be able to re-sign all of your code. 
+If it can’t see a particular code item, it can’t re-sign that code and the code won’t run. 
+A common example of this problem is code embedded in an archive, like a .zip or a .jar file. For best results, 
+follow the rules in Placing Content in a Bundle.
+https://developer.apple.com/documentation/BundleResources/placing-content-in-a-bundle
+3. Apps that try to do their own tamper detection have to take this re-signing into account. 
+It’s common for such code to fail when Apple reworks the App Store distribution process. 
+To avoid such problems, use the App Attest feature of the DeviceCheck framework to establish your app’s integrity.
+https://developer.apple.com/documentation/DeviceCheck
+4. You sign your app for distribution as part of the App Store submission process. 
+That’s the intended use for an App Store distribution-signed app. You can’t run such an app yourself.
+
+With regards that last point, the one exception is macOS. 
+In some situations macOS is able to run an App Store distribution-signed app. 
+However, this isn’t supported, and it currently fails if the app claims a restricted entitlement. 
+For more about restricted entitlements, see TN3125: Inside Code Signing: Provisioning Profiles.
+https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles
+
+
+Because you can’t reliably run your App Store distribution-signed app, you need some other way to test it before release. 
+A great option for this is TestFlight. 
+TestFlight has many fine features, but a key benefit in this context is that it re-signs your app, much like the App Store.
+https://developer.apple.com/testflight/
+
+
+因为TestFlight 会像 App Store 一样对你的 App 重新签名，TestFlight 的 App 没有描述文件
+Apple 使用自己的分发机制来控制安装权限，包括：
+哪些 Apple ID（受邀测试者）可以安装
+安装包的有效期（最多 90 天）
+哪些设备可以装（与 UDID 无关）// 指的是： 设备类型 / 架构、系统版本、TestFlight 兼容性
+
+安装流程不再依赖描述文件，而是通过 TestFlight 平台的信任体系 进行管理
+
+
+"leaf certificate"（叶子证书）
+证书链中最底层、直接用于签名的最终实体证书，也叫 end-entity certificate。
+
+
+
+==================================================Certificate expiration
+X.509 certificates（X.509 证书）是一种国际标准格式的数字证书
+
+#####
+All X.509 certificates have a valid date range.
+For Apple code-signing certificates that’s typically a year from the date of issue, although the exact duration varies based on the certificate type.
+#####
+
+
+For App Store apps certificate expiration isn’t complicated. 
+When you submit an app to the App Store, it checks that the app’s distribution certificate is currently valid. 
+The App Store then re-signs your app, making it independent of your distribution certificate’s expiry date.
+
+
+This mechanism only works for App Store apps, which raises the question of what happens when you use Developer ID signing to directly distribute Mac software. 
+People who install your product expect it to continue working, regardless of your certificate’s expiration date. 
+Apple enables this by embedding a secure timestamp within your code signature. 
+This records when your code was signed. 
+When you run the code, macOS checks that its Developer ID certificate was valid at the time that it was signed.
+
+
+Xcode automatically adds a secure timestamp when it signs code with a Developer ID code-signing identity.
+If you sign code using codesign, pass in the --timestamp option to add a secure timestamp.
+The Apple notary service ensures that all code has a secure timestamp, so if you get this wrong you’ll learn about it when you go to notarize your code.
+For more about notarization, see Notarizing macOS software before distribution.
+https://developer.apple.com/documentation/Security/notarizing-macos-software-before-distribution
+
+
+To check whether your code has a secure timestamp, look at the output from the --display subcommand. For example:
+% codesign --display -v "MyApp.app"
+…
+Timestamp=27 Jan 2024 at 10:52:13
+…
+The Timestamp field represents the secure timestamp.
+
+
+Don’t confused the Timestamp and Signed Time fields. 
+The latter is not secured by the Apple timestamp service. 
+Rather, codesign sets this field based on your Mac’s current time. You typically see this field in development-signed code. For example:
+
+% codesign --sign "Apple Development" -f "MyApp.app" 
+…
+% codesign --display -v "MyTool.app"
+…
+Signed Time=27 Jan 2024 at 10:53:29
+…
+
+
+The secure timestamp requirement has one important consequence: You must have access to the internet to sign code with a Developer ID code-signing identity.
+Specifically, codesign currently talks to the Apple timestamp service at timestamp.apple.com using a protocol based on the X.509 Time-Stamp Protocol, as described in RFC 3161. 
+https://datatracker.ietf.org/doc/html/rfc3161
+If you’re unable to sign code when running on a particular network, check that its firewall allows these connections.
+
+
+在 macOS 上使用 Developer ID Application: 证书执行签名时（用于发布到用户或 notarization），codesign 工具会默认尝试联系 Apple 的时间戳服务器，并为签名附加一个可信时间戳。
+如果签名时未添加时间戳，而之后证书过期，签名将被认为无效。
+有时间戳的好处：
+即使开发者证书过期，签名仍然有效（因为签名时的时间点是可信的）。
+苹果 notarization 流程也要求有 timestamp。
+安装和运行 app 时，系统验证更友好（通过 Gatekeeper 更容易）。
+
+Developer ID Application: 是 Apple 颁发的用于直接向用户分发 macOS 应用的证书（不走 Mac App Store）。
+它允许你将应用分发给任何用户，比如通过官网、邮件、第三方平台等。
+方式一：仅签名（不经过 Notarization）
+用户安装时：
+macOS（Catalina (10.15) 及以上）会拒绝运行未 notarized 的应用。
+用户看到的是类似：“无法打开，因为开发者无法验证。”
+解决方法：
+用户需要手动去「系统偏好设置 > 安全性与隐私」中点击“仍然打开”，用户体验差，且不是所有用户都能做到。
+
+方式二：签名后经过 Notarization（推荐）
+用户安装时：
+macOS 会自动验证 notarization ticket。
+App 运行顺利，无任何阻拦提示。
+系统认为 app 是 “来自受信任的开发者”。
+
+
+Important
+The Apple timestamp service is reserved for use by code signing. 
+Its name and behaviour are considered implementation details. Don’t ship a product that depends on those details.
+
+
+Certificates aren’t the only code-signing asset that expire. 
+Provisioning profiles also have an expiration date. To learn more about that, see TN3125: Inside Code Signing: Provisioning Profiles.
+https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles

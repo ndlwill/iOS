@@ -2,6 +2,9 @@ https://github.com/kudoleh/iOS-Clean-Architecture-MVVM
 
 https://tech.olx.com/clean-architecture-and-mvvm-on-ios-c9d167d9f5b3
 
+// Modular Architecture
+https://medium.com/olx-engineering/modular-architecture-in-ios-c1a1e3bff8e9
+
 
 Infrastructure: 基础设施
     Network
@@ -9,6 +12,72 @@ Infrastructure: 基础设施
 
 ==================================================The Clean Architecture:
 https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html
+
+Clean Architecture 强调依赖方向应从外层指向内层
+Domain 是核心，它不应该知道 Data 层的任何细节。
+
+#####
+Domain 层依赖的是 “抽象”（例如 Repository 协议）
+Data 层依赖的是 “具体”（实现 Repository 协议的具体类）
+这就是所谓的“反向依赖”：
+→ 虽然业务逻辑需要访问数据，但代码层面是由 Data 层依赖 Domain 层的协议接口，而不是反过来。
+
+Domain 层（业务逻辑，只定义协议）
+// Domain
+protocol MovieRepository {
+    func fetchPopularMovies() async throws -> [Movie]
+}
+
+struct FetchPopularMoviesUseCase {
+    let repository: MovieRepository
+
+    func execute() async throws -> [Movie] {
+        try await repository.fetchPopularMovies()
+    }
+}
+
+
+Data 层（具体实现，依赖 Domain 的协议）
+// Data
+final class MovieRepositoryImpl: MovieRepository {
+    private let apiClient: APIClient
+
+    init(apiClient: APIClient) {
+        self.apiClient = apiClient
+    }
+
+    func fetchPopularMovies() async throws -> [Movie] {
+        return try await apiClient.get("/movies/popular")
+    }
+}
+
+MovieRepositoryImpl 实现了 MovieRepository（协议在 Domain 中）
+所以 Data 层 依赖 Domain 层
+UseCase 只依赖抽象（MovieRepository），并不关心谁实现它
+
+那为什么要这么做？
+原因 1：业务核心稳定、可复用
+业务逻辑（Domain）比数据来源更“稳定”。比如你未来从 REST API 换成 GraphQL 或本地缓存，Domain 层完全不需要动。
+原因 2：可测试性高
+你可以给 MovieRepository 提供一个 Mock 实现，完全不依赖 Data 层，进行单元测试。
+原因 3：解耦架构，演化灵活
+可以非常方便地切换、组合、替换底层实现而不影响上层业务逻辑。
+
+Clean Architecture 中的 反向依赖 是通过“定义协议在 Domain 层、实现放在 Data 层”的方式实现的，这样可以确保业务逻辑与实现细节解耦，符合“依赖倒置原则”。
+#####
+
+
+#####重要
+Clean Architecture works really good with (Test Driven Development) TDD. 
+This architecture makes the project testable and layers can be replaced easily (UI and Data).
+#####
+
+
+Clean Architecture（“干净架构”）是一种高度分层、可测试、可维护、可演化的软件架构思想
+为了实现这个原则，常常使用：
+依赖注入
+协议抽象（protocol）
+反向依赖（例如用 interface 让外层调用内层）
 
 architectures 思想:
 Independent of Frameworks.
@@ -204,9 +273,10 @@ There can only be dependencies from outer layer inward.
 ###
 
 
-###
+
 After grouping all layers we have: Presentation, Domain and Data layers.
 
+==================================================Domain Layer
 Domain Layer (Business logic) is the inner-most part of the onion (without dependencies to other layers, it is totally isolated).
 It contains Entities(Business Models), Use Cases, and Repository Interfaces.
 This layer could be potentially reused within different projects.
@@ -219,7 +289,6 @@ Domain Layer它负责什么？
 声明抽象接口（protocols / interfaces），让 Data 层去实现
 不依赖 UI 层、不依赖具体的数据实现（如数据库、网络）
 
-==================================================
 The reason that good architecture is centered around Use Cases is so that architects can safely describe the structures that support those Use cases without committing to frameworks, tools, and environment. 
 It is called Screaming Architecture.
 https://blog.cleancoder.com/uncle-bob/2011/09/30/Screaming-Architecture.html
@@ -252,9 +321,201 @@ struct AddTaskUseCase {
 可以把 CoreData 替换成 SQLite、Realm，而不动 UseCase。
 可以在单元测试中 mock TaskRepository，测试 UseCase 不依赖数据库或 UI。
 
+
+Note: Another way to create Use Cases is to use UseCase protocol with start() function and all use cases implementations will conform to this protocol.
+Use Cases are also called Interactors
+
+protocol SearchMoviesUseCase {
+    func start()
+}
+
+final class DefaultSearchMoviesUseCase: SearchMoviesUseCase {
+
+    private let moviesRepository: MoviesRepository
+    private let moviesQueriesRepository: MoviesQueriesRepository
+}
+
+Note: A UseCase can depend on other UseCases
+
+
 ==================================================Presentation Layer
 Presentation Layer contains UI (UIViewControllers or SwiftUI Views). 
 Views are coordinated by ViewModels (Presenters) which execute one or many Use Cases. Presentation Layer depends only on the Domain Layer.
+
+Because keeping the ViewModel clean from any UI frameworks like UIKit, SwiftUI or WatchKit will allow for easy reuse and refactor.
+For example in future the Views refactor from UIKit to SwiftUI will be much easier, because the ViewModel will not need to change.
+
+protocol MoviesListViewModelInput {
+    func viewDidLoad()
+    func viewWillAppear()
+    func didSelectItem(at index: Int)
+}
+
+protocol MoviesListViewModelOutput {
+    var items: Observable<[MoviesListItemViewModel]> { get }
+    var errorTitle: String { get }
+}
+
+typealias MoviesListViewModel = MoviesListViewModelInput & MoviesListViewModelOutput
+
+// protocol MoviesListViewModel: MoviesListViewModelInput, MoviesListViewModelOutput { }
+
+
+struct MoviesListViewModelActions {
+    /// Note: if you would need to edit movie inside Details screen and update this Movies List screen with updated movie then you would need this closure:
+    /// showMovieDetails: (Movie, @escaping (_ updated: Movie) -> Void) -> Void
+    let showMovieDetails: (Movie) -> Void
+}
+
+final class DefaultMoviesListViewModel: MoviesListViewModel {
+
+    private let searchMoviesUseCase: SearchMoviesUseCase
+    private let actions: MoviesListViewModelActions?
+    
+    init(
+        searchMoviesUseCase: SearchMoviesUseCase,
+        actions: MoviesListViewModelActions? = nil,
+        mainQueue: DispatchQueueType = DispatchQueue.main
+    ) {
+        self.searchMoviesUseCase = searchMoviesUseCase
+        self.actions = actions
+        self.mainQueue = mainQueue
+    }
+}
+
+
+Note: We use interfaces MoviesListViewModelInput and MoviesListViewModelOutput to make MoviesListViewController testable, 
+by mocking ViewModel easily(example).
+we have MoviesListViewModelActions closures, which tells to MoviesSearchFlowCoordinator when to present another views.
+When action closure is called coordinator will present movie details screen. 
+We use a struct to group actions because we can add later easily more actions if needed.
+
+
+Presentation Layer also contains MoviesListViewController which is bound to data(items) of MoviesListViewModel.
+
+
+UI cannot have access to business logic or application logic (Business Models and UseCases), only ViewModels can do it.
+This is the separation of concerns. We cannot pass business models directly to the View (UI).
+This why we are mapping Business Models into ViewModel inside ViewModel and pass them to the View.
+
+
+final class MoviesListViewController: UIViewControlle, StoryboardInstantiable {
+    
+    private var viewModel: MoviesListViewModel!
+    
+    final class func create(with viewModel: MoviesListViewModel) -> MoviesListViewController {
+        let vc = MoviesListViewController.instantiateViewController()
+        vc.viewModel = viewModel
+        return vc
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        bind(to: viewModel)
+    }
+    
+    private func bind(to viewModel: MoviesListViewModel) {
+        viewModel.items.observe(on: self) { [weak self] items in
+            self?.moviesTableViewController?.items = items
+        }
+        viewModel.error.observe(on: self) { [weak self] error in
+            self?.showError(error)
+        }
+    }
+    
+    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
+        guard let searchText = searchBar.text, !searchText.isEmpty else { return }
+        viewModel.didSearch(query: searchText)
+    }
+}
+
+final class Observable<Value> {
+    
+    struct Observer {
+        weak var observer: AnyObject?
+        let block: (Value) -> Void
+    }
+    
+    private var observers = [Observer]()
+    
+    var value: Value {
+        didSet { notifyObservers() }
+    }
+    
+    init(_ value: Value) {
+        self.value = value
+    }
+    
+    func observe(on observer: AnyObject, observerBlock: @escaping (Value) -> Void) {
+        observers.append(Observer(observer: observer, block: observerBlock))
+        observerBlock(self.value)
+    }
+    
+    func remove(observer: AnyObject) {
+        observers = observers.filter { $0.observer !== observer }
+    }
+    
+    private func notifyObservers() {
+        for observer in observers {
+            observer.block(self.value)
+        }
+    }
+}
+
+
+We also assign function showMovieDetails(movie:) to Actions of MoviesListViewModel inside MoviesSearchFlowCoordinator, 
+to present movie details screens from flow coordinator:
+
+protocol MoviesSearchFlowCoordinatorDependencies  {
+    func makeMoviesListViewController(
+        actions: MoviesListViewModelActions
+    ) -> MoviesListViewController
+    func makeMoviesDetailsViewController(movie: Movie) -> UIViewController
+    func makeMoviesQueriesSuggestionsListViewController(
+        didSelect: @escaping MoviesQueryListViewModelDidSelectAction
+    ) -> UIViewController
+}
+
+final class MoviesSearchFlowCoordinator {
+    
+    private weak var navigationController: UINavigationController? // ###
+    private let dependencies: MoviesSearchFlowCoordinatorDependencies// ###
+
+    private weak var moviesListVC: MoviesListViewController?
+    private weak var moviesQueriesSuggestionsVC: UIViewController?
+
+    init(navigationController: UINavigationController,
+         dependencies: MoviesSearchFlowCoordinatorDependencies) {
+        self.navigationController = navigationController
+        self.dependencies = dependencies
+    }
+    
+    func start() {
+        // Note: here we keep strong reference with actions, this way this flow do not need to be strong referenced
+        let actions = MoviesListViewModelActions(showMovieDetails: showMovieDetails,
+                                                 showMovieQueriesSuggestions: showMovieQueriesSuggestions,
+                                                 closeMovieQueriesSuggestions: closeMovieQueriesSuggestions)
+        let vc = dependencies.makeMoviesListViewController(actions: actions)
+
+        navigationController?.pushViewController(vc, animated: false)
+        moviesListVC = vc
+    }
+
+    private func showMovieDetails(movie: Movie) {
+        let vc = dependencies.makeMoviesDetailsViewController(movie: movie)
+        navigationController?.pushViewController(vc, animated: true)
+    }
+
+    private func showMovieQueriesSuggestions(didSelect: @escaping (MovieQuery) -> Void) {}
+
+    private func closeMovieQueriesSuggestions() {}
+}
+
+Note: We use Flow Coordinator for presentation logic, to reduce View Controllers’ size and responsibility. 
+We have strong reference to Flow (with action closures, self functions) to keep Flow not deallocated while is needed.
+
+
 
 ==================================================Data Layer
 Data Layer contains Repository Implementations and one or many Data Sources. 
@@ -264,12 +525,152 @@ Data Layer depends only on the Domain Layer.
 In this layer, we can also add mapping of Network JSON Data (e.g. Decodable conformance) to Domain Models.
 
 
+Data Layer contains DefaultMoviesRepository. It conforms to interfaces defined inside Domain Layer (Dependency Inversion).
+
+final class DefaultMoviesRepository {
+
+    private let dataTransferService: DataTransferService// API Data Service
+    private let cache: MoviesResponseStorage// Persistent Data Storage
+    private let backgroundQueue: DataTransferDispatchQueue
+
+    init(
+        dataTransferService: DataTransferService,
+        cache: MoviesResponseStorage,
+        backgroundQueue: DataTransferDispatchQueue = DispatchQueue.global(qos: .userInitiated)
+    ) {
+        self.dataTransferService = dataTransferService
+        self.cache = cache
+        self.backgroundQueue = backgroundQueue
+    }
+}
+
+Data Transfer Object (DTO)
+Note: Data Transfer Objects DTO is used as intermediate object for mapping from JSON response into Domain.
+Also if we want to cache endpoint response we would store Data Transfer Objects in persistent storage by mapping them into Persistent objects(e.g. DTO -> NSManagedObject).
+
+In general Data Repositories can be injected with API Data Service and with Persistent Data Storage.
+The storage and API can be replaced by totally different implementations (from CoreData to Realm for example).
+
+
+
 ==================================================Data Flow
 1. View(UI) calls method from ViewModel (Presenter).
 2. ViewModel executes Use Case.
 3. Use Case combines data from User and Repositories.
 4. Each Repository returns data from a Remote Data (Network), Persistent DB Storage Source or In-memory Data (Remote or Cached).
 5. Information flows back to the View(UI) where we display the list of items.
+
+
+==================================================Infrastructure Layer (Network)
+It is a wrapper around network framework, it can be Alamofire (or another framework). 
+It can be configured with network parameters (for example base URL). 
+It also supports defining endpoints and contains data mapping methods (using Decodable).
+
+
+==================================================MVVM
+Different view implementations can be used with the same ViewModel. 
+For example, you can use CarsAroundListView and CarsAroundMapView and use CarsAroundViewModel for both.
+
+Data Binding between View and ViewModel can be done for example with closures, delegates or observables (e.g. RxSwift).
+
+// data binding from ViewController:
+private func bind(to viewModel: MoviesListViewModel) {
+    viewModel.items.observe(on: self) { [weak self] _ in self?.updateItems() }
+    viewModel.loading.observe(on: self) { [weak self] in self?.updateLoading($0) }
+    viewModel.query.observe(on: self) { [weak self] in self?.updateSearchQuery($0) }
+    viewModel.error.observe(on: self) { [weak self] in self?.showError($0) }
+}
+
+The View has a direct relationship to ViewModel and notifies it whenever an event inside View happens. 
+From ViewModel, there is no direct reference to View (only Data Binding)
+
+
+
+==================================================MVVMs Communication
+1. Delegation
+ViewModel of one MVVM(screen) communicates with another ViewModel of another MVVM(screen) using delegation pattern:
+
+For example, we have ItemsListViewModel and ItemEditViewModel. 
+Then we create a protocol ItemEditViewModelDelegate with method ItemEditViewModelDidEditItem(item). 
+And we make it conform to this protocol: extension ListItemsViewModel: ItemEditViewModelDelegate
+
+// Step 1: Define delegate and add it to first ViewModel as weak property
+protocol MoviesQueryListViewModelDelegate: class {
+    func moviesQueriesListDidSelect(movieQuery: MovieQuery)
+}
+...
+final class DefaultMoviesQueryListViewModel: MoviesListViewModel {
+    private weak var delegate: MoviesQueryListViewModelDelegate?
+    
+    func didSelect(item: MoviesQueryListViewItemModel) { 
+        // Note: We have to map here from View Item Model to Domain Enity
+        delegate?.moviesQueriesListDidSelect(movieQuery: MovieQuery(query: item.query))
+    }
+}
+
+// Step 2:  Make second ViewModel to conform to this delegate
+extension MoviesListViewModel: MoviesQueryListViewModelDelegate {
+    func moviesQueriesListDidSelect(movieQuery: MovieQuery) {
+        update(movieQuery: movieQuery)
+    }
+}
+
+Note: We can also name Delegates in this case as Responders: ItemEditViewModelResponder
+
+
+2. #####Closures#####
+Another way to communicate is by using closures which are assigned or injected by FlowCoordinator.
+In the example project we can see how MoviesListViewModel uses action closure showMovieQueriesSuggestions to show the MoviesQueriesSuggestionsView.
+It also passes parameter (_ didSelect: MovieQuery) -> Void so it can be called back from that View.
+The communication is connected inside MoviesSearchFlowCoordinator:
+
+// MoviesQueryList.swift
+
+// Step 1: Define action closure to communicate to another ViewModel, e.g. here we notify MovieList when query is selected
+typealias MoviesQueryListViewModelDidSelectAction = (MovieQuery) -> Void
+
+// Step 2: Call action closure when needed
+class MoviesQueryListViewModel {
+    init(didSelect: MoviesQueryListViewModelDidSelectAction? = nil) {
+        self.didSelect = didSelect
+    }
+    func didSelect(item: MoviesQueryListItemViewModel) {
+        didSelect?(MovieQuery(query: item.query))
+    }
+}
+
+// MoviesQueryList.swift
+
+// Step 3: When presenting MoviesQueryListView we need to pass this action closure as paramter (_ didSelect: MovieQuery) -> Void
+struct MoviesListViewModelActions {
+    let showMovieQueriesSuggestions: (@escaping (_ didSelect: MovieQuery) -> Void) -> Void
+}
+
+class MoviesListViewModel { 
+    var actions: MoviesListViewModelActions?
+
+    func showQueriesSuggestions() {
+        actions?.showMovieQueriesSuggestions { self.update(movieQuery: $0) } 
+        //or simpler actions?.showMovieQueriesSuggestions(update)
+    }
+}
+
+// FlowCoordinator.swift
+
+// Step 4: Inside FlowCoordinator we connect communication of two viewModels, by injecting actions closures as self function
+class MoviesSearchFlowCoordinator {
+    func start() {
+        let actions = MoviesListViewModelActions(showMovieQueriesSuggestions: self.showMovieQueriesSuggestions)
+        let vc = dependencies.makeMoviesListViewController(actions: actions)  
+        present(vc)
+    }
+
+    private func showMovieQueriesSuggestions(didSelect: @escaping (MovieQuery) -> Void) {
+        let vc = dependencies.makeMoviesQueriesSuggestionsListViewController(didSelect: didSelect)
+        present(vc)
+    }
+}
+
 
 
 ==================================================Dependency Direction
@@ -409,3 +810,183 @@ class AuthRepositoryImpl: AuthRepository {
 
 
 ###
+
+
+
+
+==================================================AppDIContainer
+AppDIContainer 是一种 依赖注入容器（Dependency Injection Container） 的实现，在 iOS 架构中常用于集中管理应用的依赖关系。
+
+它的作用是提供应用程序中各种服务或模块的实例（如网络服务、数据库、ViewModel、UseCase、Repository 等），从而让其他部分（比如 AppFlowCoordinator）不需要自己去初始化这些依赖，而是 由容器统一创建和提供。
+
+
+使用 AppDIContainer 有几个明显的好处：
+解耦
+各模块之间通过协议交互，不直接创建彼此，降低耦合度，方便测试和维护。
+集中管理依赖
+所有依赖的初始化都集中在容器中，结构清晰。
+方便测试
+可以在测试中替换容器中的依赖为 mock 实现，提高测试能力。
+支持多模块架构
+在大规模项目中，可以按模块组织多个 DI 容器，便于管理。
+
+
+final class AppDIContainer {
+
+    lazy var networkService: NetworkService = {
+        DefaultNetworkService()
+    }()
+
+    lazy var coreDataStorage: CoreDataStorage = {
+        CoreDataStorage.shared
+    }()
+
+    func makeHomeDIContainer() -> HomeDIContainer {
+        return HomeDIContainer(dependencies: self)
+    }
+}
+
+它可能会提供：
+网络服务（如 NetworkService、APIClient）
+本地存储服务（如 CoreDataStorage、UserDefaults 包装器）
+模块 DI 容器生成器（比如 makeHomeDIContainer()）
+Use Case 或 Repository 的构建方法
+
+
+配合 FlowCoordinator 使用
+appFlowCoordinator = AppFlowCoordinator(
+    navigationController: navigationController,
+    appDIContainer: appDIContainer
+)
+这表示 AppFlowCoordinator 会依赖 AppDIContainer 来构建它所需的模块和服务，比如进入首页、详情页等的初始化流程。
+
+
+final class AppFlowCoordinator {
+
+    var navigationController: UINavigationController
+    private let appDIContainer: AppDIContainer // AppFlowCoordinator 依赖 AppDIContainer
+    
+    // 构造函数注入（Constructor Injection）方式
+    /*
+    构造函数注入是依赖注入的常见模式之一，它具有以下优点：
+    明确声明依赖关系
+    保证类构造时依赖已就绪
+    有利于测试（可以注入 mock 版本）
+    */
+    init(
+        navigationController: UINavigationController,
+        appDIContainer: AppDIContainer
+    ) {
+        self.navigationController = navigationController
+        self.appDIContainer = appDIContainer
+    }
+
+    func start() {
+        // In App Flow we can check if user needs to login, if yes we would run login flow
+        let moviesSceneDIContainer = appDIContainer.makeMoviesSceneDIContainer()
+        let flow = moviesSceneDIContainer.makeMoviesSearchFlowCoordinator(navigationController: navigationController)
+        flow.start()
+    }
+}
+
+AppDelegate（持有 AppDIContainer）  
+    ⬇️ 创建
+AppFlowCoordinator（依赖 AppDIContainer）
+    ⬇️ 调用
+MoviesSceneDIContainer（通过 appDIContainer 提供）
+    ⬇️ 创建
+MoviesSearchFlowCoordinator
+这是一条DI + Coordinator 架构链条：每一级依赖上一级容器/协调器提供服务或模块。
+
+
+Dependency Injection 是一种 设计模式，用于将一个对象所依赖的组件（service、repository、use case 等）从外部传入，而不是在对象内部直接创建。
+
+
+==================================================Dependency Injection Container
+Dependency injection is a technique whereby one object supplies the dependencies of another object. 
+#####
+DIContainer in your application is the central unit of all injections.
+#####
+
+1. #####Using dependencies factory protocols#####
+One of the options is to declare a dependencies protocol that delegates the creation of dependency to DIContainer. 
+To do this we need to define MoviesSearchFlowCoordinatorDependencies protocol and make your MoviesSceneDIContainer to conform to this protocol, 
+and then inject it into the MoviesSearchFlowCoordinator that needs this injection to create and present MoviesListViewController. Here are the steps:
+
+// Define Dependencies protocol for class or struct that needs it
+protocol MoviesSearchFlowCoordinatorDependencies  {
+    func makeMoviesListViewController() -> MoviesListViewController
+}
+
+class MoviesSearchFlowCoordinator {
+    
+    private let dependencies: MoviesSearchFlowCoordinatorDependencies
+
+    init(dependencies: MoviesSearchFlowCoordinatorDependencies) {
+        self.dependencies = dependencies
+    }
+...
+}
+
+// Make the DIContainer to conform to this protocol
+extension MoviesSceneDIContainer: MoviesSearchFlowCoordinatorDependencies {}
+
+// And inject MoviesSceneDIContainer `self` into class that needs it
+final class MoviesSceneDIContainer {
+    ...
+    // MARK: - Flow Coordinators
+    func makeMoviesSearchFlowCoordinator(navigationController: UINavigationController) -> MoviesSearchFlowCoordinator {
+        return MoviesSearchFlowCoordinator(navigationController: navigationController,
+                                           dependencies: self)
+    }
+}
+
+
+2. Using closures
+Another option is to use closures. 
+To do it we need to declare closure inside the class that needs an injection and then we inject this closure. For example:
+// Define makeMoviesListViewController closure that returns MoviesListViewController
+class MoviesSearchFlowCoordinator {
+   
+    private var makeMoviesListViewController: () -> MoviesListViewController
+
+    init(navigationController: UINavigationController,
+         makeMoviesListViewController: @escaping () -> MoviesListViewController) {
+        ...
+        self.makeMoviesListViewController = makeMoviesListViewController
+    }
+    ...
+}
+
+// And inject MoviesSceneDIContainer's `self`.makeMoviesListViewController function into class that needs it
+final class MoviesSceneDIContainer {
+    ...
+    // MARK: - Flow Coordinators
+    func makeMoviesSearchFlowCoordinator(navigationController: UINavigationController) -> MoviesSearchFlowCoordinator {
+        return MoviesSearchFlowCoordinator(navigationController: navigationController,
+                                           makeMoviesListViewController: self.makeMoviesListViewController)
+    }
+    
+    // MARK: - Movies List
+    func makeMoviesListViewController() -> MoviesListViewController {
+        ...
+    }
+}
+
+
+
+==================================================Layer Separation into frameworks (Modules)
+Now each layer (Domain, Presentation, UI, Data, Infrastructure Network) of the example app can be easily separated into separate frameworks.
+
+New Project -> Create Project… -> Cocoa Touch Framework
+
+Then you can include these frameworks into your main app by using CocoaPods.
+
+
+==================================================modularisation of the app
+https://tech.olx.com/modular-architecture-in-ios-c1a1e3bff8e9
+
+
+
+==================================================The 5 Patterns You Need to Know
+https://dzone.com/articles/software-architecture-the-5-patterns-you-need-to-k

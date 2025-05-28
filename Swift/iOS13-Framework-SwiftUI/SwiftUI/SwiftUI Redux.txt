@@ -1,0 +1,240 @@
+Redux 是一种 状态管理架构，最早由 Dan Abramov 为 JavaScript（特别是 React）生态设计
+
+Redux 的核心思想：可预测的单向数据流
+整个应用的状态保存在一个**全局单一的状态树（state tree）**中，状态的更新只能通过明确的「动作（actions）」和「纯函数（reducers）」来完成。
+
+
+Redux 架构的四大核心概念
+State	应用的单一状态树，代表当前应用的全部数据
+Action	一个简单的对象，描述「发生了什么」，必须有 type 字段
+Reducer	一个纯函数，接收当前 state 和 action，返回新的 state
+Store	管理状态的容器，提供 dispatch() 和 getState() 接口
+
+
+Redux 数据流示意图：
+View
+ ↓ dispatch(action)
+Action
+ ↓
+Reducer (纯函数)
+ ↓
+New State
+ ↓
+Store
+ ↓
+View 自动更新（通常通过绑定）
+
+
+
+1. Redux 部分
+// State
+struct AppState {
+    var counter: Int
+}
+
+// Action
+enum CounterAction {
+    case increment
+    case decrement
+}
+
+// Reducer
+func counterReducer(state: AppState, action: CounterAction) -> AppState {
+    var state = state
+    switch action {
+        case .increment:
+            state.counter += 1
+        case .decrement:
+            state.counter -= 1
+    }
+    return state
+}
+
+// Store
+class Store: ObservableObject {
+    @Published private(set) var state: AppState
+    init(initial: AppState) {
+        self.state = initial
+    }
+
+    func dispatch(action: CounterAction) {
+        state = counterReducer(state: state, action: action)
+    }
+}
+
+
+2. SwiftUI 界面绑定 Redux Store
+import SwiftUI
+
+struct ContentView: View {
+    @ObservedObject var store: Store
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Counter: \(store.state.counter)")
+                .font(.largeTitle)
+
+            HStack(spacing: 40) {
+                Button(action: {
+                    store.dispatch(action: .decrement)
+                }) {
+                    Image(systemName: "minus.circle.fill")
+                        .resizable()
+                        .frame(width: 60, height: 60)
+                        .foregroundColor(.red)
+                }
+
+                Button(action: {
+                    store.dispatch(action: .increment)
+                }) {
+                    Image(systemName: "plus.circle.fill")
+                        .resizable()
+                        .frame(width: 60, height: 60)
+                        .foregroundColor(.green)
+                }
+            }
+        }
+        .padding()
+    }
+}
+
+
+3. 入口：App 初始化 Store
+@main
+struct ReduxCounterApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView(store: Store(initial: AppState(counter: 0)))
+        }
+    }
+}
+
+
+==================================================如果你的应用中有多个 View 和多个 State（例如 CounterState、UserState、SettingsState 等）
+统一的 AppState，拆分的 Reducer
+
+1. 定义一个全局的 AppState，组合子状态：
+struct CounterState {
+    var count: Int
+}
+
+struct UserState {
+    var username: String
+    var isLoggedIn: Bool
+}
+
+struct AppState {
+    var counter: CounterState
+    var user: UserState
+}
+
+
+2. 定义各自的 Action 类型（可合并为 enum 或 protocol）：
+enum CounterAction {
+    case increment
+    case decrement
+}
+
+enum UserAction {
+    case login(String)
+    case logout
+}
+
+enum AppAction {
+    case counter(CounterAction)
+    case user(UserAction)
+}
+
+
+3. 拆分 Reducer，每个子模块负责自己的 State：
+func counterReducer(state: CounterState, action: CounterAction) -> CounterState {
+    var state = state
+    switch action {
+        case .increment:
+            state.count += 1
+        case .decrement:
+            state.count -= 1
+    }
+    return state
+}
+
+func userReducer(state: UserState, action: UserAction) -> UserState {
+    var state = state
+    switch action {
+        case let .login(username):
+            state.username = username
+            state.isLoggedIn = true
+        case .logout:
+            state.username = ""
+            state.isLoggedIn = false
+    }
+    return state
+}
+
+
+
+4. 定义顶层 Reducer 组合子 Reducer：
+func appReducer(state: AppState, action: AppAction) -> AppState {
+    var state = state
+
+    switch action {
+        case let .counter(counterAction):
+            state.counter = counterReducer(state: state.counter, action: counterAction)
+        case let .user(userAction):
+            state.user = userReducer(state: state.user, action: userAction)
+    }
+
+    return state
+}
+
+
+
+5. 全局 Store 管理完整 AppState 和 Action：
+class Store: ObservableObject {
+    @Published private(set) var state: AppState
+
+    init(initial: AppState) {
+        self.state = initial
+    }
+
+    func dispatch(action: AppAction) {
+        state = appReducer(state: state, action: action)
+    }
+}
+
+
+6. View 中只订阅关心的 State：
+struct CounterView: View {
+    @EnvironmentObject var store: Store
+
+    var body: some View {
+        VStack {
+            Text("Counter: \(store.state.counter.count)")
+            Button("Increment") {
+                store.dispatch(action: .counter(.increment))
+            }
+        }
+    }
+}
+
+struct UserView: View {
+    @EnvironmentObject var store: Store
+
+    var body: some View {
+        VStack {
+            Text(store.state.user.isLoggedIn ? "Welcome, \(store.state.user.username)" : "Not logged in")
+            Button("Login") {
+                store.dispatch(action: .user(.login("Alice")))
+            }
+        }
+    }
+}
+
+
+
+Reducer（缩写自 “state reducer”）可以理解为一个纯函数，用来“描述状态如何变化”。
+状态更新的“说明书”或者“工厂加工指令” —— 输入当前状态和一条 Action，输出新的状态。
+一种“状态变更规则”的描述函数
+
+
+纯函数	对相同输入永远返回相同输出，无副作用

@@ -1,0 +1,124 @@
+从本质上讲，iOS 安装 .ipa 文件，最终就是把 .app 解压并安装到系统的 Applications 目录下，但这个过程在 iOS 系统内部经过了严格的验证和处理
+
+安装过程的核心流程:
+1. 解压 .ipa 
+系统（或 MDM、TestFlight、App Store）会将 .ipa 解压缩，提取 Payload/MyApp.app 目录。
+
+2. 拷贝 .app 到受控位置
+/private/var/containers/Bundle/Application/UUID/MyApp.app
+
+其中的 UUID 是 iOS 动态生成的目录名
+
+不像 macOS 的 /Applications 是公开路径，iOS 的应用目录受沙盒保护，不可直接访问或修改。
+
+3. 代码签名验证
+系统会校验 .app 的代码签名是否有效
+
+iOS 安装时代码签名验证过程:
+(1)提取 Code Signature 区段
+可执行文件中有一个 __LINKEDIT 区段，包含了代码签名结构，包括：
+CodeDirectory
+CMS Signature（实际上是一个 CMS/PKCS7 签名数据块）
+
+otool -l MyApp.app/MyApp   # 看 LC_CODE_SIGNATURE
+
+(2)读取 CodeDirectory
+这是代码签名的“目录”，包含：
+代码各页的哈希值
+Info.plist 哈希
+Entitlements 哈希
+签名所使用的哈希算法
+标识符（CFBundleIdentifier）
+Team ID、平台类型等元数据
+
+(3)验证哈希值是否匹配
+系统对 .app 的关键部分重新计算 hash（如可执行文件页、plist、entitlements），然后和 CodeDirectory 里的 hash 比较:
+如果 任何一项 hash 对不上，说明文件被篡改，安装失败。
+
+(4)验证签名链是否可信
+CodeDirectory 的 hash 会被签名成一个 CMS/PKCS7 结构，这个结构中包含：
+签名者的证书（开发证书 / 企业证书 / App Store）
+Apple 的中级 CA、根 CA
+
+系统会：
+校验证书是否在 Apple 信任列表中（即“根证书是否受信”）
+检查证书是否过期或吊销
+这相当于“验证你是谁”。
+
+(5)检查 embedded.mobileprovision 描述文件是否匹配
+iOS 会解析这个嵌入式描述文件，检查：
+Bundle Identifier 是否匹配（与 CodeDirectory 里的 identifier）
+签名证书是否和其中的 Developer 证书匹配
+UDID 是否在 ProvisionedDevices（仅限开发/企业签名）
+证书是否在有效期内
+Entitlements 权限是否匹配
+如果有任意一项不匹配，系统会拒绝安装，提示如“无法安装 App”。
+
+
+最终判断：
+如果：
+.app 文件未被篡改
+签名者身份可信
+描述文件合法、匹配
+系统信任证书链
+则：安装成功。
+否则，系统拒绝安装或运行。
+
+
+codesign -dvvv MyApp.app // 查看签名信息的命令行工具
+security cms -D -i embedded.mobileprovision  # 解析描述文件
+
+安装阶段：由 installd、mobile_installation_proxy 等完成签名检查
+运行阶段：SpringBoard / kernel 会在 app 启动时再次校验签名（防止运行期间修改）
+
+
+系统在校验 .app 的哈希完整性时，不需要签名者的私钥，它只需要用签名者的公钥验证签名是否成立。
+阶段	使用谁的私钥？	使用谁的公钥？	系统行为
+签名阶段（开发者操作）	✅ 使用开发者的私钥	❌ 不使用公钥	计算哈希 → 用私钥签名成 CMS (这边是两个独立的步骤，哈希+私钥签名)
+验证阶段（系统安装或运行时）	❌ 不需要私钥	✅ 使用签名者的公钥（从证书中提取）	重新计算哈希 + 用公钥验证签名
+
+假设你是开发者：
+你打包了 .app，生成了 CodeDirectory，其中包括多个哈希值
+然后你用你自己开发证书的 私钥，对这些哈希值做签名 → 得到一个 CMS 结构（代码签名）
+这个 CMS 是放在 .app 的 __LINKEDIT 区段里的。
+
+当系统安装这个 App 时，它做了什么？
+读取 CodeDirectory 和你的签名（CMS）
+用你证书中的“公钥” 解开 CMS，提取出签名的哈希值
+系统重新计算实际 .app 的哈希值
+比较两个哈希值是否一致
+✔ 如果一致 → 签名有效，文件完整
+✘ 如果不一致 → 安装失败、报错（例如：签名无效、App 被篡改）
+
+“系统怎么知道哈希对不对？”:	系统重新计算哈希，然后验证你私钥生成的签名是否能被公钥解开，并与计算值一致
+
+
+数字签名过程（以代码签名为例）:
+(1)哈希（Hashing）
+把你要签名的内容（如 CodeDirectory）用一种哈希算法（SHA-256、SHA-1 等）计算出一个摘要值（digest）
+这个摘要就是“这段数据的指纹”
+CodeDirectory → SHA256 → 哈希值（digest）
+(2)签名（Signing）
+用你的私钥对这个哈希值进行加密（这就是“签名”）
+得到一个签名数据块（通常是一个 ASN.1 / PKCS7 / CMS 格式）
+signature = encrypt_with_private_key(digest)
+
+所以完整过程是：
+App中的CodeDirectory
+↓
+SHA256 → digest
+↓
+用私钥签名（加密digest）
+↓
+得到签名 → 存在 __LINKEDIT 区段（CMS结构）
+
+
+4. 创建沙盒目录结构
+系统为该 App 创建对应的沙盒路径，例如：
+Documents/
+Library/
+tmp/
+
+/private/var/mobile/Containers/Data/Application/UUID/
+
+
