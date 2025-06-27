@@ -1,0 +1,291 @@
+https://developer.apple.com/documentation/technotes/tn3121-selecting-a-pixel-format-for-an-avcapturevideodataoutput#Choosing-between-lossy-and-lossless
+
+Learn how to choose the best output pixel format for your app.
+
+AVCaptureVideoDataOutput is capable of outputting pixel buffers to your app in many different pixel formats.
+
+
+Avoid defaulting to ‘BGRA’:
+A common mistake is to default to selecting ‘BGRA’ as the output format. This format is not a native capture format, 
+which means that AVCapture has to perform a conversion to deliver this format. 
+Additionally, this format requires significantly more memory than many of the native capture formats.
+
+
+https://developer.apple.com/documentation/AVFoundation/AVCaptureDevice/activeFormat
+https://developer.apple.com/documentation/AVFoundation/AVCaptureDevice
+Consider a common scenario where the activeFormat of the AVCaptureDevice is configured to capture in ‘420v’:
+
+In this scenario, if you request that the video data output deliver pixel buffers in ‘BGRA’, then AVCapture has to convert every captured ‘420v’ pixel buffer to ‘BGRA’. 
+AVCapture performs these conversions efficiently, but they are not free.
+
+Also, ‘BGRA’ pixel buffers require approximately 2.6x more memory than their ‘420v’ equivalent pixel buffers! 
+This dramatic increase in memory bandwidth usage has serious implications for the efficiency, 
+thermals, and battery consumption of your app.
+
+Instead of paying the costs of pixel format conversion and high memory bandwidth by default, 
+follow the guidance provided in “Choosing the output pixel format” to select an appropriate pixel format for your app.
+
+
+
+Discovering available output pixel formats:
+https://developer.apple.com/documentation/AVFoundation/AVCaptureVideoDataOutput
+Not all devices support the full range of output pixel formats. To see the available formats at run time, 
+iterate through the AVCaptureVideoDataOutput’s array of availableVideoPixelFormatTypes.
+
+
+Note
+The availableVideoPixelFormatTypes array is dynamic, and depends on the activeFormat of the capture device that the AVCaptureVideoDataOutput is connected to.
+
+
+As an example, iPhone 13 Pro supports the following output pixel formats:
+Pixel Format Constant
+FourCharCode
+Bits Per Channel
+
+kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+
+‘420v’
+
+8
+
+kCVPixelFormatType_Lossless_420YpCbCr8BiPlanarVideoRange
+
+‘&8v0’
+
+8
+
+kCVPixelFormatType_Lossy_420YpCbCr8BiPlanarVideoRange
+
+‘-8v0’
+
+8
+
+kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+
+‘420f’
+
+8
+
+kCVPixelFormatType_Lossless_420YpCbCr8BiPlanarFullRange
+
+‘&8f0’
+
+8
+
+kCVPixelFormatType_Lossy_420YpCbCr8BiPlanarFullRange
+
+‘-8f0’
+
+8
+
+kCVPixelFormatType_32BGRA
+
+‘BGRA’
+
+8
+
+kCVPixelFormatType_Lossless_32BGRA
+
+‘&BGA’
+
+8
+
+kCVPixelFormatType_Lossy_32BGRA
+
+‘-BGA’
+
+8
+
+kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+
+‘x420’
+
+10
+
+kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarVideoRange
+
+‘&xv0’
+
+10
+
+kCVPixelFormatType_Lossy_420YpCbCr10PackedBiPlanarVideoRange
+
+‘-xv0’
+
+10
+
+kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange
+
+‘x422’
+
+10
+
+kCVPixelFormatType_Lossless_422YpCbCr10PackedBiPlanarVideoRange
+
+‘&xv2’
+
+10
+
+kCVPixelFormatType_Lossy_422YpCbCr10PackedBiPlanarVideoRange
+
+‘-xv2’
+
+10
+
+
+
+
+Choosing the output pixel format:
+The ideal output pixel format for your app will depend on how your app utilizes the pixel buffers that it receives from the video data output, 
+as well the requirements that you have for your app. 
+There is no exact formula that can be applied to identify this format, but here are a few questions to consider:
+Can your app work with bi-planar YpCbCr pixel buffers, or does it require BGRA pixel buffers?
+Can your app work with compressed pixel buffers, or does it require uncompressed pixel buffers?
+Does your app want to deliver 10-bit high dynamic range content?
+
+Consider the following example scenarios, which are intended to help guide you in selecting the output pixel format for your app:
+
+Scenario 1: An app takes the output pixel buffers and feeds them to a machine learning model that requires uncompressed BGRA pixel buffers as input. 
+This app is a good candidate for the ‘BGRA’ output pixel format. 
+By specifying this format, this app benefits from efficient conversion from a native capture format to the ‘BGRA’ that is required by the machine learning model.
+
+Scenario 2: An app takes the output pixel buffers and feeds them to an AVAssetWriter, configured to write with the hevc codec. 
+This app is a good candidate for a bi-planar YpCbCr format, which the asset writer can accept as input. 
+By specifying this format, this app benefits from the efficiency and performance advantages of bi-planar YpCbCr data compared to BGRA data, 
+and if the device this app is running on supports compressed pixel buffer formats, 
+this app can use a compressed variation of the bi-planar format to reduce memory bandwidth even further.
+
+Scenario 3: An app takes the output pixel buffers and feeds them to a custom Metal kernel to filter that operates on BGRA data. 
+The developer of this app should consider modifying their kernel implementation to operate on bi-planar YCbCr data. 
+Then, the app could request bi-planar YCbCr pixel buffers, greatly reducing its memory bandwidth usage. 
+Since this app’s filter is implemented for the GPU, it can also utilize a compressed variation of its chosen output pixel format on supported devices.
+
+
+
+Choosing between lossy and lossless:
+In a scenario where your app can utilize a compressed pixel format, always request the lossy variation as the output pixel format if it is available, 
+which will provide additional memory footprint savings.
+There is no difference in image quality between the lossy, lossless, and uncompressed pixel buffers that you receive from AVCapture.
+This is because AVCapture internally uses lossy formats on devices that support them.
+These lossy formats are implemented such that, for most images, the compression is lossless, while the few remaining images are visually lossless.
+
+
+Bi-planar YpCbCr pixel buffer 是一种 YUV 格式的像素缓存结构，将图像拆分为两个独立的内存区域（平面）：
+一个平面用于亮度（Y）
+一个平面用于色度（CbCr）
+相对于 BGRA（或 RGBA）这种 单平面、每像素包含所有通道 的格式，Bi-planar 是“按分量分开存储”的结构，主要用于压缩视频处理。
+
+
+相对比：BGRA vs Bi-Planar YpCbCr
+特性	BGRA8888	Bi-Planar YpCbCr (e.g. NV12)
+每像素包含	R、G、B、A	Y + 共用的 CbCr
+内存结构	单平面（Packed）	两个平面
+数据体积	较大（4 字节/像素）	更小（约 1.5 字节/像素）
+应用	图像渲染、UI	视频编解码、相机输出 ✅
+可读性	易调试	不直观，但高效 ✅
+
+
+分为两个 Plane：
+Y 平面（亮度）
+每像素 1 个字节（灰度图）
+分辨率：width × height
+
+CbCr 平面（色度）
+每 2x2 像素块 共享一组 CbCr（即 4:2:0 采样）
+交错存储：[Cb, Cr][Cb, Cr]...
+分辨率：width/2 × height/2，每像素块 2 字节
+
+示例图像：1920x1080
+Plane	分量	尺寸	字节数
+Plane 0	Y	1920×1080	≈ 2MB
+Plane 1	CbCr	960×540×2（交错）	≈ 1MB
+合计	-	-	≈ 3MB
+比起 BGRA：1920×1080×4 ≈ 8MB，节省了不少内存 
+
+
+为什么视频领域喜欢用 YUV（YpCbCr）？
+人眼对亮度（Y）更敏感，对色彩变化不敏感
+所以：亮度保留精细，色度可以压缩
+节省存储空间 + 提高处理效率
+
+
+Bi-planar YpCbCr 把图像数据分成亮度（Y）和平面交错色度（CbCr）两部分，节省内存，适合视频传输。
+而 BGRA 是渲染友好的格式，适合显示和处理，但不适合压缩传输。
+
+
+Bi-Planar YpCbCr 格式的数据非常适合传输和压缩处理，关键优势就在于它更“轻” —— 占用空间小，效率高。
+非常关键于 实时视频、低延迟传输 场景。
+
+为什么它适合传输？核心原因如下：
+1. 数据体积小得多
+常见的 BGRA8888 是 4 字节/像素
+而 Bi-Planar YpCbCr 420（如 NV12）只有 约 1.5 字节/像素
+几乎节省了 60% 的带宽/内存
+
+2. YUV 分离亮度和色度，便于压缩
+人眼对亮度（Y）更敏感，对色彩（CbCr）不敏感
+所以 Y 分量高分辨率存储，CbCr 分量低分辨率（4:2:0）
+色度“共享”多个像素，非常节省空间
+
+3. 天然支持硬件解码 & GPU 渲染
+编码器/摄像头/视频解码器几乎都直接输出 YpCbCr 格式
+视频传输（比如视频通话、录制、流媒体）都优先使用这种格式
+不需要额外格式转换
+
+Bi-Planar YpCbCr 是为了节省带宽和内存而设计的格式，
+非常适合摄像头输出、视频编码、实时传输场景，
+相比 BGRA 更轻巧，但不直接适合显示（需转换为 RGB）。
+
+
+
+VideoRange vs FullRange 的区别
+它们主要区别在于 亮度（Y）和色度（Cb、Cr）采样的数值范围不同。
+1. Video Range（视频范围）
+亮度 Y 的值范围：16 ~ 235（8-bit）
+色度 Cb、Cr 的值范围：16 ~ 240
+原因： 这个范围是为了兼容传统电视广播标准（BT.601、BT.709），保留了黑电平（16）到白电平（235）之间的区间，避免超出范围产生信号失真。
+应用场景：广播电视、视频压缩、摄像头原始输出一般用 VideoRange。
+
+2. Full Range（全范围）
+亮度 Y 的值范围：0 ~ 255
+色度 Cb、Cr 的值范围：0 ~ 255
+适合计算机图像处理，避免色彩压缩和色域缩放导致的精度损失。
+应用场景：数字图像处理、游戏渲染、图形设计和一般电脑显示设备。
+
+
+
+
+4:2:0 是色彩采样格式（Chroma Subsampling）的表示方法
+
+4:2:0 的含义 — 色度采样比例
+它表示的是 色度（Cb、Cr）分量相对于亮度（Y）分量的采样比例，目的是减少色度数据量以节省带宽，同时保持画面质量。
+
+数字的具体含义（格式是 J:a:b）
+第一个数字（J=4）：表示亮度（Y）采样的水平采样参考单位，固定为4个像素宽度。
+第二个数字（a=2）：表示色度分量在水平方向上采样的次数（在这4个像素宽度中，色度采样了多少次）
+第三个数字（b=0）：表示色度分量在垂直方向上的采样次数（对2行像素来说采样多少次）
+
+4:2:0 表示：
+水平方向：色度分量采样是亮度的一半（2次采样 vs 4次亮度采样）
+垂直方向：色度分量采样是亮度的一半（0 表示色度每两行采样一次）
+
+换句话说，
+每4个像素宽度 × 2行像素，只有 1 个色度采样点。 // 8 个亮度像素共享 1 个色度采样点
+
+Y 分量（亮度）	CbCr 分量（色度）
+4 pixels × 2 rows (完整采样)	2 pixels × 1 row (采样减半)
+
+
+为什么这样设计？
+人眼对亮度敏感，对色彩变化不敏感
+通过降低色度分辨率（4:2:0）来节省带宽和存储
+在视觉上基本不会明显影响画质
+
+其他采样格式举例
+格式	说明
+4:4:4	无色度压缩，亮度和色度分辨率相同
+4:2:2	水平方向色度采样减半，垂直方向不变
+4:2:0	水平和垂直方向色度采样均减半（最常用视频采样）
+
+
+4:2:0 代表色度分量的采样分辨率是亮度分量的1/4（水平×垂直各减半），大幅减少数据量，且视觉损失很小，是视频编码中最常用的格式。

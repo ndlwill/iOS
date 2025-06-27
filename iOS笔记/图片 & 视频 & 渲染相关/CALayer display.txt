@@ -1,0 +1,316 @@
+-[CALayer display] 是 Core Animation 中的一个关键方法，它控制着一个 layer 如何绘制其内容（contents）。
+这是你自定义图层绘制的核心入口之一。
+
+
+- (void)display;
+这是 CALayer 的一个实例方法。默认实现会尝试从 delegate 获取内容，或者用 draw(in:) 方法进行绘制。
+
+
+它在什么时候被调用？
+当 Core Animation 准备将一个 layer 提交到 render tree（准备上屏），并且该 layer 标记为「需要重新绘制内容」，即 needsDisplay = YES，那么系统会调用 display()。
+这个过程通常发生在：
+显式调用 [layer setNeedsDisplay]
+或者你自定义了 CALayer 并实现了 display，然后系统在 commit 时自动调用
+
+
+默认的 -[CALayer display] 做了以下几件事：
+如果有 contents（layer.contents != nil），就用它；
+如果有 delegate 并实现了 displayLayer:，就调用 delegate 的方法让它绘制；
+否则，如果 drawsAsynchronously = NO，它会使用 draw(in:) 进行同步绘制；
+如果没有自定义内容，它就什么也不做，保留默认内容。
+
+
+它的调用逻辑如下（伪代码）：
+- (void)display {
+    if (self.delegate && [self.delegate respondsToSelector:@selector(displayLayer:)]) {
+        [self.delegate displayLayer:self];
+    } else if ([self needsDisplay]) {
+        UIGraphicsBeginImageContext(self.bounds.size);
+        [self drawInContext:context]; // 或 draw(in:) in Swift
+        self.contents = CGBitmapContextCreateImage(context);
+        UIGraphicsEndImageContext();
+    }
+}
+
+
+
+使用场景：
+1. 自定义 CALayer 子类时重绘内容：
+- (void)display {
+    self.contents = ... // 用你自己的图像或绘制逻辑
+}
+或者
+- (void)drawInContext:(CGContextRef)ctx {
+    // 自定义绘图
+    CGContextSetFillColorWithColor(ctx, [UIColor redColor].CGColor);
+    CGContextFillRect(ctx, self.bounds);
+}
+
+2. 配合 setNeedsDisplay() 使用：
+layer.setNeedsDisplay()
+// 下一次 runloop 会调用 display()，刷新 contents
+
+
+
+项目	描述
+display() 是底层入口	尽量不要频繁 override 除非你做完全自定义绘制
+更常用的是 draw(in:)	用于 CGContext 绘制图形内容
+不等同于 UIView 的 draw(_:)	UIView 的绘制封装在 draw(_:)，但底层也是调到 CALayer.display()
+
+
+方法	作用
+-display	决定 layer 的最终内容（contents）是啥
+-drawInContext:	如果你要用 Core Graphics 绘图，在这里处理
+displayLayer:（delegate 方法）	另一种方式给 layer 提供内容
+
+
+
+
+流程图：
+你调用 setNeedsDisplay()
+       ↓
+layer 被标记为 dirty（需要重绘）//（needsDisplay = YES），系统不会立即绘制，等待本次 runloop 结束后统一处理（batch）
+Core Animation 使用事务系统（CATransaction）合并多次改动
+你也可以手动调用 layer.display()，但这通常是系统行为
+       ↓
+下一次主线程 RunLoop 到达 BeforeWaiting
+       ↓
+CATransaction.commit()
+       ↓
+  Layer Tree 被同步到 Render Tree
+       ↓
+  调用 -[CALayer display]
+       ↓
+  设置 contents，或 drawInContext
+       ↓
+  Render Server 接收指令
+       ↓
+  GPU 合成并渲染，最终显示到屏幕
+
+
+
+Step 1：你调用 layer.setNeedsDisplay()
+Step 2：下一次主线程 RunLoop 进入 BeforeWaiting
+这是 RunLoop 的一个阶段，UIKit 会在这个阶段自动调用：
+[CATransaction flush];// 内部调用commit
+
+CATransaction.flush() 做了什么？
+遍历所有被标记为需要 display 的 layer
+调用每个 layer 的 -display 方法
+生成或更新 layer 的 contents（通常是一个 CGImageRef）
+
+Step 3：[CALayer display] 被调用
+如果你实现了 displayLayer: delegate 方法，调用它；
+如果你 override 了 display()，走你的逻辑；
+否则 fallback 到 drawInContext:
+生成的内容最终赋值到：
+self.contents = <CGImageRef>;
+
+Step 4：同步到 Render Server（Render Tree）
+Core Animation 会将 CALayer 层级树转换为内部结构（CA::Layer）
+通过 XPC 进程通信传送给 backboardd 或 WindowServer
+Render Server 会将这些 Layer 数据交给 GPU 去合成（composition）
+
+render tree 是不可见的，是 Core Animation 内部管理的
+它是 model tree 的只读快照，供 GPU 使用
+
+Step 5：GPU 合成并渲染
+Render Server 接管后：
+GPU 执行渲染命令（使用 Metal 或 OpenGL ES）
+将图层合成（包括透明度、变换、遮罩、裁剪等）
+最终显示在屏幕上（下一次 VSync 到来时）
+
+你看到的动画/更新，其实是前一帧的 render tree 的成果。
+
+#####
+1. 如果你是手动调用 CATransaction begin 和 commit
+[CATransaction begin];
+layer.opacity = 0.5;
+[CATransaction commit];
+这是 显式事务，你明确告诉系统“现在就提交”。但实际显示刷新在下一帧 // ##### Core Animation 是异步的渲染系统，确保性能和批量提交效率。
+这种写法如果你没关闭动画，会触发一个默认的淡入淡出动画。
+在 layer.opacity = 0.5; 之前添加[CATransaction setDisableActions:YES];这时候 opacity 会瞬时生效，而不是带动画。
+
+2. 如果你不写 begin 和 commit，但改了 layer 属性：
+layer.opacity = 0.5;
+此时系统帮你隐式创建了一个事务，但它还没提交，只是被注册了。
+然后在 RunLoop 即将 sleep（BeforeWaiting）前，UIKit 会自动调用：
+[CATransaction flush];
+这个 flush 会去检查是否存在未提交的事务，如果有，就会调用 commit。
+
+
+flush() 会触发 commit()
+如果你自己没有显式或隐式触发更改（事务内容为空），flush() 什么也不会做
+
+layer.opacity = 0.5;
+[CATransaction flush]; // 这时会触发隐式 commit（因为 layer 改动了）
+
+flush() 是入口，但它本身不代表事务已提交；
+必须先做出改动（即形成事务），flush 才能触发 commit；
+如果在调用 flush() 之前没有形成事务（没有 begin 或没有更改属性），flush 是无效的。
+
+flush()它只会提交已存在的事务，如果你什么都没改，它就什么都不会做。
+
+Render Server（或 GPU 合成线程）渲染完成后，不会主动唤醒 RunLoop。
+实际刷新是在下一次 VSync（垂直同步） 信号到来时，由系统的显示管线 自动合成和上屏，和 RunLoop 是解耦的。
+实际显示刷新在下一帧由系统统一合成（这边的合成就是指“系统的显示管线 自动合成和上屏”）（通常 1/60 秒后）
+
+所谓“系统统一合成”指的正是：
+Render Server（或 GPU 合成线程）在下一次 VSync 到来时，将多个 layer 的内容合成一帧图像并送入屏幕显示管线。
+
+Render Server 收到 layer tree 后做这些事：
+读取每个 CALayer 的内容（比如 contents 或绘制出来的 bitmap）；
+根据 Z 顺序、透明度、变换等，把它们“叠”成一张完整的图；
+准备提交给 GPU 进行图像合成（OpenGL/Metal）；
+
+iOS 系统中，显示帧率一般是 60Hz（或 120Hz），每隔 16.67ms 就有一次 VSync 信号；
+Render Server 会在 下一帧到来前刚好把合成帧准备好；
+然后在 VSync 信号到达时，把合成好的帧提交给显示硬件（LCD/OLED）进行显示。
+
+CATransaction commit (主线程)
+↓
+Render Server 收到变更
+↓
+Render Server 准备合成（GPU）
+↓
+【下一帧 VSync 信号】
+↓
+系统显示管线合成并上屏 ✅
+
+“下一帧到来前还没准备好合成帧”
+就是我们平时说的 “掉帧 / 卡顿”。
+
+掉帧 = 下一次 VSync 到来时，上一帧还没准备好，所以只能“跳过”显示，用户看到卡顿或动画不流畅。
+
+
+系统要求的节奏：
+屏幕 60Hz → 每 16.67ms 一帧；
+你必须在 一帧时间内：
+完成布局（layout）
+更新 layer 属性（动画变更、显示内容变更）
+CATransaction commit
+Render Server 收到变更 → 合成帧 → 准备 GPU 输出
+
+如果超过 16.67ms：
+VSync 到来了，但这一帧还没准备好；
+系统 只能跳过这一帧，等下一帧；
+肉眼看到的就是“卡了一下”或“动画不连贯”；
+
+掉帧的真实视觉表现 —— 中间帧永远不会补上，也不会重播。
+系统不会“回播”任何一帧，它只显示 最新准备好的那一帧。
+#####
+
+
+==================================================
+[CATransaction commit] 和 [CATransaction flush] 是两个不同层级的 API，主要用于事务提交和强制刷新动画事务。
+
+
+CATransaction.commit()用于提交当前动画事务的方法：
+每次使用 CATransaction.begin() 开启一个事务后，都应该配对使用 CATransaction.commit()。
+所有在 begin/commit 之间对 CALayer 的属性所做的更改会被打包成一个事务，在 commit 时统一提交给渲染服务器（Render Server）。
+CATransaction.begin()
+// 做一些 layer 更改
+CATransaction.commit()
+
+
+[CATransaction flush]会立即将当前 pending 的 layer 树更改提交到渲染服务器，而不是等到系统自动合适的时机（如 runloop idle 时）才提交。
+它并不会开启或关闭事务。
+它是一个全局性操作，适合在希望立即看到界面更新的场景使用，例如截图前、强制刷新 UI 等。
+
+// 不一定需要 begin/commit，也可以单独调用
+CATransaction.flush()
+
+
+
+调用顺序和关系（如果都用）：
+CATransaction.begin()
+// 做 layer 更改
+CATransaction.commit()
+
+// 可选：如果你希望立即看到动画或更改效果，可以再 flush 一下
+CATransaction.flush()
+
+
+错误用法：
+调用 flush() 之前没有提交事务（也就是还没 commit()），那就可能会刷新不到想要的更改。
+反之，flush() 之后才 commit() 也没意义，因为 flush() 只能刷新已经提交（或自动合并）的内容。
+
+
+方法	功能	是否需要成对调用	使用场景
+CATransaction.begin() / commit()	打包一组动画/图层更改事务	✅	常规 layer 动画更新
+CATransaction.flush()	强制立即提交所有 pending 更改	❌	强制刷新 UI，例如截图前
+
+建议：在你需要确保 UI 更改“马上”显示时，可以在 commit() 后调用 flush()。但在一般 UI 更新场景中，系统自动调度即可，不需要频繁使用 flush()。
+
+
+==================================================
+通过 CADisplayLink 每帧移动视图的位置，同时模拟主线程过载导致的 掉帧 / 卡顿。
+
+每帧平滑移动一个红色方块（view.center.x += 5）
+添加耗时逻辑模拟主线程阻塞（heavyCalculation）
+观察动画卡顿的现象
+
+
+import UIKit
+
+class ViewController: UIViewController {
+    let animatedView = UIView()
+    var displayLink: CADisplayLink?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        // 设置动画视图
+        animatedView.backgroundColor = .systemRed
+        animatedView.frame = CGRect(x: 0, y: 200, width: 50, height: 50)
+        view.addSubview(animatedView)
+
+        // 开始 CADisplayLink
+        displayLink = CADisplayLink(target: self, selector: #selector(updateFrame))
+        displayLink?.add(to: .main, forMode: .default)
+    }
+
+    @objc func updateFrame() {
+        // 模拟主线程阻塞
+        heavyCalculation()
+
+        // 移动小方块
+        animatedView.center.x += 5
+
+        // 重置到左边
+        if animatedView.frame.origin.x > view.frame.width {
+            animatedView.center.x = -25
+        }
+    }
+
+    func heavyCalculation() {
+        // 模拟一个较重的同步 CPU 任务
+        var sum = 0
+        for i in 0..<20_000 {
+            sum += i % 7
+        }
+        // 防止编译器优化掉
+        _ = sum
+    }
+
+    deinit {
+        displayLink?.invalidate()
+    }
+}
+
+
+添加如下代码输出帧时间间隔：
+var lastTimestamp: CFTimeInterval = 0
+
+@objc func updateFrame(link: CADisplayLink) {
+    if lastTimestamp > 0 {
+        let delta = link.timestamp - lastTimestamp
+        print("Frame interval: \(delta * 1000) ms")
+    }
+    lastTimestamp = link.timestamp
+
+    heavyCalculation()
+    animatedView.center.x += 5
+}
+
+正常应该是 ~16.67ms（60fps），卡顿时会变成 30ms、50ms 甚至更多。

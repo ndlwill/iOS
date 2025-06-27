@@ -1,0 +1,979 @@
+https://onevcat.com/2024/07/swift-6/
+
+Swift 6:
+并发编程和编译时就能保证的完全线程安全
+通过引入一系列语言工具 (主要是 actor 隔离和 Sendable 标注)，
+Swift 6 在开启完全的严格并发检查 (也就是-strict-concurrency=complete) 时，理想状态下可以完全确保在编译阶段就将数据竞争 (data race) 和线程问题排除掉。
+
+Migrating to Swift 6 文档
+https://www.swift.org/migration/documentation/migrationguide/
+
+Common Compiler Errors 
+https://www.swift.org/migration/documentation/swift-6-concurrency-migration-guide/commonproblems/
+常见编译器错误
+识别、理解并解决使用 Swift 并发时可能遇到的常见问题。
+
+Incremental Adoption 
+https://www.swift.org/migration/documentation/swift-6-concurrency-migration-guide/incrementaladoption/
+逐步采用
+了解如何逐步将 Swift 并发特性引入到您的项目中。
+
+
+
+当你首次将 -strict-concurrency 选项设置为 complete 时，必然会遇到一大堆错误。
+对于普通的 app 来说，主要任务无外乎以下三项：
+添加 @MainActor
+标记 Sendable
+将回调函数改写成 async，并考虑在哪里加 Task 作为异步入口
+
+
+1. @MainActor
+View、View Controller 以及 UIKit 的其他类型都默认添加了 @MainActor。
+如果你需要在其他非 MainActor 部分的代码中调用它们，要么需要使用 Task，要么需要为自己的代码也添加 @MainActor，以确保同样的隔离域。
+而进一步，调用你自己的被标记为 @MainActor 代码的地方可能也要做出同样的选择：要么开始一个 Task，要么将自己添加到 Main Actor 隔离域中去。
+从某种意义上来说，@MainActor 会在项目中“传染”。
+
+当你无法决定其他模块的迁移计划时（在稍大一些的团队协作项目中，这种情况很常见），保留原来的方法，只是将它标记为“弃用”，
+并同时提供一个新的标记为 @MainActor 的方法，是相对现实的做法。
+@available(*, deprecated, message:"Use the main actor version.")
+func myMethod() {
+  // 避免重复，将原实现移到 myMethodOnMain 中
+  // 不过因为我们从原先的非 Main Actor 环境里调用了 Main Actor 里的方法，会编译报错
+  myMethodOnMain()
+}
+
+@MainActor func myMethodOnMain() {
+  // ..其他被隔离在 MainActor 中的 UI 操作
+}
+
+但 myMethod 里的调用标记为 @MainActor 的 myMethodOnMain 也是无法成功的，我们需要一些额外手段来绕开编译器的过于严格的机制。
+官方给出的方式是 MainActor.assumeIsolated：
+MainActor.assumeIsolated：“我向编译器保证：现在我已经在 MainActor 的隔离域内了，所以可以在不 await 的情况下访问 @MainActor 标注的 API。”
+MainActor.assumeIsolated {} 是一种“告诉编译器”的方式，不是“切换线程”的方式。
+所以如果你不先确保 已经在 MainActor 上运行，那么你不能安全地使用 assumeIsolated，否则会造成 UI 崩溃或数据竞争。
+https://developer.apple.com/documentation/swift/actor/assumeisolated(_:file:line:)
+func myMethod() {
+  MainActor.assumeIsolated {
+    myMethodOnMain()
+  }
+}
+assumeIsolated 当然可以同步地给我们一个 main actor 隔离域，但是这完全依赖于开发者的判断。
+如果不小心从其他隔离域（或者说，main thread 以外）进行调用，那就直接 crash 了。
+更温柔一点的做法是使用 assertIsolated：来让调用者在开发时得到一些提示：
+https://developer.apple.com/documentation/swift/actor/assertisolated(_:file:line:)
+
+func myMethod() {
+  MainActor.assertIsolated("This method is expected to be called in main thread!")
+  // ...
+}
+然而，单靠 assertIsolated 仍无法解决 myMethodOnMain 调用的问题。
+在实践中，对于 Main Actor，我们可以结合这两者，并加上线程判断，写一个临时方法。
+这样既能在迁移过程中对非主线程的调用进行断言（assert），又能尽量保持原有代码的正常运行
+extension MainActor {
+  static func runSafely<T>(_ block: @MainActor () -> T) throws -> T {
+    if Thread.isMainThread {
+      return MainActor.assumeIsolated { block() }
+    } else {
+      MainActor.assertIsolated("This method is expected to be called in main thread!")
+      return DispatchQueue.main.sync {
+        MainActor.assumeIsolated { block() }
+      }
+    }
+  }
+}
+不过需要特别说明，这种方式并不是特别安全。
+DispatchQueue.global().async {
+  try? MainActor.runSafely {
+    DispatchQueue.main.sync { print("hello") }// 这样实际上很容易导致死锁
+  }
+}
+这种方式可以作为过渡时期的暂行手段。但一旦迁移完成，最好尽快删除这样的代码：actor 隔离和 Dispatch queue 的隔离天然不兼容。
+
+
+2. Sendable class 以及 @unchecked Sendable // Sendable 是 Swift 并发中用于标记“可以安全跨线程传递”的类型。
+Sendable 的核心理念是：
+类型在并发环境下可以安全地被复制、传递、共享，而不会造成数据竞争。
+@unchecked Sendable 是 Swift 并发中提供的一种 “声明你对自己负责”的方式，用于标记类型为 Sendable，
+但不让编译器检查它是否真的安全跨线程传递。
+
+对于能够轻松标记为 Sendable 的类型，比如只含有值类型变量的 struct 或者只含有值类型关联值的 enum，添加 Sendable 是无痛的。
+但是，对于大部分的 class，只要其中含有 var 变量，编译器就无法将它接受为 Sendable。
+在这种情况下，如果我们确实希望这个 class 类型可以跨越隔离域，我们只能在类型内部实现线程安全机制。
+
+对于 class 内部的变量，实现线程安全最简单和直接的方式莫过于加锁。
+如果你的项目是从 iOS 16 开始的，那么使用 OSAllocatedUnfairLock 应该是一个不错的选择。
+https://developer.apple.com/documentation/os/osallocatedunfairlock
+
+Unfair Lock: 不公平锁
+Allocated Unfair Lock: 分配非公平锁
+
+它提供的 withLock 闭包让开发者可以用相对安全和先进的语法操作锁的生命周期。
+将你的 class 中的 var 都替换成带有 OSAllocatedUnfairLock 的 let 后，整个 class 就可以是 Sendable 的了：
+
+enum State: Sendable {
+    case yes
+    case no
+}
+
+final class A: Sendable {
+-    var state: State
++    let state: OSAllocatedUnfairLock<State>
+    
+    init(state: State) {
+-        self.state = state
++        self.state = OSAllocatedUnfairLock(initialState: state)
+    }
+    
+    func update(newState: State) {
+-        state = newState
++        state.withLock { state in
++            state = newState
++        }
+    }
+}
+如果你还需要兼容 iOS 16 之前的系统，那么可以选择其他的锁，或者是更传统的用 dispatch queue 来隔离访问：
+private let queue = DispatchQueue(label: "private queue")
+var _state: State // 存储属性（backing stored property）
+var state: State { // “计算属性”（computed property）
+  get { queue.sync { _state } }
+  set { queue.sync { _state = newValue } }
+}
+但是这样的后果是，我们只能将这个类标记为 @unchecked Sendable。
+添加 @unchecked Sendable 并不是一件值得羞耻的事情，这相当于将以前只能写在文档中的“该类型是线程安全的”声明明确地告诉编译器。
+如果有条件，依赖加锁或者进一步尝试使用 actor，仍然会是更优的解决方案。
+
+
+类型	特点	示例关键字
+Stored Property	真正存储值	var, let
+Computed Property	每次访问时计算结果	get, set
+Lazy Property	第一次访问时计算并存储	lazy var
+Property Wrapper	属性行为复用	@Wrapper
+Projected Property	属性包装器的衍生值（$）	$属性名
+Type Property	属于类型而非实例	static, class
+Observed Property	值改变前后可观察	willSet, didSet
+Read-only Property	只有 getter	var now: Date
+
+
+3. 尽量避免 Sendable 的回调
+项目中 async 普及之前，一定会有大量遗留的基于 completion handler 的代码。
+而在适配 Swift 6 时，也经常会遇到需要将某个闭包 (closure) 标记为 @Sendable 的情况。
+把某个闭包标记为 @Sendable，目的主要是为了 保证该闭包在并发环境下是线程安全的，可以安全地跨线程传递和执行。
+对于在 escaping closure 里使用了非 Sendable 的变量的情况而言，编译器确实无法判断 closure 是否跨越了隔离域，
+而如果我们能人为保证这一点的话，就可以通过为闭包添加 @Sendable 来给编译器提示。
+
+但是和 @MainActor 的情况类似，闭包的 @Sendable 标记也很容易在项目里”传染”。而这带来了更多的需要检查的 case，以及更多原本不必要的 Sendable 类型适配。
+为了避免这种不必要的“跨域”，一个可行方法是尽量用 async 来重写这些带回调的方法。
+把在不同 actor 间切换 (即 actor hopping) 的工作交给运行时 (runtime) 来解决，这样我们可以省去很多标记 @Sendable 闭包的额外工作。
+
+
+假设有一个带回调的接口：
+// 传统 callback 方式，闭包需要 @Sendable 标记，且捕获内容也必须 Sendable
+func fetchData(completion: @Sendable (Result<String, Error>) -> Void) {
+    DispatchQueue.global().async {
+        completion(.success("Hello"))
+    }
+}
+使用时：
+@MainActor
+class ViewModel {
+    var text: String = ""
+
+    func load() {
+        fetchData { [weak self] result in   // 这里闭包必须是 @Sendable，所以捕获 self 要特别处理
+            guard let self = self else { return }
+            switch result {
+            case .success(let data):
+                self.text = data  // 因为 ViewModel 是 @MainActor，需要跳回主线程，写法复杂
+            case .failure:
+                break
+            }
+        }
+    }
+}
+completion 闭包必须是 @Sendable，会传染到捕获的 self，得保证它是线程安全的。
+还需要用 @MainActor 或手动调度回主线程，代码复杂，且容易出错。
+
+你需要显式切回主线程：
+fetchData { [weak self] result in
+    guard let self = self else { return }
+    Task { @MainActor in
+        switch result {
+        case .success(let data):
+            self.text = data   // 这时写在 @MainActor 任务里，访问是安全的
+        case .failure:
+            break
+        }
+    }
+}
+
+
+改成 async/await 版本：
+func fetchData() async throws -> String {
+    try await Task.sleep(nanoseconds: 1_000_000_000)
+    return "Hello"
+}
+
+@MainActor
+class ViewModel {
+    var text: String = ""
+
+    func load() async {
+        do {
+            let data = try await fetchData()
+            self.text = data   // 在 @MainActor 隔离域内，自动保证主线程安全
+        } catch {
+            // 处理错误
+        }
+    }
+}
+调用时：
+Task {
+    await viewModel.load()
+}
+优势：
+没有显式 @Sendable 闭包，避免“传染”
+跨 actor 跳转（回到主线程）由运行时自动处理，不用写复杂的 DispatchQueue.main.async
+代码更简洁，易维护
+
+这边的@MainActor作用：
+将整个 ViewModel 类隔离到主线程（Main Actor）
+意味着类的所有实例成员（属性、方法）都必须在主线程上访问和执行。
+编译器和运行时会强制保证 text 这个属性以及 load() 方法都只能在主线程执行。
+
+Task { await viewModel.load() } 本身启动的任务并不保证一定是在主线程执行的，但因为你的 ViewModel 类被 @MainActor 标记了，所以：
+viewModel.load() 这个方法本身是在 @MainActor（主线程）隔离域里执行的
+运行时会自动切换回主线程来执行 load() 内部代码（包括后续的 self.text = data）
+
+Task { ... } 默认在当前执行上下文或全局并发队列执行，是非确定线程的
+但调用被 @MainActor 标记的隔离方法时，Swift 运行时会自动切换到主线程（Main Actor）
+所以 await viewModel.load() 内的代码最终是跑在主线程的
+
+Task {  // 这里的 Task 可能在任意线程启动
+    await viewModel.load()  // 这里运行时帮你 hop 到主线程执行 load()
+}
+
+如果你想让 Task 本身一开始就在主线程执行，可以写：
+Task { @MainActor in
+    await viewModel.load()
+}
+这样 Task 的执行上下文是主线程，但即便不写，调用 @MainActor 的方法时也会自动切回主线程。
+
+“MainActor” 中文一般翻译为：
+主执行者 或 主执行上下文 或 主线程隔离器
+在 iOS/macOS 并发编程中，它指的是：
+主线程对应的并发隔离域
+代表主线程的 Actor，保证代码在主线程执行
+
+
+4. deinit 问题
+当前 deinit 是无法被 actor 隔离的
+因为 deinit 是一个运行时的特性，可能发生在不同线程，因此在编译器层面无法确定 deinit 的隔离域。
+如果 deinit 里用到了 actor 实例中的被隔离的存储属性，它就将无法被用在 deinit 里
+https://www.swift.org/migration/documentation/swift-6-concurrency-migration-guide/commonproblems/#Non-Isolated-Deinitialization
+官方文档中当前给出的方法是把需要隔离的值捕获到一个 Task 里
+actor BackgroundStyler {
+    private let store = StyleStore()
+
+    deinit {
+        // no actor isolation here, so none will be inherited by the task
+        Task { [store] in
+            await store.stopNotifications()
+        }
+    }
+}
+但是如果 StyleStore 不是 Sendable 的话，这个方法也无法绕开 deinit 限制。
+
+在 Swift 中，actor 是一种并发保护机制的对象类型，它的职责是：
+让内部状态的访问是串行的、线程安全的。
+推荐翻译：“执行域” 或 “隔离域”
+
+
+==================================================例子：多个任务并发访问共享 actor
+
+import Foundation
+
+// 定义 actor，内部状态隔离保护
+actor Counter {
+    private var value = 0
+    
+    func increment() {
+        value += 1
+    }
+    
+    func getValue() -> Int {
+        return value
+    }
+}
+
+let sharedCounter = Counter()  // 全局共享的 actor 实例
+
+// 模拟第一个并发任务
+func task1() async {
+    for _ in 0..<1000 {
+        await sharedCounter.increment()
+    }
+}
+
+// 模拟第二个并发任务
+func task2() async {
+    for _ in 0..<1000 {
+        await sharedCounter.increment()
+    }
+}
+
+// 主入口，启动多个并发任务
+Task {
+    await withTaskGroup(of: Void.self) { group in
+        group.addTask { await task1() }
+        group.addTask { await task2() }
+    }
+    
+    let finalValue = await sharedCounter.getValue()
+    print("Final value: \(finalValue)")  // 期望输出 2000
+}
+
+
+==================================================例子：@unchecked Sendable
+final class Logger: @unchecked Sendable {
+    let label: String
+    let dateFormatter = DateFormatter()  // ❌ DateFormatter 不是 Sendable，所以需要 @unchecked Sendable ✅
+
+    init(label: String) {
+        self.label = label
+    }
+
+    func log(_ message: String) {
+        print("[\(dateFormatter.string(from: Date()))] \(label): \(message)")
+    }
+}
+❗️如果你从多个线程同时调用 log 方法，那是有问题的！
+什么时候它Logger是安全的？
+情况 1：你在单个线程中使用 Logger
+情况 2：你自己加了线程隔离措施（锁、串行队列等）
+final class Logger: @unchecked Sendable {
+    let label: String
+    private let dateFormatter = DateFormatter()
+    private let lock = NSLock()
+
+    init(label: String) {
+        self.label = label
+    }
+
+    func log(_ message: String) {
+        lock.lock()
+        let timestamp = dateFormatter.string(from: Date())
+        lock.unlock()
+
+        print("[\(timestamp)] \(label): \(message)")
+    }
+}
+或用 GCD 串行队列也可以：
+private let loggerQueue = DispatchQueue(label: "logger.queue")
+
+func log(_ message: String) {
+    loggerQueue.async {
+        let timestamp = self.dateFormatter.string(from: Date())
+        print("[\(timestamp)] \(self.label): \(message)")
+    }
+}
+这样才是真的线程安全，配得上 @unchecked Sendable
+
+
+
+Sendable 是 Swift 并发中用于 跨线程或跨 actor 安全传递数据 的一个协议（protocol）。
+Sendable 表示一个类型的值可以安全地在多个并发执行环境中传递和使用。
+在 Swift 的并发模型中（如 Task、actor 等），当你：
+把数据 从一个线程传到另一个线程；
+把变量 从一个 actor 传递到另一个 actor；
+或者在 @Sendable 闭包中捕获了某个值；
+编译器会希望你保证这些值是 线程安全的，即必须符合 Sendable 协议。
+
+从一个线程传到另一个线程
+class Logger {
+    var text = ""
+}
+
+let logger = Logger()
+
+Task.detached {
+    print(logger.text)  // ❌ 编译警告或错误：Logger 不是 Sendable
+}
+
+从一个 actor 传到另一个 actor
+actor Database {
+    func fetch() -> [String] {
+        return ["a", "b", "c"]
+    }
+}
+
+actor ViewModel {
+    let db = Database()
+
+    func load() async {
+        let result = await db.fetch()  // ✅ 调用另一个 actor 的方法。 actor 间通信是跨并发域的，参数和返回值都必须是 Sendable，防止共享状态竞争。
+        print(result)
+    }
+}
+
+在 @Sendable 闭包中捕获了非 Sendable 的值
+class NotSafe {}
+
+let obj = NotSafe()
+
+let closure: @Sendable () -> Void = {
+    print(obj)  // ❌ 报错：obj 不是 Sendable
+}
+
+当你标记一个闭包为 @Sendable，Swift 编译器必须确保：
+捕获的值是 Sendable；
+参数是 Sendable；
+返回值也是 Sendable；
+这是因为 这个闭包可能会在其他线程、actor 上执行，所以：
+所有进入、传出闭包的数据，都必须是线程安全的（即 Sendable）。
+
+
+==================================================例子：@MainActor
+@MainActor
+func updateUI() {
+    label.text = "Hello"
+}
+
+func someOtherMethod() {
+    DispatchQueue.main.async {
+        // 现在我手动进入了主线程，但编译器不知道
+        // 所以我们用 assumeIsolated 来告诉编译器这段代码在 MainActor 上
+        MainActor.assumeIsolated {
+            updateUI() // ✅ 不再需要 await
+        }
+    }
+}
+
+这里 updateUI() 是 @MainActor 方法，理论上需要用：
+await updateUI()
+但你 已经明确在主线程（通过 DispatchQueue.main.async），所以你用 assumeIsolated 来告诉编译器：我知道我在主线程
+
+如果你真的想写“只有在 MainActor 上才执行”，该怎么办？
+@MainActor
+func myMethodOnMain() { ... }
+
+func myMethod() {
+    Task { @MainActor in // 这个 task 的执行内容是在 MainActor 上运行的，也就是主线程。
+        myMethodOnMain()
+    }
+}
+或者
+func myMethod() {
+    await MainActor.run { // 使用 Swift Concurrency 的 MainActor.run {} 来进入 MainActor（主线程）
+        myMethodOnMain()
+    }
+}
+
+方法	是否检查线程	推荐程度	用途
+MainActor.run {}	✅ 是	✅ 推荐	在非主线程中跳回主线程执行
+Task { @MainActor in ... }	✅ 是	✅ 推荐	显式结构化地使用主线程任务，启动一个主线程任务
+
+Task { @MainActor in
+    self.label.text = "Updated from MainActor"
+}
+和
+DispatchQueue.main.async {
+    self.label.text = "Updated from MainActor"
+}
+效果一样，但它是 Swift 并发语法，支持 await、错误传播、类型隔离等优点。
+
+
+https://tech.bedrockstreaming.com/2023/11/14/swift-concurrency-in-a-nutshell.html?utm_source=chatgpt.com
+Task {
+    let data = await fetchAndProcessData()
+    await MainActor.run {
+        // Executed on main thread
+        await updateUI(with: data)
+    }
+}
+
+
+Task { @MainActor in ... } // 它不是结构化任务，不会自动跟随你的函数作用域退出
+用于启动一个 隔离于 MainActor 的非结构化并发任务
+这句话应该被更准确地理解为：
+启动一个 被 MainActor 隔离（isolated to MainActor） 的非结构化任务。
+也就是说：
+这个任务的执行环境是绑定到 MainActor 的（也就是主线程）
+它和其他任务或 actor 是并发的，但属于 MainActor 的执行域
+所以这里的“隔离”意思是“任务的执行被限定在 MainActor 上”
+更自然的中文翻译应该是：
+“启动一个非结构化并发任务，并且它运行在 MainActor 隔离域中（即主线程）。”
+
+如何判断是不是结构化任务？
+结构化任务必须满足：
+它的生命周期绑定到调用者作用域
+调用者退出时它也自动取消
+编译器能帮助你追踪和等待
+只有 async let 和 withTaskGroup 满足这些条件。
+
+结构化并发 = 系统帮你管任务生死。
+非结构化任务 = 你自己负责结束、取消、追踪。
+
+
+
+
+在后台线程要同步取主线程上的值（不怕阻塞）时可以用
+let result = DispatchQueue.main.sync {
+    return someUIView.bounds
+}
+DispatchQueue.main.sync { ... } 表示“我要同步在主线程执行这段代码”
+当前后台线程会暂停执行，等待主线程把这段闭包执行完，然后取出返回值 result
+#####
+被阻塞的是后台线程，不是主线程。主线程只是执行你 sync 提交的任务而已。
+#####
+看起来是对 “主队列” 提交任务，但实际上：
+主队列（DispatchQueue.main）就是主线程上的串行调度队列。
+提交到主队列上的代码，就是在主线程上运行的。
+
+GCD 中的 DispatchQueue
+是对线程调度的一种抽象，不直接控制线程
+每个 DispatchQueue 负责调度任务到某个线程执行 // #####
+
+DispatchQueue.main.async 不是“立即执行”闭包代码的。
+“把这段闭包代码排队放到主线程队列的末尾，由主线程在空闲时执行。”
+它什么时候执行？
+“什么时候执行”由主线程的调度机制（RunLoop + GCD）控制，通常是主线程空闲时。
+这段闭包排进主线程队列后，会等待：
+当前主线程在做的事（如用户触摸处理、UI 渲染等）完成
+主线程的 GCD 任务队列轮到它的时候
+这就是为什么：
+它不会立即执行
+但通常延迟很短（除非主线程很忙）
+
+“主线程空闲时” 通常就是指 —— 主线程即将进入 RunLoop 的休眠（sleep）阶段 之前的那个时机。
+RunLoop 运行循环开始 →
+    处理定时器 →
+    处理输入源（触摸、按钮、手势） →
+    处理 GCD 派发的任务 → // #####
+    布局 / 渲染更新 → // “布局 & 屏幕绘制”这一步，本质上是主线程把视图树的变化准备好，打包并提交给系统的渲染服务（render server）去处理。
+    准备进入休眠（等待下一个事件）
+
+
+1. 布局（layout）
+对视图树（View Hierarchy）重新计算大小、位置等
+比如：layoutSubviews()、Auto Layout 的计算发生在这一步
+
+2. 绘制（drawing）
+UIKit 或 SwiftUI 会遍历视图层级，生成每个 View 的绘制指令
+如果用 Core Graphics，就是在 draw(_:) 里画图
+如果用 CALayer，会生成 layer 的合成信息（contents、transform、opacity 等）
+iOS 使用一个叫 Render Server 的系统组件（配合 Core Animation），负责将 App 传过来的渲染树提交给 GPU 渲染
+
+层级	执行位置	作用
+App 进程（主线程）	CPU（主线程）	准备 UI、提交渲染命令
+渲染服务（RenderServer）	GPU / 系统服务进程	实际执行图像合成和绘制
+显示系统	GPU / 显示硬件	呈现画面到屏幕上
+
+
+==================================================
+@available(iOS 8.0, *)
+optional func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void)
+
+@available(iOS 8.0, *)
+optional func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy
+
+这两个方法的共存，正是为了支持 Swift 并发（iOS 15+）的同时，又向下兼容 iOS 15 之前的系统。
+为什么要加 async 版本？
+Swift 5.5 / iOS 15 引入了结构化并发（async/await），Apple 推出大量基于 async 的 API。
+使用 async/await 更符合 Swift 现代风格，逻辑清晰，避免嵌套闭包。
+Apple 在不打破兼容性的前提下，为老的 delegate 方法提供 async 替代版本。
+
+
+这个是 Swift 和 Objective-C 并存环境中**向后兼容 + 支持现代 Swift 并发语法（async/await）**的结果。
+这两个方法是 WKNavigationDelegate 协议中对同一个功能（决定是否允许导航）提供的两种调用形式：
+
+方法签名形式	用途	技术背景
+func webView(..., decisionHandler: @escaping @MainActor @Sendable ...)	✅ 原始方式（iOS 8+），使用回调闭包处理异步决策	基于 Objective-C 设计，兼容 UIKit/Delegate 模式
+func webView(...) async -> WKNavigationActionPolicy	✅ 现代 Swift 并发方式（iOS 15+ 支持 async/await 后加入）	Swift 并发系统对旧 API 的语法糖封装，提高可读性、减少回调地狱
+
+
+为什么存在两个版本？
+1. 向后兼容 Objective-C / UIKit Delegate 传统写法
+decisionHandler 是最早的做法，完全兼容 UIKit 和 Objective-C 的 Delegate 模式，所有操作通过异步闭包回调完成。
+这种方式需要你手动写：
+func webView(_ webView: WKWebView,
+             decidePolicyFor navigationAction: WKNavigationAction,
+             decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+    decisionHandler(.allow)
+}
+
+
+2. 支持现代 Swift 并发：async/await 更自然
+从 iOS 15 起，Apple 开始在很多 Delegate 协议中添加对应的 async 版本：
+func webView(_ webView: WKWebView,
+             decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
+    return .allow
+}
+这个语法更直观，更接近逻辑思维（“我返回一个值”，而不是“我给你传一个闭包”），也更容易与 await 写法组合，不容易出错。
+
+
+版本	特点	适合场景
+decisionHandler 闭包	向后兼容，基于 UIKit/Objective-C 模式	项目支持 iOS 14 及以下，或者你在写纯 UIKit 老项目
+async 返回值	更现代、易读、天然支持 Swift 并发	使用 Swift 并发框架，项目支持 iOS 15+ 时推荐使用
+
+
+
+苹果为 WKNavigationDelegate 的这个代理方法 func webView(..., decisionHandler: @escaping @MainActor @Sendable ...) 的参数 decisionHandler 标记了：
+@MainActor @Sendable
+
+就是为了确保：
+1. @MainActor — 确保闭包必须在主线程上执行
+Web 内容加载、跳转决策这些操作会影响 UI，而 UI 操作必须在主线程上进行。
+所以 Apple 要求你调用 decisionHandler(...) 时必须在主线程上，否则可能造成崩溃或行为未定义。
+加了 @MainActor，Swift 会强制你只能在主线程调用它，或自动插入线程跳转逻辑（actor hopping）。
+✅ 所以你在实现这个代理方法时，不需要手动 DispatchQueue.main.async，Swift runtime 会确保 decisionHandler 在主线程执行。
+
+2. @Sendable — 确保闭包是线程安全可传递的
+decisionHandler 是 @escaping 的，也就是说它可能被传到异步环境或后台线程中暂存。
+所以必须是 Sendable，这样才能在并发环境中安全使用。
+Swift 并发系统对 @Sendable 的闭包有静态分析：比如不能捕获非线程安全的变量。
+✅ Apple SDK 在设计这个闭包时已经考虑了并发安全，因此你也要保证你对这个闭包的使用是线程安全的。
+
+就是 Apple 明确告诉你：
+“你要在主线程调用我”
+“这个闭包可以安全跨线程传递，但只能在主线程执行”
+
+Apple 通过 @MainActor @Sendable 限定了 decisionHandler 的使用语义 —— 主线程上执行，线程安全传递，开发者只需要专注业务逻辑，不用担心线程切换和并发冲突。
+
+
+@MainActor、@Sendable 并不是仅用于向后兼容旧代码，而是 Swift 并发模型的核心组成部分，它们在 async/await + actor 并发模型中仍然非常重要
+@MainActor 和 @Sendable 并不是为了旧代码而设计的，它们是 Swift 并发的核心特性，用于明确线程隔离和数据安全，在使用 async/await 和 actor 时同样不可或缺。
+那为什么你会觉得它们像是“为了兼容”？
+因为：
+很多旧 API 以闭包形式存在（如 GCD 回调、delegate 方法）
+Swift 并发为这些旧 API 添加了新的标记（@Sendable / @MainActor）或新的 async 替代版本
+所以你看到的那些 @MainActor 和 @Sendable 是对 旧设计的一种现代化补强
+
+
+==================================================actor hopping
+actor hopping（actor 跳跃） 指的是：
+当前代码从一个 actor 的隔离域切换到另一个 actor 的隔离域去执行代码，这个切换可能会触发线程切换和 await。
+
+actor A {
+    func doA() {
+        print("A 在运行")
+    }
+}
+
+actor B {
+    let a = A()
+
+    func doB() async {
+        print("B 在运行")
+        await a.doA()  // ⬅️ 这里发生了 actor hopping
+    }
+}
+
+doB() 是在 B actor 的隔离域中运行。
+当你执行 await a.doA()，你从 B 的隔离域跳到 A 的隔离域。
+这个切换就叫做 actor hopping。
+
+
+把 actor 想象成“房间”，每个房间只能有一个人（线程）访问，不能同时进两个线程。
+你现在在房间 B。
+你要去房间 A 干活，得先敲门、等待、进入。
+这个“从 B 跳到 A”过程，就叫做 actor hopping。
+Swift runtime 保证：你在房间 A 干活的时候，其他人不能同时也在房间 A。
+
+
+不要频繁在 actor 之间互相调用（actor ping-pong），容易导致复杂的等待链和性能下降。
+
+
+如何避免不必要的 actor hopping？
+把相关的数据和操作尽量封装在同一个 actor 中。
+如果你在 @MainActor 中调用另一个 actor 的方法，也会发生 hopping。
+
+
+一个典型的实际例子（UI + 网络）：
+@MainActor
+class ViewModel {
+    let service = NetworkService()  // 这是个 actor
+
+    func load() async {
+        let data = await service.fetch()  // ⬅️ 从主线程跳到 NetworkService actor
+        self.updateUI(with: data)         // ⬅️ 跳回来主线程
+    }
+}
+上面你看到了两个 actor hopping：
+主线程 → NetworkService
+NetworkService → 主线程
+
+整体结构符合 “主线程调度任务 → 后台请求 → 回主线程更新 UI” 的标准流程。
+
+
+优化后的代码结构：
+1. NetworkService —— 用 actor 保证线程安全
+actor NetworkService {
+    func fetch() async throws -> String {
+        try await Task.sleep(nanoseconds: 1_000_000_000) // 模拟网络延迟
+        return "来自网络的数据"
+    }
+}
+
+2. ViewModel —— @MainActor 确保主线程安全 + 控制并发请求
+@MainActor
+class ViewModel: ObservableObject {
+    @Published var text: String = "加载中..."
+    @Published var isLoading: Bool = false
+
+    private let service = NetworkService()
+    private var currentTask: Task<Void, Never>?  // 用于取消上一个请求
+
+    func load() {
+        // 取消之前的任务（避免同时多个请求）
+        currentTask?.cancel()
+
+        // 启动一个新的异步任务
+        currentTask = Task {
+            isLoading = true
+            do {
+                let data = try await service.fetch()
+                self.text = data
+            } catch {
+                if Task.isCancelled {
+                    self.text = "请求已取消"
+                } else {
+                    self.text = "加载失败: \(error.localizedDescription)"
+                }
+            }
+            isLoading = false
+        }
+    }
+
+    func cancelLoad() {
+        currentTask?.cancel()
+        currentTask = nil
+    }
+}
+
+3. 使用示例（SwiftUI View）
+struct ContentView: View {
+    @StateObject var viewModel = ViewModel()
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Text(viewModel.text)
+            if viewModel.isLoading {
+                ProgressView()
+            }
+            Button("重新加载") {
+                viewModel.load()
+            }
+            Button("取消加载") {
+                viewModel.cancelLoad()
+            }
+        }
+        .padding()
+        .onAppear {
+            viewModel.load()
+        }
+    }
+}
+
+==================================================例子：@MainActor
+@MainActor
+class ViewModel {
+    var text: String = ""
+
+    func updateUI() {
+        // ...
+    }
+}
+ViewModel 是标注了 @MainActor 的类，表示：
+所有它的 属性访问 和 方法调用 都必须在主线程上执行。
+
+updateUI() 只能在主线程（MainActor）调用。
+如果你在后台线程调用 updateUI()，编译器会发出警告或强制要求你 await：
+let viewModel = ViewModel()
+
+Task.detached {
+    await viewModel.updateUI()  // ✅ 正确做法：通过 await 跳转到 MainActor
+}
+
+
+
+#####
+我的理解：
+所以updateUI只能在主线程被调用，指的是也可以在后台线程被调用，但必须使用await，这样系统会自动帮我们跳转到主线程执行，而不是说必须在主线程被调用，而是应该确切的说是应该在主线程执行
+
+用更准确的话来说：
+updateUI() 应该在主线程执行（由 @MainActor 指定的隔离域保证）。
+/*
+ViewModel 是标注了 @MainActor 的类，表示：
+所有它的 属性访问 和 方法调用 都必须在主线程上执行。
+*/
+你可以在任意线程调用它，但如果当前不是主线程，就必须使用 await 来触发 actor hopping。
+你不需要手动用 DispatchQueue.main.async，Swift 会自动切线程。
+
+@MainActor 表示方法必须在主线程执行（不是调用），
+而是否需要 await，取决于你当前所在的 actor 隔离域。
+#####
+
+
+场景一：主线程调用非 async 函数 —— 可以直接调用
+let vm = ViewModel()  // ViewModel 是 @MainActor
+vm.updateUI()         // ✅ OK，只要你在主线程就行
+
+场景二：你在一个异步回调中
+func onTap() {
+    fetchSomethingAsync { result in
+                /* Task {}
+自动 hop 回 @MainActor（主线程）
+会跳一次 actor（从当前线程 → 主线程）
+适用于：不确定当前 actor 的时候
+            */
+        Task {
+            await vm.updateUI()  // ✅ 在 Task 中 hop 回主线程
+        }
+    }
+}
+也可以用
+Task { @MainActor in // 在 Swift 5.9（Xcode 15）及之后版本中是完全合法、推荐的语法，用于 直接在主线程（MainActor）中创建任务。
+    await vm.updateUI()
+}
+在创建任务时就指定了 MainActor 隔离域
+任务从一开始就运行在主线程，不需要再 hop
+更加 明确、直接、安全、性能更好（尤其任务中要访问多个主线程资源时）
+
+写法	推荐场景
+Task { await ... }	只调用一个 @MainActor 方法时，简单写法
+Task { @MainActor in ... }	要访问多个主线程资源、希望整个任务都跑在主线程
+
+
+也可以用，但必须在 async 上下文中
+await MainActor.run {
+    vm.updateUI()
+}
+明确表示：我要在主线程（MainActor）中同步执行这一段代码。
+会立即切换到主线程并执行闭包。
+语义非常像 GCD 的 DispatchQueue.main.sync {}，但是 Swift 并发风格。
+
+特性	Task { await ... }	await MainActor.run { ... }
+所在上下文	可用在任意地方	✅ 必须在 async 上下文中才能使用
+调度行为	创建一个异步任务，非阻塞	会阻塞当前任务，等待切主线程再执行
+生命周期	独立任务（可以取消）	跟随当前任务，不可取消
+
+需求	推荐方式
+想运行一段完整主线程逻辑	Task { @MainActor in ... } ✅
+只想快速 hop 一下主线程执行一小段代码	await MainActor.run { ... } ✅
+当前不在 async 上下文里	Task { ... } ✅ 更灵活
+
+Task { await ... } 是异步 fire-and-forget 式执行，await MainActor.run {} 是立即切到主线程执行一段代码。
+
+“fire-and-forget”字面意思是“触发然后忘掉”，
+也就是说：
+你发起了一个异步任务（fire），
+但不关心它什么时候完成，也不等待它的结果（forget）。
+
+Task {
+    await doSomething()
+    print("任务完成了")
+}
+print("代码继续执行，不等待任务完成")
+Task { ... } 创建了一个异步任务，
+这个任务在后台执行 doSomething()，
+但是外层代码不会等待它完成，会直接继续往下执行。
+
+
+
+
+@MainActor
+class ViewModel {
+    func updateUI() {
+        print("更新 UI")
+    }
+}
+
+let vm = ViewModel()
+
+1️⃣ 直接调用（同步执行）
+vm.updateUI()
+print("后续代码")
+updateUI() 是同步的，调用立即执行完成，
+立刻执行后续代码。
+
+2️⃣ 用 Task { await vm.updateUI() }（异步调用）
+Task {
+    await vm.updateUI()
+}
+print("后续代码")
+Task {} 启动了异步任务，
+立即执行后续代码，
+updateUI() 稍后异步执行。
+
+await 关键字只能在 异步函数（标记为 async）内部使用
+
+
+任务创建方式	属于结构化任务？	继承 Actor？	生命周期跟随父任务？
+async let / withTaskGroup	✅ 是	✅ 是	✅ 是
+Task {}	❌ 否（但可继承）	✅ 是	❌ 否（手动管理）
+Task.detached {}	❌ 否	❌ 否	❌ 否
+
+viewDidAppear:
+Task {
+    // 后台执行计算任务
+    let s = await Task.detached(priority: .background) {
+        print("Thread.isMainThread = ", Thread.isMainThread)
+        var s = 10
+        for x in 0..<1_000_000 {
+            s += x
+        }
+        return s
+    }.value  // 等待任务结果
+
+    // 回到主线程处理结果（因为 Task 默认在当前 Actor 执行，即 MainActor）
+    print("计算结果：\(s)，主线程？\(Thread.isMainThread)")  // ✅ 是主线程
+}
+
+
+==================================================例子：Task & Task.detached
+override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    
+    guard let windowScene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap({ $0.windows }).first(where: { $0.isKeyWindow })?.windowScene else { return }
+    
+    Task.detached {
+        do {
+            try await AppStore.showManageSubscriptions(in: windowScene)
+            
+        } catch {
+            
+        }
+    }
+}
+你这个写法虽然编译不会报错，但在语义上有明显的问题，不推荐使用
+
+@MainActor
+public static func showManageSubscriptions(in scene: UIWindowScene) async throws
+是 @MainActor 标记的函数
+也就是说，它必须在主线程（MainActor 隔离域）中调用
+
+Task.detached 会忽略当前 actor 隔离域，从一个独立上下文中启动异步任务
+→ 默认在后台执行，不继承主线程。
+这样调用 @MainActor 的方法时，Swift 会在运行时插入跳转（actor hopping），
+虽然可以工作，但会造成额外开销，并且逻辑上很混乱。
+
+正确写法：
+方式 1：
+Task {
+    do {
+        try await AppStore.showManageSubscriptions(in: windowScene)
+    } catch {
+        // 错误处理
+    }
+}
+这个写法会继承当前上下文（此时你就在主线程）
+
+方式 2：如果你不确定是否当前是主线程，可以明确指定
+Task { @MainActor in
+    do {
+        try await AppStore.showManageSubscriptions(in: windowScene)
+    } catch {
+        // 错误处理
+    }
+}
+这是最明确、安全的写法，强制任务在 MainActor 上运行，不会有 actor hopping 问题。

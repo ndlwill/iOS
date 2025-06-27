@@ -1,0 +1,139 @@
+能左右视图的尺寸分配
+
+
+.layoutPriority
+Sets the priority by which a parent layout should apportion space to this child.
+设置父布局向此子视图分配空间时的优先级。
+你可以为视图分配一个优先级（默认值为 0）
+
+
+==================================================HStack 与 VStack 中的 layoutPriority:
+它能在空间紧张时，为具有更高优先级的视图“争取”更多建议尺寸。
+
+struct HStackDemoView: View {
+    var body: some View {
+        HStack(spacing: 0) {
+            Text("Leading String,Leading String")
+                .font(.largeTitle)
+                .layoutPriority(0) // Default
+                .border(Color.red, width: 2)
+            Text("Trailing String 123456")
+                .font(.largeTitle)
+                .layoutPriority(1) // 1 > 0，更高的视图优先级
+                .border(Color.orange, width: 2) 
+        }
+        .frame(height: 50)
+    }
+}
+
+
+struct VStackDemo: View {
+    var body: some View {
+        VStack {
+            VStack(spacing:0){
+                Rectangle() // default priority is zero
+                    .foregroundStyle(.green)
+                Text("Hello World") // default priority is zero // 为什么同样优先级为 0 的 Text 被保留了？即使我们进一步降低 Text 的优先级，它仍然会被完整显示出来。
+                Rectangle()
+                    .foregroundStyle(.pink)
+                    .layoutPriority(1) 
+            }
+        }
+        .frame(height:300)
+    }
+}
+
+这正是 VStack 对子视图在纵向排列上表现出的“贪婪”行为的特殊处理结果：
+贪婪视图（如 Rectangle）在纵向最大建议尺寸模式下会返回 .infinity，表现为“我要占满所有空间”。
+非贪婪视图（如 Text 或通过 frame 明确尺寸的视图）仅返回自身所需大小。
+在分配空间时，VStack 会先保证所有 非贪婪 视图的需求，再在 贪婪 视图之间比对 layoutPriority。
+因此，即使粉色矩形优先级高于 Text，但它们属于不同“贪婪”类别，VStack 并不会让 Text 与粉色矩形直接竞争。
+
+在 HStack/VStack 中，layoutPriority 主要左右子视图之间的空间分配比例，而不会改变容器的整体尺寸
+
+
+==================================================ZStack 中的 layoutPriority
+layoutPriority 会影响最终视图的布局尺寸
+
+struct ZStackDemo: View {
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Rectangle()
+                .foregroundStyle(.red.opacity(0.8))
+                .frame(width: 200, height: 200)
+                .layoutPriority(1)
+            Rectangle()
+                .foregroundStyle(.blue.opacity(0.8))
+                .frame(width: 100, height: 100)
+                .layoutPriority(2)
+            Rectangle()
+                .foregroundStyle(.orange.opacity(0.8))
+                .frame(width: 150, height: 150)
+                .layoutPriority(2)
+        }
+        .border(Color.black, width: 5) // 展现 layout size
+    }
+}
+
+黑色边框仅包裹了 150×150 的区域，而 红色（200×200）并未纳入 ZStack 的最终尺寸。这说明：
+ZStack 并不简单地取包含所有子视图的最小边界；
+它只考虑 具有最高 layoutPriority的子视图集合，计算出能同时容纳它们的最小对齐尺寸，作为自身的建议尺寸。
+
+调整蓝色矩形的 alignmentGuide：
+Rectangle()
+    .foregroundStyle(.blue.opacity(0.8))
+    .frame(width: 100, height: 100)
+    .layoutPriority(2)
+    .alignmentGuide(.trailing){ $0.width/2} // 调整 topTrailing 对应的位置
+这会移动蓝色方块在 .topTrailing 对齐时的位置，但 ZStack 的边框仍旧依据那两个 layoutPriority == 2 的视图来计算。
+
+
+
+动态调整 ZStack 尺寸:
+你可以在不改变子视图尺寸的前提下，仅通过切换 layoutPriority，动态调整 ZStack 的对外建议尺寸——这是传统的 if/switch 或 ViewThatFits 难以实现的。
+struct SwitchDemo: View {
+    @State var selection: Selection = .a
+    var body: some View {
+        HStack {
+            Text("Hello")
+            DynamicSizeZStack(selection: $selection)
+            Text("World")
+        }
+        
+        Picker(selection: $selection.animation(), content: {
+            ForEach(Selection.allCases) {
+                Text($0.rawValue)
+                    .tag($0)
+            }
+        }, label: { Text("Selection") })
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+    }
+}
+
+struct DynamicSizeZStack: View {
+    @Binding var selection: Selection
+    var body: some View {
+        ZStack {
+            Rectangle().foregroundStyle(Color.blue).frame(width: 200, height: 200)
+                .layoutPriority(selection == .a ? 1 : 0)
+                .opacity(selection == .a ? 1 : 0)
+            
+            Rectangle().foregroundStyle(Color.orange).frame(width: 150, height: 150)
+                .layoutPriority(selection == .b ? 1 : 0)
+                .opacity(selection == .b ? 1 : 0)
+            
+            Rectangle().foregroundStyle(Color.blue).frame(width: 100, height: 100)
+                .layoutPriority(selection == .c ? 1 : 0)
+                .opacity(selection == .c ? 1 : 0)
+        }
+        .animation(.smooth, value: selection)
+    }
+}
+
+enum Selection: String, Equatable, CaseIterable, Hashable, Identifiable {
+    case a, b, c
+    var id: Self { self }
+}
+
+通过这一技巧，你可以在保持子视图标识符稳定、尺寸不变的同时，让父容器根据不同场景自动伸缩，提升布局的灵活性与可维护性。

@@ -1,0 +1,319 @@
+设备坐标系是物理坐标系，是 IMU 传感器的“本地坐标”。它不管 UI 的方向，只关心设备本体在物理世界里的转动和移动。
+
+
+设备坐标系在左转/右转（也就是横屏）之后，坐标轴如何变化
+默认竖屏（Portrait）：
+方向	坐标轴	含义
+右	+X	设备右侧
+上	+Y	设备顶部（接近电源键）
+外（朝你）	+Z	垂直于屏幕向你（屏幕外）
+
+横屏右转（LandscapeRight）👉（Home 键在左）
+你把手机 向右转 90°，整个设备绕 Z 轴顺时针转：
+原来向右的 +X，现在朝 屏幕向上
+原来向上的 +Y，现在朝 屏幕向右
+
+原始轴	横屏后方向（在屏幕坐标系里）
++X	↑（屏幕上方）
++Y	→（屏幕右方）
++Z	→（仍垂直于屏幕外）
+
+横屏左转（LandscapeLeft）👈（Home 键在右）
+你把手机 向左转 90°，整个设备绕 Z 轴逆时针转：
+原来向右的 +X，现在朝 屏幕向下
+原来向上的 +Y，现在朝 屏幕向左
+
+原始轴	横屏后方向（在屏幕坐标系里）
++X	↓（屏幕下方）
++Y	←（屏幕左方）
++Z	→（仍垂直于屏幕外）
+
+
+
+解析：
+这是一个典型的坐标系旋转问题，核心是用绕 Z 轴旋转的二维旋转矩阵来描述设备坐标系相对于屏幕坐标系的变化。
+
+设备绕其自身 Z 轴顺时针旋转 90°（向右转手机横屏），相当于把设备坐标系的X、Y坐标点绕Z轴旋转90度。
+
+绕Z轴旋转的二维旋转矩阵
+二维旋转矩阵（绕Z轴）用于变换坐标(x, y)为(x', y')：
+[x']   [ cosθ   sinθ ] [x]
+[y'] = [-sinθ   cosθ ] [y]
+
+参数带入：顺时针旋转 90°
+θ = -90° = -π/2 弧度
+
+cos(-π/2) = 0, sin(-π/2) = -1
+
+Rz(-90°) = [ [0, -(-1)],
+             [-1,  0] ]
+         = [ [0, 1],
+             [-1, 0] ]
+
+计算旋转后的坐标轴方向
+设备原始 +X 轴向量为 (1, 0)
+
+[x']   [0  1] [1]   [0]
+[y'] = [-1 0] [0] = [-1]
+
+结果：旋转后设备 +X 轴方向为 (0, -1)
+
+
+设备原始 +Y 轴向量为 (0, 1)
+
+[x']   [0  1] [0]   [1]
+[y'] = [-1 0] [1] = [0]
+
+结果：旋转后设备 +Y 轴方向为 (1, 0)
+
+
+转换回屏幕坐标的描述
+屏幕坐标系X轴向右，Y轴向下：
+旋转后设备+X轴对应屏幕坐标 (0, -1) → 向上（负Y方向）
+旋转后设备+Y轴对应屏幕坐标 (1, 0) → 向右（正X方向）
+
+
+绕 Z 轴旋转 的确是在 三维空间里的旋转，但刚才我给的二维旋转矩阵是 三维旋转矩阵中作用于 x 和 y 坐标的部分的简化。
+三维旋转矩阵（绕 Z 轴）
+Rz(θ) = [
+  [cosθ, -sinθ, 0],
+  [sinθ,  cosθ, 0],
+  [0,       0,  1]
+]
+
+v = (x, y, z)
+
+v' = Rz(θ) * v = (
+  x * cosθ - y * sinθ,
+  x * sinθ + y * cosθ,
+  z
+)
+
+
+为什么二维矩阵可以用来表示？
+因为绕 Z 轴旋转时，Z 轴分量不变，
+所以旋转只影响平面上的 x,y 坐标。
+
+绕 Z 轴旋转三维空间时，Z 坐标不变。
+刚才用的二维旋转矩阵，是三维旋转矩阵中对 x,y 坐标的部分简写。
+
+
+============================================================
+
+sublayerTransform 是 CALayer 的一个属性，用于 统一地对该图层的所有子图层（sublayers）应用一个变换（transform）。
+这和直接给某个子图层设置 transform 不一样，它是对所有子图层在一个共同坐标系下进行的变换，常用于实现 3D 效果或统一的视角控制。
+
+
+self.overlayLayer.sublayerTransform = CATransform3DMakePerspective(1000);
+
+static CATransform3D CATransform3DMakePerspective(CGFloat eyePosition) {
+    CATransform3D transform = CATransform3DIdentity;
+    transform.m34 = -1.0 / eyePosition;
+    return transform;
+}
+
+struct CATransform3D
+{
+  CGFloat m11, m12, m13, m14;
+  CGFloat m21, m22, m23, m24;
+  CGFloat m31, m32, m33, m34;
+  CGFloat m41, m42, m43, m44;
+}
+/* The identity transform: [1 0 0 0; 0 1 0 0; 0 0 1 0; 0 0 0 1]. */
+
+[1 0 0 0;
+ 0 1 0 0;
+ 0 0 1 0;
+ 0 0 0 1]
+
+[1 0 0 0; 0 1 0 0; 0 0 1 0; 0 0 0 1] 中的 0 0 0 1 对应第4行 m41,m42,m43,m44
+Apple 的矩阵是按「列优先（column-major）」排列的
+第 1 列：m11, m21, m31, m41
+第 2 列：m12, m22, m32, m42
+第 3 列：m13, m23, m33, m43
+第 4 列：m14, m24, m34, m44
+
+平移	MakeTranslation(tx, ty, tz)	m41, m42, m43
+缩放	MakeScale(sx, sy, sz)	m11, m22, m33
+旋转 X轴	MakeRotation(θ, 1,0,0)	m22, m23, m32, m33
+旋转 Y轴	MakeRotation(θ, 0,1,0)	m11, m13, m31, m33
+旋转 Z轴	MakeRotation(θ, 0,0,1)	m11, m12, m21, m22
+绕 X 轴旋转（角度 θ）：
+| 1    0         0        0 |
+| 0   cosθ    -sinθ     0 |
+| 0   sinθ     cosθ     0 |
+| 0    0         0        1 |
+绕 Y 轴旋转（角度 θ）：
+| cosθ   0   sinθ   0 |
+| 0      1    0     0 |
+| -sinθ  0   cosθ   0 |
+| 0      0    0     1 |
+绕 Z 轴旋转（角度 θ）：
+| cosθ  -sinθ   0   0 |
+| sinθ   cosθ   0   0 |
+| 0       0     1   0 |
+| 0       0     0   1 |
+
+
+CATransform3D transform = CATransform3DMakeTranslation(100, 0, 0);
+transform = CATransform3DRotate(transform, M_PI_4, 0, 0, 1); // 旋转 45°
+transform = CATransform3DScale(transform, 2, 2, 1);          // 缩放
+每一步都是在上一步的结果基础上创建新的矩阵。
+其实等价于用 CATransform3DConcat 把每个变换串起来，只不过这里的 Rotate 和 Scale 函数内部已经自动使用了 CATransform3DConcat。
+等价于：
+CATransform3D translation = CATransform3DMakeTranslation(100, 0, 0);
+CATransform3D rotation    = CATransform3DMakeRotation(M_PI_4, 0, 0, 1);
+CATransform3D scale       = CATransform3DMakeScale(2, 2, 1);
+
+// 合并顺序是：先平移 → 再旋转 → 再缩放
+CATransform3D transform = CATransform3DConcat(translation, rotation);
+transform = CATransform3DConcat(transform, scale);
+
+CATransform3DConcat(A, B) → 表示先应用 A，再应用 B
+CATransform3DConcat(translation, rotation);的效果是：
+rotation * translation * vertex
+也就是说，vertex 先平移，再旋转；所以顺序写得对很重要。
+
+
+第 4 列主要是与透视投影（Perspective）
+矩阵项	含义
+m14	控制沿 x 轴的透视（一般用于透视投影矩阵）
+m24	控制沿 y 轴的透视
+m34	控制沿 z 轴的透视 → ⭐️ 最常用
+m44	齐次坐标的 w 分量标定（通常是 1）
+
+
+CATransform3D CATransform3DMakeRotation (CGFloat angle, CGFloat x, CGFloat y, CGFloat z)
+其中只设置 y=1 或 y=-1，而 x=z=0，也就是绕 Y 轴旋转
+CATransform3DMakeRotation(angle, 0, **1**, 0)
+表示绕 Y 轴正向（逆时针）旋转 angle 弧度
+CATransform3DMakeRotation(angle, 0, **-1**, 0)
+表示绕 Y 轴反向（顺时针）旋转 angle 弧度
+
+
+#####重点：
+Core Animation 和大多数 3D 系统一样遵循右手定则：
+右手定则（Right-Hand Rule）就是你说的：用右手的大拇指、食指、中指三根手指来描述三维空间中三个正交方向或旋转方向与轴向的关系
+右手伸出三根手指，彼此垂直：
+大拇指 → X 轴正方向
+食指 → Y 轴正方向
+中指（垂直于掌心）→ Z 轴正方向
+
+用于判断绕某轴旋转时，正方向是什么样的旋转：
+大拇指：指向旋转轴的正方向（例如 (0, 1, 0) 表示 Y 轴正方向）
+四指弯曲的方向：就是正角度的旋转方向
+比如：
+旋转轴	大拇指方向	四指弯曲方向（正角度）
+Y轴正方向 (0, 1, 0)	向上	从上往下看时 逆时针 旋转
+Z轴正方向 (0, 0, 1)	指向你	逆时针 是绕 Z 轴的正转
+
+
+由于 iOS 使用右手坐标系，绕 Y 轴的正方向旋转效果与人类视觉直觉相反，所以为了让人脸偏转方向与图层显示一致，我们将 Y 轴取负，使用 -1.0f。
+
+
+CATransform3DMakeRotation(30°, 0, 1, 0)
+这表示的是：
+绕 Y 轴 正方向（向上）
+旋转角度为 +30°
+所以，按照右手法则：从上往下看时是逆时针旋转
+
+
+理解本质：
+CATransform3DMakeRotation(45, 0, 1, 0);
+和
+CATransform3DMakeRotation(-45, 0, -1, 0);
+等价 —— 它们描述了同一个旋转，只是“绕轴方向”和“旋转方向”互为相反。
+
+绕 +Y 轴 旋转 +45°，从观察者“上往下看”，是 逆时针旋转45°
+绕 -Y 轴 旋转 -45°，从观察者“下往上看”，是 顺时针旋转45°
+两个旋转的效果在三维空间里是一样的，只是观察角度（视角）不同。
+#####
+
+
+设置的是一个带有 m34 分量的 CATransform3D 变换，用于实现所谓的 “透视变换（perspective transform）”。
+这是 Core Animation 中添加 3D 透视效果的标准做法。
+
+
+假设你有两个子图层，一个向前移动（z = -100），一个向后移动（z = 100）：
+如果你没有设置 sublayerTransform，它们在屏幕上看起来大小没什么变化（因为默认是正交投影，没有透视感）。
+如果你设置了一个带 m34 的 sublayerTransform，它们就会出现透视缩放效果：
+离你近的图层变大
+离你远的图层变小
+这就像在真实世界中看东西那样，有远近感。
+
+
+
+给这个 layer 添加的所有子 layer，比如用于渲染“人脸框”、“标识”等，在进行 Z 轴旋转或位移时都会带上透视效果；
+
+
+为什么是 m34 呢？
+这其实源于 3D 图形变换中的投影矩阵原理。
+在 Core Animation 中，CATransform3D 是一个 4x4 的矩阵结构，遵循 齐次坐标系统，而 m34 是这个矩阵中特别用于控制透视效果的关键位置。
+
+CATransform3D 是一个 4×4 的矩阵：
+| m11  m12  m13  m14 |
+| m21  m22  m23  m24 |
+| m31  m32  m33  m34 |  ← 注意这里的 m34
+| m41  m42  m43  m44 |
+
+在这个矩阵中：
+前 3 行（m11~m33）控制旋转、缩放、斜切
+第 4 行是平移和投影控制
+m34 是透视缩放因子，用来让 Z 轴上的深度影响 X 和 Y 的显示效果
+
+因为 Core Animation 使用的是 右手坐标系 和 齐次坐标投影矩阵。在这种系统中，真实世界中的透视变换会把三维空间的点通过下面这个公式投影到二维平面上：
+X' = X / Z
+Y' = Y / Z
+也就是说，Z 越大（离你越远），投影结果越小（图像越小），形成透视感。
+
+在 CATransform3D 中，如果你设置：
+transform.m34 = -1.0 / d;
+就等价于告诉系统：“Z 轴方向上距离是 d 的地方，物体会被缩小为原来的 1/d 倍大小”，从而实现了近大远小的透视感。
+
+
+Core Animation 默认 m34 = 0，相当于 无透视，也就是正交投影。
+所以即使你做了 CATransform3DMakeRotation 绕 Y 轴旋转 45°，图层也不会“斜着变小”，而是看起来像平移过去了。
+
+
+在 m34 = -1.0 / d 中，d 的正负号控制的是透视方向
+m34 = -1.0 / d
+Core Animation 和 OpenGL 一样使用的是 右手坐标系。
+在这个坐标系中：
+z轴正方向是从屏幕外面指向你（用户）。
+z轴负方向是从你指向屏幕深处。
+通常你希望：
+图层的 z 坐标 越小（越远），它看起来 越小；
+图层的 z 坐标 越大（越近），它看起来 越大；
+
+
+使用 m34 = -1.0 / 500、-1.0 / 1000 是比较自然的选择；
+值越小（例如 -1/100），透视越明显；
+值越大（例如 -1/2000），透视越轻微、更接近正交投影。
+
+
+
+| m11  m12  m13  m14 |   ← 第1列控制 x 轴相关变换
+| m21  m22  m23  m24 |   ← 第2列控制 y 轴相关变换
+| m31  m32  m33  m34 |   ← 第3列控制 z 轴相关变换
+| m41  m42  m43  m44 |   ← 第4列影响最终的 w 值（齐次坐标）
+
+第4列（m14、m24、m34、m44）控制的是原始坐标如何转换成最终的“齐次坐标 w 分量”。
+所以 m34 的作用就是：“让 z 坐标的变化对 w 值产生影响”，从而实现透视缩放。
+
+什么是齐次坐标？
+在 3D 图形系统中，我们常用 4 维向量来表示 3D 点：
+| x |
+| y |
+| z |
+| w |   ← 这就是“齐次坐标”
+通常 w = 1。
+投影变换会影响这个 w 值，从而实现诸如透视的效果。
+最终在渲染之前，系统会做一件事：把 x, y, z 除以 w，得到真实投影结果。
+
+
+
+而透视的核心逻辑其实不直接是 w' 的变化，而是：系统会用 w' 对 x'、y'、z' 进行除法归一化：
+x_final = x' / w'
+y_final = y' / w'
+z_final = z' / w'
+最终系统会把所有坐标除以它 w'，完成从 3D 到屏幕 2D的投影过程。

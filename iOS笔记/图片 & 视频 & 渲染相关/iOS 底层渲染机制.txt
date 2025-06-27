@@ -1,0 +1,61 @@
+iOS 图形系统的底层渲染机制:
+在 iOS 的每一帧（一次 runloop 循环） 中，并不是每次都会「commit & render」，只有当你 修改了 UI 时，才会触发 commit 和 render 流程。
+这些操作是 按需触发 的，有条件才会执行。
+
+
+背后机制（基于 Core Animation）
+当你在主线程修改 UI，比如：
+view.frame = ...
+view.backgroundColor = ...
+这些只是改了内存中的 layer 树（称为 model tree），并没有立即渲染。// 当你修改 UI 时（比如修改 view 的 frame、颜色、透明度等），这些操作会标记为“待提交”。
+
+下一轮 RunLoop 执行时：
+Core Animation 发现有 layer 属性变化
+会将变化同步到 render tree（commit 阶段）
+触发 GPU 渲染任务（render server 完成）
+
+或者
+
+下一次主线程 runloop 的「BeforeWaiting」阶段（即将睡眠阶段），Core Animation 会检查是否有 layer 改动；
+如果有，就会 commit（将 model layer 的更改同步到 render tree）；
+然后会排队给 GPU 进行 render；
+如果你没有修改任何 UI（也没有动画），这些操作就会跳过，不会发生。
+
+
+
+你可以把 UI 系统理解为一个「只在必要时才动手画图」的画师：
+如果没人改图，他就休息；
+只有有人动了画布（frame、颜色），他才在下一轮工作时 commit 并画出来；
+动画、DisplayLink、视频播放这些会让他每帧都必须画。
+
+
+哪些情况会导致每次 runloop 都执行 commit 和 render：
+情况	commit	render
+修改 UI 属性（如 frame）	✅（下一帧）	✅（如有改动）
+有动画在进行中（隐式/显式）	✅ 每帧	✅ 每帧
+使用 CADisplayLink	✅（看你代码）	✅（看你行为）
+使用 Metal/OpenGL 绘制	你控制	你控制
+没有任何改动	❌	❌
+
+
+只有满足下面条件才会 commit & render：
+条件	是否会触发 render
+没有修改 UI	❌ 不会触发 render
+修改了 layer 的属性（比如 frame, opacity）	✅ 会触发
+使用了 CADisplayLink / 动画进行中	✅ 每帧都会 render（常见）
+有隐式/显式动画正在进行	✅ 每帧 render
+使用了 Metal/OpenGL 做了 draw call	✅ 你控制时机
+
+
+概念	iOS Core Animation	React
+UI 描述数据	model tree（CALayer 对象的属性，如 frame, opacity）	Virtual DOM（JS 对象）
+真正渲染目标	render tree（由系统提交给 Render Server，GPU 绘制）	Real DOM（浏览器 DOM）
+改动行为	修改 layer 属性，不会立即渲染	setState / 修改 JSX，不会立即更新 DOM
+提交时机	RunLoop 的 before waiting 阶段会自动 commit	React 内部调度机制（如异步合并更新）
+渲染优化	Core Animation 只提交有变化的 layer（diff）	React 通过 Virtual DOM diff 算法
+动画支持	隐式动画（动画不是立即生效，而是系统调度）	React Transition/CSSTransition/动画 hook
+中央调度	Core Animation 的事务机制（CATransaction）	React 的 Fiber Scheduler（如 Concurrent Mode）
+
+
+Core Animation 的 model tree 相当于 React 的 Virtual DOM，render tree 相当于浏览器真实 DOM。两者都通过中间层做 diff 和延迟提交，提高性能和可维护性。
+

@@ -1,0 +1,92 @@
+Lays out the subviews immediately, if layout updates are pending.（有待处理的布局更新）
+func layoutIfNeeded()
+
+
+layout updates are pending 表示视图当前被标记为需要重新布局（通常是因为你调用了 setNeedsLayout()），但系统还没有立即执行 layoutSubviews()。
+如果你调用 layoutIfNeeded()，系统就会立即触发 layoutSubviews()。
+
+
+分步骤理解：
+1. 正常布局流程是延迟触发的
+someView.setNeedsLayout() // 告诉系统：我需要重新布局
+这个方法的作用是：
+把当前视图标记为“dirty”状态（需要重新布局）；
+系统会在 当前 RunLoop 结束前（beforeWaiting） 自动调用 layoutSubviews()；
+但不是立即调用！
+
+2. 这时候如果你调用：
+someView.layoutIfNeeded()
+它就会判断：
+这个 view 或其子视图是否处于“有待布局”状态（即 setNeedsLayout() 被调用过）？
+如果有待布局：layoutIfNeeded() 会立即调用 layoutSubviews()；
+如果没有：什么都不做。
+
+
+如果你设置了 v.frame = xxx，再调用 v.layoutIfNeeded() 是会立即触发 layoutSubviews() 的，即使你没有调用 setNeedsLayout()。
+UIKit 自动在以下场景调用 setNeedsLayout()：
+你修改了 view 的 frame 或 bounds；
+添加或移除了 subview；
+手动调用 setNeedsLayout()；
+这些都会让系统自动标记该视图为“需要布局”，即 layout updates are pending。
+
+
+如果你调用 layoutIfNeeded()，系统就会立即触发 layoutSubviews()。// 内存中的视图层级布局状态此时已经是最新的；
+触发 layoutSubviews()后
+视图的布局数据在调用 layoutIfNeeded() 后已经更新，但画面（屏幕上的显示） 不一定立刻更新。
+
+
+画面什么时候更新？
+屏幕上的“视觉更新”不是立即呈现的，而是要等到：
+当前 RunLoop 周期结束 → UIKit 在 .beforeWaiting 阶段将图层变更提交给 Core Animation → 等待下一次 VSync（垂直同步） → GPU 开始渲染 → 显示
+对于这个流程，当 GPU 渲染完，画面被显示出来时，RunLoop 并不会因此被唤醒，它依然是处于休眠（sleeping）状态的。
+当前 RunLoop 周期结束  
+→ UIKit 在 .beforeWaiting 阶段将图层变更提交给 Core Animation  
+→ 等待下一次 VSync（垂直同步）  
+→ GPU 开始渲染  
+→ 显示新帧内容到屏幕
+这些操作都是在主线程之外完成的：
+图层变更提交后，UIKit 不再管事；
+Core Animation 在后台线程将图层树转为渲染树；
+GPU 渲染并准备好帧缓冲区（frame buffer）；
+最后显示系统（Display Server）在 VSync 时刻从 GPU 获取帧并显示。
+这些过程跟主线程（也就是 RunLoop 所在线程）是解耦的。
+
+
+一旦进入 .beforeWaiting 阶段：
+RunLoop 会设置定时器、Source0/1 等事件监听；
+然后就进入睡眠（mach_msg_trap 等等待系统事件唤醒）；
+不会因为 GPU 完成渲染而被唤醒，因为这是显示层的事，与 app 无关。
+
+
+RunLoop 会被唤醒通常是因为：
+用户触摸/手势（Input Source1）
+定时器（Timer Source）
+自定义事件（CFRunLoopSource）
+GCD 派发任务（Dispatch Source）
+网络 / 文件事件（Port）
+
+
+layoutIfNeeded() 让视图的几何结构立即更新（frame、布局都变了），
+但视觉更新（画面刷新）仍然等到当前 RunLoop 的 .beforeWaiting 阶段之后，由 Core Animation 提交，再等下一帧 GPU 才渲染出来。
+
+如果你需要强制视觉上立即更新画面，可以调用：
+CATransaction.flush()
+但这几乎不推荐在正常 UI 代码中使用，因为它打破了 UIKit 的批处理优化机制。
+
+
+#####
+下一次 VSync（Vertical Sync）就是屏幕下一帧应该刷新的时刻，它由系统的显示硬件驱动，通常是 固定频率，比如：
+在 60Hz 屏幕上：每隔约 16.67ms 有一次 VSync 信号；
+在 120Hz 屏幕上：每隔约 8.33ms 有一次 VSync 信号。
+#####
+
+VSync 是 GPU 和屏幕之间的“同步时钟信号”，用于保证：
+显示内容和 GPU 渲染保持一致；
+避免 撕裂（tearing） 和 闪烁（flickering）；
+系统在 每次 VSync 来临时才允许显示新的帧（即使你提前准备好了，也要等这次信号）；
+
+
+UIKit 和 Core Animation 是怎么用 VSync 的？
+UIKit 会注册一个叫 CADisplayLink 的机制去监听 VSync；
+「下一次 VSync」就是「下一帧应该到来的时间」，系统希望能在这之前准备好内容。
+而如果你的绘制准备晚了（GPU 太慢、CPU 卡顿），就错过了这一帧的 VSync → 下一帧再画 → 掉帧。

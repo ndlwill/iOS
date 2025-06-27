@@ -1,0 +1,181 @@
+TCA（The Composable Architecture）是一个用于构建 Swift 应用（尤其是 SwiftUI 应用）的 架构框架，由 Point-Free 团队开发。
+https://www.pointfree.co/
+它提供了一种 函数式、可组合、测试友好、可预测的方式 来构建 Swift 应用，尤其适用于复杂状态管理、模块化和测试驱动开发（TDD）。
+The Composable Architecture was built on a foundation of ideas started by other libraries, in particular Elm and Redux.
+
+TCA 之所以测试友好，是因为：
+所有业务逻辑都被收敛到了纯函数 reducer 中
+
+
+副作用（Side Effect）
+在函数式编程里，副作用 指的是那些 影响外部世界、或者依赖外部世界的操作
+操作	是副作用吗？	理由
+纯粹地加法运算	❌ 否	不依赖外部世界，不影响外部世界
+打印一行日志	✅ 是	改变了控制台输出
+网络请求	✅ 是	依赖外部服务器，返回值不确定
+保存文件到磁盘	✅ 是	改变了磁盘状态
+计时器 1 秒后执行代码	✅ 是	需要调度异步任务，依赖时间
+
+副作用 不是状态更新本身，而是 触发状态更新的“外部动作”：
+登录后返回的数据，会触发 reducer 更新状态（这一步是状态更新）
+发起网络请求是副作用（不是状态更新）
+成功拿到结果后发送 .loginSuccess(user) action，再进入 reducer 改 state（状态更新）
+
+为什么副作用要特别处理（不能随便写在逻辑里）？
+这些操作通常是异步的（比如网络）
+不确定性强（失败、延迟、超时等）
+在测试中无法重现（比如拿 GPS、打日志）
+会污染 reducer 的纯粹性
+
+副作用测试就是：
+在不真正执行副作用的前提下，验证副作用是否被正确地触发、其行为和结果是否正确。
+在 TCA 中，所有副作用都被封装成 Effect，可以在测试时用假数据（mock）来替代真实网络、定时器等操作。
+
+场景：点击按钮后，1 秒后自动把 count 设置为 42。
+1. State & Action
+struct CounterState: Equatable {
+    var count = 0
+}
+
+enum CounterAction: Equatable {
+    case startTimer
+    case timerFired(Int)
+}
+2. Reducer（含副作用）
+let counterReducer = Reducer<CounterState, CounterAction, CounterEnvironment> { state, action, env in
+    switch action {
+    case .startTimer: // 正确理解：TCA 中的 reducer 不执行副作用，而是声明副作用
+        return Effect(value: .timerFired(42))
+            .delay(for: 1, scheduler: env.mainQueue)
+            .eraseToEffect()
+
+    case .timerFired(let value):
+        state.count = value
+        return .none
+    }
+}
+
+struct CounterEnvironment {
+    var mainQueue: AnySchedulerOf<DispatchQueue>
+}
+3. 测试副作用触发
+func testTimerFires() {
+    let scheduler = DispatchQueue.test
+
+    let store = TestStore(
+        initialState: CounterState(),
+        reducer: counterReducer,
+        environment: CounterEnvironment(mainQueue: scheduler)
+    )
+
+    store.send(.startTimer)
+
+    // 触发 1 秒后的副作用
+    scheduler.advance(by: .seconds(1))
+
+    store.receive(.timerFired(42)) {
+        $0.count = 42
+    }
+}
+
+TCA 是怎么执行副作用的？
+用户点击 -> reducer 不变 state + 返回 effect
+        -> store 执行 effect（异步、网络）
+        -> effect 产生新的 action
+        -> reducer 再次处理这个 action，真正更新 state
+
+
+TCA 的核心围绕四个概念：
+State（状态）
+表示你的应用的全部状态。
+是一个普通的 Swift struct，通常是 @BindableState + 普通值。
+
+Action（动作）
+用户或系统触发的事件，通常是枚举。
+表示“发生了什么”。
+
+Reducer（状态处理器）
+是一个纯函数：(inout State, Action) -> Effect
+根据传入的 Action 修改状态，并返回副作用（Effect）。
+
+Store（商店）
+封装了 State 和 Reducer。
+提供了 send(action) 方法来驱动状态变更。
+
+
+import ComposableArchitecture
+
+struct CounterFeature: Reducer {
+    struct State: Equatable {
+        var count = 0
+    }
+
+    enum Action: Equatable {
+        case increment
+        case decrement
+    }
+
+    func reduce(into state: inout State, action: Action) -> Effect<Action> {
+        switch action {
+        case .increment:
+            state.count += 1
+            return .none
+        case .decrement:
+            state.count -= 1
+            return .none
+        }
+    }
+}
+
+
+struct CounterView: View {
+    let store: StoreOf<CounterFeature>
+
+    var body: some View {
+        WithViewStore(self.store, observe: { $0 }) { viewStore in
+            VStack {
+                Text("Count: \(viewStore.count)")
+                Button("+") { viewStore.send(.increment) }
+                Button("-") { viewStore.send(.decrement) }
+            }
+        }
+    }
+}
+
+
+TCA = 状态驱动 + 可组合 + 可预测 + 易测试的 Swift 应用架构方式，适合管理复杂状态与逻辑。
+
+TCA（The Composable Architecture）和 Redux 非常相似，甚至可以说是 将 Redux 的核心理念用 Swift 实现并“进化”而来的架构模式。
+它们都属于**“单向数据流 + 函数式状态管理”**的架构。
+
+
+单向数据流（Unidirectional Data Flow）： 和 SwiftUI 高度契合	SwiftUI 本身就推荐用 State 驱动 View 的更新
+所有状态变更都通过发送 Action，然后由 Reducer 处理。// UI 由状态（state）驱动，而不是自己直接改自己。
+UI 只观察状态，不能直接修改状态。
+它的本质是：
+数据的流动方向始终是“从源头出发，经过固定路线，最终影响 UI”，不能逆向或跳跃式修改。
+单向数据流：
+View → Action → Reducer（逻辑）→ State → View（刷新）
+View 只能通过发送 Action 表示用户意图（比如按钮点击、输入等）；
+Action 被发送给 Reducer（或 Store）；
+Reducer 接收 Action 和当前 State，计算出新的 State；
+View 观察 State 的变化并重新渲染界面。
+全程没有 UI 自己偷偷改状态，也没有状态跳过逻辑层直接影响 UI。
+
+非单向数据流（传统 UIKit 写法可能出现）：
+button.addTarget(self, action: #selector(directlyChangeLabelText), for: .touchUpInside)
+func directlyChangeLabelText() {
+    label.text = "你点了我"
+}
+上面这种写法，View 层直接操作 View，中间没有状态和逻辑层，导致：
+状态不可追踪
+修改路径混乱
+测试困难
+
+Reducer 是纯函数，可以单元测试
+
+纯 Reducer
+Reducer 不做副作用，只负责根据 Action 改变状态。
+
+Reducer：状态处理器
+“Reducer（状态处理器）是根据 Action 修改 State 的核心函数。”

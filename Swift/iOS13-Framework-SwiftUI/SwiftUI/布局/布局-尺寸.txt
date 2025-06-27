@@ -1,0 +1,699 @@
+https://fatbobman.com/zh/posts/layout-dimensions-1/
+
+SwiftUI 布局过程:
+
+struct ContentView: View {
+    var body: some View {
+        ZStack {
+            Text("Hello world")
+        }
+    }
+}
+// ContentView
+//     |
+//     |———————— ZStack
+//                 |
+//                 |—————————— Text
+
+
+SwiftUI 的布局就是布局系统通过为视图树上的节点提供必要的信息，最终计算出每个视图（ 矩形 ）所需的尺寸以及摆放位置的行为。
+
+当前设备为 iPhone 13 Pro:
+ContentView 为应用的根视图
+SwiftUI 的布局系统为 ZStack 提供一个建议尺寸（ 390 x 763 该尺寸为设备屏幕尺寸去掉安全区域的大小 ），并询问 ZStack 的需求尺寸
+ZStack 为 Text 提供建议尺寸（ 390 x 763 ），并询问 Text 的需求尺寸
+Text 根据 ZStack 提供的建议尺寸，返回了自己的需求尺寸（ 85.33 x 20.33 ，因为 ZStack 提供建议尺寸大于 Text 的实际需求，因此 Text 的需求尺寸为对文本不折行，不省略的完整显示尺寸）
+ZStack 向 SwiftUI 的布局系统返回了自己的需求尺寸（ 85.33 x 20.33，因为 ZStack 中仅有 Text 一个子视图，因此 Text 的需求尺寸便是 ZStack 的需求尺寸 ）
+SwiftUI 的布局系统将 ZStack 放置在了 152.33, 418.33 处，并为其提供了布局尺寸（ 85.33 x 20.33 ）
+ZStack 将 Text 放置在了 152.33, 418.33 处，并为其提供了布局尺寸（ 85.33 x 20.33 ）
+
+布局过程基本上分为两个阶段:
+第一阶段 —— 讨价还价
+在这个阶段，父视图为子视图提供建议尺寸，子视图为父视图返回需求尺寸
+在 Layout 协议中，对应的是 sizeThatFits 方法。经过该阶段的协商，SwiftUI 将确定视图所在屏幕上的位置和尺寸。
+
+第二阶段 —— 安置子民
+在该阶段，父视图将根据 SwiftUI 布局系统提供的屏幕区域（ 由第一阶段计算得出 ）为子视图设置布局的位置和尺寸
+在 Layout 协议中，对应的是 placeSubviews 方法。此时，视图树上的每个视图都将与屏幕上的具体位置联系起来。
+
+讨价还价的次数与视图结构的复杂度成正比，整个的协商过程可能会反复出现多次甚至推倒重来的情况。
+
+
+容器与视图:
+在 SwiftUI 中，只有符合 View 协议的 component 才能被 ViewBuilder 所处理。
+因此任何一种布局容器，最终都会被包装并以 View 的形式出现在代码中。
+
+#####
+下面是 VStack 的构造函数，content 被传递给了真正的布局容器 _VStackLayout 进行布局
+#####
+public struct VStack<Content>: SwiftUI.View where Content: View {
+    internal var _tree: _VariadicView.Tree<_VStackLayout, Content>
+    public init(alignment: SwiftUI.HorizontalAlignment = .center, spacing: CoreFoundation.CGFloat? = nil, @SwiftUI.ViewBuilder content: () -> Content) {
+        _tree = .init(
+            root: _VStackLayout(alignment: alignment, spacing: spacing), content: content()
+        )
+    }
+    public typealias Body = Swift.Never
+}
+
+#####
+除了我们熟悉的 VStack、ZStack、List 等布局视图外，在 SwiftUI 中，大量的布局容器是以视图修饰器的形式存在的。
+#####
+例如，下面是 frame 在 SwiftUI 中的定义
+public extension SwiftUI.View {
+    func frame(width: CoreFoundation.CGFloat? = nil, height: CoreFoundation.CGFloat? = nil, alignment: SwiftUI.Alignment = .center) -> some SwiftUI.View {
+        return modifier(
+            _FrameLayout(width: width, height: height, alignment: alignment))
+    }
+}
+
+public struct _FrameLayout {
+    let width: CoreFoundation.CGFloat?
+    let height: CoreFoundation.CGFloat?
+    init(width: CoreFoundation.CGFloat?, height: CoreFoundation.CGFloat?, alignment: SwiftUI.Alignment)
+    public typealias Body = Swift.Never
+}
+
+_FrameLayout 被包装成 viewModifier ，作用于给定的视图。
+
+Text("Hi")
+    .frame(width: 100,height: 100)
+
+// 可以被视为
+
+_FrameLayout(width: 100,height: 100,alignment: .center) {
+    Text("Hi")
+}
+
+此时 _FrameLayout 即是 Text 的父视图，也是布局容器。
+
+对于不包含子视图的视图来说（ 例如 Text 这类的元视图 ），它们同样会提供接口供父视图来调用以向其传递建议尺寸并获取其需求尺寸。
+虽然当前 SwiftUI 中绝大多数的视图并不遵循 Layout 协议，但从 SwiftUI 诞生之始，其布局系统便是按照 Layout 协议提供的流程进行布局操作的，
+Layout 协议仅是将内部的实现过程包装成开发者可以调用的接口，以方便我们进行自定义布局容器的开发。
+
+将父视图与具备布局能力的容器等同起来
+
+
+#####
+不过需要注意的是，在 SwiftUI 中，有一类视图是会在视图树上显示为父视图，但并不具备布局能力。
+其中的代表有 Group、ForEach 等。这类视图的主要作用有:
+突破 ViewBuilder Block 的数量限制
+方便为一组视图统一设置 view modifier
+有利于代码管理
+其他特殊应用，如 ForEach 可支持动态数量的子视图等
+#####
+
+
+对于上面的例子，SwfitUI 会将 ContentView 视作类似 Group 的存在。
+这类视图本身并不会参与布局，SwiftUI 的布局系统会在布局时自动将它们忽略，让其子视图与具备布局能力的祖先视图直接联系起来。
+
+
+尽管 Layout 协议的主要用途是让开发者创建自定义布局容器，且在 SwiftUI 中仅有少数的视图符合该协议，但从 SwiftUI 1.0 开始，
+SwiftUI 视图的布局机制便基本与 Layout 协议所实现的流程一致。可以说 Layout 协议是一个用来观察和验证 SwiftUI 布局运作原理的优秀工具。
+
+
+建议尺寸:
+#####
+SwiftUI 的布局是从外向内进行的。布局过程的第一个步骤便是由父视图为子视图提供建议尺寸（ Proposal Size）。
+建议尺寸是父视图为子视图提供的建议，子视图在计算其需求尺寸时是否考虑建议尺寸完全取决于它自己的行为设定。
+#####
+
+
+以子视图为符合 Layout 协议的自定义布局容器举例，父视图通过调用子视图的 sizeThatFits 方法提供建议尺寸。
+建议尺寸的类型为 ProposedViewSize，它的宽和高均为 Optional<CGFloat> 类型。
+而该自定义布局容器又会在它的 sizeThatFits 方法中通过调用其子视图代理（ Subviews，子视图在 Layout 协议中的表现方式 ）的 sizeThatFits 方法为子视图代理提供建议尺寸。
+建议尺寸在布局的两个阶段（讨价还价、安置子民）均会提供，但通常我们只需在第一个阶段使用它（ 可以在第一阶段用 cache 保存中间的计算数据，减少第二阶段的计算量 ）。
+
+// 代码来自 My_ZStackLayout
+
+// 容器的父视图（父容器）将通过调用容器的 sizeThatFits 获取容器的需求尺寸，本方法通常会被多次调用，并提供不同的建议尺寸
+func sizeThatFits(
+    proposal: ProposedViewSize, // 容器的父视图（父容器）提供的建议尺寸
+    subviews: Subviews, // 当前容器内的所有子视图的代理
+    cache: inout CacheInfo // 缓存数据，本例中用于保存子视图的返回的需求尺寸，减少调用次数
+) -> CGSize {
+    cache = .init() // 清除缓存
+    for subview in subviews {
+        // 为子视图提供建议尺寸，获取子视图的需求尺寸 (ViewDimensions)
+        let viewDimension = subview.dimensions(in: proposal)
+        // 根据 MyZStack 的 alignment 的设置获取子视图的 alignmentGuide
+        let alignmentGuide: CGPoint = .init(
+            x: viewDimension[alignment.horizontal],
+            y: viewDimension[alignment.vertical]
+        )
+        // 以子视图的 alignmentGuide 为 (0,0) , 在虚拟的画布中，为子视图创建 CGRect
+        let bounds: CGRect = .init(
+            origin: .init(x: -alignmentGuide.x, y: -alignmentGuide.y),
+            size: .init(width: viewDimension.width, height: viewDimension.height)
+        )
+        // 保存子视图在虚拟画布中的数据
+        cache.subviewInfo.append(.init(viewDimension: viewDimension, bounds: bounds))
+    }
+
+    // 根据所有子视图在虚拟画布中的数据，生成 MyZtack 的 CGRect
+    cache.cropBounds = cache.subviewInfo.map(\.bounds).cropBounds()
+    // 返回当前容器的理想尺寸，当前容器的父视图将使用该尺寸在它的内部进行摆放
+    return cache.cropBounds.size
+}
+
+#####
+根据建议尺寸内容的不同，我们可以将建议尺寸细分为四种建议模式，在 SwiftUI 中，父视图会根据它的需求选择合适的建议模式提供给子视图。
+#####
+由于可以在宽度和高度上分别选择不同的模式，因此建议模式特指在一个维度上所提供的建议内容。
+
+最小化模式
+该维度的建议尺寸为 0 。ProposedViewSize.zero 表示两个维度都为最小化模式的建议尺寸。某些布局容器（比如 VStack、HStack ），会通过为其子视图代理提供最小化模式的建议尺寸以获取子视图在特定维度下的最小需求尺寸（ 例如对视图使用了 minWidth 设定 ）
+
+最大化模式
+该模式的建议尺寸为 CGFloat. infinity 。ProposedViewSize.infinity 表示两个维度都为最大化模式的建议尺寸。当父视图想获得子视图在最大模式下的需求尺寸时，会为其提供该模式的建议尺寸
+
+明确尺寸模式
+非 0 或 infinity 的数值。比如在上文的例子中，ZStack 为 Text 提供了 390 x 763 的建议尺寸。
+
+未指定模式
+nil，不设置任何数值。ProposedViewSize.unspecified 表示两个维度都为未指定模式的建议尺寸。
+
+#####
+为子视图提供不同的建议模式的目的是获得在该模式下子视图的需求尺寸，具体使用哪种模式，完全取决于父视图的行为设定。
+#####
+例如：ZStack 会将其父视图提供给它的建议模式直接转发给 ZStack 的子视图，
+而 VStack、HStack 则会要求子视图返回全部模式下的需求尺寸，以判断子视图是否为动态视图（ 在特定维度可以动态调整尺寸 ）。
+
+在 SwiftUI 中，通过设置或调整建议模式而进行二次布局的场景很多，比较常用的有：frame、fixedSize 等。
+比如，下面的代码中，frame 便是无视 VStack 提供建议尺寸，强行为 Text 提供了 50 x 50 的建议尺寸。
+VStack {
+    Text("Hi")
+       .frame(width: 50,height: 50)
+}
+
+
+
+需求尺寸:
+#####
+在子视图收到了父视图的建议尺寸后，它将根据建议模式和自身行为特点返回需求尺寸。
+需求尺寸的类型为 CGSize 
+#####
+在绝大多数情况下，自定义布局容器（ 符合 Layout 协议）在布局第一阶段最终返回的需求尺寸与第二阶段 SwiftUI 布局系统传递给它的屏幕区域（ CGRect ）的尺寸一致。
+
+// 代码来自 FixedSizeLayout
+// 根据建议尺寸返回需求尺寸
+func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard subviews.count == 1, let content = subviews.first else {
+        fatalError("Can't use MyFixedSizeLayout directly")
+    }
+    let width = horizontal ? nil : proposal.width
+    let height = vertical ? nil : proposal.height
+    // 获取子视图的需求尺寸
+    let size = content.sizeThatFits(.init(width: width, height: height))
+    return size
+}
+
+
+以下是 Rectangle() 在四种建议模式下返回的结果，以两个维度为同一种模式举例:
+最小化模式
+需求尺寸为 0 x 0
+
+最大化模式
+需求尺寸为 infinity * infinity
+
+明确尺寸模式
+需求尺寸为建议尺寸
+
+未指定模式
+需求尺寸为 10 x 10（ 至于为什么是 10 x 10 ，下文中的理想尺寸将有更详细的说明 ）
+
+
+Text("Hello world") 在四种建议模式下计算需求尺寸的行为与 Rectangle 则大相径庭:
+最小化模式
+当任意维度为最小化模式时，需求尺寸为 0 x 0
+
+最大化模式
+需求尺寸为 Text 的实际显示尺寸（ 文本不折行、不省略 ） 85.33 x 20.33（ 例子中尺寸 ）
+
+明确尺寸模式
+如果建议宽度大于单行显示的需要，则需求宽度返回单行实现显示尺寸的宽度 85.33 ；
+如果建议宽度小于单行显示的需要则需求宽度返回建议尺寸的宽度；
+如果建议高度小于单行显示的高度，则需求高度返回单行的显示高度 20.33；
+如果建议高度高于单行显示的高度且宽度大于单行显示的宽度，则需求高度返回单行显示的高度 20.33 ……
+
+未指定模式
+当两个维度均为未指定模式时，需求尺寸为单行完整显示所需的宽和高 85.33 x 20.33
+
+
+不同的视图，在相同的建议模式及尺寸下会返回不同的需求尺寸这一事实既是 SwiftUI 的特色也是十分容易很让人困扰的地方。
+需求尺寸总体上来说还是有规律可循的:
+Shape
+除了未指定模式，其他均与建议尺寸一致
+
+Text
+需求尺寸的计算规则较为复杂，需求尺寸取决于建议尺寸和实际完整显示尺寸
+
+布局容器（ ZStack 、HStack、VStack 等）
+需求尺寸为容器内子视图按指定对齐指南对齐摆放后（ 已处理动态尺寸视图 ）的总尺寸
+
+其他控件例如 TextField、TextEditor、Picker 等
+需求尺寸取决于建议尺寸和实际显示尺寸
+
+
+#####
+在 SwiftUI 中，frame(minWidth:,maxWidth:,minHeight:,maxHeight) 便是对子视图的需求尺寸进行调整的典型应用。
+#####
+
+
+
+布局尺寸 (渲染尺寸):
+#####
+在布局的第二阶段，当 SwiftUI 的布局系统调用布局容器（ 符合 Layout 协议 ）的 placeSubviews 方法时，
+布局容器会将每个子视图放置在给定的屏幕区域（ 尺寸通常与该布局容器的需求尺寸一致 ）中，并为子视图设置布局尺寸。
+#####
+// 代码来自 FixedSizeLayout
+func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    guard subviews.count == 1, let content = subviews.first else {
+        fatalError("Can't use MyFixedSizeLayout directly")
+    }
+
+    // 设置布局位置及布局尺寸。
+    content.place(at: .init(x: bounds.minX, y: bounds.minY), anchor: .topLeading, proposal: .init(width: bounds.width, height: bounds.height))
+}
+
+
+父视图将根据自身的行为特点以及参考子视图的需求尺寸计算子视图的布局尺寸，例如：
+在 ZStack 中，ZStack 为子视图设置的布局尺寸与子视图的需求尺寸一致
+在 VStack 中，VStack 将根据其父视图提供的建议尺寸、子视图是否为可扩展视图、子视图的视图优先级等信息，为子视图计算布局尺寸。
+比如： 当固定高度的子视图的总高度已经超出了 VStack 获得的建议尺寸高度，那么 Spacer 就只能获得高度为 0 的布局尺寸
+
+多数情况下，布局尺寸与子视图的最终显示尺寸（ 视图尺寸 ）一致，但并非绝对。
+
+SwiftUI 没有提供可以在视图中直接处理布局尺寸的方式（ 除了 Layout 协议 ），通常我们会通过对建议尺寸以及需求尺寸的调整，来影响布局尺寸。
+
+
+
+视图尺寸:
+#####
+视图渲染后在屏幕上呈现的尺寸
+#####
+在视图中可以通过 GeometryReader 获取特定视图的尺寸及位置
+
+extension View {
+    func printSizeInfo(_ label: String = "") -> some View {
+        background(
+            GeometryReader { proxy in
+                Color.clear
+                    .task(id: proxy.size) {
+                        print(label, proxy.size)
+                    }
+            }
+        )
+    }
+}
+
+VStack {
+    Text("Hello world")
+        .printSizeInfo() // 打印视图尺寸
+}
+
+
+可以通过 border 视图修饰器更加直观地比对不同层级的视图尺寸
+VStack {
+    Text("Hello world")
+        .border(.red)
+        .frame(width: 100, height: 100, alignment: .bottomLeading)
+        .border(.blue)
+        .padding()
+}
+.border(.green)
+
+视图尺寸已经是布局完成之后的产物了，在没有 Layout 协议之前，开发者只能通过获取当前视图以及子视图的视图尺寸来实现自定义布局。
+通过 Layout 协议，开发者可以站在上帝的视角，利用建议尺寸、需求尺寸、布局尺寸等信息从容地进行布局。
+
+
+
+理想尺寸:
+#####
+理想尺寸（ ideal size ）特指在建议尺寸未指定模式下返回的需求尺寸。
+SwiftUI 为所有的 Shape 设置的默认理想尺寸为 10 x 10 ，Text 默认的理想尺寸为单行完整显示全部内容所需的尺寸。
+
+frame(idealWidth:idealHeight:) 为视图提供理想尺寸建议，系统尽量采用但不强制。
+若希望视图在某个维度上保持其理想尺寸，可搭配 fixedSize(horizontal:vertical:) 强制使用其自身内容大小作为最终尺寸。
+#####
+
+#####
+我们可以使用 frame(idealWidth:CGFloat, idealHeight:CGFloat) 为视图设置理想尺寸，
+并使用 fixedSize 为视图的特定维度提供未指定模式的建议尺寸，以使其在该维度上将理想尺寸作为其需求尺寸。
+#####
+
+
+Text("Hello world")
+    .border(.red)
+    .frame(idealWidth: 100, idealHeight: 100)
+    .fixedSize()
+    .border(.green)
+
+Text("Hello world")
+    .border(.red)
+    .frame(idealWidth: 100, idealHeight: 100)
+    .fixedSize(horizontal: true, vertical: true)
+    .border(.green)
+    .frame(width: 200, height: 200)
+    .border(.yellow)
+
+Text("Hello")
+    .border(.red)
+    .frame(width: 100)
+    .border(.green)
+它等价于嵌套结构：
+Border(Green) {
+  Frame(100) {
+    Border(Red) {
+      Text("Hello")
+    }
+  }
+}
+最外层的是最后应用的 modifier（绿色边框）
+
+
+#####
+frame (width: 50, height: 50)
+为子视图提供 50 x 50 的建议尺寸，并将 50 x 50 作为需求尺寸返回给父视图
+
+fixedSize ()
+为子视图提供未指定模式的建议尺寸
+
+frame (minWidth: 100, maxWidth: 300)
+将子视图的需求尺寸控制在指定的范围中，并将调整后的尺寸作为需求尺寸返回给父视图
+
+frame (idealWidth: 100, idealHeight: 100)
+如果当前视图收到为未指定模式的建议尺寸，则返回 100 x 100 的需求尺寸
+
+GeometryReader
+将建议尺寸作为需求尺寸直接返回（ 充满全部可用区域 ）
+#####
+
+
+==================================================
+
+ZStack、overlay、background:
+
+struct HeartView: View {
+    var body: some View {
+        Circle()
+            .fill(.yellow)
+            .frame(width: 30, height: 30)
+            .overlay(Image(systemName: "heart").foregroundColor(.red))
+    }
+}
+
+struct ButtonView: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(Color.blue.gradient)
+            .frame(width: 150, height: 50)
+    }
+}
+
+// ZStack
+struct IconDemo1: View {
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            ButtonView()
+            HeartView()
+                .alignmentGuide(.top, computeValue: { $0.height / 2 })
+                .alignmentGuide(.trailing, computeValue: { $0.width / 2 })
+        }
+    }
+}
+
+// overlay
+struct IconDemo2: View {
+    var body: some View {
+        ButtonView()
+            .overlay(alignment: .topTrailing) {
+                HeartView()
+                    .alignmentGuide(.top, computeValue: { $0.height / 2 })
+                    .alignmentGuide(.trailing, computeValue: { $0.width / 2 })
+            }
+    }
+}
+
+// background
+struct IconDemo3: View {
+    var body: some View {
+            HeartView()
+            .background(alignment:.center){
+                ButtonView()
+                    .alignmentGuide(HorizontalAlignment.center, computeValue: {$0[.trailing]})
+                    .alignmentGuide(VerticalAlignment.center, computeValue: {$0[.top]})
+            }
+    }
+}
+
+虽然 IconDemo 1、IconDemo 2、IconDemo 3 在单独预览时看起来完全一样，但如果将它们放置到其他的布局容器中，
+你会发现它们在容器内的布局后的摆放结果明显不同 —— 需求尺寸的构成和大小不一样
+布局容器在规划自身的需求尺寸上的策略不同是造成上述现象的原因
+
+###
+像 ZStack、VStack、HStack 这几个容器，它们的需求尺寸是由其全部子视图按照指定的布局指南进行摆放后的获得的总尺寸所构成的
+而 overlay 和 background 的需求尺寸则完全取决于它们的主视图
+###
+
+
+SwiftUI 的布局操作是在视图层面进行的，而所有针对关联图层（ backing layer ）的操作仍是通过 Core Animation 来完成的
+针对 CALayer直接做出的调整，SwiftUI 的布局系统是无法感知的。
+
+Rectangle()
+    .fill(.green.gradient)
+    .frame(width: 100, height: 50)
+    .border(.blue)
+    .offset(x: 30, y: 30)
+    .border(.green)
+在 SwiftUI 中，offset 修饰符对应的是 Core Animation 中的 CGAffineTransform 操作。.offset(x: 30, y: 30) 相当于 .transformEffect(.init(translationX: 30, y: 30))。
+这种直接在 CALayer 层面进行的修改，并不会对布局造成影响
+
+// 通过 padding
+Rectangle()
+    .fill(.green.gradient)
+    .frame(width: 100, height: 50)
+    .border(.blue)
+    .padding(EdgeInsets(top: 30, leading: 30, bottom: 0, trailing: 0))
+    .border(.green)
+如果想实现让位移后的视图能够对它的父视图（ 容器 ）的布局有所影响，或许就需要换一种方式 —— 用布局容器而非 Core Animtion 操作
+或者:
+// 通过 frame
+Rectangle()
+    .fill(.green.gradient)
+    .frame(width: 100, height: 50)
+    .border(.blue)
+    .frame(width: 130, height: 80, alignment: .bottomTrailing)
+    .border(.green)
+
+// 通过 position
+Rectangle()
+    .fill(.green.gradient)
+    .frame(width: 100, height: 50)
+    .border(.blue)
+    .position(x: 80, y: 55)
+    .frame(width: 130, height: 80)
+    .border(.green)
+
+
+开发者在对视图进行调整前需要清楚该操作是针对里子（ 基于布局机制 ）还是面子（ 在 CALayer 层面）
+
+
+
+
+在 SwiftUI 中，通常需要对布局容器进行二次包装后再使用。例如 _VStackLayout 被包装成 VStack，_FrameLayout 被包装成 frame 视图修饰器。
+模仿:
+private struct MyFrameLayout: Layout, ViewModifier {
+    let width: CGFloat?
+    let height: CGFloat?
+    let alignment: Alignment
+
+    func body(content: Content) -> some View {
+        MyFrameLayout(width: width, height: height, alignment: alignment)() { // 由于 callAsFunction 所导致的多括号
+            Color.clear // 添加用于辅助对齐的视图
+            content
+        }
+    }
+}
+
+public extension View {
+    func myFrame(width: CGFloat? = nil, height: CGFloat? = nil, alignment: Alignment = .center) -> some View {
+        self
+            .modifier(MyFrameLayout(width: width, height: height, alignment: alignment))
+    }
+
+    @available(*, deprecated, message: "Please pass one or more parameters.")
+    func myFrame() -> some View {
+        modifier(MyFrameLayout(width: nil, height: nil, alignment: .center))
+    }
+}
+
+func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard subviews.count == 2, let content = subviews.last else { fatalError("Can't use MyFrameLayout directly") }
+    var result: CGSize = .zero
+
+    if let width, let height { // 两个维度都有设定
+        result = .init(width: width, height: height)
+    }
+
+    if let width, height == nil {  // 仅宽度有设定
+        let contentHeight = content.sizeThatFits(.init(width: width, height: proposal.height)).height // 子视图在该维度上的需求尺寸
+        result = .init(width: width, height: contentHeight)
+    }
+
+    if let height, width == nil {
+        let contentWidth = content.sizeThatFits(.init(width: proposal.width, height: height)).width
+        result = .init(width: contentWidth, height: height)
+    }
+
+    if height == nil, width == nil {
+        result = content.sizeThatFits(proposal)
+    }
+
+    return result
+}
+
+在 placeSubviews 中，我们将利用 modifier 中添加的辅助视图，对子视图进行对齐摆放。
+func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    guard subviews.count == 2, let background = subviews.first, let content = subviews.last else {
+        fatalError("Can't use MyFrameLayout directly")
+    }
+    // 在 bounds 中满铺 Color.clear
+    background.place(at: .zero, anchor: .topLeading, proposal: .init(width: bounds.width, height: bounds.height))
+    // 获取 Color.clear 对齐指南的位置
+    let backgroundDimensions = background.dimensions(in: .init(width: bounds.width, height: bounds.height))
+    let offsetX = backgroundDimensions[alignment.horizontal]
+    let offsetY = backgroundDimensions[alignment.vertical]
+    // 获取子视图对齐指南的位置
+    let contentDimensions = content.dimensions(in: .init(width: bounds.width, height: bounds.height))
+    // 计算 content 的 topLeading 偏移量
+    let leading = offsetX - contentDimensions[alignment.horizontal] + bounds.minX
+    let top = offsetY - contentDimensions[alignment.vertical] + bounds.minY
+    content.place(at: .init(x: leading, y: top), anchor: .topLeading, proposal: .init(width: bounds.width, height: bounds.height))
+}
+现在我们已经可以在视图中使用 myFrame 替代 frame ，并实现完全一样的效果。
+
+
+
+fixedSize 为子视图的特定维度提供未指定模式（ nil ）的建议尺寸，
+以使其在该维度上将理想尺寸作为其需求尺寸返回，并以该尺寸作为自身的需求尺寸返回给父视图。
+
+private struct MyFixedSizeLayout: Layout, ViewModifier {
+    let horizontal: Bool
+    let vertical: Bool
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard subviews.count == 1, let content = subviews.first else {
+            fatalError("Can't use MyFixedSizeLayout directly")
+        }
+        // 准备提交给子视图的建议尺寸
+        let width = horizontal ? nil : proposal.width // 如果 horizontal 为 true 则提交非指定模式的建议尺寸，否则则提供父视图在改维度上的建议尺寸
+        let height = vertical ? nil : proposal.height // 如果 vertical 为 true 则提交非指定模式的建议尺寸，否则则提供父视图在改维度上的建议尺寸
+        let size = content.sizeThatFits(.init(width: width, height: height)) // 向子视图提交上方确定的建议尺寸，并获取子视图的需求尺寸
+        return size // 以子视图的需求尺寸作为 MyFixedSizeLayout 容器的需求尺寸
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 1, let content = subviews.first else {
+            fatalError("Can't use MyFixedSizeLayout directly")
+        }
+
+        content.place(at: .init(x: bounds.minX, y: bounds.minY), anchor: .topLeading, proposal: .init(width: bounds.width, height: bounds.height))
+    }
+
+    func body(content: Content) -> some View {
+        MyFixedSizeLayout(horizontal: horizontal, vertical: vertical)() {
+            content
+        }
+    }
+}
+
+public extension View {
+    func myFixedSize(horizontal: Bool, vertical: Bool) -> some View {
+        modifier(MyFixedSizeLayout(horizontal: horizontal, vertical: vertical))
+    }
+
+    func myFixedSize() -> some View {
+        myFixedSize(horizontal: true, vertical: true)
+    }
+}
+
+
+frame(minWidth:, idealWidth: , maxWidth: , minHeight: , idealHeight:, maxHeight: , alignment:) 是对布局容器 _FlexFrameLayout 的二次包装。
+_FlexFrameLayout 实际上是两个功能的结合体：
+在设置了 ideal 值且父视图的在该维度上提供了未指定模式的建议尺寸时，以 ideal value 作为需求尺寸返回，并将其作为子视图的布局尺寸
+当 min 或（ 和 ） max 有值时，会按如下规则返回 _FlexFrameLayout 的在该维度上的需求尺寸
+https://swiftui-lab.com/frame-behaviors/?utm_source=Fatbobman%20Blog&utm_medium=web&utm_campaign=Fatbobman%20Blog
+
+func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard subviews.count == 2, let content = subviews.last else { fatalError("Can't use MyFlexFrameLayout directly") }
+
+    var resultWidth: CGFloat = 0
+    var resultHeight: CGFloat = 0
+
+    let contentWidth = content.sizeThatFits(proposal).width // 以父视图的建议尺寸为建议尺寸，获取子视图在宽度上的需求尺寸
+    // idealWidth 有值，且父视图在宽度上的建议尺寸为未指定模式，需求宽度为 idealWidth
+    if let idealWidth, proposal.width == nil {
+        resultWidth = idealWidth
+    } else if minWidth == nil, maxWidth == nil { // min 和 max 均没有指定，返回子视图在宽度上的需求尺寸
+        resultWidth = contentWidth
+    } else if let minWidth, let maxWidth { // min 和 max 都有值时
+            resultWidth = clamp(min: minWidth, max: maxWidth, source: proposal.width ?? contentWidth)
+    } else if let minWidth { // min 有值时，确保需求尺寸不小于最小值
+        resultWidth = clamp(min: minWidth, max: maxWidth, source: contentWidth)
+    } else if let maxWidth { // max 有值时，确保需求尺寸不大于最大值
+        resultWidth = clamp(min: minWidth, max: maxWidth, source: proposal.width ?? contentWidth)
+    }
+
+    // 将上面确定的需求宽度作为建议宽度，获取子视图的需求高度
+    let contentHeight = content.sizeThatFits(.init(width: proposal.width == nil ? nil : resultWidth, height: proposal.height)).height
+    if let idealHeight, proposal.height == nil {
+        resultHeight = idealHeight
+    } else if minHeight == nil, maxHeight == nil {
+        resultHeight = contentHeight
+    } else if let minHeight, let maxHeight {
+            resultHeight = clamp(min: minHeight, max: maxHeight, source: proposal.height ?? contentHeight)
+    } else if let minHeight {
+        resultHeight = clamp(min: minHeight, max: maxHeight, source: contentHeight)
+    } else if let maxHeight {
+        resultHeight = clamp(min: minHeight, max: maxHeight, source: proposal.height ?? contentHeight)
+    }
+
+    let size = CGSize(width: resultWidth, height: resultHeight)
+    return size
+}
+
+// 将值限制在最小和最大之间
+func clamp(min: CGFloat?, max: CGFloat?, source: CGFloat) -> CGFloat {
+    var result: CGFloat = source
+    if let min {
+        result = Swift.max(source, min)
+    }
+    if let max {
+        result = Swift.min(source, max)
+    }
+    return result
+}
+
+在 View 扩展中需要判断 min、ideal、max 的值是否满足了升序要求
+public extension View {
+    func myFrame(minWidth: CGFloat? = nil, idealWidth: CGFloat? = nil, maxWidth: CGFloat? = nil, minHeight: CGFloat? = nil, idealHeight: CGFloat? = nil, maxHeight: CGFloat? = nil, alignment: Alignment = .center) -> some View {
+        // 判断是否 min < ideal < max
+        func areInNondecreasingOrder(
+            _ min: CGFloat?, _ ideal: CGFloat?, _ max: CGFloat?
+        ) -> Bool {
+            let min = min ?? -.infinity
+            let ideal = ideal ?? min
+            let max = max ?? ideal
+            return min <= ideal && ideal <= max
+        }
+
+        // SwiftUI 官方实现在数值错误的情况下仍会执行，但会在控制台显示错误信息。
+        if !areInNondecreasingOrder(minWidth, idealWidth, maxWidth)
+            || !areInNondecreasingOrder(minHeight, idealHeight, maxHeight) {
+            fatalError("Contradictory frame constraints specified.")
+        }
+
+        return modifier(MyFlexFrameLayout(minWidth: minWidth, idealWidth: idealWidth, maxWidth: maxWidth, minHeight: minHeight, idealHeight: idealHeight, maxHeight: maxHeight, alignment: alignment))
+    }
+}

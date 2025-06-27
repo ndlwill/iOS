@@ -167,6 +167,7 @@
 
 // MARK: - AVAsset
 /**
+ AVAsset 是一个抽象类和不可变类，定义了媒体资源混合呈现的方式，
  将媒体资源的静态属于模块化一个整体，比如标题、时长和元数据等。
 
  苹果使用类簇设计AVAsset ，用其具体的子类 AVURLAsset和 NSURL实例化，
@@ -417,7 +418,154 @@
  直通预设
  AVAssetExportPresetPassthrouge
  
+ 
+ 配置输出 URL：
+ 创建一个导出会话后，需要指定一个 outputURL 用于声明导出内容将要写入的地址，AVAssetExportSession 可以从 URL 路径的扩展名设置输出文件类型，但是通常直接使用 outputFileType 值来表示将要写入的导出格式。
+ 还可以指定其他属性，例如时间范围、输出文件长度的限制、导出的文件是否应针对网络使用进行优化以及视频合成。
+ 使用 timeRange属性修剪影片：
+ exportSession.outputURL = <#A file URL#>;
+ exportSession.outputFileType = AVFileTypeQuickTimeMovie;
+
+ CMTime start = CMTimeMakeWithSeconds(1.0, 600);
+ CMTime duration = CMTimeMakeWithSeconds(3.0, 600);
+ CMTimeRange range = CMTimeRangeMake(start, duration);
+ exportSession.timeRange = range;
  */
+
+// MARK: - 音频会话（Audio Session）
+/**
+ 使用iPhone打开一首歌曲，音频从内置扬声器中播放出来，此时有电话拨入，音乐会立即停止并处于暂停状态。
+ 此时听到的是手机呼叫的铃声，当我们挂掉电话后，刚才的音乐再次响起。在这一过程中 iOS 提供了一个可管理的音频环境，通过 音频会话（Audio Session）来管理应用程序、应用程序间和设备级别的音频行为。
+
+ 音频会话：
+ 音频会话在应用程序和操作系统之间扮演者中间人的角色，它提供了一种简单实用的方法使得系统得知应用程序应该如何与 iOS 音频环境进行交互。
+ 
+ 所有 iOS 应用程序启动后，都具有一个默认音频会话，无论是否使用。默认音频会话来自于以下一些预配置：
+ 支持音频播放，但不允许录音。
+ 在 iOS 中，将响铃/静音开关设置为静音模式会使应用程序正在播放的任何音频静音。
+ 在 iOS 中，当设备被锁定时，应用程序的音频会静音。
+ 当应用程序播放音频时，任何其他后台音频（例如音乐应用程序正在播放的音频）都会被静音。
+
+ 音频会话类别：
+ 类别    作用    是否允许混音    音频的输入与输出    由响铃/静音开关和屏幕锁定静音
+ AVAudioSessionCategoryAmbient    游戏、效率应用程序    Yes    仅输出    Yes
+ AVAudioSessionCategorySoloAmbient (默认)    游戏、效率应用程序    No    仅输出    Yes
+ AVAudioSessionCategoryPlayback    音频和视频播放器    可选    仅输出    No
+ AVAudioSessionCategoryRecord    录音机、音频捕捉    No    仅输入    No
+ AVAudioSessionCategoryPlayAndRecord    Voip、语言聊天    可选    输入和输出    No
+ AVAudioSessionCategoryMultiRoute    使用外部硬件的高级 A/V应用程序    No    输入和输出    No
+
+ AVAudioSession *session = [AVAudioSession sharedInstance];
+
+ NSError *error;
+ if (![session setCategory:AVAudioSessionCategoryPlayback error:&error]) {
+     NSLog(@"Category Error: %@", [error localizedDescription]);
+ }
+
+ if (![session setActive:YES error:&error]) {
+     NSLog(@"Activation Error: %@", [error localizedDescription]);
+ }
+ 
+ 音频中断及处理：
+ 音频中断是应用程序音频会话的停用——它会立即停止音频。
+ 当来自其它应用程序的音频会话被激活并且该会话未被系统分类以与我们的应用程序的音频混合时，就会发生中断。
+ 在会话处于非活动状态后，系统会发送一条“被中断”消息，可以通过保存状态、更新用户界面等来响应该消息。
+
+ 首先需要得到中断出现的通知
+ [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleInterruption:) name:AVAudioSessionInterruptionNotification object:[AVAudioSession sharedInstance]];
+ 
+ 在系统发送通知调用 handlerInterruption: 时传递的NSNotification 实例包含一个 userInfo 提供中断详细信息的填充字典。可以通过从字典中检索 AVAudioSessionInterruptionType 值来确定中断的类型，中断类型指示中断是已经开始还是已经结束。
+
+ typedef NS_ENUM(NSUInteger, AVAudioSessionInterruptionType) {
+     AVAudioSessionInterruptionTypeBegan = 1, ///< the system has interrupted your audio session
+     AVAudioSessionInterruptionTypeEnded = 0, ///< the interruption has ended
+ };
+ 
+ 当中断出现时，类型为 AVAudioSessionInterruptionTypeBegan，需要采取的动作就是暂停音频播放以及 UI 界面的处理。
+
+ 当中断结束时，类型为 AVAudioSessionInterruptionTypeEnded，userInfo 中可能包含一个AVAudioSessionInterruptionOptions 值，指示音频会话是否以及重新激活以及它是否可以再次播放。如果选项值为 AVAudioSessionInterruptionOptionShouldResume，则可以继续播放。
+
+ 
+ 响应路由的变化：
+ 当应用程序运行时，用户可能会插入或拔出耳机，或使用带有音频连接的扩展坞。
+ https://developer.apple.com/design/human-interface-guidelines/playing-audio
+ 
+ 音频硬件路由是音频信号的有线电子通路。当设备的用户插入或拔出耳机时，系统会发生线路改变， AVAudioSession 会广播一个描述该变化的通知AVAudioSessionRouteChangeNotification 给所有相关的监听者。
+
+ 需要注册 AVAudioSession 发送的通知AVAudioSessionRouteChangeNotification，该通知包含一个 userInfo 字典，携带了通知发送的原因及前一个路由的描述。
+ [[NSNotificationCenter defaultCenter] addObserver:self
+              selector:@selector(handleRouteChange:)
+                  name:AVAudioSessionRouteChangeNotification
+                object:[AVAudioSession sharedInstance]];
+ 
+ 收到通知后查看保存在userInfo 字典中 AVAudioSessionRouteChangeReasonKey 判断路由变更的原因：
+
+ AVAudioSessionRouteChangeReasonNewDeviceAvailable，连接新设备
+ AVAudioSessionRouteChangeReasonOldDeviceUnavailable，移除设备
+
+ 当有设备断开时，获取 userInfo 中描述前一个路由信息 的AVAudioSessionRouteChangePreviousRouteKey，其整合在一个输入 NSArray 和一个输出 NSArray 中，判断其中第一个是否为 AVAudioSessionPortHeadphones （耳机接口）。
+ - (void)handleRouteChange:(NSNotification *)notification {
+
+     NSDictionary *info = notification.userInfo;
+
+     AVAudioSessionRouteChangeReason reason =
+         [info[AVAudioSessionRouteChangeReasonKey] unsignedIntValue];
+
+     if (reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable) {
+
+         AVAudioSessionRouteDescription *previousRoute =
+             info[AVAudioSessionRouteChangePreviousRouteKey];
+
+         AVAudioSessionPortDescription *previousOutput = previousRoute.outputs[0];
+         NSString *portType = previousOutput.portType;
+
+         if ([portType isEqualToString:AVAudioSessionPortHeadphones]) {
+             //暂停
+         }
+     }
+ }
+ */
+
+
+// MARK: - AVFoundation 使用高帧率捕捉的目的
+/**
+ 帧率捕捉（High Frame Rate Capture）
+ 
+ 1. 实现慢动作回放（Slow Motion Playback）
+ 这是高帧率捕捉最常见、最核心的用途：
+ 比如 iPhone 支持以 120 fps 或 240 fps 捕捉视频；
+ 播放时仍以 正常的 30 fps 播放，从而形成 慢动作效果。
+ 
+ 举例：
+ 用 240 fps 拍摄 2 秒，生成了 480 帧；
+ 以 30 fps 播放时，视频长度变为 16 秒慢动作回放。
+ 
+ 2. 拍摄快速运动物体时减少运动模糊
+ 比如拍摄：
+ 体育比赛中的快速移动
+ 宠物奔跑
+ 飞溅的水、火花等高动态画面
+
+ 高帧率意味着每帧的 曝光时间更短，从而更清晰，降低运动模糊。
+ 
+ 3. 提高后期剪辑的灵活性
+ 高帧率可以：
+ 在剪辑时任意挑选关键帧，画面更平滑
+ 支持从视频中提取高质量的图片序列（类似 burst 模式）
+ 实现变速视频（如从正常 → 慢动作 → 恢复正常）
+ 
+ 4. 视觉增强体验（AR / 游戏 / 特效）
+ 高帧率可以用于捕捉手势、头部动作等微小变化
+ 对于 AR 应用、增强现实交互、游戏直播等场景，可以更准确捕捉用户动作
+ 
+ CMTimeMake(1, 240)
+ CMTimeMake(value, timescale)
+ value: 分子（时间的数值）
+ timescale: 分母（每秒的单位刻度数）
+ 也就是 每帧持续时间为 1/240 秒，也就是frameDuration，对应的帧率就是 240 fps（帧每秒）。
+ fps（frames per second，帧每秒）越高，表示单位时间内显示或捕捉的画面越多，画面越“流畅”或“细腻”。
+ */
+
 
 #import <UIKit/UIKit.h>
 
