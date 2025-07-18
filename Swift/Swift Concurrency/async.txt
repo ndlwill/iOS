@@ -1,0 +1,85 @@
+Swift 中 async 的真正语义：
+在 Swift 中，async 表示这个方法是 异步的，调用它时不会立即得到结果，而是需要使用 await 等待它执行完成后再继续往下执行。
+async 方法的执行过程会挂起当前调用者，等它完成后再继续执行调用者剩下的部分。
+也就是说：
+不是“它主动把数据同步回来”
+而是：你 await 等它做完，之后程序继续执行
+
+你可以把 await 当成一个“程序暂停点”，挂起当前任务，等 async 方法完成后继续执行。
+
+
+
+==================================================不是所有带 async 的方法都会在后台执行
+async 只是表示“可以挂起（suspend）”，它并不意味着自动在后台线程执行。
+
+
+async 方法到底是什么？
+async 表示这个函数 可能会挂起（暂停）然后稍后恢复执行。
+它可以在任意线程/actor 上运行——主线程、后台线程、MainActor、Detached Task，取决于：
+#####
+谁调用它（在哪个线程/actor）
+它内部怎么调度
+#####
+
+
+例子 1：URLSession.shared.data(for:)
+let (data, _) = try await URLSession.shared.data(from: url)
+虽然是 async，但它内部使用了 URLSession，其工作会自动调度到后台（不阻塞当前线程）。
+你可以在主线程调用它，它也不会阻塞主线程。
+所以这个 async 方法确实在后台执行核心任务。
+
+
+
+例子 2：你自己写的 async 方法，没有做任何调度
+func doSomething() async {
+    for i in 0..<1_000_000 { print(i) }
+}
+虽然是 async，但它没有调用 await，也没有内部转线程。
+如果你在主线程调用，它会阻塞主线程！所以 不能认为 async 就自动是“后台”执行。
+
+
+
+所以：要判断是否后台执行，看什么？
+判断条件	是否后台执行
+Task.detached {}	✅ 后台（脱离当前actor）
+DispatchQueue.global().async	✅ 后台
+async + 系统 API 内部调度（如 URLSession）	✅ 背后由系统自动后台
+Task { @MainActor in ... }	❌ 主线程
+Task { ... }（不加 actor）	🔁 跟当前线程一致；不保证是后台
+@MainActor func	❌ 主线程执行
+
+
+如果你希望方法在后台线程执行，请 明确调度，例如：
+用 Task.detached {} 包装
+用 DispatchQueue.global() 包装
+
+想在主线程安全更新 UI，用 @MainActor 或 Task { @MainActor in ... }
+Task { @MainActor in ... } 这种 inline actor-closure（内联 actor 闭包语法） 是 Swift 5.9 新增的语法
+
+
+在 Swift 5.8 及更早版本中，如果你想让 Task 的执行内容在 MainActor 上运行，常见写法如下：
+Task {
+    await MainActor.run {
+        // 主线程代码
+        self.images = ...
+    }
+}
+
+
+Task { @MainActor in
+    // 更简洁，直接指定 actor
+    self.images = ...
+}
+这种新语法本质上是语法糖，作用等同于：
+Task {
+    await MainActor.run {
+        ...
+    }
+}
+
+xcrun swift -version
+xcrun 是 Apple 提供的工具，用来在 当前 Xcode 命令行工具链 下运行指定的工具或命令，比如 swift、clang、simctl 等。
+macOS 可以同时安装多个 Xcode（比如 /Applications/Xcode_14.app, /Applications/Xcode_15.app 等），这时：
+xcrun 会使用当前设置的命令行开发工具（Command Line Tools）。
+你可以通过以下方式查看或设置当前使用哪个 Xcode：
+xcode-select -p

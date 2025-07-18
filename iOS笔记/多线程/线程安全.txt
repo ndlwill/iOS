@@ -1,0 +1,177 @@
+==================================================Thread Sanitizer 
+线程检测器
+Thread Sanitizer 是一个调试工具，用来检测多线程代码中是否存在数据竞争和其他线程安全问题。
+
+TSan 在程序运行时会监视所有内存访问行为，检测以下问题：
+问题类型	说明
+#####
+Data Race	多线程并发读写一个变量，且至少有一个是写操作，没有使用同步保护
+#####
+
+“同步保护”是指：
+在同一时间，只有一个线程能够访问或修改某段共享数据。
+
+==================================================串行队列
+class SafeReader<T> {
+    private var value: T
+    private let queue = DispatchQueue(label: "safe.reader.queue") // 串行队列
+
+    init(value: T) {
+        self.value = value
+    }
+
+    func read(completion: @escaping (T) -> Void) {
+        queue.async {
+            // 保证顺序
+            completion(self.value)
+        }
+    }
+}
+
+let reader = SafeReader(value: 42)
+
+// A
+DispatchQueue.global().async {
+    reader.read { value in
+        print("A: \(value)")
+    }
+}
+// B
+DispatchQueue.global().async {
+    reader.read { value in
+        print("B: \(value)")
+    }
+}
+代码书写顺序 ≠ 实际执行顺序
+
+即使 B 的代码写在 A 的下面，它也可能先执行。
+DispatchQueue.global().async {} 是 异步提交：
+它是非阻塞的，会把任务丢到一个 系统级并发线程池 中。
+谁先被调度取决于操作系统的调度器和当前 CPU 情况，而不是代码写在哪一行。
+
+#####
+并发队列允许我们同时执行多个任务。任务始终按照添加的顺序启动，但由于可以并行执行，因此可以以不同的顺序完成。
+
+let concurrentQueue = DispatchQueue(label: "swiftlee.concurrent.queue", attributes: .concurrent)
+
+concurrentQueue.async {
+    print("Task 1 started")
+    // Do some work..
+    print("Task 1 finished")
+}
+concurrentQueue.async {
+    print("Task 2 started")
+    // Do some work..
+    print("Task 2 finished")
+}
+
+/*
+Concurrent Queue prints:
+Task 1 started
+Task 2 started
+Task 1 finished
+Task 2 finished
+*/
+#####
+
+多线程调度是不可预测的：
+系统有多个线程同时运行时，A 和 B 都是异步提交，调度顺序是不确定的。
+
+
+串行队列保证 提交顺序 = 执行顺序。
+并发队列，调度顺序不可预测
+
+
+DispatchQueue 任务可以同步或异步运行。
+同步启动任务会阻塞调用线程，直到任务完成。
+异步启动任务会直接返回调用线程而不会阻塞。
+
+
+==================================================actor
+Actors have an important difference compared to classes: they do not support inheritance.
+
+#####
+使用 async/await 访问 Actor 中的数据
+由于我们不确定何时允许访问，因此需要创建对 Actor 可变数据的异步访问。
+如果没有其他线程正在访问该数据，我们将直接获得访问权限。
+但是，如果有其他线程正在访问可变数据，则需要等待，直到获得访问权限。
+
+Nonisolated access within Actors：
+在访问 Actor 内部的隔离方法时，您基本上可以访问任何其他需要同步访问的属性或方法。
+因此，您实际上是在重用您已获得的访问权限，以最大限度地利用它！
+
+有些情况下，你知道不需要隔离访问。添加 nonisolated，告诉 Swift 编译器我们的方法没有访问任何隔离数据
+extension ChickenFeeder {
+    nonisolated func printWhatChickensAreEating() {
+        print("Chickens are eating \(food)")// let food = ""
+    }
+}
+which is helpful to conform to protocols like CustomStringConvertible:
+extension ChickenFeeder: CustomStringConvertible {   
+    nonisolated var description: String {     
+        "A chicken feeder feeding \(food)"   
+    } 
+}
+#####
+
+actor 保证 内部数据的同步安全性，但用的是 任务队列机制（task queue），而不是传统的加锁（lock）
+所有访问 actor 的方法，都会被编译器自动标记为 async（异步）
+
+actor Counter {
+    private var counter = 0
+
+    func increment() {
+        counter += 1
+    }
+
+    func get() -> Int {
+        return counter
+    }
+}
+主线程异步调用：
+Task {// 启动一个新的异步任务
+    await counter.increment()
+    let value = await counter.get()
+}
+这不会阻塞主线程，也能保证线程安全。
+
+因为 actor 的方法是 异步执行的（async），调用它不会阻塞当前线程（包括主线程）。
+它只是“挂起当前任务”，然后等 actor 内部代码 有空时 再执行。// 本质上就是挂起了 Task 中当前的协程（concurrent context）
+
+await counter.increment() 表示：
+当前任务会 挂起，等待 counter 的任务队列轮到你执行时再执行
+主线程 继续执行下一行代码，不会卡在那里等你完成
+换句话说：
+await 不等于“同步等待”，它是“异步挂起”，这就避免了主线程阻塞。
+
+
+Task {
+    print("1")
+    await counter.increment()
+    print("2")
+}
+这里 Task {} 创建了一个结构叫 Swift concurrency task，它拥有自己的一块执行上下文。
+
+流程是：
+Task 启动，执行 print("1")
+
+执行 await counter.increment()
+→ 检查 actor 当前是否正在处理别的任务
+→ 如果是，则挂起当前 task 的执行，并将它排入 actor 的队列
+
+一旦 actor 队列轮到你：
+→ 恢复这个 task 的执行，执行 counter.value += 1
+
+执行 print("2")
+
+#####
+Task {} 会继承当前的 actor 上下文
+#####
+
+==================================================lazy
+惰性变量导致的数据争用
+惰性变量会将实例的初始化延迟到首次调用时。
+
+==================================================barrier
+你可以将屏障视为一个阻碍并行任务的任务，它会暂时将并发队列变为串行队列。
+使用屏障执行的任务会被延迟，直到所有先前提交的任务都执行完毕。最后一个任务完成后，队列将执行屏障块，并在此之后恢复其正常的执行行为。

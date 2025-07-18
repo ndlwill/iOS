@@ -1,3 +1,102 @@
+重点：
+“视图是状态的函数” 
+每个视图都有与其对应的状态，当状态变化时，SwiftUI 都将重新计算与其对应视图的 body 值。
+如果视图响应了不该响应的状态，或者视图的状态中包含了不该包含的成员，都可能造成 SwiftUI 对该视图进行不必要的更新（ 重复计算 ）
+
+
+视图状态的构成：
+可以驱动视图进行更新的源被称之为 Source of Truth，它的类型有：
+使用 @State、@StateObject 这类属性包装器声明的变量
+视图类型（ 符合 View 协议 ）的构造参数
+例如 onReceive 这类的事件源
+一个视图可以包含多个不同种类的 Source of Truth，它们共同构成了视图状态（ 视图的状态是个复合体 ）。
+
+
+所有可以让变量成为 Source of Truth 的属性包装器都有一个特点 —— 符合 DynamicProperty 协议。
+public protocol DynamicProperty {
+  static func _makeProperty<V>(in buffer: inout _DynamicPropertyBuffer, container: _GraphValue<V>, fieldOffset: Int, inputs: inout _GraphInputs)
+  static var _propertyBehaviors: UInt32 { get }
+  mutating func update()
+}
+#####
+通过 _makeProperty 方法，SwiftUI 得以实现在将视图加载到视图树时，把所需的数据（ 值、方法、引用等 ）保存在 SwiftUI 的托管数据池中，
+并在属性图（ AttributeGraph ）中将视图与该 Source of Truth 关联起来，让视图响应其变化（ 当 SwiftUI 数据池中的数据给出变化信号时，更新视图 ）。
+
+@propertyWrapper public struct State<Value> : DynamicProperty {
+  internal var _value: Value
+  internal var _location: SwiftUI.AnyLocation<Value>? // SwiftUI 托管数据池中的数据引用
+  public init(wrappedValue value: Value)
+  public init(initialValue value: Value) {
+        _value = value // 创建实例时，只会暂存初始值
+    }
+  public var wrappedValue: Value {
+    get  //  guard let _location else { return _value} ...
+    nonmutating set // 只能改动 _location 指向的数据
+  }
+  public var projectedValue: SwiftUI.Binding<Value> {
+    get
+  }
+  // 在将视图加载到视图树中时，调用此方法，完成关联工作
+  public static func _makeProperty<V>(in buffer: inout _DynamicPropertyBuffer, container: _GraphValue<V>, fieldOffset: Int, inputs: inout _GraphInputs)
+}
+
+
+在初始化 State 时，initialValue 仅被保存在 State 实例的内部属性 _value 中，此时，
+使用 State 包装的变量值没有被保存在 SwiftUI 的托管数据池中，并且 SwiftUI 也尚未在属性图中将其作为 Source of Truth 与视图关联起来。
+
+当 SwiftUI 将视图加载到视图树时，通过调用 _makeProperty 完成将数据保存到托管数据池以及在属性图中创建关联的操作，
+并将数据在托管数据池中的引用保存在 _location （ AnyLocation 为引用类型，为 AnyLocationBase 的子类 ） 中。wrappedValue 的 get 和 set 方法都是针对 _location 操作的（ projectedValue 也一样 ）。
+
+当 SwiftUI 将视图从视图树上删除时，会一并完成对 SwiftUI 数据池以及关联的清理工作。如此，使用 State 包装的变量，
+其存续期将与视图的存续期保持完全一致。并且 SwiftUI 会在其变化时自动更新（ 重新计算 ）对应的视图。
+
+struct TestView: View {
+    @State private var number: Int = 10
+    init(number: Int) {
+        self.number = 11 // 更改无效
+    }
+    var body: some View {
+        Text("\(number)") // 首次运行，显示 10
+    }
+}
+为什么无法在视图的构造函数中，更改 State 包装的变量值？
+在构造函数中使用 self.number = 11 赋值时，视图尚未加载，_location 为 nil , 因此赋值对应的 wrappedValue set 操作并不会起作用。
+#####
+
+
+视图的构造参数：
+SwiftUI 会将视图类型的构造参数作为 Source of Truth 对待。与符合 DynamicProperty 协议的属性包装器主动驱动视图更新的机制不同，
+SwiftUI 在更新视图时，会通过检查子视图的实例是否发生变化（ 绝大多数都由构造参数值的变化导致 ）来决定对子视图更新与否。
+例如：当 SwiftUI 在更新 ContentView 时，如果 SubView 的构造参数（ name 、age ）的内容发生了变化，SwiftUI 会对 SubView 的 body 重新求值（ 更新视图 ）
+
+在这些创建实例的操作中，绝大多数的目的都是为了检查视图类型的实例是否发生了变化（ 绝大多数的情况下，变化是由构造参数的值发生了变化而导致 ）。
+创建新实例
+将新实例与 SwiftUI 当前使用的实例进行比对
+如实例发生变化，用新实例替换当前实例，对实例的 body 求值，并用新的视图值替换老的视图值
+视图的存续期不会因为实体的更替有所改变
+
+让视图符合 Equatable 协议以自定义比对规则：
+也许由于某种原因，你无法采用上面的方法来优化构造参数，SwiftUI 还提供了另外一种通过调整比对规则的方式用以实现相同的结果。
+让视图符合 Equatable 协议
+为视图自定义判断相等的比对规则
+
+此种方法仅会影响视图类型实例的比对，并不会影响因符合 DynamicProperty 协议的属性包装器产生的刷新
+
+
+事件源：
+例如：onReceive、onChange、onOpenURL、onContinueUserActivity
+这些触发器被称为事件源，它们也被视为 Source of Truth ，是视图状态的组成部分。
+这些触发器是以视图修饰器的形式存在的，因此触发器的生命周期同与其关联的视图的存续期完全一致。当触发器接收到事件后，无论其是否更改当前视图的其他状态，当前的视图都会被更新。
+为了减少因事件源导致的重复计算，我们可以考虑采用如下的优化思路：
+控制生命周期
+只在需要处理事件时才加载与其关联的视图，用关联视图的存续期来控制触发器的生命周期
+
+减小影响范围
+为触发器创建单独的视图，将其对视图更新的影响范围降至最低
+
+
+==================================================
+
 “视图是状态的函数” 这一 SwiftUI 的基本概念
 每个视图都有与其对应的状态，当状态变化时，SwiftUI 都将重新计算与其对应视图的 body 值。
 
@@ -40,9 +139,9 @@ BView 和 Text 完全出现在屏幕上，SwiftUI 触发 onAppear。
 onAppear 触发时，代表 BView 已经成功 push，并且完全出现在屏幕上。
 BView.body 可能会更早计算
 
-
+#####
 在 SwiftUI 中，"将视图加载到视图树时" 的意思是 SwiftUI 正在构建或更新 UI 视图层级，并将视图及其相关的数据 整合 到 SwiftUI 的内部系统
-
+#####
 
 "加载到视图树" 具体指什么？
 1.首次创建

@@ -1,0 +1,76 @@
+terminating due to uncaught exception of type std::invalid_argument: stoi: no conversion
+
+terminating due to uncaught exception	程序终止是因为有个异常没有被捕获（try-catch）
+std::invalid_argument	抛出的异常类型是 std::invalid_argument，意思是传入了一个无效的参数
+stoi: no conversion	std::stoi 函数在尝试将字符串转换为整数时失败，原因是：无法进行转换
+
+你应该捕获异常，避免程序崩溃：
+try {
+    int num = std::stoi(s);
+} catch (const std::invalid_argument& e) {
+    std::cerr << "转换失败，原因：" << e.what() << std::endl;
+}
+
+
+崩溃日志：不能有效的看到哪里出问题
+* thread #1, queue = 'com.apple.main-thread', stop reason = signal SIGABRT
+frame #0: 0x000000019846b720 libsystem_kernel.dylib__pthread_kill + 8
+frame #1: 0x00000001052cbfa8 libsystem_pthread.dylibpthread_kill + 288
+frame #2: 0x00000001983b0908 libsystem_c.dylibabort + 128
+frame #3: 0x000000019845a44c libc++abi.dylibabort_message + 132
+frame #4: 0x0000000198448a24 libc++abi.dylibdemangling_terminate_handler() + 320
+frame #5: 0x00000001980f13f4 libobjc.A.dylib_objc_terminate() + 172
+frame #6: 0x0000000198459710 libc++abi.dylibstd::__terminate(void (*)()) + 16
+frame #7: 0x000000019845cf8c libc++abi.dylib__cxa_rethrow + 204
+frame #8: 0x000000019810c214 libobjc.A.dylibobjc_exception_rethrow + 44
+frame #9: 0x000000019c66eb40 AppKit-[NSApplication _handleEvent:] + 120
+frame #10: 0x000000019c0f589c AppKit-[NSApplication run] + 520
+* frame #11: 0x0000000104cab544 AJiaSumain(argc=3, argv=0x000000016b1bb318) at main.mm:35:9
+frame #12: 0x0000000198124274 dyldstart + 2840
+
+
+方法一：开启 Xcode 的“异常断点”
+打开左侧导航栏中 Breakpoints 标签（或按下快捷键 Cmd + 8）。
+点击左下角 + 按钮 ➜ 选择 Exception Breakpoint。
+在弹窗中：
+Exception：选 C++
+Break：On Throw
+勾选 "All" 或者保留默认
+添加断点。
+这样 Xcode 会在异常抛出那一刻直接中断，你能看到准确的调用堆栈位置。
+
+
+方法二：用 LLDB 在崩溃点打印 throw 异常
+程序 SIGABRT 崩溃时停在 __pthread_kill。
+在 LLDB 中输入：
+thread backtrace all
+或者
+bt
+如果你看到 libc++abi.dylib 中断了，但没有看到你的函数名，可能是因为异常还没被 rethrow 到外层。
+你也可以加断点：
+break set -E c++
+或：
+breakpoint set --name __cxa_throw
+这会在 C++ 抛出异常那一刻中断。
+
+
+
+
+
+全局安装 terminate handler，记录最后一个异常
+#include <exception>
+
+void myTerminateHandler() {
+    auto eptr = std::current_exception();
+    try {
+        if (eptr) std::rethrow_exception(eptr);
+    } catch (const std::exception& e) {
+        NSLog(@"[Global Crash] Uncaught exception: %s", e.what());
+    }
+    std::abort(); // 仍要终止程序
+}
+
+int main(int argc, char* argv[]) {
+    std::set_terminate(myTerminateHandler);
+    ...
+}

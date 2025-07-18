@@ -1,0 +1,182 @@
+https://www.avanderlee.com/concurrency/urlsession-async-await-network-requests-in-swift/
+
+https://github.com/Alamofire/Alamofire
+
+
+URLSession allows you to perform network requests and becomes even more powerful with its async/await APIs.
+
+
+Performing a network request using async/await:
+/// Configure the URL for our request.
+/// In this case, an example JSON response from httpbin.
+let url = URL(string: "https://httpbin.org/get")!
+
+/// Use URLSession to fetch the data asynchronously.
+let (data, response) = try await URLSession.shared.data(from: url)
+
+
+Passing arguments to a GET request:
+The above example represents a simple GET request without parameters. We can add parameters using URLComponents:
+var urlComponents = URLComponents(string: "https://httpbin.org/get")!
+
+/// Define the parameters.
+let parameters: [String: String] = [
+    "name": "Antoine van der Lee",
+    "age": "33"
+]
+
+/// Add the query parameters to the URL.
+urlComponents.queryItems = parameters.map { key, value in
+    URLQueryItem(name: key, value: value)
+}
+
+/// Ensure we have a valid URL and throw a URLError if it fails.
+guard let url = urlComponents.url else {
+    throw URLError(.badURL)
+}
+
+/// Use URLSession to fetch the data asynchronously.
+let (data, response) = try await URLSession.shared.data(from: url)
+
+The above example results in the following URL with encoded parameters:
+https://httpbin.org/get?age=33&name=Antoine%20van%20der%20Lee
+
+
+
+Performing a POST request with parameters:
+A POST request works differently and requires us to configure the HTTP method.
+We must encode the parameters as JSON body and configure the content-type header.
+/// Configure the URL for our request.
+let url = URL(string: "https://httpbin.org/post")!
+
+/// Create a URLRequest for the POST request.
+var request = URLRequest(url: url)
+
+/// Configure the HTTP method.
+request.httpMethod = "POST"
+
+/// Configure the proper content-type value to JSON.
+request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+/// Define the struct of data and encode it to data.
+let postData = PostData(name: "Antoine van der Lee", age: 33)
+let jsonData = try JSONEncoder().encode(postData)
+
+/// Pass in the data as the HTTP body.
+request.httpBody = jsonData
+
+/// Use URLSession to fetch the data asynchronously.
+let (data, response) = try await URLSession.shared.data(for: request)
+
+I recommend using a struct to define the parameters to make your code less error-prone. For the above example, the structure looks as follows:
+/// Define a struct to represent the data you want to send
+struct PostData: Codable {
+    let name: String
+    let age: Int
+}
+
+
+
+Decoding JSON responses into a decodable struct:
+I always inspect network traffic using the Xcode Simulator so I can quickly inspect the JSON returned by any request during development:
+https://www.avanderlee.com/xcode/inspect-network-traffic-simulator/
+
+The great thing is that RocketSim will always run in the background, so you can also use it to inspect network requests that failed unexpectedly.
+https://www.rocketsim.app/?utm_source=swiftlee&utm_medium=article&utm_campaign=urlsession_async_await
+
+
+We can decode the given JSON response using a JSON decoder. 
+For this to work, we first need to define the JSON response as a decodable struct:
+/// Define a struct to handle the response from httpbin.org.
+struct PostResponse: Decodable {
+    
+    /// In this case, we can reuse the same `PostData` struct as
+    /// httpbin returns the received data equally.
+    let json: PostData
+}
+
+Secondly, we can use the raw data and decode it as follows:
+/// Use URLSession to fetch the data asynchronously.
+let (data, response) = try await URLSession.shared.data(for: request)
+
+/// Decode the JSON response into the PostResponse struct.
+let decodedResponse = try JSONDecoder().decode(PostResponse.self, from: data)
+
+print("The JSON response contains a name: \(decodedResponse.json.name) and an age: \(decodedResponse.json.age)")
+
+
+
+Optimizing URLSession error handling:
+So far, we’ve been throwing an error if anything goes wrong. 
+However, we didn’t validate invalid response codes and didn’t benefit from typed throws. 
+While you can go extreme with error handling, I’d like to show an example where we validate the response status code and throw a single type of error to simplify error handling on the calling side:
+
+// swift 6.0
+https://www.avanderlee.com/swift/typed-throws/ 
+
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0413-typed-throws.md
+
+func performPOSTURLRequest() async throws(NetworkingError) {
+    do {
+        /// Configure the URL for our request.
+        let url = URL(string: "https://httpbin.org/post")!
+        
+        /// Create a URLRequest for the POST request.
+        var request = URLRequest(url: url)
+        
+        /// Configure the HTTP method.
+        request.httpMethod = "POST"
+        
+        /// Configure the proper content-type value to JSON.
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        /// Define the struct of data and encode it to data.
+        let postData = PostData(name: "Antoine van der Lee", age: 33)
+        let jsonData = try JSONEncoder().encode(postData)
+        
+        /// Pass in the data as the HTTP body.
+        request.httpBody = jsonData
+        
+        /// Use URLSession to fetch the data asynchronously.
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let statusCode = (response as? HTTPURLResponse)?.statusCode else {
+            throw NetworkingError.invalidStatusCode(statusCode: -1)
+        }
+        
+        guard (200...299).contains(statusCode) else {
+            throw NetworkingError.invalidStatusCode(statusCode: statusCode)
+        }
+        
+        /// Decode the JSON response into the PostResponse struct.
+        let decodedResponse = try JSONDecoder().decode(PostResponse.self, from: data)
+        
+        print("The JSON response contains a name: \(decodedResponse.json.name) and an age: \(decodedResponse.json.age)")
+    } catch let error as DecodingError {
+        throw .decodingFailed(innerError: error)
+    } catch let error as EncodingError {
+        throw .encodingFailed(innerError: error)
+    } catch let error as URLError {
+        throw .requestFailed(innerError: error)
+    } catch let error as NetworkingError {
+        throw error
+    } catch {
+        throw .otherError(innerError: error)
+    }
+}
+
+You can generalize this code for multiple requests, but the idea of error handling is clear. 
+We catch specific types of errors and funnel them into a newly defined NetworkingError:
+enum NetworkingError: Error {
+    case encodingFailed(innerError: EncodingError)
+    case decodingFailed(innerError: DecodingError)
+    case invalidStatusCode(statusCode: Int)
+    case requestFailed(innerError: URLError)
+    case otherError(innerError: Error)
+}
+
+This example shows the power of typed throws and error case handling. 
+If the status code is outside the 200 to 299 range, we throw an invalid status code error, 
+which will fall through the catch statements. Altogether, we can now focus on switching cases on the specific NetworkingError type at callside.
+
+Modern Swift APIs combined with URLSession and async/await allow you to write a robust networking layer without needing third-party dependencies.

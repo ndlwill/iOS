@@ -1,0 +1,180 @@
+在concurrency环境中创建的 Task：
+
+func doSomething() async {
+    print("11111#doSomething")
+}
+
+func load111() async {
+    print("11111#load1")
+    Task {
+        print("11111#task1")
+        await doSomething()
+        print("11111#task2")
+    }
+    print("11111#load2")
+}
+
+override func viewDidLoad() {
+    super.viewDidLoad()
+    
+    Task {
+        await load111()
+    }
+
+    // 'async' call in a function that does not support concurrency
+    // await load111()
+    
+}
+
+11111#load1
+11111#load2
+11111#task1
+11111#doSomething
+11111#task2
+
+这个 Task {}：
+是结构化任务（因为它在 async 函数里创建）；
+但你没有 await 它的 .value 或结果；
+所以它是异步“fire and forget”地开始执行，load111() 继续往下走，不会等它。
+
+
+
+如果你写成这样就会等待了：
+func load111() async {
+    print("11111#load1")
+    let t = Task {
+        print("11111#task1")
+        await doSomething()
+        print("11111#task2")
+    }
+    await t.value // // 手动等待这个结构化任务完成
+    print("11111#load2")
+}
+11111#load1
+11111#task1
+11111#doSomething
+11111#task2
+11111#load2
+
+「任务在返回前等待完成」
+
+
+其他例子:
+func doSomething() async {
+    try? await Task.sleep(nanoseconds: 2000000000)
+    print("11111#doSomething")
+}
+
+func doSomething2() async {
+    try? await Task.sleep(nanoseconds: 1000000000)
+    print("11111#doSomething2")
+}
+
+func load111() async {
+    print("11111#load1")
+    let t = Task {
+        print("11111#task1")
+        await doSomething()
+        print("11111#task2")
+    }
+    let t2 = Task {
+        print("11111#task3")
+        await doSomething2()
+        print("11111#task4")
+    }
+    await t.value
+    await t2.value
+    print("11111#load2")
+}
+
+11111#load1
+11111#task3
+11111#task1
+11111#doSomething2
+11111#task4
+11111#doSomething
+11111#task2
+11111#load2
+
+用 async let 改写，效果基本一致
+
+#####
+但：
+async let 创建的是结构化并发任务，自动绑定到当前任务作用域中
+把你的 async 函数想象成一个“任务树的节点”：
+你每调用一个 async 函数，它就变成一个结构化任务；
+你在里面用 async let 创建的任务，是它的“子任务”；
+
+Task {} 是非结构化并发任务，独立运行，需要手动管理引用和生命周期。它不属于任何函数的作用域
+#####
+
+
+
+==================================================TaskGroup中的结构化并发任务
+func loadAllImages(urls: [URL]) async -> [UIImage] {
+    await withTaskGroup(of: UIImage?.self) { group in
+        for url in urls {
+            group.addTask {
+                return await loadImage(url: url)
+            }
+        }
+
+        var images: [UIImage] = []
+        for await image in group {
+            if let img = image {
+                images.append(img)
+            }
+        }
+        return images
+    }
+}
+所有子任务在 withTaskGroup 作用域内完成；
+自动并发、自动取消、自动收集；
+更加结构化、安全。
+
+
+==================================================结构化任务 & 结构化并发
+结构化任务 = 有父任务（async上下文）来等它、取消它、跟踪它的任务。否则就是“野任务”。
+
+
+"结构化任务" 是 "结构化并发" 的组成部分。
+
+
+结构化并发（Structured Concurrency）
+是一种整体并发模型的设计思想：
+并发任务应该像函数作用域一样，有父子关系、有生命周期、自动管理、易于推理。
+它是一套原则 / 约束，包括：
+父子任务之间有生命周期绑定；
+子任务不能“悬挂”在系统中；
+错误传播是可控的；
+自动传递取消信号；
+作用域内的并发任务必须在退出前完成。
+
+
+结构化任务（Structured Task）
+是这个模型下的具体执行单位，也就是实际被创建出来、受控于结构化体系的 Task 实例。
+比如：
+async let 创建的任务
+withTaskGroup 中的任务
+这些都是“结构化任务”，因为它们：
+有“父任务”（比如调用它们的 async 函数）
+会在作用域结束前被等待和清理
+被 Swift 编译器和运行时自动管理
+
+
+概念	类比
+结构化并发	法律、制度、规则
+结构化任务	遵守这个制度的每一个具体任务
+
+
+func fetchData() async {
+    async let user = loadUser()
+    async let posts = loadPosts()
+    let (u, p) = await (user, posts) // 👈 结构化任务必须 await 回来
+}
+这里 loadUser() 和 loadPosts() 对应的就是结构化任务；
+而整个 fetchData() 的行为，符合结构化并发的模型。
+
+
+结构化并发是模型，结构化任务是这个模型中的具体任务实例。
+有了结构化并发的原则，结构化任务才能有意义地被管理。

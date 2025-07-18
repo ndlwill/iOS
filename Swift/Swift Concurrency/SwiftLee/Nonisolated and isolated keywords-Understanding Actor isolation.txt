@@ -1,0 +1,267 @@
+https://github.com/apple/swift-evolution/blob/main/proposals/0313-actor-isolation-control.md
+
+nonisolated and isolated keywords as part of adding actor isolation control.
+Actors are a new way of providing synchronization for shared mutable states with the new concurrency framework.
+
+how to control method and parameter isolation when working with actors in Swift.
+
+----------Understanding the default behavior of actors:
+#####
+By default, each method of an actor becomes isolated, 
+which means you’ll have to be in the context of an actor already or use await to wait for approved access to actor contained data.
+#####
+It’s typical to run into errors with actors like the ones below:
+Actor-isolated property ‘balance’ can not be referenced from a non-isolated context
+Expression is ‘async’ but is not marked with ‘await’
+
+#####
+Both errors have the same root cause: actors isolate access to its properties to ensure mutually exclusive access.
+Actor 隔离了对其属性的访问，以确保互斥访问。
+#####
+
+bank account actor example:
+
+actor BankAccount {
+    enum BankError: Error {
+        case insufficientFunds
+    }
+    
+    var balance: Double
+    
+    init(initialDeposit: Double) {
+        self.balance = initialDeposit
+    }
+    
+    func withdraw(amount: Double) throws {
+        guard balance >= amount else {
+            throw BankError.insufficientFunds
+        }
+        balance -= amount
+    }
+    
+    func deposit(amount: Double) {
+        balance = balance + amount
+    }
+}
+
+Actor methods are isolated by default but not explicitly marked as so. 
+You could compare this to methods that are internal by default but not marked with an internal keyword. 
+Under the hood, the code looks as follows:
+
+isolated func withdraw(amount: Double) throws {
+    guard balance >= amount else {
+        throw BankError.insufficientFunds
+    }
+    balance -= amount
+}
+
+isolated func deposit(amount: Double) {
+    balance = balance + amount
+}
+
+Though, marking methods explicitly with the isolated keyword like this example will result in the following error:
+‘isolated’ may only be used on ‘parameter’ declarations
+We can only use the isolated keyword with parameter declarations.
+
+
+----------Marking actor parameters as isolate:
+Using the isolated keyword for parameters can be pretty useful for preventing unnecessary suspensions points. 
+In other words, you’ll need fewer await statements for the same result.
+
+To illustrate this, we could introduce a new Charger type that charges money from a bank account:
+struct Charger {
+    // charge: 收费
+    static func charge(amount: Double, from bankAccount: BankAccount) async throws -> Double {
+        try await bankAccount.withdraw(amount: amount) // withdraw: 提取
+        let newBalance = await bankAccount.balance
+        return newBalance
+    }
+}
+As you can see, we have two different suspension points:
+One to withdraw the given amount
+Another one to read the new balance
+
+We could optimize this in several ways, one including to add a new method to BankAccount. 
+However, sometimes you’re not in control of the actor internals. In this case, we can use the isolated keyword in front of the parameter:
+
+/// Due to using the `isolated` keyword, we only need to await at the caller side.
+static func charge(amount: Double, from bankAccount: isolated BankAccount) async throws -> Double {
+    try bankAccount.withdraw(amount: amount)
+    let newBalance = bankAccount.balance
+    return newBalance
+}
+
+By using the isolated parameter, we basically instruct the whole method to be isolated to the given actor. 
+In this case, we instruct the whole method to be isolated to the BankAccount actor. 
+Since there can only be one isolation at the same time, you can only use one isolated parameter. 
+Obviously, you can also only use the isolated keyword with an Actor type.
+
+
+----------Isolated Closure Parameters
+Isolated parameters can be used inside closures as well.
+This can be useful if you want to perform constant operations around a given dynamic action. 
+A common example is a database transaction:
+
+actor Database {
+    func beginTransaction() {
+        // ...
+    }
+    
+    func commitTransaction() {
+        // ...
+    }
+    
+    func rollbackTransaction() {
+        // ...
+    }
+    
+    /// By using an isolated `Database` parameter inside the closure, we can access `Database`-actor isolation from anywhere
+    /// allowing us to perform multiple database queries with just one `await`.
+    func transaction<Result>(_ transaction: @Sendable (_ database: isolated Database) throws -> Result) throws -> Result {
+        do {
+            beginTransaction()
+            let result = try transaction(self)
+            commitTransaction()
+            
+            return result
+        } catch {
+            rollbackTransaction()
+            throw error
+        }
+    }
+}
+
+@Sendable 是 Swift 并发中的一个属性修饰符，用于标记闭包是“可安全跨线程传递”的（sendable）。
+意思是：
+你传入的闭包 transaction ——
+必须是线程安全的（即 没有捕获非 Sendable 的状态）
+可以跨越 actor 执行边界安全地调用
+编译器会验证闭包是否满足 Sendable 要求（尤其在启用了并发严格模式时）
+
+因为你将这个闭包作为参数传入 actor 的方法，并且它会被调用，而调用方可能来自 actor 外部，如果这个闭包不安全，就可能破坏 actor 的线程隔离。
+加上 @Sendable 后：
+编译器可以验证闭包是否捕获了不安全的值（比如 class 实例、非 sendable 的引用等）
+可以避免在并发调用中出现数据竞争或崩溃
+
+isolated Database
+表示这个闭包在执行时是“已经获取到 Database actor 隔离权限”的，也就是说：
+在 transaction(self) 调用闭包时，它拥有 Database 的 actor 隔离上下文
+所以闭包内可以直接访问 Database 的方法，无需再次 await
+
+The transaction closure contains an isolated parameter using the Database actor. 
+This results in a way for us to perform multiple database queries from outside the Database while only having to await once:
+let database = Database()
+try await database.transaction { database in
+    database.insert("<some entity>")
+    database.insert("<some entity>")
+    database.insert("<some entity>")
+}
+
+
+----------Adding a generic isolated closure for any actor
+public protocol Actor : AnyObject, Sendable {
+nonisolated var unownedExecutor: UnownedSerialExecutor { get }
+}
+在 Swift 中，所有使用 actor 声明的类型，默认就自动 conform（遵循） 这个 Actor 协议。
+An actor implicitly conforms to the Actor protocol, which provides the interface for interacting with actor instances.
+
+We can take this one step further by adding an extension for any Actor type:
+extension Actor {
+    /// Adds a general `perform` method for any actor to access its isolation domain to perform
+    /// multiple operations in one go using the closure.
+    @discardableResult
+    func performInIsolation<T: Sendable>(_ block: @Sendable (_ actor: isolated Self) throws -> T) async rethrows -> T {
+        try block(self)
+    }
+}
+
+This would allow us to access the isolation domain of any actor and perform multiple operations on it in one go. 
+For example, we could rewrite the earlier bank charging without the extra Charger instance method:
+
+let bankAccount = BankAccount(initialDeposit: 200)
+try await bankAccount.performInIsolation { bankAccount in
+    try bankAccount.withdraw(amount: 20)
+    print("New balance is \(bankAccount.balance)")
+}
+
+
+----------Using the nonisolated keyword in actors:
+Marking methods or properties as nonisolated can be used to opt-out to the default isolation of actors. 
+Opting out can be helpful in cases of accessing immutable values or when conforming to protocol requirements.
+将方法或属性标记为非隔离状态，可用于选择退出 Actor 的默认隔离状态。
+在访问不可变值或符合协议要求的情况下，选择退出会很有帮助。
+
+In the following example, we’ve added an account holder name to the actor:
+
+actor BankAccountActor {
+    
+    let accountHolder: String
+
+    // ...
+}
+
+The account holder is an immutable let and is therefore safe to access from a non-isolated environment.
+账户持有者是一个不可变的 let，因此在非隔离环境中访问是安全的。
+
+The compiler is smart enough to recognize this state, so there’s no need to mark this parameter as nonisolated explicitly.
+However, if we introduce a computed property accessing an immutable property, we have to help the compiler a bit. Let’s take a look at the following example:
+actor BankAccountActor {
+
+    let accountHolder: String
+    let bank: String
+
+    var details: String {
+        "Bank: \(bank) - Account holder: \(accountHolder)"
+    }
+
+    // ...
+}
+If we were to print out details right now, we would run into the following error:
+
+Actor-isolated property ‘details’ can not be referenced from a non-isolated context
+Both bank and accountHolder are immutable properties, so we can explicitly mark the computed property as nonisolated and solve the error:
+
+actor BankAccountActor {
+
+    let accountHolder: String
+    let bank: String
+
+    nonisolated var details: String {
+        "Bank: \(bank) - Account holder: \(accountHolder)"
+    }
+
+    // ...
+}
+#####
+The nonisolated keyword is a way to opt-out of the actor isolation, removing the need to access the value using await.
+#####
+
+
+----------Solving protocol conformances with nonisolated:
+The same principle applies to adding protocol conformance in which you’re sure to access immutable state only.
+we could replace the details property with the nicer CustomStringConvertible protocol:
+extension BankAccountActor: CustomStringConvertible {
+    var description: String {
+        "Bank: \(bank) - Account holder: \(accountHolder)"
+    }
+}
+
+Using the default recommended implementation from Xcode, we would run into the following error:
+
+Actor-isolated property ‘description’ cannot be used to satisfy a protocol requirement
+
+Which we can solve again by making use of the nonisolated keyword:
+
+extension BankAccountActor: CustomStringConvertible {
+    nonisolated var description: String {
+        "Bank: \(bank) - Account holder: \(accountHolder)"
+    }
+}
+
+
+Accessing isolated properties from a nonisolated environment will result in a compiler error.
+The compiler is smart enough to warn us if we accidentally access isolated properties within a nonisolated environment
+
+Actors in Swift are a great way to synchronize access to a shared mutable state.
+In some cases, however, we want to control actor isolation as we might be sure immutable state is accessed only.
+By making use of the nonisolated and isolated keywords, we gain precise control over actor isolation.

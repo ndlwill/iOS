@@ -1,0 +1,425 @@
+https://www.swift.org/migration/documentation/swift-6-concurrency-migration-guide/incrementaladoption/
+
+
+
+==================================================Dynamic Isolation
+静态 Actor 隔离（static isolation） vs 动态 Actor 隔离（dynamic isolation）。
+
+Expressing the isolation of your program statically, using annotations and other language constructs, is both powerful and concise. 
+But it can be difficult to introduce static isolation without updating all dependencies simultaneously.
+
+Dynamic isolation provides runtime mechanisms you can use as a fallback for describing data isolation.
+It can be an essential tool for interfacing a Swift 6 component with another that has not yet been updated, even if these components are within the same module.
+
+1. Internal-Only Isolation
+Suppose you have determined that a reference type within your project can be best described with MainActor static isolation.
+@MainActor
+class WindowStyler {
+    private var backgroundColor: ColorComponents
+
+
+    func applyStyle() {
+        // ...
+    }
+}
+This MainActor isolation may be logically correct. 
+But if this type is used in other unmigrated locations, adding static isolation here could require many additional changes.
+An alternative is to use dynamic isolation to help control the scope.
+class WindowStyler {
+    @MainActor
+    private var backgroundColor: ColorComponents
+
+
+    func applyStyle() {
+        MainActor.assumeIsolated {
+            // use and interact with other `MainActor` state
+        }
+    }
+}
+Here, the isolation has been internalized into the class. 
+This keeps any changes localized to the type, allowing you make changes without affecting any clients of the type.
+
+However, a major disadvantage of this technique is the type’s true isolation requirements remain invisible. 
+There is no way for clients to determine if or how they should change based on this public API. 
+You should use this approach only as a temporary solution, and only when you have exhausted other options.
+
+
+2. Usage-Only Isolation
+If it is impractical to contain isolation exclusively within a type, you can instead expand the isolation to cover only its API usage.
+
+To do this, first apply static isolation to the type, and then use dynamic isolation at any usage locations:
+@MainActor
+class WindowStyler {
+    // ...
+}
+
+
+class UIStyler {
+    @MainActor
+    private let windowStyler: WindowStyler
+    
+    func applyStyle() {
+        MainActor.assumeIsolated {
+            windowStyler.applyStyle()
+        }
+    }
+}
+Combining static and dynamic isolation can be a powerful tool to keep the scope of changes gradual.
+
+
+3. Explicit MainActor Context
+The assumeIsolated method is synchronous and exists to recover isolation information from runtime back into the type-system by preventing execution if the assumption was incorrect. 
+The MainActor type also has a method you can use to manually switch isolation in an asynchronous context.
+
+// type that should be MainActor, but has not been updated yet
+class PersonalTransportation {
+}
+
+
+await MainActor.run {
+    // isolated to the MainActor here
+    let transport = PersonalTransportation()
+    
+    // ...
+}
+Remember that static isolation allows the compiler to both verify and automate the process of switching isolation as needed.
+While MainActor.run can be useful during migration, it should not be used as a substitute for expressing the isolation requirements of your system statically. 
+The ultimate goal should still be to apply @MainActor to PersonalTransportation.
+
+
+
+例子：
+如果你把整个类标记为 @MainActor，虽然语义清晰，但可能影响广泛，导致旧代码大改。
+相反，可以选择只隔离关键成员或方法，用 @MainActor 或 MainActor.assumeIsolated 进行“局部 Actor 隔离”。
+
+场景：
+有一个 WindowStyler 类，主要在 UI 线程上运行，但它也可能被用在一些后台逻辑中，比如 JSON 解码、测试中、或非 UI 的缓存系统里。
+将整个类设为 @MainActor，意味着它的所有方法、属性访问都必须 await 或运行在主线程。
+会导致大量代码出错或被强制迁移 —— 很麻烦。
+
+静态隔离例子：一刀切（全类隔离）
+@MainActor
+class WindowStyler {
+    var backgroundColor: ColorComponents
+
+    init(color: ColorComponents) {
+        self.backgroundColor = color
+    }
+
+    func applyStyle(to view: UIView) {
+        view.backgroundColor = backgroundColor.uiColor
+    }
+}
+WindowStyler 无论何时创建、使用、赋值，都必须在 MainActor 上。
+即使有一部分代码根本不需要 UI 相关，也必须用 Task { await ... }，或者标记成 @MainActor。
+影响面太大，不利于渐进式迁移。
+
+
+动态隔离例子：只隔离关键状态或逻辑
+class WindowStyler {
+    // 仅这一个属性需要主线程操作
+    @MainActor
+    private var backgroundColor: ColorComponents
+
+    init(color: ColorComponents) {
+        self.backgroundColor = color
+    }
+
+    func applyStyle(to view: UIView) {
+        MainActor.assumeIsolated {
+            view.backgroundColor = backgroundColor.uiColor
+        }
+    }
+}
+WindowStyler 类型本身是非 actor 隔离的，可以在任意线程中创建或传递。
+只有访问 @MainActor 成员（如 backgroundColor）时才要求主线程上下文。
+MainActor.assumeIsolated 明确告诉编译器：“此 block 已在主线程，我知道自己在干嘛。”
+
+
+==================================================Missing Annotations
+Dynamic isolation gives you tools to express isolation at runtime. 
+But you may also find you need to describe other concurrency properties that are missing from unmigrated modules.
+
+1. Unmarked Sendable Closures
+The sendability of a closure affects how the compiler infers isolation for its body. 
+A callback closure that actually does cross isolation boundaries but is missing a Sendable annotation violates a critical invariant of the concurrency system.
+
+// definition within a pre-Swift 6 module
+extension JPKJetPack {
+    // Note the lack of a @Sendable annotation
+    static func jetPackConfiguration(_ callback: @escaping () -> Void) {
+        // Can potentially cross isolation domains
+    }
+}
+
+
+@MainActor
+class PersonalTransportation {
+    func configure() {
+        JPKJetPack.jetPackConfiguration {
+            // MainActor isolation will be inferred here
+            self.applyConfiguration()
+        }
+    }
+
+
+    func applyConfiguration() {
+    }
+}
+
+If jetPackConfiguration can invoke its closure in another isolation domain, it must be marked @Sendable. 
+When an un-migrated module hasn’t yet done this, it will result in incorrect actor inference. This code will compile without issue but crash at runtime.
+
+Note
+It is not possible for the compiler to detect or diagnose the lack of compiler-visible information.
+
+To workaround this, you can manually annotate the closure with @Sendable. 
+This will prevent the compiler from inferring MainActor isolation. 
+Because the compiler now knows actor isolation could change, it will require a task at the callsite and an await in the task.
+
+@MainActor
+class PersonalTransportation {
+    func configure() {
+        JPKJetPack.jetPackConfiguration { @Sendable in
+            // Sendable closures do not infer actor isolation,
+            // making this context non-isolated
+            Task {
+                await self.applyConfiguration()
+            }
+        }
+    }
+
+
+    func applyConfiguration() {
+    }
+}
+
+Alternatively, it is also possible to disable runtime isolation assertions for the module with the -disable-dynamic-actor-isolation compiler flag. 
+This will suppress all runtime enforcement of dynamic actor isolation.
+
+Warning
+This flag should be used with caution. Disabling these runtime checks will permit data isolation violations.
+
+
+==================================================静态隔离 & 动态隔离
+Swift 并发中的 静态隔离（static isolation） 和 动态隔离（dynamic isolation） 是两种 actor 隔离的使用方式，它们设计目的不同，适合的场景也不同。
+类型	定义	关键机制
+静态隔离 (Static Isolation)	使用 @MainActor（或其他全局 actor）标注在类型、方法、属性上，编译器严格追踪 actor 隔离	编译器自动检查、自动隔离，强安全保障
+动态隔离 (Dynamic Isolation)	用 @MainActor 标记局部属性或方法，再通过 await MainActor.run {} 或 MainActor.assumeIsolated {} 显式跳入 actor 上下文
+
+静态隔离的使用场景：
+一次性为整个类或方法指定 actor（比如 @MainActor）
+编译器会自动帮你插入 await，并保证访问安全
+新项目 或 Actor 化的模块
+@MainActor
+class ViewModel {
+    var counter = 0
+
+    func updateUI() {
+        // 一定在主线程安全访问
+    }
+}
+
+动态隔离的使用场景：
+局部使用 actor 隔离（例如 @MainActor private var）
+用 MainActor.assumeIsolated {} 或 await MainActor.run {} 控制具体访问点
+更灵活，不要求整个类必须 actor 隔离
+并发迁移期（尤其是旧代码库）：
+比如 UIKit 控制器和服务层大量混用
+你不能一口气把整个类都标成 @MainActor
+类中有一部分是 UI 相关（需要主线程）：
+但其它部分是非 UI 逻辑（可以在后台执行）
+比如：UIStyler 有 UI 配置和 JSON 读取两个职责
+性能敏感场景：避免频繁 actor 跳转，提高效率
+你能确定当前线程是 actor 隔离的（比如主线程）：
+在这种前提下 MainActor.assumeIsolated {} 安全使用
+class WindowStyler {
+    @MainActor private var themeColor: UIColor = .black
+
+    func apply(to label: UILabel) {
+        MainActor.assumeIsolated {
+            label.textColor = themeColor
+        }
+    }
+
+    func parseConfig(json: Data) {
+        // 非 UI，不需要隔离
+    }
+}
+
+动态隔离是不是为了“并发迁移期”设计的？
+是的
+它是为了 Swift 的并发系统迁移提供的过渡方案：
+“你不需要一次性把一整个旧系统都 actor 化，你可以先逐步隔离关键资源，逐步替换 GCD，逐步引入 Task {} 和 Sendable。”
+
+维度	静态隔离 @MainActor class	动态隔离 @MainActor var + assumeIsolated
+安全性	高，编译器检查保证	中，依赖开发者保证当前已在 actor 上下文
+灵活性	较低，适合全 UI 结构	高，可在 UI/非 UI 混合代码中细粒度使用
+适合新项目	✅	❌（适合迁移）
+适合旧项目迁移	❌ 重构成本大	✅ 非侵入式迁移
+调试难度	低	中~高，需掌握 actor thread 上下文
+
+
+#####
+静态隔离适合设计好的新架构，动态隔离是迁移旧系统、逐步引入 actor 模型的重要桥梁。
+#####
+
+
+静态隔离 是指你在类型或方法上明确标注了 @MainActor（或其他 actor），编译器会强制你在正确的 actor 上访问。
+@MainActor
+class ViewModel {
+    func update() {
+        // 必须在 MainActor 上运行
+    }
+}
+
+
+动态隔离 则是一种更灵活的隔离方式。你并不在整个类或函数上加 @MainActor，而是：
+只给某些属性或方法加 @MainActor
+在访问这些 actor 隔离的值时，用 MainActor.assumeIsolated {} 或 await MainActor.run {} 来动态保证你在正确线程
+
+
+动态隔离的作用
+作用	说明
+✅ 渐进迁移	可以不一下子把整个类型声明为 @MainActor，避免大量编译错误
+✅ 隔离粒度更细	只对 UI 或共享状态加隔离，后台逻辑不受影响
+✅ 灵活、兼容性好	类型可以用于非 UI 场景，也可配合老代码
+✅ 避免“过度隔离”	静态隔离一旦加上，很多地方都要 await、跳线程，非常麻烦
+
+
+
+==================================================全局 actor（global actor） 和 actor（具体 actor 类型）
+概念	简单描述
+actor	是一种类型（像 class），用于封装共享可变状态并提供自动线程隔离的实例。
+全局 actor	是一种全局范围的线程隔离机制，用于跨类型、跨作用域共享线程隔离规则（如 @MainActor）。
+
+
+actor（实例隔离）：
+actor Counter {
+    var value = 0
+
+    func increment() {
+        value += 1
+    }
+}
+每个 actor 实例拥有一个独立的隔离域（类似一个私有串行队列）
+同一个 actor 实例的方法或属性不能被并发访问
+使用时必须通过 await 来调用异步方法
+let counter = Counter()
+Task {
+    await counter.increment()
+}
+
+全局 actor（全局隔离）：
+@MainActor
+class MyViewModel {
+    var title: String = ""
+
+    func updateUI() {
+        // 一定运行在主线程
+    }
+}
+全局 actor 是一种全应用级别的线程隔离机制
+常用于 UI 场景中（比如主线程）或一些跨多个类型的共享调度模型
+常见全局 actor：@MainActor（系统内置）
+
+
+也可以自定义：
+@globalActor
+struct BackgroundActor {
+    static let shared = BackgroundExecutor()
+}
+
+actor BackgroundExecutor {}
+
+
+特性	actor	@MainActor（全局 actor）
+是什么？	一种引用类型，封装状态	一种线程隔离机制（修饰符）
+是否有实例？	✅ 每个 actor 都是实例隔离	✅ 也有实例（如 MainActor.shared）
+作用域	隔离一个实例	隔离全局上下文/整个类型或函数
+使用场景	多线程数据模型、异步任务隔离	UI 更新、全局串行任务隔离（比如主线程）
+调用方式	需 await actor.method()	需 await MainActor.run {} 或标注 @MainActor
+是否可自定义	✅ 任意自定义 actor 类型	✅ 可自定义 @globalActor
+
+以为 @MainActor 是个类型
+→ 不是！它只是个标注，真正的类型是 MainActor，是一个 actor。
+
+以为 actor 是共享的线程队列
+→ 错！每个 actor 实例有自己的隔离域，它不是共享全局的。
+
+以为 actor 更强大就不用 global actor
+→ 实际上，UI 场景（UIKit / SwiftUI）应该始终使用 @MainActor，而非自己创建 UI actor。
+
+
+需求	推荐选择
+控制 UI 更新	✅ @MainActor
+为每个用户对象提供线程隔离	✅ 使用 actor
+只想让某些方法在主线程执行	✅ 方法标注 @MainActor
+想做并发队列模型	✅ 使用 actor，不要用 DispatchQueue
+想让多个类共享一个“任务执行器”	✅ 自定义 @globalActor
+
+
+
+@globalActor
+struct LoggingActor {
+    static let shared = LoggerActor()  // ⚠️ 这就是“全局 actor”的核心实例
+}
+
+actor LoggerActor {
+    func log(_ message: String) {
+        print("Logged: \(message)")
+    }
+}
+
+@LoggingActor
+func logData() {
+    // 这个函数会运行在 LoggingActor.shared 上
+    print("Log Something")
+}
+
+你已经给某些函数标记了 @LoggingActor，这表示这些函数会自动在 LoggingActor.shared 这个 actor 的串行隔离域内执行。
+调用方式：
+你不能直接调用 logData()，必须用 await 来切换到 LoggingActor 的上下文。
+func run() async {
+    await logData()  // ✅ 在 LoggingActor 的 actor 上调用
+}
+或者用 Task：
+Task {
+    await logData()
+}
+
+
+你也可以调用 LoggerActor 中的函数，完全运行在隔离上下文中：
+@LoggingActor
+func logData() {
+    Task {
+        await LoggingActor.shared.log("Hello from logData")
+    }
+}
+
+
+全局 actor 是用来：
+标注多个类型/函数，统一调度逻辑、串行处理资源
+
+
+actor 和 global actor
+的根本目的都是 —— “让并发访问某段共享数据变得线程安全”
+它们都是 Swift 并发模型中为了解决数据竞争（data race）引入的隔离机制，不过适用场景和表现形式有所不同。
+
+actor 是“实例级”的线程隔离工具：
+每个 actor 实例拥有自己的隔离域（类似串行队列）
+保证某一个具体对象在多个并发任务访问时是线程安全的
+适用于：用户模型、缓存对象、状态容器、任务队列等
+
+global actor 是“全局级”的线程隔离工具：
+是一种共享 actor 隔离域，可跨多个类型和模块使用
+用来约束某些行为只能在某种全局上下文（如主线程）运行
+适用于：UI 更新、日志收集、数据库写入、系统调用等
+
+
+项目	actor	@globalActor（如 @MainActor）
+使用方式	定义一个 actor 类型	定义一个全局 actor 标注
+隔离级别	实例隔离	全局共享隔离
+是否可复用隔离域	❌ 每个实例一个隔离域	✅ 所有标注共用一个隔离域
+调用开销	较少（尤其 Swift 6 后优化）	更可能需要线程跳转（如主线程）
+推荐用在	状态模型、后台缓存	UI、日志、数据库写操作等串行要求场景

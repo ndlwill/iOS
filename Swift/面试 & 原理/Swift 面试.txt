@@ -1,0 +1,120 @@
+==================================================
+Are you familiar with SwiftUI?
+SwiftUI 是 Apple 在 iOS 13 推出的声明式 UI 框架，用于构建跨 Apple 平台的用户界面。
+
+1. 声明式语法（Declarative）
+UI 是状态的函数，用状态驱动视图更新，而不是命令式手动更新视图。
+
+2. 数据驱动（State Driven）
+常用属性包装器：
+@State：本地状态
+@Binding：父子状态绑定
+@ObservedObject / @StateObject：引用类型状态
+@EnvironmentObject：全局依赖注入
+
+3. View 是值类型（struct）
+View 是轻量、可组合的值，编译期优化好，支持视图重用。
+
+4. 与 Combine/TCA 等架构良好结合
+配合 Combine 或 The Composable Architecture（TCA）可以实现高度可测试、模块化的 UI 架构。
+
+5. 跨平台（iOS/macOS/watchOS/tvOS）统一开发
+复用 UI 代码、响应式布局、自适应系统动态字体、暗黑模式等。
+
+
+==================================================
+Can you explain the difference between a state object and an observed object in SwiftUI?
+
+@StateObject 和 @ObservedObject 都是用来在视图中监听对象状态变化并自动刷新 UI 的，
+但它们在 “谁负责创建”和“生命周期管理” 方面有很大区别。
+
+属性包装器	谁负责创建对象	谁负责持有和管理生命周期
+@StateObject	当前视图创建	✅ 当前视图负责持有
+@ObservedObject	外部传入	❌ 当前视图只是观察，不持有
+
+
+@StateObject：在当前视图中创建和拥有对象
+class Counter: ObservableObject {
+    @Published var value = 0
+}
+
+struct MyView: View {
+    @StateObject var counter = Counter()  // 👈 视图“自己创建并持有”
+
+    var body: some View {
+        Text("Value: \(counter.value)")
+        Button("Add") {
+            counter.value += 1
+        }
+    }
+}
+当视图被销毁再重建时（如 Navigation 回退后再次 push），@StateObject 会重新创建，其生命周期和视图绑定在一起。
+
+
+@ObservedObject：从外部传入，仅观察状态
+struct MyChildView: View {
+    @ObservedObject var counter: Counter  // 👈 父视图传入，子视图只是“观察者”
+
+    var body: some View {
+        Text("Value: \(counter.value)")
+    }
+}
+
+struct ParentView: View {
+    @StateObject var counter = Counter()
+
+    var body: some View {
+        MyChildView(counter: counter)  // 👈 由父视图持有并传入
+    }
+}
+@ObservedObject 不会创建对象，只是观察对象的变化，生命周期由别处决定（通常是父视图）。
+
+
+==================================================
+combine中的merge、zip、combineLatest的区别
+
+1. merge —— 谁来得快用谁的，多个合成一个
+作用：把多个 Publisher 合并成一个，只要有一个发送就立刻转发。
+特点：不等待，不配对。
+应用场景：多个请求/事件都可以立即响应，例如多个输入来源。
+
+2. zip —— 一一配对，等大家都准备好了才发
+作用：把多个 Publisher 的元素配对，每个都来一个后才合并成元组输出。
+特点：严格配对，顺序一一对应。
+应用场景：必须等多个异步结果同时返回，例如并发请求图片和描述，然后同时展示。
+
+3. combineLatest —— 总是拿“最新的组合”发出去
+作用：当任意 Publisher 发出新值时，会组合所有最新的值并输出。
+特点：先等每个 Publisher 至少发出一个值，之后任意一个更新就触发。
+应用场景：表单验证、多个输入框联动，只要任意输入变动就更新逻辑。
+
+操作符	等待策略	输出时机	适用场景
+merge	不等待	谁先发就用谁的	多来源快速响应
+zip	等待所有一个	所有 Publisher 各出一个时	精准配对组合，如任务组完成
+combineLatest	每个至少来一个	之后谁变就组合最新的值发出	联动变化，比如输入联动验证
+
+
+==================================================
+What’s the difference between SwiftUI and UIKit Lifecycle Methods?
+
+UIKit 的生命周期（命令式）
+UIKit 使用 ViewController 来控制视图，有明确的生命周期方法：
+viewDidLoad()：视图加载完成
+viewWillAppear()：视图将要出现
+viewDidAppear()：视图已经出现
+viewWillDisappear() / viewDidDisappear()
+这些方法由系统自动调用，开发者手动写逻辑控制视图状态。
+
+SwiftUI 的生命周期（声明式）
+SwiftUI 没有 ViewController，采用 数据驱动 + 声明式生命周期修饰符：
+.onAppear {}：类似 viewDidAppear
+.onDisappear {}：类似 viewDidDisappear
+.task {} / .task(id:) {}：用于触发异步任务，如页面加载时自动发起网络请求
+@State / @ObservedObject 等状态绑定也会引起视图生命周期重新计算
+SwiftUI 的 View 是值类型（struct），生命周期更像是“状态变化 → 重建视图”而不是“控制视图何时变化”。
+
+UIKit 是 命令式，用 ViewController 管控生命周期，有固定回调函数。
+SwiftUI 是 声明式，用 .onAppear、.task 等修饰器响应生命周期事件。
+SwiftUI 的 View 不是持久对象，是状态变化时不断重建的“快照”。
+
+在 SwiftUI 中，视图是轻量值类型，生命周期更关注‘状态驱动的变化’
