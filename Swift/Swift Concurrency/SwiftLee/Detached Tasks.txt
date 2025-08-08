@@ -1,0 +1,85 @@
+https://www.avanderlee.com/concurrency/detached-tasks/
+
+#####
+Detached tasks allow you to create a new top-level task and disconnect from the current structured concurrency context.
+You could argue that using them results in unstructured concurrency since you’re disconnecting potentially relevant tasks.
+#####
+
+While it sounds terrible to disconnect from structured concurrency, there are still examples of use cases in which you can benefit from detached tasks.
+
+
+==================================================What is a detached task?
+A detached task runs a given operation asynchronously as part of a new top-level task.
+Task.detached(priority: .background) {
+    // Runs asynchronously
+}
+The code inside the closure will be executed asynchronously from the parent context.
+
+await asyncPrint("Operation one")
+Task.detached(priority: .background) {
+    // Runs asynchronously
+    await self.asyncPrint("Operation two")
+}
+await asyncPrint("Operation three")
+
+func asyncPrint(_ string: String) async {
+    print(string)
+}
+
+// Prints:
+// Operation one
+// Operation three
+// Operation two
+
+#####
+In other words, by using a detached task, we stepped away from structured concurrency, and we’re no longer in control of the execution order.
+#####
+
+
+==================================================Risks of using detached tasks
+#####
+Tasks that run detached will create a new context to operate in. 
+They won’t inherit the parent task’s priority and the task-local storage, 
+and they won’t cancel if the parent task gets cancelled:
+#####
+
+let outerTask = Task {
+    /// This one will cancel.
+    await longRunningAsyncOperation() // 11
+
+    /// This detached task won't cancel.
+    Task.detached(priority: .background) {
+        /// And, therefore, this task won't cancel either.
+        await self.longRunningAsyncOperation() // 22
+    }
+}
+outerTask.cancel()
+
+If you want the detached task to cancel seamlessly, you must hold a reference and cancel it manually. 
+On top of that, they are not automatically canceled as soon as you release your reference. 
+You would no longer have a way to cancel the task yourself while the task continues independently.
+
+Lastly, since you’re executing code asynchronously, you’ll have to use ‘self’ to make capture semantics explicit explicitly // 对应上面例子的 // 22
+
+Another indication of a risk that comes with disconnecting from the parent’s local storage is that you’re more likely to run into retain cycles.
+
+
+==================================================When to use a detached task
+Detached tasks should be your last resort. 
+In many cases, you’ll be able to run tasks in parallel using task groups instead and benefit from parent-child relationships. 
+The latter will allow you to cancel the parent task and all related child tasks automatically.
+
+However, in some cases, you have operations that can run independently, don’t require a connection with the parent context, 
+and are acceptable to succeed if the parent operation cancels. 
+You don’t want to await the results or block the parent actor from executing other tasks. An example could be cleaning up a directory:
+Task.detached(priority: .background) {
+    await DirectoryCleaner.cleanup()
+}
+In this example, we don’t reference any local references using self. 
+The cleanup code runs independently, can continue while the parent context cancels, and executes using a background priority.
+
+
+
+It can be tempting to use detached tasks if you want to execute code asynchronously, but they should be your last resort. 
+You can often solve the same using regular child tasks or task groups. 
+It’s essential to be aware of the consequences when you do decide to use a detached task.

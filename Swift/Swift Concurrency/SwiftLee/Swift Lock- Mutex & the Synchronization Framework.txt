@@ -1,0 +1,167 @@
+https://www.avanderlee.com/concurrency/modern-swift-lock-mutex-the-synchronization-framework/
+
+Swift offers several solutions to lock access to mutable content and prevent so-called data races. 
+Locks like NSLock, DispatchSemaphore, or a serial DispatchQueue are a popular choice for many.
+
+a modern Swift lock variant introduced via SE-433 Synchronous Mutual Exclusion Lock.
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0433-mutex.md
+we’re going to look at a standardized version of a so-called Mutex lock.
+
+
+==================================================What is a Swift Lock?
+A Swift Lock, or locks in general, allow you to ensure only one thread or task can access a piece of data at a time. 
+It ensures thread-safety access and prevents exceptions caused by data being accessed simultaneously.
+
+What is the difference between a Mutex and a Lock?
+All mutexes are locks, but not all locks are mutexes. 
+Mutex is a shorthand for mutual exclusion, and it’s a specific type of lock that strictly enforces mutual exclusion, 
+meaning only one thread can own it at a time. 
+This ownership means it can only be unlocked by the same thread or task that locked it.
+
+
+On the other hand, the term “lock” is broader and can refer to different synchronization tools, 
+like reentrant locks, reader-writer locks, or unfair locks.
+While both ensure exclusive access to shared resources, mutexes focus on simplicity and strict ownership, 
+whereas locks offer more flexibility and can be tailored to different concurrency scenarios.
+
+
+==================================================Using Swift’s Mutex lock from the Synchronization framework
+This framework was announced during WWDC 24 and is available from iOS 18 and macOS 15. 
+
+In this example, we’re going to use a Mutex Swift lock to protect a counter. 
+This is a classic example to demonstrate the concept of a Mutex:
+final class Counter {
+    
+    /// Use the Mutex to protect the count value.
+    private let count = Mutex<Int>(0)
+    
+    /// Provide a public accessor to read the current count value.
+    var currentCount: Int {
+        count.withLock { currentCount in
+            return currentCount
+        }
+    }
+    
+    func increment() {
+        count.withLock { currentCount in
+            currentCount += 1
+        }
+    }
+    
+    func decrement() {
+        count.withLock { currentCount in
+            currentCount -= 1
+        }
+    }
+}
+
+We’ve created public accessors to communicate with the count and the Mutex enforces us to make use of the withLock method.
+This method provides an inout access to the count property.
+This basically means that we can directly interact with the mutable value of count. 
+Therefore, we can update the count using:
+currentCount += 1
+
+The withLock method forwards any returned values. 
+This is why we can return the current count by simply returning the closure parameter:
+var currentCount: Int {
+    count.withLock { currentCount in
+        return currentCount
+    }
+}
+
+
+Throwing errors from within a Mutex:
+It’s also possible to throw an error from within the withLock closure. 
+For example, we could decide to throw a reachedZero error when someone tries to decrement below zero:
+func decrement() throws {
+    try count.withLock { currentCount in
+        guard currentCount > 0 else {
+            throw Error.reachedZero
+        }
+        currentCount -= 1
+    }
+}
+
+
+==================================================A lock that works great with Swift Concurrency
+The Mutex is a Swift lock that works great with Swift Concurrency. 
+It’s unconditionally Sendable, which means that it provides thread-safe (Sendable) access to any non-Sendable value.
+
+
+NSBezierPath, which is a mutable non-Sendable type.
+I was able to work safely with this instance by wrapping it inside a Mutex:
+final class TouchesCapturer: Sendable {
+    let path = Mutex<NSBezierPath>(NSBezierPath())
+    
+    func storeTouch(_ point: NSPoint) {
+        path.withLock { path in
+            path.move(to: point)
+        }
+    }
+}
+
+This made TouchesCapturer conform to Sendable and demonstrates how you can write a solution to work with non-Sendable types.
+
+Using a Swift lock like a mutex can help you create sendable access to data.
+
+
+==================================================Shouldn’t I use an actor instead of locks in Swift Concurrency?
+#####
+I bet many of you are wondering why Apple introduced this Mutex while it’s also working on modern concurrency APIs. 
+Shouldn’t you use an actor in these cases?
+
+Actors are indeed a fantastic tool for protecting mutable state in many scenarios, but they aren’t always the right fit.
+
+There are situations where you need synchronous, immediate access to data without introducing the async keyword or suspension points.
+使用 Swift 的 actor 的确可以很好地保护共享状态，但是：
+使用 actor 意味着你必须通过 await 来访问其内部状态；
+await 会引入 挂起点（suspension point）；
+这意味着代码可能在执行时被挂起，稍后恢复，不再是同步的、立即完成的调用；
+
+Sometimes, your code needs to interact with APIs or legacy code that doesn’t support Swift Concurrency at all, making actors impractical or impossible to adopt.
+
+Moreover, actors come with certain design trade-offs — they isolate state and enforce exclusive access through asynchronous messages, 
+which is great for safety but can introduce additional overhead and complexity when low-level, fine-grained locking is required. 
+In these cases, a Mutex offers a lightweight and familiar synchronization primitive that can be used without changing your code to be asynchronous or refactoring everything around await.
+
+Ultimately, it’s not about choosing one over the other universally — it’s about picking the right tool for the job. 
+Actors shine when you can adopt an async model and benefit from clear logical isolation, 
+whereas mutexes fill the gaps where synchronous, immediate access, and minimal disruption are necessary.
+#####
+
+
+用法	是否引入 suspension point	是否适合高频调用	是否能在同步上下文使用
+actor	✅ 会	❌ 慢	❌ 不行（不能在非 async 方法中访问）
+lock / Mutex	❌ 不会	✅ 快	✅ 可以
+
+用 actor：用于###结构化的异步程序设计###，适合逻辑清晰、不需要###同步访问的场景###；
+用 Mutex / NSLock / os_unfair_lock：用于性能敏感、需要同步读取、不能使用 await 的场景。
+
+“结构化的异步程序设计” 指的正是像：
+await stepA()
+await stepB()
+await stepC()
+
+同步访问的场景:
+同步访问，是指你不希望、也不能引入 await，而是要立即（同步地）读取或修改某个共享状态。
+// 某个同步函数中，不能使用 await
+func isUserLoggedIn() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return session != nil
+}
+
+
+func hash(value: Int) -> Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return hashTable[value] ?? 0
+}
+这种函数可能在每秒执行几百万次（如图形、音频、数据处理），如果用 actor 变成：
+let result = await hashTableActor.lookup(value) // ❌引入 suspension point
+就会严重降低性能。
+
+
+Conclusion:
+The Synchronization framework introduces a Mutex which is a modern Swift lock to create mutually exclusive access to data. 
+It works great with Swift Concurrency and provides a solution to non-Sendable types without introducing the overhead of an actor.

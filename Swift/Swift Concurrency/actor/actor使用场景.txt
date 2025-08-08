@@ -1,0 +1,123 @@
+特性	DispatchQueue.sync	actor + await
+线程阻塞？	✅ 会阻塞调用线程	❌ 不会阻塞，只挂起 Task
+对主线程友好吗？	❌ 会卡 UI	✅ UI 线程不被卡死
+是否串行访问状态？	✅ 是	✅ 是
+
+
+actor Counter {
+    private var value = 0
+
+    func increment() {
+        value += 1
+    }
+
+    func getValue() -> Int {
+        value
+    }
+}
+
+let counter = Counter()
+
+Task {
+    await counter.increment()
+    let v = await counter.getValue()
+    print(v)
+}
+await 是挂起当前协程（Task），不是阻塞线程；
+也就是说，主线程还可以处理其他事件，不影响 UI；
+Actor 内部是自动串行执行的，确保状态安全。
+
+
+actor 是 Swift Concurrency 中用于保护共享可变状态的机制，它提供一种天然的并发安全封装方式，类似于一种轻量级的“线程安全类”。
+
+当你有“在多个线程之间共享的状态”，且你不想手动用锁来保证线程安全时，就适合使用 actor。
+
+
+1. 缓存（Cache）/ 状态存储
+你有一个图片缓存，多个线程/任务都可能同时访问它：
+actor ImageCache {
+    private var cache: [URL: UIImage] = [:]
+    
+    func image(for url: URL) -> UIImage? {
+        return cache[url]
+    }
+    
+    func insert(_ image: UIImage, for url: URL) {
+        cache[url] = image
+    }
+}
+用 actor 保护了 cache 字典，线程安全、无锁、语义清晰。
+
+
+2. 并发任务合并（coalescing）/ 请求去重
+多个地方同时发起对同一个接口的请求，但你只想发出一次，其他地方等待同一个结果。
+
+actor UserInfoLoader {
+    private var currentTask: Task<UserInfo, Error>?
+
+    func loadUserInfo() async throws -> UserInfo {
+        if let task = currentTask {
+            return try await task.value
+        }
+
+        let task = Task {
+            try await network.loadUserInfo()
+        }
+        currentTask = task
+
+        defer { currentTask = nil }
+
+        return try await task.value
+    }
+}
+actor 保护了 currentTask，多个并发调用可以共用一个请求。
+
+
+3. 序列化磁盘/数据库写入
+多个异步任务都要往磁盘写数据，为了避免同时写入导致数据丢失或破坏，使用 actor 串行化写操作：
+actor FileWriter {
+    func write(data: Data, to file: URL) throws {
+        try data.write(to: file)
+    }
+}
+哪怕多个任务同时调用 write，actor 也会自动串行处理，避免写冲突。
+
+
+4. 后台计数器 / 日志收集器
+一个后台统计模块记录事件计数（如埋点），多个模块并发更新：
+actor AnalyticsTracker {
+    private var counts: [String: Int] = [:]
+    
+    func track(event: String) {
+        counts[event, default: 0] += 1
+    }
+    
+    func snapshot() -> [String: Int] {
+        return counts
+    }
+}
+天然线程安全，收集数据过程中不需要锁。
+
+
+5. 异步下载队列管理器
+你有一个下载任务管理器，既要控制并发数量，还要记录当前任务状态。
+actor DownloadManager {
+    private var activeDownloads: [URL: Task<Data, Error>] = [:]
+
+    func download(from url: URL) async throws -> Data {
+        if let task = activeDownloads[url] {
+            return try await task.value
+        }
+
+        let task = Task {
+            try await URLSession.shared.data(from: url).0
+        }
+
+        activeDownloads[url] = task
+
+        defer { activeDownloads[url] = nil }
+
+        return try await task.value
+    }
+}
+非常典型的“去重 + 状态保护”使用场景。

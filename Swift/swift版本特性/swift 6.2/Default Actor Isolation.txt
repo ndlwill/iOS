@@ -1,0 +1,149 @@
+https://fatbobman.com/zh/posts/default-actor-isolation/
+
+尽管 Swift 严格并发检查的初衷是好的，但对于很多单线程场景来说，却明显增加了开发者的负担。
+开发者不得不在代码中添加一些并不必要的 Sendable、@MainActor 等声明，只为了满足编译器的要求。
+Swift 6.2 新增的 Default Actor Isolation 功能将极大地改善这种状况，减少不必要的样板代码。
+
+
+在 Swift 6.2 之前，编译器对并发的默认推断策略是：如果一个函数或类型没有显式声明或推断出隔离域，则将其视为非隔离（non-isolated），这意味着它可以被并发使用。
+即便你明知这个模块的绝大多数代码只运行在 MainActor 中，但仍缺乏统一向编译器表明这一事实的手段。
+
+
+Default Actor Isolation 正是用来解决这个问题的。
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0466-control-default-actor-isolation.md?utm_source=Fatbobman%20Blog&utm_medium=web
+该功能为开发者提供了在 Target 范围内统一向编译器表明这些代码运行在 MainActor 之上的能力。
+设置后，编译器在编译该 Target 代码时，会对没有明确标注隔离域的代码隐式推断为隔离到 @MainActor 中，从而减少开发者的负担。
+
+
+在 Xcode 26 中，新创建的项目已经默认启用了这个选项，并将默认隔离域设置为 MainActor。
+
+
+对于 SPM，仍采用默认非隔离的设置。你可以用如下方式将一个 Target 的 Default Actor Isolation 设置为 MainActor
+.target(
+    name: "CareLogUI",
+    swiftSettings: [
+        .defaultIsolation(MainActor.self), // set Default Actor Isolation 
+    ]),
+
+Swift 6.2 的这个新变化，它有利于 Swift 严格并发的进一步普及
+
+
+==================================================从隔离域中退出：nonisolated
+@Model
+final class Item {
+    var timestamp: Date
+    
+    init(timestamp: Date) {
+        self.timestamp = timestamp
+    }
+}
+
+// 使用 SwiftData ModeActor 宏
+@ModelActor
+actor DataHandler {
+    func createItem(timeStamp: Date) throws {
+        let item = Item(timestamp: timeStamp)
+        modelContext.insert(item)
+        try modelContext.save()
+    }
+}
+
+因为 Xcode 26 的模板代码都将 Default Actor Isolation 设置为了 MainActor。
+DataHandler 由于是一个 Actor，Swift 编译器会尊重它的隔离域（而不使用默认 MainActor），
+但 Item 的声明没有添加任何标注，编译器会将其隐式推断为只能运行在 MainActor 中（可以理解为编译器帮我们增加了一个 @MainActor）。
+如此一来，我们在一个非 MainActor 的隔离域（DataHandler）中创建 Item 就违反了安全并发的原则。
+
+解决这个问题很简单。在 Item 的声明前添加 nonisolated，这样 Swift 编译器就不会对 Item 应用默认隔离推断了。
+Item 类型也就可以运行在不同的隔离域当中了。
+@Model
+nonisolated final class Item { // 增加 nonisolated
+    var timestamp: Date
+    
+    init(timestamp: Date) {
+        self.timestamp = timestamp
+    }
+}
+
+当然，如果你只是想让某个属性或方法从默认隔离域中脱离出来，可以直接在其前面添加 nonisolated 即可。
+class RunInMainActor {    
+    var name: String = "example" // 运行在 MainActor
+    
+    nonisolated func processData() async {
+        // 脱离 MainActor 隔离域（编译层面）
+    }
+    
+    nonisolated var computedValue: String {
+        // 非隔离的计算属性（编译层面）
+        return "computed"
+    }
+}
+
+#####
+需要注意的是，由于 Swift 6.2 对 nonisolated 的语义进行了重要调整（引入了 nonisolated(nonsending) 作为默认行为(启用 NonisolatedNonsendingByDefault)），
+nonisolated 异步方法现在会继承调用者的隔离域，而不是像之前那样强制切换到后台执行。
+#####
+如果你确实需要强制方法在后台线程执行，应该使用 @concurrent 注解
+class RunInMainActor {        
+    @concurrent
+    func guaranteedBackground() async {
+        // 确保在后台线程执行
+    }
+}
+
+如果你在一个 Default Actor Isolation 为 MainActor 的项目中需要大量添加 nonisolated 时，你就要考虑是否应该继续使用该模式了。
+一种解决方式是将项目的默认隔离改成 nonisolated，另一种方式是将这部分代码剥离到另一个 Target 中，使用之前的 nonisolated 默认隔离推断方式。
+
+从某种角度来说，Default Actor Isolation 在减轻开发者负担的同时，也会促进更多人采用模块化编程。
+
+
+==================================================Default Actor Isolation 为 MainActor 与 @MainActor 并不完全一样
+尽管在大多数情况下，我们可以将 Default Actor Isolation 设置为 MainActor 视作自动为未标注的类型添加 @MainActor，
+但在个别情况下，两者之间还是会有一些差异。比如下面的代码：
+
+@MainActor
+class UserMainActorClass {
+    private final class DefaultsObservation: @unchecked Sendable {
+        private var notificationObserver: NSObjectProtocol?
+      
+        deinit {
+            if let observer = notificationObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
+    }
+}
+这段代码在 Default Actor Isolation 为 nonisolated 时可以正确编译，但如果切换成 MainActor 后会出现编译错误
+
+此时编译器会认为内部嵌套类型的 deinit 并非在同一个隔离域中。
+我们必须在 deinit 前添加 isolated 或 @MainActor 才能让编译器将这个 deinit 视作运行在 @MainActor 中
+
+class UserMainActorClass {
+    private final class DefaultsObservation: @unchecked Sendable {
+        private var notificationObserver: NSObjectProtocol?
+        
+        isolated // 或 @MainActor
+        deinit {
+            if let observer = notificationObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
+    }
+}
+在包含嵌套类型的声明场景中，Default Actor Isolation 为 MainActor 与显式的 @MainActor 并不完全等同。
+
+
+==================================================ObservableDefaults 宏:
+https://github.com/fatbobman/ObservableDefaults?utm_source=Fatbobman%20Blog&utm_medium=web
+
+这段代码就是在宏中用来判断是否给类型添加了 @MainActor 标注的
+let hasExplicitMainActor = classDecl.attributes.contains(where: { attribute in
+    if case let .attribute(attr) = attribute,
+       let identifierType = attr.attributeName.as(IdentifierTypeSyntax.self)
+    {
+        return identifierType.name.text == "MainActor"
+    }
+    return false
+})
+
+显然，在 Default Actor Isolation 为 MainActor 时，并没有走对应的分支。
+在 Default Actor Isolation 为 MainActor 时，尽管编译器会使用默认隔离域推断，但宏无法得知这个情况。

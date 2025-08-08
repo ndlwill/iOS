@@ -1,0 +1,219 @@
+Framework
+dnssd
+Discover, publish, and resolve network services on a local area or wide area network.
+iOS 10.0+
+
+
+“Wide Area Network（广域网，WAN）” 是一种计算机网络，它覆盖的地理范围比局域网（LAN, Local Area Network）要大得多。简单说就是：
+跨城市、跨国家、甚至全球互联的网络
+类型	范围	举例
+LAN（局域网）	小范围，比如一个家、一层楼、一家公司内部	家用 Wi-Fi、公司内网
+WAN（广域网）	覆盖城市、国家或全球	互联网 就是最大的 WAN
+
+外网 = 公众能访问的广域网，广域网 = 泛指跨局域网的通信网络。所以外网属于广域网。
+
+
+https://developer.apple.com/documentation/dnssd
+
+
+The DNS Service Discovery API helps you to perform three main tasks:
+Registering a service.
+Browsing for services.
+Resolving service names to host names.
+
+
+In support of these main tasks, this API can directly assist you in performing two subsidiary tasks:
+Enumerating domains (finding recommended service domains).
+Updating registrations (changing your DNS registration data dynamically).
+
+
+Most apps shouldn’t use this API, and instead should use a higher-level service discovery API like NetService. 
+Use dnssd if you’re writing BSD-style applications or cross-platform programs that don’t need to link to higher-level frameworks. 
+You can also use dnssd if you need specific lower-level functionality exposed by this API.
+
+
+Important
+Apps that use the local network must provide a usage string in their Info.plist file with the key NSLocalNetworkUsageDescription.
+https://developer.apple.com/documentation/BundleResources/Information-Property-List/NSLocalNetworkUsageDescription
+
+Apps that use Bonjour must also declare the services they browse, using the NSBonjourServices key.
+https://developer.apple.com/documentation/Foundation/bonjour
+https://developer.apple.com/documentation/BundleResources/Information-Property-List/NSBonjourServices
+
+
+dnssd（DNS Service Discovery）
+即 Bonjour（苹果的商品名），是用来在 本地或广域网络上自动发现、发布和解析网络服务 的一套技术。
+它背后的核心是 mDNS（Multicast DNS） 和 DNS-SD（DNS-Based Service Discovery）。
+
+
+Discover, publish, and resolve network services on a local area or wide area network
+1. Discover（发现）
+你可以找到局域网内有哪些设备或服务。例如：
+找到所有支持 AirPlay 的设备
+找到附近的打印机、共享文件服务器、游戏对手等
+
+2. Publish（发布）
+你的 App 或设备可以将自己注册为一个服务，例如：
+发布一个 _myapp._tcp 类型的服务
+把自己告诉局域网内的其他设备
+
+3. Resolve（解析）
+当你发现某个服务（如名字叫 “JamesPrinter.local.”），你还需要进一步解析出它的：
+IP 地址
+端口
+其他服务信息（TXT record）
+
+应用	使用 Bonjour / dnssd 的目的
+AirDrop	发现附近的设备
+AirPlay	找到 Apple TV 或音箱
+网络打印机	自动显示局域网内的打印机
+Files App	浏览共享的 SMB 服务器
+局域网游戏	匹配附近玩家
+第三方 App	发布自己的服务供其他设备连接
+
+
+你可以用 Apple 提供的 API 来使用 Bonjour 服务：
+使用 NetService（Swift / ObjC 中的高级封装）
+let service = NetService(domain: "local.", type: "_http._tcp.", name: "MyWebServer", port: 8080)
+service.publish()
+或使用更底层的 dnssd.h API（C 风格）
+比如在 macOS、iOS 内部实现或跨平台库中，比如 libdns_sd.dylib。
+
+
+dnssd（Bonjour）让设备之间在同一个网络下不需要手动输入 IP 和端口，就能自动发现、连接和通信。
+它是实现“零配置网络”（Zero Configuration Networking）的基础。
+
+如果你在做：文件共享、远程控制、AirPlay、IoT 设备自动发现等功能，几乎都需要用到 Bonjour / dnssd。
+
+
+名称	描述
+Bonjour	Apple 对其“基于 mDNS 和 DNS-SD 的零配置网络发现协议”的商品名
+mDNS	Multicast DNS，是 Bonjour 的技术底层
+DNS-SD	DNS Service Discovery，服务发现规范，mDNS 用它来广播“我提供啥服务”
+dnssd	Apple 提供的 Bonjour API 库，C 语言接口也叫 dns_sd.h
+
+
+mDNS（Multicast DNS）：
+类似“在局域网里广播”，告诉大家：“我是谁，我提供哪些服务”。
+就像你在房间里大喊：“我是张三，我这有打印服务！”
+
+DNS-SD（DNS Service Discovery）：
+类似“怎么描述和查找服务”，用标准 DNS 格式告诉别人：
+服务名、类型、端口、地址等。
+就像你告诉别人：“我这个打印服务叫 MyPrinter._ipp._tcp.local., 在 192.168.1.100:631”。
+
+mDNS 是通信方式（多播喊话），DNS-SD 是服务内容和格式（服务清单）。
+
+合在一起就成了 Apple 的 Bonjour 技术：设备自动广播自己、自动发现别人。
+NetService 发布服务，或 NetServiceBrowser 搜索服务
+
+
+#####
+mDNS 和 DNS-SD 看起来都在“告诉别人我是谁”，但它们的角色其实不同，虽然看起来都在“告诉”，但它们“告诉”的方式和目的不同
+
+1. mDNS：负责“怎么告诉”——广播机制
+mDNS 解决的是**“消息怎么发出去”**的问题，主要是通过 局域网广播 实现的。
+设备会在 224.0.0.251:5353 上进行多播。
+既可以是“我是谁”广播（比如我提供某服务），
+也可以是“谁是某人”的请求（比如我想找某服务），
+类似一个广播频道，大家都在听。
+
+举例：
+小明电脑广播：“有没有叫 MyPrinter._ipp._tcp.local 的？”
+小红打印机听到后回复：“我就是，IP 是 192.168.1.100，端口 631！”
+
+2. DNS-SD：负责“告诉什么”——服务描述格式
+DNS-SD 解决的是**“怎么描述一个服务”**，也就是数据结构、命名规则等。
+
+它使用标准 DNS 名字结构来命名服务：
+服务名：MyPrinter
+类型：_ipp._tcp
+域：local.（表示局域网）
+同时还提供 TXT 记录附加描述，比如：
+支持的功能、队列名、状态、认证方式等。
+
+举例：
+MyPrinter 的完整 DNS 名可能是：
+MyPrinter._ipp._tcp.local.
+
+附加描述可能包括：
+note=Office printer
+duplex=T
+
+mDNS 是广播手段，DNS-SD 是广播协议格式
+#####
+
+
+严格约定（规范）的，尤其是服务类型 _ipp._tcp 和域名 local.，它们都有明确的用途和标准来源，你可以理解为“行业内定的命名规则
+https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml
+
+类型:
+这是由 IANA 维护的公共注册表，规定了服务类型和它们所使用的协议。
+_ipp._tcp：
+_ipp 是 Internet Printing Protocol
+_tcp 表示使用 TCP 协议
+其他常见类型还包括：
+_http._tcp：HTTP 服务
+_airplay._tcp：AirPlay 服务
+_ssh._tcp：SSH 服务
+_afpovertcp._tcp：Apple 文件共享服务
+
+域:
+local. 是mDNS 专用的域名后缀，它并不是互联网上的普通 DNS 域名。
+意思是：这是在局域网内广播的服务，不走公网 DNS。
+
+约定俗成的做法：
+你在 xxx.local. 下发布的服务，会被认为是通过 mDNS 可发现的局域网服务。
+所有 mDNS 查询都默认在 local. 这个“虚拟域”中完成。
+
+如果你自己实现一个服务，比如一个聊天服务，服务类型也最好注册或使用不冲突的私有前缀，比如 _mychat._tcp.local.
+
+
+IANA Service Name Registry // https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml
+RFC 6763 – DNS-Based Service Discovery // https://datatracker.ietf.org/doc/html/rfc6763
+RFC 6762 – Multicast DNS // https://datatracker.ietf.org/doc/html/rfc6762
+
+
+==================================================Bonjour:
+https://developer.apple.com/documentation/Foundation/bonjour
+Advertise services for easy discovery on local networks, or discover services advertised by others.
+
+
+#####
+Bonjour 是 Apple 为其 “零配置网络发现技术” 所起的商品名（商标名）。
+它的本质是基于标准的 mDNS（Multicast DNS） 和 DNS-SD（DNS Service Discovery） 的一套服务发现协议。
+#####
+
+
+“Bonjour” 是法语单词，意思是 “你好”（Hello）。
+
+
+苹果的 Bonjour 通常只在局域网 LAN 内起作用，因为它依赖 multicast，但：
+Bonjour over WAN（通过广域网使用 Bonjour） 是 Apple 支持的一个扩展方案，主要用于：
+教育机构（Apple School Manager）
+企业部署设备自动发现（Apple Configurator）
+iCloud Drive / Handoff / AirDrop 跨网发现
+
+
+Bonjour 是 Apple 给“零配置网络服务发现”技术起的商品名，本质是 mDNS + DNS-SD，意在让设备自动发现和连接彼此，无需用户操作。
+
+
+==================================================NetService
+https://developer.apple.com/documentation/Foundation/NetService
+Class
+NetService
+A network service that broadcasts its availability using multicast DNS.
+iOS 2.0–26.0
+Use nw_connection_t or nw_listener_t in Network framework instead
+
+
+The NetService class represents a network service, either one your application publishes or is a client of. 
+This class and the NetServiceBrowser class use multicast DNS to convey information about network services to and from your application.
+The API of NetService provides a convenient way to publish the services offered by your application and to resolve the socket address for a service.
+
+
+
+NetServiceBrowser
+A network service browser that finds published services on a network using multicast DNS.
+iOS 2.0–26.0
+Use nw_browser_t in Network framework instead

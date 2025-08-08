@@ -1,0 +1,197 @@
+https://fatbobman.com/zh/posts/sendable-sending-nonsending/
+
+Swift 并发中与跨隔离域传递相关的几个关键字：Sendable、@unchecked Sendable、@Sendable、sending 和 nonsending
+
+
+==================================================隔离域（Isolation Domain）
+Swift 在构建新的并发模型时引入了隔离域的概念。
+开发者可以通过 actor、@MainActor 或其他自定义的 Global Actor 来声明一个隔离域。
+每个隔离域实例都会通过其 Executor（执行器） 来维护和管理一个串行队列，保证同一时刻只有一个任务在访问受保护的状态，从而将数据竞争从运行时错误转变为编译时错误。
+
+正因为有了明确的隔离域边界，开发者就需要为数据类型或接收端添加特定的标注，让编译器能够检查数据是否可以在不同的隔离域之间安全传递。
+因此，一系列包含 “Send” 语义的关键字和协议应运而生。
+
+
+==================================================Sendable
+值类型在 Swift 中被广泛使用，其复制语义天然适合在不同的隔离域之间传递。
+但由于自定义类型中可能包含不能安全传递的成员，因此我们可以通过添加 Sendable 标注，让编译器帮助验证其安全性。
+#####
+虽然 Sendable 以协议形式出现，但本质上它是一个编译时契约，声明某个类型可以安全地跨隔离域传递，编译器会验证这个声明的真实性。
+#####
+
+// Sendable 是一个标记协议（marker protocol）
+protocol Sendable { }
+// 它告诉编译器："这个类型跨隔离域传递是安全的"
+
+对于明显符合 Sendable 特性的类型，编译器会自动推断，即使不显式添加 Sendable 标注，编译器仍会确保其满足跨隔离域安全传递的要求：
+
+func getSendable<T:Sendable>(value:T) {}
+
+struct People { // 值类型
+    var name:String // 属性都是 Sendable
+    var age:Int
+}
+
+let people = People(name: "", age: 10)
+getSendable(value: people) // 自动推断为 Sendable
+
+
+在 Swift 6 中，某些之前可以自动推断的场景不再被支持：
+final class NoNeedMarkSendable {
+    let name = "fat"
+}
+let a = NoNeedMarkSendable()
+getSendable(value: a) // Swift 6 之前或没有开启严格并发检查 ✅
+getSendable(value: a) // Swift 6 之后 ❌： Type 'NoNeedMarkSendable' does not conform to the 'Sendable' protocol
+
+为了确保代码的健壮性，建议开发者显式添加 Sendable 标注。
+
+另外，如果一个类型具有明确的隔离域（如 actor 类型或标记为 @MainActor 的类），它本身就被视为 Sendable，因为其内部状态已由 Swift 并发模型提供隔离保障：
+@MainActor
+final class NoNeedMarkSendable {
+    let name = "fat"
+}
+
+Task { @MainActor in
+  let a = NoNeedMarkSendable()
+  getSendable(value: a) // ✅ @MainActor 类型自动 Sendable
+}
+Sendable 通常作为泛型约束使用，在编译时确保只接受可安全传递的类型。
+
+
+==================================================@unchecked Sendable
+在某些场景中，特别是处理遗留代码时，我们可能已经通过其他机制（如锁、队列等）确保了线程安全，但编译器无法理解这些实现。
+此时，开发者可以通过 @unchecked Sendable 向编译器保证类型的安全性，从而绕过编译器的自动检查：
+
+final class ThreadSafeCache: @unchecked Sendable {
+    private var cache: [String: Sendable] = [:]
+    // 虽然有可变状态，但通过队列保证了线程安全
+    private let queue = DispatchQueue(label: "cache", attributes: .concurrent)
+    
+    func get(_ key: String) -> Sendable? {
+        queue.sync {
+            cache[key]
+        }
+    }
+    
+    func set(_ key: String, value: Sendable) {
+        queue.async(flags: .barrier) {
+            self.cache[key] = value
+        }
+    }
+}
+需要警惕的是，一些开发者为了让代码通过编译会滥用 @unchecked Sendable，这会使严格并发检查失去意义。
+
+从 Swift 6 开始，Synchronization 框架提供的 Mutex 类型可以实现真正的 Sendable，无需再依赖 @unchecked：
+import Synchronization
+
+final class ThreadSafeCache: Sendable {
+    private let cache = Mutex<[String: Sendable]>([:])
+
+    func get(_ key: String) -> Sendable? {
+        cache.withLock {
+            $0[key]
+        }
+    }
+
+    func set(_ key: String, value: Sendable) {
+        cache.withLock {
+            $0[key] = value
+        }
+    }
+}
+
+==================================================@Sendable
+由于 Sendable 协议只能用于类型声明，Swift 为闭包提供了专门的属性 @Sendable。它表示闭包可以安全地跨隔离域传递：
+func getSendableClosure(perform: @escaping @Sendable () -> Void ) {}
+
+编译器会在编译阶段检查闭包的安全性：
+final class NoNeedMarkSendable {
+    let name = "fat"
+}
+
+let a = NoNeedMarkSendable()
+getSendableClosure(perform: { a }) // ❌ Capture of 'a' with non-Sendable type 'NoNeedMarkSendable' in a '@Sendable' closure
+
+getSendableClosure(perform: {
+   let a = NoNeedMarkSendable() // ✅ 在闭包内部创建，不存在跨隔离域传递
+})
+
+
+==================================================sending
+@Sendable 闭包的限制有时过于严格。考虑以下场景：
+Task {
+    let nonSendable = NonSendableClass()
+    getSendableClosure {
+        nonSendable.value += 1 // Capture of 'nonSendable' with non-Sendable type 'NonSendableClass' in a '@Sendable' closure
+    }
+    // 实际上这里是安全的，因为 nonSendable 不会在其他地方被修改
+}
+
+Swift 6 引入了 sending 参数修饰符来解决这个问题：
+
+// 原来的
+func getSendableClosure(perform: @escaping @Sendable  () -> Void) {}
+
+// 新的
+func getSendableClosure(sending perform: @escaping  () -> Void) {}
+
+Task {
+    let nonSendable = NonSendableClass()
+    getSendableClosure {
+        nonSendable.value += 1 // ✅ 换成 `sending` 后
+    }
+}
+
+#####
+但 sending 并非像 @unchecked Sendable 一样，会绕过 Swift 编译器的检查。如果出现了不安全的使用场景，编译器仍然会提醒我们：
+#####
+actor MyActor {
+    var storage: NonSendableClass?
+    
+    // 使用 sending 允许接收非 Sendable 参数
+    func store(_ object: sending NonSendableClass) {
+        storage = object 
+    }
+}
+
+Task {
+    let obj = NonSendableClass()
+    let myActor = MyActor()
+    await myActor.store(obj) // ✅ 所有权转移给 actor
+    // obj.value += 1 // ❌ 'obj' used after being passed as a 'sending' parameter
+}
+这是因为，sending 的核心概念是“转移所有权”，尽管编译器不再对 Sendable 进行检查，但是会对所有权进行检查。在转移后，我们不能在其他地方再使用已转移的值！
+
+sending 更适合的场景是：
+迁移非 Sendable 的遗留代码
+
+@Sendable 是类型安全地“声明线程安全”，而 sending 是所有权语义上的“保证单一使用权”
+
+
+==================================================nonsending
+nonsending 与前面的关键字在语义上有本质区别。它与 nonisolated 配合使用
+nonisolated(nonsending)，表示异步方法应该继承调用者的隔离域，而不是脱离当前隔离域运行。
+
+这是 Swift 6.2 对 nonisolated 行为的重要调整。在 Swift 6.2 之前：
+@MainActor
+class RunInMainActor {    
+    var name: String = "example"
+    
+    nonisolated func processData() async {
+        // Swift 6.2 之前：总是脱离 MainActor 运行（非主线程）
+    }
+}
+使用 nonisolated(nonsending) 后：
+@MainActor
+class RunInMainActor {    
+    var name: String = "example"
+    
+    nonisolated(nonsending) func processData() async {
+        // #####Swift 6.2：继承调用者的隔离域#####
+        // 从 MainActor 调用时运行在主线程
+        // 从其他 actor 调用时运行在对应的隔离域
+    }
+}
+
+开发者还可以通过启用 NonisolatedNonsendingByDefault 标志使该行为成为默认设置。

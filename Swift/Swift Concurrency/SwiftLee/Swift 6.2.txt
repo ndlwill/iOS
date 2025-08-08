@@ -1,0 +1,153 @@
+Swift 6.2: how it’s changing Concurrency
+https://www.avanderlee.com/concurrency/swift-6-2-concurrency-changes/
+
+
+
+==================================================Improving the approachability of data-race safety
+The Swift team recognizes that Swift Concurrency has not been as approachable as hoped. 
+In their official vision document they mention:
+
+visions(愿景): https://github.com/swiftlang/swift-evolution/blob/main/visions/approachable-concurrency.md
+
+
+#####
+They are focusing on improving the language so that it becomes easier to adopt Swift Concurrency slowly.
+Changes are expected to reduce the number of compiler warnings and errors, 
+and they even plan on automatic migration using a so-called migration build to accommodate these changes more easily. Some of these changes will be released in Swift 6.2.
+#####
+
+
+
+==================================================Swift 6.2 branch
+When we zoom into the currently active Swift 6.2 branch, we can already see a few proposals being implemented. 
+We can filter on ###implemented proposals### at the official Swift website and find proposals related to Swift Concurrency.
+Swift Evolution（进化）:
+https://www.swift.org/swift-evolution/#?version=6.2
+
+例如:
+SE-0371
+Isolated synchronous deinit // https://github.com/swiftlang/swift-evolution/blob/main/proposals/0371-isolated-synchronous-deinit.md
+SE-0461
+Run nonisolated async functions on the caller’s actor by default // https://github.com/swiftlang/swift-evolution/blob/main/proposals/0461-async-function-isolation.md
+SE-0463
+Import Objective-C completion handler parameters as `@Sendable` // https://github.com/swiftlang/swift-evolution/blob/main/proposals/0463-sendable-completion-handlers.md
+SE-0466
+Control default actor isolation inference(推断) // https://github.com/swiftlang/swift-evolution/blob/main/proposals/0466-control-default-actor-isolation.md
+SE-0470
+Global-actor isolated conformance // https://github.com/swiftlang/swift-evolution/blob/main/proposals/0470-isolated-conformances.md
+
+refer: 参考
+
+#####
+Let me be clear that until Swift 6.2 is officially released, it’s uncertain how these proposals will actually be implemented. 
+SE-0371, for example, was planned for Swift 6.1 but was moved last minute. 
+This shows that it’s uncertain to rely on the proposals’ state completely. 
+However, we can safely assume accepted proposals will eventually make it into a future Swift release.
+#####
+
+
+==================================================SE-466: Control default actor isolation inference
+To quote the proposal’s introduction:
+#####
+This proposal introduces a new compiler setting for inferring @MainActor isolation by default within the module to mitigate false-positive data-race safety errors in sequential code.
+#####
+Most code we write is single-threaded. 
+Apps, scripts, and command-line tools usually run on the main actor by default, 
+and unless you explicitly introduce concurrency—like by creating a Task—everything just runs sequentially.
+
+In these cases, data races aren’t even possible, so any concurrency warning is essentially a false alarm.
+This proposal aims to recognize that, so we don’t get overwhelmed with unnecessary warnings.
+Especially for beginners, it’s important to keep things simple—many start out with these straightforward programs, 
+and if we don’t force them to learn concurrency concepts too early, the language becomes a lot more welcoming.
+
+This change is source incompatible and will be opt-in for existing projects via -default-isolation MainActor or defaultIsolation(MainActor.self) in a package manifest.
+Obviously, this will become much clearer when Swift 6.2 gets officially released.
+
+
+==================================================Running nonisolated async functions on the caller’s actor by default
+非隔离 (nonisolated) 和隔离 (isolated)
+
+the compiler currently evaluates nonisolated synchronous and asynchronous methods differently.
+This is confusing, and that’s what SE-461 will change.
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0461-async-function-isolation.md
+
+
+Take the following code example that demonstrates on which thread an asynchronous task executes:
+class NotSendable {
+    func performAsync() async {
+        print("Task started on thread: \(Thread.currentThread)")
+        // Current (old) situation: Task started on thread: <NSThread: 0x600003694d00>{number = 8, name = (null)}
+    }
+}
+
+@MainActor
+struct NewThreadingDemonstrator {
+    
+    func demonstrate() async {
+        print("Starting on the main thread: \(Thread.currentThread)")
+        // Prints: Starting on the main thread: <_NSMainThread: 0x6000006b4040>{number = 1, name = main}
+
+        let notSendable = NotSendable()
+        await notSendable.performAsync()
+        
+        /// Returning on the main thread.
+        print("Resuming on the main thread: \(Thread.currentThread)")
+        // Prints: Resuming on the main thread: <_NSMainThread: 0x6000006b4040>{number = 1, name = main}
+    }
+}
+
+#####
+As you can see, the async task does not inherit the caller’s actor isolation. 
+If it were, we would see the main thread being printed inside performAsync.
+This demonstrates how we potentially get exposed to Swift Concurrency early in the process of working with Swift—you simply call into an asynchronous method, 
+which results in a multi-threaded application that risks potential data races.
+
+This behavior is especially important for preventing unexpected overhang on the main actor. 
+In the end, we often want asynchronous methods to be dispatched to a different thread so our programs can continue execution while awaiting the results.
+#####
+
+extension Thread {
+    /// A convenience method to print out the current thread from an async method.
+    /// This is a workaround for compiler error: // 这是编译器错误的解决方法：
+    /// Class property 'current' is unavailable from asynchronous contexts; Thread.current cannot be used from async contexts.
+    /// See: https://github.com/swiftlang/swift-corelibs-foundation/issues/5139
+    public static var currentThread: Thread {
+        return Thread.current
+    }
+}
+
+I’ve downloaded the latest main branch development toolchain and compiled the same code using the AsyncCallerExecution upcoming feature flag. 
+This is the result after enabling:
+class NotSendable {
+    func performAsync() async {
+        print("Task started on thread: \(Thread.currentThread)")
+        // Old situation: Task started on thread: <NSThread: 0x600003694d00>{number = 8, name = (null)}
+        // New situation: Task started on thread: <_NSMainThread: 0x6000006b4040>{number = 1, name = main}
+    }
+}
+
+@MainActor
+struct NewThreadingDemonstrator {
+    
+    func demonstrate() async {
+        print("Starting on the main thread: \(Thread.currentThread)")
+        // Prints: Starting on the main thread: <_NSMainThread: 0x6000006b4040>{number = 1, name = main}
+
+        let notSendable = NotSendable()
+        await notSendable.performAsync()
+        
+        /// Returning on the main thread.
+        print("Resuming on the main thread: \(Thread.currentThread)")
+        // Prints: Resuming on the main thread: <_NSMainThread: 0x6000006b4040>{number = 1, name = main}
+    }
+}
+
+###
+As you can see, someAsyncTask now inherits the actor isolation from its caller. 
+There will be ways to opt out of inheritance described in the proposal, but these are not yet available in the latest toolchain. 
+This will definitely become clearer as soon as Swift 6.2 gets released.
+###
+
+
+==================================================
+Swift Concurrency is getting improved in Swift 6.2 to ###make it more approachable###(使它更容易上手).

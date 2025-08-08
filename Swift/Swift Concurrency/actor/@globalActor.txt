@@ -1,0 +1,280 @@
+Actors are a new kind of reference type that protect their instance data from concurrent access.
+Swift actors achieve this with actor isolation, which ensures (at compile time) that all accesses to that instance data go through a synchronization mechanism that serializes execution.
+Actor 是一种新的引用类型，可以保护其实例数据免受并发访问。
+Swift Actor 通过 Actor 隔离机制来实现这一点，它确保（在编译时）所有对该实例数据的访问都经过同步机制，从而实现序列化执行。
+
+
+Actors are fantastic for isolating instance data, providing a form of reference type that can be used in concurrent programs without introducing data races.
+
+
+==================================================Defining global actors
+A global actor is a globally-unique actor identified by a type. 
+That type becomes a custom attribute.
+Any declaration can state that it is actor-isolated to that particular global actor by naming the global actor type as an attribute, 
+at which point all of the normal actor-isolation restrictions come into play:
+#####
+the declaration can only be synchronously accessed from another declaration on the same global actor, 
+but can be asynchronously accessed from elsewhere.
+#####
+
+GlobalActor
+A type that represents a globally-unique actor that can be used to isolate various declarations anywhere in the program.
+https://developer.apple.com/documentation/swift/globalactor
+
+
+A global actor is a type that has the @globalActor attribute and contains a static property named shared that provides a shared instance of an actor.
+@globalActor actor UserProfileActor {
+    static var shared = UserProfileActor()
+}
+#####
+A global actor type can be a struct, enum, actor, or final class.
+It is essentially just a marker type that provides access to the actual shared actor instance via shared.
+The shared instance is a globally-unique actor instance that becomes synonymous with the global actor type, 
+and will be used for synchronizing access to any code or data that is annotated with the global actor.
+
+Global actors implicitly conform to the GlobalActor protocol, which describes the shared requirement.
+The conformance of a @globalActor type to the GlobalActor protocol must occur in the same source file as the type definition, 
+and the conformance itself cannot be conditional.
+https://developer.apple.com/documentation/swift/globalactor
+#####
+
+
+==================================================Defining MainActor
+Its a globally unique actor who performs its tasks on the main thread. 
+You can use it for properties, methods, instances, and closures to perform tasks on the main thread. 
+Proposal SE-0316 Global Actors.
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0316-global-actors.md
+
+
+Imagine when we need to fetch the user pofile photo, 
+we do network request and when the response came we switch to the main thread, we used to do this:
+
+func fetchProfilePhoto() async {
+    // Here we do the normal Netwrok Request fo fetch the profile photo
+    
+    DispatchQueue.main.async {
+        // Here we switch to the main thread to update the profile photo.
+    }
+}
+
+So now after having @MainActor we don’t need to use DispatchQueue anymore we can just label the function to @MainActor and it will execute the logic on the main thread like this:
+@MainActor
+func fetchProfilePhoto() {
+    // Here we do the normal Netwrok Request fo fetch the profile photo
+    // After the request is done, we dont need to switch to Main thread anymore as @MainActor will take care for us.
+}
+
+
+==================================================Using actors on functions and variable
+You can label the variables as well to make the access happens only on the main thread
+
+final class User {
+    @MainActor var name: String?
+    
+    @MainActor func update(name: String) {
+        self.name = name
+    }
+}
+
+If we tried to update the name in the User class, our compiler will complain as we can access name variable only from the main thread so we have to fix it by labeling update function to @MainActor as well.
+
+
+==================================================Using actors on a class
+If we wanna make everything in the class be executed on the main thread, we can mark the class with @MainActor
+
+@MainActor
+final class UserViewModel {
+    func updateProfilePhoto() {
+        print("Update the profile photo done on MainThread: \(Thread.isMainThread)")
+        print("Update the profile photo done on Thread: \(Thread.current)")
+    }
+    
+    @UserProfileActor
+    func fetchProfilePhoto() async {
+        print("Fetch the profile photo done on MainThread: \(Thread.isMainThread)")
+        print("Fetch the profile photo done on Thread: \(Thread.current)")
+        await updateProfilePhoto()
+    }
+}
+
+@globalActor actor UserProfileActor {
+    static var shared = UserProfileActor()
+}
+
+Imagine that you need to make everything in the class be executed on the main thread but in the same time there is a part of this class needs to be executed on a different thread, 
+here comes the usage of global actor.
+
+The function fetchProfilePhoto is labeled as @UserProfileActor which we did create earlier, 
+then the fetch itself will be on the global actor like a different thread but the update itself will be on the main actor like main thread.
+
+Fetch the profile photo done on MainThread: false
+Fetch the profile photo done on Thread: <NSThread: 0x600000c34940>{number = 7, name = (null)}
+
+Update the profile photo done on MainThread: true
+Update the profile photo done on Thread: <_NSMainThread: 0x600000c280c0>{number = 1, name = main}
+
+As we can see that both of the logic has been done on different threads.
+
+
+==================================================源码
+
+/// Common protocol to which all actors conform.
+///
+/// The `Actor` protocol generalizes over all `actor` types. Actor types
+/// implicitly conform to this protocol.
+///
+/// ### Actors and SerialExecutors
+/// By default, actors execute tasks on a shared global concurrency thread pool.
+/// This pool is shared by all default actors and tasks, unless an actor or task
+/// specified a more specific executor requirement.
+///
+/// It is possible to configure an actor to use a specific ``SerialExecutor``,
+/// as well as impact the scheduling of default tasks and actors by using
+/// a ``TaskExecutor``.
+///
+/// - SeeAlso: ``SerialExecutor``
+/// - SeeAlso: ``TaskExecutor``
+@available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *)
+public protocol Actor : AnyObject, Sendable {
+
+    /// Retrieve the executor for this actor as an optimized, unowned
+    /// reference.
+    ///
+    /// This property must always evaluate to the same executor for a
+    /// given actor instance, and holding on to the actor must keep the
+    /// executor alive.
+    ///
+    /// This property will be implicitly accessed when work needs to be
+    /// scheduled onto this actor.  These accesses may be merged,
+    /// eliminated, and rearranged with other work, and they may even
+    /// be introduced when not strictly required.  Visible side effects
+    /// are therefore strongly discouraged within this property.
+    ///
+    /// - SeeAlso: ``SerialExecutor``
+    /// - SeeAlso: ``TaskExecutor``
+    nonisolated var unownedExecutor: UnownedSerialExecutor { get }
+}
+
+
+
+/// A type that represents a globally-unique actor that can be used to isolate
+/// various declarations anywhere in the program.
+///
+/// A type that conforms to the `GlobalActor` protocol and is marked with
+/// the `@globalActor` attribute can be used as a custom attribute. Such types
+/// are called global actor types, and can be applied to any declaration to
+/// specify that such types are isolated to that global actor type. When using
+/// such a declaration from another actor (or from nonisolated code),
+/// synchronization is performed through the shared actor instance to ensure
+/// mutually-exclusive access to the declaration.
+///
+/// ## Custom Actor Executors
+/// A global actor uses a custom executor if it needs to customize its execution
+/// semantics, for example, by making sure all of its invocations are run on a
+/// specific thread or dispatch queue.
+///
+/// This is done the same way as with normal non-global actors, by declaring a
+/// ``Actor/unownedExecutor`` nonisolated property in the ``ActorType``
+/// underlying this global actor.
+///
+/// It is *not* necessary to override the ``sharedUnownedExecutor`` static
+/// property of the global actor, as its default implementation already
+/// delegates to the ``shared.unownedExecutor``, which is the most reasonable
+/// and correct implementation of this protocol requirement.
+///
+/// You can find out more about custom executors, by referring to the
+/// ``SerialExecutor`` protocol's documentation.
+///
+/// - SeeAlso: ``SerialExecutor``
+@available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *)
+public protocol GlobalActor {
+
+    /// The type of the shared actor instance that will be used to provide
+    /// mutually-exclusive access to declarations annotated with the given global
+    /// actor type.
+    associatedtype ActorType : Actor
+
+    /// The shared actor instance that will be used to provide mutually-exclusive
+    /// access to declarations annotated with the given global actor type.
+    ///
+    /// The value of this property must always evaluate to the same actor
+    /// instance.
+    static var shared: Self.ActorType { get }
+
+    /// Shorthand for referring to the `shared.unownedExecutor` of this global actor.
+    ///
+    /// When declaring a global actor with a custom executor, prefer to implement
+    /// the underlying actor's ``Actor/unownedExecutor`` property, and leave this
+    /// `sharedUnownedExecutor` default implementation in-place as it will simply
+    /// delegate to the `shared.unownedExecutor`.
+    ///
+    /// The value of this property must be equivalent to `shared.unownedExecutor`,
+    /// as it may be used by the Swift concurrency runtime or explicit user code with
+    /// that assumption in mind.
+    ///
+    /// Returning different executors for different invocations of this computed
+    /// property is also illegal, as it could lead to inconsistent synchronization
+    /// of the underlying actor.
+    ///
+    /// - SeeAlso: ``SerialExecutor``
+    static var sharedUnownedExecutor: UnownedSerialExecutor { get }
+}
+
+
+/// A singleton actor whose executor is equivalent to the main
+/// dispatch queue.
+@available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *)
+@globalActor final public actor MainActor : GlobalActor {
+
+    /// The shared actor instance that will be used to provide mutually-exclusive
+    /// access to declarations annotated with the given global actor type.
+    ///
+    /// The value of this property must always evaluate to the same actor
+    /// instance.
+    public static let shared: MainActor
+
+    /// Retrieve the executor for this actor as an optimized, unowned
+    /// reference.
+    ///
+    /// This property must always evaluate to the same executor for a
+    /// given actor instance, and holding on to the actor must keep the
+    /// executor alive.
+    ///
+    /// This property will be implicitly accessed when work needs to be
+    /// scheduled onto this actor.  These accesses may be merged,
+    /// eliminated, and rearranged with other work, and they may even
+    /// be introduced when not strictly required.  Visible side effects
+    /// are therefore strongly discouraged within this property.
+    ///
+    /// - SeeAlso: ``SerialExecutor``
+    /// - SeeAlso: ``TaskExecutor``
+    @inlinable nonisolated final public var unownedExecutor: UnownedSerialExecutor { get }
+
+    /// Shorthand for referring to the `shared.unownedExecutor` of this global actor.
+    ///
+    /// When declaring a global actor with a custom executor, prefer to implement
+    /// the underlying actor's ``Actor/unownedExecutor`` property, and leave this
+    /// `sharedUnownedExecutor` default implementation in-place as it will simply
+    /// delegate to the `shared.unownedExecutor`.
+    ///
+    /// The value of this property must be equivalent to `shared.unownedExecutor`,
+    /// as it may be used by the Swift concurrency runtime or explicit user code with
+    /// that assumption in mind.
+    ///
+    /// Returning different executors for different invocations of this computed
+    /// property is also illegal, as it could lead to inconsistent synchronization
+    /// of the underlying actor.
+    ///
+    /// - SeeAlso: ``SerialExecutor``
+    @inlinable public static var sharedUnownedExecutor: UnownedSerialExecutor { get }
+
+    @inlinable nonisolated final public func enqueue(_ job: UnownedJob)
+
+    /// The type of the shared actor instance that will be used to provide
+    /// mutually-exclusive access to declarations annotated with the given global
+    /// actor type.
+    @available(iOS 13.0, tvOS 13.0, watchOS 6.0, macOS 10.15, *)
+    public typealias ActorType = MainActor
+
+    @objc deinit
+}

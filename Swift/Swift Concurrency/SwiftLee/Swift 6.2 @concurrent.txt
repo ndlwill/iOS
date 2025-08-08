@@ -1,0 +1,133 @@
+https://www.avanderlee.com/concurrency/concurrent-explained-with-code-examples/
+
+Swift 6.2 introduced many changes during WWDC 2025, including a new @concurrent attribute we need when working with Swift Concurrency.
+
+
+You might have read that we’ll be able to
+SE-0466
+Control default actor isolation inference, 
+which also means we need a way out of the @MainActor for asynchronous functions.
+#####
+For the latter, @concurrent comes into place. It’s a way to switch off from an actor and let nonisolated methods run in a different isolation domain.
+#####
+
+
+==================================================How to use @concurrent in Swift Concurrency
+###
+Let’s start by making it clear that you will only need @concurrent in Swift 6.2 and up.
+Before that, the behavior of nonisolated asynchronous methods was different
+
+You can read more about this in detail in 461 – Run nonisolated async functions on the caller’s actor by default.
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0461-async-function-isolation.md#concurrent-functions
+###
+
+
+###
+Since Swift 6.2, nonisolated asynchronous functions run on the caller’s actor by default.
+This means that if you call a method from, for example, the @MainActor, the nonisolated async method will run on this actor too.
+In Xcode 26, you can enable this behavior with the upcoming feature flag NonisolatedNonsendingByDefault:
+
+Swift Compiler - Upcoming Features
+nonisolated(nonsending) By Default: YES // To start making use of @concurrent, you need to enable an upcoming feature.
+###
+
+
+extension Thread {
+    /// A convenience method to print out the current thread from an async method.
+    /// This is a workaround for compiler error:
+    /// Class property 'current' is unavailable from asynchronous contexts; Thread.current cannot be used from async contexts.
+    /// See: https://github.com/swiftlang/swift-corelibs-foundation/issues/5139
+    public static var currentThread: Thread {
+        return Thread.current
+    }
+}
+
+
+Once enabled, the behavior of nonisolated asynchronous methods will change. Let me first demonstrate the current (old) behavior:
+class NotSendable {
+    func performAsync() async {
+        print("Task started on thread: \(Thread.currentThread)")
+        // Current (old) situation: Task started on thread: <NSThread: 0x600003694d00>{number = 8, name = (null)}
+    }
+}
+
+@MainActor
+struct NewThreadingDemonstrator {
+    
+    func demonstrate() async {
+        print("Starting on the main thread: \(Thread.currentThread)")
+        // Prints: Starting on the main thread: <_NSMainThread: 0x6000006b4040>{number = 1, name = main}
+
+        let notSendable = NotSendable()
+        await notSendable.performAsync()
+        
+        /// Returning on the main thread.
+        print("Resuming on the main thread: \(Thread.currentThread)")
+        // Prints: Resuming on the main thread: <_NSMainThread: 0x6000006b4040>{number = 1, name = main}
+    }
+}
+The code example demonstrates how the nonisolated method switches off from the @MainActor isolation domain, running on a different thread.
+
+
+After turning on the upcoming feature flag, the behavior will change:
+class NotSendable {
+    func performAsync() async {
+        print("Task started on thread: \(Thread.currentThread)")
+        // Old situation: Task started on thread: <NSThread: 0x600003694d00>{number = 8, name = (null)}
+        // New situation: Task started on thread: <_NSMainThread: 0x6000006b4040>{number = 1, name = main}
+    }
+}
+
+@MainActor
+struct NewThreadingDemonstrator {
+    
+    func demonstrate() async {
+        print("Starting on the main thread: \(Thread.currentThread)")
+        // Prints: Starting on the main thread: <_NSMainThread: 0x6000006b4040>{number = 1, name = main}
+
+        let notSendable = NotSendable()
+        await notSendable.performAsync()
+        
+        /// Returning on the main thread.
+        print("Resuming on the main thread: \(Thread.currentThread)")
+        // Prints: Resuming on the main thread: <_NSMainThread: 0x6000006b4040>{number = 1, name = main}
+    }
+}
+As you can see, the new situation of the performAsync() method shows that it’s now respecting the caller’s actor.
+
+
+Making use of @concurrent:
+With the feature flag enabled, we can now return to the old behavior by using the @concurrent attribute:
+
+class NotSendable {
+    @concurrent func performAsync() async {
+        print("Task started on thread: \(Thread.currentThread)")
+        // Task started on thread: <NSThread: 0x600003694d00>{number = 8, name = (null)}
+    }
+}
+It restores the ‘old’ behavior and switches off from the @MainActor.
+
+
+==================================================Why do we need a feature flag for this feature?
+It’s essential to understand why this functionality is behind a feature flag.
+Changing the way nonisolated asynchronous functions run can have an impact on your code’s performance.
+For example, you might suddenly block the main thread for a longer period of time.
+Therefore, you need to consciously opt-in to this behavior and check your code to make sure you need to add @concurrent anywhere to restore performant behavior.
+
+
+Will this ever be the default?
+Yes, with most of the upcoming feature flags you can assume that it will eventually become the default. 
+Therefore, you should take this as a sign that you need to migrate anywhere in the upcoming months.
+
+
+==================================================Why it’s better to wait for adoption
+Swift 6.2 is still in development—we’re waiting for the final version of Xcode 26 before we get the final version of Swift 6.2. 
+The team is currently working hard on a migration functionality, which will likely (or hopefully) add the @concurrent attribute automatically. 
+This makes it easier for you to review nonisolated asynchronous methods and decide whether or not it makes sense to jump off from the caller’s actor.
+
+Eventually, you’ll be able to make conscious decisions whether or not you need to switch off from an isolation domain by making use of the @concurrent attribute.
+
+
+==================================================Conclusion
+Swift 6.2 brings a lot of concurrency improvements that will help us migrate. 
+The @concurrent attribute will play an important role in assigning a default isolation domain for nonisolated asynchronous methods.

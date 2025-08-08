@@ -1,0 +1,368 @@
+https://developer.apple.com/documentation/xcode/identifying-and-addressing-framework-module-issues
+
+
+When you create a framework containing Objective-C, Objective-C++, C, or C++ code that you distribute to customers, clients, or other developers, 
+it’s often challenging and time-consuming to find problems in your framework that don’t appear at build time.
+
+
+In Xcode version 14.3 or later, enable the module verifier in your Xcode project’s build settings so that you can identify and address problems with your framework module before you distribute it.
+Some examples of these problems include:
+Missing header references in your umbrella header
+Using quoted includes instead of angle-bracketed includes
+Using @import syntax in your public and private headers
+Incorrect target conditionals
+Imports inside of extern "C" language linkage specification
+Non-modular headers in your umbrella header
+References to private headers from public headers
+When you enable the module verifier, it finds module problems in your code and displays errors for them in Xcode’s Issue navigator, just like compiler errors or warnings.
+
+
+Address common issues:
+https://developer.apple.com/documentation/xcode/identifying-and-addressing-framework-module-issues
+
+
+Build Settings->Packaging->Defines Module
+是一个非常关键的设置，尤其是当你开发的是一个 framework（框架）时
+“Defines Module” 指的是“是否为该 target 定义一个 Swift module（模块）”。
+默认值：
+对于 framework：默认为 YES
+对于 app：默认为 NO
+
+设置为 YES 时会发生什么？
+1. Xcode 会为该 target 生成一个 Swift module
+这个模块可以通过 import MyFramework 的方式被其他模块或 app 使用。
+2. 模块名称由 Product Module Name 决定
+你可以通过 Build Setting 的 Product Module Name 设置模块名（默认是 target name 去掉非法字符）。
+3. 生成 .swiftmodule 文件
+在编译产物中，会包含 .swiftmodule、.modulemap 等文件，这是 Swift 的模块接口描述文件。
+4. 允许 Clang 模块导入
+如果你写了一个 Objective-C 的 framework 并设置了 module map，勾上 Defines Module 也能让 Clang 使用模块方式导入。
+
+
+Framework Module
+它结合了 动态库、模块化编译、名称空间管理 等概念
+Framework Module = 一个以 framework 形式存在的模块。
+
+Framework Module 的特点
+模块化：使用 import FrameworkName 直接导入，无需暴露头文件路径。
+名称空间隔离：模块内的符号不会污染全局命名空间。
+
+
+Framework Module 的组成结构:
+swift:
+MyFramework.framework/
+├── Modules/             # Clang/Swift模块文件
+│   └── MyFramework.swiftmodule/  # Swift模块
+├── # 资源文件
+├── Info.plist           # 描述信息
+├── MyFramework          # 二进制动态库文件
+├── _CodeSignature       # 签名
+
+
+oc:
+MyFramework.framework/
+├── Headers/             # 公开（public）头文件
+├── Modules/             # Clang/Swift模块文件
+│   ├── module.modulemap # Clang模块描述
+├── # 资源文件
+├── Info.plist           # 描述信息
+├── MyFramework          # 二进制动态库文件
+├── _CodeSignature       # 签名
+
+当你用 Xcode 建一个 Framework Target，Xcode 会自动生成一个主头文件（伞形头文件Umbrella Header） MyFramework.h
+这样使用者只需要导入这一份伞形头文件，就能用到框架里所有公开的 API。
+“在这个头文件里，应该 #import 你框架中所有需要公开的头文件，就像这样：#import <MyFramework/PublicHeader.h>。”
+因为 Umbrella Header 是你的框架对外暴露的统一入口
+统一出口：你控制哪些头对外公开（配合 Build Phases → Headers 里的 Public/Private/Project 可见性）。
+同时在 Target → Build Phases → Headers 把 ABC.h、XYZ.h 标记为 Public。
+
+public 只有 MyFramework.h 时
+或者
+public 有 MyFramework.h TestObject.h , private 有 Utils.h 时
+都是
+module.modulema:
+framework module MyFramework {// 定义一个叫做 MyFramework 的模块，并声明它是一个 framework module
+  umbrella header "MyFramework.h" // 指定这个模块的 umbrella header（主头文件）是 MyFramework.h，Umbrella header 是一个统一入口，里面应该包含所有希望公开的头文件的 #import <MyFramework/PublicHeader.h>
+  export * // 表示 导出 umbrella header 中所有 import 的符号
+
+  module * { export * } // 表示 所有子模块都导出其内容
+}
+如果你有如下结构
+Headers/
+  ├── MyFramework.h
+  ├── A.h
+  ├── B.h
+module * 会自动帮你为每个头文件或文件夹生成匿名子模块，并 export *
+举例来说，它等价于：
+module A { header "A.h"; export * }
+module B { header "B.h"; export * }
+
+
+
+TestObject.h 的实际路径: Desktop/TestOCFramework/TestOCFramework/TestObjectF/TestObject.h
+MyFramework.h 中需要写 #import <TestOCFramework/TestObject.h>
+写了：
+#import <TestOCFramework/TestObjectF/TestObject.h> // 'TestOCFramework/TestObjectF/TestObject.h' file not found
+#import <TestOCFramework/XXX> 是模块路径，不是文件系统路径！
+这不是说去磁盘找 /TestObjectF/TestObject.h，而是：
+去 TestOCFramework 这个模块暴露的 public headers 中查找 "TestObjectF/TestObject.h" 这个模块路径。
+判断能否这么 import 的核心是：Public Headers + modulemap 路径是否包含 TestObjectF/TestObject.h
+默认情况下，Xcode 不会保留子目录结构（TestObjectF）
+Xcode 编译时会把它“扁平化”处理成：
+TestOCFramework.framework/Headers/TestObject.h
+它在模块中的路径就是 TestObject.h
+所以你只能这样写：
+#import <TestOCFramework/TestObject.h>
+
+
+模块层级结构
+子模块：
+你需要手动创建 module.modulemap 文件：
+打包后的 Headers 和 Xcode 的 MyFramework 文件结构(Xcode 的 MyFramework 文件夹，即 MyFramework 项目下的 MyFramework 文件夹)都是:
+  ├── MyFramework.h // 里面不写 #import <MyFramework/TestObject.h>
+  ├── TestObject.h
+
+framework module MyFramework {// OC framework module
+  umbrella header "MyFramework.h"
+  export *
+
+  module TestObjectF { 
+    header "TestObject.h"
+    export *
+  }
+}
+然后告诉 Xcode 使用你的 module.modulemap
+MODULEMAP_FILE = $(SRCROOT)/path/to/module.modulemap
+
+swift项目使用时 import TestOCFramework
+具体代码： TestOCFramework.TestObject().test() // TestOCFramework可以不加,表示模块，相当于命名空间
+对 import TestOCFramework 的 TestOCFramework command + 左键进入看到:
+
+import Foundation
+import TestOCFramework.TestObjectModule // 包含了子模块
+
+//! Project version number for TestOCFramework.
+public var TestOCFrameworkVersionNumber: Double
+
+//! Project version string for TestOCFramework.
+public let TestOCFrameworkVersionString: <<error type>>
+
+也可以通过子模块 import TestOCFramework.TestObjectModule 使用 TestObject().test()，这个 TestObjectModule 也可以 command + 左键进入
+因为复杂的框架中，TestOCFramework 可能包含其他更多的子模块，这样 import 更具体明确，引入更少
+此时用户就能控制只引入部分功能模块，有一定“瘦身”效果（适用于大型 SDK 组件化场景）
+模块拆分的好处：
+便于多人协作或大型 SDK 维护
+如果你以后不想让别人访问某些子模块，移除 export 即可
+
+
+通过 import TestOCFramework.TestObjectModule 并不能让最终 IPA 中只包含该模块的代码
+最终 App 打包到 IPA 时，整个 TestOCFramework.framework 是作为一个整体的动态库或静态库被打包进去的。
+即使你只用了 TestObject 类，如果这个 framework 是动态库（.framework with .dylib），那它整个都在 App 包里。
+如果你希望实现真正的按模块打包“瘦身”：
+A. 拆分 framework 为多个子 framework
+TestOCFramework/
+  └── TestObject.framework
+  └── TestUser.framework
+  └── TestCore.framework
+客户端只链接需要的模块，未使用的模块不会出现在最终的 IPA 中（尤其是静态库时更明显）。
+
+B. 使用静态 library + Dead Code Stripping（推荐静态框架）
+使用静态库（Static Framework / .a + .h）而不是动态 framework
+打开 Xcode 的优化选项：
+Dead Code Stripping: YES (/OPT:REF or -Wl,-dead_strip)
+加上 -all_load 和 -ObjC 控制是否保留所有 Objective-C 类和 Category
+最终会做到：
+未被引用的类、函数会被 strip 掉
+不用的模块不会出现在可执行文件中
+选项	作用	是否常用
+-ObjC	链接器会将所有包含 Objective-C 类和 Category 的 对象文件 都加载进来（从 .a 中）	✅ 必要
+-all_load	强制将整个静态库中的所有对象文件都加载进来	⛔️ 谨慎使用
+为什么需要这些选项？
+Objective-C 的一些功能（如 Category 和 Selector 注册）依赖 runtime，在静态链接时不会被主动引用到，容易被链接器认为是“无用代码”剔除掉。比如：
+// 假设 MyCategory.m 只是为 NSString 添加一个分类方法，但没有任何地方直接调用
+@implementation NSString (MyCategory)
+- (void)myExtensionMethod { ... }
+@end
+如果没有 -ObjC，这个分类的方法所在的 .o 文件可能就不会被链接进最终 App。你会发现：
+方法在运行时找不到（selector not recognized）
+category 无效，symbol 丢失
+
+-ObjC 会告诉链接器：
+如果一个 .a 文件中某个对象文件（.o）包含 Objective-C 类或 Category，即使没有其他地方直接引用它，也把它链接进来。
+这可以确保：
+Objective-C 类完整
+Category 被正确加载（否则 runtime 发现不了）
+但它不会引入那些只包含 C 或 C++ 函数的 .o 文件，所以它是一个比较 温和、安全的链接选项
+
+
+
+通过命令行工具（如 nm 或 otool）来确认一个 .a 静态库中是否包含 Objective-C 的类、Category 或其他符号，以判断是否 必须加 -ObjC。
+nm -gU path/to/libYourLibrary.a
+-g：只列出全局符号（external symbols）
+-U：只显示未定义符号（可以省略）
+
+$ nm -gU libMySDK.a
+00000000 T _OBJC_CLASS_$_CoolClass
+00000000 T _OBJC_METACLASS_$_CoolClass
+00000000 T _OBJC_CATEGORY_$_NSString_$_MyExtension
+00000000 T _OBJC_SELECTOR_REFERENCES_._myCategoryMethod
+00000000 T _OBJC_IVAR_$_CoolClass._someIvar
+出现 OBJC_CATEGORY_$_ClassName_$_CategoryName：
+👉 说明库中确实定义了 Category，你需要加 -ObjC，否则 Category 无法生效。
+出现 OBJC_CLASS_$_XXX 和 OBJC_METACLASS_$_XXX：
+👉 说明有 Objective-C 类定义（类和元类），如果没引用类本身，链接器也会丢弃它，-ObjC 仍有必要。
+
+Objective-C 中的 Category（分类）确实是在运行时动态加载的
+运行时加载流程（简化版）：
+程序启动时，dyld 加载二进制及其依赖库；
+Objective-C Runtime（libobjc）初始化；
+扫描所有二进制模块中的 __objc_catlist；
+对每个 Category：
+    查找它对应的“原始类”（原始 Class）；
+    将 Category 的方法列表、属性列表、协议列表 动态合并到原始类中；
+    这种合并是追加到方法查找链最前面，所以 Category 方法可以覆盖原类方法。
+
+
+
+#####
+.o 是 object 的缩写，代表“目标代码文件（Object File）
+.o 文件的全称是 object file，也就是 目标文件
+它是你写的源代码（.c、.cpp、.m、.mm、.s 等）经过 编译（compile） 后生成的中间文件
+.o 文件还没有被链接（link），所以不能独立运行
+.o 的全称是 Object file，即目标文件，是编译器生成的中间产物，用于下一阶段链接成可执行文件或库。
+
+
+如果 Category 中的方法在运行时根本就不会被用到，那就算 runtime 没加载它，也不会导致崩溃或错误。
+但有一些 特定场景 下，即使你“看起来没用”，Category 被剔除了，也会出现隐性 bug 或崩溃
+@implementation NSString (MyUtils)
+- (NSString *)reversedString {
+    // ...
+}
+@end
+
+// 但项目中从来没调用过 reversedString
+此时链接器剔除该 Category
+runtime 无法加载
+情况：Category 通过 Selector 或 KVC 间接调用 —— ❌ 运行时崩溃或行为异常
+SEL sel = NSSelectorFromString(@"reversedString");
+if ([someString respondsToSelector:sel]) {
+    NSString *reversed = [someString performSelector:sel];
+}
+或者
+NSString *value = [model valueForKey:@"someComputedProperty"]; // 实际实现来自 Category
+这种调用方式 编译器无法分析出依赖
+链接器会认为 reversedString 没人用，剔除
+最终运行时找不到方法，performSelector 报错或返回 nil
+#####
+
+
+
+使用方如何导入
+Objective‑C:
+#import <MyFramework/MyFramework.h>
+// 或（Clang modules 开启）
+@import MyFramework;
+Swift：
+import MyFramework
+
+
+
+
+
+模块接口：
+Objective-C Framework 用 module.modulemap 定义模块接口。
+Swift Framework 自动生成 .swiftmodule，声明可访问的接口。
+
+
+module.modulemap 文件:
+module.modulemap 是用来告诉 Clang 如何将 C/C++ 头文件组织成模块的文件，
+它主要用于创建 Clang Module（也叫 modular header），通常用于：
+C/C++ 的静态库/动态库模块化
+Objective-C 引用 C 库
+Swift 引用 C/C++ 库（例如通过桥接 header）
+
+
+1. Public
+✅ 会被包含在 framework 的 module 接口中（即 import MyFramework 时可见）
+✅ 编译后会复制到 MyFramework.framework/Headers/ 目录下
+✅ 可以被 framework 使用者 导入和使用
+✅ 应当用于你希望暴露给外部的 API 接口
+
+2. Private
+❌ 不会出现在 module map 里，也不会被 Swift 使用者自动看到
+✅ 编译后会复制到 MyFramework.framework/PrivateHeaders/
+✅ 可以被你自己框架的实现代码导入使用
+❌ 不应暴露给外部调用者
+
+3. Project
+❌ 不包含在 framework 的 module 接口中（跟 Private 一样不会暴露）
+✅ 可以被 当前 framework 工程中的其他文件使用
+❌ 外部无法访问
+
+相同点（Private ≈ Project）
+项	Project	Private
+外部项目是否能访问	❌ 否	❌ 否
+是否暴露在 modulemap	❌ 否	❌ 否
+Swift 能否访问	❌ 否	❌ 否
+是否能被 framework 自己访问	✅ 是	✅ 是
+
+关键区别在于打包成 .framework 后
+项	Project	Private
+是否包含在最终 .framework 中	❌ 不包含，不会出现在打包后的 Headers 文件夹	✅ 包含在 PrivateHeaders/ 子目录中
+是否适合 framework 内部子模块共享	✅ 更适合（在开发时使用）	✅ 也可以（打包后依然可用）
+用于发布 SDK 是否可行	❌ 不推荐，发布后头文件不会包含	✅ 推荐用于“内部头文件”，使用者无法导入但你仍能访问
+
+
+
+
+进入 Build Settings → MACH_O_TYPE
+查看framework是（静态库）还是 (动态库)
+
+
+引入 Framework Module 使用，编译成功后，但运行报错
+dyld[3973]: Library not loaded: @rpath/TestOCFramework.framework/TestOCFramework
+Referenced from: <BDBBC828-4A5E-389C-8819-2FB43D87B45C> /private/var/containers/Bundle/Application/5DFEA802-1A6C-4AEC-B760-2F421EC5C1A0/TestModule.app/TestModule.debug.dylib
+Reason: tried: '/private/var/containers/Bundle/Application/5DFEA802-1A6C-4AEC-B760-2F421EC5C1A0/TestModule.app/Frameworks/TestOCFramework.framework/TestOCFramework' (no such file), 
+'/private/var/containers/Bundle/Application/5DFEA802-1A6C-4AEC-B760-2F421EC5C1A0/TestModule.app/TestOCFramework.framework/TestOCFramework' (no such file), 
+'/private/var/containers/Bundle/Application/5DFEA802-1A6C-4AEC-B760-2F421EC5C1A0/TestModule.app/Frameworks/TestOCFramework.framework/TestOCFramework' (no such file), 
+'/private/var/containers/Bundle/Application/5DFEA802-1A6C-4AEC-B760-2F421EC5C1A0/TestModule.app/TestOCFramework.framework/TestOCFramework' (no such file), 
+'/private/var/containers/Bundle/Application/5DFEA802-1A6C-4AEC-B760-2F421EC5C1A0/TestModule.app/Frameworks/TestOCFramework.framework/TestOCFramework' (no such file)
+是 运行时缺少 .framework 文件 引起的。编译成功说明引用没问题，但运行时找不到动态库文件。
+你使用了一个 动态 Framework (.framework)，但它 没有被正确打包进最终的 App 包（.app/Frameworks/ 目录中找不到它）。
+
+对于动态库，Embed 方式选择：Embed & Sign（或 Embed Without Signing，按需）
+如果是 Do Not Embed 就会出现上面的错误。
+对于静态库，选择 Do Not Embed 就行
+
+
+通过 命令行工具 file 或 otool 查看 .framework 是静态库还是动态库
+file TestOCFramework.framework/TestOCFramework
+/Users/youdun-ndl/Desktop/TestModule/TestOCFramework.framework/TestOCFramework: Mach-O 64-bit dynamically linked shared library arm64
+
+静态库则会显示
+TestOCFramework: current ar archive
+
+otool -l TestOCFramework.framework/TestOCFramework | grep LC_ID_DYLIB
+如果是动态库：
+输出中会包含：
+cmd LC_ID_DYLIB
+
+
+“Embed & Sign” 和 “Embed Without Signing” 是为 .framework、.xcframework、.dylib 等动态库设置的嵌入方式，它们控制：
+是否将库复制进 App Bundle 中
+是否对嵌入的库进行代码签名
+
+设置名	是否拷贝进 App	是否签名（使用 App 的签名）	适用场景说明
+Embed & Sign	✅ 是	✅ 是	你使用的是第三方动态库，且 不是自己签名的库，需要 App 对它进行签名以保证一致性。也适用于 Swift Package 动态库。
+Embed Without Signing	✅ 是	❌ 否	你自己构建并已经签名的动态库，或者你不希望 Xcode 对其重新签名（比如某些企业框架或系统库）。适合自己控制签名流程的情况。
+
+
+使用 CocoaPods / Swift Package Manager 引入的第三方动态库
+选择：Embed & Sign
+Xcode 会将该库嵌入到 App 包中，并使用你的 App 签名信息对其签名，避免运行时报 code signature invalid 错误。
+如果 CocoaPods 是静态库，Do Not Embed 就行，也就不涉及签名了（签的是最终 App 二进制）
+静态库（.a、静态 framework）在 编译阶段就被打包进 App 的可执行文件中，不会以独立文件形式存在于 .app 目录中
+
+你自己团队制作的 framework，且已经提前签过名
+选择：Embed Without Signing
+可以节省构建时间，并避免不必要的重签名。

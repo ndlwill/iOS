@@ -1,4 +1,3 @@
-Sendable and @Sendable are part of the concurrency changes that arrived in Swift 5.5 and address a challenging problem of type-checking values passed between structured concurrency constructs and actor messages.
 
 public protocol Sendable {}
 Sendable 是一个空协议
@@ -185,17 +184,23 @@ Sendable 本身是一个 Marker Protocol，用于编译期的合规检查；
 
 
 
-==============================
+==================================================Sendable and @Sendable closures
 https://www.avanderlee.com/swift/sendable-protocol-closures/
+
+#####
+Sendable and @Sendable are part of the concurrency changes that arrived in Swift 5.5 and address a challenging problem of type-checking values passed between structured concurrency constructs and actor messages.
+#####
 
 
 ----------When should I use Sendable?
+#####
 The Sendable protocol and closure indicate whether the public API of the passed values passed thread-safe to the compiler.
 A public API is safe to use across concurrency domains when there are no public mutators, an internal locking system is in place, 
 or mutators implement copy-on write like with value types.
+#####
 
 Many types of the standard library already support the Sendable protocol, taking away the requirement to add conformance to many types.
-As a result of the standard library support, the compiler can implicitly create support for your custom types.
+As a result of the standard library support, the compiler can implicitly(隐式的) create support for your custom types.
 
 integers support the protocol:
 extension Int: Sendable {}
@@ -241,12 +246,6 @@ enum State: Sendable {
     case loggedIn(name: String)
 }
 
-We can solve the error by using a value type String instead, as it already conforms to Sendable:
-enum State: Sendable {
-    case loggedOut
-    case loggedIn(name: String)
-}
-
 
 ----------Throwing errors from thread-safe instances:
 The same rules apply to errors that want to conform to Sendable:
@@ -266,7 +265,7 @@ You can solve the error by making sure all members of ArticleSavingError conform
 Implicit conformance takes away a lot of cases in which we need to add conformance to the Sendable protocol ourselves.
 However, there are cases in which the compiler does not add implicit conformance while we know that our type is thread-safe.
 
-Common examples of types that are not implicitly sendable but can be marked as such are immutable classes and classes with internal locking mechanisms:
+Common examples of types that are not implicitly sendable but can be marked as such are immutable classes and classes with internal locking mechanisms(机制):
 /// User is immutable and therefore thread-safe, so can conform to Sendable
 final class User: Sendable {
     let name: String
@@ -299,9 +298,13 @@ public struct Article {
     internal var title: String
 }
 
+#####
 The article is public, while the title is internal and not visible outside the module.
 Therefore, the compiler can’t apply Sendable conformance outside of the source file as it has no visibility of the title property, 
 even though the title is using a Sendable type String.
+
+所以对于 public 的需要你显式添加 Sendable
+#####
 
 The same problem occurs when trying to conform an immutable non-final class to Sendable
 Since the class is non-final, we can’t conform to Sendable as we’re unsure whether other classes will inherit from User with non-Sendable members.
@@ -328,9 +331,9 @@ Examples of functions that you can pass around are global function declarations,
 
 https://github.com/apple/swift-evolution/blob/main/proposals/0302-concurrent-value-and-concurrent-closures.md
 
-###
+##########
 Using the @Sendable attribute, we will tell the compiler that he doesn’t need extra synchronization as all captured values in the closure are thread-safe. 
-###
+##########
 A typical example would be using closures from within Actor isolation:
 
 actor ArticlesList {
@@ -357,21 +360,30 @@ Xcode 14 allows you to enable strict concurrency checking through the SWIFT_STRI
 Enable strict concurrency checking to fix sendable conformances and prepare your code for Swift 6.
 This build setting controls the compiler enforcement level of Sendable and actor-isolation checking.
 
+#####
 Minimal: The compiler will only diagnose instances explicitly marked with Sendable conformance and equals the behavior of Swift 5.5 and 5.6. There won’t be any warnings or errors.
 Targeted: Enforces Sendable constraints and performs actor-isolation checking for all your code that adopted concurrency like async/await. The compiler will also check Instances that explicitly adopt Sendable. This mode tries to strike a balance between compatibility with existing code and catching potential data races.
 Complete: Matches the intended Swift 6 semantics to check and eliminate data races. This mode checks everything the other two modes do as well but performs these checks for all code in your project.
+#####
 
+
+#####
 The strict concurrency checking build setting helps Swift move forward to data-race safety.
 Each of the warnings triggered related to this build setting might indicate a potential data race in your code. 
 Therefore, it’s essential to consider enabling strict concurrency checking to validate your code.
+#####
 
 
 ==================================================
+It would be best if you only used the @unchecked attribute for reference types that do their internal synchronization without actors.
+These types are thread-safe, but there’s no way for the compiler to verify them. 
+You can mark them as unchecked, in which you tell the compiler to take care of data races yourself.
+
 the SharedWithYou framework, it’s better to wait for the library owners to add Sendable support. 
 In this case, it would mean waiting for Apple to indicate Sendable conformance for SWHighlight instances. 
 For those libraries, you can temporarily disable Sendable warnings by making use of the @preconcurrency attribute:
-
 @preconcurrency import SharedWithYou
+
 It’s important to understand that we didn’t solve the warnings but just disabled them. 
 There’s still a possibility of data races occurring with code from these libraries. 
 If you’re using instances from these frameworks, you need to consider whether instances are actually thread-safe. 

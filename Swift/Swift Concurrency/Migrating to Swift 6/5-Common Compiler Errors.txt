@@ -1,0 +1,849 @@
+https://www.swift.org/migration/documentation/swift-6-concurrency-migration-guide/commonproblems
+
+
+==================================================1. Unsafe Global and Static Variables（针对变量）
+Experiment
+These code examples are available in package form. Try them out yourself in Globals.swift.
+https://github.com/swiftlang/swift-migration-guide/blob/main/Sources/Examples/Globals.swift
+
+(1)Sendable Types:
+var supportedStyleCount = 42
+The global variable is both non-isolated and mutable from any isolation domain. 
+Compiling the above code in Swift 6 mode produces an error message:
+Two functions with different isolation domains accessing this variable risks a data race.
+n the following code, printSupportedStyles() could be running on the main actor concurrently with a call to addNewStyle() from another isolation domain:
+@MainActor
+func printSupportedStyles() {
+    print("Supported styles: ", supportedStyleCount)
+}
+
+func addNewStyle() {
+    let style = Style()
+
+    supportedStyleCount += 1
+
+    storeStyle(style)
+}
+
+#####
+One way to address the problem is by changing the variable’s isolation.
+@MainActor
+var supportedStyleCount = 42
+#####
+
+The variable remains mutable, but has been isolated to a global actor. 
+All accesses can now only happen in one isolation domain, and the synchronous access within addNewStyle would be invalid at compile time.
+
+#####
+If the variable is meant to be constant and is never mutated, a straight-forward solution is to express this to the compiler. 
+By changing the var to a let, the compiler can statically disallow mutation, guaranteeing safe read-only access.
+let supportedStyleCount = 42
+#####
+
+#####
+A global value can also be expressed with a computed property. 
+If such property consistently returns the same constant value, this is semantically equivalent to a let constant as far as observable values/effects are concerned:
+var supportedStyleCount: Int {
+    42
+}
+#####
+
+#####
+If there is synchronization in place that protects this variable in a way that is invisible to the compiler, 
+you can disable all isolation checking for supportedStyleCount using nonisolated(unsafe).
+如果存在同步以编译器不可见的方式保护此变量，则可以使用 nonisolated(unsafe) 禁用对 supportedStyleCount 的所有隔离检查。
+
+/// This value is only ever accessed while holding `styleLock`.
+nonisolated(unsafe) var supportedStyleCount = 42
+
+Only use nonisolated(unsafe) when you are carefully guarding all access to the variable with an external synchronization mechanism such as a lock or dispatch queue.
+#####
+
+
+(2)Non-Sendable Types:
+In the above examples, the variable is an Int, a value type that is inherently Sendable. 
+Global reference types present an additional challenge, because they are typically not Sendable.
+class WindowStyler {
+    var background: ColorComponents
+
+    static let defaultStyler = WindowStyler()
+}
+
+#####
+The problem with this static let declaration is not related to the mutability of the variable. 
+The issue is WindowStyler is a non-Sendable type, making its internal state unsafe to share across isolation domains.
+问题在于 WindowStyler 是一个不可发送的类型，这使得其内部状态在跨隔离域共享时不安全
+#####
+
+func resetDefaultStyle() {
+    WindowStyler.defaultStyler.background = ColorComponents(red: 1.0, green: 1.0, blue: 1.0)
+}
+
+@MainActor
+class StyleStore {
+    var stylers: [WindowStyler]
+
+    func hasDefaultBackground() -> Bool {
+        stylers.contains { $0.background == WindowStyler.defaultStyler.background }
+    }
+}
+Here, we see two functions that could access the internal state of the WindowStyler.defaultStyler concurrently.
+The compiler only permits these kinds of cross-isolation accesses with Sendable types. 
+One option is to isolate the variable to a single domain using a global actor. 
+Alternatively, it might make sense to add a conformance to Sendable directly.
+
+
+==================================================2. Protocol Conformance Isolation Mismatch: 协议一致性隔离不匹配 （针对协议）
+#####
+A protocol defines requirements that a conforming type must satisfy, including static isolation. 
+This can result in isolation mismatches between a protocol’s declaration and conforming types.
+
+There are many possible solutions to this class of problem, but they often involve trade-offs. 
+Choosing an appropriate approach first requires understanding why there is a mismatch in the first place.
+#####
+
+Experiment
+These code examples are available in package form. Try them out yourself in ConformanceMismatches.swift.
+https://github.com/swiftlang/swift-migration-guide/blob/main/Sources/Examples/ConformanceMismatches.swift
+
+
+(1)Under-Specified Protocol:
+#####
+The most commonly-encountered form of this problem happens when a protocol has no explicit isolation. 
+In this case, as with all other declarations, this implies non-isolated.
+
+Non-isolated protocol requirements can be called from generic code in any isolation domain. 
+If the requirement is synchronous, it is invalid for a conforming type’s implementation to access actor-isolated state:
+#####
+protocol Styler {
+    func applyStyle()
+}
+
+@MainActor
+class WindowStyler: Styler {
+    func applyStyle() {
+        // access main-actor-isolated state
+        // error: main actor-isolated instance method 'applyStyle()' cannot be used to satisfy nonisolated protocol requirement
+    }
+}
+The above code produces the following error in Swift 6 mode
+
+It is possible that the protocol actually should be isolated, but has not yet been updated for concurrency. 
+If conforming types are migrated to add correct isolation first, mismatches will occur.
+
+
+方案1: Adding Isolation
+If protocol requirements are always called from the main actor, adding @MainActor is the best solution.
+There are two ways to isolate a protocol requirement to the main actor:
+// entire protocol
+@MainActor
+protocol Styler {
+    func applyStyle()
+}
+
+// per-requirement
+protocol Styler {
+    @MainActor
+    func applyStyle()
+}
+
+Marking a protocol with a global actor attribute will infer isolation for the entire scope of the conformance. 
+This can apply to a conforming type as a whole if the protocol conformance is not declared in an extension.
+
+Per-requirement isolation has a narrower impact on actor isolation inference, because it only applies to the implementation of that specific requirement. It does not impact the inferred isolation of protocol extensions or other methods on the conforming type. 
+This approach should be favored if it makes sense to have conforming types that aren’t necessarily also tied to the same global actor.
+
+Either way, changing the isolation of a protocol can affect the isolation of conforming types and it can impose restrictions on generic code using the protocol.
+
+You can stage in diagnostics caused by adding global actor isolation on a protocol using @preconcurrency. 
+This will preserve source compatibility with clients that have not yet begun adopting concurrency.
+https://www.swift.org/migration/documentation/swift-6-concurrency-migration-guide/libraryevolution/#Preconcurrency-annotations
+@preconcurrency @MainActor
+protocol Styler {
+    func applyStyle()
+}
+
+方案2: Asynchronous Requirements
+#####
+For methods that implement synchronous protocol requirements the isolation of implementations must match exactly. 
+Making a requirement asynchronous offers more flexibility for conforming types.
+#####
+protocol Styler {
+    func applyStyle() async
+}
+It’s possible to satisfy a non-isolated async protocol requirement with an isolated method.
+
+@MainActor
+class WindowStyler: Styler {
+    // matches, even though it is synchronous and actor-isolated
+    func applyStyle() {
+    }
+}
+
+#####
+The above code is safe, because generic code must always call applyStyle() asynchronously, allowing isolated implementations to switch actors before accessing actor-isolated state.
+#####
+
+However, this flexibility comes at a cost. Changing a method to be asynchronous can have a significant impact at every call site. 
+In addition to an async context, both the parameters and return values may need to cross isolation boundaries. 
+Together, these could require significant structural changes to address. 
+This may still be the right solution, but the side-effects should be carefully considered first, even if only a small number of types are involved.
+
+
+方案3: Preconcurrency Conformance // 预并发一致性
+#####
+Swift has a number of mechanisms to help you adopt concurrency incrementally and interoperate with code that has not yet begun using concurrency at all. 
+These tools can be helpful both for code you do not own, as well as code you do own, but cannot easily change.
+#####
+Annotating a protocol conformance with @preconcurrency makes it possible to suppress errors about any isolation mismatches.
+
+@MainActor
+class WindowStyler: @preconcurrency Styler {
+    func applyStyle() {
+        // implementation body
+    }
+}
+This inserts runtime checks to ensure that that static isolation of the conforming class is always enforced.
+
+
+(2)Isolated Conforming Type:
+So far, the solutions presented assume that the causes of isolation mismatches are ultimately rooted in protocol definitions. 
+But it could be that the protocol’s static isolation is appropriate, and the issue instead is only caused by the conforming type.
+
+Non-Isolated: 非隔离
+Even a completely non-isolated function could still be useful.
+@MainActor
+class WindowStyler: Styler {
+    nonisolated func applyStyle() {
+        // perhaps this implementation doesn't involve
+        // other MainActor-isolated state
+    }
+}
+#####
+The constraint on this implementation is isolated state and functions become unavailable. 
+This can still be an appropriate solution, especially if the function is used as a source of instance-independent configuration.
+#####
+
+
+Conformance by Proxy: 通过代理实现一致性
+It’s possible to use an intermediate type to help address static isolation differences. 
+This can be particularly effective if the protocol requires inheritance by its conforming types.
+
+#####
+class UIStyler {
+}
+
+protocol Styler: UIStyler { // 不是协议“继承”类，而是：协议 声明了“类约束” —— 即：只有继承自特定类的类型才能遵守这个协议。
+    func applyStyle()
+}
+//class Test: Styler { // 报错: 'Styler' requires that 'Test' inherit from 'UIStyler'
+//
+//}
+
+class SubStyler: UIStyler, Styler {
+    func applyStyle() {
+        
+    }
+}
+#####
+
+
+class UIStyler {
+}
+
+protocol Styler: UIStyler {
+    func applyStyle()
+}
+
+// actors cannot have class-based inheritance
+actor WindowStyler: Styler {
+}
+
+Introducing a new type to conform indirectly can make this situation work. 
+However, this solution will require some structural changes to WindowStyler that could spill out to dependent code as well.
+
+// class with necessary superclass
+class CustomWindowStyle: UIStyler {
+}
+
+// now, the conformance is possible
+extension CustomWindowStyle: Styler {
+    func applyStyle() {
+    }
+}
+Here, a new type has been created that can satisfy the needed inheritance. 
+Incorporating will be easiest if the conformance is only used internally by WindowStyler.
+
+
+==================================================3. Crossing Isolation Boundaries: 跨越隔离边界(数据需要是 Sendable 的)
+#####
+The compiler will only permit a value to move from one isolation domain to another when it can prove it will not introduce data races. 
+#####
+Attempting to use values that do not satisfy this requirement in contexts that can cross isolation boundaries is a very common problem. 
+And because libraries and frameworks may be updated to use Swift’s concurrency features, these issues can come up even when your code hasn’t changed.
+
+
+Experiment
+These code examples are available in package form. Try them out yourself in Boundaries.swift.
+https://github.com/swiftlang/swift-migration-guide/blob/main/Sources/Examples/Boundaries.swift
+
+
+1. Implicitly-Sendable Types: 隐式可发送类型
+#####
+Many value types consist entirely of Sendable properties. 
+The compiler will treat types like this as implicitly Sendable, but only when they are non-public.
+#####
+
+public struct ColorComponents {
+    public let red: Float
+    public let green: Float
+    public let blue: Float
+}
+
+@MainActor
+func applyBackground(_ color: ColorComponents) {
+}
+
+func updateStyle(backgroundColor: ColorComponents) async {
+    await applyBackground(backgroundColor)
+}
+
+#####
+A Sendable conformance is part of a type’s public API contract, which is up to you to declare.
+#####
+Because ColorComponents is marked public, it will not implicitly conform to Sendable. This will result in the following error:
+6 | 
+7 | func updateStyle(backgroundColor: ColorComponents) async {
+8 |     await applyBackground(backgroundColor)
+|           |- error: sending 'backgroundColor' risks causing data races
+|           `- note: sending task-isolated 'backgroundColor' to main actor-isolated global function 'applyBackground' risks causing data races between main actor-isolated and task-isolated uses
+9 | }
+10 | 
+
+A straightforward solution is to make the type’s Sendable conformance explicit:
+
+public struct ColorComponents: Sendable {
+    // ...
+}
+
+Remember that Sendable is a guarantee of thread-safety and removing the conformance is an API-breaking change.
+Sendable 是线程安全的保证
+
+
+2. Preconcurrency Import: 预并发引入
+#####
+Even if the type in another module is actually Sendable, it is not always possible to modify its definition. 
+In this case, you can use a @preconcurrency import to downgrade diagnostics until the library is updated.
+#####
+
+// ColorComponents defined here
+@preconcurrency import UnmigratedModule
+
+
+func updateStyle(backgroundColor: ColorComponents) async {
+    // crossing an isolation domain here
+    await applyBackground(backgroundColor)
+}
+
+With the addition of this @preconcurrency import, ColorComponents remains non-Sendable. // 添加 @preconcurrency 导入后，ColorComponents 仍然不可发送
+However, the compiler’s behavior will be altered. When using the Swift 6 language mode, the error produced here will be downgraded to a warning. 
+The Swift 5 language mode will produce no diagnostics at all.
+
+
+3. Latent Isolation: 潜在隔离
+Sometimes the apparent need for a Sendable type can actually be the symptom of a more fundamental isolation problem.
+The only reason a type needs to be Sendable is to cross isolation boundaries. // 一个类型需要可发送的唯一原因是跨越隔离边界
+If you can avoid crossing boundaries altogether, the result can often be both simpler and a better reflection of the true nature of your system.
+
+@MainActor
+func applyBackground(_ color: ColorComponents) {
+}
+
+
+func updateStyle(backgroundColor: ColorComponents) async {
+    await applyBackground(backgroundColor)
+}
+
+##########
+The updateStyle(backgroundColor:) function is non-isolated. This means that its non-Sendable parameter is also non-isolated. // updateStyle(backgroundColor:) 函数是非隔离的。这意味着它的非可发送参数也是非隔离的。
+The implementation crosses immediately from this non-isolated domain to the MainActor when applyBackground(_:) is called. // 当调用applyBackground（_:）时，实现会立即从这个非隔离域跨越到MainActor。
+##########
+
+##########
+Since updateStyle(backgroundColor:) is working directly with MainActor-isolated functions and non-Sendable types, just applying MainActor isolation may be more appropriate.
+
+(在同一隔离域，可以传递 non-Sendable 数据)
+##########
+
+@MainActor
+func updateStyle(backgroundColor: ColorComponents) async {
+    applyBackground(backgroundColor)
+}
+#####
+Now, there is no longer an isolation boundary for the non-Sendable type to cross. // 现在，非可发送类型不再需要跨越隔离边界
+And in this case, not only does this resolve the problem, it also removes the need for an asynchronous call. // 在这种情况下，这不仅解决了问题，还消除了异步调用的需要
+#####
+
+Lack of MainActor isolation like this is, by far, the most common form of latent isolation. // 到目前为止，像这样的 MainActor 隔离缺失是最常见的潜在隔离形式
+It is also very common for developers to hesitate to use this as a solution. 
+It is completely normal for programs with a user interface to have a large set of MainActor-isolated state. // 对于具有用户界面的程序来说，拥有大量 MainActor 隔离状态是完全正常的
+Concerns around long-running synchronous work can often be addressed with just a handful of targeted nonisolated functions.
+
+
+4. #####Computed Value#####: 计算值 （这就是 Swift 并发中的一个 sendable 安全的 workaround —— 用计算闭包代替直接共享值）
+#####
+Instead of trying to pass a non-Sendable type across a boundary, it may be possible to use a Sendable function that creates the needed values.
+#####
+// 这里的重点是：并不是返回值要是 Sendable，而是闭包本身必须是 @Sendable。
+func updateStyle(backgroundColorProvider: @Sendable () -> ColorComponents) async {
+    await applyBackground(using: backgroundColorProvider) 
+}
+#####
+Here, it does not matter than ColorComponents is not Sendable. 
+By using @Sendable function that can compute the value, the lack of sendability is side-stepped entirely.
+在这里，ColorComponents 是否可发送并不重要。通过使用可以计算值的 @Sendable 函数，可以完全避免不可发送的问题。
+#####
+
+class ColorComponents {
+    let red: Float
+    let green: Float
+    let blue: Float
+
+    init(red: Float, green: Float, blue: Float) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+    }
+}
+
+##########
+func updateStyle(backgroundColorProvider: @Sendable () -> ColorComponents) async {
+    /*
+    Sendable： 自动保证可以安全共享。
+    非 Sendable： 不共享就仍然是安全的，只要你手动保证不共享。
+    Sendable 数据，被共享也没事，也能保证安全。非 Sendable 数据，做到不共享，也相当是安全的。
+    Swift 并发系统并不会阻止你使用非 Sendable 的类型，只要你能证明它不会跨越并发边界（不会在多个并发上下文中被同时访问）。
+
+    @Sendable 修饰的是闭包的“捕获列表”和执行上下文的 线程安全性，即###闭包内部引用的变量必须是 Sendable 的###
+    但闭包 返回的值（比如 ColorComponents），它不会在不同的 actor 之间传递闭包时直接传输。只要你不把 返回值本身 直接跨 actor 发送，它就可以不是 Sendable。
+    也就是说：
+    @Sendable () -> ColorComponents 是个 值工厂（value-producing closure）。
+    只要闭包本身安全地跨 actor 使用，返回值可以是 non-Sendable 的，因为调用时结果还没生成，不涉及共享状态。
+    */
+    let color = backgroundColorProvider()  // ✅ 在当前 actor 执行，安全。主要是没有共享 color，就不会有数据竞争
+    await applyBackground(using: color)
+}
+
+// 调用者
+await updateStyle {
+    ColorComponents(red: 0.5, green: 0.5, blue: 1.0)
+}
+##########
+
+
+错误示例：闭包捕获了非 Sendable 的变量
+let state = NotSendableClass()
+await updateStyle {
+    state.makeColorComponents()  // ❌ 错误：捕获了非 Sendable 的对象
+}
+闭包捕获 vs. 闭包内部构造
+**捕获（Capture）**指的是闭包 引用 了闭包外部的变量（比如局部变量、实例属性等）。
+这里的闭包体内只是 直接构造了一个新的 ColorComponents 实例，没有引用外部已经存在的那个实例。
+为什么捕获会限制 Sendable？
+捕获的变量是闭包外已有的对象，
+如果这个对象不是 Sendable，闭包就不是 Sendable。
+
+
+5. Sending Argument: 发送参数
+#####
+The compiler will permit non-Sendable values to cross an isolation boundary if the compiler can prove it can be done safely. // 如果编译器能够证明不可发送的值跨越隔离边界是安全的，它将允许该值跨越隔离边界
+Functions that explicitly state they require this can use the values within their implementations with less restrictions. // 明确声明需要这样做的函数可以在其实现中以较少的限制使用这些值。
+#####
+func updateStyle(backgroundColor: sending ColorComponents) async {
+    #####
+    // this boundary crossing can now be proven safe in all cases
+    #####
+    await applyBackground(backgroundColor)
+}
+#####
+A sending argument does impose some restrictions at call sites. // 发送参数确实会在调用点施加一些限制
+But, this can still be easier or more appropriate than adding a Sendable conformance. 
+This technique also works for types you do not control.
+#####
+
+“我保证这个参数即使不是 Sendable，跨越 actor 隔离边界也不会导致数据竞争，因为我只在安全的上下文中使用它。”
+// 假设 ColorComponents 不是 Sendable
+class ColorComponents {
+    var red: Float
+    var green: Float
+    var blue: Float
+
+    init(red: Float, green: Float, blue: Float) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+    }
+}
+
+// 带 sending 修饰符的参数，表示传入这里的值跨隔离边界是安全的
+func updateStyle(backgroundColor: sending ColorComponents) async {
+    await applyBackground(backgroundColor)
+}
+
+#####
+// 调用者必须遵守限制，确保安全调用
+func caller() async {
+    let color = ColorComponents(red: 1, green: 0, blue: 0)
+    await updateStyle(backgroundColor: color)  // 允许，不强制 color 是 Sendable.###直白点就是 color 不是共享的数据。###
+}
+#####
+
+可能某些类型是“表面上非 Sendable”，但程序逻辑保证它只会在单线程环境下访问，或者调用时上下文保证安全。
+这种情况下，用 sending 让调用更灵活，无需强制给类型加 Sendable 协议。
+
+
+6. Sendable Conformance: 可发送一致性
+#####
+When encountering problems related to crossing isolation domains, a very natural reaction is to just try to add a conformance to Sendable. 
+You can make a type Sendable in four ways.
+#####
+
+(1)Global Isolation: 全局隔离
+#####
+Adding global isolation to any type will make it implicitly Sendable. // 为任何类型添加全局隔离将使其隐式可发送
+#####
+@MainActor
+public struct ColorComponents {
+    // ...
+}
+#####
+By isolating this type to the MainActor, any accesses from other isolation domains must be done asynchronously. 
+This makes it possible to safely pass instances around across domains.
+通过将此类型隔离到 MainActor，来自其他隔离域的任何访问都必须异步完成。
+这使得跨域安全地传递实例成为可能。
+#####
+
+
+(2)Actors
+#####
+Actors have an implicit Sendable conformance because their properties are protected by actor isolation.
+#####
+actor Style {
+    private var background: ColorComponents
+}
+#####
+In addition to gaining a Sendable conformance, actors receive their own isolation domain. // 除了符合 Sendable 规范之外，Actor 还拥有自己的隔离域
+This allows them to work freely with other non-Sendable types internally. // 这使得它们能够在内部与其他非 Sendable 类型自由协作
+This can be a major advantage, but does come with trade-offs.
+#####
+
+#####
+Because an actor’s isolated methods must all be asynchronous, sites that access the type may require an async context. // 由于 Actor 的隔离方法必须全部异步，访问该类型的站点可能需要异步上下文
+This alone is a reason to make such a change with care. // 仅凭这一点，就需要谨慎进行此类更改
+But further, data that is passed into or out of the actor may itself need to cross the isolation boundary. // 此外，传入或传出 Actor 的数据本身可能需要跨越隔离边界。
+This can result in the need for yet more Sendable types. // 这可能导致需要更多可发送类型。
+#####
+
+actor Style {
+    private var background: ColorComponents
+
+
+    func applyBackground(_ color: ColorComponents) {
+        // make use of non-Sendable data here
+    }
+}
+#####
+By moving both the non-Sendable data and operations on that data into the actor, no isolation boundaries need to be crossed. // 通过将不可发送的数据及其操作都移入 Actor，无需跨越任何隔离边界
+This provides a Sendable interface to those operations that can be freely accessed from any asynchronous context.
+#####
+
+
+(3)Manual Synchronization
+风险：
+@unchecked Sendable: 你告诉编译器“我手动保证这是线程安全的”，编译器就不再检查了。但如果你错了（实际类内部没做线程安全操作），就会引入竞态条件、崩溃等严重 bug。编译器不会再保护你
+
+If you have a type that is already doing manual synchronization, 
+you can express this to the compiler by marking your Sendable conformance as unchecked.
+class Style: @unchecked Sendable {
+    private var background: ColorComponents
+    private let queue: DispatchQueue
+}
+#####
+You should not feel compelled to remove the use of queues, locks, or other forms of manual synchronization to integrate with Swift’s concurrency system. // 您不必为了与 Swift 的并发系统集成而放弃使用队列、锁或其他形式的手动同步
+However, most types are not inherently thread-safe. 
+As a general rule, if a type isn’t already thread-safe, attempting to make it Sendable should not be your first approach. 
+It is often easier to try other techniques first, falling back to manual synchronization only when truly necessary. // 通常，先尝试其他技术会更容易，只有在真正必要时才回退到手动同步
+#####
+
+
+(4)Retroactive Sendable Conformance: 追溯可发送一致性 ??? (不怎么理解，也没具体看)
+extension ColorComponents: @retroactive @unchecked Sendable {
+}
+Because Sendable is a marker protocol, a retroactive conformance does not have direct binary compatibility issues.
+However, it should still be used with extreme caution.
+
+Note
+To learn more about retroactive conformances, see the associated Swift evolution proposal.
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0364-retroactive-conformance-warning.md
+
+
+(5)Sendable Reference Types: 可发送的引用类型
+#####
+It is possible for reference types to be validated as Sendable without the unchecked qualifier, but this is only done under very specific circumstances.
+To allow a checked Sendable conformance, a class:
+Must be final
+Cannot inherit from another class other than NSObject // 不能从 NSObject 以外的其他类继承
+Cannot have any non-isolated mutable properties // 不能具有任何非隔离的可变属性
+#####
+
+public struct ColorComponents: Sendable {
+    // ...
+}
+
+final class Style: Sendable {
+    private let background: ColorComponents
+}
+A reference type that conforms to Sendable is sometimes a sign that a value type would be preferable. 
+But there are circumstances where reference semantics need to be preserved, or where compatibility with a mixed Swift/Objective-C code base is required.
+
+
+(6)Using Composition: 使用组合
+You do not need to select one single technique for making a reference type Sendable. 
+One type can use many techniques internally.
+
+final class Style: Sendable {
+    /*
+    private nonisolated var background: ColorComponents
+    报: 'nonisolated' 不能应用于可变存储属性
+    */
+    private nonisolated(unsafe) var background: ColorComponents // 使用 nonisolated(unsafe)，编译器就不会进行隔离检查
+    private let queue: DispatchQueue
+
+    @MainActor
+    private var foreground: ColorComponents
+}
+#####
+The background property is protected by manual synchronization, while the foreground property uses actor isolation. // 后台属性受手动同步保护，而前台属性则使用 Actor 隔离
+Combining these two techniques results in a type that better describes its internal semantics. // 结合这两种技术，可以生成一个能够更好地描述其内部语义的类型。
+By doing this, the type continues to take advantage of the compiler’s automated isolation checking. // 这样，该类型就可以继续利用编译器的自动隔离检查。
+#####
+
+
+7. Non-Isolated Initialization: 非隔离初始化
+#####
+Actor-isolated types can present a problem when they are initialized in a non-isolated context. 
+This frequently occurs when the type is used in a default value expression or as a property initializer.
+#####
+
+Note
+These problems could also be a symptom of latent isolation or an under-specified protocol.
+https://www.swift.org/migration/documentation/swift-6-concurrency-migration-guide/commonproblems/#Latent-Isolation
+https://www.swift.org/migration/documentation/swift-6-concurrency-migration-guide/commonproblems/#Under-Specified-Protocol
+
+Here the non-isolated Stylers type is making a call to a MainActor-isolated initializer.
+@MainActor
+class WindowStyler {
+    init() {
+    }
+}
+
+struct Stylers {
+    static let window = WindowStyler()
+}
+This code results in the following error:
+ 7 | 
+ 8 | struct Stylers {
+ 9 |     static let window = WindowStyler()
+   |                `- error: main actor-isolated default value in a nonisolated context
+10 | }
+11 | 
+
+##########
+Globally-isolated types sometimes don’t actually need to reference any global actor state in their initializers. 
+By making the init method nonisolated, it is free to be called from any isolation domain. 
+This remains safe as the compiler still guarantees that any state that is isolated will only be accessible from the MainActor.
+##########
+
+@MainActor
+class WindowStyler {
+    private var viewStyler = ViewStyler()
+    private var primaryStyleName: String
+
+    nonisolated init(name: String) {
+        self.primaryStyleName = name
+        // type is fully-initialized here
+    }
+}
+#####
+All Sendable properties can still be safely accessed in this init method. // 所有 Sendable 属性仍然可以在此 init 方法中安全访问
+And while any non-Sendable properties cannot, they can still be initialized by using default expressions. // 非 Sendable 属性则无法访问，但仍可以使用默认表达式进行初始化
+#####
+
+
+8. Non-Isolated Deinitialization: 非隔离反初始化
+#####
+Even if a type has actor isolation, deinitializers are always non-isolated.(针对 actor isolation，即 actor XX {} ) // 即使类型具有参与者隔离，反初始化器也始终是非隔离的。
+#####
+actor BackgroundStyler {
+    // another actor-isolated type
+    private let store = StyleStore()
+
+    deinit {
+        // this is non-isolated
+        store.stopNotifications()
+    }
+}
+This code produces the error:
+error: call to actor-isolated instance method 'stopNotifications()' in a synchronous nonisolated context
+ 5 |     deinit {
+ 6 |         // this is non-isolated
+ 7 |         store.stopNotifications()
+   |               `- error: call to actor-isolated instance method 'stopNotifications()' in a synchronous nonisolated context
+ 8 |     }
+ 9 | }
+
+While this might feel surprising, given that this type is an actor, this is not a new constraint. 
+#####
+The thread that executes a deinitializer has never been guaranteed and Swift’s data isolation is now just surfacing that fact. // 执行析构函数的线程从来都不是被保证的
+#####
+
+#####
+Often, the work being done within the deinit does not need to be synchronous. 
+A solution is to use an unstructured Task to first capture and then operate on the isolated values. 
+When using this technique, it is critical to ensure you do not capture self, even implicitly.
+#####
+
+actor BackgroundStyler {
+    // another actor-isolated type
+    private let store = StyleStore()
+
+    deinit {
+        // no actor isolation here, so none will be inherited by the task
+        Task { [store] in
+            await store.stopNotifications()
+        }
+    }
+}
+
+#####
+Important
+Never extend the life-time of self from within deinit. Doing so will crash at runtime.
+#####
+
+
+==================================================nonisolated
+开发者常常担心把整个类标记为 @MainActor 会让长时间运行的同步逻辑卡住主线程。
+但其实你只需要把这些有性能风险的函数单独标记为 nonisolated，就可以很安全地处理这种情况，其他函数照样主线程安全执行。
+
+@MainActor
+class ImageProcessor {
+    var image: UIImage?
+
+    // 这是个耗时同步操作，我们不想在主线程执行它
+    nonisolated func heavyProcessing(_ data: Data) -> UIImage {
+        // 大量 CPU 计算
+    }
+
+    func applyFilter() {
+        let processed = heavyProcessing(imageData)  // ✅ 这是合法的
+        self.image = processed
+    }
+}
+
+ImageProcessor 是主 actor 隔离的
+大多数函数（如 UI 状态修改）都是主线程安全的
+唯一担心的是 heavyProcessing 可能卡主线程
+所以我们 只把它标记为 nonisolated，它就可能在后台线程运行
+#####
+nonisolated 并不会让函数“自动在后台线程运行”，它只是允许你在任何线程调用它，不会触发 actor 跳转。
+
+@MainActor：要求方法必须在主线程（MainActor）执行，调用时会被强制调度过去。
+nonisolated：表示方法不属于任何 actor，因此不会触发跳 actor 行为，你可以从任意线程直接调用。
+
+但 是否真的运行在后台线程，取决于你从哪调用的。
+它不会自动后台调度。
+#####
+@MainActor
+class ImageProcessor {
+    var image: UIImage?
+
+    nonisolated func heavyProcessing(_ data: Data) -> UIImage {
+        // 大量 CPU 计算
+    }
+
+    func applyFilter() {
+        let processed = heavyProcessing(imageData)  // ✅ 合法
+        self.image = processed
+    }
+}
+applyFilter() 是主 actor 方法，它是在主线程上运行的。
+applyFilter() 调用 heavyProcessing(...)，即使这个函数是 nonisolated，但它是被主线程调用的。
+所以 heavyProcessing 仍然会在 主线程同步运行，并不会自动跳到后台线程！
+
+nonisolated 只让你有能力“在后台线程调用它”，但不是说“系统就会自动安排在后台线程跑它”。
+那要怎么让它真正跑在后台线程？
+你要自己调度，比如这样：
+@MainActor
+func applyFilter() {
+    Task.detached {
+        let result = heavyProcessing(imageData)  // ⬅️ 在后台线程调用 nonisolated 函数
+        await MainActor.run {
+            self.image = result
+        }
+    }
+}
+Task.detached：在后台线程中执行（脱离 actor）
+heavyProcessing 是 nonisolated，所以可以在后台线程调用它
+再通过 MainActor.run 回到主线程更新 UI 状态
+
+
+nonisolated 是 Swift 并发系统中的一个关键修饰符，它的作用是：
+#####
+标记某个方法或属性“不会受到 actor 或 global actor 隔离的限制”，可以在任何线程/actor 上安全调用。
+#####
+
+nonisolated 表示“我保证这个方法不依赖 actor 的内部状态，你可以在任何线程/actor 中直接调用它，无需 await、无需跳 actor”。
+
+为什么需要 nonisolated？
+Swift 中，如果你把一个类型标记为 @MainActor 或一个 actor 类型，那么所有方法默认都只能在那个 actor 上被调用。
+@MainActor
+class Logger {
+    func log(_ message: String) {
+        print(message)
+    }
+}
+
+func test() {
+    let logger = Logger()
+    logger.log("Hello")  // 编译错误
+}
+
+但如果你这么写：
+@MainActor
+class Logger {
+    nonisolated func log(_ message: String) {
+        print(message)
+    }
+}
+你就可以在任何地方直接调用它：
+let logger = Logger()
+logger.log("Hello")// 任何线程都能用
+因为你告诉编译器：这个方法不访问主线程的数据，不需要跳 actor 调度。
+
+你可以把它当作：“我这个方法不属于 actor 的运行时隔离域。”
+
+
+nonisolated(unsafe) 是什么？
+nonisolated(unsafe) func foo() { ... }
+暂时绕过 actor 隔离，但编译器不会强制检查是否线程安全。
+你自己负责安全性。
+官方不推荐常用，适合非常特殊的场景（如与 C 互操作、低层系统库）
+
+nonisolated 是你告诉编译器：“这个方法跟 actor 的状态无关，任何线程都能安全调用它”。
+
+
+==================================================Actor 模型
+actor 模型并不是 Swift 的创新，它是一个在计算机科学中存在多年的并发编程模型，Swift 是在语言层面将其引入并“现代化”了。
+Actor 是一种 并发模型（Concurrency Model）
+主要思想是：
+每个 actor 拥有自己的私有状态，通过消息发送（message passing）来通信，不共享状态，从而避免数据竞争和并发冲突。

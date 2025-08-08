@@ -108,7 +108,132 @@ async let 创建的是结构化并发任务，自动绑定到当前任务作用�
 Task {} 是非结构化并发任务，独立运行，需要手动管理引用和生命周期。它不属于任何函数的作用域
 #####
 
+==================================================测试
+1.
+@MainActor
+class TestClass {
+    func test() {
+        print("TestClass=====111", Thread.current)
+        Task {
+            print("TestClass=====333", Thread.current)
+        }
+        print("TestClass=====222", Thread.current)
+    }
+}
+TestClass=====111 <_NSMainThread: 0x60000170c040>{number = 1, name = main}
+TestClass=====222 <_NSMainThread: 0x60000170c040>{number = 1, name = main}
+TestClass=====333 <_NSMainThread: 0x60000170c040>{number = 1, name = main}
 
+
+2.
+class TestClass {
+    func test() {
+        print("TestClass=====111", Thread.current)
+        Task {
+            print("TestClass=====333", Thread.current)
+        }
+        print("TestClass=====222", Thread.current)
+    }
+}
+TestClass=====111 <_NSMainThread: 0x60000170c040>{number = 1, name = main}
+TestClass=====222 <_NSMainThread: 0x60000170c040>{number = 1, name = main}
+TestClass=====333 <NSThread: 0x600001710380>{number = 6, name = (null)}
+
+
+3.
+@MainActor
+class TestClass {
+    func test() {
+        print("TestClass=====111", Thread.current)
+        Task.detached {
+            print("TestClass=====333", Thread.current)
+        }
+        print("TestClass=====222", Thread.current)
+    }
+}
+TestClass=====111 <_NSMainThread: 0x60000170c040>{number = 1, name = main}
+TestClass=====222 <_NSMainThread: 0x60000170c040>{number = 1, name = main}
+TestClass=====333 <NSThread: 0x600001710380>{number = 7, name = (null)}
+
+
+4.
+@MainActor
+override func viewDidLoad() {
+    super.viewDidLoad()
+    
+    print("=====111", Thread.current)
+    Task {
+        print("=====333", Thread.current)
+    }
+    print("=====222", Thread.current)
+}
+=====111 <_NSMainThread: 0x283dc8380>{number = 1, name = main}
+=====222 <_NSMainThread: 0x283dc8380>{number = 1, name = main}
+=====333 <_NSMainThread: 0x283dc8380>{number = 1, name = main}
+
+
+5.
+class Test {
+    func test1() {
+        print("===1111", Thread.current)
+        Task {
+            print("===111", Thread.current)
+        }
+    }
+    
+    @MainActor
+    func test2() {
+        print("===2222", Thread.current)
+        Task {
+/*
+标记
+@MainActor
+func test2()
+使用Thread.current也会警告: 
+Class property 'current' is unavailable from asynchronous contexts;
+Thread.current cannot be used from async contexts.;
+this is an error in the Swift 6 language mode
+ */
+            print("===222", Thread.current)
+        }
+    }
+}
+
+@MainActor
+func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+    let test = Test()
+    test.test1()
+    test.test2()                
+}
+===1111 <_NSMainThread: 0x2808d4380>{number = 1, name = main}
+===2222 <_NSMainThread: 0x2808d4380>{number = 1, name = main}
+/*
+Task {} 的默认行为是：
+从调用点捕获其所在的 actor（如 MainActor）
+
+func test1()没有标记MainActor，即使它在标记MainActor的didFinishLaunchingWithOptions中被调用
+*/
+===111 <NSThread: 0x280884280>{number = 6, name = (null)}
+===222 <_NSMainThread: 0x2808d4380>{number = 1, name = main} 
+
+
+==================================================Task { @MainActor in ... }
+Task { @MainActor in ... } 这个写法其实是 Swift 5.9（正式支持） 开始支持的**“任务局部执行上下文标注”**（task local actor isolation）语法糖。
+Task { @MainActor in ... } 让你启动一个异步任务，并且任务内部的代码自动运行在 MainActor 上。
+这是对以前需要写成 await MainActor.run { ... } 的简写 // Swift 5.5
+
+Task { @MainActor in
+    // 这里的代码自动切换到主线程执行
+    print(Thread.current)
+    // 可以安全访问 UI 相关代码
+}
+等价于：
+Task {
+    await MainActor.run {
+        print(Thread.current)
+    }
+}
 
 ==================================================TaskGroup中的结构化并发任务
 func loadAllImages(urls: [URL]) async -> [UIImage] {

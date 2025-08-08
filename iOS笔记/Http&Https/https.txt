@@ -4,6 +4,137 @@ HTTPS 客户端与服务器交互过程：
 3、服务器收到后，利用私钥解开得到对称加密秘钥，保存；
 4、之后的交互都使用对称加密后的数据进行交互。
 
+==========================================TLS 全称是 Transport Layer Security，传输层安全协议。
+它的主要作用包括：
+加密（Confidentiality）：保护通信内容不被第三方窃听。
+认证（Authentication）：验证通信双方身份，防止中间人攻击。
+完整性校验（Integrity）：确保数据在传输过程中未被篡改。
+
+"ECDHE" 是 TLS 中的一种密钥交换算法，全称是：
+Elliptic Curve Diffie-Hellman Ephemeral
+使用 椭圆曲线 Diffie-Hellman 算法来协商会话密钥。
+
+在 TLS（如 HTTPS）连接建立时，客户端和服务器需要协商一个共享的对称密钥来进行加密通信。
+ECDHE 就是用于协商这个密钥的算法之一。
+
+它的作用：
+通过 椭圆曲线 Diffie-Hellman (ECDH) 算法生成共享密钥
+Ephemeral（临时）：意味着每次握手都使用一个新的密钥对，提供 前向保密性（Forward Secrecy）
+
+前向保密性 (Forward Secrecy)
+使用 ECDHE 的好处之一是：即使服务器的私钥将来被泄露，攻击者也无法解密过去的通信内容（因为每次连接的密钥都是临时生成的）。
+
+常见的 TLS cipher suite // cipher suite（加密套件）
+TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+ECDHE	密钥交换算法（使用椭圆曲线 DH，临时密钥）
+RSA	身份认证算法（服务器用 RSA 证书签名）
+AES_128_GCM	加密算法（对称加密）
+SHA256	摘要算法（用于 HMAC 和签名）
+
+与其他 DH 算法的区别
+算法	椭圆曲线	临时性	是否前向保密
+DHE	否	是	是
+ECDHE	✅ 是	✅ 是	✅ 是
+RSA（传统 TLS）	❌ 否	❌ 否	❌ 否
+
+
+ECDHE 是现代 TLS 推荐使用的密钥交换算法
+通常与 RSA 或 ECDSA 一起使用进行认证
+
+场景假设：
+客户端：浏览器（或 app）
+服务端：网站（部署了带有 RSA 或 ECDSA 证书的 Web 服务器）
+密钥交换算法：ECDHE
+加密套件：例如 TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+
+TLS 1.2 交互流程
+Client                           Server
+  |                                 |
+  |---- ClientHello --------------->|
+  |                                 |
+  |<--- ServerHello ----------------|
+  |<--- Certificate ----------------|
+  |<--- ServerKeyExchange ---------|
+  |<--- ServerHelloDone -----------|
+  |                                 |
+  |---- ClientKeyExchange --------->|
+  |---- [ChangeCipherSpec] -------->|
+  |---- Finished ------------------>|
+  |                                 |
+  |<--- [ChangeCipherSpec] --------|
+  |<--- Finished ------------------ |
+
+ClientHello
+客户端发起连接，发送：
+支持的 TLS 版本
+支持的 cipher suites（加密套件）
+支持的椭圆曲线（如 secp256r1）
+一个客户端随机数（client_random）
+
+ServerHello
+服务端响应：
+确定使用的 cipher suite（如 ECDHE_RSA_WITH_AES_128_GCM_SHA256）
+服务端随机数（server_random）
+
+Certificate
+发送服务器证书（一般是 RSA 或 ECDSA 公钥证书）
+客户端用这个证书验证服务器身份（例如签名是否被可信 CA 签发）
+
+ServerKeyExchange
+服务端生成一个临时的 ECDH 公钥
+用证书私钥对这个公钥签名，防止中间人攻击
+客户端验证签名后，提取出 ECDH 公钥
+
+ClientKeyExchange
+客户端生成自己的临时 ECDH 公钥，发送给服务器
+客户端用自己的私钥和服务端的公钥做 ECDH 计算，生成共享密钥
+
+ChangeCipherSpec & Finished
+客户端和服务端都根据共享密钥生成主密钥（master secret） → 衍生出会话密钥
+双方进入加密通信阶段，发送加密的 Finished 报文，表示握手完成
+
+
+TLS 1.3 交互流程（大幅简化）
+Client                            Server
+  |                                 |
+  |---- ClientHello --------------->|
+  |                                 |
+  |<--- ServerHello + EncryptedExt + Certificate + Finished
+  |                                 |
+  |---- Finished ------------------>|
+所有服务器消息合并成一条，节省 RTT
+默认使用 ECDHE（或 DHE），没有静态 RSA
+不再有 ClientKeyExchange / ServerKeyExchange
+强制支持前向保密
+所有后续内容加密
+
+
+EncryptedExtensions 和 Certificate 是服务端在 ServerHello 之后，发送给客户端的一部分内容。
+它们属于 握手阶段，但从 ServerHello 开始之后的所有消息，已经 使用协商出的共享密钥加密 了（所以叫 Encrypted）。
+EncryptedExtensions是什么？
+服务器对 ClientHello 中扩展字段的响应。
+所有不涉及身份验证的 server-side 扩展参数都放在这里。
+名字叫 EncryptedExtensions 是因为它是在 ServerHello 后才发送，已经通过 ECDHE 衍生的密钥加密
+
+Certificate是什么？
+服务端的数字证书链（证书 + 中间证书）
+用于让客户端验证服务端身份
+
+
+TLS 1.3 更安全更高效：
+默认开启 0-RTT（可选） // 往返（RTT）
+所有加密算法需支持前向保密（DHE / ECDHE）
+密钥派生采用 HKDF
+
+
+对比项	TLS 1.2	TLS 1.3
+握手轮数	2 个往返（RTT）	1 个往返（RTT）或 0-RTT
+前向保密	取决于是否使用 DHE/ECDHE	默认启用（必须）
+静态 RSA	支持（不安全）	不支持
+密钥交换	RSA / DHE / ECDHE	ECDHE / DHE
+密钥派生方式	自定义逻辑	标准化 HKDF
+
+
 ==========================================HTTPS
 HTTP 有以下安全性问题：
 使用明文(不加密)进行通信，内容可能会被窃听；

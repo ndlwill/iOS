@@ -1,0 +1,131 @@
+https://www.avanderlee.com/concurrency/task-groups-in-swift/
+
+#####
+Task Groups in Swift allow you to combine multiple parallel tasks and wait for the result to return when all tasks are finished.
+They are commonly used for tasks like combining multiple API request responses into a single response object.
+Swift 中的任务组允许您合并多个并行任务，并等待所有任务完成后返回结果。
+它们通常用于诸如将多个 API 请求响应合并为单个响应对象之类的任务。
+#####
+
+
+==================================================What is a Task Group?
+#####
+You can see a Task Group as a container of several child tasks that are dynamically added. 
+Child tasks can run in parallel or in serial, but the Task Group will only be marked as finished once its child tasks are done.
+#####
+
+A common example could be downloading several images from a photo gallery:
+await withTaskGroup(of: UIImage.self) { taskGroup in
+    let photoURLs = await listPhotoURLs(inGallery: "Amsterdam Holiday")
+    for photoURL in photoURLs {
+        taskGroup.addTask { await downloadPhoto(url: photoURL) }
+    }
+}
+we iterate over each photo URL and start downloading them in parallel. 
+The withTaskGroup method will return once all photos are downloaded.
+
+
+==================================================How to use a Task Group
+#####
+You can group tasks in several ways, including handling errors or returning the final collection of results. 
+They’re a more advanced alternative to async let and allow dynamically adding tasks.
+#####
+
+Returning the final collection of results:
+let images = await withTaskGroup(of: UIImage.self, returning: [UIImage].self) { taskGroup in
+    let photoURLs = await listPhotoURLs(inGallery: "Amsterdam Holiday")
+    for photoURL in photoURLs {
+        taskGroup.addTask { await downloadPhoto(url: photoURL) }
+    }
+
+    var images = [UIImage]()
+    for await result in taskGroup {
+        images.append(result)
+    }
+    return images
+}
+We defined the return type as a collection of images using [UIImage].self. 
+After starting all child tasks, we use an Async Sequence to await the following result and append the outcome image to our results collection.
+
+Tasks groups conform to AsyncSequence, allowing us to rewrite the above code using a reduce operator:
+let images = await withTaskGroup(of: UIImage.self, returning: [UIImage].self) { taskGroup in
+    let photoURLs = await listPhotoURLs(inGallery: "Amsterdam Holiday")
+    for photoURL in photoURLs {
+        taskGroup.addTask { await downloadPhoto(url: photoURL) }
+    }
+
+    return await taskGroup.reduce(into: [UIImage]()) { partialResult, name in
+        partialResult.append(name)
+    }
+}
+Other operations like map and flatMap can also be used, allowing for flexible solutions to create the outcome. 
+Finally, you can use the collection of images and continue your workflow.
+
+
+Handling errors by using a throwing variant:
+It’s common for image downloading methods to throw an error on failure. 
+We can rewrite our example to handle these cases by renaming withTaskGroup to withThrowingTaskGroup:
+let images = try await withThrowingTaskGroup(of: UIImage.self, returning: [UIImage].self) { taskGroup in
+    let photoURLs = try await listPhotoURLs(inGallery: "Amsterdam Holiday")
+    for photoURL in photoURLs {
+        taskGroup.addTask { try await downloadPhoto(url: photoURL) }
+    }
+
+    return try await taskGroup.reduce(into: [UIImage]()) { partialResult, name in
+        partialResult.append(name)
+    }
+}
+Note that we added the try keyword before each async method since we have to handle potentially thrown errors. 
+The outcome will be a ThrowingTaskGroup that will return the result of images as long as there is no thrown error.
+
+
+Failing a group when a child task throws:
+In the above example, our group wouldn’t fail if a child download task throws an error. 
+To make that happen, we need to change how we iterate over the outcome results by using the next() method:
+
+let images = try await withThrowingTaskGroup(of: UIImage.self, returning: [UIImage].self) { taskGroup in
+    let photoURLs = try await listPhotoURLs(inGallery: "Amsterdam Holiday")
+    for photoURL in photoURLs {
+        taskGroup.addTask { try await downloadPhoto(url: photoURL) }
+    }
+
+    var images = [UIImage]()
+
+    /// Note the use of `next()`:
+    while let downloadImage = try await taskGroup.next() {
+        images.append(downloadImage)
+    }
+    return images
+}
+#####
+The next() method receives errors from individual tasks, allowing you to handle them accordingly. 
+In this case, we forward the error to the group closure, making the entire task group fail. 
+Any other running child tasks will be canceled at this point.
+#####
+
+
+Avoid concurrent mutation:
+You need to realize you shouldn’t mutate a task group from outside the task where you created it. 
+For example, please don’t pass it around and add child tasks to it from another task. 
+In most cases, you should be warned by the Swift type system when you do since mutating operations like this can’t be performed from a concurrent execution context like a child task.
+
+
+Cancellations in groups:
+You can cancel a group of tasks by canceling the task it’s running in or by calling the cancelAll() method on the group itself.
+
+When tasks are added to a canceled group using the addTask(), they’ll be canceled directly after creation.
+It will stop its work directly depending on whether that task respects cancelation correctly. 
+Optionally, you can use addTaskUnlessCancelled() to prevent the task from starting.
+
+
+Creating a Tasks Group Result Builder:
+we can create a custom Result Builder, allowing us to rewrite the above code as follows:
+https://www.avanderlee.com/swift/result-builders/
+let photoURLs = try await listPhotoURLs(inGallery: "Amsterdam Holiday")
+let images = try await withThrowingTaskGroup {
+    for photoURL in photoURLs {
+        Task { try await downloadPhoto(url: photoURL) }
+    }
+}
+
+https://github.com/AvdLee/TaskGroupsResultBuilder

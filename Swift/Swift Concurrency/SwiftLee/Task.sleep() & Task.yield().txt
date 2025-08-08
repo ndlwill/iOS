@@ -1,0 +1,150 @@
+https://www.avanderlee.com/concurrency/task-sleep-vs-yield-differences/
+
+In Swift Concurrency, we can use Task.sleep() and Task.yield() to let a specific task sleep or yield for a period of time.
+Both look and behave similarly, but there are a few significant differences to be aware of as Swift developers.
+
+==================================================How to use Task.sleep()
+Using Task.sleep() you can suspend a task for a given duration:
+try await Task.sleep(for: .seconds(5))
+
+Task.sleep(_:)
+让当前任务暂停执行指定的时间，时间到了之后恢复执行。
+用途：用于等待一段时间（比如节流、延时执行、重试机制等）。
+行为：
+当前任务挂起（不会阻塞线程）。
+任务在延迟时间后恢复。
+可以取消，如果被取消会抛出 CancellationError。
+
+#####
+Unlike regular sleep methods we know from non-concurrency code, this sleep does not block the underlying thread. 
+This means it permits lower-priority tasks that were awaiting to run.
+不会阻塞底层线程，这叫做“协作式挂起”或“非阻塞挂起”：
+当前异步任务会“挂起”自己，但线程会被释放；
+系统调度器可以把这个线程用来执行别的任务；
+比如，有一些低优先级的任务正等着被调度，它们可以在这段时间里执行；
+所以这种 sleep 是 “资源友好型”的延迟。
+
+
+传统的 sleep 方法:
+Thread.sleep(forTimeInterval: 2)
+这种 同步 sleep 方法会阻塞当前线程，也就是说：
+当前线程完全停住了；
+这段时间这个线程不能做别的事；
+如果你在主线程上调用它，UI 就会卡住；
+线程被占用，系统不能安排别的任务在这段时间执行。
+
+协程的好处之一：非阻塞的挂起（Suspend without blocking）
+你可以用 await 来挂起当前任务，但系统能在此期间继续用线程去运行其他任务。
+
+
+对比点	传统阻塞式（如 Thread.sleep）	协程中的 Task.sleep（或 await）
+是否挂起任务	❌ 不挂起，任务死等	✅ 是，挂起当前任务
+是否阻塞线程	✅ 是，线程不能做其他事	❌ 否，线程被释放
+系统是否能安排别的任务	❌ 不行	✅ 可以，调度器会安排别的任务
+对系统资源的影响	高（浪费线程）	低（线程复用）
+是否适合高并发	❌ 不适合	✅ 非常适合
+
+延伸一下：不仅是 Task.sleep
+其实 Swift 中所有 await 操作都具备这个优势，比如：
+await URLSession.shared.data(for:)
+await someAsyncFunction()
+await Task.yield()
+这些操作都不会阻塞线程，而是把执行权让出去，系统可以在空隙里安排其他任务运行。
+这就是所谓的 cooperative multitasking（协作式多任务） 的魅力所在。
+#####
+
+If the task is canceled before the sleep ends, this function will throw a CancellationError
+https://www.avanderlee.com/concurrency/tasks/#handling-cancellation
+
+
+When should I use Task.sleep()?
+You should use a sleep when you want to introduce a delay in an asynchronous context. 
+A common example is to debounce user input and wait for a pause in typing before executing a search request:
+
+func search(_ query: String) {
+    /// Cancel any previous searches that might be 'sleeping'.
+    currentSearchTask?.cancel()
+    
+    currentSearchTask = Task {
+        do {
+            /// Sleep for 0.5 seconds to wait for a pause in typing before executing the search.
+            try await Task.sleep(for: .milliseconds(500))
+            
+            print("Starting to search!")
+            
+            /// A simplified static result and search implementation.
+            searchResults = Self.articleTitlesDatabase
+                .filter { $0.lowercased().contains(query.lowercased()) }
+        } catch {
+            print("Search was cancelled!")
+        }
+    }
+}
+
+
+Other common usecases are:
+Polling an API at intervals in combination with async sequences（异步序列） // https://www.avanderlee.com/concurrency/asyncsequence/
+Rate limiting outgoing network requests
+Artificial delays for UI testing
+
+Make sure to consider cancellation when using Task.sleep() by respecting the throwing functionality.
+
+
+==================================================How to use Task.yield()
+The Task.yield() method suspends the current task and allows other tasks to execute:
+await Task.yield()
+
+You can use the yield method to suspend a task, potentially during a long-running operation. 
+This allows other tasks to run for a while before execution returns to this task.
+
+Note, though: if the current task is already the highest-priority task in the system, 
+the executor will immediately resume executing the same task. 
+In other words, the Task.yield() method might not have any impact.
+
+
+When should I use Task.yield()?
+In my experience, there aren’t many common use cases in which you’ll need to use Task.yield(). 
+In most cases, it’s better to use Task.sleep().
+For me, the most common use case has been when I write tests for asynchronous code.
+
+https://github.com/pointfreeco/swift-concurrency-extras
+which demonstrates usage as follows:
+func testIsLoading() async {
+    /// Run on a serial executor to attempt running all tasks serially.
+    await withMainSerialExecutor {
+        let model = NumberFactModel(getFact: {
+            /// Yield the current task and let other tasks continue first.
+            await Task.yield()
+            return "\($0) is a good number."
+        })
+
+        let task = Task { await model.getFactButtonTapped() }
+        
+        /// Yield the test so the `getFactButtonTapped()` method gets called.
+        await Task.yield()
+        XCTAssertEqual(model.isLoading, true)
+        XCTAssertEqual(model.fact, nil)
+
+        /// Wait for the task to return its value.
+        await task.value
+        XCTAssertEqual(model.isLoading, false)
+        XCTAssertEqual(model.fact, "0 is a good number.")
+    }
+}
+Using Task.yield() here allows you to let your code under test progress and ensure the results are consistently available for test validation.
+
+
+==================================================The differences between Task.sleep() and Task.yield()
+Both methods suspend execution, but they have a few key differences.
+
+###
+The Task.sleep() method suspends execution for a set of time while the Task.yield() method might only suspend if other tasks with similar or lower priority await execution. 
+Therefore, the duration of suspension is only fixed for Task.sleep() and indeterminate for Task.yield().
+###
+The sleep method is interruptible via cancellation, while Task.yield() only yields control. Both are non-blocking for their respective threads.
+
+In most cases, you’ll be using the sleep method, while the yield method can be useful when writing tests for asynchronous methods.
+
+
+==================================================The Composable Architecture (TCA)
+https://github.com/pointfreeco/swift-composable-architecture

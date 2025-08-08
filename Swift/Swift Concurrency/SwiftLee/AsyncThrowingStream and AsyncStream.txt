@@ -1,20 +1,36 @@
 https://github.com/apple/swift-evolution
 https://github.com/apple/swift-evolution/tree/main/proposals
-https://github.com/apple/swift-evolution/blob/main/proposals/0314-async-stream.md
+
+https://www.avanderlee.com/swift/asyncthrowingstream-asyncstream/
 
 
+AsyncThrowingStream and AsyncStream are part of the concurrency framework introduced in Swift 5.5 due to SE-314.
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0314-async-stream.md
+
+
+#####
 Async streams allow you to replace existing code that is based on closures or Combine publishers.
+#####
 
-What is an AsyncThrowingStream?
+
+==================================================What is an AsyncThrowingStream?
+#####
 You can see an AsyncThrowingStream as a stream of elements that could potentially result in a thrown error. 
-Values deliver over time, and the stream can be closed by a finish event. A finish event could either be a success or a failure once an error occurs.
+Values deliver over time, and the stream can be closed by a finish event. 
+A finish event could either be a success or a failure once an error occurs.
+#####
 
-What is an AsyncStream?
+==================================================What is an AsyncStream? // 异步流
+#####
 An AsyncStream is similar to the throwing variant but will never result in a throwing error.
 A non-throwing async stream finishes based on an explicit finished call or when the stream cancels.
+#####
 
-How to use AsyncThrowingStream:
+==================================================How to use AsyncThrowingStream:
+#####
 An AsyncThrowingStream can be an excellent replacement for existing code based upon closures like progress and completion handlers. 
+AsyncThrowingStream 可以很好地替代现有的基于闭包（例如进度处理程序和完成处理程序）的代码
+#####
 
 struct FileDownloader {
     enum Status {
@@ -54,10 +70,14 @@ extension FileDownloader {
         }
     }
 }
+
+#####
 As you can see, we wrapped the download method inside an AsyncThrowingStream. 
 We describe the stream’s type of value Status as a generic, allowing us to continue the stream with status updates.
 We will finish the stream by throwing an error whenever an error occurs.
 In the case of the completion handler, we’re either finishing by throwing an error or following up the yield with data with a non-throwing finish callback:
+#####
+
 switch result {
 case .success(let data):
     continuation.yield(.finished(data))
@@ -65,8 +85,10 @@ case .success(let data):
 case .failure(let error):
     continuation.finish(throwing: error)
 }
+#####
 It’s essential to not forget about the finish() callback after you’ve received the final status update.
 Otherwise, we will keep the stream alive, and code at the implementation level will never continue.
+#####
 
 We could rewrite the above code by making use of another yield method, accepting a Result enum as an argument:
 continuation.yield(with: result.map { .finished($0) })
@@ -77,7 +99,7 @@ We do have to map our Result enum to match the expected Status value.
 Our stream will finish after throwing the contained error if we yield a failing result.
 
 
-Iterating over an AsyncThrowingStream:
+==================================================Iterating over an AsyncThrowingStream:
 You can start iterating over the stream of values once you’ve configured your async throwing stream.
 do {
     for try await status in download(url) {
@@ -93,14 +115,16 @@ do {
     print("Download failed with \(error)")
 }
 
+#####
 We handle any status update, and we can use the catch closure to handle any occurred errors.
 You can iterate using a for ... in loop based on the AsyncSequence interface, which works the same for an AsyncStream.
+#####
 
 The print statements in the above code example help you understand the lifecycle of an AsyncThrowingStream. 
 You can replace the print statements to handle the progress updates and process the data to visualize it for your users.
 
 
-Debugging an AsyncStream:
+==================================================Debugging an AsyncStream:
 If a stream fails to report values, we could debug the stream’s yield callbacks by placing breakpoints.
 Though it could also be that the above “Download finished and stream closed” print statement won’t call, 
 which means your code at the implementation level never continues. 
@@ -118,10 +142,14 @@ func download(_ url: URL) -> AsyncThrowingStream<Status, Error> {
         // ..
     }
 }
+#####
 The callback is called on termination of the stream and will tell you whether your stream is still alive or not.
+#####
 In case of a thrown error, the output could look as follows:
+Stream terminated with status finished(Optional(FileDownloader.FileDownloadingError.example))
+The above output will only be possible when using an AsyncThrowingStream. 
 
-The above output will only be possible when using an AsyncThrowingStream. In the case of a regular AsyncStream, the finished output looks as follows:
+In the case of a regular AsyncStream, the finished output looks as follows:
 Stream terminated with status finished
 
 While the result of cancellation looks like this for both types of streams:
@@ -131,7 +159,7 @@ You can also use this termination callback for any cleanup after the stream fini
 Examples could be removing any observers or cleaning disk space after the file download.
 
 
-Canceling an AsyncStream:
+==================================================Canceling an AsyncStream:
 An AsyncStream or AsyncThrowingStream can cancel due to an enclosing task getting canceled.
 let task = Task.detached {
     do {

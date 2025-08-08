@@ -1,0 +1,99 @@
+https://developer.apple.com/forums/thread/793921
+
+When running my app with Xcode16.4, it crashed with the error:
+dyld[1045]: Symbol not found: ___res_9_state
+Referenced from: <8B329554-5BEF-38D0-BFCD-1731FA6120CB> /private/var/containers/Bundle/Application/00C941BA-E397-4D0B-B280-E75583FF2890/xxx.app/xxx.debug.dylib
+Expected in: <7D74C679-8F55-3A01-9AA2-C205A4A19D3E> /usr/lib/libresolv.9.dylib
+
+The ___res_9_state related code in my app is:
+let state = __res_9_state()
+res_9_ninit(state)
+
+var servers = [res_9_sockaddr_union](repeating: res_9_sockaddr_union(), count: Int(MAXNS))
+let found = Int(res_9_getservers(state, &servers, Int32(MAXNS)))
+res_9_nclose(state)
+if found > 0 {
+    return Array(servers[0..<found]).filter() { $0.sin.sin_len > 0 }
+} else {
+    return []
+}
+
+Previously, __res_9_state() could run normally in Xcode 16.1
+
+
+DTS Engineer:
+If you compare the header files for resolv.h included with the SDKs for Xcode 16.1 and Xcode 16.4, you'll see there's quite a signifiant difference. 
+This is also visible in the Apple open source repository. In particular, note how this YYYYMMDD formatted macro in resolv.h jumped from this in Xcode 16.1:
+#define	__RES	19991006
+to this in Xcode 16.4:
+#define	__RES	20090302
+You should take a look at your overall code to make sure that it is compatible with those changes you can see by diffing the header files.
+
+https://github.com/apple-oss-distributions/libresolv/commit/84e15f965bf75b6696fdb5c21405f141ae660dc5#diff-1e754da4a16238193d0b49a77e882fe82b087b2e6e5fc2c52d38d2b8c17324a7
+
+
+
+
+// Xcode 16.4: resolv.h
+/* Things involving an internal (static) resolver context. */
+__BEGIN_DECLS
+extern struct __res_state *__res_state(void);
+__END_DECLS
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#include <Availability.h>
+
+#if (TARGET_OS_OSX &&						\
+    __MAC_OS_X_VERSION_MIN_REQUIRED < __MAC_15_4) ||		\
+    (TARGET_OS_IOS && !TARGET_OS_VISION &&			\
+    __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_18_4) ||	\
+    (TARGET_OS_TV &&						\
+    __TV_OS_VERSION_MIN_REQUIRED < __TVOS_18_4) ||		\
+    (TARGET_OS_WATCH &&						\
+    __WATCH_OS_VERSION_MIN_REQUIRED < __WATCHOS_11_4) ||	\
+    (TARGET_OS_VISION &&					\
+    __VISION_OS_VERSION_MIN_REQUIRED < __VISIONOS_2_4) ||	\
+    (0 &&					\
+    __BRIDGE_OS_VERSION_MIN_REQUIRED < __BRIDGEOS_9_4)
+extern struct __res_state _res;
+#else
+#define _res (*__res_state())
+#endif
+
+#else /* !__APPLE__ */
+
+#define _res (*__res_state())
+
+#endif /* __APPLE__ */
+
+
+// fix
+res_9_ninit(&_res)
+
+
+
+// 这边用模拟器测试，运行在不同的系统测试
+// 00000000000069e0 T ___res_9_state
+nm -gU /Library/Developer/CoreSimulator/Volumes/iOS_23A5287g/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS\ 26.0.simruntime/Contents/Resources/RuntimeRoot/usr/lib/libresolv.9.dylib | grep __res_9_state
+// 没有 ___res_9_state
+nm -gU /Library/Developer/CoreSimulator/Volumes/iOS_21A328/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS\ 17.0.simruntime/Contents/Resources/RuntimeRoot/usr/lib/libresolv.9.dylib | grep __res_9_state
+nm -gU /Library/Developer/CoreSimulator/Volumes/iOS_20A360/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS\ 16.0.simruntime/Contents/Resources/RuntimeRoot/usr/lib/libresolv.9.dylib | grep __res_9_state
+
+
+// nm: “name list”（名字列表）
+nm -gU 是一个用于查看目标文件（如 .dylib、.o、.a 等）中的符号信息的命令。它来自 Unix 系统中的 nm 工具。
+nm 用于列出目标文件中的符号表（symbol table）。
+可用于查看某个 .dylib 或 .a 中是否有你需要的函数（如 __res_state、res_query 等）。
+
+
+-g：只显示 external（外部）符号
+即那些对外导出（export）的符号，别的模块或程序可以链接或调用的。
+忽略内部私有符号或本地符号。
+
+-U：只显示 undefined（未定义）符号
+通常指这个 .dylib 或目标文件中**声明了使用，但没有定义（实现）**的符号。
+在 .dylib 里意义是：这个库依赖于其他库来提供这些符号。
+
+
+-g	只显示全局符号（对外导出）
+-U	只显示未定义符号（依赖于别人实现）

@@ -1,0 +1,59 @@
+WireGuard VPN：默认采用 ChaCha20-Poly1305 做加密算法
+WireGuard 中的 ChaCha20-Poly1305 是用来加密和认证 WireGuard 隧道中传输的数据包的“载荷”部分
+
+WireGuard 加密对象是什么？// WireGuard 是 L3 层 VPN，保护的是整个 IP 包
+WireGuard 实际上是一个 L3（网络层）VPN，它传输的是封装好的 IP 数据包。加密保护的就是：
+封装后的原始 IP 数据包（里面包含所有协议层数据，比如 TCP、TLS 加密的 HTTPS 流量等）
+
+WireGuard 封装后的数据包结构：
+[外层 IP 头][外层 UDP 头][WireGuard 封装包（加密负载 + WireGuard 协议头）]
+
+WireGuard 在接收时的操作流程
+从链路层（L2）收到一个 UDP 数据包（WireGuard 封装包）。
+解包、验证、解密后，恢复出原始的 IP 包。
+将解密后的 IP 包注入到操作系统的网络层（L3）处理。
+
+明文数据：
+就是你设备要发送出去的 IP 数据包（可能里面包含 TLS 加密的 HTTPS 内容，也可能是其他协议的数据）
+加密过程：
+WireGuard 用 ChaCha20-Poly1305 对这个 IP 数据包的“有效负载”（Payload）部分进行加密和认证。
+加密后，生成的密文再连同 WireGuard 协议头部一起发送。
+发送：
+发送的是一个 WireGuard 封装包，里面的有效负载是加密过的原始 IP 数据包。
+接收：
+对端用相同的密钥解密该有效负载，恢复原始 IP 数据包，再进行正常路由。
+
+
+
+WireGuard 协议头部：
+WireGuard 的数据包可以分为两种类型：
+握手包（Handshake Message） — 用于密钥协商和建立安全连接。
+数据包（Transport Data Message） — 用于传输加密的实际用户数据。
+
+
+握手包（Handshake Message）
+握手包是 WireGuard 连接初始化的关键，包含：
+字段	长度（字节）	说明
+类型（Message Type）	1	固定值，比如 1 表示 Initiation，2 表示 Response 等
+保留字节（Reserved）	3	保留，当前为零
+发送者公钥（Sender's ephemeral public key）	32	本次握手使用的临时公钥
+发送者静态公钥的加密版本	48	发送者静态公钥经加密
+发送者认证信息（MACs）	16 + 16	用于身份验证的消息认证码 (MAC)
+
+握手消息总长一般是固定的约 148 字节。
+通过握手，双方交换公钥并建立共享密钥。
+
+
+数据包（Transport Data Message）
+数据包承载用户的 IP 层数据，结构简单：
+
+字段	长度（字节）	说明
+标识符（Message Type）	1	固定值 4，表示 Transport Data 消息
+保留字节（Reserved）	3	保留，当前为零
+接收序号（Counter）	8	递增的计数器，用于防重放攻击
+加密负载（Encrypted Payload）	变长	经过 ChaCha20-Poly1305 加密的 IP 数据包
+
+Message Type 1-3 是握手包，4 是数据包。
+Counter 防止重放攻击，确保每个包唯一。
+加密负载是原始 IP 包的加密版本。
+

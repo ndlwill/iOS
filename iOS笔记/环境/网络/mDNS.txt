@@ -1,0 +1,121 @@
+mDNS = Multicast DNS
+"multicast"（多播）
+
+mDNS 是一种 在本地网络中通过多播方式进行 DNS 名称解析 的协议，主要用于：
+在没有中央 DNS 服务器的网络中进行设备名称解析
+广播自己的服务名、IP、端口等信息给同一子网的其他设备
+常见于 Apple 生态的 Bonjour（ZeroConf）服务中
+
+
+比如你的局域网打印机叫：
+printer.local
+你电脑通过 mDNS 能解析这个 .local 域名，找到打印机的 IP 地址，无需配置 DNS 服务器。
+
+
+Apple 系统中 mDNSResponder 就是 mDNS 的核心进程，广泛应用于：
+AirDrop
+Bonjour 打印
+AirPlay
+Apple TV 发现
+HomeKit 配对
+
+
+特性	普通 DNS	mDNS (Multicast DNS)
+传输方式	Unicast	Multicast
+是否需 DNS 服务器	是	否（本地局域网广播）
+常见用途	互联网域名解析	局域网设备发现与通信
+端口	53	5353 (UDP)
+
+
+如果你看到 .local 域名（例如 macbook.local），基本都是走的 mDNS。
+
+
+所以 mDNS 的目标是：
+在没有 DNS 服务器的情况下，通过局域网广播方式解析设备名（如：printer.local）
+
+
+Apple 用 mDNSResponder 实现了 Bonjour，应用层可以通过：
+NetService（Swift / ObjC 封装）
+dns_sd.h（C 接口，底层更细）
+来进行：
+注册服务（如 HTTP、打印服务）
+查找服务
+解析主机名
+
+
+
+[MacBook]                 [Printer]
+   |                          |
+   | -- 查询 printer.local -->|
+   |<-- 回应：IP = 192.168.1.100
+
+1. MacBook 要解析 printer.local
+系统触发：
+用户代码（或系统服务）调用 getaddrinfo("printer.local", ...)
+因为是 .local 后缀，不走系统 DNS 服务器，而是交给 mDNSResponder
+
+2. mDNSResponder 构造并发送查询
+字段	内容
+协议	DNS 协议格式
+类型	A（IPv4 地址）或 AAAA（IPv6 地址）
+名字	printer.local
+目的 IP	224.0.0.251（IPv4 多播地址）// 224.0.0.251 是 固定的 mDNS 多播地址，对应的 IPv6 多播地址 是：ff02::fb
+目的端口	UDP 5353
+
+数据包通过 UDP 广播到整个子网。
+
+3. 打印机收到多播查询
+打印机也运行了一个 mDNSResponder 或兼容服务
+它看到查询名是 printer.local
+检查发现 自己注册了这个名称
+构造响应包并发送回去（也是通过 224.0.0.251:5353）
+
+
+4. MacBook 收到回应
+mDNSResponder 监听着 5353 端口
+收到回应后提取出 IP 地址：192.168.1.100
+缓存这个信息（带 TTL）
+把结果返回给调用者，例如 getaddrinfo() 的调用者
+
+多播地址的用途：
+mDNS 查询和响应都通过它广播
+所有 本地子网中参与 mDNS 的设备都会监听 这个地址
+它是 局部链路（link-local）广播，不会跨网段/路由器
+
+发送：当设备想解析 something.local，会将 DNS 查询包发送到：
+IP：224.0.0.251
+端口：5353（UDP）
+接收：所有运行 mDNS 的设备（包括打印机、Apple TV、Mac、iPhone）都监听这个地址，一旦收到匹配的名字就回应。
+这些设备（打印机、Apple TV、Mac、iPhone 等）都会运行一个内置的 mDNS 服务进程，负责处理 .local 域名的发现与响应
+
+
+系统级别内置的 mDNS 服务是：
+/usr/sbin/mDNSResponder
+功能包括：
+监听 224.0.0.251:5353（IPv6 是 ff02::fb）
+处理 .local 的 DNS 查询
+参与 Bonjour 服务发现（AirDrop、打印机、AirPlay、共享等）
+
+
+==================================================什么是 Bonjour？
+Bonjour 是 Apple 推出的零配置网络服务发现协议，基于 mDNS（多播DNS） 和 DNS-SD（DNS 服务发现）。
+它的作用是让局域网内的设备和服务能自动发现彼此，无需手动配置 IP 或主机名。
+
+参与 Bonjour 服务发现，具体是指：
+主动广播自己提供的服务
+例如，打印机会通过 mDNS 广播它支持的打印服务（如 _ipp._tcp.local），告诉网络上的其他设备“我这里有打印功能”。
+
+监听和响应网络中其他设备的服务查询
+比如你的 Mac 或 iPhone 通过发送 mDNS 查询，发现局域网内的打印机，然后显示可用打印机列表。
+
+维护服务列表和解析服务地址
+设备会解析收到的服务信息（服务类型、名字、端口、IP地址等），以便应用程序使用。
+
+简单的例子：
+打印机开机后：
+它会在局域网的 mDNS 多播地址 224.0.0.251:5353 上广播它的服务信息。
+
+你的 Mac 或 iPhone：
+会监听这个地址，同时可以发送请求查找 _ipp._tcp.local 类的打印服务。
+
+打印机收到请求后，响应具体服务信息，Mac/iPhone 就能显示“打印机 A”，用户可以直接连接使用。

@@ -8,6 +8,58 @@ runlopp处理的输入事件分为2种来源：
 Input sources输入源  处理异步消息（来自其他线程的），让其他线程回到主线程做事情
 Timer sources定时源  处理同步消息，处理主线程的事件，定时检查有没有界面点击事件，滚动事件，ui刷新事件
 
+
+==================================================
+print("=====11111")
+
+DispatchQueue.main.async {
+    print("=====33333")
+    
+    sleep(10) // 执行这块闭包时，阻塞了UI，点击其他按钮没反应，为了测试
+    
+    print("=====44444")
+}
+
+print("=====22222")
+
+=====111 11111
+=====111 22222
+=====111 33333   <-- 延迟触发
+（10秒暂停）
+=====111 44444
+
+
+DispatchQueue.main.async 里的 block 什么时候执行？
+主线程的任务执行依赖于 RunLoop 事件处理机制。
+在 DispatchQueue.main.async 被调用时，它所做的是：
+将 block 添加到主线程的 RunLoop 的 kCFRunLoopCommonModes 下的 GCD 任务队列中（通过一个 GCD 到 RunLoop 的桥接机制）。
+当前主线程仍然在执行 viewDidLoad()，即同步代码没有执行完，RunLoop 还未返回到事件处理阶段。
+一旦同步代码执行完毕，控制权回到 RunLoop，由它去从队列中取出任务，执行 GCD 传过来的 block。
+
+do {
+    // 处理 source0 (如 UI/手势等)
+    // 检查 timers
+
+    __CFRUNLOOP_IS_CALLING_OUT_TO_A_BLOCK__
+
+    // 处理 main queue 上的 GCD block
+    __CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__ // 就是主线程 RunLoop 的一个“专门执行主队列任务”的阶段。
+
+    // 等待新的事件，阻塞直到下个事件到达
+} while (1);
+
+
+RunLoop 会在空闲时自动执行 DispatchQueue.main.async 的任务。
+所以 DispatchQueue.main.async {} 的 block 是在 下一个 RunLoop 循环中 被执行的。
+
+DispatchQueue.main.async 是异步，将 block 投递到主线程队列
+
+
+符号名	说明	示例
+__CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__	RunLoop 正在执行 DispatchQueue.main 上的 block（GCD 主队列任务）	你用 DispatchQueue.main.async {} 提交的 block
+__CFRUNLOOP_IS_CALLING_OUT_TO_A_BLOCK__	RunLoop 正在执行某个非 GCD 的 block 回调	例如 Timer 的 .init(timeInterval:repeats:block:)、RunLoop 自定义 source 的 block
+
+
 ==================================================
 
 
