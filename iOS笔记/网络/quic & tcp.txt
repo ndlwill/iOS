@@ -1,0 +1,368 @@
+TCP (Transmission Control Protocol)
+1970年代出现的传输层协议（OSI 第四层），提供可靠、有序、无差错的数据传输。广泛用于 HTTP、SMTP、FTP 等。
+特点：面向连接（三次握手）、基于字节流、内建拥塞控制与流量控制。
+
+QUIC (Quick UDP Internet Connections)
+Google 在 2012 年开始设计的新一代传输协议，运行在 UDP 之上（应用层或传输层的“混合”），并集成了 TLS 加密（TLS 1.3）、多路复用等特性。后来被 IETF 标准化（RFC 9000）。主要用于 HTTP/3。
+
+
+| 特性         | TCP                                       | QUIC                                       |
+| ---------- | ----------------------------------------- | ------------------------------------------ |
+| **底层协议**   | IP 之上直接运行                                 | UDP 之上运行                                   |
+| **握手**     | 三次握手建立连接，TLS 需要额外握手（总共 2-3 RTT）           | 将连接建立与加密握手合并（1 RTT，甚至 0 RTT）               |
+| **加密**     | TLS 是独立层（可选）                              | 内建 TLS 1.3 加密，默认加密所有数据                     |
+| **多路复用**   | HTTP/2 虽然有多路复用，但 TCP 仍有队头阻塞（HOL Blocking） | 原生多路复用，独立流不互相阻塞                            |
+| **连接迁移**   | 连接与 IP/端口绑定，IP 变更需重连                      | 使用 Connection ID，可在 IP 变化（如 Wi-Fi→4G）时保持连接 |
+| **延迟优化**   | 建立连接延迟较高                                  | 1-RTT / 0-RTT，移动网络体验好                      |
+| **拥塞控制**   | 内置多种算法（CUBIC、BBR）                         | 也有拥塞控制，且可以更快迭代（不改内核）                       |
+| **部署**     | 依赖内核 TCP 栈，升级慢                            | 应用层协议，升级快                                  |
+| **中间设备兼容** | 高度兼容                                      | 早期被防火墙/中间盒丢弃的风险高（现在改善很多）                   |
+
+
+工作流程对比（HTTP 传输场景）
+TCP + TLS 1.3 (HTTP/2)：
+TCP 三次握手（1 RTT）
+TLS 握手（1 RTT）
+开始传输数据（总延迟 ≥ 2 RTT）
+QUIC (HTTP/3)：
+首次连接：1 RTT 完成握手（传输加密 + 连接建立）
+复用旧会话（0-RTT）：直接发数据（0 RTT）
+
+QUIC 优点
+更低延迟（1/0 RTT 建连）
+避免 TCP 队头阻塞
+连接迁移支持移动网络切换
+应用层可快速更新协议，不依赖系统 TCP 栈
+默认全加密，安全性高
+
+QUIC 缺点
+CPU 消耗高（加密解密全在用户态）
+报文头加密，中间设备优化难
+UDP 可能在某些旧网络设备/防火墙上被屏蔽
+协议复杂度更高，调试困难
+
+
+QUIC 就像一个“用 UDP 伪装成 TCP+TLS+HTTP/2”的新型高速协议，比传统 TCP 更快、更灵活，特别适合移动互联网和低延迟场景。
+本质上 QUIC 就是基于 UDP，但在 UDP 之上自己实现了一整套 TCP 级别甚至更强的可靠传输机制。
+
+| 能力       | TCP                    | UDP | QUIC                   |
+| -------- | ---------------------- | --- | ---------------------- |
+| **可靠传输** | ✅                      | ❌   | ✅（有确认ACK、重传）           |
+| **有序传输** | ✅                      | ❌   | ✅（按流重排）                |
+| **流量控制** | ✅                      | ❌   | ✅                      |
+| **拥塞控制** | ✅                      | ❌   | ✅                      |
+| **连接管理** | ✅                      | ❌   | ✅（带 Connection ID，可迁移） |
+| **加密**   | 额外用 TLS                | ❌   | ✅（内建 TLS 1.3）          |
+| **多路复用** | HTTP/2 实现但受 TCP 队头阻塞影响 | ❌   | ✅（无 TCP 队头阻塞）          |
+
+
+RTT 全称是 Round-Trip Time，中文一般叫 往返时延 或 往返时间。
+从你的设备发送一个数据包到目标主机，再从目标主机返回一个响应数据包，这整个过程所花的时间。
+你 ping 一个网站，显示 RTT = 50ms，意思是来回一次大约 50 毫秒。
+在 TCP 或 QUIC 建连时，一个 RTT 就表示需要一次完整的“来回通信”。
+
+TCP 三次握手本身只需要 1 个 RTT。
+TCP 三次握手过程
+客户端 → 服务器：SYN
+服务器 → 客户端：SYN + ACK
+客户端 → 服务器：ACK（可以同时携带数据）
+为什么是 1 个 RTT？
+RTT 的定义是一次“来回”
+从客户端发 SYN 到收到 SYN+ACK 算一次“去 + 回”
+第三步的 ACK 是单向的（可带数据），不算额外 RTT
+
+
+==================================================QUIC 确实属于应用层协议
+QUIC 确实属于应用层协议（IETF 也这么定义），但它又承担了传统“传输层”的一大堆功能，所以它有点“跨层”的感觉。
+
+QUIC 是 跑在 UDP 之上的，而 UDP 本身就是传输层（IP 上一层）
+按 OSI 模型，QUIC 运行在应用层（就像 HTTP、DNS 一样），因为：
+它不直接控制内核 TCP 栈
+它在用户态实现，和内核协议栈解耦
+应用程序可以直接内置 QUIC 实现（如 Chrome、nginx）
+
+但它的功能像传输层
+QUIC 实现了 TCP 的可靠传输、拥塞控制、流量控制、连接管理
+这些本来是传输层的事，但 QUIC 全部在应用层完成
+所以它是应用层实现的“类传输层协议”
+
+为什么这样设计有优势
+部署灵活
+TCP 改协议要改内核 → 要等操作系统厂商更新
+QUIC 在用户态 → 直接更新应用（如浏览器、服务器软件）
+快速迭代
+谷歌能在 Chrome 内更新 QUIC 协议，而不必管用户的操作系统
+穿透性好
+只要 UDP 能通，就能跑 QUIC
+
+
+为什么 QUIC 要用 UDP 而不是直接改 TCP？
+部署灵活：
+TCP 在内核里实现，改协议需要操作系统和中间设备支持，更新很慢；UDP 协议可以在应用层实现，升级部署快。
+
+规避 TCP 队头阻塞：
+QUIC 把多个流分开确认，不像 TCP 一个包丢了就卡住整个连接。
+
+连接迁移：
+TCP 连接和 IP+端口绑定，换网络就断；QUIC 用 Connection ID，不怕 IP 变。
+
+集成加密：
+QUIC 协议的每个包几乎都加密，安全性比纯 TCP 更好。
+
+
+==================================================自动重连
+无论是 TCP 还是 UDP，一旦 IP 变了，底层套接字（socket）就不能直接继续用，都需要重新建立连接（手动或自动）。
+
+TCP 连接的唯一标识是四元组：
+源 IP、源端口、目标 IP、目标端口
+如果你从 Wi-Fi 切到 4G，源 IP 会变，四元组不一致，旧连接直接失效。
+
+“自动重连”是怎么做到的
+这是应用层逻辑，比如：
+浏览器检测到 TCP 断开 → 自动发起新 TCP 连接 → 重新发请求
+WebSocket 客户端检测到断开 → 自动 reconnect
+
+QUIC 的不同
+QUIC 有 Connection ID，连接不依赖 IP/端口变化
+IP 变了也能继续用同一个连接（前提是网络能打通）
+这样可以做到真正的无缝切换（如视频通话、在线游戏不中断）
+
+
+TCP 它只有重传机制。 // RTO 全称是 Retransmission Timeout，中文一般翻译成 重传超时。
+TCP 的重传机制（Retransmission）
+目的：保证已建立连接中的数据可靠送达
+触发条件：
+超时未收到 ACK（RTO 超时重传）
+收到重复 ACK（快速重传）
+1.
+在 TCP（以及 QUIC）里，RTO 是发送方等待 ACK 的最长时间
+如果超过这个时间还没收到确认（ACK），就会认为数据包丢失，触发重传
+
+发送方发出一个包
+计时器开始计时（RTO）
+在 RTO 到期前收到 ACK → 计时器清零
+到期还没收到 ACK → 立刻重发该包，并重新设置 RTO
+2.
+收到重复 ACK（Duplicate ACK）时触发重传，是 TCP 保证数据可靠性和快速恢复丢包的一种机制，称为快速重传（Fast Retransmit）。
+为什么重复 ACK 会导致重传？
+当发送方发送了一批数据包后，如果中间某个包丢失了，接收方收到后续的数据包时，会发现序号不连续，无法按序交付给上层。
+接收方会不断发送对丢失包前一个已正确收到数据包的确认 ACK（重复 ACK），告诉发送方“我还在等那个丢失的包”。
+发送方收到 3 个及以上重复 ACK（通常是 3 个）后，就立刻重传那个丢失的包，而不必等超时（RTO）。
+这样能大大减少恢复丢包的延迟，提高 TCP 性能。
+
+
+| 机制        | 触发条件          | 作用          |
+| --------- | ------------- | ----------- |
+| 重传超时(RTO) | 发送后超时没收到 ACK  | 丢包后最后的重传手段  |
+| 快速重传      | 收到 ≥3 个重复 ACK | 快速发现丢包，立即重传 |
+
+
+import Foundation
+import Network
+
+class TCPConnectionManager {
+    private var connection: NWConnection?
+    private let host: NWEndpoint.Host
+    private let port: NWEndpoint.Port
+    
+    private let monitor = NWPathMonitor()
+    private let monitorQueue = DispatchQueue(label: "NetworkMonitorQueue")
+    
+    init(host: String, port: UInt16) {
+        self.host = NWEndpoint.Host(host)
+        self.port = NWEndpoint.Port(rawValue: port)!
+        
+        startNetworkMonitor()
+    }
+    
+    func startConnection() {
+        print("尝试建立连接...")
+        connection = NWConnection(host: host, port: port, using: .tcp)
+        
+        connection?.stateUpdateHandler = { newState in
+            switch newState {
+            case .ready:
+                print("TCP 连接已建立")
+                self.receiveData()
+            case .failed(let error):
+                print("连接失败: \(error)")
+                self.connection = nil
+            case .waiting(let error):
+                print("等待连接: \(error)")
+            case .cancelled:
+                print("连接取消")
+                self.connection = nil
+            default:
+                break
+            }
+        }
+        
+        connection?.start(queue: .global())
+    }
+    
+    func stopConnection() {
+        connection?.cancel()
+        connection = nil
+    }
+    
+    private func receiveData() {
+        connection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, isComplete, error in
+            if let data = data, !data.isEmpty {
+                let message = String(decoding: data, as: UTF8.self)
+                print("收到数据：\(message)")
+            }
+            if isComplete {
+                print("连接结束")
+                self.stopConnection()
+            } else if let error = error {
+                print("接收数据出错: \(error)")
+                self.stopConnection()
+            } else {
+                self.receiveData()
+            }
+        }
+    }
+    
+    private func startNetworkMonitor() {
+        monitor.pathUpdateHandler = { path in
+            if path.status == .satisfied {
+                print("网络可用，尝试重连")
+                // 如果当前没有连接，则尝试重连
+                if self.connection == nil {
+                    self.startConnection()
+                }
+            } else {
+                print("网络不可用，断开连接")
+                self.stopConnection()
+            }
+        }
+        
+        monitor.start(queue: monitorQueue)
+    }
+    
+    deinit {
+        monitor.cancel()
+        stopConnection()
+    }
+}
+
+
+==================================================SYN 和 ACK 是 TCP 报文头中的两个不同的控制位（flag）
+TCP 头部的控制位（Flags）
+SYN（Synchronize）
+用于建立连接的同步标志
+只在连接建立的三次握手阶段使用
+表示发起连接请求或响应请求，带有初始序号（ISN）
+
+ACK（Acknowledgment）
+表示确认号字段有效
+用于确认接收到的数据序号
+在连接建立后，几乎所有包都会带 ACK
+
+连接建立时，三次握手包会携带 SYN 标志，带上自己的初始序号（ISN）
+连接建立完成后，数据包里就只有 ACK 标志（确认号），表示确认接收到的数据
+数据包中的 ACK 字段是确认号，它表示“我期待收到的下一个字节序号”，它和 SYN 是两个不同的标志和字段
+
+三次握手：
+第1次：客户端发送带 SYN 的包，序号 Seq = x
+第2次：服务端发送带 SYN+ACK 的包，Seq = y，Ack = x+1（确认客户端的序号）
+第3次：客户端发送带 ACK 的包，Ack = y+1
+
+数据传输阶段：
+发送方发送数据包，序号 Seq = n
+接收方回复 ACK = m，表示它已收到序号 < m 的所有数据，期待序号 m
+
+
+TCP 中的序号（Sequence Number，Seq）非常关键，是实现可靠、有序传输的基础
+
+TCP 序号 Seq 的作用
+唯一标识每个字节的数据位置：
+TCP 把数据当作字节流来传输，每个字节都有一个唯一的序号。
+Seq 表示该数据包中第一个字节的序号，接收方通过它知道这些数据在整个数据流中的位置。
+
+保证数据有序接收：
+即使网络中数据包乱序到达，接收方也可以根据 Seq 排序，恢复原始顺序。
+只有收到前面的数据后，接收方才会交付数据给应用层。
+
+实现可靠传输和重传：
+发送方根据 Seq 号知道哪些数据已经发送，哪些需要重传。
+接收方通过 ACK 确认收到的最高连续序号，告诉发送方可以丢弃哪些数据。
+
+检测重复数据：
+如果收到重复的 Seq 范围的数据包，接收方可以判断是重传包，避免重复交付。
+
+简单例子
+发送方发送了 Seq = 100，长度为 50 字节的数据包
+接收方收到后，知道它是数据流中第 100 到 149 字节的数据
+接收方回复 ACK = 150，表示“我已经收到了序号 < 150 的所有数据，期待 150 以后的数据”
+
+
+==================================================VPN
+无论你用的是 Wi-Fi、4G 还是其他任何物理网络，VPN 最终都是通过物理设备的网络接口（比如4G基站）来发送和接收数据包的。
+
+VPN 工作原理简述
+虚拟网络接口（虚拟网卡）
+VPN 软件在设备上创建一个虚拟网卡，分配虚拟 IP 地址
+所有上层应用的数据流经虚拟网卡，不直接操作物理网卡
+
+封装和加密
+虚拟网卡发出的数据被 VPN 客户端软件封装成隧道协议包，并加密
+这些封装后的包通过设备的物理网卡（比如4G模块或Wi-Fi网卡）发送出去
+
+通过物理网络传输
+封装后的包通过运营商网络（4G基站、Wi-Fi 路由器等）传输到 VPN 服务
+VPN 服务器再解封装、转发数据，保证安全和隐私
+
+#####
+所以说，VPN 把“安全的虚拟通道”构建在了物理网络之上，但数据最终还是要通过物理设备和运营商网络发送的，只是中间多了一层加密和封装。
+#####
+
+
+VPN 隧道中“物理网卡 IP”和“封装包中 IP”的关系：
+1. 物理网卡的 IP 地址
+物理网卡（比如 4G 模块或 Wi-Fi 网卡）确实有自己的 真实 IP 地址（公网或内网 IP），这是设备在运营商或局域网中的身份标识。
+物理网卡负责将所有发出的数据包，通过物理网络发送到下一跳（基站、路由器等）。
+
+2. VPN 封装包中的 IP 地址
+VPN 客户端软件会将原始数据包（里面包含虚拟 IP 地址，即虚拟网卡分配的地址）封装成新的数据包。
+这个新包通常是用 UDP（或 TCP）包裹着的，里面的“有效负载”是原始的 IP 包。
+封装后的数据包的 IP 头部是物理网卡的真实 IP（源 IP），目标是 VPN 服务器的 IP。
+
+VPN 封装包的结构层次：
+假设你的原始数据包是一个 IP 包（比如 TCP/IP 包），VPN 客户端软件把它封装成一个新的包，步骤如下：
+
+原始数据包
+这是你设备虚拟网卡的“虚拟 IP 地址”对应的原始数据包。比如：
+IP头（虚拟IP） + TCP/UDP头 + 业务数据
+
+封装过程
+VPN 软件把上面的原始数据包当作负载，封装在一个新的 UDP（或 TCP）包里。
+也就是说：
+UDP头（源端口+目标端口） + 原始数据包 // 封装协议头，用来承载内层数据
+
+外层IP头
+这个 UDP 包又被加上一个新的 IP 头（外层IP头），它使用的是真实物理网卡的IP作为源IP，VPN服务器的IP作为目标IP。
+也就是说：
+外层IP头（物理网卡IP） + UDP头 + 原始数据包
+
+3. 对端（VPN 服务器）收到的包怎么看？
+VPN 服务器看到的是封装后的数据包，包头的 IP 是设备的真实物理 IP（比如 4G 分配的 IP），目标是 VPN 服务器的公网 IP。
+VPN 服务器会对这个包进行解封装，取出内部的“原始 IP 包”，里面才是虚拟 IP 地址和目的地址。
+VPN 服务器根据虚拟 IP 和内部 IP 包的信息，知道这是哪个客户端发来的数据，并进行后续转发。
+
+
+VPN 并不能完全隐藏你的物理网卡的IP地址，物理网卡IP是网络通信的“底层身份”，无法被完全掩盖，但VPN依然可以实现有效的IP地址隐藏和匿名，具体体现在这些方面：
+1. VPN隐藏IP的原理不是“物理IP隐藏”，而是“对外展示虚拟IP”
+你设备的物理IP（如运营商分配的公网IP），是物理网卡发包时必须带上的源IP，这部分信息是网络必须知道的，无法隐藏。
+但是，你的真实上网请求和应用流量是经过VPN服务器转发的，VPN服务器会使用自己的IP地址访问目标网站或服务。
+目标网站看到的访问IP是VPN服务器的IP，而不是你物理网卡的IP。
+
+2. VPN的“IP隐藏”是网络层和应用层的分离
+VPN客户端和服务器之间的通信（封装包）使用真实物理IP，但这是隧道内部的通信。
+外部目标（如网站、服务器）看到的只会是VPN服务器的IP地址，而非你的真实物理IP。
+
+3. 物理IP对ISP和中间路由器可见，但对访问目标不可见
+ISP和物理网络中的路由设备必须知道你的物理IP来转发包裹。
+但互联网远端服务（比如谷歌）只会看到VPN服务器的IP。
+
+ISP 全称是 Internet Service Provider，中文一般翻译为 互联网服务提供商，就是你用来上网的宽带运营商或移动网络运营商。

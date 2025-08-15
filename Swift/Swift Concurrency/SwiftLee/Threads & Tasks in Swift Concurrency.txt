@@ -1,0 +1,164 @@
+https://www.avanderlee.com/concurrency/threads-vs-tasks-in-swift-concurrency/
+
+Are Threads the same as Tasks in Swift Concurrency? 
+You may wonder if you’re used to writing Swift or Objective-C using Grand Central Dispatch (GCD) and traditional APIs. 
+A so-called threading mindset has helped us develop apps that work with asynchronous functions for years.
+
+Modern concurrency uses Swift Concurrency and its async/await methodology. 
+Instead of creating a closure-based method, you’ll be using a Task { ... } to start an asynchronous context.
+
+
+==================================================What is a thread?
+#####
+A thread is a system-level resource that runs a sequence of instructions. 
+The operating system manages them, and threads have a high overhead when created or switched. 
+#####
+Multithreading allows multiple operations to run concurrently, but managing these threads manually can be complex.
+
+Therefore, it’s beneficial to understand how Swift Concurrency works with threads and how it alleviates a significant amount of responsibility.
+
+
+==================================================Swift Concurrency and Threads
+##########
+The concurrency model in Swift is built on top of threads, but you’ll never interact with them directly. // Swift 中的并发模型建立在线程之上，但您永远不会直接与线程交互。
+Swift doesn’t make any guarantee about which thread a function will run on. // Swift 不保证函数将在哪个线程上运行。
+
+For example, an async function could give up a thread it’s running on, 
+letting another async function run on that thread while the first one is being blocked. 
+When that first function resumes, there’s no guarantee which thread it will continue on.
+##########
+
+
+Suspension points and threads:
+#####
+When working with tasks, there will be so-called suspension points. 
+For example, when you use await, you’re essentially pausing execution of that piece of code until the asynchronous function returns.
+
+This is also called yielding the thread, as Swift suspends the execution of your code on the current thread and might run some other code on that thread instead.
+This clearly explains why there’s no direct relationship between a single task and a single thread, and it also shows how well Swift can optimize concurrency.
+#####
+
+
+==================================================Tasks: A Higher-Level Abstraction
+#####
+A task in Swift Concurrency is a unit of asynchronous work that runs within Swift’s cooperative thread pool.
+They’re not tied to a specific thread. They are scheduled and executed on any available threads.
+Swift dynamically manages task execution and ensures efficient thread usage.
+In other words, it prevents creating more threads than necessary, optimizing CPU efficiency. // 换句话说，它可以防止创建不必要的线程，从而优化 CPU 效率
+#####
+
+What is Swift’s cooperative thread pool?
+#####
+The cooperative thread pool is the execution model that Swift Concurrency uses to manage the execution of asynchronous tasks efficiently. 
+Instead of creating a separate thread for each task (which can lead to excessive context switching and resource consumption), 
+Swift dynamically schedules tasks on a limited number of system threads.
+#####
+
+
+==================================================How Tasks are mapped to Threads // 任务如何映射到线程
+#####
+The earlier described cooperative thread pool is used to execute tasks efficiently. 
+It avoids blocking threads and reduces unnecessary thread creation.
+
+The system creates only as many threads as CPU cores. Tasks are scheduled onto available threads rather than getting its own thread each. 
+When a suspension point occurs (as with await), the task will be suspended and another task is allowed to run on the same thread.
+#####
+Here’s a code example to demonstrate this behavior:
+struct ThreadingDemonstrator {
+    private func firstTask() async throws {
+        print("Task 1 started on thread: \(Thread.current)")
+        try await Task.sleep(for: .seconds(2))
+        print("Task 1 resumed on thread: \(Thread.current)")
+    }
+
+    private func secondTask() async {
+        print("Task 2 started on thread: \(Thread.current)")
+    }
+
+    func demonstrate() {
+        Task {
+            try await firstTask()
+        }
+        Task {
+            await secondTask()
+        }
+    }
+}
+Note that you can only print Thread.current in Swift 5 language mode.
+
+The above code example might print out something like:
+Task 1 started on thread: <NSThread: 0x600001752200>{number = 3, name = (null)}
+Task 2 started on thread: <NSThread: 0x6000017b03c0>{number = 8, name = (null)}
+Task 1 resumed on thread: <NSThread: 0x60000176ecc0>{number = 7, name = (null)}
+
+#####
+This is explained as follows:
+firstTask() starts, sleeps, and releases its thread
+secondTask() runs and uses a different thread
+firstTask() resumes and uses a different thread than when it started
+
+This is possible because Swift Concurrency does not block threads while awaiting. 
+In this case, it didn’t block any thread while sleeping. 
+#####
+
+
+==================================================Can Thread explosion still happen in Swift Concurrency?
+The traditional Grand Central Dispatch (GCD) model could lead to a so-called thread explosion: when too many threads are created and blocking occurs. This results in:
+High memory overhead due to many idle threads.
+Excessive context switching: reduces CPU efficiency.
+Priority inversion issues: important tasks get stuck behind lower-priority tasks.
+
+#####
+Swift Concurrency avoids thread explosion by only creating as many threads as CPU cores. 
+It uses continuations instead of blocking threads, which allows more efficient use of available threads. 
+This also ensures threads always make forward progress.
+#####
+
+
+==================================================Does Swift Concurrency’s Limited Threads Reduce Performance Compared to GCD?
+#####
+No, Swift Concurrency does not sacrifice performance compared to GCD,
+even though it limits the number of threads to match the number of CPU cores.
+Since it optimizes concurrency efficiency,
+it often outperforms GCD in real-world scenarios.
+#####
+
+Why fewer threads doesn’t mean less performance:
+but fewer threads don’t mean less performance.
+#####
+Traditional GCD can create many more threads than CPU cores. 
+While this may seem beneficial, it can lead to the earlier-mentioned thread explosion, 
+excessive context switching, and CPU inefficiency.
+
+Swift Concurrency, on the other hand, uses a fixed number of threads matching the CPU cores count. 
+It prevents creating too many threads and ensures not to waste CPU cycles. 
+It keeps CPU cores busy without excessive switching due to using continuations instead of blocking threads,
+which can add up if we talk about performance.
+
+This reduced CPU overhead allows more work to be done per unit of time, often outperforming GCD.
+#####
+
+
+==================================================Common misconceptions // 常见误解
+Related to tasks and threads, there are a few common misconceptions:
+
+Misconception 1: Each Task runs on a new thread // 每个任务都在一个新线程上运行
+Misconception 2: await blocks the thread // await 会阻塞线程
+Misconception 3: Task Execution Order is Guaranteed // 任务执行顺序是有保证的
+Task {
+    print("A")
+}
+
+Task {
+    print("B")
+}
+你不能保证一定是先输出 "A" 再输出 "B"。它们可能：
+A → B
+B → A
+甚至部分交错（如果是更复杂的任务）。
+
+
+==================================================Conclusion
+Swift Concurrency allows us to eliminate the threading mindset and forces us to think in terms of instructions. 
+The system will optimize threads usage automatically, resulting in the best performance possible. 
+This reduces the overhead for us to manage threads manually, which can be complex and challenging to manage.

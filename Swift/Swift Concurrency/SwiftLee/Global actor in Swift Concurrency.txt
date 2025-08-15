@@ -1,0 +1,105 @@
+https://www.avanderlee.com/concurrency/global-actor/
+
+
+Swift Concurrency introduced the concept of a global actor among async/await and tasks. 
+The most common one is likely @MainActor
+
+
+==================================================What is a Global Actor?
+#####
+A global actor is precisely what it sounds like: an actor that you can apply globally.
+
+It brings the same kind of actor isolation — safe, serialized access to data — but instead of being tied to a single instance, 
+it’s tied to something broader: like a function, a property, or even an entire type.
+#####
+
+
+Here’s an example you’ve probably seen or used already:
+
+@MainActor
+func updateUI() {
+    // Safely runs on the main thread
+}
+
+By marking this function with @MainActor, you’re basically saying:
+“This should always run on the main thread.”
+
+#####
+@MainActor is a global actor. 
+It ensures that everything it touches is run on the same actor executor— in this case, the executor tied to the main thread.
+That makes it perfect for UI updates, which must happen on the main thread in apps.
+#####
+
+
+@MainActor
+final class ContentViewModel {
+    
+    var titles: [String] = []
+    
+    /// ...
+}
+#####
+In this case, all access to ContentViewModel will need to happen on the @MainActor executor. 
+In other words, access is isolated to the global @MainActor. // 换句话说，访问被隔离到全局 @MainActor
+#####
+But you’re not limited to the main thread. 
+You can also create custom global actors to group and isolate access to global or static state, 
+making your app more robust in a concurrent world.
+
+
+==================================================How to use a custom Global Actor?
+#####
+Imagine having an app that does several things, including image processing. 
+You don’t want multiple images to be processed at the same time. // 您不希望同时处理多张图片
+You also want anything that has to do with image processing be running synchronized. // 您还希望所有与图像处理相关的操作都能同步运行。
+#####
+In this case, we can define a custom Global Actor named ImageProcessing:
+
+@globalActor
+actor ImageProcessing {
+    static let shared = ImageProcessing()
+}
+#####
+The @globalActor attribute makes the ImageProcessing actor a globally accessible actor. 
+It also requires the type to conform to the GlobalActor protocol, for which defining the static shared property will be enough.
+#####
+
+Once defined, we can start using it just like we can with @MainActor. For example, we could use it on an image cache:
+@ImageProcessing
+final class ImageCache {
+    
+    var images: [URL: Data] = [:]
+    
+    /// Image cache logic...
+}
+Or maybe we have some kind of image filtering method:
+@ImageProcessing
+func applyFilter(_ inputImage: UIImage) -> UIImage {
+    /// Apply filter to an image ...
+}
+#####
+Each of those will now execute on the ImageProcessing actor isolation domain, allowing you to centralize work related to image processing. // 现在，每个操作都将在 ImageProcessing 参与者隔离域上执行，从而使您可以集中与图像处理相关的工作。
+#####
+
+
+==================================================Preventing misuse of a Global Actor
+The above example uses the @globalActor attribute directly attached to the actor instance itself. 
+This has the downside that we’re not preventing anyone from using the ImageProcessing actor directly:
+
+/// This is still possible:
+ImageProcessing()
+
+#####
+Doing so would create a new actor with a new executor underneath. 
+This is not what we aimed to achieve—we want all image processing to be running on the same executor.
+#####
+Therefore, I recommend making the initializer of your global actors private:
+
+@globalActor actor ImageProcessing {
+    public static let shared = ImageProcessing()
+    
+    private init() { }
+}
+The actor can’t be constructed directly anymore, preventing duplicate instances from being created.
+
+make the actor’s initializer private to prevent misuse.

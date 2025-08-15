@@ -1,0 +1,80 @@
+https://www.avanderlee.com/concurrency/thread-dispatching-actor-execution/
+
+
+#####
+Actors ensure your code is executed on a specific thread, like the main or a background thread.
+They help you synchronize access to mutable states and prevent data races. // 它们帮助你同步对可变状态的访问，并防止数据争用
+#####
+
+
+==================================================Thread dispatching in asynchronous contexts
+#####
+In general, you’ll likely going to use actors in asynchronous environments.
+In case your calling code accesses actor-attributed methods, you’ll have to use a task or adopt the same global actor
+#####
+
+the real power of Swift’s concurrency framework and the compiler. 
+You’ll be instructed to adjust your code when you’re trying to access asynchronous code from a non-async context.
+
+The example DispatchCoordinator contains a dispatch() method that isn’t marked with the same actor attribute as the ActorDispatcher method. 
+Therefore, we need to either use a task in combination with an await:
+struct DispatchCoordinator {
+    static func dispatch() {
+        Task {
+            let dispatcher = ActorDispatcher()
+            await dispatcher.methodAttributedWithMainActor() // @MainActor func methodAttributedWithMainActor()
+        }
+    }
+}
+Or we need to add the same actor attribute to either the method or the enclosing DispatchCoordinator instance:
+struct DispatchCoordinator {
+    @MainActor
+    static func dispatch() {
+        let dispatcher = ActorDispatcher()
+        dispatcher.methodAttributedWithMainActor()
+    }
+}
+
+The above should make sense in most cases, as the compiler will instruct you accordingly. 
+However, there are cases in which you won’t get any instructions.
+
+
+==================================================Thread dispatching in synchronous contexts
+A common mistake I’ve seen many developers make (including myself) is assuming a method is always executed on the main thread when attributed to @MainActor. 
+For example, you might have existing code that dispatches to a background thread using DispatchQueue:
+
+DispatchQueue.global().async {
+
+    /// Executed on some kind of background thread.
+    /// In this case, simulated by calling into DispatchQueue.global().
+    let dispatcher = ActorDispatcher()
+    dispatcher.methodAttributedWithMainActor()
+}
+
+#####
+The above is an explicit example, but many APIs from Apple in frameworks like Foundation return on a background thread without you even noticing. 
+The code compiles, and the compiler is not suggesting any changes regarding using a task or similar. 
+Therefore, we assume our code is thread-safe and executes nicely on the main thread. The opposite is true when pausing our app and looking into the Debug Navigator:
+
+The code executes on a background thread, even though it’s attributed to @MainActor.
+
+The above DispatchQueue closure executes synchronously in a nonisolated context. 
+The compiler can only suggest changes when it’s confident about potential failures and doesn’t enforce actor isolation in code that’s not concurrency aware. 
+In other words, we can’t assume our code executes on the destination actor in case there are no compilation failures. // 换句话说，我们不能假设我们的代码在没有编译失败的情况下会在目标 Actor 上执行
+#####
+
+
+==================================================Strict Concurrency Checking to the rescue // 严格的并发检查来拯救
+Luckily, we won’t be able to compile the above code when Swift 6 arrives. 
+You can already opt-in to Strict Concurrency Checking with the latest Xcode by changing the build setting
+
+Once enabled, you’ll notice the following warning after compiling:
+// 在同步非隔离上下文中调用主 Actor 隔离实例方法“methodAttributedWithMainActor()”；这是 Swift 6 中的错误
+Call to main actor-isolated instance method ‘methodAttributedWithMainActor()’ in a synchronous nonisolated context; this is an error in Swift 6
+
+#####
+The warning would have helped us prevent the unexpected thread destination. 
+It’s essential to prepare your projects for Swift 6 and prevent yourself from having to fix many of these warnings in the future. 
+If you want to learn more, I encourage you to read Swift 6: Preparing your Xcode projects for the future.
+https://www.avanderlee.com/concurrency/swift-6-migrating-xcode-projects-packages/
+#####

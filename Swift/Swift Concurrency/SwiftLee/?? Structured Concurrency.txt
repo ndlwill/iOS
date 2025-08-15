@@ -1,0 +1,133 @@
+https://www.avanderlee.com/swift/what-is-structured-concurrency/
+
+What is Structured Concurrency?
+When we talk about Swift Concurrency, we also often mention Structured Concurrency.
+
+#####
+Before async/await, we wrote our asynchronous methods using closures and Grand Central Dispatch (GCD). 
+#####
+This worked well but often resulted in a so-called closure hell—missing an overview due to chained closures. 
+Structured concurrency makes asynchronous code easier to follow, but we still have unstructured tasks. 
+
+
+==================================================What does Structured Concurrency stand for?
+#####
+Structured Concurrency is a model that makes asynchronous code easier to read, maintain, and reason about. 
+
+Before structured concurrency, asynchronous code often relied on callback hell or manually managed tasks using DispatchQueue or OperationQueue. 
+This led to scattered execution flows, making it hard to understand the order of execution.
+
+With structured concurrency, Swift ensures that child tasks stay within a defined scope, meaning:
+1. Tasks are created and awaited in a clear, structured way—from top to bottom.
+2. The parent task waits for child tasks to finish before continuing.
+3. Errors are automatically propagated, reducing the need for manual error handling across multiple completion handlers.
+
+Especially error handling is so much easier with structured concurrency. 
+You’ll no longer have the optional error parameters inside closures or endless error unwrapping that would clutter your code.
+#####
+
+
+==================================================Structured Concurrency in action // 结构化并发的实际应用
+Fetching data with closures:
+Without structured concurrency, we would use traditional callbacks. This could result in the following code example:
+
+func fetchData(completion: @escaping (String) -> Void) {
+    let seconds = 1.0 // Simulating network delay
+    DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
+        completion("Data")
+    }
+}
+
+func loadData() {
+    fetchData { data1 in
+        fetchData { data2 in
+            fetchData { data3 in
+                print("Finished loading: \(data1), \(data2), \(data3)")
+            }
+        }
+    }
+}
+
+There are a few problems with this approach:
+The indentation grows deeper with every nested callback (callback hell).
+Hard to follow the order of execution.
+Error handling gets complicated.
+
+The code has already become quite complicated. We could use the result enum instead of the error, but the code would not improve:
+func fetchData(completion: @escaping (Result<String, Error>) -> Void) {
+    let seconds = 1.0 // Simulating network delay
+    DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
+        completion(.success("Data"))
+    }
+}
+
+func loadData() {
+    fetchData { result1 in
+        switch result1 {
+        case .success(let data1):
+            fetchData { result2 in
+                switch result2 {
+                case .success(let data2):
+                    fetchData { result3 in
+                        switch result1 {
+                        case .success(let data3):
+                            fetchData { result2 in
+                                print("Finished loading: \(data1), \(data2), \(data3)")
+                            }
+                        case .failure:
+                            print("Request 3 failed!")
+                        }
+                    }
+                case .failure:
+                    print("Request 2 failed!")
+                }
+            }
+        case .failure:
+            print("Request 1 failed!")
+        }
+    }
+}
+
+
+==================================================Fetching data with Structured Concurrency (async/await)
+func fetchData() async throws -> String {
+    try await Task.sleep(for: .seconds(1)) // Simulating network delay
+    return "Data"
+}
+
+func loadData() async throws { // 原始代码只是串行的异步调用，不属于结构化并发。
+    let data1 = try await fetchData()
+    let data2 = try await fetchData()
+    let data3 = try await fetchData()
+    
+    print("Finished loading: \(data1), \(data2), \(data3)")
+}
+
+这三个 fetchData() 是顺序执行的，每个都等上一个完成才开始下一个，没有形成“多个子任务并发执行并在作用域收拢”的结构。所以这个例子不算严格意义上的“结构化并发”
+
+结构化并发（structured concurrency）
+核心思想：在一个作用域内创建多个子任务（tasks），作用域退出时它们必须都结束（成功或抛错）。
+Swift 提供的主要工具：async let、withTaskGroup、withThrowingTaskGroup。
+特点是**“并发启动 + 自动收拢”**，不会出现悬空任务。
+
+结构化并发需要多个子任务并发执行 + 在同一作用域收拢结果。
+Swift 提供的方式主要是 async let（静态数量） 和 withThrowingTaskGroup（动态数量）。
+
+非结构化并发（unstructured concurrency）
+使用 Task { ... } 直接启动后台任务，没有明确的作用域来收拢它们。
+
+This code example has several improvements:
+Clear Execution Order: The code reads from top to bottom—just like synchronous code.
+Easier to Maintain: No deep nesting of callbacks.
+Automatic Error Propagation: If fetchData() threw an error, it would bubble up naturally.
+
+
+==================================================How about unstructured tasks?
+You might have heard about unstructured tasks in Swift Concurrency. 
+They exist indeed, and the most common example is a detached task.
+these are the most important characteristics of an unstructured task:
+
+1. Not tied to a parent: They exist independently and don’t automatically inherit cancellation behavior.
+2. Manual cancellation required: Developers need to manage task cancellation explicitly.
+3. More flexibility, but more risk: While they offer more control, they also introduce potential pitfalls like race conditions or orphaned tasks.
+

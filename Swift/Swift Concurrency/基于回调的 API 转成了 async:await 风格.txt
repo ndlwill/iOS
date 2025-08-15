@@ -1,0 +1,38 @@
+单次完成的回调 → 几乎都可以改成 async/await。
+重复触发、事件流 → 需要用 AsyncStream / AsyncSequence，不能简单 withCheckedContinuation。
+
+
+基于回调的 API 转成了 async/await 风格
+有几个前提条件和注意事项：
+1. 必须有回调通知结果
+#####
+async/await 的核心是“挂起等待结果”，所以原来的回调必须在某个时刻被调用，告诉你操作完成并返回结果。
+#####
+func loadData(completion: @escaping (String) -> Void)
+可以改成：
+func loadDataAsync() async -> String {
+    await withCheckedContinuation { continuation in
+        loadData { result in
+            continuation.resume(returning: result)
+        }
+    }
+}
+
+
+2. 注意只挂起一次
+withCheckedContinuation 或 withUnsafeContinuation 只能调用一次 resume(returning:)，否则会崩溃。
+如果原回调可能多次触发（比如监听事件、WebSocket 消息），就不能直接用 continuation，需要用 AsyncStream 或 AsyncSequence。
+
+
+3. 异步错误处理
+如果回调带有错误回调：
+func fetch(completion: @escaping (Result<Data, Error>) -> Void)
+可以改成：
+func fetchAsync() async throws -> Data {
+    try await withCheckedThrowingContinuation { continuation in
+        fetch { result in
+            continuation.resume(with: result)
+        }
+    }
+}
+

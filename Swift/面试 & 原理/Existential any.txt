@@ -1,0 +1,393 @@
+https://www.avanderlee.com/swift/existential-any/#enforced-starting-from-swift-6
+
+#####
+Existential any allows you to define existential types in Swift by prefixing a type with the any keyword. 
+In short, an existential means “any type, but conforming to protocol X.”
+#####
+
+
+==========What does Existential any mean?
+By using the any keyword in front of a protocol, we’re defining an existential type of a specific protocol. 
+For example, defining a variable of any type conforming to the Content protocol:
+protocol Content {
+    var id: UUID { get }
+    var url: URL { get }
+}
+
+struct ImageContent: Content {
+    let id = UUID()
+    let url: URL
+}
+
+let content: any Content = ImageContent(...)
+
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0335-existential-any.md
+
+SE-335 introduced existential any, and Swift 5.6 made it available first. 
+Swift 5.7 enhanced existential and allows us to use existentials combined with associated types. 
+#####
+For example, we could redefine our Content protocol to inherit the Identifiable protocol with a UUID type constraint and use it as an existential accordingly:
+#####
+protocol Content: Identifiable where ID == UUID {
+    var url: URL { get }
+}
+
+struct ImageContent: Content {
+    let id = UUID()
+    let url: URL
+}
+
+let content: any Content = ImageContent(...)
+
+
+----------Constrained existentials:
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0346-light-weight-same-type-syntax.md
+
+With the introduction of Primary Associated Types in SE-346, we can also define constrained existentials. 
+To explain this further, I’d like to introduce an ImageFetching protocol with a primary associated type Image:
+protocol ImageFetching<Image> {
+    associatedtype Image
+    func fetchImage() -> Image
+}
+#####
+The generic parameter in the protocol definition defines the primary associated type by matching the name of the associated type that has to become primary. 
+In this case, we defined Image to be our primary associated type. // 在本例中，我们将 Image 定义为主关联类型
+#####
+We can use the primary associated type as a constraint in our code.
+For example, defining an extension on UIImageView to configure an image using an image fetcher:
+extension UIImageView {
+    func configureImage(with imageFetcher: any ImageFetching<UIImage>) {
+        image = imageFetcher.fetchImage()
+    }
+}
+#####
+Since UIImageView requires a UIImage type, we constrained the parameter type to be any kind of ImageFetching, but having an associated type of UIImage.
+In other words: we can use any type conforming to the ImageFetching protocol, but it has to define UIImage as its associated type.
+#####
+Note: in the above example, it’s better to use some.
+
+
+==========When to use Existentials
+My general advice towards using existential any would be as follows:
+1. Consider starting with concrete types first, don’t overcomplicate from the start
+2. Move to opaque types using the some keyword once you need more type flexibility
+3. Change some to any when you know you need to store arbitrary (random) values
+
+public struct RemoteImageFetcher: ImageFetching {
+    let url: URL
+
+    public func fetchImage() -> UIImage {
+        // ..
+    }
+}
+public struct ImageFetcherFactory {
+    public static func imageFetcher(for url: URL) -> RemoteImageFetcher {
+        RemoteImageFetcher(url: url)
+    }
+}
+It’s the easiest to start with a concrete RemoteImageFetcher type since there is no requirement yet to make it more dynamic.
+
+----------The value of existentials for framework development:
+However, it could be that you’re developing a 3rd party library or SDK used by external parties. 
+In that case, you only want to expose the minimum required APIs to prevent many breaking changes for implementors.
+For example, if we expose the RemoteImageFetcher type and rename it to ExternalImageFetcher, we need all implementors to update their implementation accordingly.
+
+Instead, we could rewrite the code following step 2 of my advice to make use of the some keyword:
+struct RemoteImageFetcher: ImageFetching {
+    let url: URL
+
+    func fetchImage() -> UIImage {
+        return UIImage()
+    }
+}
+
+public struct ImageFetcherFactory {
+    public static func imageFetcher(for url: URL) -> some ImageFetching {
+        RemoteImageFetcher(url: url)
+    }
+}
+we no longer have to define the RemoteImageFetcher type to be publically visible. 
+Instead, we return some ImageFetching as API users don’t have to know the exact concrete type.
+
+Lastly, we could introduce another image fetcher that will handle local images:
+struct LocalImageFetcher: ImageFetching {
+    let url: URL
+
+    func fetchImage() -> UIImage {
+        return UIImage()
+    }
+}
+Once we update our factory method:
+public struct ImageFetcherFactory {
+    public static func imageFetcher(for url: URL) -> some ImageFetching {
+        if url.isFileURL {
+            return LocalImageFetcher(url: url)
+        } else {
+            return RemoteImageFetcher(url: url)
+        }
+    }
+}
+We will run into the following error:
+// 函数声明了一个不透明的返回类型“some ImageFetching”，但其主体中的返回语句没有匹配的底层类型
+Function declares an opaque return type ‘some ImageFetching’, but the return statements in its body do not have matching underlying types
+
+#####
+opaque types require to have a fixed type within the scope they’re used. // 不透明类型需要在其使用范围内具有固定的类型
+#####
+Since we’re returning either a LocalImageFetcher or a RemoteImageFetcher the compiler can no longer statically determine the outcome type. 
+In this case, you are required to define the return type to be existential:
+public struct ImageFetcherFactory {
+    public static func imageFetcher(for url: URL) -> any ImageFetching {
+        if url.isFileURL {
+            return LocalImageFetcher(url: url)
+        } else {
+            return RemoteImageFetcher(url: url)
+        }
+    }
+}
+In other words:
+We’ll return any type conforming to the ImageFetching protocol
+Since the compiler can no longer statically predict the returned type, we’ll have to accept some performance impact.
+
+
+==========The impact of existentials on performance
+As quoted from the SE-335 proposal:
+https://github.com/apple/swift-evolution/blob/main/proposals/0335-existential-any.md#introduction
+This proposal makes the impact of existential types explicit in the language by annotating such types with any.
+
+#####
+In other words, you’ll now know better when you’re defining a type to be existential. 
+The reason for doing so is related to the impact of existentials on performance. 
+They’re more expensive than concrete types since they can store any value conforming to the protocol and since they can dynamically change. 
+To explain this, you can look at the following code example:
+
+var anyContent: any Content = ImageContent(…)
+anyContent = VideoContent(…)
+#####
+
+The above code example compiles successfully and demonstrates the fact that anyContent can change dynamically. 
+Due to this, existential types require dynamic memory. 
+They also incur pointer indirection and dynamic method dispatch that cannot be optimized away. 
+Without going into details about what this means, we can conclude that it’s better not to use any if you can.
+
+it’s better to start with concrete or opaque types first. 
+You’ll notice soon enough when you need existentials. 
+For example, the above code example can be rewritten using opaque types:
+
+var someContent: some Content = ImageContent(…)
+someContent = VideoContent(…)
+The compiler would indicate dynamic type change isn’t possible with the some keyword:
+Cannot assign value of type ‘VideoContent’ to type ‘some Content’
+
+
+==========Enforced starting from Swift 6
+The performance impact of existentials used to be too hidden, so the Swift team decided to introduce the any keyword. 
+To not force us to change our complete code base to use any where required, we’re only enforced to do so starting from Swift 6.
+
+
+==================================================existential any
+
+在 Swift 6 里，existentials（存在类型） 是一个重点变化的地方，主要涉及 类型安全 和 Sendable 并发检查。
+1. 什么是 existential
+在 Swift 里，any P（或者旧写法 P）就是 存在类型，意思是：
+“一个遵循了协议 P 的值，但编译时并不知道它的具体类型。”
+
+protocol Animal { func speak() }
+func makeAnimal() -> any Animal {
+    return Dog()
+}
+这里的 any Animal 可能是 Dog、Cat、Sheep……编译时不确定，运行时才确定。
+
+
+2. Swift 6 对 existentials 的变化
+Swift 6 在 existentials 上主要有 严格化 和 并发安全 方面的调整：
+(1) 明确 any 关键字
+Swift 5.6 开始引入 any，Swift 6 中 必须显式写 any，不能再隐式用裸协议当类型。
+这是为了让开发者明确自己在用的是 存在类型，而不是泛型约束（some）。// 但不是完全替换，而是 在某些场景里用 some 可以简化原来的泛型写法。
+
+// Swift 5.x 还能这样：
+var animal: Animal   // ❌ Swift 6 会报错
+// Swift 6 必须：
+var animal: any Animal
+
+(2) Sendable 检查更严格
+Swift 6 默认开启 严格的 Sendable 检查（即使不加 -strict-concurrency），
+这会影响到 existential 协议，因为它们可能在跨线程时不安全。
+如果协议没有声明 Sendable，则 any P 不一定能跨 actor 或线程传递。
+这意味着很多旧代码会在 Swift 6 下报错，需要你：
+给协议加上 Sendable
+或用 @unchecked Sendable 明确声明你“手动保证安全”
+
+protocol Animal {
+    func speak()
+}
+
+func test() async {
+    let a: any Animal = Dog()
+    await Task {  // ❌ Swift 6 会警告/报错
+        print(a)
+    }
+}
+解决办法：
+protocol Animal: Sendable {
+    func speak()
+}
+
+(3) 泛型 vs existential 的性能差异更明显
+Swift 6 编译器对 existentials 和泛型做了更多优化提示。
+泛型 (some P) → 编译期已知具体类型，零开销。
+existential (any P) → 运行时需要装箱（boxing）和动态派发（dynamic dispatch）。
+Swift 6 社区也在推动用泛型替代不必要的 existentials，提高性能。
+
+在 Swift 6 里，existentials 的主要影响是：
+语法层面：必须显式写 any。
+并发安全：默认严格检查 Sendable，存在类型跨线程需要保证协议本身是 Sendable。
+性能建议：能用泛型 (some) 就少用 existentials。
+
+
+
+existential (any P) → 运行时需要装箱（boxing）和动态派发（dynamic dispatch）：
+1. 为什么需要装箱（Boxing）
+在 Swift 里，协议类型 any P 只是一个接口集合，它本身不知道底层具体类型有多大、布局如何。
+protocol Animal { func speak() }
+struct Dog: Animal { func speak() { print("Woof") } }
+struct Elephant: Animal { func speak() { print("Pawoo") } }
+Dog 可能是 8 字节
+Elephant 可能是 64 字节
+如果我声明：
+var pet: any Animal = Dog()
+编译器怎么分配 pet 的存储空间？
+它没法在编译期知道底层是 Dog 还是 Elephant，所以会统一用一个**固定大小的“盒子”**来存放值。
+
+装箱的过程
+如果底层类型很小（比如 <= 3 个指针大小），直接放在 box 里的内联缓冲区（类似 swift 的 small buffer optimization）。
+如果太大，就在 堆上分配内存，然后 box 里存一个指针指向它。
+Box 还会带上一个 witness table 指针，用来存放协议方法的实现地址。
+
+witness table 是一个运行时数据结构，用来记录一个具体类型是如何实现某个协议的所有要求的。// witness table 一般翻译成：协议见证表（最直译，"witness" → “见证”）、协议方法表（强调它存方法指针）
+你可以把它理解成：
+“某个类型对这个协议的所有实现方法、属性访问、关联类型等的函数指针表。”
+
+你可以把 any P 在内存里想象成这样：
++-------------------+
+| inline buffer / ptr|  <- 存放数据（或堆指针）
++-------------------+
+| witness table ptr |  <- 协议方法映射表
++-------------------+
+
+所以这个“装箱”会带来：
+额外内存分配（堆分配或内联缓冲复制）
+额外的间接访问（多一次指针跳转）
+
+2. 为什么需要动态派发（Dynamic Dispatch）
+当你调用：
+pet.speak()
+编译器无法直接内联成 Dog.speak()，因为：
+编译期并不知道 pet 的具体类型。
+它只能通过 witness table 查找 speak 的函数指针，然后调用它。
+
+这个查找过程就是 动态派发：
+从 box 里拿到 witness table 指针。
+从表里找到 speak 的地址。
+调用这个函数指针。
+
+相比之下：
+泛型 / some P 在编译期就知道类型，可以直接静态调用或内联，不需要查表。
+
+| 特性    | `some P` / 泛型 | `any P`（existential） |
+| ----- | ------------- | -------------------- |
+| 类型确定性 | 编译期已知         | 运行时才知道               |
+| 存储方式  | 直接存储值         | 可能堆分配 + 装箱           |
+| 方法调用  | 静态调用 / 内联     | 动态派发（查 witness）      |
+| 优化可能性 | 高             | 低                    |
+
+
+装箱（boxing）：为未知大小的类型分配一个统一的存储容器（内联或堆上）。
+动态派发（dynamic dispatch）：运行时查找协议方法的实现地址，然后调用。
+这就是为什么 Swift 6 推崇能用 some / 泛型就用泛型，减少 existential 的性能开销。
+
+
+==================================================some
+some 表示“存在一个确定的具体类型”
+Swift 的 some 是 不透明类型（Opaque Type）的语法标记。
+它的意思是：
+“这里返回的值，类型是确定的，但调用者看不到具体是什么类型，只知道它符合某个协议。”
+
+protocol Animal { func speak() }
+
+func makeAnimal() -> some Animal { // some kind of Animal
+    return Dog()
+}
+这里的 some Animal：
+编译器知道：它就是 Dog（确定的类型）。
+调用者不知道：只知道它是 Animal。
+整个函数返回的类型必须一致：不能有时 Dog，有时 Cat。
+
+如果换成 any Animal：
+编译器在编译期也不确定具体类型（存在类型）。
+会引入额外的运行时开销（装箱 + 动态派发）。
+
+
+Swift 的泛型参数一般写成：
+func foo<T: Animal>(_ t: T) { ... }
+但是有些时候我们不想显式写 T，而是让函数自己决定具体类型，这时就用 some：
+func makeAnimal() -> some Animal { Dog() }
+
+这样：
+你不用自己声明泛型参数名（T）。
+编译器会自动帮你做泛型推导。
+保持了泛型的性能（静态类型，零开销）。
+
+| 特性      | `some`（不透明类型） | `any`（存在类型） |
+| ------- | ------------- | ----------- |
+| 编译期类型确定 | ✅ 确定          | ❌ 不确定       |
+| 运行时开销   | 零开销           | 装箱 + 动态派发   |
+| 可变具体类型  | ❌ 必须一致        | ✅ 可以变化      |
+| 性能优化    | ✅             | ❌           |
+
+
+some：编译器自己替你声明了一个隐藏的泛型参数。
+any：编译器放弃推断具体类型，交给运行时处理。
+
+
+==================================================<T> 泛型 & some 异同点
+原来泛型的写法:
+func foo<T: Animal>(_ t: T) { ... }
+特点：
+T 是调用者决定的（调用时推断）。
+你可以在函数体里自由使用 T。
+适合参数、返回值都依赖 T 的情况。
+
+some 的写法:
+func foo(_ t: some Animal) { ... }
+特点：
+some Animal 相当于编译器帮你声明了一个匿名泛型参数。
+在函数内部，它的具体类型是固定的，但调用者看不到这个类型名。
+你不需要显式写 T，语法更简短。
+适合只需要约束为 Animal，但不需要跨多个参数/返回值共享类型的情况。
+
+
+#####
+区别示例:
+泛型参数共享类型（只能用 <T>）
+func compare<T: Animal>(_ a: T, _ b: T) { ... }
+// 要求 a 和 b 是同一种具体类型
+
+不需要类型共享（可以用 some）
+func feed(_ animal: some Animal) { ... }
+// 可以是 Dog，也可以是 Cat，每次调用都独立推断
+#####
+
+
+返回值的区别:
+some 在返回值位置更有意义：
+// 泛型版本
+func makeAnimal<T: Animal>() -> T { ... } // 调用者要提供 T，很不方便
+
+// some 版本
+func makeAnimal() -> some Animal { Dog() } // 返回类型编译期已知但调用者不用管
+
+总结：
+some 可以看作是匿名泛型参数，简化了原来显式声明 <T> 的语法。
+它不是所有泛型的替代品，当需要跨多个位置共享类型时还是要用 <T>。
+在返回值位置用 some，比传统泛型更直观。

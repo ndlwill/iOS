@@ -1,0 +1,101 @@
+https://www.avanderlee.com/concurrency/concurrency-safe-global-variables-to-prevent-data-races/
+
+#####
+Concurrency-safe global variables help you prevent data races and allow you to solve strict-concurrency-related warnings. 
+Since you can access global variables from any context, ensuring access is safe by removing mutability or conforming to Sendable is essential.
+#####
+
+
+==================================================What are global variables?
+A global variable has a global scope, meaning it’s accessible and visible (hence accessible) from anywhere in your code. 
+You’ve most likely used a global variable when working with a singleton:
+struct APIProvider {
+    static let shared = APIProvider()
+}
+By using the static keyword, you can now access the shared variable from anywhere in your code
+
+This means it is accessible from different threads, as well as from async contexts. // 这意味着它可以从不同的线程以及异步上下文访问
+
+
+==================================================Creating concurrency-safe global variables
+When preparing your project for Swift 6, you’re likely running into the following warning:
+Reference to class property ‘shared’ is not concurrency-safe because it involves shared mutable state
+
+The following code is an example of where this warning would show up:
+class ImageCache {
+    /// When you've enabled the strict concurrency build setting:
+    /// Warning: Reference to class property 'shared' is not concurrency-safe 
+    /// because it involves shared mutable state.
+    static var shared = ImageCache()
+}
+
+There are several ways of solving this warning. 
+
+1. You could isolate the image cache using a global actor:
+/// Isolated by the @MainActor, making is concurrency-safe.
+@MainActor
+class ImageCache {
+    static var shared = ImageCache()
+
+    func clearCache() {
+        /// ...
+    }
+}
+#####
+You can now only access the image cache from the main actor, making its access serialized and concurrency-safe. 
+However, actor isolation might not always work since it complicates access from non-concurrency contexts. 
+#####
+2. Another solution would be to make image cache both immutable and conform to Sendable:
+/// The `ImageCache` is `final` and conforms to `Sendable`, making it thread-safe.
+final class ImageCache: Sendable {
+
+    /// The global variable is no longer a `var`, making it immutable.
+    static let shared = ImageCache()
+
+    func clearCache() {
+        /// ...
+    }
+}
+Note that we’ve had to do a few things to make our image cache concurrency-safe:
+We’ve marked the class as final, making introducing mutable states through inheritance impossible. This is required to make a class conform to Sendable.
+The shared variable is no longer mutable since we’ve defined it as a static let.
+
+
+While either actor isolation or conforming to Sendable works in most cases, you might have global instances with a custom locking mechanism. 
+There’s a way to opt out of concurrency checking for these cases.
+
+
+==================================================Marking a global variable as nonisolated unsafe
+
+You could be running into a scenario where you know your global variable is concurrency-safe, but you’re still running into strict concurrency-related warnings. 
+An example could be a force unwrapped shared property which you initialize through a configuration method:
+struct APIProvider: Sendable {
+    static var shared: APIProvider!
+
+    let apiURL: URL
+
+    init(apiURL: URL) {
+        self.apiURL = apiURL
+    }
+
+    static func configure(apiURL: URL) {
+        /// Warning:
+        /// Reference to static property 'shared' is not concurrency-safe because it involves shared mutable state.
+        shared = APIProvider(apiURL: apiURL)
+    }
+}
+
+In those cases, you can make use of the nonisolated(unsafe) keyword that was introduced in SE-412:
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0412-strict-concurrency-for-global-variables.md
+
+struct APIProvider: Sendable {
+
+    /// We've now indicated to the compiler we're taking responsibility ourselves
+    /// regarding thread-safety access of this global variable.
+    nonisolated(unsafe) static var shared: APIProvider!
+}
+
+#####
+It’s essential to realize this is not making your code thread-safe. 
+You’re taking responsibility yourself to ensure you’re only calling the configure(apiURL: ) method in a way that does not result in any data races.
+#####

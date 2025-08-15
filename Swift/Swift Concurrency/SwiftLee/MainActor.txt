@@ -18,30 +18,36 @@ Swift Runtime 会安排这个任务跳回 MainActor（即主线程）；
 从 await 返回值开始继续执行后续逻辑（打印 3️）。
 
 
-==================================================
 
+MainActor（主参与者、主执行体、主线程执行者） usage in Swift explained to dispatch to the main thread（调度到主线程）
+==================================================
+苹果在 Swift 并发相关文档中，基本不翻译 actor，直接保留英文。但如果翻译，会更倾向：
+参与者（Participant）
+执行者（Executor） ← 这个在 Swift Runtime 里是一个相关底层概念，actor 是由 executor 驱动的
 
 https://www.avanderlee.com/swift/mainactor-dispatch-main-thread/
 
-MainActor usage in Swift explained to dispatch to the main thread
-
+#####
 MainActor is a new attribute introduced in Swift 5.5 as a global actor providing an executor which performs its tasks on the main thread.
+#####
 When building apps, it’s important to perform UI updating tasks on the main thread, which can sometimes be challenging when using several background threads.
 Using the @MainActor attribute will help you make sure your UI is always updated on the main thread.
 
 Global actors act similar to actors
 
-----------What is a MainActor?
+
+==================================================What is a MainActor?
+#####
 A MainActor is a globally unique actor who performs his tasks on the main thread. 
 It should be used for properties, methods, instances, and closures to perform tasks on the main thread. 
 Proposal SE-0316 Global Actors introduced the main actor as its an example of a global actor, and it inherits the GlobalActor protocol.
+https://github.com/apple/swift-evolution/blob/main/proposals/0316-global-actors.md
+#####
 
-----------Understanding Global Actors
+==================================================Understanding Global Actors
+#####
 Global Actors can be seen as singletons: there’s only one instance of each.
-As of now, global actors only work by enabling experimental concurrency. 
-You can do so by adding the following value to “Other Swift Flags” in Xcode’s build settings:
--Xfrontend -enable-experimental-concurrency
-
+#####
 
 You can see Global Actors as singletons: only one instance exists. 
 We can define a global actor as follows:
@@ -58,7 +64,9 @@ final class SwiftLeeFetcher {
     // ..
 }
 
-Anywhere you use the global actor attribute, you’ll ensure synchronization through the shared actor instance to ensure mutually exclusive access to declarations.
+Anywhere you use the global actor attribute, 
+you’ll ensure synchronization through the shared actor instance to ensure mutually exclusive access to declarations.
+// 无论在哪里使用全局 Actor 属性，您都将通过共享 Actor 实例来确保同步，从而确保对声明的互斥访问。
 
 
 The underlying @MainActor implementation is similar to our custom-defined @SwiftLeeActor:
@@ -73,7 +81,7 @@ In other words, you can start using this global actor immediately and mark your 
 ###
 
 
-----------How to use MainActor in Swift?
+==================================================How to use MainActor in Swift?
 ###
 A global actor can be used with properties, methods, closures, and instances.
 ###
@@ -85,9 +93,11 @@ final class HomeViewModel {
     // ..
 }
 
+https://www.avanderlee.com/swift/actors/#nonisolated-access-within-actors
 Using nonisolated, we can make sure that methods without the main thread requirement perform as fast as possible.
 ###
-A class can only be annotated with a global actor if it has no superclass, the superclass is annotated with the same global actor, or the superclass is NSObject.
+A class can only be annotated with a global actor if it has no superclass, 
+the superclass is annotated with the same global actor, or the superclass is NSObject.
 A subclass of a global-actor-annotated class must be isolated to the same global actor.
 ###
 
@@ -100,12 +110,19 @@ final class HomeViewModel {
 ###
 Marking the images property with the @MainActor property ensures that it can only be updated from the main thread
 
+
+#####
 Individual methods can be marked with the attribute as well:
 @MainActor func updateViews() {
     // Perform UI updates..
     images = []
 }
+Be warned: This method is only guaranteed to be dispatched to the main thread if you call it from an asynchronous context.
+Xcode 16 will adequately let you know about this, but it’s essential to be aware of this functionality to understand how a main actor attribute applies.
+#####
 
+
+#####
 And even closures can be marked to perform on the main thread:
 func updateData(completion: @MainActor @escaping () -> ()) {
     Task {
@@ -114,9 +131,11 @@ func updateData(completion: @MainActor @escaping () -> ()) {
     }
 }
 Although in this case, you should rewrite the updateData method to an async variant without needing a completion closure.
+后续使用 async/await 后，一般不用闭包
+#####
 
 
-----------Using the main actor directly
+==================================================Using the main actor directly
 The MainActor in Swift comes with an extension to use the actor directly:
 @available(macOS 12.0, iOS 15.0, watchOS 8.0, tvOS 15.0, *)
 extension MainActor {
@@ -126,6 +145,7 @@ extension MainActor {
 }
 
 This allows us to use the MainActor directly from within methods, even if we didn’t define any of its body using the global actor attribute:
+This lets us call @MainActor in methods without using its attribute in the body.
 
 Task {
     await someHeavyBackgroundOperation()
@@ -135,9 +155,9 @@ Task {
 }
 
 In other words, there’s no real need to use DispatchQueue.main.async anymore.
+However, I do recommend using the global attribute to restrict any access to the main thread.
 
-
-----------When should I use the MainActor attribute?
+==================================================When should I use the MainActor attribute?
 Before Swift 5.5, you might have defined many dispatch statements to make sure tasks are running on the main thread. 
 An example could look as follows:
 
@@ -172,5 +192,29 @@ func fetchImage(for url: URL) async throws -> UIImage {
     return image
 }
 
+#####
 The @MainActor attribute ensures the logic executes on the main thread while the network request is still performed on the background queue. 
 Dispatching to the main actor only takes place if needed to ensure the best performance possible.
+#####
+
+
+==================================================Understanding Why @MainActor Doesn’t Always Ensure Main Thread Execution
+If you’re new to concurrency, you might think marking a method with @MainActor always ensures it runs on the main thread.
+Unfortunately, this is not guaranteed for synchronous methods in non-isolated contexts.
+
+it’s good to know that Swift 6 language mode catches most of these occasions.
+
+Synchronous methods in non-isolated contexts run on the same thread as the caller, regardless of any actor annotations. 
+Depending on which Swift language mode you’re using, you might or might not be warned about potential issues.
+
+#####
+The dispatch via the global queue creates a non-isolated context and the @MainActor attribute isn’t respected.
+#####
+
+However, if we turn on Swift 6 language mode, the compiler will tell us about the potential flaw right away:
+The compiler with Swift 6 language mode will prevent you from mistakes when using the @MainActor attribute.
+
+
+In larger projects, it’s likely that a chain of methods is called on a background thread. Eventually, 
+such a chain can end up calling a method attributed to the main actor while synchronously dispatched to the same thread as the caller: a background thread. 
+Therefore, see if you can get your code on Swift 6

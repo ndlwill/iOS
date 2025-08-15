@@ -1,0 +1,207 @@
+https://www.avanderlee.com/concurrency/swift-6-migrating-xcode-projects-packages/
+
+
+==================================================The idea behind Swift 6
+it’s important to understand why Swift 6 is a major milestone.
+
+
+==================================================The goals of Swift 6
+Swift 6 is a major release of Apple’s primary programming language.
+
+1. Eliminating all data races // 消除所有数据竞争
+#####
+Swift 6’s goal has always been to eliminate all data races. 
+Once you migrate your projects to Swift 6, you’ll notice several warnings related to Sendable and concurrency. 
+These warnings guide you towards making your project thread-safe, eliminating data races and race conditions (they’re not the same).
+
+Some of your app’s crashes are likely related to data races, while you have no clue how to reproduce them. 
+Don’t be surprised to see them disappear after migrating successfully.
+#####
+
+
+2. Strict Concurrency Checking // 严格并发检查
+#####
+To get to a point of eliminating all data races, you need to have strict concurrency checking in place. 
+That’s why you’ll see a lot of warnings and errors in your projects as soon as you switch to Swift 6 language mode
+#####
+
+
+3. More deterministic execution // 更确定性的执行
+#####
+Enforcing the previous two goals will result in a more deterministic execution.
+Your code should become more predictable, reducing unexpected runtime issues.
+You might have been battling those EXC_BAD_ACCESS crashes in the past
+#####
+
+
+==================================================What’s new in Swift 6?
+1. Enhanced concurrency support // 增强并发支持
+It’s not brand new, but it’s a next-level iteration.
+Previous language updates prepared us for this, but now you’ll experience a more strict concurrency checker with fewer false positives.
+Data-race safety checks were previously available as warnings through the -strict-concurrency=complete compiler flag. 
+Now, they’ll result in compiler errors when diagnosing potential data races.
+
+Related to this, Swift 6 also introduced a new Synchronization library.
+including atomic operations and a new mutex API.
+
+原子操作（Atomic Operation）
+定义：在 CPU 执行层面，不可被中断或分割的单一步操作。
+也就是说，要么整个操作完成，要么完全不发生，不会出现“进行到一半被其他线程看到”的情况。
+
+互斥量（Mutex）
+定义：一种同步原语，确保在同一时刻，只有一个线程可以进入临界区。
+
+| 特性     | 原子操作       | 互斥量        |
+| ------ | ---------- | ---------- |
+| 粒度     | 极细（单一内存操作） | 粗（任意代码块）   |
+| 执行位置   | CPU 指令级    | OS 同步机制    |
+| 开销     | 极低         | 较高（可能阻塞）   |
+| 适用场景   | 简单计数、标志位   | 复杂逻辑、多资源保护 |
+| 是否阻塞线程 | 否          | 是（可能等待锁）   |
+
+
+2. Typed throws // 类型化抛出
+More predictable code will result in code that’s easier to reason about. 
+Typed throws will help with this as it reduces the number of error types to prepare you for at implementation level.
+
+/// Using throws(ValidationError) we specify the error type to always be `ValidationError`
+static func validate(name: String) throws(ValidationError) {
+    guard !name.isEmpty else {
+        throw ValidationError.emptyName
+    }
+    guard name.count > 2 else {
+        throw ValidationError.nameTooShort(nameLength: name.count)
+    }
+}
+
+As you can see in the method above, we’re defining the expected error type to be ValidationError. 
+At the implementation level, we only have to take care of error cases of this type.
+https://www.avanderlee.com/swift/typed-throws/
+
+
+3. Manage dependency creep with access-level modifiers on import declarations
+#####
+You’re probably familiar with access-level modifiers like public, private, and internal for classes, methods, and properties. 
+Starting with Swift 6, you can also apply these to package imports:
+#####
+
+internal import FrameworkDependency
+private import FrameworkDependencyOnlyForThisFile
+package import FrameworkDependencyOnlyForFilesInThisPackage
+
+Using these access-level modifiers helps indirect clients to determine whether they can skip loading transitive dependencies. 
+You’ll expose fewer dependencies to top-level clients, reducing the number of dependencies to check during compiling. 
+In other words, this allows you to manage dependency creep.
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0409-access-level-on-imports.md
+
+
+4. others
+Swift 6 contains an extensive list of merged proposals
+https://www.swift.org/swift-evolution/#?version=6.0
+
+#####
+Swift can be seen as a complex language, but only if you focus on all the features it provides.
+
+Some are just not required for regular app development
+#####
+
+
+==================================================Incrementally migrating your Xcode Projects and packages to Swift 6
+I recommend incremental adoption in all cases to isolate the changes and to enable you to open pull requests that aim to be small enough for reviews.
+
+#####
+You’ll follow the same steps for migrating modules (Swift Packages) as for Xcode projects, 
+but you’ll apply build settings inside the Package.swift file. Each migration follows the following steps:
+
+1. Determine an isolated part of your project. This will either be an individual target, test target, or module.
+
+2. Enable upcoming language features for Swift 6, one by one.
+#####
+You can do this by going into build settings and searching for “Upcoming features”
+I recommend focusing on the build settings that contain the $(SWIFT_UPCOMING_FEATURE_6_0) variable, as these relate to Swift 6 directly.
+These features will also be enabled automatically when you change the project’s language feature to version six.
+
+You’ll likely see new warnings after enabling one of the upcoming features.
+Some of these warnings will become errors when you’ve updated your language version, so try to fix as many as you can.
+Once done, open a pull request with just these changes before moving towards the next upcoming feature.
+#####
+
+For Swift packages, you can enable upcoming features as follows:
+.target(
+    name: "WindowMonitoring",
+    dependencies: [],
+    swiftSettings: [
+        .enableUpcomingFeature("SWIFT_UPCOMING_FEATURE_FORWARD_TRAILING_CLOSURES")
+    ]
+)
+You can find the key to use inside Swift packages inside Xcode’s Quick Help.
+
+3. Increase the strict concurrency checking from minimal to targeted and finally to complete.
+#####
+The strict concurrency checking build setting controls the level of Sendable enforcement and actor-isolation checking performed by the Swift compiler.
+
+There are three levels to pick from:
+Minimal: Enforce Sendable constraints only where they have been explicitly adopted and perform actor-isolation checking wherever code has adopted concurrency.
+Targeted: Enforce Sendable constraints and perform actor-isolation checking wherever code has adopted concurrency, including code that has explicitly adopted Sendable.
+Complete: Enforce Sendable constraints and actor-isolation checking throughout the entire project or module.
+
+Each step results in stricter checking and potentially more warnings. 
+Don’t go too fast here, and adopt each level individually. 
+After fixing the warnings for each level, you can open a pull request and continue to the next level.
+
+If you’re using Swift packages, you can change the strict concurrency level as follows:
+.target(
+    name: "CoreExtensions",
+    dependencies: ["Logging"],
+    path: "CoreExtensions/Sources",
+    swiftSettings: [
+        /// Used to be like this in Xcode 14:
+        SwiftSetting.unsafeFlags(["-Xfrontend", "-strict-concurrency=complete"]),
+
+        /// Xcode 15 & 16. Remove `=targeted` to use the default `complete`. Potentially isolate to a platform to further reduce scope.
+        .enableExperimentalFeature("StrictConcurrency=targeted", .when(platforms: [.macOS]))
+    ]
+)
+#####
+
+4. After fixing all warnings in each step, you can change the language mode to Swift 6.
+The final step of the migration requires you to change the Swift Language Version to Swift 6.
+For packages, you can set the swift-tools-version to 6.0 to enable Swift 6 language mode for all targets:
+// swift-tools-version:6.0
+// The swift-tools-version declares the minimum version of Swift required to build this package.
+
+import PackageDescription
+
+This is the first line inside your Package.swift files. 
+To update a specific package target to an older language version, you’ll need to adopt the following Swift setting:
+.target(
+    name: "WindowMonitoring",
+    dependencies: [],
+    swiftSettings: [
+        .swiftLanguageMode(.v5) // Still requires Swift 5
+    ]
+)
+Note that you can remove any other Swift Settings for upcoming features or strict concurrency checking since they’ll be enabled by default after updating the language version.
+#####
+
+
+==================================================Frequently Asked Questions (FAQ) related to Swift 6
+Can I only adopt Swift 6 if all my dependencies are migrated?
+No, all projects, packages, and dependencies can migrate independently. That also means that you can migrate your projects before any 3rd party dependencies do.
+
+
+What if a dependency updates to Swift 6 and my project didn’t migrate yet?
+Even in this case, you won’t notice anything. You can migrate your project when you are ready, independently from any dependencies.
+
+
+#####
+Isn’t Swift 6 all about async/await?
+It’s essential to understand it’s not only about getting rid of closures in favor of async/await. 
+By using the concurrency framework, you’ll allow the compiler to validate your code for thread safety. 
+The concurrency strictness warnings will indicate which types must become sendable, preventing you from creating data races and runtime exceptions.
+#####
+
+
+How do existentials relate to Swift 6?
+Swift 6 will eventually force you to use any in front of existentials to indicate the impact on performance.
+https://www.avanderlee.com/swift/existential-any/#enforced-starting-from-swift-6
