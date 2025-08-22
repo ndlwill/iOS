@@ -1,0 +1,125 @@
+UIGraphicsGetCurrentContext:
+
+The current graphics context is nil by default. 
+Prior to calling its drawRect: method, view objects push a valid context onto the stack, making it current. 
+If you are not using a UIView object to do your drawing, 
+however, you must push a valid context onto the stack manually using the UIGraphicsPushContext(_:) function. 
+
+This function may be called from any thread of your app.
+
+
+The current graphics context is nil by default. 
+默认情况下 没有 current context，也就是说 UIGraphicsGetCurrentContext() 会返回 nil，如果你没有创建或者推入 context。
+
+
+Prior to calling its drawRect: method, view objects push a valid context onto the stack, making it current. 
+UIView 的 drawRect / draw(_:)
+在 UIView 的 draw(_:) 或 drawRect: 调用前，UIKit 会自动推入一个有效的屏幕 context
+所以在 draw(_:) 内调用 UIGraphicsGetCurrentContext() 是有效且线程安全的（主线程）
+
+
+If you are not using a UIView object to do your drawing, 
+however, you must push a valid context onto the stack manually using the UIGraphicsPushContext(_:) function. 
+非 UIView 的绘制
+如果你 自己创建的 context（离屏 bitmap），你需要手动推入 context 才能通过 UIGraphicsGetCurrentContext() 拿到它
+UIGraphicsPushContext(bitmapContext)
+let ctx = UIGraphicsGetCurrentContext()
+// 使用 ctx 绘制
+UIGraphicsPopContext()
+这种 context 完全在内存里，线程安全
+
+
+This function may be called from any thread of your app.
+这里指的是函数本身可在任意线程调用，不会崩溃
+并不意味着获取到的 context 一定能安全绘制
+安全绘制依赖于 context 类型：
+离屏 bitmap → 子线程安全
+屏幕 context / UIView context → 必须主线程
+
+
+绘制安全性取决于 context：
+离屏 context → 子线程可用
+UIView / 屏幕 context → 主线程
+
+
+
+一个 CGContext 不可在多个线程同时使用
+离屏 context：线程独占安全
+屏幕 context：必须主线程
+多线程共享同一个 context → 必须加锁，否则线程不安全
+
+
+#####
+离屏渲染文字到 UIImage → 子线程安全
+渲染到屏幕或操作 UIView/Layer → 必须主线程
+
+UIGraphicsBeginImageContextWithOptions(size, opaque, scale)
+会创建一个 离屏位图上下文（bitmap context）
+绘制的内容只在内存里，不依赖屏幕
+可以在 子线程安全使用
+最终生成的 UIImage 也是离屏渲染结果
+
+UIGraphicsGetCurrentContext() / 主屏幕 context
+取得的是 当前 UIKit 视图的 context
+通常依赖 主线程的屏幕渲染 context
+
+
+| context 来源                                                   | 线程要求     | 说明                           |
+| ------------------------------------------------------------ | -------- | ---------------------------- |
+| 屏幕 context（UIView draw / layer 上下文）                          | **主线程**  | UIKit 绘制必须在主线程，否则 context 无效 |
+| 离屏 bitmap context (`UIGraphicsBeginImageContextWithOptions`) | **任意线程** | 你自己创建的 context 在内存里，线程安全     |
+| Core Graphics 自建 context (`CGBitmapContextCreate`)           | **任意线程** | 纯 CG API，不依赖屏幕，线程安全          |
+
+#####
+
+
+==================================================渲染流程
+1. 自定义 UIView 内部绘制和子视图显示是两件事情:
+
+class ViewA: UIView {
+    let viewB = UIView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        addSubview(viewB)
+    }
+
+    override func draw(_ rect: CGRect) {
+        super.draw(rect)
+        // 自定义绘制
+        UIColor.red.setFill()
+        UIRectFill(rect)
+    }
+}
+
+draw(_:)
+UIKit 会在需要刷新时调用（setNeedsDisplay / layoutSubviews / 首次渲染）
+绘制内容在 ViewA 的 layer 上生成，属于 layer backing store
+
+addSubview(viewB)
+viewB 是独立的 UIView，会有自己的 layer
+它的内容在 viewB.layer 上绘制
+
+
+2. UIKit 的渲染合成（Render & Composite）:
+每个 UIView 对应一个 CALayer
+层次结构（layer tree）会在 RunLoop 休眠前 前由 Core Animation 合成
+合成顺序：
+父 view 的 layer backing store（drawRect 绘制内容）
+子 view layer（viewB）
+其他 sibling layer
+Core Animation 会把所有 layer 合成为一张最终屏幕图，然后提交给 GPU 显示
+
+
+3. 渲染时机
+drawRect 里的绘制 不是立即显示的
+UIKit 会把你的绘制缓存到 layer 的 backing store
+最终显示发生在 下一次 RunLoop 的 CATransaction flush 时（默认在主线程 RunLoop 休眠前 flush）
+所以父 view 的绘制和子 view 的内容会 一起显示在屏幕上
+
+
+#####
+自定义 view 绘制内容和子视图内容最终会 一起显示
+绘制是在 layer backing store，子视图有自己的 layer，两者由 Core Animation 合成
+显示发生在 RunLoop flush CATransaction 时，而不是 drawRect 里立即显示 // flush（提交）核心含义：把缓存的数据立即送往下一环节处理或显示
+#####

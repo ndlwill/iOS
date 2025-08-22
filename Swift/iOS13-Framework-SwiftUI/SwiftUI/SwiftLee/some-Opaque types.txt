@@ -1,0 +1,173 @@
+https://www.avanderlee.com/swift/some-opaque-types/
+
+
+The some keyword in Swift declares opaque types, and Swift 5.1 introduced it with support for opaque result types.
+
+some 关键字是 Swift 5.1（随 iOS 13 / Xcode 11 发布） 引入的
+Swift 5.7：支持 parameter position 的 some，可以直接在函数参数里写 some Protocol，减少对泛型的依赖。
+
+Opaque Parameter Declarations: Implemented (Swift 5.7)
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0341-opaque-parameters.md
+
+
+==================================================What are opaque types?
+Opaque types allow you to describe the expected return type without defining a concrete type. // 不透明类型允许你描述预期的返回类型，而无需定义具体的类型
+A common place where we use opaque types today is inside the body of a SwiftUI view:
+var body: some View { ... }
+
+it looks like we’re returning a protocol type. 
+Though, the some keyword is crucial here as it allows the compiler to access the actual type information and perform optimizations. // 因为它允许编译器访问实际的类型信息并执行优化
+For example, the compiler can see the following return types: // 编译器可以看到以下返回类型
+var body: VStack { ... }
+// or:
+var body: Text { ... }
+
+The entire view hierarchy is opaque, allowing the compiler to know the exact size of the returned view body. // 整个视图层次结构是不透明的，这使得编译器能够知道返回视图主体的确切大小。
+The compiler can optimize the code, and fewer heap allocations are needed. // 编译器可以优化代码，并减少所需的堆分配
+you could say we’re giving the compiler more information than just stating we’re expecting a View protocol to be returned by appending the some keyword. // 您可以说，我们通过附加 some 关键字向编译器提供了更多信息（编译器希望通过 some 关键字了解底层的具体类型），而不仅仅是声明我们期望返回 View 协议
+
+
+==================================================Using opaque types to hide type information
+#####
+The some keyword allows describing the return value by providing the protocol it supports, allowing to hide the concrete type accordingly. 
+When developing modules, you can use opaque types to hide concrete types that you don’t want to expose to implementors. // 在开发模块时，您可以使用不透明类型来隐藏不想向实现者公开的具体类型。
+#####
+if you provide a package for fetching images, you might define an image fetcher:
+
+struct RemoteImageFetcher {
+    // ...
+}
+
+public struct ImageFetcherFactory {
+    public func imageFetcher(for url: URL) -> RemoteImageFetcher
+}
+
+The API is defined within a Swift package module and requires the public keyword to expose APIs to implementors. 
+Since we defined a concrete RemoteImageFetcher return type, 
+the compiler now requires us to convert the remote image fetcher into publicly accessible code
+
+#####
+Without using opaque types using the some keyword, we might need to expose more code than intended.
+#####
+
+We can solve this problem by defining a public ImageFetching protocol and use that as a return type:
+public protocol ImageFetching {
+    func fetchImage() -> UIImage
+}
+
+struct RemoteImageFetcher: ImageFetching {
+    func fetchImage() -> UIImage {
+        // ...
+    }
+}
+
+public struct ImageFetcherFactory {
+    public func imageFetcher(for url: URL) -> ImageFetching {
+        // ...
+    }
+}
+
+Returning a protocol without associated types works fine without defining opaque types, 
+but as soon as we define an associated type Image
+
+We’ll run into the following error:
+#####
+Protocol ‘ImageFetching’ can only be used as a generic constraint because it has Self or associated type requirements
+#####
+Solving errors like these requires defining opaque types
+
+
+Solving Protocol can only be used as a generic constraint errors:
+When #####working with protocols and associated types##### in Swift, it’s common to run into the following error:
+Protocol ‘X’ can only be used as a generic constraint because it has Self or associated type requirements
+
+The protocol requires you to provide information about the generic constraints; 
+#####
+the compiler can’t resolve these without extra details. // 如果没有额外的细节，编译器就无法解决这些问题
+We allow the compiler to read out that additional information by using the some keyword // 我们允许编译器使用 some 关键字读出附加信息
+#####
+public func imageFetcher(for url: URL) -> some ImageFetching { ... }
+
+#####
+While we will enable the compiler to read out all necessary information, 
+we can still hide implementation details like the concrete RemoteImageFetcher type used underneath.
+#####
+
+Using an opaque return type solves generics constraints in the above example, // 使用不透明的返回类型解决了上面例子中的泛型约束
+but we could also run into the same error when using the protocol as a function parameter:
+public extension UIImageView {
+    // Protocol 'ImageFetching' can only be used as a generic constraint because it has Self or associated type requirements
+    func configureImage(with imageFetcher: ImageFetching) {
+
+        // Member 'fetchImage' cannot be used on value of protocol type 'ImageFetching'; use a generic constraint instead
+        image = imageFetcher.fetchImage()
+    }
+}
+The above error throws in Xcode 13 only.
+
+Xcode 14 comes with Swift 5.7 and several improvements regarding opaque and existential types.
+
+SE-0341 Opaque Parameter Declarations is one of the implemented proposals and allows to use opaque types in parameter declarations. 
+Though, the compiler will tell you:
+Use of protocol ‘ImageFetching’ as a type must be written ‘any ImageFetching’
+
+but for now, the only thing you need to know is that you could use either any or some. 
+In other words, we could change our method as follows:
+func configureImage(with imageFetcher: some ImageFetching)
+
+
+==================================================Using Primary Associated Types and constraints using some
+While this solves the compiler error related to our method definition, 
+we will still run into the following error regarding image fetching:
+public extension UIImageView {
+    func configureImage(with imageFetcher: some ImageFetching) {
+        // Cannot assign value of type '<anonymous>.Image' to type 'UIImage'
+        image = imageFetcher.fetchImage()
+    }
+}
+
+The compiler will recommend you to force unwrap the value to a UIImage but we don’t want to risk runtime exceptions.
+Therefore, we’ll have a look at another Swift 5.7 feature implemented with SE-358 Primary Associated Types in the Standard Library
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0358-primary-associated-types-in-stdlib.md
+allowing us to configure the primary associated type for our image fetcher:
+
+public protocol ImageFetching<Image> {
+    associatedtype Image
+    func fetchImage() -> Image
+}
+
+#####
+By matching the associated type Image inside the protocol name declaration, we configure the primary associated type for our image fetching protocol. 
+
+Swift 5.7 also comes with proposal SE-0346 Lightweight same-type requirements for primary associated types allowing us to now update our extension method to be constraint to UIImage types only:
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0346-light-weight-same-type-syntax.md
+
+public extension UIImageView {
+    func configureImage(with imageFetcher: some ImageFetching<UIImage>) {
+        image = imageFetcher.fetchImage()
+    }
+}
+#####
+
+All compiler errors are solved, and we’ve configured our method so that the compiler knows we’re dealing with some image fetcher returning a UIImage.
+
+#####
+By using opaque types in the above examples, we’ve removed the need to expose code publically, 
+allowing us to refactor code internally without publishing breaking changes. // 通过在以上示例中使用不透明类型，我们无需公开代码，从而可以在内部重构代码而无需发布重大更改
+Gaining this flexibility is crucial during normal development with internal APIs and when providing frameworks.
+#####
+
+
+==================================================Replacing generics with some
+The some keyword can also be used as syntactic sugar to replace generics and improve readability. 
+If a generic parameter is only used in a single place, we can replace it with opaque types.
+
+func printElement<T: CustomStringConvertible>(_ element: T) {
+    print(element)
+}
+The generic parameter is only used in a single place, so we can replace it using the some keyword accordingly:
+func printElement(_ element: some CustomStringConvertible) {
+    print(element.description)
+}
+
+In other words, you can use opaque type some Protocol as a shorthand of T where T: Protocol and improve the readability of your code.

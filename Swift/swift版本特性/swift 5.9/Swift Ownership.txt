@@ -1,0 +1,66 @@
+Swift 的 Ownership（所有权）模型，是 Swift 语言在内存管理和并发安全上的一个底层基础，目的是让编译器能在编译期推理出对象的生命周期，减少运行时开销，并保证数据在并发环境下的正确性。
+
+Swift 团队引入 Ownership Model，让编译器能静态地追踪“谁拥有数据、谁负责释放、是否允许复制”。
+
+~Copyable 配合 consume & consuming & borrowing 使用，效仿rust
+
+#####
+sswift.org/blog/swift-5.9-released/
+
+Ownership features can help developers fine-tune memory management behavior in performance-critical code.
+
+The new consume operator tells Swift to deinitialize a variable and transfer its contents without copying it. 
+The consuming and borrowing parameter modifiers provide hints that Swift can use to eliminate unnecessary copying and reference-counting operations when passing a parameter. 
+Finally, noncopyable structs and enums allow you to create types which, like a class, 
+can’t be meaningfully copied when assigned, but like a struct or enum, 
+do not need to be reference-counted because only one storage location can own the instance at a time.
+
+
+// consume operator to end the lifetime of a variable binding
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0366-move-function.md#consume-operator-to-end-the-lifetime-of-a-variable-binding
+// borrowing and consuming parameter ownership modifiers
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0377-parameter-ownership-modifiers.md
+// Noncopyable structs and enums
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0390-noncopyable-structs-and-enums.md
+#####
+
+
+消费（consume / consuming）
+语义：函数内部拥有值的独占所有权
+行为：
+可以 读取和修改值（如果类型可变）
+可以 move 或 转移所有权
+调用结束后，原变量在调用者处不可再使用
+
+struct FileHandle: ~Copyable {
+    var fd: Int
+}
+
+func useFile(_ fh: consuming FileHandle) {
+    print("Using fd: \(fh.fd)")   // 读取
+    // 这里也可以修改 fh 内部状态
+}
+
+var fh = FileHandle(fd: 3)
+useFile(fh)  // 所有权 move
+// print(fh.fd) ❌ 编译报错，fh 已被消费
+
+
+借用（borrowing）
+语义：函数内部只借用值
+行为：
+只能 读取值，不能修改/消费
+调用结束后，原变量仍然可用
+多线程借用是允许的（只读安全）
+
+func printFile(@borrow fh: FileHandle) {
+    print("Borrowed fd: \(fh.fd)")  // 只读
+    // ❌ fh.fd = 10 不能修改
+}
+
+var fh = FileHandle(fd: 3)
+printFile(fh)   // 借用，调用后 fh 仍然可用
+
+#####
+所以“消费”不是只读，而是拥有独占读写权限，与借用只读完全不同。
+#####

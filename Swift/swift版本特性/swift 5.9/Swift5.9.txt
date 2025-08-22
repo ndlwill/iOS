@@ -1,5 +1,4 @@
-https://docs.swift.org/swift-book/documentation/the-swift-programming-language/
-
+http://sswift.org/blog/swift-5.9-released/
 
 https://docs.swift.org/swift-book/documentation/the-swift-programming-language/
 
@@ -7,3 +6,165 @@ https://cloud.tencent.com/developer/article/2307180
 
 // Swift Macro
 https://juejin.cn/post/7249888320166903867
+
+
+if与switch表达式
+if与switch语句可以作为表达式使用
+let score = 90
+let result1 = if score >= 60 {
+    "及格"
+} else {
+    "不及格"
+}
+print(result1)
+
+let result2 = switch score {
+case 0 ..< 60:
+    "不及格"
+case 60 ..< 70:
+    "及格"
+case 70 ..< 80:
+    "中等"
+case 89 ..< 90:
+    "良好"
+case 90 ... 100:
+    "优秀"
+default:
+    "其他"
+}
+print(result2)
+
+
+
+~Copyable不可复制 // 属于 Swift Ownership 模型的一部分
+引入了“不可复制的枚举与结构体”的概念。
+不可复制的枚举与结构体需要遵守~Copyable协议。
+枚举与结构体如果遵守了~Copyable协议，则除了Sendable协议再也不能遵守其他任何协议。
+
+但有些类型的「语义」不允许随便复制，比如：
+文件句柄（file handle）
+独占资源（exclusive resource）
+锁（mutex）
+actor 中的某些内部状态
+这些场景需要「独占所有权（move-only）」语义。
+
+struct Person: ~Copyable {
+    var name = "Zhangsan"
+    var age = 10
+    let sex = "male"
+}
+
+let person = Person()
+print(person.name, person.age, person.sex)
+
+// 报错：Cannot consume noncopyable stored property 'person' that is global
+let personCopy = person
+print(personCopy.name, personCopy.age, personCopy.sex)
+
+
+使用场景
+（1）资源管理
+比如一个「只能被一个实例持有」的资源：
+struct FileHandle: ~Copyable {
+    let fd: Int
+    deinit {
+        close(fd) // 释放资源
+    }
+}
+这样 FileHandle 就不能被随意复制，只能 move（转移所有权）。
+避免出现两个实例同时试图 close(fd) 的问题。
+
+（2）并发安全
+在 actor 并发 下，如果一个类型是 ~Copyable，可以确保它不会在多个地方复制共享，从而避免数据竞争。
+
+
+
+
+Clock增加sleep(for:)方法
+let clock1 = ContinuousClock()
+try? await clock1.sleep(for: .seconds(1))
+let clock2 = SuspendingClock()
+try? await clock2.sleep(for: .seconds(1))
+
+// 应用于Concurrency
+Task {
+    print("start task...")
+
+    // Swift5.7之后，Swift5.9之前
+    try await Task.sleep(until: .now + .seconds(1), clock: .suspending)
+    // Swift5.9之后
+    try await Task.sleep(for: .seconds(1), clock: .suspending)
+
+    print("continue task...")
+}
+
+// 异步函数
+func doSomeAsyncWork() async throws {
+    print("start to work...")
+    // Swift5.7之后，Swift5.9之前
+    try await Task.sleep(until: .now + .seconds(3), clock: .continuous)
+    // Swift5.9之后
+    try await Task.sleep(for: .seconds(3), clock: .continuous)
+
+    print("continue to work...")
+}
+
+
+
+Macros
+Swift 5.9 引入了一个重要新功能 — 宏。
+宏可以在编译前动态地操作代码，从而能够在编译时注入额外的功能。
+
+独立 Macro：通过@freestanding关键字声明，使用时以标签#开头，并在后边的()中添加对应的参数，主要作用是代替代码中的内容。
+附加 Macro：通过@attached关键字声明，使用时以标签@开头，并在后边的()中添加对应的参数，主要作用是为声明添加代码。
+
+每个 Macro 都是 Package，因此需要通过 Xcode 菜单 —> File —> New —> Package... —> Swift Macro 创建 Macro Package。
+Sources：源码目录包含 3 个子文件夹。
+[Macro name]：包含创建 Macro 的声明源文件。
+[Macro name]Client：包含创建 Macro 的使用源文件。
+[Macro name]Macros：包含创建 Macro 的实现源文件。
+
+在使用 Macro 的地方，可以通过选中宏 —> 右键菜单 —> Expand Macro 在下方显示展开后的代码。
+
+// 声明源文件 [Macro name].swift
+// 定义一个宏函数，接收一个泛型参数，返回原始值与对应字符串组成的元组，函数实现在FirstMacroMacros的StringifyMacro
+@freestanding(expression)
+public macro stringify<T>(_ value: T) -> (T, String) = #externalMacro(module: "FirstMacroMacros",
+                                                                      type: "StringifyMacro")
+
+// 实现源文件 [Macro name]Macro.swift
+public struct StringifyMacro: ExpressionMacro {
+    public static func expansion(
+        of node: some FreestandingMacroExpansionSyntax,
+        in context: some MacroExpansionContext
+    ) -> ExprSyntax {
+        guard let argument = node.argumentList.first?.expression else {
+            fatalError("compiler bug: the macro does not have any arguments")
+        }
+
+        return "(\(argument), \(literal: argument.description))"
+    }
+}
+// 导出Macro以供使用
+@main
+struct FirstMacroPlugin: CompilerPlugin {
+    let providingMacros: [Macro.Type] = [
+        StringifyMacro.self,
+    ]
+}
+
+
+// 使用源文件 main.swift
+import FirstMacro
+
+let a = 10
+let b = 20
+let (result, code) = #stringify(a + b) 
+print("The value \(result) was produced by the code \"\(code)\"")
+
+返回的整体表达式是：
+(a + b, "a + b")
+let result = #Stringify(2 * 3 + 1)
+// 展开后： (2 * 3 + 1, "2 * 3 + 1")
+// result.0 = 7
+// result.1 = "2 * 3 + 1"

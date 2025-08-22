@@ -18,7 +18,38 @@ https://www.6hu.cc/archives/24404.html
 验证 JWT,最重要的是验证 verify_signature
 当验证签名的时候，利用公钥或者密钥来解密 Sign，和 base64UrlEncode(header) + “.” + base64UrlEncode(payload) 的内容完全一样的时候，表示验证通过。
 
-JWS 的 x5c 头字段中包含一个证书链（x509），第一个证书包含用于验证 JWS 签名的公钥。
+JWS 的 x5c 头字段中包含一个证书链（每个证书都是 x509，base64 编码形式），第一个证书包含用于验证 JWS 签名的公钥。
+在 JWS 头部中，它通常长这样（伪代码示意）：
+
+{
+  "alg": "ES256",
+  "x5c": [
+    "MIIC...（第一个证书，base64 DER 编码）",
+    "MIIC...（中间 CA 证书，base64 DER 编码）",
+    "MIIC...（根证书，base64 DER 编码）"
+  ]
+}
+
+第一个证书（x5c[0]）：
+包含签名用的 公钥。
+这个证书和 JWS 的 kid（Key ID）对应。
+验签时需要从这里拿到公钥。
+
+后续证书（中间 CA，根 CA）：
+用来构成完整的证书链。
+验证第一个证书是否可信。
+
+格式：
+x5c 里的每一项是 base64（不是 base64url） 的 DER 编码。
+如果你想变成人类可读的 PEM 格式，可以加上头尾：
+
+-----BEGIN CERTIFICATE-----
+MIIC...（base64 数据）
+-----END CERTIFICATE-----
+用 OpenSSL 打印就能看到第一个证书里面的公钥（通常是 EC P-256 曲线公钥，因为苹果用的是 ES256 算法）。
+
+然后就能用 openssl x509 -in cert.pem -text -noout 查看详细内容（颁发者、使用者、公钥、有效期等）。
+
 
 证书可以从苹果 Apple PKI 页面下载
 https://www.apple.com/certificateauthority/
@@ -33,3 +64,58 @@ AppleRootCA-G3.pem 内容，和 x5c 证书链中最后一个证书的内容一�
 
 验证的逻辑是:
 用苹果提供的 AppleRootCA-G3.cer 证书内容验证 JWT x5c 证书链中最后一个证书，然后利用 x509 证书链规范，验证剩下的每个证书链，最后用x5c 证书链中的第一个证书的公钥，来验证 JWT。
+
+
+==================================================X.509
+X.509 是一种 数字证书标准，最早由 ITU-T（国际电信联盟电信标准化部门） 制定，用来定义 公钥证书（Public Key Certificate） 的格式。它是 PKI（公钥基础设施） 的核心标准之一。
+
+X.509 证书就是一种 身份证明，证明某个实体（比如网站、公司、个人）和一个 公钥 绑定在一起，别人可以通过它来验证通信的真实性和安全性。
+
+一个典型的 X.509 证书包含：
+版本号（Version）
+标明是 X.509 v1、v2 还是 v3（目前主流是 v3）。
+
+序列号（Serial Number）
+由签发机构（CA）分配，用来唯一标识证书。
+
+签名算法（Signature Algorithm）
+证书签名用的算法（如 SHA256-RSA）。
+
+颁发者（Issuer）
+签发证书的 CA（例如 DigiCert、Apple、Google）。
+
+主体（Subject）
+证书的拥有者（如某个网站域名、公司名）。
+
+公钥（Subject Public Key Info）
+与主体绑定的公钥。
+
+有效期（Validity）
+起始时间和过期时间。
+
+扩展字段（Extensions）（X.509 v3 才有）
+
+用途限制（如只能用于 TLS/SSL）
+
+证书链相关信息（CA、路径长度）
+
+备用名称（SAN，Subject Alternative Name，比如多个域名）
+
+最后由 CA 的私钥签名，别人用 CA 的公钥验证。
+
+
+
+当你访问 https://apple.com 时，服务器会返回一个 X.509 证书，里面包含 Apple 的公钥、域名、有效期等。你的浏览器用 CA 的公钥去验证这个证书是否可信，从而保证你访问的真的是 Apple。
+
+
+==================================================证书链
+通常不是单独一个证书，而是 一条证书链（Certificate Chain）：
+叶子证书（End-entity certificate）：比如 www.example.com 的证书。
+中间证书（Intermediate CA）：由根证书签发，作为中间层。
+根证书（Root CA）：自签名证书，内置在操作系统/浏览器的受信任根证书库中。
+验证过程就是一层一层往上追溯，直到系统信任的根证书。
+
+
+==================================================X.509 证书链
+X.509 证书链 👉 就是 多个 X.509 证书 按照签发/验证关系串在一起，形成的一条验证路径。
+

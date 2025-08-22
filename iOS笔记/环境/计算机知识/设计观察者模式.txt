@@ -1,0 +1,79 @@
+系统通知中心，在哪个线程post，就会在哪个线程执行回调
+
+
+@interface EventCenter : NSObject
+- (void)addListener:(id<EventListener>)listener;
+- (void)notifyEvent:(NSString *)event;
+@end
+
+@implementation EventCenter {
+    NSHashTable *_listeners;
+    NSLock *_lock;
+}
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _listeners = [NSHashTable weakObjectsHashTable];
+        _lock = [[NSLock alloc] init];
+    }
+    return self;
+}
+
+- (void)addListener:(id<EventListener>)listener {
+    [_lock lock];
+    [_listeners addObject:listener];
+    [_lock unlock];
+}
+
+- (void)notifyEvent:(NSString *)event {
+    [_lock lock];
+    // 拷贝一份，避免回调里修改监听器集合导致崩溃
+    NSArray *listenersCopy = _listeners.allObjects;
+    [_lock unlock];
+
+    for (id<EventListener> listener in listenersCopy) {
+        [listener onEventReceived:event];
+    }
+}
+@end
+
+notifyEvent: 里要 先复制再解锁，否则回调里如果又 addListener: 就可能死锁或修改集合。
+
+
+
+用串行队列（GCD）隔离:
+
+@implementation EventCenter {
+    NSHashTable *_listeners;
+    dispatch_queue_t _syncQueue;
+}
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _listeners = [NSHashTable weakObjectsHashTable];
+        _syncQueue = dispatch_queue_create("com.example.eventcenter", DISPATCH_QUEUE_SERIAL);
+    }
+    return self;
+}
+
+- (void)addListener:(id<EventListener>)listener {
+    dispatch_async(_syncQueue, ^{
+        [_listeners addObject:listener];
+    });
+}
+
+- (void)notifyEvent:(NSString *)event {
+    dispatch_async(_syncQueue, ^{
+        NSArray *listenersCopy = _listeners.allObjects;
+        for (id<EventListener> listener in listenersCopy) {
+            [listener onEventReceived:event];
+        }
+    });
+}
+@end
+
+
+这里 notifyEvent: 是异步执行的，如果你希望 同步广播，需要 dispatch_sync。
+如果事件回调比较耗时，可能会堵塞 _syncQueue，这时可以考虑在 notifyEvent: 内再把事件投递到全局队列。

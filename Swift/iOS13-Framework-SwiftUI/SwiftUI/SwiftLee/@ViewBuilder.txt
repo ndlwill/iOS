@@ -1,0 +1,180 @@
+https://www.avanderlee.com/swift/result-builders/
+
+https://www.avanderlee.com/swiftui/viewbuilder/
+
+
+The @ViewBuilder attribute is one of the few result builders available for you to use in SwiftUI.
+
+
+public protocol View {
+    associatedtype Body : View
+
+    @ViewBuilder var body: Self.Body { get }
+}
+
+
+#####
+The body property of this protocol comes with the @ViewBuilder attribute, allowing you to benefit from the underlying implementation of the result builder.
+The result is that you can write your SwiftUI view body as follows:
+struct ContentView: View {
+    var body: some View {
+        Text("Hello, world!")
+            .padding()
+    }
+}
+#####
+
+To explain the effect of the result builder, I would like to introduce an alternative protocol:
+protocol NonResultBuilderView {
+    associatedtype Body : View
+    var body: Self.Body { get }
+}
+
+Adapting to this protocol would still allow you to write the same view body because we can omit the return keyword since we have a single expression:
+struct ContentView: NonResultBuilderView {
+    var body: some View {
+        Text("Hello, world!")
+            .padding()
+    }
+}
+However, if we were to have an if-statement in our view’s body, we would run into the following error:
+Function declares an opaque return type, but has no return statements in its body from which to infer an underlying type
+
+#####
+The resulting errors come from the opaque return type requiring a consistent outcome type for the scope of the body property. // 由此产生的错误是由于不透明的返回类型要求 body 属性的作用域具有一致的输出类型
+
+https://www.avanderlee.com/swift/some-opaque-types/
+
+In the above example, we could add a return keyword in front of the two Text elements and solve both the warnings and the errors
+struct SalesFooterView: NonResultBuilderView {
+    let isPro: Bool
+
+    var body: some View {
+        if isPro {
+            return Text("Hello, PRO user!")
+        } else {
+            return Text("Hi there, don't you want to become PRO?")
+        }
+    }
+}
+#####
+
+Once we start returning a different type inside the if-statement, we will run into the same error as before:
+struct SalesFooterView: NonResultBuilderView {
+    let isPro: Bool
+
+    // Error: Function declares an opaque return type, but the return statements in its body do not have matching underlying types
+    var body: some View {
+        if isPro {
+            return Text("Hello, PRO user!")
+        } else {
+            return Button("Hi there, don't you want to become PRO?") {
+                startPurchase()
+            }
+        }
+    }
+
+    func startPurchase() {
+        // ...
+    }
+}
+#####
+You can solve the above error by adding the @ViewBuilder attribute and by removing the return keywords accordingly
+#####
+
+The default View protocol defines the @ViewBuilder attribute inside the interface definition, 
+removing the need to add the attribute inside each custom view adapting the protocol.
+
+
+==================================================How to use @ViewBuilder to return a SwiftUI View
+benefit from the result builder in different places.
+
+1. You’ll use the @ViewBuilder attribute inside the initializer of your custom view to allow for passing in a body-like structure of child views.
+In this case, the custom VHStack allows dynamically switching between a horizontal- and vertical stack based on the horizontal size class:
+
+struct VHStack<Content: View>: View {
+    @Environment(\.horizontalSizeClass) var horizontalSizeClass
+
+    let content: Content
+
+    init(@ViewBuilder _ content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        if horizontalSizeClass == .compact {
+            VStack {
+                content
+            }
+        } else {
+            HStack {
+                content
+            }
+        }
+    }
+}
+
+Since we’re using the @ViewBuilder attribute, we can now initialize the view just like a body of a custom SwiftUI View:
+
+struct ContentView: View {
+    var body: some View {
+        VHStack {
+            Text("Hello, World!")
+            Text("Result Builders are great!")
+        }
+    }
+}
+
+2. Using the view builder attribute with properties
+The above implementation works excellent, but we can further optimize the code and make it more compact. // 但我们可以进一步优化代码，使其更加紧凑
+We can get rid of the custom initializer and benefit from the default init we will get from structures:
+struct VHStack<Content: View>: View {
+    @Environment(\.horizontalSizeClass) var horizontalSizeClass
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        if horizontalSizeClass == .compact {
+            VStack {
+                content()
+            }
+        } else {
+            HStack {
+                content()
+            }
+        }
+    }
+}
+The @ViewBuilder marked property allows us to pass the content property directly into the HStack and VStack.
+Doing so makes our code even more compact and improves readability:
+
+struct VHStack<Content: View>: View {
+    @Environment(\.horizontalSizeClass) var horizontalSizeClass
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        if horizontalSizeClass == .compact {
+            VStack(content: content)
+        } else {
+            HStack(content: content)
+        }
+    }
+}
+
+3. Marking methods with the result builder
+Another option you have is to use the @ViewBuilder attribute with method definitions. 
+One example could be to apply an accent color on a slider if the property is available for the given system version:
+
+extension Slider {
+    @ViewBuilder
+    func minimumTrackColor(_ color: Color) -> some View {
+        if #available(OSX 11.0, *) {
+            accentColor(color)
+        } else {
+            self
+        }
+    }
+}
+
+Note that if-statements can impact your view’s performance and animations.
+
+https://www.avanderlee.com/swiftui/conditional-view-modifier/

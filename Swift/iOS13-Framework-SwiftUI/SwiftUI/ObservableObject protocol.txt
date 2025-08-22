@@ -1,0 +1,147 @@
+@StateObject and @ObservedObject
+#####
+Both property wrappers require your object to conform to the ObservableObject protocol. 
+This protocol stands for an object with a publisher that emits before the object has changed and allows you to tell SwiftUI to trigger a view redraw.
+#####
+
+
+final class CounterViewModel: ObservableObject {
+    @Published var count = 0
+
+    func incrementCounter() {
+        count += 1
+    }
+}
+
+struct CounterView: View {
+    @ObservedObject var viewModel = CounterViewModel()
+
+    var body: some View {
+        VStack {
+            Text("Count is: \(viewModel.count)")
+            Button("Increment Counter") {
+                viewModel.incrementCounter()
+            }
+        }
+    }
+}
+
+To better understand how a change delegates through observers, 
+we could modify the above code to no longer use the @Published property wrapper. 
+Instead, we’ll make use of the observable object publisher and send a change signal manually:
+
+final class CounterViewModel: ObservableObject {
+    private(set) var count = 0
+
+    func incrementCounter() {
+        count += 1
+        objectWillChange.send() // 不使用 @Published var count = 0，只能监听整个 objectWillChange（也就是“有变化了”事件），不能精确监听具体属性。
+        手动 objectWillChange.send() = 只能驱动 UI 更新，外部无法单独订阅具体属性。
+        没有 $count 这个 Publisher，所以外部没办法像 viewModel.$count.sink { ... } 那样单独订阅 count 的变化。
+        你手动调用 objectWillChange.send()，这样 SwiftUI 的 View（如果绑定了 @ObservedObject 或 @StateObject）还是能感知变化并刷新。
+    }
+}
+You’ll see the view still updates once the increment method executes.
+In most cases, we don’t need to call into the objectWillChange.send() method manually. 
+However, it might be a better solution if you’re updating multiple published properties at once to mark those properties as regular arguments and use the manual signal instead.
+
+
+What is a @StateObject?
+The @StateObject property wrapper works similarly to the @ObservedObject. 
+We could change our previous code example to use the @StateObject property wrapper instead, and nothing seems to be changed:
+struct CounterView: View {
+    /// Using @StateObject instead of @ObservedObject
+    @StateObject var viewModel = CounterViewModel()
+
+    var body: some View {
+        VStack {
+            Text("Count is: \(viewModel.count)")
+            Button("Increment Counter") {
+                viewModel.incrementCounter()
+            }
+        }
+    }
+}
+
+However, there’s a significant difference in making it clear when to use @StateObject instead of @ObservedObject.
+
+#####
+Observed objects marked with the @StateObject property wrapper don’t get destroyed and re-instantiated at times their containing view struct redraws. // 标有 @StateObject 属性包装器的观察对象在其包含的视图结构重新绘制时不会被销毁和重新实例化。
+#####
+
+To demonstrate how this works, we can wrap our earlier used counter view inside another view:
+struct RandomNumberView: View {
+    @State var randomNumber = 0
+
+    var body: some View {
+        VStack {
+            Text("Random number is: \(randomNumber)")
+            Button("Randomize number") {
+                randomNumber = (0..<1000).randomElement()!
+            }
+        }.padding(.bottom)
+        
+        CounterView()
+    }
+}
+
+#####
+The random number view allows you to generate a random number by pressing the randomize button. 
+The randomNumber property marked by the @State property wrapper will redraw the view causing our CounterView to be regenerated.
+
+You’ll see the counter resetting if we use @ObservedObject inside our CounterView once a new random number generates
+The counter resets since we’re using @ObservedObject instead of @StateObject
+
+The fix is as simple as changing the CounterView view model property to be a @StateObject instead of an @ObservedObject.
+the state object makes sure the view model retains between view redraws and ensures our counter values remain the same. // 状态对象确保视图模型在视图重绘之间保留，并确保计数器值保持不变。
+#####
+
+
+when should I use a @StateObject?
+#####
+It’s unsafe to create an @ObservedObject inside a view since SwiftUI might create or recreate a view at any time. 
+Unless you inject the @ObservedObject as a dependency, you want to use the @StateObject wrapper to ensure consistent results after a view redraw.
+#####
+
+
+
+Should I use @StateObject for all views using the same instance?
+Siblings observing the same @StateObject instance down the line don’t require marking the object with this property wrapper. 
+It’s important not to do this since you’ll ask to retain and manage the object’s lifecycle in two places. 
+As described in the previous section: if you inject the observed object, you should use @ObservedObject.
+
+// 父 View 托管，子 View 仅观察
+final class CounterViewModel: ObservableObject {
+    @Published var count = 0
+}
+
+struct ParentView: View {
+    @StateObject private var vm = CounterViewModel()  // ✅ 生命周期托管在 Parent
+
+    var body: some View {
+        VStack {
+            ChildA(vm: vm)
+            ChildB(vm: vm)
+        }
+    }
+}
+
+struct ChildA: View {
+    @ObservedObject var vm: CounterViewModel  // ✅ 仅观察
+    var body: some View {
+        Button("Increment") {
+            vm.count += 1
+        }
+    }
+}
+
+struct ChildB: View {
+    @ObservedObject var vm: CounterViewModel  // ✅ 仅观察
+    var body: some View {
+        Text("Count is \(vm.count)")
+    }
+}
+
+ParentView 负责创建和持有 CounterViewModel 的生命周期。
+ChildA 点击按钮时修改 count，ChildB 会立即刷新显示同步的值。
+如果在 ChildA、ChildB 中都用了 @StateObject，它们就各自独立了，不会同步。

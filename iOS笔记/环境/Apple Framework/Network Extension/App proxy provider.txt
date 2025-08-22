@@ -1,0 +1,96 @@
+https://developer.apple.com/documentation/NetworkExtension/app-proxy-provider
+
+App proxy provider
+Implement a VPN client for a flow-oriented, custom VPN protocol.
+
+Platform    Packaged as     Minimum OS      Restrictions
+iOS     app extension       9.0     managed devices only
+
+#####
+When the system starts a VPN configuration that uses your app proxy provider, it performs the following steps:
+Launches your app extension.
+Instantiates your proxy provider subclass within that app extension.
+Starts forwarding flows to your provider.
+#####
+
+
+#####
+Each flow represents either a TCP connection or a conversation over user datagram protocol (UDP). // 每个流代表一个 TCP 连接或通过用户数据报协议 (UDP) 的对话。连接 / 会话 在 flow-oriented 模式 下，确实就是指 TCP 连接 或者 UDP 会话。
+“流” 的基本单位就是：
+一个 TCP 连接
+一个 UDP 会话
+为什么只有 TCP/UDP？
+实际应用绝大多数流量都是 TCP/UDP
+TCP：Web (HTTP/HTTPS)、邮件、消息、API 调用几乎都跑在 TCP 上。
+UDP：DNS、VoIP、视频流、游戏流量。
+
+更底层的协议（ICMP、IGMP、ESP 等）
+不属于 TCP/UDP
+这类协议没法抽象成“流”（比如 ICMP 只是 ping 的回显请求/响应，没有连接状态）。
+只能在 packet-oriented 里才能看到。
+
+TCP 的情况
+连接 (connection) = 一次三次握手建立、四次挥手关闭的完整 TCP 通道
+标识方式：五元组 (srcIP, srcPort, dstIP, dstPort, protocol=TCP)
+特点：有状态、可靠、有序
+类比：一条固定的电话线路，从拨号到挂断就是一个 flow
+
+UDP 的情况
+UDP 是 无连接 的，本身没有 session 概念
+系统在 flow 模式下，会把一组具有相同五元组 (srcIP, srcPort, dstIP, dstPort, protocol=UDP) 的数据报当作一个 会话 (conversation)
+但注意：
+这个会话不一定长期存在，可能因为超时就断开
+没有“连接建立/关闭”的明确边界，更多是系统帮你维持一个临时的流
+类比：对讲机频道里的一段对话，大家在同一频道里发消息，这就算一个 flow
+
+flow = TCP connection or UDP conversation
+也就是说：
+TCP → 一个握手建立的连接
+UDP → 系统帮你划分的一次“会话”
+
+Your provider should to open a tunnel to a VPN server and forward each flow over that tunnel.
+Similarly, if your provider receives flow data from the tunnel, it should pass that back to the system through the appropriate flow.
+#####
+
+
+App proxy providers are one form of per-app VPN, the other being a Packet tunnel provider in source application mode.
+
+
+==================================================flow-oriented vs. packet-oriented
+其实就是 “按连接处理” 和 “按单个数据包处理” 的区别
+
+Packet-oriented （数据包导向）
+单位：一个个 IP 包 (L3)
+特征：
+每个数据包都是独立的。
+系统交给你时，不保证顺序、不保证完整性。
+#####
+你需要自己去做 重组、状态跟踪（比如 TCP 的分片、乱序）。 
+#####
+优势：
+细粒度，可以做到 防火墙级别的控制（IP、协议、端口级过滤）。
+即使数据流没完全建立，也能提前丢弃。
+劣势：
+处理复杂，需要自己维护状态（TCP 重组、UDP 会话跟踪）。
+类比：
+像在高速路口逐个拦截 每辆车，你要自己判断它属于哪个车队。
+
+
+Flow-oriented （流导向）
+单位：一个 流 (flow)，一般是一个 TCP/UDP 连接。
+特征：
+系统帮你把同一条连接的包 组合成流。
+你看到的更接近应用层数据（比如 HTTP 请求）。
+不用操心重组和乱序问题。
+优势：
+开发友好，能方便地做 URL、payload 级别的过滤。
+更适合 内容审查 / 家长控制。
+劣势：
+粒度更粗，不能拦截到具体某个独立的数据包。
+依赖系统帮你维护连接状态。
+类比：
+像在收费站拦截 整个车队，系统已经帮你把车队归类好，你只需要决定“这个车队能不能过”。
+
+
+packet-oriented = “逐包过滤”，粒度细，适合防火墙。
+flow-oriented = “逐流过滤”，粒度粗，适合内容审查。

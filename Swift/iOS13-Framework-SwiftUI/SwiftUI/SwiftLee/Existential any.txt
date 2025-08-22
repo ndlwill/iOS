@@ -1,0 +1,201 @@
+https://www.avanderlee.com/swift/existential-any/
+
+Existential any allows you to define existential types(存在性类型) in Swift by prefixing a type with the any keyword.
+In short, an existential means “any type, but conforming to protocol X.”
+
+
+==================================================What does Existential any mean?
+By using the any keyword in front of a protocol, we’re defining an existential type of a specific protocol. // 通过在协议前使用 any 关键字，我们定义了特定协议的存在类型
+
+protocol Content {
+    var id: UUID { get }
+    var url: URL { get }
+}
+
+struct ImageContent: Content {
+    let id = UUID()
+    let url: URL
+}
+
+let content: any Content = ImageContent(...)
+
+
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0335-existential-any.md
+SE-335 introduced existential any, and Swift 5.6 made it available first.
+Swift 5.7 enhanced existential and allows us to use existentials combined with associated types. // Swift 5.7 增强了存在性，并允许我们将存在性与关联类型结合使用
+For example, we could redefine our Content protocol to inherit the Identifiable protocol with a UUID type constraint and use it as an existential accordingly:
+
+protocol Content: Identifiable where ID == UUID {
+    var url: URL { get }
+}
+
+struct ImageContent: Content {
+    let id = UUID()
+    let url: URL
+}
+
+let content: any Content = ImageContent(...)
+
+
+Constrained existentials:
+With the introduction of Primary Associated Types in SE-346, we can also define constrained existentials.
+an ImageFetching protocol with a primary associated type Image:
+
+protocol ImageFetching<Image> {
+    associatedtype Image
+    func fetchImage() -> Image
+}
+
+#####
+The generic parameter in the protocol definition defines the primary associated type by matching the name of the associated type that has to become primary. // 协议定义中的泛型参数通过匹配要成为主关联类型的名称来定义主关联类型
+In this case, we defined Image to be our primary associated type. // 在本例中，我们将 Image 定义为主关联类型
+#####
+
+We can use the primary associated type as a constraint in our code. 
+For example, defining an extension on UIImageView to configure an image using an image fetcher:
+extension UIImageView {
+    func configureImage(with imageFetcher: any ImageFetching<UIImage>) {
+        image = imageFetcher.fetchImage()
+    }
+}
+
+#####
+// 由于 UIImageView 需要 UIImage 类型，我们将参数类型限制为任何类型的 ImageFetching，但具有相关类型 UIImage。
+Since UIImageView requires a UIImage type, we constrained the parameter type to be any kind of ImageFetching, but having an associated type of UIImage. 
+// 换句话说：我们可以使用任何符合 ImageFetching 协议的类型，但必须将 UIImage 定义为其关联类型。
+In other words: we can use any type conforming to the ImageFetching protocol, but it has to define UIImage as its associated type.
+#####
+
+Note: in the above example, it’s better to use some.
+
+==================================================When to use Existentials
+My general advice towards using existential any would be as follows:
+Consider starting with concrete types first, don’t overcomplicate from the start
+Move to opaque types using the some keyword once you need more type flexibility
+Change some to any when you know you need to store arbitrary (random) values
+
+例子：
+public struct RemoteImageFetcher: ImageFetching {
+    let url: URL
+
+    public func fetchImage() -> UIImage {
+        // ..
+    }
+}
+public struct ImageFetcherFactory {
+    public static func imageFetcher(for url: URL) -> RemoteImageFetcher {
+        RemoteImageFetcher(url: url)
+    }
+}
+It’s the easiest to start with a concrete RemoteImageFetcher type since there is no requirement yet to make it more dynamic.
+
+
+The value of existentials for framework development: // 存在性对于框架开发的价值
+#####
+However, it could be that you’re developing a 3rd party library or SDK used by external parties. 
+In that case, you only want to expose the minimum required APIs to prevent many breaking changes for implementors. 
+For example, if we expose the RemoteImageFetcher type and rename it to ExternalImageFetcher, 
+we need all implementors to update their implementation accordingly.
+#####
+
+Instead, we could rewrite the code following step 2 of my advice to make use of the some keyword:
+struct RemoteImageFetcher: ImageFetching {
+    let url: URL
+
+    func fetchImage() -> UIImage {
+        return UIImage()
+    }
+}
+
+public struct ImageFetcherFactory {
+    public static func imageFetcher(for url: URL) -> some ImageFetching {
+        RemoteImageFetcher(url: url)
+    }
+}
+// 我们不再需要将 RemoteImageFetcher 类型定义为公开可见。
+// 相反，我们返回some ImageFetching 对象，因为 API 用户无需知道确切的具体类型。
+As you can see, we no longer have to define the RemoteImageFetcher type to be publically visible. 
+Instead, we return some ImageFetching as API users don’t have to know the exact concrete type.
+
+Lastly, we could introduce another image fetcher that will handle local images:
+struct LocalImageFetcher: ImageFetching {
+    let url: URL
+
+    func fetchImage() -> UIImage {
+        return UIImage()
+    }
+}
+
+Once we update our factory method:
+public struct ImageFetcherFactory {
+    public static func imageFetcher(for url: URL) -> some ImageFetching {
+        if url.isFileURL {
+            return LocalImageFetcher(url: url)
+        } else {
+            return RemoteImageFetcher(url: url)
+        }
+    }
+}
+We will run into the following error:
+Function declares an opaque return type ‘some ImageFetching’, but the return statements in its body do not have matching underlying types
+
+#####
+opaque types require to have a fixed type within the scope they’re used // 不透明类型需要在其使用范围内具有固定的类型
+Since we’re returning either a LocalImageFetcher or a RemoteImageFetcher the compiler can no longer statically determine the outcome type
+#####
+In this case, you are required to define the return type to be existential:
+public struct ImageFetcherFactory {
+    public static func imageFetcher(for url: URL) -> any ImageFetching {
+        if url.isFileURL {
+            return LocalImageFetcher(url: url)
+        } else {
+            return RemoteImageFetcher(url: url)
+        }
+    }
+}
+#####
+In other words:
+We’ll return any type conforming to the ImageFetching protocol
+Since the compiler can no longer statically predict the returned type, we’ll have to accept some performance impact. // 由于编译器无法再静态预测返回的类型，因此我们必须接受一些性能影响。
+#####
+
+
+==================================================The impact of existentials on performance
+As quoted from the SE-335 proposal:
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0335-existential-any.md#introduction
+
+#####
+// 它们比具体类型更昂贵，因为它们可以存储任何符合协议的值，并且可以动态更改
+They’re more expensive than concrete types since they can store any value conforming to the protocol and since they can dynamically change.
+
+var anyContent: any Content = ImageContent(…)
+anyContent = VideoContent(…)
+
+The above code example compiles successfully and demonstrates the fact that anyContent can change dynamically.
+Due to this, existential types require dynamic memory. // 因此，存在性类型需要动态内存
+They also incur pointer indirection and dynamic method dispatch that cannot be optimized away. // 它们还会导致指针间接寻址和动态方法调度，而这些都无法通过优化消除
+we can conclude that it’s better not to use any if you can. // 可以得出结论：如果可以，最好不要使用 any
+#####
+
+As shared before, it’s better to start with concrete or opaque types first.
+You’ll notice soon enough when you need existentials.
+For example, the above code example can be rewritten using opaque types:
+var someContent: some Content = ImageContent(…)
+someContent = VideoContent(…)
+The compiler would indicate dynamic type change isn’t possible with the some keyword:
+
+Cannot assign value of type ‘VideoContent’ to type ‘some Content’
+
+
+==================================================Enforced starting from Swift 6
+The performance impact of existentials used to be too hidden, so the Swift team decided to introduce the any keyword. 
+To not force us to change our complete code base to use any where required, we’re only enforced to do so starting from Swift 6.
+
+
+==================================================总结
+#####
+Swift 中的存在性 (Existentials) 允许定义遵循特定协议的动态值。
+使用主关联类型 (Primary Associated Type)，我们可以将存在性约束在特定范围内。
+Existentials in Swift allow defining a dynamic value conforming to a specific protocol. 
+Using primary associated types, we can constrain existentials to certain boundaries.
+#####

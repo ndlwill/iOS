@@ -1,3 +1,95 @@
+https://www.avanderlee.com/swiftui/published-property-wrapper/
+
+// @Published 是 SwiftUI 中的属性包装器之一，它允许我们在发生更改时触发视图重绘。
+@Published is one of the property wrappers in SwiftUI that allows us to trigger a view redraw whenever changes occur.
+You can use the wrapper combined with the ObservableObject protocol, but you can also use it within regular classes.
+#####
+It’s essential to understand how the published property wrapper works since it can easily lead to unexpected behavior because it’s responding to a will set trigger.
+
+The wrapper is class constrained, meaning that you can only use it on instances of a class. // 包装器是类约束的，这意味着您只能在类的实例上使用它。
+#####
+
+final class ArticleViewModel {
+
+    @Published
+    var title: String = "An example title"
+}
+The wrapped value of the @Published property wrapper represents the actual value of the property:
+let viewModel = ArticleViewModel()
+print(viewModel.title) // Prints: An example title
+
+The projected value results in a publisher which you can use to observe changes:
+var cancellable = viewModel.$title.sink(receiveValue: { newTitle in
+    print("Title changed to \(newTitle)")
+})
+viewModel.title = "@Published explained"
+
+// Prints:
+// Title changed to An example title
+// Title changed to @Published explained
+
+Note that we’re using the dollar sign to access the projected value.
+
+The receive value closure emits both when the value changes and when we subscribe for the first time.
+
+
+The importance of understanding the willSet trigger:
+#####
+Publishing of changes occurs in the property’s willSet block, meaning that any subscribers will receive an update before the property is changed.
+#####
+To better explain this behavior, we can look at the following code example:
+
+var cancellable = viewModel.$title.sink(receiveValue: { newTitle in
+    print("Title changed to: '\(newTitle)'")
+    print("ViewModel title is: '\(viewModel.title)'")
+})
+viewModel.title = "@Published explained"
+
+// Prints:
+// Title changed to: '@Published explained'
+// ViewModel title is: 'An example title'
+#####
+the received value correctly represents the new title. However, the reference of the view model property still returns the previous title.
+#####
+
+#####
+Why willSet and not didSet?
+A question you might have is why it’s using the willSet and not the didSet trigger. 
+The reason is that SwiftUI needs to perform diffing between the old state and the new state to decide if a new rendering of the view is necessary. 
+For this to happen we need to have a reference of the old state, which is why the willSet is used.
+#####
+
+
+@Published and @ObservableObject:
+While the above examples demonstrate the use of the @Published property wrapper inside a regular class, 
+it’s more common to see the wrapper inside an observed object:
+final class ArticleViewModel: ObservableObject {
+
+    @Published
+    var title: String = "An example title"
+}
+// ObservableObject 是一种特殊的协议，它合成一个 objectWillChange 发布者，当其包含的任何 @Published 属性发生变化时，该发布者就会发出消息。
+The ObservableObject is a special kind of protocol that synthesizes an objectWillChange publisher that emits when any of its contained @Published properties changes.
+
+
+let viewModel = ArticleViewModel()
+
+viewModel.objectWillChange.sink { _ in
+    print("Articles view model changed!")
+}
+
+viewModel.title = "@Published explained"
+
+// Prints:
+// Articles view model changed!
+
+
+synthesize → 合成/生成
+synchronize → 同步
+
+
+==================================================
+
 @Published 属性包装器
 @Published 是一个属性包装器，用于自动发布属性的变化。
 当你在 ObservableObject 的属性上使用 @Published 时，SwiftUI 会自动为该属性创建一个 Publisher，视图会根据这个发布者的变化来重新渲染。

@@ -1,0 +1,230 @@
+在 SwiftUI 里，有两套和动画相关的 API
+withAnimation(_:_:)
+.animation(_:) (View modifier)
+
+
+1. withAnimation(_:_:) —— 包裹状态更新
+withAnimation(.easeInOut(duration: 0.3)) {
+    self.isExpanded.toggle()
+}
+本质：告诉 SwiftUI 接下来的状态变化要带动画。
+动画只对 这个闭包里触发的状态更新 生效。
+更加“命令式”的风格，和你对某些状态的变化控制强相关。
+常用于 点击事件、交互时的动画。
+
+
+2. .animation(_:) —— 绑定到 View 的修饰器
+Text("Hello")
+    .offset(x: isExpanded ? 100 : 0)
+    .animation(.easeInOut(duration: 0.3), value: isExpanded)
+
+本质：给 某个视图的变化 绑定动画。
+当 value 参数变化 时，SwiftUI 会对该视图的相关属性做动画。
+是 声明式 的写法，不用在每次状态变化时写 withAnimation
+常用于 对视图外观变化的持续绑定。
+
+
+==================================================modifier
+在 SwiftUI 里，modifier 就是一个返回新 View 的方法。
+它不会真的去“修改”原来的 View，而是 基于原来的 View 包装（wrap）一个新的 View。
+
+struct TitleStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .font(.largeTitle)
+            .foregroundColor(.purple)
+    }
+}
+
+extension View {
+    func titleStyle() -> some View {
+        self.modifier(TitleStyle())
+    }
+}
+
+Text("Hello").titleStyle()
+
+modifier 是 SwiftUI 中视图组合的基石，它不是修改原视图，而是返回一个新的视图描述，从而以声明式的方式构建 UI。
+
+Text("Hello").modifier(TitleStyle())
+modifier 会返回一个 ModifiedContent<Text, TitleStyle> 视图。// ###这个已验证，对的###
+
+
+#####
+// 实际测试
+let text = Text("Hello")
+let fontModified = text.font(.largeTitle)
+let colorModified = fontModified.foregroundColor(.purple)
+
+print(type(of: text))          // Text
+print(type(of: fontModified))  // Text
+print(type(of: colorModified)) // Text
+
+
+这些都是 值类型（struct），只是“视图描述”。
+SwiftUI 在渲染时会把它们合成真正的 UI 节点（UIKit 里的 UILabel 等）。
+
+
+let view = Text("Hello").titleStyle() // 从Xcode看只有1个view，CGDrawView
+print(type(of: view))  // 打印类型
+可以用 type(of:) 来打印一个值的类型。对于 SwiftUI 的视图，它会显示出嵌套的 ModifiedContent 类型。
+只能打印出：ModifiedContent<Text, TitleStyle>
+#####
+
+
+#####
+Xcode 测试结果：
+
+struct TitleStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .font(.largeTitle)
+            .foregroundColor(.purple)
+    }
+}
+
+let bodyFunc = TitleStyle().body // 这边拿的是 body 方法
+let mirror = Mirror(reflecting: bodyFunc)
+print(mirror)
+
+在 Swift 里，方法名本身可以被当作一个函数引用，这就是你看到 TitleStyle().body 打印出来是一个函数类型的原因
+
+Mirror for (_ViewModifier_Content<TitleStyle>) -> ModifiedContent<ModifiedContent<_ViewModifier_Content<TitleStyle>, _EnvironmentKeyWritingModifier<Optional<Font>>>, _EnvironmentKeyWritingModifier<Optional<Color>>>
+#####
+
+
+==================================================
+https://www.avanderlee.com/swiftui/withanimation-completion-callback/
+#####
+A custom AnimatableModifier implementation allows us to get a callback once an animation of a specific property completes.
+#####
+
+struct IntroductionView: View {
+
+    @State private var introTextOpacity = 0.0
+
+    var body: some View {
+        VStack {
+            Text("Welcome to SwiftLee")
+                .opacity(introTextOpacity)
+                // The callback is called whenever an animation of this property finishes. This is made possible through a custom implementation of the AnimatableModifier protocol.
+                .onAnimationCompleted(for: introTextOpacity) {
+                    print("Intro text animated in!")
+                }
+        }.onAppear(perform: {
+            withAnimation(.easeIn(duration: 1.0)) {
+                introTextOpacity = 1.0
+            }
+        })
+    }
+}
+
+
+Triggering a withAnimation completion using an animatable modifier:
+#####
+To get a callback when a withAnimation triggered animation completes we have to implement a custom implementation of the AnimatableModifier protocol.
+The AnimatableModifier protocol requires implementing both the ViewModifier and Animatable protocols and makes it possible to adjust how views are animated.
+It also requires to return data for the animation through the animatableData property which we will use for validating whether the animation completes.
+#####
+
+/// An animatable modifier that is used for observing animations for a given animatable value.
+struct AnimationCompletionObserverModifier<Value>: AnimatableModifier where Value: VectorArithmetic {
+
+    /// While animating, SwiftUI changes the old input value to the new target value using this property. This value is set to the old value until the animation completes.
+    var animatableData: Value {
+        didSet {
+            notifyCompletionIfFinished()
+        }
+    }
+
+    /// The target value for which we're observing. This value is directly set once the animation starts. During animation, `animatableData` will hold the oldValue and is only updated to the target value once the animation completes.
+    private var targetValue: Value
+
+    /// The completion callback which is called once the animation completes.
+    private var completion: () -> Void
+
+    init(observedValue: Value, completion: @escaping () -> Void) {
+        self.completion = completion
+        self.animatableData = observedValue
+        targetValue = observedValue
+    }
+
+    /// Verifies whether the current animation is finished and calls the completion callback if true.
+    private func notifyCompletionIfFinished() {
+        guard animatableData == targetValue else { return }
+
+        /// Dispatching is needed to take the next runloop for the completion callback.
+        /// This prevents errors like "Modifying state during view update, this will cause undefined behavior."
+        DispatchQueue.main.async {
+            self.completion()
+        }
+    }
+
+    func body(content: Content) -> some View {
+        /// We're not really modifying the view so we can directly return the original input value.
+        return content
+    }
+}
+
+// The method takes the property that’s going to be animated as input and requires to pass in the completion callback. // 该方法将要动画的属性作为输入，并需要传入完成回调。
+extension View {
+
+    /// Calls the completion handler whenever an animation on the given value completes.
+    /// - Parameters:
+    ///   - value: The value to observe for animations.
+    ///   - completion: The completion callback to call once the animation completes.
+    /// - Returns: A modified `View` instance with the observer attached.
+    func onAnimationCompleted<Value: VectorArithmetic>(for value: Value, completion: @escaping () -> Void) -> ModifiedContent<Self, AnimationCompletionObserverModifier<Value>> {
+        return modifier(AnimationCompletionObserverModifier(observedValue: value, completion: completion))
+    }
+    // It’s recommended to write your own view extension methods for custom modifiers as it simply improves the readability of custom modifiers. // 建议为自定义修饰符编写自己的视图扩展方法，因为它可以提高自定义修饰符的可读性。
+}
+
+#####
+The AnimationCompletionObserverModifier takes a generic animatable property that conforms to the VectorArithmetic protocol. // AnimationCompletionObserverModifier 采用符合 VectorArithmetic 协议的通用动画属性。
+This type is required to make sure the input is actually animatable and we’re not observing something that is never going to be animated. // 需要这种类型来确保输入实际上是可动画的
+
+Our body is simply returning the original view. // 我们的 body 只是返回了原始视图。
+This is because we’re not really animating something but observing the animation of a property instead. // 这是因为我们实际上并不是在为某个东西制作动画，而是在观察某个属性的动画。
+
+
+Understanding step by step:
+1. The animatable modifier is instantiated when the view is initialized // 当视图初始化时，animable 修饰符会被实例化
+2. It takes our animatable property as input which at first is set to its initial value. In our example, this will be the opacity value of 0
+3. When the animation starts, our animatable modifier will be instantiated with the outcome value. In our case, this is 1.
+4. Both animatableData and targetValue are set to 1 at this point but thedidSet callback is not triggered by init methods. In other words, our notifyCompletionIfFinished is not yet called.
+5. The animatable data property is updated to the old value once an animation occurs. In our example, this means that it’s updated to 0. // 动画发生后，可动画的数据属性会更新为旧值。在我们的示例中，这意味着它被更新为 0。
+This will also trigger the didSet and notifyCompletionIfFinished method which will result in a negative match. // 这也会触发 didSet 和 notifyCompletionIfFinished 方法，从而导致匹配失败。
+6. The notifyCompletionIfFinished method keeps on validating whether the input value matches our expected outcome and if so, triggers the completion callback
+#####
+
+All the magic happens inside the animatableData property for which the property description explains best what it does:
+While animating, SwiftUI changes the old input value to the new target value using this property. 
+This value is set to the old value until the animation completes.
+
+In other words, once the animation is done it will match our expected outcome. This is exactly how we know that an animation completes.
+
+
+DispatchQueue.main.async { … } 会把代码块放到 主线程的下一个事件循环。// async 表示“异步提交”，也就是 不会立即执行，只会放到队列里等待执行。主线程的队列消费是由 RunLoop 驱动的。
+这样做可以：
+确保 当前 SwiftUI 更新流程完成
+安全地触发 状态更新或其他副作用
+
+
+为什么说“下一个 runloop iteration”
+RunLoop 每次循环会处理：
+UI 事件（触摸、绘制）
+Timer
+GCD DispatchQueue 的任务
+当你在当前代码中同步执行动画更新或修改状态时，闭包还在队列里排队。
+等当前循环结束，RunLoop 去取主队列的下一个任务执行时，闭包才真正运行。
+
+
+为什么需要异步调度
+SwiftUI 的 视图更新和状态改变是在当前 runloop 中同步进行的。
+animatableData 在动画过程中不断更新，didSet 会被调用。
+如果你在 didSet 里直接修改 @State 或触发视图更新（比如 completion 里更新状态），
+#####
+就会发生 “Modifying state during view update” 的警告或未定义行为。
+#####
+所以需要把回调延迟到下一次 runloop，让当前视图更新完成后再执行状态变化。

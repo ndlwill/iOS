@@ -1,0 +1,211 @@
+https://www.avanderlee.com/swiftui/debugging-swiftui-views/
+
+Debugging SwiftUI views: what caused that change?
+
+#####
+Debugging SwiftUI views is an essential skill when writing dynamic views with several redrawing triggers.
+Property wrappers like @State and @ObservedObject will redraw your view based on a changed value. // 像 @State 和 @ObservedObject 这样的属性包装器会根据更改的值重绘视图
+This is often expected behavior, and things look like they should.
+However, in so-called Massive SwiftUI Views (MSV), there could be many different triggers causing your views to redraw unexpectedly. // 可能会有许多不同的触发器导致视图意外重绘
+#####
+
+
+==================================================What is a dynamic SwiftUI View?
+A dynamic SwiftUI view redraws as a result of a changed observed property. // 动态 SwiftUI 视图会根据观察到的属性的变化进行重绘
+An example could be a timer count view that updates a label with an updated count integer:
+
+struct TimerCountView: View {
+    @State var count = 0
+    let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        Text("Count is now: \(count)!")
+            .onReceive(timer) { input in
+                count += 1
+            }
+    }
+}
+Every time the timer fires, the count will go up. 
+Our view redraws due to the @State attribute attached to the count property
+The TimerCountView is dynamic since its contents can change.
+
+
+==================================================
+struct TimerCountView: View {// 错误的例子
+    @State var count = 0
+    @State var animateButton = true
+    
+    let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    
+    var body: some View {
+        VStack {
+            Text("Count is now: \(count)!")
+                .onReceive(timer) { input in
+                    count += 1
+                }
+            Button {
+                
+            } label: {
+                Text("SAVE")
+                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 80)
+                    .background(.red)
+                    .cornerRadius(50)
+                    .shadow(color: .secondary, radius: 1, x: 0, y: 5)
+            }.rotationEffect(Angle(degrees: animateButton ? Double.random(in: -8.0...1.5) : Double.random(in: 0.5...16)))
+        }.onAppear {
+            withAnimation(.easeInOut(duration: 1).delay(0.5).repeatForever(autoreverses: true)) {
+                animateButton.toggle()
+            }
+        }
+    }
+}
+Since both the timer and the animation are triggering a redraw of the same TimerCountView, our resulting animation is not what we expected
+
+
+Using LLDB to debug a change:
+Swift provides us with a private static method Self._printChanges() that prints out the trigger of a redraw.
+We can use it by setting a breakpoint in our SwiftUI body and typing po Self._printChanges() inside the console
+
+the console tells us the _count property changed. Our SwiftUI view redraws since we observed our count property as a state value.
+
+To thoroughly verify our count property is causing animation issues, we could temporarily turn off the timer and rerun our app.
+
+
+Using _logChanges in Xcode 15.1 and up:
+Xcode 15.1 introduced a new debugging method similar to Self._printChanges that allows you to debug SwiftUI views
+var body: some View {
+    #if DEBUG
+        Self._logChanges()
+    #endif
+    return VStack {
+        /// ...
+    }
+}
+The information is logged at the info level using the com.apple.SwiftUI subsystem and category “Changed Body Properties” which is a major benefit over Self._printChanges as you can benefit from Xcode 15’s new debugging console.
+
+
+Solving redraw issues in SwiftUI:
+#####
+We can solve our issue by isolating redraw triggers into single responsible views.
+By isolating triggers, we will only redraw relevant views. // 通过隔离触发器，我们只会重绘相关的视图
+#####
+struct TimerCountFixedView: View {
+    @State var count = 0
+    
+    let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    
+    var body: some View {
+        VStack {
+            Text("Count is now: \(count)!")
+                .onReceive(timer) { input in
+                    count += 1
+                }
+            AnimatedButton()
+        }
+    }
+}
+
+struct AnimatedButton: View {
+    @State var animateButton = true
+    
+    var body: some View {
+        Button {
+            
+        } label: {
+            Text("SAVE")
+                .font(.system(size: 36, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 80)
+                .background(.red)
+                .cornerRadius(50)
+                .shadow(color: .secondary, radius: 1, x: 0, y: 5)
+        }.rotationEffect(Angle(degrees: animateButton ? Double.random(in: -8.0...1.5) : Double.random(in: 0.5...16))).onAppear {
+            withAnimation(.easeInOut(duration: 1).delay(0.5).repeatForever(autoreverses: true)) {
+                animateButton.toggle()
+            }
+        }
+    }
+}
+The timer no longer changes the rotation effect random value since SwiftUI is smart enough not to redraw our button for a count change.
+
+
+Debugging changes using code:
+The code change speeds up debug processes since it constantly runs while your views are redrawn.
+var body: some View {
+    #if DEBUG
+        Self._logChanges()
+    #endif
+    return VStack {
+        // .. other changes
+    }
+}
+
+TimerCountView: @self, @identity, _count, _animateButton changed.
+TimerCountView: _animateButton changed.
+TimerCountView: _count changed.
+TimerCountView: _count changed.
+
+The @self and @identity are new, and you might wonder what they mean. 
+Looking at the documentation of the _printChanges method we’ll get an explanation:
+
+When called within an invocation of body of a view of this type, 
+prints the names of the changed dynamic properties that caused the result of body to need to be refreshed. As well as the physical property names, 
+“@self” is used to mark that the view value itself has changed, 
+and “@identity” to mark that the identity of the view has changed (i.e. that the persistent data associated with the view has been recycled for a new instance of the same type).
+
+@self and @identity are followed by the properties that changed. 
+The above example shows that both _count and _animateButton affected the view redraw.
+
+
+==================================================
+let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+Timer.publish 默认是一个 冷发布者（cold publisher），它需要你手动调用 .connect() 才会真正启动。
+加上 .autoconnect() 后，就会在订阅时自动开始运行，不需要你手动管理连接。
+所以 .autoconnect() 让定时器 一旦被订阅（比如 UI 监听它），就立即开始发出事件。
+
+.onReceive(timer)
+这是 SwiftUI 的一个 View modifier，它能订阅任意 Combine Publisher，并在每次 Publisher 发出新值时执行闭包。
+
+iOS 13/14 用 .onReceive 的写法 和 iOS 15+ 用 .task 的写法
+
+.task {} + AsyncStream（iOS 15+）
+更符合 Swift Concurrency 风格
+.task {
+    for await _ in Timer.publish(every: 1, on: .main, in: .common)
+        .autoconnect()
+        .values {
+        count += 1
+    }
+}
+在 Swift Concurrency 里，AsyncStream 就是异步序列（AsyncSequence）的其中一种具体实现
+
+// AsyncStream 本质上就是一个 AsyncSequence
+public struct AsyncStream<Element>: AsyncSequence {
+    public struct Iterator: AsyncIteratorProtocol { ... }
+}
+AsyncStream 是一种特殊的 AsyncSequence。
+你可以像用数组一样 for await 遍历它，但它的值是由你主动 yield 出来的。
+
+func makeTimerStream(interval: TimeInterval) -> AsyncStream<Date> {
+    AsyncStream { continuation in
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
+            continuation.yield(Date())  // 产生新值
+        }
+        continuation.onTermination = { _ in
+            timer.invalidate()
+        }
+    }
+}
+
+#####
+AsyncSequence 是协议（定义能力）。
+AsyncStream 是它的一个具体实现（基于 continuation 产出值）。
+#####
+AsyncStream 常用于 把回调式 API 转换成异步序列，更符合 Swift Concurrency 的风格。
+
+
+
