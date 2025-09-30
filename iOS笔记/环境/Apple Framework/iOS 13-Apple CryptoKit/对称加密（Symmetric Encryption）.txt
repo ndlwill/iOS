@@ -1,0 +1,49 @@
+// 生成密钥
+let key = SymmetricKey(size: .bits256)
+
+// AES-GCM 加密
+let message = "secret message".data(using: .utf8)!
+let sealedBox = try! AES.GCM.seal(message, using: key) // 返回值是一个 AES.GCM.SealedBox 类型的对象
+let ciphertext = sealedBox.ciphertext
+
+// AES-GCM 解密
+let decrypted = try! AES.GCM.open(sealedBox, using: key)
+
+常用算法：AES.GCM（推荐），ChaChaPoly
+
+
+SealedBox:
+可以理解为 “密封的数据容器”。
+它不是单纯的密文，而是 密文 + 随机数 (Nonce) + 验证标签 (Authentication Tag) 的组合。
+在 AES-GCM 模式 下，加密不仅仅是输出密文，还会生成用于完整性校验的 Tag，以及用于防止重放攻击的 Nonce。
+
+SealedBox 包含的主要部分：
+ciphertext
+真正的加密后的消息内容。
+nonce (随机数)
+每次加密都需要一个随机数（不一定保密，但必须唯一），防止同一明文加密出相同结果。
+tag (验证标签)
+GCM（Galois/Counter Mode）会计算一个校验值，确保密文在传输过程中没被篡改。
+
+
+sealedBox = 一个包含 密文 + Nonce + Tag 的安全数据容器。
+它是 AES-GCM 的标准加密结果，保证了 机密性 + 完整性。
+
+
+这里的 GCM 是 Galois/Counter Mode 的缩写。
+常见用途
+HTTPS / TLS
+
+在对称加密（如 AES）里，单单“AES”只是一个 分组加密算法，它能把固定大小（通常是 128 位）的明文块加密成密文块。
+但在实际使用中，你需要一个 工作模式 (Mode of Operation) 来处理任意长度的数据，并保证安全性。
+
+常见的工作模式有：
+CBC（Cipher Block Chaining）
+CTR（Counter）
+GCM（Galois/Counter Mode） // 在 CTR 模式的基础上，增加了 认证机制。
+
+| 模式      | 加密方式           | 完整性保护     | 并行化   | 现状            |
+| ------- | -------------- | --------- | ----- | ------------- |
+| **CBC** | 每块依赖上块         | ❌ 无       | ❌ 串行  | 已过时（TLS1.3移除） |
+| **CTR** | 计数器生成密钥流       | ❌ 无       | ✅ 可并行 | 需要额外认证        |
+| **GCM** | CTR + Galois认证 | ✅ 有 (Tag) | ✅ 可并行 | 当前主流推荐        |

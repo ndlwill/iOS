@@ -1,0 +1,862 @@
+https://developer.apple.com/documentation/CoreData
+
+
+Core Data 的不足:
+学习曲线：相比直接操作 SQLite，概念比较多（NSManagedObjectContext、persistent container、faulting、merge policy 等）。
+不适合复杂 SQL：如果你需要写复杂的 SQL 查询，Core Data 会有局限。
+跨平台受限：仅限 Apple 平台，不能直接迁移到 Android 或后端。
+需要跨平台（iOS+Android）：
+Realm 更合适。
+需要复杂 SQL 查询 / 数据处理逻辑：
+考虑 SQLite/GRDB，避免 Core Data 的限制。// GRDB（Swift 社区流行库，基于 SQLite）
+
+Core Data 更擅长：
+CRUD（增删改查单表对象）
+简单条件过滤（NSPredicate）
+关系导航（通过对象关系直接访问）
+但遇到：// 需要用到第三方库
+JOIN
+GROUP BY + 聚合
+子查询
+窗口函数
+复杂计算字段
+Core Data 就显得很笨拙，通常只能 fetch 全量数据，再在内存里自己处理。
+
+
+
+Core Data: （iOS 官方 ORM）Object-Relational Mapping，对象关系映射
+它的作用是把 面向对象语言中的对象（如 Swift 的类实例）与 关系型数据库中的表和记录 建立映射，这样你就可以用对象操作数据库，而不必直接写 SQL
+Persist or cache data on a single device, or sync data to multiple devices with CloudKit.
+
+
+Core Data 官方提供了四种存储类型（NSPersistentStore 的子类）：
+NSSQLiteStoreType：基于 SQLite 的持久化存储。
+NSBinaryStoreType：将整个对象图序列化到二进制文件中。
+NSInMemoryStoreType：真正的内存存储，不会写入磁盘。
+NSAtomicStoreType（少用）：基于原子文件保存对象图。
+其中只有 NSInMemoryStoreType 是“真正的内存模式”，其他类型都会有磁盘 I/O。
+
+
+let container = NSPersistentContainer(name: "ModelName")
+let storeDescription = container.persistentStoreDescriptions.first
+storeDescription?.url = URL(fileURLWithPath: "/dev/null")
+container.loadPersistentStores { storeDescription, error in
+    ...
+}
+/dev/null 在 Unix 系统里是一个“黑洞”，所有写入它的数据都会被丢弃。
+
+当你把路径指向 /dev/null 时：
+SQLite 会尝试写入文件，但写入的数据被丢弃。
+Core Data 仍然会在内存中维护对象图（NSManagedObjectContext 的内存缓存）。
+
+即便存储类型仍是 SQLite，写入到 /dev/null 也就相当于只在内存里保持数据，程序退出或者重新加载就丢失了数据。
+注意：这种方式并不是使用 Core Data 原生的 NSInMemoryStoreType，而是通过“把 SQLite 文件写到黑洞”来实现的“临时内存存储”。
+
+核心理解：这个内存模式是一种技巧，让 SQLite 存储的数据不落地，从而只保存在内存中，但底层逻辑仍是 SQLite；而 NSInMemoryStoreType 才是 Core Data 官方提供的真正内存存储。
+
+
+==================================================Core Data stack
+Manage and persist your app’s model layer. // 管理并保存应用程序的模型层。
+
+// Core Data 提供了一组协作支持应用程序模型层的类
+Core Data provides a set of classes that collaboratively support your app’s model layer:
+
+// NSManagedObjectModel 的实例描述了您的应用程序的类型，包括它们的属性和关系。
+An instance of NSManagedObjectModel describes your app’s types, including their properties and relationships.
+
+// NSManagedObjectContext 的实例跟踪应用程序类型实例的变化。
+An instance of NSManagedObjectContext tracks changes to instances of your app’s types.
+
+// NSPersistentStoreCoordinator 的实例从存储保存和获取应用程序类型的实例。
+An instance of NSPersistentStoreCoordinator saves and fetches instances of your app’s types from stores.
+
+// 您使用 NSPersistentContainer 实例同时设置模型、上下文和存储协调器。
+You use an NSPersistentContainer instance to set up the model, context, and store coordinator simultaneously.
+
+
+==================================================Modeling data // 建模数据
+Configure the data model file to contain your app’s object graph.
+
+Model your data by describing your objects as entities, adding their properties as attributes and relationships, 
+and finally generating respective NSManagedObject subclasses to inherit change tracking and life cycle management.
+
+
+Configuring a Core Data Model:
+1. Configuring Entities:
+Model your app’s objects.
+
+2. Configuring Attributes:
+Describe the properties that compose an entity.
+
+Attribute Type：你在模型里选的逻辑类型（如 Integer 16）。
+Type：存储时使用的对象类型（默认是 NSNumber）。
+Scalar Type：对应的底层基本类型（如 int16_t）。
+Scalar by default?：生成代码时是否默认使用标量，而不是 NSNumber 对象。
+
+3. Configuring Relationships:
+Specify how entities relate and how change propagates between them.
+
+Cardinality Type:
+Specify a relationship as being To One or To Many, which is known as its cardinality.
+Use To One relationships to connect the source with a single instance of the destination type.
+Use To Many relationships to connect the source with a mutable set of the destination type, and to optionally specify an arrangement and count:
+Arrangement—Select the Ordered checkbox to specify that the relationship has an inherent ordering, and to generate an ordered mutable set.
+Count—You can also place upper and lower limits on the number of destination instances. For optional relationships, the number of instances can be zero or within these bounds.
+
+4. Generating code:
+Automatically or manually generate managed object subclasses from entities.
+
+After you define your entities, their attributes, and relationships as described in Configuring a Core Data Model, 
+specify the classes that you’ll use to create instances of your entities. 
+Core Data optionally generates two files to support your class: a class file and a properties file.
+
+The class file declares the class as a subclass of NSManagedObject:
+//
+//  Store+CoreDataClass.swift
+//  
+//  This file was automatically generated and should not be edited.
+//
+
+import Foundation
+import CoreData
+
+@objc(Store)
+public class Store: NSManagedObject {
+}
+
+The properties file declares an extension to hold the @NSManaged properties that represent attributes and relationships, their accessors, and helper functionality for fetching instances of this type:
+//
+//  Store+CoreDataProperties.swift
+//
+//  This file was automatically generated and should not be edited.
+//
+
+import Foundation
+import CoreData
+
+extension Store {
+
+    @nonobjc public class func fetchRequest() -> NSFetchRequest<Store> {
+        return NSFetchRequest<Store>(entityName: "Store")
+    }
+
+    @NSManaged public var name: String?
+    @NSManaged public var shoppingItems: NSSet?
+
+}
+
+// MARK: Generated accessors for shoppingItems
+extension Store {
+
+    @objc(addShoppingItemsObject:)
+    @NSManaged public func addToShoppingItems(_ value: ShoppingItem)
+
+    @objc(removeShoppingItemsObject:)
+    @NSManaged public func removeFromShoppingItems(_ value: ShoppingItem)
+
+    @objc(addShoppingItems:)
+    @NSManaged public func addToShoppingItems(_ values: NSSet)
+
+    @objc(removeShoppingItems:)
+    @NSManaged public func removeFromShoppingItems(_ values: NSSet)
+
+}
+
+extension Store : Identifiable {
+
+}
+
+Core Data takes care of generating managed object subclasses for you, but you can take control when you need to add logic or edit properties.
+
+
+==================================================删除规则的类型
+关系管理其实就是 SwiftData 在处理模型之间关系时，删除对象要不要影响到它关联对象的规则。
+和数据库里的「外键约束」或者 Core Data 的「delete rule」是一个概念。
+
+SwiftData 提供 @Relationship 属性包装器，你可以指定它的 删除规则（Delete Rule）：
+@Model
+class Person {
+    var name: String
+    @Relationship(.cascade) var pets: [Pet] = []
+}
+
+@Model
+class Pet {
+    var name: String
+}
+
+
+
+SwiftData 支持和 Core Data 一样的几种删除规则：
+.cascade（级联删除）
+当你删除 Person 时，SwiftData 会自动把关联的所有 Pet 也删除。
+用途：父对象被删了，子对象也不再有意义。
+示例：删除一个「文件夹」，里面的「文件」也跟着删除。
+
+.nullify（置空，默认）
+删除 Person 时，不会删除 Pet，只是把 pets 里的关联断掉。
+用途：子对象可以独立存在，不一定依赖父对象。
+示例：删除一个「老师」，学生不会被删除，只是不再和这个老师关联。
+
+.deny（拒绝删除）
+如果 Person 还有 Pet，删除操作会失败。必须先移除所有关系才能删。
+用途：保护数据一致性。
+示例：不允许删除一个「分类」，除非这个分类下没有「文章」。
+
+.noAction（不做处理）
+删除 Person 时，对 Pet 不做任何改变。
+可能导致 Pet 引用一个不存在的 Person（要小心）。
+用途：性能优化场景，或者由业务逻辑手动维护关系。
+
+
+可以类比一下现实场景：
+.cascade：拆掉一栋房子 → 房子里的家具也都销毁。
+.nullify：辞掉一个公司老板 → 员工还在，只是没老板了。
+.deny：你想拆房子 → 系统发现里面还有家具，不让你拆。
+.noAction：强行拆房子 → 家具还指着一个不存在的房子，数据可能不一致。
+
+
+
+数据库里的外键约束
+在 SQL 里，如果两个表有外键关系，可以设置 ON DELETE 的规则：
+CREATE TABLE Person (
+    id INTEGER PRIMARY KEY,
+    name TEXT
+);
+
+CREATE TABLE Pet (
+    id INTEGER PRIMARY KEY,
+    name TEXT,
+    owner_id INTEGER,
+    FOREIGN KEY(owner_id) REFERENCES Person(id) ON DELETE CASCADE
+);
+
+这里 Pet.owner_id 是外键，指向 Person.id。
+ON DELETE CASCADE 就是 级联删除：当 Person 被删时，数据库会自动把属于这个人的 Pet 也删掉。
+
+Person
+| id | name  |
+| -- | ----- |
+| 1  | Alice |
+| 2  | Bob   |
+
+Pet
+| id | name  | owner\_id |
+| -- | ----- | --------- |
+| 1  | Tom   | 1         |
+| 2  | Jerry | 1         |
+| 3  | Max   | 2         |
+
+情况 1: ON DELETE CASCADE
+DELETE FROM Person WHERE id = 1;
+Alice 被删
+Tom、Jerry 自动被删（因为它们的 owner_id=1）。
+
+情况 2: ON DELETE SET NULL（相当于 SwiftData 的 .nullify）
+删除 Alice 后，Tom 和 Jerry 的 owner_id 会自动变成 NULL，但它们本身不会被删除。
+
+情况 3: ON DELETE RESTRICT（相当于 SwiftData 的 .deny）
+如果 Alice 还有宠物，尝试删除 Alice 会失败，必须先处理掉关系。
+
+情况 4: ON DELETE NO ACTION
+删除 Alice，数据库啥也不做，导致 Pet.owner_id=1 指向一个不存在的 Person，数据不一致。
+
+
+==================================================数据库迁移（Database Migration）
+本质：是把数据库的数据结构、数据或者整个数据库从一个状态变到另一个状态的过程。
+可能包括：
+升级数据库版本（如 MySQL 5.7 → 8.0）
+修改表结构（新增列、修改列类型、删掉表等）
+迁移到另一种数据库（如 MySQL → PostgreSQL）
+迁移数据（数据格式、编码、分区等变化）
+
+
+==================================================Using Core Data in the background
+Use Core Data in both a single-threaded and multithreaded app.
+
+Core Data works in a multithreaded environment. 
+However, not every object under the Core Data framework is thread safe. To use Core Data in a multithreaded environment, ensure that:
+#####
+Bind managed object contexts to the thread (queue) that they’re initialization on.
+Bind managed objects that you retrieve from a context to the same queue as the context.
+#####
+
+
+----------Comparing Main Queue and Private Queue Contexts:
+There are two types of managed object contexts: main queue and private queue. You define the type of context when you initialize it.
+A main queue context (as defined by a NSManagedObjectContextConcurrencyType.mainQueueConcurrencyType) is specifically for use with your application interface. 
+Only use it on the main queue of your app.
+
+A private queue context (as defined by a NSManagedObjectContextConcurrencyType.privateQueueConcurrencyType) creates its own queue upon initialization. 
+Only use it on that queue. 
+Because the queue is private and internal to the NSManagedObjectContext instance, you can only access it through the perform(_:) and the performAndWait(_:) methods.
+
+
+----------Initializing and configuring a context:
+Use init(concurrencyType:) to create a new context. For example, to create a private queue context:
+// Create a private queue context.
+let context = NSManagedObjectContext(.privateQueue)
+The parameter you pass during initialization determines what type of NSManagedObjectContext you receive.
+
+#####
+NSPersistentContainer // iOS 10.0
+When you use the NSPersistentContainer, you configure the viewContext property as a main queue (NSManagedObjectContextConcurrencyType.mainQueueConcurrencyType) context, 
+and configure the contexts associated with performBackgroundTask(_:) and newBackgroundContext() as a private queue (NSManagedObjectContextConcurrencyType.privateQueueConcurrencyType).
+#####
+
+
+----------Avoiding problems
+1. In general, avoid doing data processing on the main queue that’s not user-related.
+Data processing can be CPU-intensive, and if it’s performed on the main queue, it can result in unresponsiveness in the user interface. 
+If your application processes data, such as importing data into Core Data from JSON, create a private queue context and perform the import on the private context.
+2. Don’t pass managed object instances between queues.
+Doing so can result in corruption of the data and termination of the app. 
+When it’s necessary to hand off a managed object reference from one queue to another, use NSManagedObjectID instances.
+https://developer.apple.com/documentation/coredata/nsmanagedobjectid
+You retrieve the managed object ID of a managed object by calling the objectID accessor on the NSManagedObject instance.
+
+
+#####
+线程安全指的是 在各自 context 的队列里访问对象是安全的。
+数据安全（即两条 context 对同一条记录同时修改） 不是自动安全的，需要合并策略或者父子 context。
+
+安全做法：
+1. 使用父子 context
+backgroundContext 设置 parent = mainContext，修改后 save() 推送到父 context。
+mainContext 再保存到持久化存储。
+
+2. 使用 NSPersistentContainer.newBackgroundContext()
+iOS 10+ 推荐这种方式，container 会自动设置 merge policy。
+
+3. 合并更改通知
+通过监听 NSManagedObjectContextDidSave，另一个 context 可以 merge 更改：
+NotificationCenter.default.addObserver(forName: .NSManagedObjectContextDidSave, object: backgroundContext, queue: nil) { notification in
+    mainContext.perform {
+        mainContext.mergeChanges(fromContextDidSave: notification)
+    }
+}
+
+
+推荐 NSPersistentContainer.newBackgroundContext() 来创建后台 context:
+（1）自动配置
+let container = NSPersistentContainer(name: "Model")
+container.loadPersistentStores { _, error in
+    if let error = error { fatalError("\(error)") }
+}
+
+let backgroundContext = container.newBackgroundContext()
+
+newBackgroundContext() 自动：
+设置 concurrencyType = .privateQueueConcurrencyType
+配置了 merge policy 为 NSMergeByPropertyObjectTrumpMergePolicy（可以根据需求改）
+和 container 其他 context（比如 mainContext）更容易合并变化
+（2）数据合并更方便
+newBackgroundContext() 的 context 默认 支持自动合并保存到其他 context：
+backgroundContext.automaticallyMergesChangesFromParent = true
+这样，backgroundContext save 后，mainContext 会自动合并数据变化，减少冲突。
+（3）更安全的多线程访问
+对每个 backgroundContext，使用 perform {} 或 performAndWait {} 来操作对象就安全。
+避免直接在不同 context 之间共享 NSManagedObject，推荐用 NSManagedObjectID 传递对象标识。
+#####
+
+
+==================================================Persistent History Tracking 的工作原理
+https://developer.apple.com/documentation/coredata/persistent-history
+Persistent history
+Use persistent history tracking to determine what changes have occurred in the store since the enabling of persistent history tracking.
+
+
+
+https://fatbobman.com/zh/posts/persistenthistorytracking/
+为持久化存储启用 Persistent History Tracking 后，你的应用程序将开始为 Core Data 的持久化存储中发生的任何更改创建事务记录（ Transaction ）。
+无论该事务是由何种方式（通过上下文还是不经过上下文）产生的，由那个 App 或 Extension 产生，都将事无巨细的记录下来。
+
+所有的变化都会被保存在你的 Sqlite 数据库文件中，苹果在 Sqlite 中创建了几个表，用来记录了 Transaction 对应的各类信息。
+ATRANSACTION 中是尚未消除的 transaction，
+ATRANSACTIONSTRING 中是 author 和 contextName 的字符串标识，
+ACHANGE 是变化的数据，以上数据最终转换成对应的 ManagedObjectID。
+
+苹果并没有公开这些表的具体结构，不过我们可以使用 Persistent History Tracking 提供的 API 来对其中的数据进行查询、清除等工作。
+
+
+Transaction 将按照产生顺序被自动记录。我们可以检索特定时间后发生的所有更改。你可以通过多种表达方式来确定这个时间点：
+基于令牌（Token）
+基于时间戳（Timestamp）
+基于交易本身（Transaction）
+
+
+一个基本的 Persistent History Tracking 处理流程如下：
+响应 Persistent History Tracking 产生的 NSPersistentStoreRemoteChange 通知
+检查从上次处理的时间戳后是否仍有需要处理的 Transaction
+将需要处理的 Transaction 合并到当前的视图上下文中
+记录最后处理的 Transaction 时间戳
+择机删除已经被合并的 Transaction
+
+
+==================================================Change processing
+1. Accessing data when the store changes
+Guarantee that a context won’t see store changes until you tell it to look. // 保证上下文不会看到存储更改，直到您告诉它查看为止。
+
+在数据库领域里，generation 往往表示某个时间点的“版本”或者“代次”。
+你可以把它理解成 一个数据快照的编号。
+Generation 1 = 数据库刚启动时的状态
+Generation 2 = 有人保存了一次新数据
+Generation 3 = 又有人修改了别的记录
+每次数据有变化，就产生了一个新的 generation。
+
+
+Core Data 的数据库内容是 可能变化的（比如其他 context 保存了数据）。
+默认情况下，你的 NSManagedObjectContext 会立刻反映其他 context 的更改。
+
+但是有时候，你希望 查询到的数据保持一致性，就算底层数据库发生变化，你的查询结果也不要突然变。
+这时候，就需要 Query Generation：
+可以把上下文锁定到某个“时间点 (generation)”的数据视图。
+后续数据库发生变化，你的 context 看不到，直到你切换到新的 generation。
+
+
+NSQueryGenerationToken.current 代表 “当前的数据库状态”。
+let context = persistentContainer.viewContext
+// 固定到当前数据版本
+try context.setQueryGenerationFrom(.current)
+// Fetch 之后，这些数据不会受别的 context save 的影响
+let results = try context.fetch(fetchRequest)
+如果别的 context 保存了新的对象，results 这边还是看不到，除非你把 context 的 query generation 更新。
+
+
+#####
+Query generations give your UI a stable view of data in the database, regardless of changes happening to the store underneath.
+Whenever you read from a context, you see the same generation, or snapshot, of data until you choose to advance it to a later generation.
+
+Use query generations when you want to isolate your view context from any changes made in the store by background threads in your app, app extensions, CloudKit, or other sources.
+#####
+
+Ensure the correct type and mode for the persistent store:
+To use query generations, the persistent store must be an NSSQLiteStoreType in write-ahead logging (WAL) journal mode. 
+Core Data creates SQLite stores with WAL mode enabled by default.
+
+To confirm whether a custom store has WAL mode enabled, turn on SQL logging. 
+Choose Product > Scheme > Edit Scheme, then choose the Run action, and add the following line under Arguments Passed on Launch:
+-com.apple.CoreData.SQLDebug 1
+
+
+Pin the context to a store generation:
+By default, contexts are unpinned, and read from the store at the generation of the most recent transaction. 
+Pinned contexts read from the store at the generation of a specific transaction.
+
+To pin a context, call setQueryGenerationFrom(_:) and pass an opaque NSQueryGenerationToken. 
+The context updates to the specified generation lazily on the next read (fetching or faulting) operation.
+
+Use the current generation token to pin the context to the generation corresponding to the most recent store transaction. 
+For example, pass the current generation token when setting up your stack to pin the view context to the first generation that it fetches.
+
+// Pin the context to the generation that corresponds with the most recent
+// store transaction.
+do {
+    try persistentContainer.viewContext.setQueryGenerationFrom(.current)
+} catch {
+    // Handle the error appropriately.
+    print("Failed to pin the context:", error.localizedDescription)
+}
+
+Alternatively, use the queryGenerationToken from another pinned context to align both contexts to the same generation.
+
+To unpin a context, call setQueryGenerationFrom(_:), passing nil.
+// Unpin the context.
+do {
+    try persistentContainer.viewContext.setQueryGenerationFrom(nil)
+} catch {
+    // Handle the error appropriately.
+    print("Failed to unpin the context:", error.localizedDescription)
+}
+
+A generation doesn’t include stores added to the store coordinator after the generation’s creation. 
+Additionally, if you remove a store from the coordinator, don’t try to load data from the deleted store into a context.
+
+
+Update the view context to the current store generation:
+Advance a context to the generation of the most recent transaction, and pin it there, by calling setQueryGenerationFrom(_:) and passing the current token. 
+The context updates to the specified generation lazily on the next read (fetching or faulting) operation.
+
+// Advance the context to the generation of the most recent store transaction.
+do {
+    try persistentContainer.viewContext.setQueryGenerationFrom(.current)
+} catch {
+    // Handle the error appropriately.
+    print("Failed to set the query generation:", error.localizedDescription)
+}
+
+Alternatively, update a context’s generation by calling any of the following.
+setQueryGenerationFrom(_:)
+save()
+mergeChanges(fromContextDidSave:)
+mergeChanges(fromRemoteContextSave:into:)
+reset()
+
+Update contexts to the current generation as soon as a specific generation is no longer needed. 
+Query generations hold a file lock open to maintain the integrity of the journal for the duration of a query generation. 
+Once no contexts refer to a query generation, it expires, and the system can reclaim the journal disk space.
+
+
+Refresh objects:
+Refresh any managed objects registered to the context after you change the context’s query generation or unpin the context. 
+Managed objects don’t automatically refresh, as this behavior may not be desirable and is difficult to revert.
+
+Call refreshAllObjects() on the context to refresh its existing managed objects.
+
+// Refresh existing managed objects.
+persistentContainer.viewContext.refreshAllObjects()
+
+You can also refresh your objects by fetching them again. Call fetch(_:) on the context to retrieve a fresh set of managed objects matching your request criteria.
+// Alternatively, refresh objects by fetching them again.
+let request = NSFetchRequest<ShoppingItem>(entityName: "ShoppingItem")
+request.fetchBatchSize = 10
+
+// Execute the fetch.
+let results = await persistentContainer.viewContext.perform {
+    do {
+        return try self.persistentContainer.viewContext.fetch(request)
+    } catch {
+        // Handle the error appropriately. It's useful to use
+        // `fatalError(_:file:line:)` during development.
+        fatalError("Failed to refresh the objects: \(error.localizedDescription)")
+    }
+}
+
+The fetch reads the journal from the context’s query generation if pinned, or from the most recent transaction if unpinned.
+
+
+2. Consuming relevant store changes // 使用相关的 Store 更改
+Filter store transactions for changes relevant to the current view. // 过滤存储事务以查找与当前视图相关的更改。
+
+#####
+Use persistent history tracking to determine what changes have occurred in the store, and to update your view context only as needed.
+#####
+
+For example, consider an app that sometimes shows a list of shopping items, and sometimes shows a list of stores. 
+As the user views the ShoppingItem objects from the view context, a background context may download additional Store data from a remote source. 
+If the import happens through a batch operation, the save to the store doesn’t generate an NSManagedObjectContextDidSave notification, 
+and the view misses these relevant updates. 
+Alternatively, the background context may save changes to the store that don’t affect the current view—for example, inserting, modifying, or deleting Store objects. 
+These changes do generate context save events, so your view context processes them even though it doesn’t need to.
+
+#####
+Persistent history solves the problem by keeping track of every transaction on the store. 
+You can filter this history for relevant changes and decide how or whether to update a view.
+#####
+
+
+----------Enable history tracking for your local store:
+When you create a persistent container, set the NSPersistentHistoryTrackingKey option on the store description to true to enable history tracking.
+// Pass the data model filename to the container’s initializer.
+let container = PersistentContainer(name: "DataModel")
+
+// Get the persistent store description.
+let description = container.persistentStoreDescriptions.first
+
+// Set the persistent history tracking key option.
+description?.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
+
+Core Data tracks all changes to your local store.
+
+
+----------Listen for remote changes:
+In the persistent container, set the NSPersistentStoreRemoteChangeNotificationPostOptionKey option to true to enable listening for remote change notifications.
+description?.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
+
+add an observer to listen for remote change notifications.
+.onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)
+    .receive(on: DispatchQueue.main)) { _ in
+        fetchRemoteChanges()
+        
+        viewContext.perform {
+            do {
+                try viewContext.save()
+            } catch {
+                print("Failed to save changes: \(error.localizedDescription)")
+            }
+        }
+    }
+
+
+----------Provide details about a transaction’s source:
+Each history transaction automatically includes the originating storeID, bundleID and processID.
+You can supply additional information about the source of a change by setting each managed object context’s name and transactionAuthor.
+
+Provide a unique name for each context to identify it in the persistent history. 
+The context’s name becomes the persistent history transaction’s contextName. You only need to set this once per context.
+
+class PersistentContainer: NSPersistentContainer {
+    override init(name: String, managedObjectModel model: NSManagedObjectModel) {
+        super.init(name: name, managedObjectModel: model)
+        
+        // Set the context's name.
+        viewContext.name = "viewContext"
+    }
+}
+
+You can also set a transactionAuthor before each context save to differentiate among multiple call sites that modify the same context.
+The context’s transactionAuthor becomes the author of subsequent persistent history transactions.
+
+let newItem = ShoppingItem(context: viewContext)
+
+// Set newItem properties.
+
+// Set the transaction author.
+viewContext.transactionAuthor = "addItem"
+
+// Perform a save.
+viewContext.perform {
+    do {
+        try viewContext.save()
+        
+        // Reset the transaction author to prevent misattribution of
+        // future transactions.
+        viewContext.transactionAuthor = nil
+    } catch {
+        print("Failed to save changes:", error.localizedDescription)
+    }
+}
+Reset the context’s transactionAuthor to nil after saving the context to prevent misattribution of future transactions.
+
+
+----------Keep track of the most recent history:
+Create an instance of NSPersistentHistoryToken to keep track of the most recent history.
+var lastToken: NSPersistentHistoryToken?
+
+Save the token to disk so you can track history across app launches and fetch history based on the token.
+var lastToken: NSPersistentHistoryToken? = nil {
+    didSet {
+        // Encode the token.
+        guard let lastToken,
+              let data = try? NSKeyedArchiver.archivedData(withRootObject: lastToken,
+                                                           requiringSecureCoding: true) else {
+            return
+        }
+        
+        do {
+            // Write the token to disk.
+            try data.write(to: tokenFileURL)
+        } catch {
+            print("Failed to write token data:", error.localizedDescription)
+        }
+    }
+}
+
+lazy var tokenFileURL: URL = {
+    // Get the URL to the persistent store directory.
+    let url = NSPersistentContainer.defaultDirectoryURL().appendingPathComponent("ShoppingList",
+                                                                                 isDirectory: true)
+
+    // Create the directory if it doesn't already exist.
+    if FileManager.default.fileExists(atPath: url.path) == false {
+        do {
+            try FileManager.default.createDirectory(at: url,
+                                                    withIntermediateDirectories: true)
+        } catch {
+            print("Failed to create persistent container URL:", error.localizedDescription)
+        }
+    }
+    
+    // Append the name of the token data file and return the URL.
+    return url.appendingPathComponent("token.data", isDirectory: false)
+}()
+
+
+----------Request history:
+To request history, use the fetchHistory(after:) type method on NSPersistentHistoryChangeRequest.
+
+Important
+Execute the fetch request on a background context to avoid blocking the main thread.
+
+The following example shows a request to fetch new history since the last time you fetched history and convert the NSPersistentHistoryResult to an array of NSPersistentHistoryTransaction:
+// Create a fetch history request with the last token.
+let fetchHistoryRequest = NSPersistentHistoryChangeRequest.fetchHistory(after: lastToken)
+
+
+// Get a background context.
+let backgroundContext = persistentContainer.newBackgroundContext()
+
+
+// Perform the fetch.
+guard let historyResult = await backgroundContext.perform({
+    let historyResult = try? backgroundContext.execute(fetchHistoryRequest) as? NSPersistentHistoryResult
+    return historyResult?.result
+}) else {
+    fatalError("Failed to fetch history")
+}
+
+
+// Cast the result as an array of history transactions.
+guard let historyTransactions = historyResult as? [NSPersistentHistoryTransaction] else {
+    fatalError("Failed to convert history result to history transactions")
+}
+
+Alternatively you can use fetchHistory(after:) to get history after a particular date, or after a particular a transaction.
+
+
+----------Read history transactions:
+Each transaction represents a set of changes. Iterate through the array of transactions to learn their details. 
+The following code loops through the results of the fetchHistoryRequest to inspect the properties of each transaction.
+
+for transaction in history.reversed() {
+    // Token, date, and transaction number.
+    let token = transaction.token
+    let timestamp = transaction.timestamp
+    let transactionNumber = transaction.transactionNumber
+    
+    // Transaction source details.
+    let store = transaction.storeID
+    let bundle = transaction.bundleID
+    let process = transaction.processID
+    let context = transaction.contextName ?? "Unknown context"
+    let author = transaction.author ?? "Unknown author"
+    
+    // Get the transaction's changes.
+    guard let changes = transaction.changes else { continue }
+}
+
+A transaction’s changes array includes information about multiple changes. 
+A single NSPersistentHistoryChange represents the insertion, update, or deletion of an object.
+
+Iterate through a transaction’s changes to identify each object that changed, the type of change that occurred, and any details about the change.
+
+In the case of an update, the updatedProperties set includes any updated attributes and relationships. 
+In the case of a deletion, the tombstone dictionary includes key-value pairs for any attributes marked for preservation after deletion.
+
+for change in changes {
+    let objectID = change.changedObjectID
+    let changeID = change.changeID
+    let transaction = change.transaction
+    let changeType = change.changeType
+    var changedAttributes = [String]()
+    
+    // Iterate over the change type to get updated or deleted attributes.
+    switch changeType {
+    case .update:
+        guard let updatedProperties = change.updatedProperties else { break }
+        for property in updatedProperties {
+            changedAttributes.append(property.name)
+        }
+    case .delete:
+        guard let tombstone = change.tombstone else { break }
+        changedAttributes.append(tombstone["name"] as? String ?? "Unknown name")
+    default:
+        break
+    }
+}
+
+
+----------Filter for relevant transactions:
+Filter the history to narrow it to changes that affect the current view. 
+The following code filters for changes to ShoppingItem instances, and it updates the last transaction token as it goes.
+
+var filteredTransactions = [NSPersistentHistoryTransaction]()
+for transaction in transactions {
+    guard let changes = transaction.changes else { continue }
+    
+    let filteredChanges = changes.filter { change -> Bool in
+        ShoppingItem.entity().name == change.changedObjectID.entity.name
+    }
+    
+    if filteredChanges.isEmpty == false {
+        filteredTransactions.append(transaction)
+    }
+    
+    lastToken = transaction.token
+}
+
+Relevant changes may include all changes to a given entity, or more selectively, only changes to those properties that are visible on the screen.
+
+
+----------Merge relevant transactions:
+To merge the relevant changes into your view context, first obtain a notification by calling objectIDNotification() on the transaction. 
+Then, pass the notification to mergeChanges(fromContextDidSave:).
+
+if filteredTransactions.isEmpty == false {
+    // Iterate over filtered transactions and merge the changes in the
+    // object ID notification that you specify.
+    for transaction in filteredTransactions {
+        await persistentContainer.viewContext.perform {
+            self.persistentContainer.viewContext.mergeChanges(
+                fromContextDidSave: transaction.objectIDNotification()
+            )
+        }
+    }
+}
+
+
+----------Access attributes of deleted objects:
+After you delete an object from the store, its objectID is no longer relevant. 
+Identify a deleted object by recording select properties in its tombstone.
+
+In the Core Data model editor, select an attribute. In the data model editor, select the Preserve After Deletion checkbox.
+
+In the persistent history, NSPersistentHistoryChangeType.delete changes include a tombstone dictionary with key-value pairs for any attributes marked for preservation after deletion.
+
+var deletedAttributes = [String]()
+
+for transaction in history.reversed() {
+    guard let changes = transaction.changes else { continue }
+    
+    for change in changes where change.changeType == .delete {
+        if let tombstone = change.tombstone {
+            deletedAttributes.append(tombstone["name"] as? String ?? "Unknown attribute")
+        }
+    }
+}
+
+
+----------Purge History:
+Because persistent history tracking transactions take up space on disk, determine a clean-up strategy to remove them when you no longer need them. 
+Before you purge history, ensure that your app and its clients have consumed the history they need.
+
+Similar to fetching history, you can use deleteHistory(before:) to delete history older than a token, a transaction, or a date. 
+For example, you can delete all transactions older than seven days:
+
+// Get the point in time seven days ago.
+let sevenDaysAgo = Calendar.current.date(byAdding: .day,
+                                         value: -7,
+                                         to: Date())!
+
+
+// Create a purge history request to delete history before seven days ago.
+let purgeHistoryRequest = NSPersistentHistoryChangeRequest.deleteHistory(before: sevenDaysAgo)
+
+
+// Get a background context.
+let backgroundContext = persistentContainer.newBackgroundContext()
+
+
+// Execute the request.
+await backgroundContext.perform {// perform 保证 execute 在后台线程安全执行
+    do {
+        try backgroundContext.execute(purgeHistoryRequest)
+    } catch {
+        print("Failed to purge history:", error.localizedDescription)
+    }
+}
+
+
+perform:
+类型：NSManagedObjectContext 的方法
+作用：保证你里面的代码在 NSManagedObjectContext 所管理的 队列（queue） 上执行。
+如果是 private queue（后台上下文），perform 会在后台线程执行 block。
+如果是 main queue（主上下文），perform 会在主线程执行 block。
+特点：
+异步（performAndWait 是同步版）
+用来保证 Core Data 的线程安全，不直接操作上下文属性或对象，必须通过 perform/performAndWait
+#####
+perform 是 线程安全的封装，它本身不执行数据库操作，而是让你在正确的线程/队列执行操作。
+#####
+
+execute:
+类型：NSManagedObjectContext 的方法
+作用：真正执行一个 NSBatchDeleteRequest、NSBatchUpdateRequest 或者 NSFetchRequest（带 NSAsynchronousFetchRequest）
+特点：
+是具体的数据库操作
+会返回一个 NSPersistentStoreResult（取决于 request 类型）
+可能抛出异常，需要 try/catch
+
+
+Important
+If you attempt to fetch purged history, Core Data throws an expired token error.

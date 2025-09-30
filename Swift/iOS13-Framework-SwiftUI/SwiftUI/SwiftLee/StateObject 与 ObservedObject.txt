@@ -1,0 +1,172 @@
+https://www.avanderlee.com/swift/dynamiccallable/
+
+
+@dynamicCallable in Swift allows you to dynamically call methods using an alternative syntax.
+
+#####
+Swift naturally supports communicating with C and Objective-C APIs but couldn’t interpolate with other languages before @dynamicCallable and @dynamicMemberLookup were introduced.
+#####
+
+
+==================================================What is @dynamicCallable used for?
+You can use @dynamicCallable to provide dynamic access to your code from within Python, Javascript, or other languages.
+
+For example, you could define a cache layer that can be used from within any languages by using the dynamic callable syntax:
+let stored = cache.dynamicallyCall(withKeywordArguments: [
+    "store": "Antoine"
+])
+The above code example can be replaced using a more readable variant:
+let stored = cache(store: "Antoine")
+
+
+==================================================How to implement @dynamicCallable
+Providing access using keyword arguments:
+
+@dynamicCallable
+final class NamesCache {
+    private var names: [String] = []
+
+    @discardableResult
+    func dynamicallyCall(withKeywordArguments args: KeyValuePairs<String, String>) -> Bool {
+        for (key, value) in args {
+            if key == "contains" {
+                return names.contains(value)
+            } else if key == "store" {
+                names.append(value)
+                return true
+            }
+        }
+        return false
+    }
+}
+
+let cache = NamesCache()
+cache(contains: "Antoine") // Prints: false
+cache(store: "Antoine") // Prints: true
+cache(contains: "Antoine") // Prints: true
+
+
+Using array arguments:
+Not all languages support keyword arguments, so Swift provides an alternative by using array arguments:
+@dynamicCallable
+final class NamesCache {
+    private var names: [String] = []
+
+    @discardableResult
+    func dynamicallyCall(withArguments args: [String]) -> Bool {
+        let pairs = stride(from: 0, to: args.endIndex, by: 2).map { argumentIndex in
+            let lhsArgument = args[argumentIndex]
+            let rhsArgument = argumentIndex < args.index(before: args.endIndex) ? args[argumentIndex.advanced(by: 1)] : nil
+            return (lhsArgument, rhsArgument)
+        }
+
+        for (key, value) in pairs {
+            guard let value else { continue }
+
+            if key == "contains" {
+                return names.contains(value)
+            } else if key == "store" {
+                names.append(value)
+                return true
+            }
+        }
+        return false
+    }
+}
+
+let cache = NamesCache1()
+cache("store", "Antoine") // Prints: true
+
+We have to do a little more work to parse the arguments, but the final result equals what we’ve had before using key-value arguments.
+
+
+==================================================Combining @dynamicCallable with @dynamicMemberLookup
+In this case, we provide access to the underlying array that is used for storing the names:
+
+@dynamicMemberLookup
+@dynamicCallable
+final class NamesCache {
+    private var names: [String] = []
+
+    subscript<T>(dynamicMember keyPath: KeyPath<[String], T>) -> T {
+        return names[keyPath: keyPath]
+    }
+
+    @discardableResult
+    func dynamicallyCall(withKeywordArguments args: KeyValuePairs<String, String>) -> Bool {
+        for (key, value) in args {
+            if key == "contains" {
+                return names.contains(value)
+            } else if key == "store" {
+                names.append(value)
+                return true
+            }
+        }
+        return false
+    }
+}
+By adding the subscript using the String array type we can now access underlying information about the stored names:
+
+let cache = NamesCache()
+cache(contains: "Maaike") // Prints: false
+cache(store: "Maaike") // Prints: true
+cache(contains: "Maaike") // Prints: true
+
+cache.count // Prints: 1
+cache.description // Prints: ["Maaike"]
+
+Altogether, it provides you insights into providing access from other languages using both dynamic attributes.
+
+
+==================================================
+@dynamicCallable 和 callAsFunction 在 Swift 中都可以让类型“像函数一样调用”，但 设计目的和机制不同
+1. callAsFunction
+引入版本：Swift 5.2
+用法：在类型内部定义一个 callAsFunction 方法
+特点：
+静态类型检查，参数和返回值固定
+支持重载 callAsFunction（多个签名）
+简单、类型安全
+struct Multiplier {
+    let factor: Int
+
+    func callAsFunction(_ value: Int) -> Int {
+        value * factor
+    }
+}
+
+let triple = Multiplier(factor: 3)
+triple(5)  // 15
+#####
+调用时像普通函数，参数固定，编译器会检查类型
+#####
+
+
+2. @dynamicCallable
+引入版本：Swift 5.2
+用法：类型加上 @dynamicCallable，并实现：
+dynamicallyCall(withArguments:) 或
+dynamicallyCall(withKeywordArguments:)
+特点：
+支持 动态参数，参数个数和名称可变
+适合构建 DSL 或动态语言接口
+编译器不会严格检查参数类型（用 [Any] 或 [String: Any]）
+
+@dynamicCallable
+struct Adder {
+    func dynamicallyCall(withArguments args: [Int]) -> Int {
+        args.reduce(0, +)
+    }
+}
+
+let sum = Adder()(1, 2, 3)  // 6
+调用时参数可以随意变化，更像 Python/JavaScript 风格
+
+
+| 特性                 | 参数类型                      | 类型安全    | 可变参数         | 典型用途                |
+| ------------------ | ------------------------- | ------- | ------------ | ------------------- |
+| `callAsFunction`   | 固定类型                      | ✅ 强类型检查 | ❌ 不支持完全动态    | 算法对象、函数对象、类型安全函数调用  |
+| `@dynamicCallable` | `[Any]` 或 `[String: Any]` | ❌ 动态    | ✅ 支持可变参数/关键字 | DSL、动态语言包装、脚本风格 API |
+
+callAsFunction = 静态、类型安全的函数调用
+@dynamicCallable = 动态、灵活的函数调用

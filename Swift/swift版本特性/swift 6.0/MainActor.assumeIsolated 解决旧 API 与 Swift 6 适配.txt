@@ -1,0 +1,107 @@
+https://fatbobman.com/zh/posts/mainactor-assumeisolated/
+
+class CustomAttachmentViewProvider: NSTextAttachmentViewProvider {
+    override func loadView() {
+        let hosting = UIHostingController(rootView: InlineSwiftUIButton {
+            print("SwiftUI Button tapped!")
+        })
+
+        hosting.view.backgroundColor = .clear
+
+        // Assign to the provider's view
+        self.view = hosting.view
+    }
+}
+
+// MARK: - SwiftUI Button View
+
+struct InlineSwiftUIButton: View {
+    var action: () -> Void
+    var body: some View {
+        Button("Click Me") {
+            action()
+        }
+        .padding(6)
+        .background(Color.blue.opacity(0.2))
+        .cornerRadius(8)
+    }
+}
+
+在 Xcode 开启 Swift 6 模式后（Default Actor Isolation 设为 nonisolated），上述代码出现了错误/警告
+
+
+Swift 6 编译器之所以不认可上述几种写法，主要原因如下：
+UIHostingController 在声明中标注了 @MainActor，这意味着它必须在 MainActor 上下文中创建
+NSTextAttachmentViewProvider 的原始声明中没有明确的隔离域
+单独为 loadView 添加 @MainActor 与父类的要求不符
+如果在 loadView 中构建 MainActor 异步上下文，无法安全地传递 self
+
+#####
+似乎陷入了一个两难境地：既需要在 MainActor 中构建 UIHostingController，又不能在 MainActor 中将构建后的视图（UIView）赋值给 self.view。
+#####
+
+
+#####
+MainActor.assumeIsolated：在同步方法中提供 MainActor 上下文
+
+它只能在同步上下文中运行，并且如果当前上下文不是 MainActor，应用会直接崩溃。
+
+MainActor.assertIsolated 作为调试时判断当前上下文是否为 MainActor 的手段
+#####
+
+查看 MainActor.assumeIsolated 的签名，我们可以发现该 API 会为其尾随闭包提供一个 MainActor 上下文。
+这意味着，我们可以在一个非 MainActor 的同步上下文中，无需创建异步环境，就能“同步”地运行一段只能在 MainActor 上下文中执行的代码，并返回一个 Sendable 结果。
+public static func assumeIsolated<T>(_ operation: @MainActor () throws -> T, file: StaticString = #fileID, line: UInt = #line) rethrows -> T where T : Sendable
+
+
+解决方案:
+class CustomAttachmentViewProvider: NSTextAttachmentViewProvider {
+    override func loadView() {
+        let view = MainActor.assumeIsolated { // 在同步上下文运行
+            // assumeIsolated 闭包中提供了 MainActor 环境，可以安全地创建 UIHostingController 实例
+            let hosting = UIHostingController(rootView: InlineSwiftUIButton {
+                print("SwiftUI Button tapped!")
+            })
+
+            hosting.view.backgroundColor = .clear
+            return hosting.view // view 为 UIView，标注为 MainActor，满足 Sendable
+        }
+        self.view = view
+    }
+}
+
+我们在 loadView 中顺利执行了 MainActor.assumeIsolated 方法
+MainActor.assumeIsolated 的闭包提供了 MainActor 上下文，使我们能够安全地创建 UIHostingController 实例
+hosting.view 是 UIView 类型（声明时已有 @MainActor 标注），满足 Sendable 要求，可以作为闭包的返回值
+在 loadView 的同步上下文中，我们将 MainActor.assumeIsolated 的返回值赋值给了 self.view，#####保证了隔离域的一致性#####
+
+
+考虑到 loadView 并非总是在 MainActor 中执行，最终的完整代码如下：
+class CustomAttachmentViewProvider: NSTextAttachmentViewProvider {
+    override func loadView() {
+        view = getView()
+    }
+
+    // 如果 `loadView` 没有运行于主线程，切换到主线程
+    func getView() -> UIView {
+        if Thread.isMainThread {
+            return Self.createHostingViewOnMain()
+        } else {
+            return DispatchQueue.main.sync {
+                Self.createHostingViewOnMain()
+            }
+        }
+    }
+
+    // 使用静态方法避免捕获 self
+    private static func createHostingViewOnMain() -> UIView {
+        MainActor.assumeIsolated {
+            let hosting = UIHostingController(rootView: InlineSwiftUIButton {
+                print("SwiftUI Button tapped!")
+            })
+
+            hosting.view.backgroundColor = .clear
+            return hosting.view
+        }
+    }
+}

@@ -1,0 +1,77 @@
+https://www.avanderlee.com/swift/dynamic-member-lookup/
+
+
+Dynamic member lookup has been introduced in Swift 4.2 with SE-195 and already allowed some pretty nice solutions to for example implement JSON parsing.
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0195-dynamic-member-lookup.md
+
+
+Although this might not directly feel like a feature handy to use in your projects, it might become more handy with the support of key paths. 
+This new feature has been introduced in Swift 5.1 with SE-252. // Key Path Member Lookup
+https://github.com/apple/swift-evolution/blob/master/proposals/0252-keypath-dynamic-member-lookup.md
+
+
+
+==================================================Adding dynamic member lookup support using @dynamicMemberLookup
+@dynamicMemberLookup can be used with both classes and structs. 
+As soon as you add the key above your type definition you will see the following error:
+@dynamicMemberLookup attribute requires ‘NotificationWrapper’ to have a ‘subscript(dynamicMember:)’ method that accepts either ‘ExpressibleByStringLiteral’ or a keypath
+
+Since Swift 5.1 this error message now also includes “or a keypath”.
+
+
+We can solve this error easily by implementing the subscript as suggested. 
+In the following example, we have a `NotificationWrapper` to use for accessing the user info of a notification.
+@dynamicMemberLookup
+struct NotificationWrapper {
+    let notification: Notification
+
+    subscript(dynamicMember string: String) -> String {
+        return notification.userInfo?[string] as? String ?? ""
+    }
+}
+The dynamic member lookup will allow us to access any String values from the user info as following:
+let notificationWrapper = NotificationWrapper(notification: Notification(name: Notification.Name(rawValue: "user_did_login"), object: nil, userInfo: ["name": "Antoine van der Lee", "age": 28]))
+print(notificationWrapper.name)
+
+However, if we want to access the age integer using notificationWrapper.age, we would end up with an empty string. 
+Although you might think that we can easily solve this using an extra subscript taking an integer type, it’s instead ending up with the following error:
+error: ambiguous use of ‘subscript(dynamicMember:)’
+
+#####
+This is where key paths come to the rescue.
+#####
+
+
+==================================================Combining key paths with @dynamicMemberLookup
+Swift 5.1 introducing key paths suddenly makes dynamic member lookup support a lot more interesting. 
+It allows us to easily access values from an instance while keeping our models structured and small. 
+
+struct Blog {
+    let title: String
+    let url: URL
+}
+
+@dynamicMemberLookup
+struct Blogger {
+    let name: String
+    let blog: Blog
+
+    subscript<T>(dynamicMember keyPath: KeyPath<Blog, T>) -> T {
+        return blog[keyPath: keyPath]
+    }
+}
+
+#####
+We use a generic subscript which takes a key path for the type Blog. 
+The key path member lookup support in Swift automatically allows us now to access properties from the blog instance directly on a blogger instance.
+#####
+let blog = Blog(title: "SwiftLee", url: URL(string: "www.avanderlee.com")!)
+let blogger = Blogger(name: "Antoine van der Lee", blog: blog)
+
+print(blogger.title) // Prints: SwiftLee
+
+
+#####
+We could easily access the same property using blogger.blog.title which you could even take as more readable. 
+As this all could even lead to a less readable codebase it might be better to only use it in very specific cases.
+#####

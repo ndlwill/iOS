@@ -1,0 +1,476 @@
+https://developer.apple.com/documentation/ImageIO
+
+#####
+Image/IO，其实采取的是一种惰性解码方式。
+解码器只预先扫描一遍压缩格式的容器，提取元信息，但是不产生最终的Bitmap Buffer，而是通过惰性回调的方式，才生成Bitmap Buffer。
+
+换句话说，通过所有CGImageSourceCreateImageAtIndex这种API生成的CGImage，其实它的backing store（就是Bitmap）还没有立即创建，他只是一个包含了一些元信息的空壳Image。
+这个CGImage，在最终需要获取它的Bitmap Buffer的时候（即，通过相应的API，如CGDataProviderCopyData，CGDataProviderRetainBytePtr），
+才会触发最后的Bitmap Buffer的创建和内存分配。
+#####
+
+// Read and write most image file formats, and access an image’s metadata.
+读取和写入大多数图像文件格式，并访问图像的元数据。
+
+The Image I/O framework allows applications to read and write most image file formats. 
+This framework offers high efficiency, color management, and access to image metadata.
+
+Image I/O Programming Guide.
+https://developer.apple.com/library/archive/documentation/GraphicsImaging/Conceptual/ImageIOGuide/imageio_intro/ikpg_intro.html#//apple_ref/doc/uid/TP40005462
+
+
+当你用 UIImage(named:)、UIImage(data:)、CGImageSourceCreateImageAtIndex 之类的 API 加载图片时，底层其实就是调用 Image I/O 来做压缩格式 → CGImage 的转换。
+所以，真正的 JPEG/PNG 解码（压缩 → 像素）是 Image I/O 做的。
+当进行手动解码 UIImage 时：
+/*
+decodedImage(from:) 方法的作用
+就是强制把「懒解码 CGImage」变成「真正解码并拷贝到 bitmap buffer 的 CGImage」，避免第一次显示时卡顿。
+*/
+func decodedImage(from image: UIImage) -> UIImage? {
+    /*
+    这边的 CGImage 只是个懒加载包装
+    比如 UIImage(data:) 读入 JPEG，内部会先用 Image I/O 创建一个 CGImageRef，但 backing store 可能只是 JPEG 的压缩数据。
+    当你真正去绘制 (CGContextDrawImage / layer.contents = cgImage) 时，Core Graphics / Core Animation 才会调用 Image I/O 去做解码，分配像素内存。
+    所以这时的 CGImage 还没真正解码。
+    */
+    guard let cgImage = image.cgImage else { return nil }
+    let size = CGSize(width: cgImage.width, height: cgImage.height)
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let context = CGContext(
+        data: nil,
+        width: Int(size.width),
+        height: Int(size.height),
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )
+    context?.draw(cgImage, in: CGRect(origin: .zero, size: size))
+    /*
+    这边的 newCGImage 指向的就是已经解码好的像素 buffer
+    比如你用 CGBitmapContext.makeImage() 得到的 CGImage，它的 backing store 就是一块 ARGB bitmap buffer。
+    这种情况就是 已经解码完成的 CGImage。
+    */
+    guard let newCGImage = context?.makeImage() else { return nil }
+    return UIImage(cgImage: newCGImage)
+}
+你拿到的 UIImage.cgImage 本质上已经是 Image I/O 解析过的一个 CGImage 对象。
+注意：CGImage 可以处于 解码延迟状态（pixel buffer 还没分配，直到绘制时才 decode）。
+你在 CGBitmapContext 里调用 draw(cgImage, in:)，其实是强制让系统去执行：
+如果这个 CGImage 还没有真正展开像素 → 就会触发 Image I/O 解码 把压缩数据解成像素。
+然后把这些像素 copy 到你的 CGBitmapContext 缓冲区里。
+换句话说：
+Image I/O 负责 JPEG/PNG 的压缩解码。
+你的代码只是触发了解码并强制生成了一个“已解码的副本”。
+
+Image I/O 就像是“翻译器”，它懂 JPEG/PNG/HEIF 的压缩语言。
+CGBitmapContext.draw 就像是“读书人”，它必须把翻译结果（像素）读进自己的纸张（位图缓冲区）里。
+如果还没翻译过，draw 时会调用翻译器（Image I/O）；
+如果已经翻译过，draw 就只是单纯的复制。
+
+背后触发的像素解码工作还是由 Image I/O 来完成的。
+你只是通过 CGContext 提前让解码发生，并把结果缓存下来。
+
+CGImage 本身是个「图像描述对象」
+
+
+==================================================Basics of Using Image I/O
+The Image I/O framework provides opaque data types for reading image data from a source (CGImageSourceRef) and writing image data to a destination (CGImageDestinationRef). 
+It supports a wide range of image formats, including the standard web formats, high dynamic range images, and raw camera data. Image I/O has many other features such as:
+The fastest image decoders and encoders for the Mac platform
+The ability to load images incrementally
+Support for image metadata
+Effective caching
+
+https://developer.apple.com/documentation/imageio/cgimagesource
+https://developer.apple.com/documentation/imageio/cgimagedestination
+
+Toll-Free Bridged （无缝桥接）Types: 
+https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFDesignConcepts/Articles/tollFreeBridgedTypes.html#//apple_ref/doc/uid/TP40010677
+
+You can create image source and image destination objects from:
+// https://developer.apple.com/documentation/corefoundation/cfurl
+URLs. Images whose location can be specified as a URL can act as a supplier or receiver of image data. In Image I/O, a URL is represented as the Core Foundation data type CFURLRef.
+// https://developer.apple.com/documentation/corefoundation/cfdata, https://developer.apple.com/documentation/corefoundation/cfmutabledata
+The Core Foundation objects CFDataRef and CFMutableDataRef.
+// https://developer.apple.com/documentation/coregraphics/cgdataconsumer, https://developer.apple.com/documentation/coregraphics/cgdataprovider
+Quartz data consumer (CGDataConsumerRef) and data provider (CGDataProviderRef) objects.
+
+
+Supported Image Formats:
+The Image I/O framework understands most of the common image file formats, such as JPEG, JPEG2000, RAW, TIFF, BMP, and PNG. Not all formats are supported on each platform. 
+For the most up-to-date list of what Image I/O supports, you can call the these functions:
+
+// https://developer.apple.com/documentation/imageio/cgimagesourcecopytypeidentifiers()
+CGImageSourceCopyTypeIdentifiers returns an array of the Uniform Type Identifiers (UTIs) that Image I/O supports as image sources.
+// https://developer.apple.com/documentation/imageio/cgimagedestinationcopytypeidentifiers()
+CGImageDestinationCopyTypeIdentifiers returns an array of the uniform type identifiers (UTIs) that Image I/O supports as image destinations.
+
+Framework
+Uniform Type Identifiers // iOS 14.0 统一类型标识符
+https://developer.apple.com/documentation/UniformTypeIdentifiers
+
+
+Getting and printing supported UTIs:
+CFArrayRef mySourceTypes = CGImageSourceCopyTypeIdentifiers();
+CFShow(mySourceTypes);
+CFArrayRef myDestinationTypes = CGImageDestinationCopyTypeIdentifiers();
+CFShow(myDestinationTypes);
+
+
+==================================================Creating and Using Image Sources
+An image source abstracts the data-access task and eliminates the need for you to manage data through a raw memory buffer.
+#####
+An image source can contain more than one image, thumbnail images, properties for each image, and the image file.
+#####
+When you are working with image data and your application runs in OS X v10.4 or later, image sources are the preferred way to move image data into your application. 
+After creating a CGImageSource object, you can obtain images, thumbnails, image properties, and other image information using the functions described in CGImageSource Reference.
+
+
+Creating an Image from an Image Source:
+CGImageRef MyCreateCGImageFromFile (NSString* path)
+{
+    // Get the URL for the pathname passed to the function.
+    NSURL *url = [NSURL fileURLWithPath:path];
+    CGImageRef        myImage = NULL;
+    CGImageSourceRef  myImageSource;
+    CFDictionaryRef   myOptions = NULL;
+    CFStringRef       myKeys[2];
+    CFTypeRef         myValues[2];
+ 
+    // Set up options if you want them. The options here are for
+    // caching the image in a decoded form and for using floating-point
+    // values if the image format supports them.
+    myKeys[0] = kCGImageSourceShouldCache; // 它告诉系统“当真正需要解码的时候，把解码结果缓存下来”。这个选项并不会让 Core Graphics 在 CGImageSourceCreateImageAtIndex 调用时立即解码。
+    myValues[0] = (CFTypeRef)kCFBooleanTrue;
+    myKeys[1] = kCGImageSourceShouldAllowFloat;
+    myValues[1] = (CFTypeRef)kCFBooleanTrue;
+    // Create the dictionary
+    myOptions = CFDictionaryCreate(NULL, (const void **) myKeys,
+                   (const void **) myValues, 2,
+                   &kCFTypeDictionaryKeyCallBacks,
+                   & kCFTypeDictionaryValueCallBacks);
+    // Create an image source from the URL.
+    myImageSource = CGImageSourceCreateWithURL((CFURLRef)url, myOptions);
+    CFRelease(myOptions);
+    // Make sure the image source exists before continuing
+    if (myImageSource == NULL){
+        fprintf(stderr, "Image source is NULL.");
+        return  NULL;
+    }
+    // Create an image from the first item in the image source.
+    myImage = CGImageSourceCreateImageAtIndex(myImageSource,
+                                           0,
+                                           NULL);
+ 
+    CFRelease(myImageSource);
+    // Make sure the image exists before continuing
+    if (myImage == NULL){
+         fprintf(stderr, "Image not created from image source.");
+         return NULL;
+    }
+ 
+    return myImage;
+}
+
+真正的解码动作发生在你后续调用：
+CGContextDrawImage
+或者 UIKit 的 [UIImage imageWithCGImage:] 并显示到屏幕上的时候。
+
+
+typedef struct CGImage *CGImageRef;
+CGImageRef 本质上是一个“图像解码描述符”，它知道如何在需要时从底层的 JPEG/PNG 数据中解码出像素。
+
+myImage 在返回时还没有被解码，它只是带有解码信息的 CGImageRef。
+解码真正发生在 首次绘制 时；
+
+
+Creating a Thumbnail Image from an Image Source:
+CGImageRef MyCreateThumbnailImageFromData (NSData * data, int imageSize)
+{
+    CGImageRef        myThumbnailImage = NULL;
+    CGImageSourceRef  myImageSource;
+    CFDictionaryRef   myOptions = NULL;
+    CFStringRef       myKeys[3];
+    CFTypeRef         myValues[3];
+    CFNumberRef       thumbnailSize;
+ 
+   // Create an image source from NSData; no options.
+   myImageSource = CGImageSourceCreateWithData((CFDataRef)data,
+                                               NULL);
+   // Make sure the image source exists before continuing.
+   if (myImageSource == NULL){
+        fprintf(stderr, "Image source is NULL.");
+        return  NULL;
+   }
+ 
+   // Package the integer as a  CFNumber object. Using CFTypes allows you
+   // to more easily create the options dictionary later.
+   thumbnailSize = CFNumberCreate(NULL, kCFNumberIntType, &imageSize);
+ 
+   // Set up the thumbnail options.
+   myKeys[0] = kCGImageSourceCreateThumbnailWithTransform;
+   myValues[0] = (CFTypeRef)kCFBooleanTrue;
+   myKeys[1] = kCGImageSourceCreateThumbnailFromImageIfAbsent;
+   myValues[1] = (CFTypeRef)kCFBooleanTrue;
+   myKeys[2] = kCGImageSourceThumbnailMaxPixelSize;
+   myValues[2] = (CFTypeRef)thumbnailSize;
+ 
+   myOptions = CFDictionaryCreate(NULL, (const void **) myKeys,
+                   (const void **) myValues, 2,
+                   &kCFTypeDictionaryKeyCallBacks,
+                   & kCFTypeDictionaryValueCallBacks);
+ 
+  // Create the thumbnail image using the specified options.
+  myThumbnailImage = CGImageSourceCreateThumbnailAtIndex(myImageSource,
+                                          0,
+                                          myOptions);
+  // Release the options dictionary and the image source
+  // when you no longer need them.
+  CFRelease(thumbnailSize);
+  CFRelease(myOptions);
+  CFRelease(myImageSource);
+ 
+   // Make sure the thumbnail image exists before continuing.
+   if (myThumbnailImage == NULL){
+         fprintf(stderr, "Thumbnail image not created from image source.");
+         return NULL;
+   }
+ 
+   return myThumbnailImage;
+}
+
+Documentation ArchiveDeveloperSearch
+Image I/O Programming Guide
+Table of Contents
+NextPrevious
+Creating and Using Image Sources
+An image source abstracts the data-access task and eliminates the need for you to manage data through a raw memory buffer. An image source can contain more than one image, thumbnail images, properties for each image, and the image file. When you are working with image data and your application runs in OS X v10.4 or later, image sources are the preferred way to move image data into your application. After creating a CGImageSource object, you can obtain images, thumbnails, image properties, and other image information using the functions described in CGImageSource Reference.
+
+Creating an Image from an Image Source
+One of the most common tasks you’ll perform with the Image I/O framework is to create an image from an image source, similar to what’s shown in Listing 2-1. This example shows how to create an image source from a path name and then extract the image. When you create an image source object, you can provide a hint as to the format of the image source file.
+
+When you create an image from an image source, you must specify an index and you can provide a dictionary of properties (key-value pairs) to specify such things as whether to create a thumbnail or allow caching. CGImageSource Reference and CGImageProperties Reference list keys and the expected data type of the value for each key.
+
+You need to supply an index value because some image file formats allow multiple images to reside in the same source file. For an image source file that contains only one image, pass 0. You can find out the number of images in an image source file by calling the function CGImageSourceGetCount.
+
+Listing 2-1  Creating an image from an image source
+
+CGImageRef MyCreateCGImageFromFile (NSString* path)
+{
+    // Get the URL for the pathname passed to the function.
+    NSURL *url = [NSURL fileURLWithPath:path];
+    CGImageRef        myImage = NULL;
+    CGImageSourceRef  myImageSource;
+    CFDictionaryRef   myOptions = NULL;
+    CFStringRef       myKeys[2];
+    CFTypeRef         myValues[2];
+ 
+    // Set up options if you want them. The options here are for
+    // caching the image in a decoded form and for using floating-point
+    // values if the image format supports them.
+    myKeys[0] = kCGImageSourceShouldCache;
+    myValues[0] = (CFTypeRef)kCFBooleanTrue;
+    myKeys[1] = kCGImageSourceShouldAllowFloat;
+    myValues[1] = (CFTypeRef)kCFBooleanTrue;
+    // Create the dictionary
+    myOptions = CFDictionaryCreate(NULL, (const void **) myKeys,
+                   (const void **) myValues, 2,
+                   &kCFTypeDictionaryKeyCallBacks,
+                   & kCFTypeDictionaryValueCallBacks);
+    // Create an image source from the URL.
+    myImageSource = CGImageSourceCreateWithURL((CFURLRef)url, myOptions);
+    CFRelease(myOptions);
+    // Make sure the image source exists before continuing
+    if (myImageSource == NULL){
+        fprintf(stderr, "Image source is NULL.");
+        return  NULL;
+    }
+    // Create an image from the first item in the image source.
+    myImage = CGImageSourceCreateImageAtIndex(myImageSource,
+                                           0,
+                                           NULL);
+ 
+    CFRelease(myImageSource);
+    // Make sure the image exists before continuing
+    if (myImage == NULL){
+         fprintf(stderr, "Image not created from image source.");
+         return NULL;
+    }
+ 
+    return myImage;
+}
+Creating a Thumbnail Image from an Image Source
+Some image source files contain thumbnail images that you can retrieve. If thumbnails aren’t already present, Image I/O gives you the option of creating them. You can also specify a maximum thumbnail size and whether to apply a transform to the thumbnail image.
+
+Listing 2-2 shows how to create an image source from data, set up a dictionary that contains options related to the thumbnail, and then create a thumbnail image. You use the kCGImageSourceCreateThumbnailWithTransform key to specify whether the thumbnail image should be rotated and scaled to match the orientation and pixel aspect ratio of the full image.
+
+Listing 2-2  Creating a thumbnail image
+
+CGImageRef MyCreateThumbnailImageFromData (NSData * data, int imageSize)
+{
+    CGImageRef        myThumbnailImage = NULL;
+    CGImageSourceRef  myImageSource;
+    CFDictionaryRef   myOptions = NULL;
+    CFStringRef       myKeys[3];
+    CFTypeRef         myValues[3];
+    CFNumberRef       thumbnailSize;
+ 
+   // Create an image source from NSData; no options.
+   myImageSource = CGImageSourceCreateWithData((CFDataRef)data,
+                                               NULL);
+   // Make sure the image source exists before continuing.
+   if (myImageSource == NULL){
+        fprintf(stderr, "Image source is NULL.");
+        return  NULL;
+   }
+ 
+   // Package the integer as a  CFNumber object. Using CFTypes allows you
+   // to more easily create the options dictionary later.
+   thumbnailSize = CFNumberCreate(NULL, kCFNumberIntType, &imageSize);
+ 
+   // Set up the thumbnail options.
+   myKeys[0] = kCGImageSourceCreateThumbnailWithTransform;
+   myValues[0] = (CFTypeRef)kCFBooleanTrue;
+   myKeys[1] = kCGImageSourceCreateThumbnailFromImageIfAbsent;
+   myValues[1] = (CFTypeRef)kCFBooleanTrue;
+   myKeys[2] = kCGImageSourceThumbnailMaxPixelSize;
+   myValues[2] = (CFTypeRef)thumbnailSize;
+ 
+   myOptions = CFDictionaryCreate(NULL, (const void **) myKeys,
+                   (const void **) myValues, 2,
+                   &kCFTypeDictionaryKeyCallBacks,
+                   & kCFTypeDictionaryValueCallBacks);
+ 
+  // Create the thumbnail image using the specified options.
+  myThumbnailImage = CGImageSourceCreateThumbnailAtIndex(myImageSource,
+                                          0,
+                                          myOptions);
+  // Release the options dictionary and the image source
+  // when you no longer need them.
+  CFRelease(thumbnailSize);
+  CFRelease(myOptions);
+  CFRelease(myImageSource);
+ 
+   // Make sure the thumbnail image exists before continuing.
+   if (myThumbnailImage == NULL){
+         fprintf(stderr, "Thumbnail image not created from image source.");
+         return NULL;
+   }
+ 
+   return myThumbnailImage;
+}
+
+
+
+Incrementally Loading an Image:
+增量加载图像 = 在数据未完全获取或图像未完全解码时，就可以先显示一部分，随着更多数据到来或解码完成，逐渐完善显示。
+
+If you have a very large image, or are loading image data over the web, you may want to create an incremental image source so that you can draw the image data as you accumulate it. 
+You need to perform the following tasks to load an image incrementally from a CFData object:
+1. Create the CFData object for accumulating the image data.
+2. Create an incremental image source by calling the function CGImageSourceCreateIncremental.
+3. Add image data to the CFData object.
+4. Call the function CGImageSourceUpdateData, passing the CFData object and a Boolean value (bool data type) that specifies whether the data parameter contains the entire image, or just partial image data. In any case, the data parameter must contain all the image file data accumulated up to that point.
+5. If you have accumulated enough image data, create an image by calling CGImageSourceCreateImageAtIndex, draw the partial image, and then release it.
+6. Check to see if you have all the data for an image by calling the function CGImageSourceGetStatusAtIndex. If the image is complete, this function returns kCGImageStatusComplete. If the image is not complete, repeat steps 3 and 4 until it is.
+7. Release the incremental image source.
+
+
+Displaying Image Properties:
+Digital photos are tagged with a wealth of information about the image—image dimensions, resolution, orientation, color profile, aperture, metering mode, focal length, creation date, keywords, caption, and much more。
+This information is extremely useful for image handling and editing, but only if the data is exposed in the user interface. 
+Although the CGImageSourceCopyPropertiesAtIndex function retrieves a dictionary of all the properties associated with an image in an image source, you’ll need to write code that traverses that dictionary to retrieve and then display that information.
+https://developer.apple.com/documentation/imageio/cgimagesourcecopypropertiesatindex(_:_:_:)
+https://developer.apple.com/library/archive/samplecode/ImageApp/Introduction/Intro.html#//apple_ref/doc/uid/DTS10003685
+
+
+
+==================================================Working with Image Destinations
+An image destination abstracts the data-writing task and eliminates the need for you to manage data through a raw buffer.
+An image destination can represent a single image or multiple images.
+It can contain thumbnail images as well as properties for each image.
+After creating a CGImageDestination object for the appropriate destination (URL, CFData object, or Quartz data consumer), you can add image data and set image properties. 
+When you are finished adding data, call the function CGImageDestinationFinalize.
+
+
+Setting the Properties of an Image Destination:
+The function CGImageDestinationSetProperties adds a dictionary (CFDictionaryRef) of properties (key-value pairs) to the images in an image destination.
+Although setting properties is optional, there are many situations for which you will want to set them.
+For example, if your application allows users to add keywords to images or change saturation, exposure, or other values, you’ll want to save that information in the options dictionary.
+
+Image I/O defines an extensive set of keys to specify such things as compression quality, 
+background compositing color, Exif dictionary keys, color model values, GIF dictionary keys, Nikon and Canon camera keys, and many more. 
+See CGImageProperties Reference.
+
+float compression = 1.0; // Lossless compression if available.
+int orientation = 4; // Origin is at bottom, left.
+CFStringRef myKeys[3];
+CFTypeRef   myValues[3];
+CFDictionaryRef myOptions = NULL;
+myKeys[0] = kCGImagePropertyOrientation;
+myValues[0] = CFNumberCreate(NULL, kCFNumberIntType, &orientation);
+myKeys[1] = kCGImagePropertyHasAlpha;
+myValues[1] = kCFBooleanTrue;
+myKeys[2] = kCGImageDestinationLossyCompressionQuality;
+myValues[2] = CFNumberCreate(NULL, kCFNumberFloatType, &compression);
+myOptions = CFDictionaryCreate( NULL, (const void **)myKeys, (const void **)myValues, 3,
+                      &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+// Release the CFNumber and CFDictionary objects when you no longer need them.
+
+
+
+Writing an Image to an Image Destination:
+To write an image to a destination, you first need to create an image destination object by calling the CGImageDestinationCreateWithURL, CGImageDestinationCreateWithData, or CGImageDestinationCreateWithDataConsumer functions. 
+You need to supply the UTI of the resulting image file. You can either supply a UTI or the equivalent constant, if one if available.
+
+After you create an image destination, you can add an image to it by calling the CGImageDestinationAddImage or CGImageDestinationAddImageFromSource functions.
+If the format of the image destination file supports multiple images, you can repeatedly add images.
+Calling the function CGImageDestinationFinalize signals Image I/O that you are finished adding images. 
+Once finalized, you cannot add any more data to the image destination.
+
+The options parameter includes any properties you want to specify for the image, such as camera or compression settings.
+
+- (void) writeCGImage: (CGImageRef) image toURL: (NSURL*) url withType: (CFStringRef) imageType andOptions: (CFDictionaryRef) options
+{
+   CGImageDestinationRef myImageDest = CGImageDestinationCreateWithURL((CFURLRef)url, imageType, 1, nil);
+   CGImageDestinationAddImage(myImageDest, image, options);
+   CGImageDestinationFinalize(myImageDest);
+   CFRelease(myImageDest);
+}
+
+
+
+Creating an Animated Image:
+Image I/O can also be used to create animated images. When creating an animated image, you call CGImageDestinationAddImage for each frame you want to add to the image. 
+You must also specify other properties that control how the animation is performed.
+
+let loopCount = 1
+let frameCount = 60
+ 
+var fileProperties = NSMutableDictionary()
+fileProperties.setObject(kCGImagePropertyPNGDictionary, forKey: NSDictionary(dictionary: [kCGImagePropertyAPNGLoopCount: frameCount]))
+ 
+var frameProperties = NSMutableDictionary()
+frameProperties.setObject(kCGImagePropertyPNGDictionary, forKey: NSDictionary(dictionary: [kCGImagePropertyAPNGDelayTime: 1.0 / Double(frameCount)]))
+ 
+guard let destination = CGImageDestinationCreateWithURL(fileURL, kUTTypePNG, frameCount, nil) else {
+    // Provide error handling here.
+}
+ 
+CGImageDestinationSetProperties(destination, fileProperties.copy() as? NSDictionary)
+ 
+for i in 0..<frameCount {
+    autoreleasepool {
+        let radians = M_PI * 2.0 * Double(i) / Double(frameCount)
+        guard let image = imageForFrame(size: CGSize(width: 300, height: 300)) else {
+            return
+        }
+        
+        CGImageDestinationAddImage(destination, image, frameProperties)
+    }
+}
+ 
+if !CGImageDestinationFinalize(destination) {
+    // Provide error handling here.
+}

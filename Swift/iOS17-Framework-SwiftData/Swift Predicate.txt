@@ -1,0 +1,344 @@
+谓词（Predicate）
+
+苹果的 NSPredicate 提供了这种能力，但它依赖于 Objective-C 语法
+class MyObject: NSObject {
+  @objc var name: String
+  init(name: String) {
+    self.name = name
+  }
+}
+let object = MyObject(name: "fat")
+
+// create NSPredicate
+let predicate = NSPredicate(format: "name = %@", "fat")
+XCTAssertTrue(predicate.evaluate(with: object)) // true
+
+
+
+Swift Predicate: // 现代 Swift 特性支持：支持 Sendable 和 Codable 等现代 Swift 特性，使其更适合当下的 Swift 编程范式。
+class MyObject {
+  var name:String
+  init(name: String) {
+    self.name = name
+  }
+}
+
+let object = MyObject(name: "fat")
+let predicate = #Predicate<MyObject>{ $0.name == "fat" } // 我们通过 #Predicate 宏构建了一个逻辑条件。
+try XCTAssertTrue(predicate.evaluate(object)) // true
+
+现在的 MyObject 无需继承自 NSObject 或使用 @objc 标注其属性，以支持 KVC。当然，Swift Predicate 同样适用于仍继承自 NSObject 的类型。
+
+
+==================================================Swift Predicate 的主要构成
+1. PredicateExpression 协议
+PredicateExpression 协议（或者说是遵循该协议的具体类型）定义了表达式的条件逻辑。
+这一协议是构建 Swift Predicate 架构中最为关键的部分。
+
+public protocol PredicateExpression<Output> {
+    associatedtype Output
+    
+    func evaluate(_ bindings: PredicateBindings) throws -> Output
+}
+PredicateExpression 的 evaluate 方法可以返回任何类型的值，而不仅限于布尔类型。
+
+
+Foundation 提供了一系列预定义的表达式类型，这些类型都遵循 PredicateExpression 协议，使得开发者能够直接利用 PredicateExpressions 下的类型或类型方法来构造谓词表达式。
+https://developer.apple.com/documentation/foundation/predicateexpressions?utm_source=Fatbobman%20Blog&utm_medium=web
+
+
+我们想构造一个代表数字 4 的表达式，相应的代码如下：
+let express = PredicateExpressions.Value(4)
+
+若我们需要定义一个表达 3 < 4 条件的表达式，相应的代码示例如下：
+let express = PredicateExpressions.build_Comparison(
+  lhs: PredicateExpressions.Value(3),
+  rhs: PredicateExpressions.Value(4),
+  op: .lessThan
+)
+此代码片段将生成一个遵循 PredicateExpression 协议的类型实例：
+PredicateExpressions.Comparison<PredicateExpressions.Value<Int>, PredicateExpressions.Value<Int>>
+调用此实例的 evaluate 方法时，将返回一个布尔值，即判断结果。
+
+
+2. #Expression 宏
+在 WWDC 2024 中，Foundation 的谓词系统引入了多项新功能，不仅增加了新的表达式方法，最为显著的改进是新增了 #Expression 宏，这大大简化了谓词表达式的构建过程。
+在之前的版本中，开发者仅在使用 #Predicate 宏时才能体验到构建的便捷性。现在，通过 #Expression 宏，即使是构建独立的表达式也能实现自然流畅的表达方式。
+
+#Expression 宏使得开发者可以通过多个独立的表达式来分别定义谓词，这不仅使构建复杂谓词更为清晰，还增强了表达式的可复用性。
+
+与谓词只能返回布尔值不同，表达式可以返回任意类型。因此，在声明表达式时，开发者需要明确指定输入和输出类型。
+
+let unplannedItemsExpression = #Expression<[BucketListItem], Int> { items in
+    items.filter {
+        !$0.isInPlan
+    }.count
+}
+
+let today = Date.now
+let tripsWithUnplannedItems = #Predicate<Trip>{ trip
+    // The current date falls within the trip
+    (trip.startDate ..< trip.endDate).contains(today) &&
+
+    // The trip has at least one BucketListItem
+    // where 'isInPlan' is false
+    unplannedItemsExpression.evaluate(trip.bucketList) > 0
+}
+
+
+3. Predicate 结构体
+Swift Predicate，即使通过宏定义，其核心依然是 Predicate 结构体。
+这个结构体负责将逻辑条件（由 PredicateExpression 实现）与具体的值相绑定。
+这种机制使得 Predicate 能够实例化具体的条件逻辑，并接受输入值以进行评估。
+
+public struct Predicate<each Input> : Sendable {
+    public let expression : any StandardPredicateExpression<Bool>
+    public let variable: (repeat PredicateExpressions.Variable<each Input>)
+    
+    public init(_ builder: (repeat PredicateExpressions.Variable<each Input>) -> any StandardPredicateExpression<Bool>) {
+        self.variable = (repeat PredicateExpressions.Variable<each Input>())
+        self.expression = builder(repeat each variable)
+    }
+    
+    public func evaluate(_ input: repeat each Input) throws -> Bool {
+        try expression.evaluate(
+            .init(repeat (each variable, each input))
+        )
+    }
+}
+
+public protocol StandardPredicateExpression<Output> : PredicateExpression, Codable, Sendable {}
+
+主要特性包括：
+布尔值返回限制：Predicate 专门处理返回布尔值的表达式。这意味着复杂的表达式树的最终结果必须是一个布尔值，以便于进行逻辑判断。
+构造过程：在构造 Predicate 时，必须提供一个闭包，该闭包接收 PredicateExpressions.Variable 类型参数，并返回一个遵循 StandardPredicateExpression<Bool> 协议的表达式。
+StandardPredicateExpression 协议：这是对 PredicateExpression 协议的扩展，要求表达式同时遵循 Codable 和 Sendable。目前，官方只允许 Foundation 预置的表达式符合此协议。
+构造闭包和变量属性的高级特性：利用 Swift 的 Parameter Packs 特性，Predicate 支持创建能同时处理多个泛型参数的谓词，这是 NSPredicate 所不具备的功能。
+
+
+利用 Predicate 结构体和 PredicateExpression 协议，我们可以构造出一个用于比较两个整数 n 和 m（n < m）的谓词示例：
+// 定义闭包：比较两个整数值是否满足"小于"关系
+// 此闭包采用两个 PredicateExpressions.Variable<Int> 类型的参数，
+// 并构造一个表示"小于"比较逻辑的 PredicateExpression
+let express = { (value1: PredicateExpressions.Variable<Int>, value2: PredicateExpressions.Variable<Int>) in
+    PredicateExpressions.build_Comparison(
+        lhs: value1,
+        rhs: value2,
+        op: .lessThan
+    )
+}
+
+// 使用 express 闭包构造 Predicate 实例，
+// 其中 express 定义了评估逻辑，即判断第一个参数是否小于第二个参数
+let predicate = Predicate {
+    express($0, $1)
+}
+
+let n = 3
+let m = 4
+
+// 评估 predicate：检查 n 是否小于 m，预期返回 true
+try XCTAssertTrue(predicate.evaluate(n, m))
+
+
+4. Predicate 宏
+为了降低复杂性，Foundation 引入了 Predicate 宏（ #Predicate），旨在以更简洁、高效的方式帮助开发者构建 Swift Predicate。
+仍以构建判断 n < m 的谓词为例，通过使用宏可以大大地简化谓词的构建操作：
+let predicate = #Predicate<Int,Int>{ $0 < $1}
+let n = 3
+let m = 4
+try XCTAssertTrue(predicate.evaluate(n,m)) // true
+在 Xcode 中，通过查看宏展开后生成的代码，我们可以清楚地看到宏如何简化了之前需要大量代码才能实现的逻辑
+
+https://github.com/swiftlang/swift-foundation/blob/5b06c5d5ac15c6eb052ac1f91fc023d4299b5f66/Sources/FoundationMacros/PredicateMacro.swift?utm_source=Fatbobman%20Blog&utm_medium=web
+
+
+==================================================Swift Predicate 构建的技巧与注意事项
+1. 全局函数的限制
+当前预置的 PredicateExpress 实现并不支持直接访问全局函数或类型方法或属性返回的数据。
+func now() -> Date {
+  .now
+}
+let predicate = #Predicate<Date>{ $0 < now()  } // Global functions are not supported in this predicate
+
+正确的方式是先获取函数或属性的值，再构建谓词：
+let now = now()
+let predicate = #Predicate<Date>{ $0 < now  }
+
+对于类型属性的直接访问也存在限制：
+let predicate = #Predicate<Date>{ $0 < Date.now  }
+// Key path cannot refer to static member 'now'
+
+let now = Date.now
+let predicate = #Predicate<Date>{ $0 < now  }
+
+2. 实例方法的限制
+在谓词中直接调用实例方法（如 .lowercased()）也不受支持。
+
+struct A {
+  var name:String
+}
+
+let predicate = #Predicate<A>{ $0.name.lowercased() == "fat" } // The lowercased() function is not supported in this predicate
+
+在这种情况下，应使用 Swift Predicate 支持的内置方法，例如：
+let predicate = #Predicate<A>{ $0.name.localizedLowercase == "fat" }
+
+目前可用的内置方法集合是相对有限的，这包括但不限于：contains、allSatisfy、flatMap、filter、subscript、starts、min、max、localizedStandardContains、localizedCompare、caseInsensitiveCompare 等。
+查阅苹果的 官方文档:
+// iOS 17.0+
+https://developer.apple.com/documentation/foundation/predicate?utm_source=Fatbobman%20Blog&utm_medium=web
+
+3. 支持创建多种泛型参数的谓词
+struct A {
+  var name:String
+}
+
+struct B {
+  var age: Int
+}
+
+let predicate = #Predicate<A,B>{ a,b in
+  !a.name.isEmpty && b.age > 10
+}
+
+4. Swift Predicate 是线程安全的
+Swift Predicate 的设计考虑到了并发编程的需求，确保了其线程安全性。
+通过遵循 Sendable 协议，Swift Predicate 支持在不同的执行上下文之间安全地传递。
+
+
+5. Swift Predicate 支持序列化和反序列化
+通过实现 Codable 协议，Swift Predicate 可以被转换成 JSON 或其他格式，从而实现数据的序列化与反序列化。
+这一特性对于需要将谓词条件保存至数据库或配置文件，或者需要在客户端与服务器之间共享谓词逻辑的应用场景尤为重要。
+
+
+展示了如何将一个 Predicate 实例序列化为 JSON 数据，进而可以存储或传输：
+struct A {
+  var name:String
+}
+
+let predicate = #Predicate<A>{ $0.name == "fatbobman" }
+var configuration = Predicate<A>.EncodingConfiguration.standardConfiguration
+configuration.allowKeyPath(\A.name, identifier: "name")
+let data = try JSONEncoder().encode(predicate, configuration: configuration)
+
+6. 支持构建包含可选值的谓词
+Swift Predicate 支持了可选值类型的使用，这是在处理数据模型中常见的可选属性时的一大优势。
+let predicate = #Predicate<Note> {
+  if let name = $0.name {
+    return name.starts(with: "fat")
+  } else {
+    return false
+  }
+}
+https://fatbobman.com/zh/posts/how-to-handle-optional-values-in-swiftdata-predicates/
+
+
+==================================================在 SwiftData 中应用 Swift Predicate
+SwiftData 在底层仍然是基于 Core Data 存储的。
+
+SwiftData 和 Core Data 中使用 Predicate 作为数据检索条件
+
+SwiftData 与 Swift Predicate 的交互机制:
+当在 SwiftData 中设置 FetchDescriptor 的 Predicate 时，SwiftData 并不直接采用 Swift Predicate 的评估机制。
+相反，它通过解析 Predicate 的 express 属性所定义的表达式树，并将这些表达式转换成 SQL 语句，以便从 SQLite 数据库检索数据。
+这意味着，在 SwiftData 环境中，评估操作实际上是通过 SQL 指令从 SQLite 数据库获取数据的过程，是在数据库端进行的。
+
+SwiftData 对谓词参数的限制:
+SwiftData 要求每个 FetchDescriptor 必须对应一个具体的数据实体。
+因此，构建谓词时，相应的实体类型成为谓词的唯一参数，这一点对于有效利用 SwiftData 构建谓词至关重要。
+
+谓词出现运行时错误:
+即使 Swift Predicate 在编译时没有错误，使用 SwiftData 进行数据检索时也可能遇到无法成功转换为 SQL 语句的情况，从而导致出现运行时错误。考虑以下示例：
+let predicate = #Predicate<Note> { $0.id == noteID }
+// Runtime error：Couldn't find \Note.id on Note with fields
+
+虽然 Note 类型遵循 PersistentModel 协议，并且其 id 属性的类型也为 PersistentIdentifier，但 SwiftData 在将谓词转换为 SQL 指令时却无法识别 id 属性。
+使用 persistentModelID 属性进行比较（ 在进行谓词转换时，除了底层数据模型对应的属性外，persistentModelID 是为数不多的特别支持的属性 ）
+let predicate = #Predicate<Note> { $0.persistentModelID == noteID }
+
+尝试在 PersistentModel 的属性上应用内置方法集时也可能遇到问题：
+let predicate = #Predicate<Note> {
+  $0.name.localizedLowercase.starts(with: "abc".localizedLowercase)
+}
+// Runtime error: Couldn't find \Note.name.localizedLowercase on Note with fields
+当 SwiftData 转换这些表达式时，很多内置方法同样也不适用于 PersistentModel 的属性，SwiftData 会错误地将其视为一个 KeyPath。
+可能需要创建额外的属性（例如，属性的小写版本）来适应这种场景。
+
+类比：
+SwiftData: persistentModelID
+Core Data: NSManagedObjectID
+SQL 数据库: 主键（Primary Key）
+
+#####
+进行全面而及时的单元测试在构建 SwiftData 谓词时显得尤为重要。通过测试，开发者可以验证谓词的行为与预期是否一致，确保数据检索的准确性和应用的稳定性。
+#####
+
+
+
+从 iOS 17.4 开始，开发者可以用如下方法来动态 合成 谓词：
+https://github.com/swiftlang/swift-foundation/pull/343?utm_source=Fatbobman%20Blog&utm_medium=web?utm_medium=web&utm_source=Fatbobman+Blog
+
+
+/*
+@Model 是 SwiftData 框架（iOS 17 引入）的一个宏，用来把一个普通的 Swift 类型标记为 持久化模型（persistent model）。
+相当于 Core Data 里的 NSManagedObject，但语法更现代、纯 Swift 化。
+
+作用：声明一个 Swift 类是 SwiftData 的模型，可以直接持久化到数据库（类似 Core Data 的 SQLite 后端）。
+限制：只能用于 class（引用类型），不能用于 struct 或 enum。
+*/
+@Model
+final class People {
+  var age: Int = 9
+
+  init(age: Int) {
+    self.age = age
+  }
+}
+
+let minAge = 10
+let notTooYong = #Predicate<People> { item in
+  item.age >= minAge
+}
+
+let maxAge = 50
+let notTooOld = #Predicate<People> { item in
+  item.age <= maxAge
+}
+
+let enableMin = true // enable minAge filter
+let enableMax = false // enable maxAge filter
+
+let filterByAge = #Predicate<People> { item in
+  (enableMin ? notTooYong.evaluate(item) : true) // >= minAge
+    && (enableMax ? notTooOld.evaluate(item) : true) // <= maxAge
+}
+
+
+
+macro Attribute(Schema.Attribute.Option..., originalName: String?, hashModifier: String?)
+Specifies the custom behavior that SwiftData applies to the annotated property when managing the owning class.
+class User {
+    @Attribute(.unique, originalName: "user_name")
+    var name: String
+}
+作用：给模型的某个属性添加 自定义元信息，SwiftData 根据这些信息来管理数据。
+常用选项：
+.unique → 该属性值唯一
+.primaryKey → 主键
+.transient → 不持久化
+.indexed → 建索引 // 索引就是在 空间换时间
+参数说明：
+originalName: String? → 对应数据库中的字段名
+编译时：宏会在模型属性上生成相应的持久化逻辑，例如索引、唯一约束、或者数据库列名映射。
+
+
+主键作用：
+唯一标识一条记录：每个模型对象必须有唯一的主键值。
+数据库映射：SwiftData 会把这个属性作为表的主键列。
+自动索引：通常主键属性会自动建索引，查询和更新更快。
+与 .unique 的区别：
+.unique 只是确保值不重复，但不一定是主键。
+.primaryKey 不仅唯一，还用于标识对象、关联关系、增删改查操作的关键字段。
+
+

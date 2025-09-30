@@ -1,0 +1,66 @@
+用来在 应用内配置 Wi-Fi 网络并连接
+换句话说，就是让你的 App 可以“帮用户连 Wi-Fi”，而不是让用户自己去设置里点。
+
+
+使用场景：直连公司硬件设备
+很多公司的硬件设备（比如 IoT 网关、打印机、摄像头、智能家居设备）在出厂时会自带一个 Wi-Fi 热点，常见的流程是：
+用户买了设备 → 打开设备 → 设备广播一个 Wi-Fi SSID（可能是 Device_1234 这种）。
+App 通过 NEHotspotConfiguration 直接连接到这个 Wi-Fi，不需要用户去设置里手动操作。
+手机和设备在同一个局域网内，可以用 TCP/UDP/HTTP/mDNS 等方式和设备通信。
+配置完毕后，App 可能会让设备连接到家里的路由器，再切换回正常 Wi-Fi。
+
+
+import NetworkExtension
+
+func connectToDevice() {
+    let config = NEHotspotConfiguration(ssid: "MyDevice_1234", passphrase: "abcd1234", isWEP: false)
+    config.joinOnce = true  // 只连一次，不保存到系统 Wi-Fi 列表
+
+    NEHotspotConfigurationManager.shared.apply(config) { error in
+        if let error = error {
+            if (error as NSError).domain == NEHotspotConfigurationErrorDomain,
+               (error as NSError).code == NEHotspotConfigurationError.alreadyAssociated.rawValue {
+                print("已经连上设备 Wi-Fi")
+            } else {
+                print("连接失败: \(error.localizedDescription)")
+            }
+        } else {
+            print("连接成功，开始和设备通信！")
+        }
+    }
+}
+
+
+NEHotspotConfiguration 很适合做 App ↔ 设备直连（IoT/智能家居/公司硬件）。
+优点：用户体验好，不用跳去“设置→Wi-Fi”。
+缺点：还是有系统弹窗，不能完全无感。
+
+
+这个 192.168.4.1 并不是固定写死的标准，只是 常见约定，最终取决于设备厂商的实现：
+当设备（比如 IoT 模块）开启 热点模式 (SoftAP) 时，它会同时充当 Wi-Fi AP + DHCP 服务器。
+大多数嵌入式 Wi-Fi 芯片（比如 ESP32、ESP8266）在 SoftAP 模式下默认把 自己设为网关，IP 通常是 192.168.4.1。
+手机连上这个 AP 后，会被分配到 192.168.4.x 网段（例如 192.168.4.2）。
+这样手机和设备就在同一个小网段，设备固定网关 IP = 192.168.4.1，所以你只要连它就行。
+
+
+==================================================SoftAP 是很多 IoT 配网流程里的核心概念
+SoftAP 全称 Software-enabled Access Point，直译就是“软件实现的无线接入点”。
+普通的 Wi-Fi AP（无线路由器）一般是硬件设备（路由器）。
+而 SoftAP 是通过 Wi-Fi 芯片/驱动 把设备变成一个小型 Wi-Fi 热点。
+这样其他设备（比如手机、电脑）就能像连路由器一样，直接连到它发的 Wi-Fi。
+简单来说：
+设备自己变成了一个 Wi-Fi 路由器。
+
+
+在 IoT 设备里的作用：
+很多智能硬件（比如摄像头、智能灯、打印机）初次使用时，你需要给它配置家庭 Wi-Fi
+设备一开始没连网，所以它会 启动 SoftAP 模式，广播一个临时 Wi-Fi（比如 Device_XXXX）。
+手机连上这个 Wi-Fi 后，跟设备形成一个小局域网。
+手机通过 HTTP/TCP/UDP/mDNS 和设备通信，把家庭 Wi-Fi 的 SSID/密码下发给设备。
+设备再切到家庭 Wi-Fi → 完成配网。
+
+
+==================================================HTTP Server 原理
+底层：用 socket API，监听端口，等待客户端 TCP 连接，收发字节流。
+上层：遵循 HTTP 协议规范，把字节流解释成请求/响应。
+HTTP Server = TCP Server + HTTP 协议解析。

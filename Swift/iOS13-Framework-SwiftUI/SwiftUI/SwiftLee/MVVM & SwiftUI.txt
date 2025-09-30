@@ -1,0 +1,189 @@
+https://www.avanderlee.com/swiftui/mvvm-architectural-coding-pattern-to-structure-views/
+
+#####
+MVVM (Model-View-ViewModel) is an architectural coding pattern for structuring SwiftUI views.
+The goal of the pattern is to separate the view definition from the business logic behind it. 
+Your views will not depend on any specific model type if done correctly.
+#####
+
+==================================================What is the MVVM architectural pattern?
+#####
+MVVM is an acronym for Model-View-ViewModel and was originally invented by Microsoft architects. 
+Developers use it to create separation of concern, ensuring a view is not tight to a specific model type. // 开发者使用它来创建关注点分离，确保视图不局限于特定的模型类型。
+This results in more reusable code as you can use your view with any model if there’s a view model in-between to provide a communication layer.
+#####
+
+The pattern consists of three layers:
+View
+This is the view definition. In SwiftUI, this would be your declarative view definition.
+ViewModel
+The view directly binds to properties on the view model to send and receive updates. 
+Since the view model has no reference to the view, it becomes reusable for use with multiple views.
+Model
+A model refers to a domain model. 
+For example, a ContactView would have a ContactViewModel that acts as a communication layer with a Contact domain model.
+
+
+#####
+You don’t always have to use a Model to work with MVVM. 
+The model could also be a data access layer, e.g., a remote content cache. 
+To efficiently use the pattern, I like to think about a few critical rules:
+
+The View only communicates with the ViewModel
+The View does not know anything about the (domain) model behind the ViewModel
+The ViewModel has no reference to the View and becomes reusable to be used with any View
+
+Ensuring your code respects these rules will automatically create more reusable, testable, and isolated code.
+#####
+
+
+==================================================How to use MVVM in SwiftUI
+Without using MVVM, your ContactView might look as follows:
+struct Contact {
+    let name: String
+}
+
+struct ContactView: View {
+    
+    let contact: Contact
+    
+    var body: some View {
+        VStack {
+            Text("Name: \(contact.name)")
+            Button("Delete", action: deleteContact)
+        }
+    }
+    
+    func deleteContact() {
+        // Perform contact deletion
+    }
+}
+the ContactView is strictly connected to the Contact model and contains business logic for deleting contacts. 
+It’s also not easily testable or reusable with other similar types.
+
+
+We can rewrite this logic by making use of the MVVM architectural coding pattern.
+struct ContactViewModel {
+    /// A public accessor to the contact's name.
+    /// Implementors don't know the name is coming from a `Contact` type.
+    var name: String { contact.name }
+    
+    /// Keep a reference to the (domain) model so we can perform any actions like deleting.
+    private let contact: Contact
+    
+    /// The ViewModel only references the `Contact` model, but has no link to the view that's using the ViewModel.
+    init(contact: Contact) {
+        self.contact = contact
+    }
+}
+
+
+
+struct ContactView: View {
+    
+    let viewModel: ContactViewModel
+    
+    var body: some View {
+        VStack {
+            Text("Name: \(viewModel.name)")
+            Button("Delete", action: deleteContact)
+        }
+    }
+    
+    func deleteContact() {
+        // Perform contact deletion
+    }
+}
+
+Extracting the business logic from the view:
+#####
+The next step is to extract the business logic from the view. Honestly, many developers use different implementations for this. 
+I prefer to write the deletion logic inside the ViewModel, but the pattern originally describes implementing deletion inside the Contact model. 
+Even better would be to use the Repository Pattern here to extract away the business logic into a single responsible type, resulting in a ViewModel, which is only a communication layer.
+#####
+
+struct ContactView: View {
+    
+    let viewModel: ContactViewModel
+    
+    var body: some View {
+        VStack {
+            Text("Name: \(viewModel.name)")
+            Button("Delete", action: viewModel.deleteContact)
+        }
+    }
+}
+
+struct ContactViewModel {
+    
+    /// ...
+    
+    func deleteContact() {
+        // Perform contact deletion
+    }
+}
+
+#####
+The final ContactView implementation is no longer connected to a specific model or business logic. 
+It only communicates with our ViewModel, which acts as a communication layer between the view and the model.
+#####
+
+
+Using protocols to increase the reusability of views with MVVM:
+#####
+The MVVM implementation made our view simpler and less dependent, but we can take it one step further by making use of protocols.
+So far, we’ve only had to work with a Contact structure, but it could be that your project requires another type of contact, e.g., RemoteContact.
+#####
+protocol ContactViewModel {
+    var name: String { get }
+    
+    func deleteContact()
+}
+
+We don’t have to update our View, since it’s already communicating with the same type name, but we do need to rename our original ContactViewModel to LocalContactViewModel. 
+It also has to conform to the ContactViewModel protocol:
+struct LocalContactViewModel: ContactViewModel {
+    var name: String { contact.name }
+    private let contact: Contact
+    
+    init(contact: Contact) {
+        self.contact = contact
+    }
+    
+    func deleteContact() {
+        // Perform contact deletion **locally**.
+    }
+}
+
+Finally, we can start defining a new RemoteContactViewModel which will act as a communication layer between the ContactView and RemoteContact:
+struct RemoteContact {
+    let name: String
+}
+
+struct RemoteContactViewModel: ContactViewModel {
+    var name: String { contact.name }
+    private let contact: RemoteContact
+    
+    init(contact: RemoteContact) {
+        self.contact = contact
+    }
+    
+    func deleteContact() {
+        // Perform contact deletion **remotely**.
+        // Potentially using a network request.
+    }
+}
+
+#####
+The benefit of using protocols like this is that it allows you to instantiate the same ContactView with multiple types of ViewModels, that communicate with different (domain) models:
+#####
+let localViewModel = LocalContactViewModel(contact: Contact(name: "Antoine"))
+let remoteViewModel = RemoteContactViewModel(contact: RemoteContact(name: "Antoine"))
+
+/// We use the same `ContactView`, but different `ContactViewModel` types.
+let localContactView = ContactView(viewModel: localViewModel)
+let remoteContactView = ContactView(viewModel: remoteViewModel)
+
+#####
+We’ve created reusable and testable code and set us up for scalability in the future. // 我们创建了可重复使用和可测试的代码，并为未来的可扩展性做好了准备。
+#####

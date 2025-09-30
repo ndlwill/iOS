@@ -1,0 +1,175 @@
+图像解码（image decoding）通常就是指:
+把图像文件里的 压缩编码格式（例如 JPEG、PNG、HEIC、WebP 等）解码成 未压缩的位图数据（bitmap, raw pixels），即一块在内存里的像素缓冲区。
+
+
+文件存储时：图像往往是压缩过的（比如 JPEG 的 DCT、PNG 的无损压缩）。这样体积小，便于存储和传输。
+使用时（显示到屏幕）：Core Graphics / Core Animation / Metal / GPU 并不能直接操作压缩的 JPEG/PNG 数据，它们需要一块 连续的像素内存（RGBA 或 BGRA 格式）。
+解码：iOS 会把压缩的图像数据解码成 bitmap，比如 CGImage 或 CVPixelBuffer 里的像素数据。
+这时会占用比较大的内存（因为原始像素数据量大）。
+解码本身是 CPU 密集型操作，如果在主线程临时进行，可能引起卡顿。
+
+一张 1000 × 1000 的 JPEG，磁盘上可能只有 200 KB；
+但解码成 RGBA8888 bitmap 后就是 1000 × 1000 × 4 bytes = 4 MB 内存。
+
+“图像解码”基本就是把压缩图像 → 位图（bitmap 像素缓冲区） 的过程，这一步是显示前必需的。
+
+
+一般会用系统框架来完成。常见的几种方式如下：
+1. 系统 API 自动解码
+当你用 UIImage(named:)、UIImage(contentsOfFile:) 或 UIImage(data:) 创建图片后，iOS 并不会立即解码（lazy decode），而是等到真正要绘制（draw / render）时才解码。
+渲染路径：UIImage → CGImage → Core Animation → GPU。
+解码时机不受控，如果在主线程滚动或绘制时触发，就会有 卡顿（image decoding hitch）。
+
+
+2. 手动解码（常见优化手段）
+为避免在渲染时“突然解码”，可以提前在后台线程解码。方法是：
+/*
+传入的 image
+如果是从磁盘（PNG/JPEG/HEIC 等压缩格式）加载的，内部可能还是压缩的位图数据，只在真正要绘制到屏幕时才由系统进行解码。
+返回的 image
+已经经过 Core Graphics 的 draw → makeImage() 过程，得到了已解码的、未压缩的 RGBA 像素数据（bitmap）。
+
+所以返回的 image 内存占用更大，但绘制时更快
+*/
+func decodedImage(from image: UIImage) -> UIImage? {
+    guard let cgImage = image.cgImage else { return nil }
+    let size = CGSize(width: cgImage.width, height: cgImage.height)
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let context = CGContext(
+        data: nil,
+        width: Int(size.width),
+        height: Int(size.height),
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )
+    context?.draw(cgImage, in: CGRect(origin: .zero, size: size))
+    guard let newCGImage = context?.makeImage() else { return nil }
+    return UIImage(cgImage: newCGImage)
+}
+这样就会生成一份已经解码好的 位图 UIImage。
+适合做图片缓存（比如 SDWebImage 就是这么做的）。
+渲染时就直接用 bitmap，不会再卡顿。
+
+
+“手动解码”（通常指把 UIImage 提前转成 bitmap / CGImage 的像素数据）是一种常见优化手段，原因主要是：
+(1)默认解码时机
+系统加载图片（例如 UIImage(named:)）时，并不会立刻解码图像数据。
+它通常只是把图片的数据（JPEG/PNG/HEIF 压缩格式）加载到内存里，但还没转成真正的位图像素数据。
+真正的解码过程往往发生在 第一次要渲染到屏幕时，比如：
+    设置到 UIImageView.image 并马上显示
+    CALayer.contents 绘制
+如果这时才解码，就会占用 CPU，而且发生在主线程 + 渲染临界点 → 引起掉帧 / 卡顿。
+
+(2)手动解码的思路
+手动解码就是 在后台线程提前做这件事：
+把 UIImage 的压缩数据转成 位图（ARGB / BGRA buffer）。
+这样当真正显示时，GPU 只需上传纹理，避免了在主线程突然插入 CPU 密集的解码步骤。
+
+(3)优化收益
+避免首帧卡顿：滚动列表时，图片滑到屏幕上不需要临时解码。
+更平滑的滚动体验：尤其在 UITableView / UICollectionView 批量加载图片时。
+可配合缓存：提前解码的图片可以存到内存缓存里，下次直接取用。
+
+(4)代价
+占用更多 内存（因为存的是未压缩 bitmap）。
+提前解码的时机需要设计好（最好在后台线程做，避免阻塞主线程）。
+
+
+3. Video / Camera 图像解码
+如果是视频或相机流，解码通常交给：
+VideoToolbox（硬件加速 H.264/H.265 解码）
+CoreImage / AVFoundation（把压缩帧解码为 CVPixelBuffer）
+这类解码和静态图片解码不同，更依赖硬件加速。
+
+
+4. GPU / Metal 解码
+部分现代格式（比如 HEIC/HEIF、WebP）在最新 iOS 上可能由 GPU/硬件协助解码，效率更高，但开发者接口上还是通过 UIImage / CGImageSource 等来访问。
+
+
+==================================================CGImage & Bitmap & UIImage
+CGImage
+在 Core Graphics 里，CGImage 是一个“图像对象”的抽象，它表示一张图片的数据及其属性（比如宽高、色彩空间、位深度、像素格式等）。
+
+Bitmap
+Bitmap 指的是位图像素数据本身，通常就是一块内存区域，里面一行一行存着像素（ARGB、RGBA、BGRA 之类的格式）。
+在 Core Graphics 中，这样的像素数据一般存在 CGBitmapContext 的 backing store 里。
+
+CGImage，Bitmap 两者关系
+你可以理解为：
+CGImage = 一个对象，记录着位图的宽、高、像素格式、数据来源等信息。
+Bitmap = 存在内存里的原始像素数据。
+
+let context = CGContext(
+    data: nil,
+    width: 100,
+    height: 100,
+    bitsPerComponent: 8,
+    bytesPerRow: 0,
+    space: CGColorSpaceCreateDeviceRGB(),
+    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+)!
+
+let image: CGImage = context.makeImage()! // 得到 CGImage
+
+context 的内部有 bitmap 内存来存像素。
+makeImage() 会基于那块 bitmap 内存创建一个 CGImage，但 CGImage 自己并不“拥有”一个新的 bitmap，它是对现有数据的引用。
+CGImage 不是 bitmap，它是 bitmap 的一个不可变包装或抽象。
+
+
+UIImage 和 CGImage 的关系:
+CGImage
+Core Graphics 层面的东西。
+描述图像像素数据（不可变），本质上是 C 结构体 + 引用。
+和具体显示无关，只是像素数据的封装。
+UIImage
+UIKit 层的对象。
+是一个 更高层的封装，除了可以持有 CGImage 外，还能持有 CIImage，甚至支持动态图片（例如 GIF 动画帧）。
+附带了 scale（缩放因子，比如 @2x/@3x）、orientation（旋转方向）等信息，这些是 CGImage 没有的。
+
+let cgImage: CGImage = UIImage(named: "icon")!.cgImage!   // 底层像素
+let uiImage: UIImage = UIImage(cgImage: cgImage, scale: 2.0, orientation: .up) // 包装
+
+cgImage 只知道「一张 100x100 像素的图」。
+uiImage 可以知道「这张图在 Retina 屏幕上应该显示为 50x50 点，方向是朝上」。
+
+CGImage：低层，像素数据的抽象。
+UIImage：高层，面向 UIKit，附加了显示相关的元数据（scale、orientation）。
+
+UIImage = CGImage/CIImage + scale + orientation + UIKit 特性
+
+
+==================================================硬解码
+软解码（Software Decoding）
+由 CPU 运行软件算法（libjpeg、libavcodec 等）去解压缩图像/视频。灵活，但效率低，耗电大。
+
+硬解码（Hardware Decoding）
+由专用的硬件单元完成解码，比如 iPhone 里有 Video Decode Engine（VDE）和图像信号处理器（ISP）。
+在 API 层表现为：VideoToolbox、AVFoundation 播放 H.264/H.265/HEVC，系统会自动走硬件加速。
+不是由 CPU 软件代码做，而是交给硬件电路直接算。
+
+
+GPU 和硬解码的关系:
+GPU 并不是专门的解码器，它主要负责渲染和并行计算。
+在 iOS 上，硬解码一般不是 GPU，而是独立的视频解码芯片（Apple 芯片里的 Video Decode block）。
+解码完成后，得到的 像素缓冲区（CVPixelBuffer/bitmap） 会交给 GPU 去做缩放、色彩转换、渲染到屏幕。
+
+
+例子:
+你播放一个 HEVC 视频：
+硬解码：由 iPhone 的 VideoToolbox → Video Decode Engine 解出 YUV 帧；
+GPU：拿到 YUV 数据后，做色彩转换（YUV → RGB）、渲染到屏幕。
+你解码一张 JPEG 图片：
+iOS 内部可能走 CPU（软解码）或调用图像硬件单元（部分机型支持加速），
+最终还是得到 bitmap，再交给 GPU 绘制。
+
+
+在 iOS / 图形学上下文中：
+GPU 的渲染指的是 将场景、图形、纹理、顶点数据等通过一系列计算（着色器、光栅化、混合等）生成最终的像素数据（framebuffer）。
+最终的结果就是显示在屏幕上的 像素（bitmap）。
+
+
+“硬解码” ≠ “GPU 解码”。
+硬解码 = 专用硬件单元解码（更省电更快）。
+GPU 在 iOS 里更多是 解码后的像素渲染，而不是解码本身。

@@ -1,0 +1,63 @@
+苹果文档：https://developer.apple.com/documentation/technotes/tn3192-migrating-your-app-from-the-deprecated-uirequiresfullscreen-key
+You can adjust your app’s layout when the environment changes, such as when size class, display scale, or layout direction changes occur.
+
+
+display scale 指的是设备屏幕的缩放比例（screen scale factor），也就是 屏幕像素密度和点坐标之间的关系。
+
+在 iOS 里：
+UIScreen.main.scale 就是当前屏幕的 display scale
+它表示 1 个 point 对应多少个物理像素
+
+常见取值：
+1.0 → 老款非 Retina 屏幕（1 point = 1 px）。
+2.0 → Retina 屏幕（1 point = 2 px）。
+3.0 → 超 Retina 屏幕（1 point = 3 px，例如 iPhone 11 Pro, iPhone 14 Pro 等）。
+
+在绘制时（Core Graphics、Core Animation），需要用 scale 来保证渲染清晰，不然图像会模糊。
+
+
+==================================================
+
+
+Display scale (UIScreen.main.scale) // Display scale 不会因为放大显示而改变（3x 还是 3x）。
+这是 物理像素和点（pt） 的比例。
+它由硬件屏幕决定，比如 iPhone 14 Pro 永远是 3.0，不会因为用户设置而改变。
+
+显示放大（Display Zoom）
+这是 iOS 的一种 逻辑缩放模式。
+在放大模式下，系统会让 UI 元素以「较低分辨率设备」的逻辑坐标来布局。
+举例：iPhone 14 Pro Max（3x 屏）正常模式下逻辑分辨率是 430pt × 932pt。
+开启放大显示后，系统会用和 iPhone 14 Pro（较小屏幕）相同的逻辑分辨率 390pt × 844pt，但仍然渲染到 3x 屏幕上。
+这样看起来一切 UI 都被「放大」了。
+
+
+物理分辨率 (pixels)
+= 逻辑分辨率 × 屏幕缩放因子 (UIScreen.main.scale)
+所以算出来的是 渲染分辨率，也叫 framebuffer 分辨率。
+注意：nativeResolution
+iPhone 的面板物理像素数（native resolution）和上面算出来的有时不同，苹果会用一种「像素下采样（downsampling）」技术：
+iPhone 14 Pro Max
+实际屏幕面板像素：1290 × 2796 px
+渲染分辨率（framebuffer）：也是 1290 × 2796 px
+两者一致。
+但有些机型（比如 iPhone 6 Plus / 13 Pro Max）渲染分辨率比面板大，最后系统会缩放后再显示。
+
+
+理论公式：
+渲染分辨率 = 逻辑分辨率（pt） × display scale
+但实际情况：
+苹果为了在不同屏幕尺寸上保持视觉一致性，有些机型不会严格用“逻辑分辨率 × scale”，而是会 渲染到一个更高/更低的 framebuffer，然后再缩放到物理像素去显示。
+
+iPhone 14 Pro Max
+逻辑分辨率：430 × 932 pt
+scale：3.0
+渲染分辨率：1290 × 2796 px
+物理分辨率：1290 × 2796 px
+→ 完全对齐，没缩放。
+
+iPhone 6 Plus（比较典型的例子）
+逻辑分辨率：414 × 736 pt
+scale：3.0
+理论渲染：1242 × 2208 px
+物理分辨率：1080 × 1920 px
+→ 这里就不对齐了：系统先渲染 1242×2208，再下采样到 1080×1920 显示。

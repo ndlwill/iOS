@@ -1,0 +1,1579 @@
+#####
+椭圆曲线密码学 (ECC, Elliptic Curve Cryptography)，它是一种 公钥密码学（Asymmetric Cryptography），和 RSA 类似，但基于 椭圆曲线的数学结构。
+
+更短的密钥长度就能达到同等安全性（比如 256-bit ECC ≈ 3072-bit RSA）。
+计算效率更高，尤其适合移动端和低功耗设备。
+广泛用于 TLS/HTTPS、数字签名、加密货币钱包等场景。
+#####
+
+
+// 生成私钥（椭圆曲线 P-256）
+let privateKey = P256.KeyAgreement.PrivateKey() // KeyAgreement: 密钥协议
+let publicKey = privateKey.publicKey
+
+// 另一方也生成一对私钥/公钥
+let otherPrivateKey = P256.KeyAgreement.PrivateKey()
+// 执行 ECDH 密钥交换
+let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: otherPrivateKey.publicKey)
+// 从 sharedSecret 派生对称密钥
+let symmetricKey = sharedSecret.hkdfSha256Salted(salt: "salt".data(using: .utf8)!) // symmetricKey: 对称密钥
+
+
+#####
+证书本质上就是一个公钥 + 签名，证明公钥属于某个实体。
+#####
+
+
+DH（Diffie-Hellman） 是最早的密钥交换协议
+ECDH 是它在椭圆曲线密码学 (Elliptic Curve Cryptography, ECC) 下的变种，安全性更高，密钥更短。
+
+
+流程解释：
+双方生成各自的 ECC 密钥对（私钥 + 公钥），曲线是 P-256（NIST 推荐的椭圆曲线）。
+
+交换公钥（例如通过网络传输）。
+
+每一方都用自己的私钥 + 对方的公钥，通过 ECDH 算法计算出相同的 sharedSecret（共享秘密）
+Alice: sharedSecret = (Alice 私钥) × (Bob 公钥)
+Bob:   sharedSecret = (Bob 私钥) × (Alice 公钥)
+结果一致
+
+
+
+==================================================ECDH & ECDHE
+ECDH = Elliptic Curve Diffie-Hellman
+即：基于椭圆曲线的 Diffie-Hellman 密钥交换算法。
+
+
+#####
+ECDH 算法本身只是一个密钥交换算法：
+它定义了“双方如何用各自的私钥和对方的公钥计算共享密钥”。
+它本身不管你是单向验证还是双向验证。
+#####
+
+
+ECDH（Elliptic Curve Diffie-Hellman）和 ECDHE（Elliptic Curve Diffie-Hellman Ephemeral）听起来很像，但核心区别在于密钥是否临时，以及这对前向安全性的影响。
+Ephemeral: 短暂的，临时的
+
+
+ECDH（固定密钥）
+全称：Elliptic Curve Diffie-Hellman
+密钥特点：使用固定的私钥和公钥，通常长期存在（比如服务器证书里的公钥）。
+双方直接用长期的静态密钥对（通常是证书里的公私钥）来做椭圆曲线 Diffie-Hellman 计算。
+密钥交换：
+#####
+双方各自拥有自己的 ECC 私钥和公钥。
+#####
+使用对方的公钥和自己的私钥计算共享密钥。
+特点：
+每次会话都有相同的密钥
+如果私钥泄露，过去的会话密钥也会被泄露。
+不支持前向安全（Perfect Forward Secrecy，PFS）。
+用法：
+在 TLS 里确实有 ECDH_RSA、ECDH_ECDSA 这些固定 ECDH cipher suite，但几乎已经废弃。
+一般只出现在老规范里，用得非常少。
+
+
+ECDHE（临时密钥）
+全称：Elliptic Curve Diffie-Hellman Ephemeral
+密钥特点：使用临时生成的私钥和公钥，每次会话都重新生成。 // 这里的 “每次会话” 指的就是 每次 TLS/HTTPS 连接的握手阶段，也就是每次客户端和服务器建立一个新的安全连接时
+每次握手都生成新的临时椭圆曲线密钥对。
+密钥交换：
+#####
+会话开始时，双方生成临时 ECC 密钥对。
+#####
+用临时公钥交换，计算共享密钥。
+特点：
+每次会话都有不同的密钥。
+即使长期私钥泄露，历史会话密钥仍然安全。
+支持前向安全（PFS）。
+用法：现在 TLS 里主流都用 ECDHE（比如 ECDHE_RSA、ECDHE_ECDSA）。
+
+
+#####
+在握手开始时，双方各自生成一对 临时的 ECC 公私钥。
+用对方的临时公钥和自己的临时私钥计算共享密钥（session key）。
+这把 会话密钥 用于这次连接的数据加密。
+当连接关闭后，这对临时密钥就废掉了，不再使用。
+#####
+
+
+| 特性   | ECDH          | ECDHE           |
+| ---- | ------------- | --------------- |
+| 私钥类型 | 固定            | 临时/一次性          |
+| 前向安全 | 不支持           | 支持              |
+| 用途   | 证书验证、公钥交换     | TLS 会话密钥协商、敏感通信 |
+| 安全性  | 较低（私钥泄露会泄露历史） | 高（历史会话安全）       |
+
+ECDH 就像你一直用同一把锁开门；
+ECDHE 就像每次开门都换一把新锁，别人拿到旧锁也打不开以前的门。
+
+
+==================================================单向验证 & 双向验证
+TLS 1.2：仍然在很多企业和旧系统中使用。// 目前仍广泛使用，支持多种加密算法，支持 RSA、ECDHE、AES、SHA-2 等
+TLS 1.3：现代 Web、iOS、Android、服务器（Apache、Nginx 等）推荐使用，默认安全、握手更快。 // 最新标准，简化握手流程、默认使用前向安全的密钥交换（如 ECDHE）、废弃了 RSA 密钥交换、支持 0-RTT 连接
+TLS 1.0 / 1.1：已经被淘汰，不再安全。
+
+
+#####
+单向/双向验证是 TLS 证书验证的层面问题：
+单向验证：客户端只验证服务器证书。
+双向验证：客户端和服务器互相验证证书。
+#####
+
+
+HTTPS 单向验证：
+场景：客户端验证服务器，服务器不验证客户端（最常见的浏览器访问网站）。
+密钥使用：
+服务器持有自己的 长期公私钥对（通常是 RSA 或 ECC）证书。
+TLS 握手时：
+RSA 密钥交换
+ECDHE 密钥交换
+结论：
+单向验证完全可以用 ECDHE 进行密钥交换，而不需要 ECDH 固定密钥。
+ECDH 固定密钥在单向验证中不常用，因为前向安全不够。
+
+
+RSA 密钥交换流程（TLS 1.2 之前常用）：
+1. 身份认证
+服务器把证书发给客户端。
+证书里有 服务器的 RSA 公钥，客户端用它来验证服务器身份（证书签名链、域名匹配等）。
+2. 会话密钥的产生
+TLS 使用 pre-master secret（预主密钥）作为中间值。
+在 RSA 密钥交换里，这个 pre-master secret 是 客户端生成的随机数，长度通常是 48 字节。
+客户端使用服务器证书里的 RSA 公钥将 pre-master secret 加密，发送给服务器。
+服务器用自己的 RSA 私钥解密，就得到相同的 pre-master secret。
+这里的 RSA 公钥只用于 一次性的加密 pre-master secret。
+#####
+双方使用这个 pre-master secret 和客户端/服务器随机数生成 对称会话密钥。
+#####
+重点：
+加密是用 服务器公钥（客户端操作）。
+解密是用 服务器私钥（服务器操作）。
+这是保证只有服务器能得到客户端生成的随机数，从而产生共享会话密钥。
+3. 对称密钥的派生
+双方通过一个伪随机函数（PRF，通常基于 HMAC+哈希算法）把 pre-master secret、ClientHello/ServerHello 的随机数等信息混合，算出 master secret。
+再从 master secret 推导出 对称会话密钥（加密密钥、MAC 密钥等）。
+4. 对称加密通信
+后续所有应用数据（HTTP 内容等）都使用 对称加密算法（如 AES、ChaCha20）进行加密。
+RSA 公钥就不会再用来加密数据了。
+总结：
+前期：客户端生成 pre-master secret，用证书的 RSA 公钥加密发给服务器。
+后期：双方基于 pre-master secret 推导出对称密钥，之后只用对称加密传输数据。
+
+
+
+
+会话密钥（session key）
+不是直接等于 pre-master secret，而是通过 密钥派生函数（Key Derivation Function, KDF） 生成的。
+输入：
+Pre-Master Secret（客户端生成并用服务器公钥加密传输，服务器解密得到）
+Client Random（客户端在 ClientHello 里发送的随机数）
+Server Random（服务器在 ServerHello 里发送的随机数）
+输出：
+一系列对称密钥（用于加密、解密、MAC 校验等）
+
+
+TLS 1.2 使用 PRF（Pseudo-Random Function） 来派生 master secret 和会话密钥
+1. 生成 Master Secret：
+master_secret=PRF(pre_master_secret,"mastersecret",ClientRandom∣∣ServerRandom)
+这里的 PRF 是基于 HMAC + Hash 函数（通常是 SHA-256）
+生成的 master secret 长度固定（48 字节）
+2. 生成 Session Keys（对称会话密钥）：
+key_block=PRF(master_secret,"keyexpansion",ServerRandom∣∣ClientRandom)
+
+
+
+HTTPS 双向验证（Mutual TLS）：
+场景：服务器和客户端都持有证书，相互验证身份。
+密钥使用：
+双方都需要有长期公私钥对来验证对方证书。
+同时也需要密钥交换生成会话密钥：
+    固定 ECDH：可以直接用双方证书的公私钥进行计算（不过不推荐，缺乏 PFS）。
+    临时 ECDHE：仍然可以用临时密钥交换来增强前向安全，同时用证书进行身份认证。
+结论：
+双向验证中，固定 ECDH 可以实现，但通常为了 PFS，依然倾向使用 ECDHE + 证书签名验证。
+
+
+
+--------------------------------------------------
+Client Random / Server Random：握手时明文传输的随机数，用来增加不确定性、防止重放攻击
+
+1. Client Random（客户端随机数）
+客户端在 ClientHello 里直接明文发送给服务器。
+长度：32 字节，其中前 4 字节是时间戳，后 28 字节是真正的随机数。
+作用：参与生成最终的 master secret，保证每次握手不同。
+
+
+2. Server Random（服务器随机数）
+服务器在 ServerHello 里明文发送给客户端。
+长度：同样是 32 字节。
+作用：和 Client Random 一起作为输入，参与 master secret 的计算。
+
+
+3. Pre-Master Secret
+在 RSA 密钥交换中：
+由 客户端生成，通常 48 字节。
+用服务器的 RSA 公钥加密，发给服务器。
+服务器用 RSA 私钥解密得到同样的 pre-master secret。
+在 ECDHE 密钥交换中：
+由双方临时 ECC 密钥计算出来的共享秘密（ECDH 输出）。
+
+
+4. Master Secret
+由三部分共同派生：
+PRF 全称是 Pseudo-Random Function， 伪随机函数。
+
+master_secret=PRF(pre_master_secret,"mastersecret",ClientRandom∣∣ServerRandom)
+master_secret = PRF_SHA256(pre_master_secret,
+                           "master secret",
+                           ClientHello.random + ServerHello.random)
+长度固定：48 字节。
+后续再从 master secret 派生出对称加密密钥（session keys）。
+
+
+#####
+Client/Server Random 是“调料”（随机盐），防止每次握手结果一样。
+Pre-Master Secret 是“核心食材”。
+混合之后（PRF/HKDF）得到 Master Secret，再切分出加密用的对称密钥。
+#####
+
+
+==================================================TLS 里应用数据加密时，除了对称加密，还会不会带签名？
+应用数据阶段不会再做签名，而是通过 MAC（消息认证码）或 AEAD 模式 来保证数据完整性。
+
+HMAC 全称是 Hash-based Message Authentication Code
+基于哈希的消息认证码
+它的作用是：
+结合 哈希函数（如 SHA-256） 和 密钥，生成一个消息认证码。
+#####
+既能验证数据是否被篡改（完整性），也能确认消息是否来自持有密钥的一方（认证）。
+#####
+Hash-based → 基于哈希函数（如 SHA256、SHA1 等）
+Message Authentication Code → 消息认证码，用于验证消息完整性和真实性
+简单理解就是：用哈希函数和一个密钥生成一个“消息指纹”，接收方用同样的密钥也能计算出指纹，从而验证消息没有被篡改。
+完整性 (Integrity)
+作用：保证消息在传输过程中没有被篡改。
+实现方式：
+接收方收到消息后，用同样的算法重新计算 MAC。
+如果结果一致 → 说明消息未改动。
+如果不一致 → 说明被篡改。
+这就是 hash 的作用 —— 给消息生成一个“指纹”。
+真实性 (Authenticity)
+作用：保证消息确实来自一个持有密钥的合法发送者。
+实现方式：
+计算 MAC 需要一个秘密密钥。
+只有持有这个密钥的人，才能生成正确的 MAC。
+因此，接收方验证通过，就说明消息确实来自“信任的人”。
+这就是 key 的作用。
+结合起来（HMAC 工作逻辑）：
+HMAC = Hash + Secret Key
+核心思想：
+Hash 保证完整性，Key 保证真实性。
+
+
+AEAD 全称是 Authenticated Encryption with Associated Data
+带关联数据的认证加密
+同时保证：
+机密性 (Confidentiality) —— 加密保护数据内容。
+完整性 (Integrity) —— 检测是否被篡改。
+真实性 (Authenticity) —— 确认数据确实来自合法发送方。
+“Associated Data (AD)” 指的是 不需要加密但要保护#####完整性和认证#####的数据，比如网络协议里的头部信息。
+常见的 AEAD 模式：
+AES-GCM (Galois/Counter Mode)
+ChaCha20-Poly1305
+
+1. TLS 1.0/1.1/1.2（RSA key exchange）
+数据加密用 对称密钥（AES、3DES 等）。
+完整性验证方式：
+MAC-then-encrypt：先对明文+序列号做 HMAC（基于对称密钥），再连同明文一起加密。
+所以每条记录里包含一个 HMAC 校验值，但这是对称的，不是签名。
+注意：这个 HMAC 不是“签名”，因为它不能提供不可否认性，只有通信双方能验证。
+
+
+RSA 私钥用于 握手阶段的认证：
+1. RSA key exchange 里，RSA 私钥解密 pre-master secret（不是签名）。 
+2. ECDHE_RSA 里，RSA 私钥用来对临时公钥（ServerKeyExchange）签名，以证明服务器身份。 
+一旦进入应用数据阶段，RSA 公钥/私钥就不再参与，完全靠 对称密钥。
+
+
+2. TLS 1.2/1.3 with AEAD（推荐）
+使用 AEAD 模式（如 AES-GCM、ChaCha20-Poly1305）。
+AEAD 算法内部自带完整性校验（相当于加密 + MAC 一体化）。
+不再单独有 MAC 字段。
+
+
+总结：
+后期数据传输用对称加密（AES/ChaCha20 等）。
+完整性通过 HMAC 或 AEAD 保障
+数据里 不会包含 RSA 签名，只有对称加密生成的认证标签（MAC/Tag）。
+
+
+==================================================#####（RSA & ECDH & ECDHE） & （单向验证 & 双向验证） 总结：#####
+3种密钥交换：
+1. ECDH（固定密钥交换）// 几乎已经废弃
+2. ECDHE（临时密钥交换）// 主流
+3. RSA 密钥交换 (RSA Key Exchange) // TLS 1.3 已经废弃  // RSA 密钥交换的 Cipher Suite 格式，TLS_RSA_WITH_<对称加密算法>_<消息认证算法>
+在早期 TLS（如 TLS 1.0/1.1/1.2）中，RSA 密钥交换是常见的一种方式：
+原理：
+服务器拥有 RSA 公私钥对，并通过证书把公钥发给客户端。
+/*
+PMS = [2 bytes TLS version] + [46 bytes 随机字节]
+前 2 字节：客户端想要使用的 TLS 版本号（例如 TLS 1.2 对应 0x0303）。
+后 46 字节：由客户端生成的随机字节（通常使用安全随机数生成器，如 SecureRandom）。
+*/
+客户端生成一个“预主密钥”（pre-master secret）。
+客户端使用服务器的公钥对这个 pre-master secret 进行加密，然后发送给服务器。
+服务器使用自己的私钥解密，得到 pre-master secret。
+双方通过 pre-master secret 派生出会话密钥（用于对称加密）。
+
+
+ECDH（固定）几乎不用了，因为缺乏前向安全。
+#####
+无论是单向认证还是双向认证，现代 TLS 都推荐 ECDHE。
+#####
+RSA key exchange 只能做单向认证（服务端有证书，客户端没有），而且没有 PFS。
+
+
+2种认证：
+服务端身份认证（单向认证）
+流程：
+1. 服务端发送证书给客户端。
+2. 客户端检查证书：
+证书是否由受信任的 CA 签发？
+证书是否过期？
+证书里的域名是否和访问的域名匹配？
+3. 验证通过 → 确认服务端身份。
+常用场景：HTTPS、大部分 TLS 连接都是单向认证，只验证服务端。
+
+
+客户端身份认证（双向认证 / Mutual TLS）
+流程：
+1. 服务端要求客户端出示证书。
+2. 客户端发送证书给服务端。
+3. 服务端验证证书是否合法可信。
+用途：企业内部系统、金融接口、IoT 设备认证等。
+
+
+单向 / 双向验证和算法的关系：
+单向验证（只验证服务端）：
+可以用 RSA key exchange（老的 TLS），
+也可以用 ECDHE（现代 TLS，依赖服务端证书签名临时公钥）。
+双向验证（客户端和服务端互相验证证书）：
+ECDH 理论上可用，但安全性差，现在几乎不用。
+实际上还是用 ECDHE，客户端证书用来签名握手消息，服务端验证即可。
+
+
+身份认证和密钥交换的关系：
+身份认证：确认“你真的是你”。
+密钥交换：协商一个共享会话密钥，用来加密通信。
+结合起来：
+RSA key exchange：证书里的 RSA 公钥既用于身份认证，又用于加密 pre-master secret（单向）。
+ECDHE_RSA / ECDHE_ECDSA：证书只用于身份认证（签名），实际会话密钥通过临时 ECDH 交换。
+
+
+身份认证 = 验证证书
+密钥交换 = 协商会话密钥
+
+
+==================================================TLS cipher suite （TLS密码套件）
+RSA 是一种非对称加密算法（Asymmetric Cryptography Algorithm）
+RSA 算法用来生成并使用 公钥-私钥对，以实现加密、解密和数字签名。
+
+RSA 算法本身 不会直接生成证书，它只负责生成和使用 公钥-私钥对（以及加解密、签名/验签的数学运算）。
+证书 (X.509 证书) 是一种标准化的文件格式，里面除了包含 公钥 外，还包含：
+证书持有者的信息（比如域名、组织名）
+签发机构的信息
+有效期
+签名算法（可能是 RSA，也可能是 ECDSA 等）
+签发机构的签名（用它的私钥签出来的）
+
+换句话说：
+RSA 算法负责产生密钥对。
+证书颁发机构 (CA) 会用 RSA（或别的算法）签名来生成证书。
+所以证书的生成过程依赖于 RSA 或 ECDSA 等算法，但“生成证书”不是 RSA 算法本身的职责。
+#####
+所以说 RSA 生成的是公钥-私钥对，而证书是基于这个公钥再加上身份信息和签名生成的。
+#####
+
+证书本身不是某个算法，而是一种#####数据容器（通常是 X.509 格式）#####。
+但是 证书里包含的公钥 是用某种算法生成的，比如 RSA 公钥 或 ECC 公钥。
+证书本身的签名算法（签发机构用来签名的算法）也可能是 RSA、ECDSA
+
+所以当我们说 “RSA 证书”、“基于 RSA 的证书” 时，通常有两层意思：
+证书中使用的公钥是 RSA 公钥：
+比如证书里写着：Public Key Algorithm: RSA。
+这时候可以说“这是一个基于 RSA 的证书”。
+证书签名用的算法是 RSA：
+比如证书里写着：Signature Algorithm: sha256WithRSAEncryption。
+这时候也可以说“这是一个 RSA 签名的证书”。
+
+
+清楚几个概念：
+证书里的公钥：
+一个证书（比如你说的 RSA 公钥证书）里面包含的是一个公钥，配套的私钥在证书拥有者那边（不在证书里）。比如用户/服务器证书里的公钥，是用来做加密或者验证签名的。
+CA 签名：
+CA 对这个证书签名时，CA 并不会用证书里的私钥。CA 会用 自己的私钥（CA 的私钥）对证书信息做签名，这样其他人可以用 CA 的公钥 来验证证书的合法性。
+所以这里是两个不同的 RSA 密钥对：
+证书里公钥对应的私钥 → 证书持有者使用。
+CA 用来签名的 RSA 私钥 → CA 自己使用，与证书持有者的密钥无关。
+
+
+ECC & ECDSA 关系：
+ECC（Elliptic Curve Cryptography）// Cryptography：密码学，密码学类型（ECC）
+定义：椭圆曲线密码学，是一种公钥密码学算法的类别。
+作用：用椭圆曲线数学生成密钥对，用于加密、签名或密钥交换。
+功能范围：
+可以做 加密/解密（如 ECIES）
+可以做 签名/验签（如 ECDSA）
+可以做 密钥交换（如 ECDH）
+
+ECDSA（Elliptic Curve Digital Signature Algorithm）// Algorithm：算法
+定义：椭圆曲线数字签名算法，是 ECC 在签名领域的具体实现。
+作用：生成数字签名、验证签名，用于身份认证、消息完整性验证等。
+依赖：它依赖 ECC 的密钥对生成算法。
+特点：相对于 RSA 签名，它密钥更短、签名更小、计算速度更快。
+
+
+| 项目    | 类别      | 功能/用途             |
+| ----- | ------- | ----------------- |
+| ECC   | 密码学算法体系 | 密钥生成、加密、签名、密钥交换   |
+| ECDSA | 签名算法    | 用 ECC 生成的密钥做签名/验签 |
+#####
+
+
+------------------------------在 TLS cipher suite 命名里，ECDHE_RSA、ECDHE_ECDSA 都是缩写
+ECDHE 是一种密钥交换协议/方法，而不是单纯的“算法”。算法通常指一个明确的数学或计算步骤
+
+xx_xx: 密钥交换方法_签名算法
+
+ECDHE_RSA
+全称：Elliptic Curve Diffie–Hellman Ephemeral with RSA signatures
+ECDHE → 用临时椭圆曲线 Diffie-Hellman 做密钥交换（有 PFS）。
+RSA → 证书里的公钥算法是 RSA，用来对握手消息做签名验证服务端身份。
+也就是说：
+会话密钥是通过 临时 ECDH 协商出来的。
+服务端的证书必须是 RSA 证书（公钥是 RSA）。
+
+ECDHE_ECDSA
+全称：Elliptic Curve Diffie–Hellman Ephemeral with Elliptic Curve Digital Signature Algorithm
+ECDHE → 同样用临时椭圆曲线 Diffie-Hellman 做密钥交换。
+ECDSA → 服务端证书使用 ECDSA 签名算法（椭圆曲线签名）。
+也就是说：
+会话密钥依然是 临时 ECDH 生成的。
+服务端的证书是基于椭圆曲线的（ECDSA 公钥）。
+
+TLS 1.2 密码套件名称通常包含：
+TLS_<密钥交换>_<认证>_WITH_<加密算法>_<MAC算法>
+TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+TLS 1.3 密码套件名称改变了：
+TLS_<AEAD算法>_<Hash算法>
+TLS_AES_128_GCM_SHA256
+TLS_AES_256_GCM_SHA384
+TLS_CHACHA20_POLY1305_SHA256
+TLS 1.3 去掉了密钥交换和证书算法，这些由握手过程和证书确定。
+TLS 1.3 的握手机制：
+所有 TLS 1.3 的握手都是 临时密钥交换（ECDHE 或 DHE），自动提供前向安全 (PFS)。
+认证算法（ECDSA 或 RSA）由证书本身决定，不在密码套件中体现。
+密码套件只负责 对称加密 + 哈希
+#####
+密钥交换仍然是 ECDHE（自动），认证由证书提供。
+#####
+
+
+----------单向验证+TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 #####是 1.2 的命名方式#####
+在 TLS cipher suite 的全称里还会带上对称加密和 MAC 算法，例如：
+TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+TLS 协议
+ECDHE (密钥交换)
+RSA (身份认证) // 身份认证（Authentication），指的就是验证对方提供的证书是否合法可信
+AES_128_GCM (对称加密)
+SHA256 (MAC/PRF 哈希函数)
+
+
+#####
+AES_128_GCM:
+AES → 对称加密算法（Advanced Encryption Standard）。
+128 → 使用 128 位密钥。
+GCM → Galois/Counter Mode（加密模式 + 完整性验证）。
+
+在 TLS 中的作用
+加密数据：AES 用共享的会话密钥加密传输的应用数据（HTTP 内容、消息等）。
+保证完整性：GCM 模式内置认证码（类似 MAC），接收方可以验证数据是否被篡改。
+特点：
+高效，支持并行加密。
+提供 机密性 + 完整性（加密 + 验证）。
+
+
+配合 SHA256 / HMAC
+会话密钥生成 → PRF（用 SHA256）生成 AES 密钥。// ###
+数据加密 → AES_128_GCM 使用生成的密钥加密数据。
+数据验证 → GCM 内部的认证码确保数据未被篡改。
+
+
+AES_128_GCM 就是用来加密发送的数据，同时提供完整性验证
+
+
+后面的SHA256不是用于AES_128_GCM的
+AES-GCM 是一个 带认证的加密模式 (AEAD)，它自带完整性校验（基于 GHASH，不依赖 SHA256）。
+因此 SHA256 并不是 GCM 的一部分
+套件名里的 SHA256 指的是 TLS 协议里用来做握手消息完整性校验、密钥派生 (PRF/HKDF) 的哈希函数。
+
+客户端和服务器通过 ECDHE 协议协商出一个 pre-master secret
+使用 PRF (Pseudo-Random Function) 把它扩展成 master secret
+PRF 里的核心哈希函数就是套件名里写的 SHA256
+接下来，TLS 还会基于这个 master_secret 派生出：
+对称加密的 session keys（给 AES_128_GCM 用）
+MAC/AEAD keys（给完整性/认证用）
+而 AES_128_GCM 只是使用这些派生出的 session keys 来做加密，它本身不需要 SHA256。
+#####
+
+
+#####
+SHA256 (MAC/PRF 哈希函数):
+
+它的作用是：
+1. 签名 / MAC → 保证消息完整性（没有被篡改）。
+2. PRF → 生成会话密钥。
+也就是
+1. 握手消息完整性校验
+2. 密钥派生 (PRF/HKDF) —— 用 SHA256 来扩展 pre-master secret → master secret → session keys。
+
+在 TLS 1.2 里有一个特殊的握手消息：Finished 消息
+在握手最后，客户端和服务器都会各自发一个 Finished。
+这个消息里有一个 verify_data 字段。
+verify_data = PRF_SHA256(master_secret, "finished", Hash(handshake_messages))
+handshake_messages = 从 ClientHello 开始到 Finished 之前的所有握手消息
+Hash = 使用 SHA256 计算所有握手消息的哈希值
+PRF_SHA256 = 结合 master_secret 和上面的哈希生成最终的校验码
+#####
+
+
+----------TLS 1.2 的 RSA 密钥交换 : TLS_RSA_WITH_AES_128_GCM_SHA256 // RSA 密钥交换 + RSA 证书。
+
+----------单向验证+TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 // tls 1.2 // ECDHE 密钥交换 + RSA 签名认证。
+
+
+----------ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+参与方：
+客户端（Client）
+没有证书
+只负责验证服务器身份
+服务器（Server）
+有 ECDSA 证书
+负责生成临时 ECDHE 密钥对并签名
+
+TLS 握手步骤（单向验证）：
+1. ClientHello
+客户端发出支持的 TLS 版本、加密套件列表（包含 ECDHE_ECDSA_WITH_AES_128_GCM_SHA256）、随机数 ClientRandom。
+2. ServerHello
+服务器选择套件 ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+发送 ServerRandom
+3. ServerKeyExchange
+服务器生成 临时 ECDHE 密钥对 (b, B)
+服务器用证书的 ECDSA 私钥 对 (B + ClientRandom + ServerRandom) 签名
+发送 B 和签名给客户端
+4. Certificate
+服务器发送 ECDSA 证书，包含公钥 K_server
+5. Client 验证
+客户端用服务器证书的 ECDSA 公钥 验证签名
+确认服务器身份（防止中间人攻击）
+6. ClientKeyExchange
+客户端生成临时 ECDHE 密钥对 (a, A)
+发送 A 给服务器
+7. 计算共享密钥
+客户端：S = a * B
+服务器：S = b * A
+共享密钥 S 用 PRF 派生出 AES-GCM 的会话密钥
+8. Finished
+双方用共享密钥计算 MAC，确认握手完整性
+
+
+共享密钥到会话密钥的“钥匙派生”大致分 4 步：
+1. 先得到 premaster_secret
+先做 ECDHE：得到共享点 
+Z=a⋅B=b⋅A。
+premaster_secret = 椭圆曲线点 
+Z 的 x 坐标 的定长大端字节串
+（长度等于曲线字段大小；例如 P-256 就是 32 字节）。
+这一步是 RFC 4492 的规定：用 ECDH 结果点的 x 坐标作为 premaster。
+2. master_secret
+TLS 1.2 的 PRF 基于所选哈希（这里是 SHA-256）：
+PRF(secret, label, seed) = P_hash_{SHA-256}(secret, label || seed)
+master_secret = PRF(
+premaster_secret,
+"master secret",
+ClientRandom || ServerRandom
+) 取 48 字节。
+其中 P_hash 是用 HMAC 反复扩展的流：
+A(0)=seed；A(i)=HMAC(secret, A(i-1))；
+输出串 = HMAC(secret, A(1)||seed) || HMAC(secret, A(2)||seed) || …
+3. key_block（派生流量密钥）
+key_block = PRF(
+master_secret,
+"key expansion",
+ServerRandom || ClientRandom
+) 取所需长度。
+对于 AES_128_GCM（AEAD，不需要 MAC 密钥）
+需要：
+client_write_key：16 字节（AES-128）
+server_write_key：16 字节
+client_write_IV（也叫 fixed IV / salt）：4 字节
+server_write_IV：4 字节
+合计 40 字节 的 key_block
+与 CBC/HMAC 套件不同，GCM 没有单独的 MAC 密钥。
+4. GCM 每条记录如何用这些键
+对称密钥：用对应方向的 write_key（16B）。
+Nonce/IV：fixed_IV (4B) || explicit_nonce (8B)
+explicit_nonce 通常取 64 位记录序号（network byte order）。
+AAD：seq_num(8B) || type(1) || version(2) || length(2)（TLS 1.2 规范）。
+Tag：GCM 计算出的认证标签（通常 16B）。
+
+#####
+Finished 校验（顺带一提）
+verify_data = PRF(master_secret, "client finished", Hash(handshake_msgs)) 取 12 字节（服务端同理），用于验证握手完整性。
+#####
+
+总结：
+1. ECDHE → 点 Z → 取 x 做 premaster
+2. master = PRF(premaster, "master secret", C_rand || S_rand)[48]
+3. key_block = PRF(master, "key expansion", S_rand || C_rand)
+取：client/server AES-128 key 各 16B + fixed IV 各 4B
+4. GCM 每条记录：nonce = fixedIV(4) || explicit(8)，用 AES-GCM 加解密+认证
+
+key_block 不是单个会话密钥，而是一个“密钥材料池”。
+它是从 master_secret 通过 PRF 扩展出来的一长串字节，然后按照规范切分成不同的用途。
+
+key_block 的组成：
+（先客户端方向，再服务器方向）
+client_write_key (16B) → 客户端加密发往服务器的数据
+server_write_key (16B) → 服务器加密发往客户端的数据
+client_write_IV (fixed IV) (4B)
+server_write_IV (fixed IV) (4B)
+总共：40 字节
+这里的“IV”是 GCM 的固定部分，真正的每条记录的 IV = fixed_IV (4B) || explicit_nonce (8B)。
+
+premaster_secret：ECDHE 算出来的共享秘密
+master_secret：从 premaster 派生出来的“根钥匙”
+key_block：从 master_secret 扩展出的“大段原材料”
+会话密钥：从 key_block 切割出来的具体部分（client_write_key、server_write_key、IV）
+
+
+会话真正用的 AES key 和 IV 是从 key_block 切出来的部分
+
+key_block =
+  6A 2F 9C 41  82 33 5A 11  C7 D9 4E 2B  10 F4 66 89   # 16B
+  2E 77 8A 55  6C 19 F3 01  A4 B5 72 9F  9D 33 0A 4C   # 16B
+  55 66 77 88                                          # 4B
+  99 AA BB CC                                          # 4B
+那么切分结果就是：
+client_write_key = 6A 2F 9C 41 82 33 5A 11 C7 D9 4E 2B 10 F4 66 89
+server_write_key = 2E 77 8A 55 6C 19 F3 01 A4 B5 72 9F 9D 33 0A 4C
+client_write_IV (fixed part) = 55 66 77 88
+server_write_IV (fixed part) = 99 AA BB CC
+客户端发数据时：
+用 client_write_key 做 AES-128-GCM 加密
+IV = client_write_IV || explicit_nonce(8B)
+服务器发数据时：
+用 server_write_key 做 AES-128-GCM 加密
+IV = server_write_IV || explicit_nonce(8B) // IV (nonce)：拼接规则 = client_write_IV || explicit_nonce → 总共 12 字节（符合 AES-GCM 要求的 96 位 nonce）
+explicit_nonce 通常就是记录序号（64bit），保证每条记录唯一。
+
+
+(b, B) 是 服务器临时 ECDHE 密钥对
+b —— 私钥（private key），服务器保密
+B —— 公钥（public key），发送给客户端
+注意：私钥 b 永远不发送，只用来计算共享密钥。
+
+----------例子
+已知条件：
+1. client_write_key：16 字节（AES-128 密钥）
+2. client_write_IV（fixed IV）：4 字节（从 key_block 取）
+3. explicit_nonce：8 字节（通常是 TLS 记录序号）
+4. IV (nonce)：拼接规则 = client_write_IV || explicit_nonce → 总共 12 字节（符合 AES-GCM 要求的 96 位 nonce）
+5. AAD (Additional Authenticated Data)：
+seq_num(8B) || type(1B) || version(2B) || length(2B)
+（这是 TLS 1.2 的规定，用来保证完整性）
+6. Plaintext：要发送的数据
+
+加密流程（AES-GCM）
+1. 取出 AES key = client_write_key (16B)
+2. 取出 IV (nonce) = client_write_IV (4B) || explicit_nonce (8B)
+3. 用 AES-128-GCM 加密 Plaintext
+输入：Plaintext, AAD, Nonce, Key
+输出：Ciphertext, Authentication Tag（通常 16B）
+
+发送给对端的数据格式：
+[explicit_nonce(8B)] [Ciphertext] [Tag(16B)]
+（fixed_IV 不在记录里发送，因为双方握手时已经共享了它）
+
+
+Python 示例:（用 cryptography 库）
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+# 假设 key_block 已经算出来并切分好：
+client_write_key = bytes.fromhex("6A2F9C4182335A11C7D94E2B10F46689")
+client_write_IV  = bytes.fromhex("55667788")  # 4B fixed IV
+
+# TLS 记录序号作为 explicit_nonce (8B)
+explicit_nonce = (1).to_bytes(8, "big")
+
+# 拼接出 12B GCM nonce
+nonce = client_write_IV + explicit_nonce
+
+# 要加密的数据
+plaintext = b"Hello TLS AES-GCM!"
+aad = b"\x00\x00\x00\x00\x00\x00\x00\x01" + b"\x17" + b"\x03\x03" + len(plaintext).to_bytes(2, "big")
+#   seq_num=1(8B)   type=0x17(application_data)   version=0x0303(TLS1.2)   length
+
+# AES-GCM 加密
+aesgcm = AESGCM(client_write_key)
+ciphertext = aesgcm.encrypt(nonce, plaintext, aad)
+
+print("Explicit Nonce:", explicit_nonce.hex())
+print("Ciphertext+Tag:", ciphertext.hex())
+
+
+运行结果会输出：
+explicit_nonce：需要放到 TLS record 前面
+ciphertext+tag：要发给对端的数据
+
+
+==================================================HTTPS/TLS 里客户端如何验证服务器发过来的 公钥证书
+1. TLS 握手阶段拿到证书
+当客户端（比如浏览器或 iOS App）访问 https://example.com 时，服务器会在 TLS 握手中发送自己的 证书链，通常是：
+[服务器证书] → [中间 CA 证书] → [根 CA 证书]
+
+服务器证书 包含服务器的公钥。
+中间 CA 证书 是签发服务器证书的 CA。
+根 CA 证书 是最顶层信任的 CA（客户端本地预装的 CA）。
+
+
+2. 客户端验证证书有效性
+客户端验证证书一般分几个步骤：
+Step 1：验证签名
+每个证书都有一个签名字段，是上一级 CA 用私钥对证书内容签名的。
+客户端用上一级 CA 的公钥（在上一级证书里）来验证签名。
+逐层验证直到根 CA。
+注意：根 CA 通常是预装在客户端系统里的，所以它的签名默认可信。
+
+Step 2：检查证书链
+确保证书链是完整的，没有缺失的中间 CA。
+确保证书链中的每个证书都被上一级证书签发。
+
+Step 3：检查证书有效期
+确认 Not Before ≤ 当前时间 ≤ Not After。
+过期证书不可信。
+
+Step 4：检查域名
+证书里有 Common Name 或 Subject Alternative Name，必须包含你访问的域名。
+避免中间人攻击。
+
+Step 5：可选：吊销检查
+通过 CRL（证书吊销列表）或 OCSP（在线状态查询）验证证书是否被吊销。
+
+3. 公钥验证
+一旦证书链验证通过，客户端就可以信任服务器证书里的公钥。
+这个公钥接下来会用来：
+加密预主密钥（RSA TLS 握手模式）
+或参与 ECDHE 密钥交换 的签名验证（保证服务器身份）
+
+
+#####
+HTTPS 验证 不是直接验证公钥本身，而是通过 证书链和 CA 签名 来信任这个公钥。步骤如下：
+服务器证书公钥 ← 服务器证书签名 ← 中间 CA 公钥 ← ... ← 根 CA 公钥（本地预装）
+只要链条可信，公钥就可信。
+#####
+
+
+每个证书里都有：
+公钥（用于之后的加密或签名验证）
+签名（由上一级证书的私钥生成）
+证书信息（颁发者、有效期、用途等）
+验证的核心是 签名验证，不是直接“验证公钥”，公钥是用来验证签名的。
+
+验证中间 CA 的步骤：
+Step 1：根 CA 公钥已经信任
+根 CA 证书是预装在客户端系统里的，所以默认可信。
+根 CA 的公钥可以直接使用。
+
+Step 2：验证中间 CA 证书签名
+中间 CA 证书是由根 CA 签发的。
+客户端用 根 CA 的公钥 验证中间 CA 证书的签名。
+过程：
+从中间 CA 证书中提取签名和证书内容（去掉签名部分）。
+用根 CA 公钥对签名进行验证。
+如果验证通过，说明中间 CA 的证书是根 CA 签发的，是可信的。
+#####
+注意：这里不是直接“验证中间 CA 的公钥”，而是验证 中间 CA 证书签名合法，从而信任其中的公钥。
+#####
+
+Step 3：检查证书有效性
+检查中间 CA 证书的有效期（Not Before / Not After）。
+检查证书用途（CA: true）。
+
+Step 4：重复验证到服务器证书
+同理，用中间 CA 的公钥验证服务器证书的签名。
+最终，服务器证书的公钥就被信任，可以安全使用。
+
+
+#####
+验证中间 CA 公钥的核心不是直接验证公钥，而是：
+1. 用上一级 CA 公钥验证证书签名
+2. 确认证书有效期和用途
+3. 通过签名合法性信任证书里的公钥
+#####
+
+
+==================================================TLS 1.2 所有握手消息
+从 ClientHello 到 Finished 之间的握手消息
+
+以典型的 TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 为例
+
+客户端发起的消息
+1. ClientHello
+协议版本
+支持的密码套件（Cipher Suites）
+支持的压缩方法
+随机数（ClientRandom）
+可选扩展（如 SNI、支持的曲线等）
+
+
+服务器响应的消息
+2. ServerHello
+协议版本（协商结果）
+选择的套件
+随机数（ServerRandom）
+可选扩展
+3. Certificate（如果使用证书验证身份）
+服务器公钥证书链
+4. ServerKeyExchange（如果使用临时 ECDHE 或 DHE）
+包含临时公钥信息，用于密钥交换
+5. CertificateRequest（可选，如果服务器要求客户端证书）
+6. ServerHelloDone
+表示服务器握手消息发送完毕
+
+
+客户端后续消息
+7. Certificate（可选，如果服务器请求客户端证书）
+8. ClientKeyExchange
+发送用于计算 pre-master secret 的信息（如 ECDHE 公钥）
+9. CertificateVerify（可选，客户端签名，证明自己持有私钥）
+10. ChangeCipherSpec
+表示从此消息开始，后续消息将使用协商好的加密参数
+11. Finished
+用 PRF(master_secret, “finished”, Hash(握手消息)) 计算 verify_data
+标志握手完整性
+
+
+==================================================tls 1.3 相关概念
+TLS 1.3 的密钥交换机制：
+1. 默认都是临时密钥交换（Ephemeral）
+主要是 ECDHE（椭圆曲线 Diffie-Hellman Ephemeral）。
+TLS 1.3 不再使用静态 RSA/ECDH 密钥交换，所以总是提供 前向安全 (PFS)。
+2. 可选曲线
+常用曲线包括 X25519、secp256r1（也叫 P-256）、secp384r1 等。
+握手时客户端和服务器协商一条曲线，用这条曲线进行 ECDHE。
+3. 认证
+证书用于身份验证（ECDSA 或 RSA）。
+密码套件 不再指定密钥交换或证书类型，只指定对称加密和哈希。
+4. 没有 DHE（有限域 Diffie-Hellman）
+TLS 1.2 可以选择 DHE，但 TLS 1.3 仅支持 ECDHE。
+
+TLS 1.3 的握手密钥交换都是 临时 ECDH（ECDHE），不再用静态密钥交换或 RSA 密钥交换。
+
+
+ECDHE = Elliptic Curve Diffie-Hellman Ephemeral
+Elliptic Curve (EC) → 椭圆曲线，用于定义数学运算的坐标系。
+Diffie-Hellman (DH) → 密钥交换算法，双方生成共享密钥。
+Ephemeral (E) → 临时密钥，每次握手都会生成新的私钥，保证前向安全。
+
+所以 ECDHE 就是“用椭圆曲线做的临时 DH 密钥交换”。
+
+曲线的作用：
+椭圆曲线定义了 #####密钥对生成和点乘运算的规则#####：
+每条曲线有参数 (p, a, b, G, n, h)，包括：
+G → 基点
+n → 基点的阶
+其他参数控制曲线形状和安全性
+私钥 = 一个随机数
+公钥 = 私钥 × G （椭圆曲线点乘）
+握手时，双方通过 ECDHE 算法做公钥交换，然后计算共享密钥：
+sharedSecret = AlicePrivateKey × BobPublicKey
+sharedSecret = BobPrivateKey × AlicePublicKey
+这两个结果相同。
+
+
+曲线选择
+ECDHE 可以在多条曲线上运行。TLS 1.3 握手时，客户端和服务器协商使用哪条曲线。
+常用曲线：
+X25519 → 高效、安全
+secp256r1 (P-256)
+secp384r1 (P-384)
+曲线不同，密钥长度和安全性不同，但 ECDHE 算法流程一样。
+
+
+ECDHE 是算法，曲线是算法用的数学“坐标系”。曲线决定了点乘运算规则，而 ECDHE 是用这个规则来生成共享密钥的过程。
+
+
+
+==================================================TLS 1.3 密钥交换流程（握手阶段）
+握手初期（ClientHello / ServerHello）
+密钥派生
+握手后期（EncryptedExtensions、Certificate、CertificateVerify、Finished）
+
+
+ClientHello (明文)
+      ↓
+ServerHello (明文 + 服务器 ECDHE 公钥)
+      ↓  计算 Z
+Handshake Secret = HKDF-Extract(PSK=0, Z)
+派生 client/server handshake keys
+      ↓  加密
+EncryptedExtensions / Certificate / CertificateVerify / Finished
+      ↓  完成握手
+Master Secret = HKDF-Extract(handshake_secret, 0)
+派生应用流量密钥
+      ↓
+应用数据加密（HTTP/2/3）
+
+
+1. ClientHello
+客户端发起握手，发送：
+支持的密码套件列表（只包含 AEAD + HKDF 的组合，比如 TLS_AES_128_GCM_SHA256）。
+支持的椭圆曲线组（例如 secp256r1, x25519）。
+Client KeyShare：客户端生成临时 (EC)DH 密钥对，把公钥（比如 EC 点）放在 key_share 扩展里。
+其它扩展：SNI、ALPN、early_data（0-RTT）等。
+
+2. ServerHello
+（1）服务器选择：
+一组密码套件。
+一条曲线。
+给出 Server KeyShare：服务器生成临时 (EC)DH 密钥对，并发送公钥。
+（2）双方用 ECDHE 算出共享秘密 Z。
+
+到这里就有了共享秘密，并进入加密状态，之后的握手消息用 AEAD 加密。
+AEAD 是 Authenticated Encryption with Associated Data（带关联数据的认证加密）的缩写。
+简单说，它是一种加密方式，同时保证数据的机密性和完整性
+常见 AEAD 算法：
+AES-GCM（AES + Galois/Counter Mode）
+ChaCha20-Poly1305
+AEAD 加密握手消息：
+之后客户端/服务器发送的握手消息（EncryptedExtensions、Certificate、CertificateVerify、Finished）都使用 handshake flow key + AEAD 进行加密和认证。
+只有到了 Finished 之后，再用派生出的 应用数据密钥 加密后续应用数据。
+
+#####
+ECDHE → Z（原始共享秘密）
+Z + HKDF → handshake_secret → handshake keys
+握手消息加密 = 用 handshake keys + AEAD
+#####
+
+#####
+从 ServerHello 之后的消息开始（EncryptedExtensions, Certificate, CertificateVerify, Finished）才进入 AEAD 加密状态。
+真正能加密握手消息的 handshake traffic key，要等到 ServerHello 之后（双方算出 ECDHE 共享秘密 Z） 才能派生出来。
+handshake traffic key：握手流量密钥
+
+从 EncryptedExtensions 开始 → 用 handshake traffic key (派生自 early_secret + Z) 加密
+#####
+
+
+密钥派生（HKDF）// Derive：派生，Key Derivation Function：密钥派生函数
+TLS 1.3 使用 HKDF (HMAC-based Key Derivation Function)，核心输入是：
+1. ECDHE 共享密钥 Z
+2. 握手 transcript（握手消息的哈希）
+3. 0-rtt early_secret / handshake_secret / master_secret 分层结构
+具体流程：
+early_secret = HKDF-Extract(0, PSK)（如果没有 PSK 就全 0）。// PSK 是 Pre-Shared Key（预共享密钥）。事先在客户端和服务器之间共享的一段秘密密钥
+handshake_secret = HKDF-Extract(Derive(early_secret), Z)
+master_secret = HKDF-Extract(Derive(handshake_secret), 0) // 注意：这里的 0 代表一个固定长度全 0 的盐（salt），不是 Z。因为 Z 已经在 handshake_secret 中使用过了。
+
+用 master_secret 派生 应用流量密钥 (application traffic keys)，用于加密 HTTP/2、HTTP/3 的数据。
+然后再通过 HKDF-Expand-Label 生成：
+客户端握手流量密钥
+服务端握手流量密钥
+客户端应用数据密钥
+服务端应用数据密钥
+exporter secret 等
+
+
+PSK 和 Z 不是一个东西：
+PSK = 预共享密钥（之前约定或恢复会话时带的）。
+ECDHE Z = 临时密钥交换算出来的共享秘密。
+
+
+3. EncryptedExtensions
+服务器用握手密钥加密，发送额外的参数，比如 ALPN 协商结果。
+
+4. Certificate / CertificateVerify
+服务器发证书（依然要证明身份）。
+服务器用私钥签名整个握手 transcript（副本），证明自己对证书对应的私钥有控制权。
+
+Certificate 消息：
+Certificate 消息里面的内容确实会被 TLS 1.3 握手阶段的 handshake key + AEAD 加密发送给客户端。
+加密的对象就是消息里的证书内容（包括服务器公钥、证书链等），所以从技术角度可以说是“对证书内容加密”。
+重点是：
+1. 加密的目的不是隐藏公钥本身
+证书本身就是公开的，客户端最终必须看到证书才能验证身份。
+加密的目的是 保护握手隐私、防止中间人篡改消息、隐藏访问模式。
+2. 解密发生在客户端
+客户端使用 handshake key 解密 AEAD 消息，然后提取 Certificate 内容进行验证。
+
+TLS 1.3 的 Certificate 消息确实是“被加密的证书”，但加密只是握手传输保护手段，不改变证书本身是公开的事实。
+
+CertificateVerify 消息：
+在 TLS 1.3 单向验证里，服务器的私钥在握手流程中 只用在 CertificateVerify 这一步：
+在 TLS 1.3 的 单向验证（即客户端验证服务器，但服务器不验证客户端）中，服务器的私钥确实会用来签名，但不是随便签一条消息，而是签一个特定的“握手摘要”。
+CertificateVerify: 服务器私钥签名的一条消息
+
+CertificateVerify 消息：
+签名内容 = transcript hash + context string
+transcript hash = 到 Certificate 消息为止的所有握手消息的哈希（客户端和服务器都能计算出来）
+context string = "TLS 1.3, server CertificateVerify"（RFC 8446 第 4.4.3 节）
+signature = Sign( server_private_key, Hash(context || transcript_hash) )
+客户端拿到 Certificate 里的公钥后，就能验证 CertificateVerify 的签名。
+如果验证通过，客户端就知道：
+服务器确实拥有证书对应的私钥（认证服务器身份）
+前面的握手消息没被篡改（防止中间人攻击）
+
+这个签名的目的是 证明服务器掌握私钥并绑定到握手消息。// #####
+
+签名内容 = 上游握手消息的哈希 + context
+签名算法 = 服务器证书公钥类型对应的签名算法（RSA/PSS 或 ECDSA）
+签名用途 = 认证服务器 + 防篡改 + 前向安全绑定
+
+
+5. Finished（服务器）
+服务器发送 Finished 消息，包含一个基于握手 transcript 的 MAC。
+
+6. Finished（客户端）
+客户端也发送 Finished，完成双向验证。
+双方进入 应用数据阶段，使用 master_secret 派生出的应用密钥。
+
+
+只有到了 Finished 之后，再用派生出的 应用数据密钥 加密后续应用数据。
+#####
+TLS 1.3 的特点:
+统一使用 ECDHE → 强制前向安全（Forward Secrecy）。
+1-RTT 握手 → 最快一来一回就能建立安全连接。
+更简单的密码套件 → 不再有 RSA_WITH_AES_256_CBC_SHA 这种冗余写法，全部是 AEAD+HKDF。
+#####
+
+#####HKDF核心步骤：
+entropy: 熵
+Derivation: 推导
+“熵”的拼音是 shāng。
+在密码学里说“熵”（entropy），意思是“随机性”或者“信息的不确定性”。所以我前面说的 原始熵源，就是指 原始的随机秘密来源，比如 TLS 里 ECDHE 算出来的共享秘密 Z。
+
+ECDHE 算出的共享秘密（shared secret, 也叫 pre-master secret）本身还不能直接拿来当加密密钥。 // #####
+它只是一个原始熵源，还需要经过 HKDF 派生出真正的会话密钥。
+
+HKDF (HMAC-based Key Derivation Function) 本质上就是一个 密钥派生函数（KDF），它不是加密算法，而是一个 把已有的秘密（entropy）“加工”成可用密钥 的方法。
+HKDF 就是 把任意长度的随机源 → 标准化处理 → 生成任意长度的密钥材料。
+
+
+HKDF 派生 handshake_secret：
+handshake_secret = HKDF-Extract(early_secret, Z)
+再通过 HKDF-Expand-Label 派生出：
+客户端握手流量密钥（client handshake traffic key）
+服务端握手流量密钥（server handshake traffic key）
+
+
+HKDF 的两个核心步骤：
+1. HKDF-Extract(salt, IKM) → PRK
+IKM = Input Key Material（输入密钥材料）。
+salt = 一个随机值或上下文值。
+PRK = Pseudo-Random Key（伪随机密钥）。
+实际上就是 PRK = HMAC(salt, IKM)。
+
+2. HKDF-Expand(PRK, info, L) → OKM
+PRK 作为种子。
+info = 上下文信息（比如“我要派生的是 client handshake key”）。
+L = 输出密钥长度。
+输出 OKM（Output Keying Material）。
+实际就是反复 HMAC(PRK, T(n-1) || info || n) 迭代生成所需长度。
+
+handshake_secret = HKDF-Extract(early_secret, Z)
+client_handshake_key = HKDF-Expand(handshake_secret, "c hs traffic", transcript_hash, 16)
+server_handshake_key = HKDF-Expand(handshake_secret, "s hs traffic", transcript_hash, 16)
+这样就能从一个 ECDHE 的共享秘密，派生出各种阶段需要的 对称加密密钥。
+
+client_handshake_key 和 server_handshake_key 是不同的，原因在于 HKDF-Expand 的 label 不同
+handshake_secret 是两端通过 ECDHE (或 PSK+ECDHE) 计算出来的共享密钥。
+transcript_hash 是到当前握手消息的哈希，保证密钥和握手内容绑定。
+HKDF 标签 "c hs traffic" vs "s hs traffic"：TLS 1.3 明确要求用不同的标签来区分客户端和服务端的流量密钥。
+所以，即使 handshake_secret 和 transcript_hash 相同，由于 HKDF 输入的 label 不同，HKDF 输出的 key 也必然不同。
+
+这样做的目的就是保证：
+客户端和服务端不会用同一把密钥加解密。
+避免重放和反射攻击。
+
+TLS 1.3 的确要求 客户端和服务端的密钥不同，但是它们是 成对派生 的：
+客户端发出去的应用数据（Client → Server），用 client_application_key 加密。
+服务器收到以后，用 client_application_key 对应的密钥（同样的那一份）解密。
+同理：
+服务器发出去的数据（Server → Client），用 server_application_key 加密。
+客户端收到以后，用 server_application_key 解密。
+
+client_handshake_key：用于 Client → Server 的握手消息加密解密。
+客户端用它加密。
+服务器用它解密。
+server_handshake_key：用于 Server → Client 的握手消息加密解密。
+服务器用它加密。
+客户端用它解密。
+
+总结就是：
+不同方向的数据流，用不同的密钥。
+同一方向上，发和收的双方都持有同一份密钥。
+
+客户端和服务端其实都能推导出完全一样的一对密钥对（client_xxx_key 和 server_xxx_key），只是使用方向不同。// #####
+核心原因：双方有相同的输入材料
+在 TLS 1.3 里，密钥派生是基于 HKDF 的。
+双方在握手时都会得到相同的：
+1. shared_secret
+通过 ECDHE (椭圆曲线 Diffie-Hellman Ephemeral) 交换得到。
+客户端和服务端计算结果相同。
+2. handshake transcript hash
+对整个握手消息做哈希，保证密钥和握手内容绑定。 // #####这个哈希使用当前协商好的哈希函数，#####
+两端算出来的 hash 一致（否则握手失败）。
+
+在 TLS 1.3 里，Transcript Hash = 对 到目前为止的所有握手消息（Handshake Messages） 按照发送顺序拼接起来，然后做一次哈希（使用当前协商好的哈希函数）。
+transcript_hash = Hash(HandshakeMsg1 || HandshakeMsg2 || ... || HandshakeMsgN)
+HandshakeMsg = 每条握手消息的完整编码（包括 handshake 类型、长度字段和内容）。
+Hash = 由 CipherSuite 决定的哈希算法（比如 TLS_AES_128_GCM_SHA256 → SHA-256；TLS_AES_256_GCM_SHA384 → SHA-384）。
+
+例子：
+客户端发送 ClientHello。
+Transcript Hash = SHA-256(ClientHello)
+服务端回复 ServerHello。
+Transcript Hash = SHA-256(ClientHello || ServerHello)
+双方继续交换 EncryptedExtensions、Certificate、CertificateVerify、Finished …
+Transcript Hash = SHA-256(ClientHello || ServerHello || EncryptedExtensions || Certificate || ...)
+
+Handshake Transcript Hash 就是把所有握手消息的二进制按顺序拼接，然后用协商的哈希函数（SHA-256/384）算出来的结果。
+
+3. HKDF 派生规则
+TLS 1.3 规定死了 HKDF 的派生路径和 label，比如 "c hs traffic"、"s hs traffic"。
+只要输入材料一致，HKDF 输出就必然一致。
+
+双方各自用相同的 handshake_secret + transcript_hash 去跑 HKDF，得到 两份密钥：
+client_handshake_key（规定用来加密 Client→Server 流量）
+server_handshake_key（规定用来加密 Server→Client 流量）
+当进入应用数据阶段，又再基于 handshake_secret 推导出：
+client_application_key
+server_application_key
+
+客户端知道 client_application_key 和 server_application_key。
+服务端也知道 client_application_key 和 server_application_key。
+但协议规定：
+客户端发消息 → 用 client_application_key 加密。
+服务端收消息 → 用 client_application_key 解密。
+服务端发消息 → 用 server_application_key 加密。
+客户端收消息 → 用 server_application_key 解密。
+
+服务端之所以能解密客户端用 client_application_key 加密的数据，是因为 服务端自己也能用相同的输入材料算出完全相同的 client_application_key。
+#####
+
+
+#####TLS 1.3 核心步骤：
+1. ECDHE
+客户端有私钥 a，公钥 A = g^a
+服务器有私钥 b，公钥 B = g^b
+共享秘密：
+Z = g^(ab)
+这是原始共享秘密。
+
+
+典型的 Diffie–Hellman（DH / ECDH）密钥交换：
+在 Diffie–Hellman 密钥交换里，客户端和服务器各自生成一对 公私钥
+g：群的生成元（generator），公开的常量。
+a：客户端的私钥（secret exponent），只能客户端自己知道。// 临时私钥（ephemeral private key）
+A = g^a：客户端根据私钥计算出的公钥，可以公开发给服务器。// 临时公钥（ephemeral public key）
+b：服务器的私钥，只能服务器自己知道。
+B = g^b：服务器根据私钥计算出的公钥，可以公开发给客户端。
+客户端将 A 发送给服务器。
+服务器将 B 发送给客户端。
+计算共享密钥：
+客户端计算：Z=B^a=(g^b)^a=g^ab
+服务器计算：Z=A^b=(g^a)^b=g^ab
+
+在 经典 DH 里，公私钥对可以是长期的（static key pair），A、B 都会复用。
+在 ECDHE（Ephemeral Diffie–Hellman over Elliptic Curve） 里，a、A 和 b、B 都是临时生成的，每次握手都不同。
+
+RSA 公私钥对的生成步骤和 DH/ECDH 有点不一样，它基于大整数分解的难题
+RSA：一个公私钥对，可以反向使用（公钥加密/私钥解密，或私钥签名/公钥验证）。
+DH/ECDH：双方各自生成临时公私钥对，互相交换公钥，最后计算出共享秘密。
+
+
+2. HKDF-Extract // Extract：提取，extra：额外的
+用 Z 和一个 salt（前一步的 early_secret）作为输入，生成 handshake_secret。
+这样可以把随机性“正规化”，即使 Z 有偏差，也能得到均匀的随机输出。
+
+3. HKDF-Expand-Label
+基于 handshake_secret 和 transcript hash，派生出：
+客户端握手流量密钥
+服务端握手流量密钥
+
+4. 再进一步派生 master_secret
+基于 master_secret，再派生出 应用数据密钥，才是真正用于加密你和服务器之间 HTTP/2、HTTP/3 数据的密钥。
+
+总结：
+ECDHE → Z（共享秘密）
+Z + HKDF → handshake_secret / master_secret → session keys
+#####
+
+
+#####PSK：Pre-Shared Key（预共享密钥）
+PSK：事先在客户端和服务器之间共享的一段秘密密钥。
+PSK = 之前约定好的共享秘密，不存在就用 0 填充。
+
+在 TLS 1.3 中，PSK 有两种主要用途：
+0-RTT（零往返）握手：客户端可以基于之前和服务器共享的 PSK，直接发送加密的应用数据，不用等待完整握手完成。
+提高握手效率：如果有 PSK，客户端和服务器可以减少密钥协商的计算量。
+
+在 HKDF-Extract(0, PSK) 中:
+这里 0 表示 salt 全部置 0（没有额外随机值）。
+PSK 就是输入密钥材料（Input Key Material，IKM）。
+输出就是 early_secret，作为后续派生握手密钥的基础。
+
+如果客户端 没有 PSK（首次握手），就把 PSK 设为全 0，early_secret 也就只有默认值，后续仍然可以正常生成握手密钥。
+#####
+
+
+TLS 1.2：pre-master secret → master secret → session keys
+TLS 1.3：Z（ECDHE shared secret） → handshake_secret → master_secret → application keys
+Z≈pre-master secret
+TLS 1.3 多了 handshake_secret 这一步 HKDF 派生，增强了分阶段密钥管理的安全性。
+
+
+如果是 首次握手（无 PSK）：ClientHello 明文发送。
+如果是 带 PSK 的会话恢复：可以用 PSK 提前派生出密钥，这时 ClientHello 里发送的 0-RTT 数据可以加密。
+
+
+在 TLS 1.3 的密钥派生体系里，密钥是分层的：
+1. early_secret
+来自 HKDF-Extract(0, PSK)。
+如果 没有 PSK（首次握手），就相当于 HKDF-Extract(0, 0)，结果是个固定值（规范定义的“默认 early_secret”）。
+用途：
+如果有 PSK，它能派生出 0-RTT early traffic key，用于加密早期数据。
+如果没有 PSK，那它就只作为后续 handshake_secret 计算的输入盐（salt）。
+
+2. handshake_secret
+来自 HKDF-Extract(early_secret, ECDHE_shared_secret)。
+这一步才真正把 ECDHE 的共享秘密 Z 融入到密钥派生链里。
+之后用它派生出 握手流量密钥（client/server handshake traffic keys）。
+
+3. master_secret
+来自 HKDF-Extract(handshake_secret, 0)。
+继续往下派生应用数据密钥、exporter、resumption secret 等。
+
+
+PSK (Pre-Shared Key)：
+预共享密钥。
+可能来源：
+事先配置好的密钥（比如 IoT 设备和服务器内置的 PSK）。
+或者是 上一次 TLS 会话结束时生成的 resumption secret，用来支持 session resumption / 0-RTT。
+
+early_secret：基于 PSK，作用是支持 0-RTT。
+handshake_secret：基于 ECDHE Z，作用是派生握手阶段的密钥。
+
+
+==================================================#####ECDH_RSA 固定 ECDH 的密钥交换套件 流程#####
+RSA 证书：服务器持有一个包含 RSA 公钥的证书（通常由 CA 签发）。// #####在 ECDH_RSA 套件里，它主要用来 验证服务器身份，而不是直接参与 ECDH 密钥交换#####
+客户端支持：客户端支持 ECDH 和 RSA，并选择了 ECDH_RSA 套件。
+固定 ECDH：服务器证书中还包含了 ECDH 公钥（或称“静态 ECDH”）。
+
+
+静态 ECDH 公钥是用来 固定 ECDH（Static ECDH）密钥交换的：
+服务器自己生成的一对椭圆曲线密钥对 (d_s, Q_s)。
+公钥 Q_s 放在证书里，作为证书扩展字段或 SubjectPublicKeyInfo 的一部分。// 注意：这里不是临时密钥（因为是 ECDH），直接就是服务器的 ECDH 公钥
+客户端拿到证书后：
+验证证书签名合法性（用 RSA 公钥验证 CA 签名）。
+提取证书中的静态 ECDH 公钥 Q_s。
+用自己的 ECDH 私钥 d_c 与 Q_s 计算共享密钥。// #####客户端生成自己的 ECDH 密钥对，将客户端公钥 Q_c 通过 ClientKeyExchange 发送给服务器#####
+
+
+静态 ECDH 公钥从哪来？
+由服务器生成，和 RSA 公钥无关。
+在证书颁发时，CA 会把服务器提交的 静态 ECDH 公钥 放在证书扩展里。
+因为 ECDH_RSA 套件不生成临时密钥，所以这个公钥 长期固定，只要证书有效就用这一对密钥。
+
+
+1. 申请证书时：
+服务器想用 固定 ECDH（Static ECDH），就需要有一对 ECDH 密钥对 (d_s, Q_s)。
+服务器在向 CA 申请证书时，会把以下信息提交给 CA：
+      身份信息（域名、组织等）
+      RSA 公钥（用于身份验证）
+      静态 ECDH 公钥 Q_s（用于密钥交换）
+2. CA 的处理：
+CA 验证服务器身份后：
+      将 RSA 公钥 放入证书的主体公钥字段（SubjectPublicKeyInfo）
+      将 静态 ECDH 公钥 放在证书扩展（extension）里，通常是 “ServerECDHParams” 或类似扩展字段
+证书签名覆盖全部内容（包括扩展），保证公钥数据未被篡改
+3. 客户端使用:
+客户端收到证书后：
+用 CA 公钥验证签名
+从证书扩展中提取 静态 ECDH 公钥 Q_s
+用自己的 ECDH 私钥计算共享密钥
+
+
+RSA 密钥对的作用:
+服务器生成 RSA 密钥对 (d_RSA, Q_RSA)：
+d_RSA：私钥，自己保管
+Q_RSA：公钥，提交给 CA
+证书生成目的：
+证书本身是 CA 对服务器身份和公钥的签名保证。
+客户端只要信任 CA，就信任证书里的 RSA 公钥 Q_RSA 是服务器的合法公钥。
+
+提交给 CA 的过程:
+服务器生成 RSA 密钥对
+生成 CSR（Certificate Signing Request，证书签名请求），内容包括：
+      服务器身份信息（域名、组织等）
+      RSA 公钥 Q_RSA
+      可选：静态 ECDH 公钥 Q_s（如果要用固定 ECDH）
+CA 验证身份后，用 CA 私钥对整个证书内容（包括公钥字段和扩展）签名，生成 X.509 证书
+
+
+
+==================================================ChaCha20-Poly1305
+ChaCha20-Poly1305 是 TLS 中的一种 对称加密算法 + AEAD：
+ChaCha20 → 对称流加密
+Poly1305 → 认证码（MAC），保证完整性和认证
+
+它属于 AEAD（Authenticated Encryption with Associated Data）模式，即同时提供：
+加密（Confidentiality）
+认证（Integrity + Authenticity）
+
+
+AES-GCM
+对称加密 + AEAD
+另一种常见 AEAD 模式
+
+#####
+ChaCha20-Poly1305 是一种 AEAD 对称加密算法
+#####
+
+
+==================================================Session Resumption: 会话恢复
+Session Resumption 的作用
+1. 避免完整握手
+传统 TLS 每次都要做完整握手（ECDHE + 证书 + 签名验证），耗时大。
+有了 resumption secret（或者 PSK），客户端可以直接跳过部分握手步骤。
+2. 支持 0-RTT 数据
+客户端基于 resumption secret 派生出 early traffic key，可以在发送 ClientHello 时就附带加密数据（0-RTT）。
+服务器收到后，可以立即解密并处理。
+
+
+并不是所有服务器都支持 0-RTT 或长期 session tickets。
+前提是服务器支持：
+支持 Session Ticket / 0-RTT
+服务器配置好后，iOS 系统会自动管理，不需要管
+
+
+TLS 里的 Session Ticket:
+不是应用层的登录 token，而是 TLS 层的会话信息。
+作用是让客户端和服务器 不用每次都做完整握手。
+
+
+| 特性   | TLS Session Ticket | 应用层登录 Token            |
+| ---- | ------------------ | ---------------------- |
+| 作用   | 快速恢复 TLS 会话        | 证明用户身份 / 保存登录状态        |
+| 使用层  | TLS 层              | 应用层（HTTP Cookie / JWT） |
+| 生命周期 | 短（一般几分钟到几小时）       | 长（可能天、月）               |
+| 安全目标 | 加密通信恢复             | 用户认证授权                 |
+
+Session Ticket ≈ TLS 层的“会话钥匙”，客户端用它恢复加密连接。
+不是登录状态 token，不能直接用来识别用户身份。
+
+
+==================================================TLS 会话复用（session reuse） 和 HTTP/HTTPS 连接复用
+如果请求 https://aaa/A 成功后，再请求 https://aaa/B 这个相同域名的不同接口时，还会进行tls握手吗
+
+不会每次都重新完整握手。原因涉及 TLS 会话复用（session reuse） 和 HTTP/HTTPS 连接复用：
+1. TCP 连接复用（HTTP Keep-Alive / HTTP/2）
+HTTPS 基于 TCP + TLS。
+如果你第一次请求 https://aaa/A 建立了 TCP + TLS 连接，并且服务器允许 Keep-Alive（HTTP/1.1）或者你使用的是 HTTP/2/3，那么连接不会立即关闭。
+在这个已经建立好的连接上，你可以直接发送第二个请求 https://aaa/B，无需再次进行 TLS 握手，因为共享的会话密钥已经存在。
+
+HTTP/1.1: Keep-Alive
+
+HTTP/2: // HTTP/2 在应用层引入了 Stream 概念，每个请求/响应对都绑定一个 Stream ID。
+HTTP/2 的数据不是“整块请求/响应”一次性发送，而是被拆分为 帧（Frame）。
+每个帧都有一个头部，里面标识了它属于哪个 Stream ID。
+因此在一个 TCP 连接里，可能先到达：
+Stream 1: Frame A1
+Stream 3: Frame B1
+Stream 1: Frame A2
+Stream 5: Frame C1
+Stream 3: Frame B2
+只要帧头上写明 Stream ID，接收方就能把它们重新组装回对应的请求/响应。
+基于 TCP:
+HTTP/2 仍然依赖 TCP 连接（通常是 HTTPS → TCP + TLS）。
+多路复用（Multiplexing）:
+##########
+在 同一个 TCP + TLS 连接上，HTTP/2 可以同时发起多个请求，每个请求对应一个 Stream ID。
+每个 stream 的数据包在应用层逻辑上是独立的，可以交错发送。
+浏览器或客户端会根据 stream ID 重新组装响应数据。
+
+响应先后顺序：
+假设请求 A 和 B 都发出：
+A 请求对应的响应数据很大，或者服务器处理慢。
+B 请求对应的响应小，或者服务器处理快。
+结果：B 的响应可以比 A 先到达客户端，即 后发请求先返回。
+这是 HTTP/2 多路复用的一个优势，也是 HTTP/1.1（同一连接、顺序发送）无法做到的。
+
+
+虽然 HTTP/2 可以多路复用，但底层 TCP 丢包仍会影响顺序：如果一个 TCP 包丢了，TCP 层会阻塞后续数据的交付，但 HTTP/2 会尽量拆分数据帧，减少对其他 stream 的影响。
+HTTP/3 完全解决了 TCP 层队头阻塞，保证每个 stream 独立传输。
+
+
+#####
+实际例子：
+HTTP/2 同一 TCP 连接上，先发送请求 A，过 10 秒才发送请求 B，但发送 B 时，A 的响应未全部完成。
+
+应用层（HTTP/2）
+请求 A 发送时，客户端在 TCP 连接上发送 A 的请求帧。
+服务器开始处理 A，并逐步返回响应帧。
+10 秒后再发送请求 B：
+      客户端把 B 的请求帧发送到同一个 TCP 连接上。
+      HTTP/2 允许 不同 stream 的帧交错，所以 A 的响应还在传输中，B 的请求可以直接插入。
+
+TCP 层
+TCP 是字节流，按发送顺序传输。
+如果 10 秒内 A 的响应已经发送了一部分，B 的请求帧发送时会继续在 TCP 字节流中排队。
+没有丢包：
+      B 的请求帧会紧跟 A 后发送。
+      接收端根据 HTTP/2 的 stream ID 可以识别 B 请求并开始处理。
+如果中间发生丢包：
+      TCP 队头阻塞可能会让 B 的请求延迟交付到服务器
+#####
+
+
+##########
+
+
+不再像 HTTP/1.1 那样需要每个请求排队，或者为了并行请求开多个 TCP 连接。
+#####
+HTTP/2: TCP 队头阻塞仍存在
+
+HTTP/2 的多路复用：
+HTTP/2 可以在同一个 TCP 连接上同时发送多个请求和响应（不同 stream），互不阻塞。
+优点：请求 A 的响应慢，不会阻塞请求 B 的发送，解决了 HTTP/1.1 的队头阻塞（Head-of-line blocking）问题。
+但 TCP 层的队头阻塞仍然存在：
+虽然 HTTP/2 在 应用层实现了多路复用，但底层 TCP 是顺序可靠传输：
+#####TCP 传输数据是 有序的，如果某个 TCP 包丢了，TCP 会 阻塞后续数据包的交付，直到丢失的包重传成功。#####
+也就是说，即便 HTTP/2 的 stream 可以并行发送，底层 TCP 的丢包仍会造成整体延迟增加。
+
+这就是为什么说 “HTTP/2 多路复用解决了应用层队头阻塞，但 TCP 层仍存在队头阻塞”。
+#####
+
+
+HTTP/3:
+基于 QUIC（UDP）:
+HTTP/3 不再依赖 TCP，而是使用 QUIC 协议（UDP + 自己实现的可靠传输和加密）。
+QUIC 自带加密，类似 TLS 1.3，但握手更快，集成了加密和传输层握手。// 它用 TLS 1.3 的加密算法和握手逻辑，但不是独立 TLS 层。QUIC 不是外部 TLS 层，而是把 TLS 1.3 握手逻辑直接嵌入在自己的协议里
+#####
+QUIC 在设计时 直接在传输层（UDP）实现了加密和认证，不像 TCP+TLS 那样分层。
+#####
+多路复用天然支持:
+QUIC 本身可以在一个连接上同时传输多个请求/响应 stream，天然解决了 HTTP/2 的 “队头阻塞（Head-of-line blocking）” 问题。
+连接复用 & 快速重连:
+QUIC 支持 0-RTT（零往返时间）恢复会话，第二次请求同一个服务器几乎可以立即发送数据。
+
+
+2. TLS 会话复用（Session Resumption）
+即使之前的连接已经关闭，客户端也可能缓存上一次 TLS 会话信息（session ticket 或 session ID）。
+当再次请求同一个域名时，可以通过 TLS Session Resumption：
+Session ID：客户端告诉服务器自己有上一次的会话 ID，服务器验证后直接使用原来的密钥进行快速握手。
+Session Ticket：服务器给客户端一个加密的 ticket，下次客户端发送 ticket，服务器解密后直接恢复会话密钥。
+这种方式比完全握手快很多，不用重新进行公钥运算，但仍然是一次“握手流程”，只是轻量化。
+
+
+
+HTTP/1.1
+协议规定：默认开启 Connection: keep-alive（除非显式 Connection: close）。
+超时时间由服务器决定
+客户端如果在超时之前再次使用这个 TCP 连接，连接就复用；否则服务器会关闭。
+HTTP/1.1 → 默认 keep-alive，超时时间常见 5s（Apache）到 75s（Nginx）不等。// Connection: keep-alive 是一种告知双方可以复用 TCP 连接的机制
+HTTP/2/3 → 没有单独的 keep-alive 字段，连接由协议机制和服务器配置控制，通常几十秒。
+HTTP/2
+复用特性比 Keep-Alive 更强，不再依赖单个请求的 Connection: keep-alive。// 规范上要求 不能再发送 Connection: keep-alive 头，因为它属于 HTTP/1.x 的控制机制，在 HTTP/2/3 中无意义。
+实际上，HTTP/2 的连接生命周期也由服务器配置（例如 maxConcurrentStreams、maxConnectionAge 等）。
+HTTP/3 (QUIC)
+使用 QUIC 的 idle timeout 来决定连接空闲多久关闭，通常 30 秒左右（Chrome、nginx-quic、Cloudflare 都是这个量级）。
+
+实际应用中的经验：
+浏览器一般不会自己关掉 Keep-Alive，而是遵循服务器的超时设置。
+如果你访问一个网站，发一个请求后停 1 分钟，再发另一个请求，很可能发现连接已经断了（因为超过了服务器设置的 keep-alive 超时）。
+
+
+
+==================================================HTTP/2 的多路复用机制可以交错发送
+总结：HTTP/2 的多路复用逻辑全在应用层实现，TCP 只负责单纯的顺序可靠传输。
+应用层（HTTP/2 协议栈） 会把每个请求/响应的数据拆成若干 frame（帧），每个 frame 都带有一个 stream ID。
+比如请求 A 拆成 A-frame1、A-frame2；请求 B 拆成 B-frame1、B-frame2。
+HTTP/2 可以交错发送不同 stream 的 frame，比如 [A-frame1][B-frame1][A-frame2][B-frame2]…。
+
+
+HTTP/2 AB 同时请求发送：
+#####
+HTTP/2 在 应用层把请求拆成 frames（帧），每个帧都有一个 stream ID。
+#####
+客户端可以在同一个 TCP 连接上 交错发送不同 stream 的帧：
+TCP Stream 数据：
+[A-frame1][B-frame1][A-frame2][B-frame2]...
+所以发送顺序不是严格按请求发完再发下一个，是按帧交错发送。
+
+
+TCP 层传输：
+TCP 是 字节流，保证 顺序和可靠。
+TCP 会把上面的交错帧切分为 TCP segments（数据包）发送。
+段的顺序：TCP 按发送顺序发包，但一旦丢包或重传，TCP 会阻塞 后续字节流，包括不同 stream 的帧。
+
+
+发生丢包：
+TCP 队头阻塞触发 → B 的帧也要等 A 的丢包段重传完成，才会交付应用层 → 后发先回优势减弱。
+没有丢包：
+A 和 B 的帧交错发出，B 的帧可以比 A 的后续帧先到达接收端 → 后发先回完全可能。
+
+
+应用层 HTTP/2：帧是交错发送的，不需要等 A 完全发完才能发 B。
+TCP 层：保证字节顺序，但可能因为丢包导致队头阻塞。
+
+
+
+另一个场景：
+请求 A：先发，响应已经全部发送完并被客户端接收。
+请求 B：10 秒后才发。
+TCP 连接：仍然保持（HTTP/2 同一连接）。
+这个情况下：
+TCP 层
+TCP 是顺序字节流，但 A 的响应已经全部交付给应用层。
+所以 TCP 的 发送/接收缓冲区已经空闲，没有任何未确认数据。
+B 的请求帧发送时直接进入 TCP 发送缓冲区，可以立即被发送到服务器。
+结论：不会存在 TCP 队头阻塞，因为前面没有未完成的字节流。
+只要前面的数据（A 的响应）已经完成并交付，TCP 队头阻塞就不存在了。
+B 的请求和响应可以像完全独立的请求一样处理
+
+
+==================================================应用层的队头阻塞 & TCP 层的队头阻塞
+（1）HTTP/2 多路复用的机制
+HTTP/2 将每个请求/响应划分为 frame（帧），不同 stream 的帧可以交错发送。
+客户端根据 stream ID 对帧重新组装响应。
+所以在 应用层，请求 B 的响应完全可以先于请求 A 返回，即“后发先回”是可能的。
+
+（2）TCP 层的队头阻塞原理：
+TCP 是 字节流（byte stream），保证 顺序可靠传输。
+如果一个 TCP segment 丢了，TCP 会等待这个 segment 重传，才会交付给应用层。
+换句话说，TCP 层的队头阻塞是针对字节流顺序的，不是针对 HTTP/2 的 stream。
+
+（3）对 AB 请求的例子：
+假设请求 A 的数据很大，分成很多帧，某个中间 segment 丢了。
+TCP 会阻塞 这个 TCP 连接上所有后续字节的交付，包括请求 B 的帧。
+结果：
+在 TCP 层：队头阻塞仍存在（因为 TCP 必须按顺序交付字节流）。
+在 HTTP/2 层：理论上 B 先返回的优势被 TCP 阻塞打了折扣。
+
+（4）所以 HTTP/2 的局限
+多路复用消除了应用层的队头阻塞（HTTP/1.1 那种单请求阻塞其他请求的问题）。// HTTP/1.1：应用层的队头阻塞
+TCP 层的队头阻塞仍可能影响 HTTP/2，尤其是一个 TCP segment 丢包或延迟时。// HTTP/2：TCP 层的队头阻塞
+HTTP/3 使用 QUIC（UDP） 彻底解决了这个问题，因为每个 stream 独立可靠传输。

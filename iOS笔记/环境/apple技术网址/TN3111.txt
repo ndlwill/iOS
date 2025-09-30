@@ -1,0 +1,167 @@
+TN: Technotes
+
+TN3111: iOS Wi-Fi API overview
+https://developer.apple.com/documentation/technotes/tn3111-ios-wifi-api-overview
+
+MFi 就是 Made for iPhone / iPad / iPod 的缩写，苹果的官方认证计划。
+MFi Program 是苹果对第三方硬件厂商、特定软件功能提供的认证和授权计划
+
+iOS does not have a general-purpose API for Wi-Fi scanning and configuration.
+Scanning（扫描） 指的是获取周围 Wi-Fi 列表（SSID、信号强度等）。
+Configuration（配置） 指的是对 Wi-Fi 网络进行配置和连接，例如：
+自动加入某个 Wi-Fi（指定 SSID、密码）
+设置 WPA2 / WPA3 凭证
+移除或更新某个 Wi-Fi 配置
+Apple 在 iOS 11 开放过 NEHotspotConfiguration API，允许 App（比如扫码连 Wi-Fi 的 App）把 Wi-Fi 配置写入系统 Wi-Fi 设置里，然后系统提示用户是否要连接。
+
+However, it does support a wide range of special-purpose Wi-Fi APIs.
+
+
+==================================================Navigate an internet hotspot
+If your app helps the user navigate an internet hotspot — 
+a Wi-Fi network where the user must interact with the network to gain access to the wider internet — adopt the Hotspot helper API.
+
+To use NEHotspotHelper you must first be granted a special entitlement (com.apple.developer.networking.HotspotHelper) by Apple. 
+For information on how to apply for this, see Hotspot helper.
+
+https://developer.apple.com/documentation/NetworkExtension/hotspot-helper
+
+
+Important
+NEHotspotHelper is only useful for hotspot integration. 
+There are both technical and business restrictions that prevent it from being used for other tasks, 
+such as accessory integration or Wi-Fi based location.
+
+iOS 26 introduced support for hotspot helper app extensions. 
+Adopt these to improve the efficiency, reliability, and privacy of your hotspot helper app.
+
+
+==================================================Add an accessory to the user’s network // 将配件添加到用户网络
+If you’re creating a hardware accessory and you want to make it easy for the user to add it to their local network, 
+your best option is to build your accessory with that in mind.
+Use one of these approaches:
+1. Wireless Accessory Configuration (WAC) — The user can configure a WAC-capable accessory directly in Settings. 
+Optionally, use EAWiFiUnconfiguredAccessoryBrowser to integrate accessory configuration directly in your app.
+https://developer.apple.com/documentation/ExternalAccessory/EAWiFiUnconfiguredAccessoryBrowser
+2. HomeKit — Call HMHome APIs like performAccessorySetup(using:completionHandler:) to ask the system to scan for, pair, and configure any unpaired HomeKit accessories .
+https://developer.apple.com/documentation/HomeKit/HMAccessorySetupManager/performAccessorySetup(using:completionHandler:)
+
+Important
+To add WAC or HomeKit support to your accessory, join the MFi Program.
+https://mfi.apple.com/
+
+If your accessory does not support WAC or HomeKit, 
+you can build an accessory configuration experience on top of NEHotspotConfigurationManager, 
+although this will not be as seamless as the WAC and HomeKit accessory experience. 
+For an example of how you might approach this, see Configuring a Wi-Fi accessory to join a network.
+https://developer.apple.com/documentation/NetworkExtension/configuring-a-wi-fi-accessory-to-join-a-network
+
+
+==================================================Temporarily join a network
+If your app needs to temporarily join a Wi-Fi network — for example, you want to interact with a Wi-Fi enabled accessory with its own independent network — use NEHotspotConfigurationManager and set joinOnce to true. 
+
+https://developer.apple.com/documentation/NetworkExtension/wi-fi-configuration
+
+If you’re working with a Wi-Fi accessory, use AccessorySetupKit to simplify discovery and configuration of your accessory.
+// iOS 18
+https://developer.apple.com/documentation/AccessorySetupKit
+
+
+==================================================Permanently join a network
+Some apps need to configure the iOS device to permanently join a Wi-Fi network, 
+as if the user had selected the network in Settings > Wi-Fi. For example, an app from an ISP might do this to get the user’s iOS device on to the Wi-Fi network published by a new DSL gateway that they’ve just installed. 
+If your app needs to do this, use NEHotspotConfigurationManager and set joinOnce to false. For more details, see Wi-Fi configuration.
+
+https://developer.apple.com/documentation/NetworkExtension/wi-fi-configuration
+
+
+==================================================Peer-to-peer（点对点） networking
+If your goal is to communicate with nearby devices and accessories without configuring a Wi-Fi network, you have two options:
+1. Wi-Fi Aware™ (also known as Neighbor Awareness Networking or NAN)
+2. Apple peer-to-peer Wi-Fi
+
+iOS introduced support for Wi-Fi Aware in iOS 26. It’s supported on iPhone 12 and later. See the Wi-Fi Aware framework documentation for more details.
+https://developer.apple.com/documentation/WiFiAware
+Wi-Fi Aware is an industry standard specification, opening up the possibility of communicating with non-Apple devices and accessories.
+
+Apple peer-to-peer Wi-Fi dates all the way back to iOS 7. 
+It works on all iOS, iPadOS, macOS, tvOS, and visionOS devices. 
+For information about networking APIs that support Apple peer-to-peer Wi-Fi, see TN3151: Choosing the right networking API.
+https://developer.apple.com/documentation/Technotes/tn3151-choosing-the-right-networking-api
+
+Note
+A common misconception is that Multipeer Connectivity is the only way to use Apple peer-to-peer Wi-Fi. 
+That’s not the case. See TN3151 for the full story.
+
+Apple peer-to-peer Wi-Fi is not documented for third-party use, so this mechanism only works between Apple devices.
+
+https://developer.apple.com/documentation/Technotes/tn3151-choosing-the-right-networking-api
+Peer-to-peer networking：
+Peer-to-peer Wi-Fi allows you to communicate with a service on another local device even if that device is #####not on the same network#####. 
+Network framework supports peer-to-peer Wi-Fi, but you must opt in to it. 
+To do that, set the includePeerToPeer property (nw_parameters_set_include_peer_to_peer in C) of the parameters object you use to create your connection and listener objects.
+
+苹果官方这句话里的 “not on the same network”，指的并不是“完全不在一个局域网”，而是说 不需要依赖一个已有的 Wi-Fi 基础设施（AP/路由器）。
+换句话说：
+普通 Wi-Fi 通信：两个设备要在同一个 Wi-Fi 路由器下（同一个局域网），才能互相通信。
+Peer-to-Peer Wi-Fi (Wi-Fi Direct)：两个设备可以直接通过 Wi-Fi 建立点对点连接，即使它们不在同一个路由器/局域网下，也能互通。
+举个例子：
+你和朋友的 iPhone 都开着 AirDrop。
+即使你们一个连着家里的 Wi-Fi，另一个连着 4G，设备之间仍然能通过 Wi-Fi Direct（点对点 Wi-Fi） 建立直接连接，实现文件传输。
+所以，苹果的意思是：
+不需要依赖同一个 Wi-Fi 网络环境（局域网/路由器），设备之间也能互联。
+
+
+==================================================Location tracking
+If you’d like to use Wi-Fi data to determine the device’s location, use Core Location. 
+This locates the device using a wide variety of techniques, including Wi-Fi. For more information, see Maps and Location.
+https://developer.apple.com/maps/
+
+
+==================================================Current Wi-Fi network
+If you need to know the name of the device’s current Wi-Fi network, call fetchCurrent(completionHandler:). 
+https://developer.apple.com/documentation/NetworkExtension/NEHotspotNetwork/fetchCurrent(completionHandler:)
+That method requires iOS 14 or later. On older systems, call CNCopyCurrentNetworkInfo.
+https://developer.apple.com/documentation/systemconfiguration/1614126-cncopycurrentnetworkinfo
+
+
+==================================================WPA
+
+WPA2 / WPA3 是 Wi-Fi 的安全协议，用来加密数据和验证身份。
+最常见的就是 WPA2-Personal (WPA2-PSK) → 用户输入密码就能连。 // PSK 的全称是 Pre-Shared Key，意思是 预共享密钥。PSK 模式 → 一把大家共享的钥匙（简单，常见）。
+新的路由器开始支持 WPA3-Personal，更安全。
+企业环境会用 WPA2-Enterprise / WPA3-Enterprise → 需要证书、用户名/密码（EAP 认证）。
+
+
+它是 Wi-Fi 联盟制定的无线网络安全标准，用来替代早期的 WEP (Wired Equivalent Privacy，有线等效保密)。
+演进过程大致是：
+WEP → 最早的 Wi-Fi 加密方式，后来被发现很不安全。
+WPA (Wi-Fi Protected Access, Wi-Fi 保护访问) → 临时过渡方案，提升了加密强度。
+WPA2 → 基于 AES 的更安全版本，使用多年，是最常见的。
+WPA3 → 最新标准，更强的安全性（比如防止暴力破解）。
+
+
+==================================================Multipeer Connectivity（MPC）
+Apple 的 Multipeer Connectivity（MPC） 框架在 iOS/macOS 上的点对点通信，底层就是基于 Wi-Fi Direct（Peer-to-Peer Wi-Fi）、蓝牙和本地网络的组合实现的
+
+具体来说：
+1. 点对点 Wi-Fi（Wi-Fi Direct）
+当两台设备在同一个局域网外时，MPC 可以通过 Wi-Fi Direct 建立高速点对点连接。
+这是 Multipeer Connectivity 性能最高的传输方式，适合大文件传输。
+2. 蓝牙
+如果 Wi-Fi Direct 不可用或设备距离较近，MPC 可以通过蓝牙 LE 建立连接。
+速度比 Wi-Fi 慢，但低功耗，适合小数据传输。
+3. 本地 Wi-Fi 网络
+如果两台设备在同一个 Wi-Fi 网络下，MPC 会优先使用局域网传输。
+缺点：
+如果网络拥堵，或者路由器性能有限，速率可能下降。
+“网络拥堵” 可能因为：
+多设备竞争信道：
+路由器和 Wi-Fi 设备共享同一个无线信道（比如 2.4GHz 的信道 1）。
+如果很多设备同时在同一个信道上通信，每个设备分到的带宽就会下降。
+类似 一条高速公路上车太多，每辆车都慢下来。
+
+
+总结：
+MPC 是多通道自适应的：Wi-Fi Direct + 蓝牙 + 局域网。
+Wi-Fi Direct 是它的核心 P2P 技术之一，确保设备即使不在同一个路由器下也能通信。

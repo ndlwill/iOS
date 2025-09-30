@@ -1,0 +1,647 @@
+https://www.avanderlee.com/swift/property-wrappers/
+
+#####
+Property Wrappers in Swift enable you to extract common logic into a separate wrapper object. // Swift 中的属性包装器 (Property Wrappers) 功能允许您将通用逻辑提取到单独的包装器对象中。
+available since Swift 5
+this feature is a useful addition to the Swift library that helps eliminate much of the boilerplate code we often write in our projects.
+
+https://github.com/DougGregor/swift-evolution/blob/property-wrappers/proposals/0258-property-wrappers.md
+#####
+
+
+==================================================What is a Property Wrapper?
+#####
+You can see a property wrapper as an additional layer that defines how a variable is stored or computed on reading. 
+It’s beneficial for replacing repetitive code found in getters and setters of properties.
+#####
+
+A typical example is a custom-defined user default property in which a custom getter and setter transform the value accordingly.
+extension UserDefaults {
+    @UserDefault(key: "has_seen_app_introduction", defaultValue: false)
+    static var hasSeenAppIntroduction: Bool
+}
+
+The @UserDefault statement is a call into the property wrapper. // @UserDefault 语句是对属性包装器的调用。
+we can provide a few configuration parameters.
+There are several ways to interact with a property wrapper, like using the wrapped value and the projected value.
+
+
+==================================================A UserDefaults example
+It creates a wrapper around the UserDefaults object to make properties accessible without having to paste the string keys everywhere throughout your project.
+
+extension UserDefaults {
+
+    public enum Keys {
+        static let hasSeenAppIntroduction = "has_seen_app_introduction"
+    }
+
+    /// Indicates whether or not the user has seen the onboarding.
+    var hasSeenAppIntroduction: Bool {
+        set {
+            set(newValue, forKey: Keys.hasSeenAppIntroduction)
+        }
+        get {
+            return bool(forKey: Keys.hasSeenAppIntroduction)
+        }
+    }
+}
+
+It allows you to set and get values from the user defaults from anywhere as follows:
+UserDefaults.standard.hasSeenAppIntroduction = true
+
+guard !UserDefaults.standard.hasSeenAppIntroduction else { return }
+
+Now, as this seems to be a great solution, it could quickly end up being a large file with many defined keys and properties.
+The code is repetitive and could be made easier. 
+A custom property wrapper using the @propertyWrapper keyword can help us solve this problem.
+
+
+==================================================How to create a property wrapper
+we have to create a new property wrapper, which we will call UserDefault.
+Doing so eventually allows us to define a property as being a user default property.
+
+Note: If you’re using SwiftUI, you should use the AppStorage property wrapper instead. 
+Take this just as an example of replacing repetitive code.
+
+#####
+You can create a Property Wrapper by defining a struct and marking it with the @propertyWrapper attribute. 
+The attribute requires adding a wrappedValue property to provide a return value at the implementation level.
+#####
+
+@propertyWrapper
+struct UserDefault<Value> {
+    let key: String
+    let defaultValue: Value
+    var container: UserDefaults = .standard
+
+    var wrappedValue: Value {
+        get {
+            return container.object(forKey: key) as? Value ?? defaultValue
+        }
+        set {
+            container.set(newValue, forKey: key)
+        }
+    }
+}
+
+the user defaults wrapper allows passing in a default value if there’s no registered value yet. 
+We can pass in any value since the wrapper is using a generic value Value.
+
+
+We can now change our previous code implementation and create the following extension on the UserDefaults type:
+extension UserDefaults {
+    @UserDefault(key: "has_seen_app_introduction", defaultValue: false)
+    static var hasSeenAppIntroduction: Bool
+}
+we can use the default generated struct initializer. We pass in the same key as before and set the default value to false.
+Using this new property is simple:
+UserDefaults.hasSeenAppIntroduction = false
+print(UserDefaults.hasSeenAppIntroduction) // Prints: false
+UserDefaults.hasSeenAppIntroduction = true
+print(UserDefaults.hasSeenAppIntroduction) // Prints: true
+
+In some cases, you might want to define your custom user defaults.
+For example, in cases where you have an app group defined user defaults. 
+Our illustrated wrapper defaults to the standard user defaults, but you can override this to use your container:
+extension UserDefaults {
+    static let groupUserDefaults = UserDefaults(suiteName: "group.com.swiftlee.app")!
+
+    @UserDefault(key: "has_seen_app_introduction", defaultValue: false, container: .groupUserDefaults)
+    static var hasSeenAppIntroduction: Bool
+}
+
+
+Storing optionals:
+A common issue you can run into when using property wrappers is that the generic value either allows you to define all optionals or all unwrapped values. 
+There’s a common technique found in the community to deal with this, which makes use of a custom-defined AnyOptional protocol:
+/// Allows to match for optionals with generics that are defined as non-optional.
+public protocol AnyOptional {
+    /// Returns `true` if `nil`, otherwise `false`.
+    var isNil: Bool { get }
+}
+
+extension Optional: AnyOptional {
+    public var isNil: Bool { self == nil }
+}
+
+We can extend our UserDefault instance for cases where the Value conforms to the ExpressibleByNilLiteral. 
+In other words, when the value is an optional:
+extension UserDefault where Value: ExpressibleByNilLiteral {
+    
+    /// Creates a new User Defaults property wrapper for the given key.
+    /// - Parameters:
+    ///   - key: The key to use with the user defaults store.
+    init(key: String, _ container: UserDefaults = .standard) {
+        self.init(key: key, defaultValue: nil, container: container)
+    }
+}
+
+This extension creates an additional initializer that removes the requirement of defining a default value and allows working with optionals.
+
+Lastly, we need to adjust our wrapper value setter to allow removing objects from the user defaults when the value is nil:
+@propertyWrapper
+struct UserDefault<Value> {
+    let key: String
+    let defaultValue: Value
+    var container: UserDefaults = .standard
+
+    var wrappedValue: Value {
+        get {
+            return container.object(forKey: key) as? Value ?? defaultValue
+        }
+        set {
+            // Check whether we're dealing with an optional and remove the object if the new value is nil.
+            if let optional = newValue as? AnyOptional, optional.isNil {
+                container.removeObject(forKey: key)
+            } else {
+                container.set(newValue, forKey: key)
+            }
+        }
+    }
+
+    var projectedValue: Bool {
+        return true
+    }
+}
+
+This now allows us to define optionals and set values to nil:
+extension UserDefaults {
+
+    @UserDefault(key: "year_of_birth")
+    static var yearOfBirth: Int?
+}
+
+UserDefaults.yearOfBirth = 1990
+print(UserDefaults.yearOfBirth) // Prints: 1990
+UserDefaults.yearOfBirth = nil
+print(UserDefaults.yearOfBirth) // Prints: nil
+
+
+#####
+We can now handle most scenarios with the user defaults wrapper. 
+The last thing to add is a projected value, which we can convert to a Combine publisher, just like the @Published property wrapper.
+#####
+
+
+==================================================Projecting a Value From a Property Wrapper
+#####
+Property wrappers can add another property besides the wrapped value, which is called the projected value. // 属性包装器除了包装值之外，还可以添加另一个属性，称为投影值。
+This allows us to project another value based on the wrapped value. 
+A typical example is to define a Combine publisher so that we can observe changes when they occur.
+#####
+
+To achieve this with our user defaults instance, we need to add a publisher that serves as a passthrough subject. 
+It’s all in the name: it will simply pass through value changes. The implementation looks as follows:
+
+import Combine
+
+@propertyWrapper
+struct UserDefault<Value> {
+    let key: String
+    let defaultValue: Value
+    var container: UserDefaults = .standard
+    private let publisher = PassthroughSubject<Value, Never>()
+    
+    var wrappedValue: Value {
+        get {
+            return container.object(forKey: key) as? Value ?? defaultValue
+        }
+        set {
+            // Check whether we're dealing with an optional and remove the object if the new value is nil.
+            if let optional = newValue as? AnyOptional, optional.isNil {
+                container.removeObject(forKey: key)
+            } else {
+                container.set(newValue, forKey: key)
+            }
+            publisher.send(newValue)
+        }
+    }
+
+    var projectedValue: AnyPublisher<Value, Never> {
+        return publisher.eraseToAnyPublisher()
+    }
+} 
+
+We can now start observing changes to our property as follows:
+let subscription = UserDefaults.$username.sink { username in
+    print("New username: \(username)")
+}
+UserDefaults.username = "Test"
+// Prints: New username: Test 
+
+
+==================================================Accessing private defined properties
+A private defined property can be accessed by using an underscore prefix. 
+This allows us to access the private property key from our user defaults property wrapper:
+extension UserDefaults {
+    static func printKey() {
+        print(_yearOfBirth.key) // Prints "year_of_birth"
+    }
+}
+
+One idea could be to access the property wrapper’s enclosing instance, which will have the added benefit of accessing private defined properties from external framework modules.
+
+A better alternative for accessing all variables:
+By using the projected value of a property wrapper, we can define public access to all defined properties on a wrapper. 
+We can do this by returning the wrapper instance itself as follows:
+@propertyWrapper
+struct UserDefault<Value> {
+    let key: String
+    let defaultValue: Value
+    var container: UserDefaults = .standard
+
+    var wrappedValue: Value {
+        get {
+            return container.object(forKey: key) as? Value ?? defaultValue
+        }
+        set {
+            container.set(newValue, forKey: key)
+        }
+    }
+
+    var projectedValue: UserDefault<Value> {
+        self
+    }
+}
+The projected value is now returning the user default structure with the generic type value. Its usage looks as follows:
+extension UserDefaults {
+    static func printPrivateProperties() {
+        // Through underscore
+        print(_hasSeenAppIntroduction.key)
+
+        // Through projected value
+        print($hasSeenAppIntroduction.key)
+    }
+}
+
+
+==================================================Accessing a property wrapper’s enclosing instance
+Using a custom static subscript, you’ll be able to access the property wrapper’s enclosing instance that defined the specific property wrapper. // 使用自定义静态下标，您将能够访问定义特定属性包装器的属性包装器的封闭实例
+This can lead to exciting use cases in which you can share the same underlying instance properties for each defined wrapper.
+
+For example, we could define a preferences class that represents a single user defaults container:
+final class Preferences {
+    let container = UserDefaults(suiteName: "group.com.swiftlee.app")!
+
+    @UserDefault(key: "has_seen_app_introduction", defaultValue: false)
+    var hasSeenAppIntroduction: Bool
+}
+#####
+we no longer defined the container in our user default property wrapper initializer.
+#####
+
+To still give access to the correct container, we can add a static subscript to our wrapper definition:
+struct UserDefault<Value> {
+    let key: String
+    let defaultValue: Value
+
+    @available(*, unavailable)
+    var wrappedValue: Value {
+        get { fatalError("This wrapper only works on instance properties of classes") }
+        set { fatalError("This wrapper only works on instance properties of classes") }
+    }
+
+    // private api
+    // Apple 官方文档里把这个叫 EnclosingSelf subscript support for property wrappers，是在 Swift 5.1 之后引入的
+    // enclosingInstance 下标,可以拿到 Preferences 实例，所以能访问 container 这种外部依赖。
+    static subscript( 
+        _enclosingInstance instance: Preferences,
+        wrapped wrappedKeyPath: ReferenceWritableKeyPath<Preferences, Value>,
+        storage storageKeyPath: ReferenceWritableKeyPath<Preferences, Self>
+    ) -> Value {
+        get {
+            let propertyWrapper = instance[keyPath: storageKeyPath]
+            let key = propertyWrapper.key
+            let defaultValue = propertyWrapper.defaultValue
+            return instance.container.object(forKey: key) as? Value ?? defaultValue
+        }
+        set {
+            let propertyWrapper = instance[keyPath: storageKeyPath]
+            let key = propertyWrapper.key
+            instance.container.set(newValue, forKey: key)
+        }
+    }
+}
+
+它的目的就是：让包装器能访问宿主对象（这里是 Preferences），所以你才能在 subscript 里用到 instance.container
+
+跟普通的 @propertyWrapper 一样用：
+let prefs = Preferences()
+
+// 读取时会触发 subscript 的 get
+print(prefs.hasSeenAppIntroduction)   // false（如果 UserDefaults 没有值）
+
+// 写入时会触发 subscript 的 set
+prefs.hasSeenAppIntroduction = true
+
+// 再次读取，会从 UserDefaults 拿到 true
+print(prefs.hasSeenAppIntroduction)   // true
+
+你不需要直接调用这个下标，Swift 编译器会自动把
+prefs.hasSeenAppIntroduction
+转发成
+Preferences.UserDefault[
+    _enclosingInstance: prefs,
+    wrapped: \.hasSeenAppIntroduction,
+    storage: \._hasSeenAppIntroduction
+]
+
+
+底层机制：
+Swift 编译器看到这种 static subscript(_enclosingInstance:wrapped:storage:) 时，会做语法糖展开：
+// 原始代码
+prefs.hasSeenAppIntroduction = true
+
+// 编译器自动展开成
+Preferences.UserDefault[
+    _enclosingInstance: prefs,
+    wrapped: \Preferences.hasSeenAppIntroduction,
+    storage: \Preferences._hasSeenAppIntroduction
+] = true
+
+
+#####这就是为什么你写 prefs.hasSeenAppIntroduction，实际上调用的就是 UserDefault 里的 static subscript
+正常的属性包装器只会生成一个 _xx 存储和一个 xx 计算属性（wrappedValue），但是如果包装器里声明了：
+static subscript(
+  _enclosingInstance: EnclosingSelf,
+  wrapped wrappedKeyPath: ReferenceWritableKeyPath<EnclosingSelf, Value>,
+  storage storageKeyPath: ReferenceWritableKeyPath<EnclosingSelf, Self>
+) -> Value
+编译器就会选择 用这个 subscript 来合成 getter/setter，而不是用 wrappedValue
+#####
+
+
+#####
+The static subscript allows us to access both the property wrapper container and the enclosing instance that defined the variable with the user defaults wrapper attribute. 
+In other words, it gives us access to the UserDefault struct, as well as to the Preferences class. // 换句话说，它允许我们访问 UserDefault 结构体以及 Preferences 类。
+#####
+
+By combining these, we can rewrite our user defaults wrapper to use the container as defined on the Preferences instance. 
+This is a great way to reuse the same underlying user defaults container for each wrapper.
+
+
+==================================================Attaching Property Wrappers to function and closure parameters
+You can also use Property Wrappers with function or closure parameters
+The following example demonstrates a wrapper for debugging purposes:
+@propertyWrapper
+struct Debuggable<Value> {
+    private var value: Value
+    private let description: String
+
+    init(wrappedValue: Value, description: String = "") {
+        print("Initialized '\(description)' with value \(wrappedValue)")
+        self.value = wrappedValue
+        self.description = description
+    }
+
+    var wrappedValue: Value {
+        get {
+            print("Accessing '\(description)', returning: \(value)")
+            return value
+        }
+        set {
+            print("Updating '\(description)', newValue: \(newValue)")
+            value = newValue
+        }
+    }
+}
+A log will appear whenever the property is accessed or updated, while we can also add a breakpoint for enhanced debugging.
+
+As an example, we could add this wrapper to the function argument duration in the following animation example:
+func runAnimation(@Debuggable(description: "Duration") withDuration duration: Double) {
+    UIView.animate(withDuration: duration) {
+        // ..
+    }
+}
+
+runAnimation(withDuration: 2.0)
+
+// Prints:
+// Initialized 'Duration' with value 2.0
+// Accessing 'Duration', returning: 2.0
+
+
+you can use the same wrapper within closures:
+struct Article {
+    let title: String
+}
+
+let articleFactory: (String) -> Article = { (@Debuggable(description: "Closure debug") title) in
+    return Article(title: title)
+}
+
+let article = articleFactory("Property Wrappers in Swift")
+
+// Prints:
+// Initialized 'Closure debug' with value Property Wrappers in Swift
+// Accessing 'Closure debug', returning: Property Wrappers in Swift
+
+The description inside the property wrapper initializer helps you identify which part of the code you’re running.
+
+
+==================================================Other usage examples
+Defining Sample Files using a property wrapper:
+@propertyWrapper
+struct SampleFile {
+
+    let fileName: String
+
+    var wrappedValue: URL {
+        let file = fileName.split(separator: ".").first!
+        let fileExtension = fileName.split(separator: ".").last!
+        let url = Bundle.main.url(forResource: String(file), withExtension: String(fileExtension))!
+        return url
+    }
+
+    var projectedValue: String {
+        return fileName
+    }
+}
+We can use this wrapper to define our sample files which we might want to use for debugging or while running tests:
+struct SampleFiles {
+    @SampleFile(fileName: "sample-image.png")
+    static var image: URL
+}
+The projectedValue property allows us to read out the file name as used in the property wrapper:
+print(SampleFiles.image) // Prints: "../resources/sample-image.png"
+print(SampleFiles.$image) // Prints: "sample-image.png"
+
+
+==================================================Property Wrappers vs. Macros
+While they can sometimes solve similar problems, they serve different purposes:
+1. Property Wrappers are designed specifically to add behavior to properties.
+They encapsulate logic like persistence, validation, or transformation in a reusable, declarative way. 
+Their scope is narrow: they only wrap individual properties, and their power comes from simplifying repetitive patterns related to stored values.
+
+2. Macros, on the other hand, operate at the syntax level.
+They allow you to generate or transform Swift code before compilation. // 它们允许您在编译之前生成或转换 Swift 代码
+This makes them much more powerful and flexible: you can create boilerplate, generate conformances, or apply transformations beyond just properties. 
+However, that power comes with increased complexity, and its use should be limited to situations where property wrappers or other abstractions are not expressive enough.
+
+#####
+In short, property wrappers are specialized, and macros are general-purpose.
+#####
+If you can solve your problem cleanly with a property wrapper, prefer it for its simplicity and readability. 
+If you need to affect broader parts of your code, macros are the tool for the job.
+
+
+==================================================Swift Concurrency and Property Wrappers
+You might have been adopting Property Wrappers over the years and finding yourself now migrating existing code to Swift Concurrency. 
+You’re trying to conform types to Sendable and you run into issues with property wrappers.
+
+Property wrappers require properties to be defined as a variable. // @propertyWrapper 修饰的属性 必须是 var
+Variables are mutable, and Strict Concurrency will start to complain about sendability. As an example, let’s make our sample file property wrapper conform to Sendable:
+@propertyWrapper
+struct SampleFile: Sendable {
+
+    let fileName: String
+
+    var wrappedValue: URL {
+        let file = fileName.split(separator: ".").first!
+        let fileExtension = fileName.split(separator: ".").last!
+        let url = Bundle.main.url(forResource: String(file), withExtension: String(fileExtension))!
+        return url
+    }
+
+    var projectedValue: String {
+        return fileName
+    }
+}
+
+
+为什么必须是 var？
+属性包装器的核心是 wrappedValue，它通常是一个 计算属性，背后还会生成 getter/setter。
+Swift 编译器要求：
+必须声明为 var，即使你的包装器 wrappedValue 是只读的。
+这样才能保证编译器能生成对应的 getter（和可能的 setter）。
+
+
+struct SampleFiles {
+    @SampleFile(fileName: "sample-image.png")
+    static var image: URL 
+}
+You might think we’re all good now. There are no mutable members on the property wrapper, so everything’s safe. 
+However, we will run into the following compilation error when using the sample file wrapper:
+// Property Wrappers don’t go well together with Strict Concurrency and Sendable support.
+
+We would need to change the var into a let to solve this compilation error, 
+but that’s not possible when using the property wrapper as we would get a compilation error: “Property wrapper can only be applied to a ‘var'”.
+
+At this point, I gave up and decided to go for nonisolated(unsafe) as a rescue path, but even that is not possible:
+‘nonisolated’ is not supported on properties with property wrappers
+
+It looks like, at this point, there’s no way to properly use Property Wrappers with Sendable when strict concurrency and Swift 6 are enabled.
+https://forums.swift.org/t/static-property-wrappers-and-strict-concurrency-in-5-10/70116/30
+
+
+==================================================Swift 编译器为属性包装器生成的 合成存储属性 _xx
+
+@propertyWrapper
+struct Clamped<Value: Comparable> {
+    private var value: Value
+    let range: ClosedRange<Value>
+
+    init(wrappedValue: Value, _ range: ClosedRange<Value>) {
+        self.value = min(max(wrappedValue, range.lowerBound), range.upperBound)
+        self.range = range
+    }
+
+    var wrappedValue: Value {
+        get { value }
+        set { value = min(max(newValue, range.lowerBound), range.upperBound) }
+    }
+}
+
+struct Test {
+    @Clamped(0...10) var score = 5
+}
+
+编译器实际上会生成类似这样的存储：
+
+struct Test {
+    // 这个是合成出来的“底层存储属性”，名字带 `_`
+    private var _score = Clamped(wrappedValue: 5, 0...10)
+
+    // 这个是我们用的对外暴露的属性
+    var score: Int {
+        get { _score.wrappedValue }
+        set { _score.wrappedValue = newValue }
+    }
+}
+
+_score 这种带下划线的是 编译器自动合成的 backing storage。
+你写 @SomeWrapper var property 时，Swift 会生成一个 _property 用来真正存储包装器实例。
+property 本身只是访问 wrappedValue 的语法糖。
+如果包装器声明了 projectedValue，你还可以用 $property 来访问。
+
+_xx：存放包装器实例（自动生成）。
+xx：访问包装器的 wrappedValue。
+$xx：访问包装器的 projectedValue（如果有）。
+
+wrappedValue → 必须有（包装的核心值）。
+projectedValue → 可选
+
+projectedValue 常见用法：
+1. 暴露辅助信息
+例如包装验证规则，$xx 返回是否校验通过。
+2. 提供额外接口
+SwiftUI 里的 @State 就是一个例子：
+wrappedValue = 值本身
+projectedValue = Binding<Value>，这样外部可以用 $state 拿到绑定对象。
+
+
+模仿 @State:
+import SwiftUI
+
+@propertyWrapper
+struct MyState<Value>: DynamicProperty {
+    private var value: Value
+
+    init(wrappedValue: Value) {
+        self.value = wrappedValue
+    }
+
+    // 必须实现 wrappedValue
+    var wrappedValue: Value {
+        get { value }
+        nonmutating set { value = newValue }
+    }
+
+    // projectedValue 可以是任意类型，这里模仿 SwiftUI 返回 Binding
+    var projectedValue: Binding<Value> {
+        Binding(
+            get: { self.value },
+            set: { self.value = $0 }
+        )
+    }
+}
+
+struct ContentView: View {
+    @MyState var count = 0   // wrappedValue = Int
+
+    var body: some View {
+        VStack {
+            Text("Count: \(count)")
+
+            // 直接修改 wrappedValue
+            Button("Increase") {
+                count += 1
+            }
+
+            // 这里用 $count，它的类型是 Binding<Int>
+            Stepper("Stepper", value: $count)
+        }
+    }
+}
+
+
+nonmutating set:
+在 Swift 里，set 本质上是一个 方法。
+而对 结构体（struct） 来说，方法默认是不能随便修改 self 的，除非标记为 mutating。
+
+nonmutating 是 mutating 的反义词，用在 属性包装器 里特别有用。
+#####
+属性包装器的 wrappedValue(包装值) 在很多场景下，编译器会把它放到 类 或者 引用语义的上下文里，这时 不需要修改 self
+#####
+Swift 提供了 nonmutating set 关键字，告诉编译器：
+“我在 setter 里不会修改整个包装器实例，只会修改我内部存的引用值。”

@@ -32,6 +32,26 @@ https://github.com/swiftlang/swift-evolution/blob/main/proposals/0390-noncopyabl
 可以 move 或 转移所有权
 调用结束后，原变量在调用者处不可再使用
 
+/*
+在 Swift 的 ownership system（所有权系统）里，~Copyable 表示这个类型 不是总是可复制 (non-copyable) 的。
+普通 struct 默认是 Copyable 的，也就是说你可以随意赋值、传参，它会隐式拷贝
+加了 ~Copyable 后，这个类型就变成 不可随意拷贝（move-only type）。也就是说，它更像 Rust 里的 move semantics 或者 C++ 里的 unique_ptr。
+这样 Swift 编译器就会强制你去管理值的唯一性和生命周期，避免像文件句柄这种系统资源被复制后多次关闭。
+
+一般是配合 consuming 使用的。
+consume 表示“消耗掉”某个值的所有权，把它的唯一所有权转移出来。之后你就不能再用原来的值了。
+如果没有 ~Copyable，编译器无法保证 f 在调用后就被“唯一消耗”，因为默认 struct 是 copyable 的，你可能偷偷拷贝一份继续用，这样就破坏了资源管理。
+
+典型场景就是 资源管理：
+文件句柄 (FileHandle)
+网络 socket
+GPU buffer
+Mutex/锁对象
+这些东西都应该有 唯一所有者，不能随便复制。否则可能导致二次释放、重复关闭、未定义行为。
+
+用 ~Copyable + consume，Swift 可以在编译期帮你防止这类错误。
+~Copyable 的作用是让类型成为 move-only，不能被随意复制。
+*/
 struct FileHandle: ~Copyable {
     var fd: Int
 }

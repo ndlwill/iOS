@@ -1,0 +1,62 @@
+早期 SwiftUI(iOS 13) 确实有 10 个子 view 的限制（因为 ViewBuilder.buildBlock 只有 10 个重载）
+@resultBuilder
+public struct ViewBuilder {
+    public static func buildBlock() -> EmptyView
+
+    public static func buildBlock<C0: View>(_ c0: C0) -> C0
+    public static func buildBlock<C0: View, C1: View>(_ c0: C0, _ c1: C1) -> TupleView<(C0, C1)>
+    ...
+    public static func buildBlock<C0: View, ..., C9: View>(_ c0: C0, ..., _ c9: C9) -> TupleView<(C0,...,C9)>
+}
+所以 VStack { Text("1"); ...; Text("11") } 会编译错误。
+
+
+实际可以突破限制：
+用 Group 包装
+用数组 + ForEach
+
+
+
+==================================================Swift Parameter Packs（Swift 参数包）
+当我们使用两个泛型时：
+func eachFirst<T1, T2>(_ item1: T1, _ item2: T2) -> (T1?, T2?)
+当我们使用三个泛型时：
+func eachFirst<T1, T2, T3>(_ item1: T1, _ item2: T2, _ item3: T3) -> (T1?, T2?, T3?)
+
+在 SwiftUI 框架中 buildBlock 函数竟然多达 10 个泛型：
+static func buildBlock<C0, C1, C2, C3, C4, C5, C6, C7, C8, C9>(_ c0: C0, _ c1: C1, _ c2: C2, _ c3: C3, _ c4: C4, _ c5: C5, _ c6: C6, _ c7: C7, _ c8: C8, _ c9: C9) -> TupleView<(C0, C1, C2, C3, C4, C5, C6, C7, C8, C9)> where C0: View, C1: View, C2: View, C3: View, C4: View, C5: View, C6: View, C7: View, C8: View, C9: View
+
+
+swift 为了解决这个问题，提出了 Swift Parameter Packs 的概念，简单来讲就是，可以用 each 关键字来代替那些重复的代码，使用 each 之后的 buildBlock 函数变为：
+static func buildBlock<each Content>(_ content: repeat each Content) -> TupleView<(repeat each Content)> where repeat each Content : View
+
+
+几个实用的例子:
+KeyPath 取值:
+
+有个用户类，然后我想要取其中的属性，并以元组的方式返回：
+class User {
+    let id: String
+    let name: String
+    let age: Int
+    init(id: String, name: String, age: Int) {
+        self.id = id
+        self.name = name
+        self.age = age
+    }
+}
+
+func valueAt(_ object: User, keyPath1: KeyPath<User, String>, keyPath2: KeyPath<User, String>, keyPath3: KeyPath<User, Int>) -> (String, String, Int) {
+    return (object[keyPath: keyPath1], object[keyPath: keyPath2], object[keyPath: keyPath3])
+}
+
+let user = User(id: "0", name: "iOS 新知", age: 1)
+print(valueAt(user, keyPath1: \.id, keyPath2: \.name, keyPath3: \.age))
+
+使用参数包的形式改一下：
+func valuesAt<T, each U>(_ subject: T, keyPaths keyPath: repeat KeyPath<T, each U>) -> (repeat each U) {
+    (repeat (subject[keyPath: each keyPath]))
+}
+
+valuesAt(user, keyPaths: \.id, \.name, \.age)
+后面的参数可以传任意多个，而且使用泛型之后不仅 User 可以调用，其他的类也能使用。

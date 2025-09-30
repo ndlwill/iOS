@@ -1,0 +1,197 @@
+https://www.avanderlee.com/swiftui/navigationlink-programmatically-binding/
+
+
+==================================================Using a NavigationLink inside a dynamic list
+import SwiftUI
+
+@main
+struct ListNavigationLinkApp: App {
+    var body: some Scene {
+        WindowGroup {
+            FavoritesView()
+        }
+    }
+}
+
+struct FavoritesView: View {
+
+    @ObservedObject var favoritesStore: FavoritesStore = .standard
+
+    var body: some View {
+        NavigationView {
+            List(favoritesStore.favorites, id: \.self) { favorite in
+                NavigationLink(favorite) {
+                    FavoriteDetailView(favorite: favorite)
+                }
+            }.navigationTitle("My Favorites")
+        }
+    }
+}
+
+struct FavoriteDetailView: View {
+
+    let favorite: String
+
+    var body: some View {
+        VStack {
+            Text("Opened favorite:")
+            Text(favorite)
+            Button("Remove from favorites") {
+                FavoritesStore.standard.remove(favorite)
+            }
+        }
+    }
+}
+
+final class FavoritesStore: ObservableObject {
+    static let standard = FavoritesStore()
+
+    @Published var favorites: [String] = ["Swift", "SwiftUI", "UIKit"]
+
+    func add(_ favorite: String) {
+        favorites.append(favorite)
+    }
+
+    func remove(_ favorite: String) {
+        favorites.removeAll(where: { $0 == favorite })
+    }
+}
+
+#####
+You can tap on an item that will trigger a favorite detail view. However, as soon as you press “Remove from favorites,” 
+you’ll notice that the favorites detail view is dismissed
+#####
+
+
+==================================================Programmatically pushing a view using NavigationLink
+iOS 16 api: NavigationStack、navigationDestination(for xxx)
+///     NavigationStack {
+///         List {
+///             NavigationLink("Mint", value: Color.mint)
+///             NavigationLink("Pink", value: Color.pink)
+///             NavigationLink("Teal", value: Color.teal)
+///         }
+///         .navigationDestination(for: Color.self) { color in // 期望实现类似这种 navigationDestination(for xxx)
+///             ColorDetail(color: color)
+///         }
+///         .navigationTitle("Colors")
+///     }
+
+
+(1)Pushing a view using a NavigationLink based on a Binding:
+#####
+The outcome solution is an API that allows pushing a new view based on an optional binding.
+A new favorite detail view will push whenever the binding updates to a favorite. 
+#####
+The outcome code looks as follows:
+
+struct FavoritesProgrammaticallyView: View {
+
+    @ObservedObject var favoritesStore: FavoritesStore = .standard
+
+    /// Store the favorite that has to be shown inside a detail view.
+    @State var selectedFavorite: String?
+
+    var body: some View {
+        NavigationView {
+            List(favoritesStore.favorites, id: \.self) { favorite in
+                Button(favorite) {
+
+                    /// Update `selectedFavorite` on tap.
+                    selectedFavorite = favorite
+                }.tint(Color.primary)
+            }.navigationTitle("My Favorites")
+
+                /// Whenever `selectedFavorite` is set, a new `FavoriteDetailView` is pushed.
+                .navigationDestination(for: $selectedFavorite) { favorite in
+                    FavoriteDetailView(favorite: favorite)
+                }
+        }
+    }
+}
+
+The above view lets you programmatically push a view onto the navigation stack. 
+Let’s go over the applied changes:
+1. A new state property selectedFavorite is added to store the favorite to show in a detailed view
+2. We replaced the NavigationLink inside the list with a button that updates the selected favorite
+3. The new navigation destination view modifier takes care of pushing Favorite detail views onto the screen
+
+
+#####
+Our view redraws whenever selectedFavorite becomes a non-optional view. 
+The view modifier triggers since it will find a wrapped favorite value, 
+and we can push the favorite detail view onto our stack.
+#####
+
+
+(2)Defining a new navigation stack modifier:
+struct NavigationStackModifier<Item, Destination: View>: ViewModifier {
+    let item: Binding<Item?>
+    let destination: (Item) -> Destination
+
+    func body(content: Content) -> some View {
+        content.background(NavigationLink(isActive: item.mappedToBool()) {
+            if let item = item.wrappedValue {
+                destination(item)
+            } else {
+                EmptyView()
+            }
+        } label: {
+            EmptyView()
+        })
+    }
+}
+
+public extension View {
+    func navigationDestination<Item, Destination: View>(
+        for binding: Binding<Item?>,
+        @ViewBuilder destination: @escaping (Item) -> Destination
+    ) -> some View {
+        self.modifier(NavigationStackModifier(item: binding, destination: destination))
+    }
+}
+
+A lot is going on in this code, so let’s go over it one by one:
+1. The NavigationStackModifier requires to be set up with an optional item provided by a binding and a destination @ViewBuilder to create the destination for the wrapped value
+2. The NavigationLink added as a background view modifier allows pushing a view while not taking any visual space // 添加为背景视图修饰符的 NavigationLink 允许推动视图而不占用任何视觉空间
+3. We’re making use of the isActive navigation variant that requires us to convert the binding into a boolean binding
+4. For convenience, we’ve created a view extension to make use of the new view modifier easily
+
+
+Converting a Binding<Wrapped?> to an optional is common practice when working with bindings in SwiftUI. 
+Such conversion can be helpful in cases you want to observe a binding value based on the boolean outcome.
+The code for converting to boolean looks as follows:
+
+public extension Binding where Value == Bool {
+    init<Wrapped>(bindingOptional: Binding<Wrapped?>) {
+        self.init(
+            get: {
+                bindingOptional.wrappedValue != nil
+            },
+            set: { newValue in
+                guard newValue == false else { return }
+
+                /// We only handle `false` booleans to set our optional to `nil`
+                /// as we can't handle `true` for restoring the previous value.
+                bindingOptional.wrappedValue = nil
+            }
+        )
+    }
+}
+
+extension Binding {
+    public func mappedToBool<Wrapped>() -> Binding<Bool> where Value == Wrapped? {
+        return Binding<Bool>(bindingOptional: self)
+    }
+}
+
+其实 Binding<Value> 本质上就是：
+struct Binding<Value> {
+    var get: () -> Value     // 取值
+    var set: (Value) -> Void // 改值
+}
+所以它不是拷贝数据，而是提供了一个访问器。
+这也解释了为什么修改 Binding 的值，会直接影响原始数据。
+
+
+The outcome allows you to open a detail view and adjust the dynamic list without popping the view
