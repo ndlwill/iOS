@@ -1,0 +1,111 @@
+https://www.donnywals.com/what-is-approachable-concurrency-in-xcode-26/
+
+Xcode 26 allows developers to opt-in to several of Swift 6.2’s features that will make concurrency more approachable to developers through a compiler setting called “Approachable Concurrency” or SWIFT_APPROACHABLE_CONCURRENCY.
+
+#####
+The exact settings that you see enabled under Swift Compiler - Upcoming Features will be different depending on your Swift Language Version. 
+If you’re using the Swift 6 Language Version, you will see everything except the following two settings set to Yes:
+Infer isolated conformances
+nonisolated(nonsending) By Default
+#####
+
+
+Enabling approachable concurrency in a Swift Package:
+Packages are a little bit more complex than Xcode projects.
+By default, a newly created package will use the Swift 6.2 toolchain and the Swift 6 language mode. 
+In practice, this will mean that most of approachable concurrency's features will be on by default. 
+There are two features that you'll need to enable manually though:
+swiftSettings: [
+  .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+  .enableUpcomingFeature("InferIsolatedConformances")
+]
+
+If you're using the Swift 5 language mode in your package, your swift settings should look a bit more like this:
+swiftSettings: [
+   .swiftLanguageMode(.v5),
+   .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+   .enableUpcomingFeature("InferIsolatedConformances"),
+   .enableUpcomingFeature("InferSendableFromCaptures"),
+   .enableUpcomingFeature("DisableOutwardActorInference"),
+   .enableUpcomingFeature("GlobalActorIsolatedTypesUsability"),
+]
+
+
+==================================================Which settings are part of approachable concurrency?
+1. Understanding nonisolated(nonsending) By Default:
+
+nonisolated(nonsending) func performAsync() async {}
+// 不受特定参与者隔离的限制。 
+nonisolated: Not tied to a specific actor's isolation 表示performAsync在哪（任何参与者隔离）都能调用
+// 它不会将对象/状态发送到另一个隔离域
+nonsending: It does not send the object/state to another isolation domain 表示performAsync在哪（隔离域）被调用，就在哪里执行
+#####
+The compiler setting for nonisolated(nonsending) is probably the most important. 
+With nonisolated(nonsending) your nonisolated async will run on the calling actor’s executor by default.
+It used to be the case that a nonisolated async function would always run on the global executor. // 以前，非隔离异步函数总是在全局执行器上运行
+Now that behavior will change and be consistent with nonisolated functions that are not async. // 现在，这种行为将会改变，并与非异步的非隔离函数保持一致。
+
+The @concurrent declaration is also part of this feature. 
+#####
+https://www.donnywals.com/what-is-concurrent-in-swift-6-2/
+
+
+2. Understanding Infer Sendable for Methods and Key Path Literals:
+This compiler flag introduces a less obvious, but still useful improvement to how Swift handles functions and key paths. 
+It allows functions of types that are Sendable to automatically be considered Sendable themselves without forcing developers to jump through hoops.
+https://www.donnywals.com/what-are-sendable-and-sendable-closures-in-swift/
+
+Similarly, in some cases where you’d leverage KeyPath in Swift, 
+the compiler would complain about key paths capturing non-Sendable state even when there’s no real potential for a data race in certain cases.
+
+This feature is already part of Swift 6 and is enabled in Approachable Concurrency in the Swift 5 Language Version (which is the default).
+
+
+3. Understanding Infer Isolated Conformances: // 推断隔离的一致性
+In Swift 6, it’s possible to have protocol conformances that are isolated to a specific global actor.
+https://www.donnywals.com/solving-actor-isolated-protocol-conformance-related-errors-in-swift-6-2/
+The Infer Isolated Conformances build setting will make it so that protocol conformances on a type that’s isolated to a global actor will automatically be isolated to the same global actor.
+
+@MainActor
+struct MyModel: Decodable {
+}
+I’ve explicitly constrained MyModel to the main actor. 
+But without inferring isolated conformances, my conformance to Decodable is not on the main actor which can result in compiler errors.
+
+That’s why with SE-470, we can turn on a feature that will allow the compiler to automatically isolate our conformance to Decodable to the main actor if the conforming type is also isolated to the main actor.
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0470-isolated-conformances.md
+
+
+4. Understanding global-actor-isolated types usability
+“Global-actor-isolated types usability” 让编译器理解：
+只要类型被一个全局 actor（如 @MainActor）保护，那么它的非 Sendable 属性或方法在并发上下文中也是安全的，不需要 nonisolated(unsafe)。
+
+This build setting is another one that’s always on when you’re using the Swift 6 Language mode. 
+With this feature, the compiler will make it less likely that you need to mark a property as nonisolated(unsafe). // 有了这个特性，编译器就不需要将属性标记为非隔离（不安全）了。
+https://www.donnywals.com/using-singletons-in-swift-6/
+This escape hatch exists for properties that can safely be transferred across concurrency domains even when they’re not sendable.
+
+#####
+In some cases, the compiler can actually prove that even though a property isn’t sendable, it’s still safe to be passed from one isolation context to another. 
+
+For example, if you have a type that is isolated to the main actor, its properties can be passed to other isolation contexts without problems.
+You don’t need to mark these as nonisolated(unsafe) because you can only interact with these properties from the main actor anyway.
+#####
+
+This setting also includes other improvements to the compiler that will allow globally isolated types to use non-Sendable state due to the protection that’s imposed by the type being isolated to a global actor.
+
+this feature is always on when you’re using the Swift 6 Language Version
+
+
+5. Understanding Disable outward actor isolation inference
+This build setting applies to code that’s using property wrappers. 
+This is another setting that’s always on in the Swift 6 language mode and it fixes a rather surprising behavior that some developers might remember from SwiftUI.
+
+Remove Actor Isolation Inference caused by Property Wrappers
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0401-remove-property-wrapper-isolation.md
+
+If you’re using a property wrapper that has an actor-isolated wrappedValue (like @StateObject which has a wrappedValue that’s isolated to the main actor) then the entire type that uses that property wrapper is also isolated to the same actor.
+
+In other words, back when View wasn’t annotated with @MainActor in SwiftUI, using @StateObject in your View would make your View struct @MainActor isolated.
+
+This behavior was implicit and very confusing so I’m honestly quite glad that this feature is gone in the Swift 6 Language Version.

@@ -1,0 +1,417 @@
+==========1. The Mistake: Treating async for loops as normal for loops
+When you're processing an AsyncSequence (values that arrive over time), your brain tricks you into thinking each iteration is a separate function call. 
+You write return when you mean "skip this one," and suddenly your entire notification listener dies. 
+Your file watcher stops watching. Your network stream closes permanently before the upload completes.
+
+This mistake leads to the following problems (which is why you should avoid it):
+
+Silent feature death:
+Your app stops responding to system notifications after the first "uninteresting" event
+Incomplete data syncing:
+The first malformed item in a stream kills the entire sync process, giving users an “Upload complete” message, even though that’s not the case
+User confusion:
+Features that work initially suddenly stop working, with no visible error or crash
+
+
+but basically, an async for loop is still a for loop. 
+It runs in a single function context. 
+When you write return, you're not saying "skip this value". 
+You're saying, "exit this entire function and never come back."
+
+AsyncSequences are just for loops that wait for values over time. 
+Treat them exactly like you would treat a regular for loop iterating over an array. 
+When you want to skip an iteration, use continue, not return.
+
+
+workaround:
+#####
+Use continue not return in async for loops if you just want to skip an iteration
+#####
+
+
+==========2. The Mistake: Assuming async methods run in the background by default
+Marking a method as async doesn't automatically mean it runs on a background thread.
+
+#####
+The truth is that async only defines how a method can be called and awaited, it says nothing about which thread executes the code.
+事实上，异步仅定义了方法如何被调用和等待，并没有说明哪个线程执行代码。
+#####
+
+@MainActor
+class PhotoEditor {
+    func applyFilters(to image: UIImage) async -> UIImage {
+        let enhancedImage = await enhanceImage(image)
+        let filteredImage = await applyVintageFilter(enhancedImage)
+        let finalImage = await adjustColors(filteredImage)
+
+        return finalImage
+    }
+
+    /// Developer assumes this runs in background
+    func enhanceImage(_ image: UIImage) async -> UIImage {
+        /// Heavy image processing...
+        /// 2 seconds of computation
+        return image
+    }
+
+    func applyVintageFilter(_ image: UIImage) async -> UIImage {
+        /// Heavy image processing...
+        /// 1 second of computation
+        return image
+    }
+}
+Yet the UI still freezes for 3+ seconds whenever a user applies filters.
+
+Here's why: those async methods inherit the caller's isolation. 
+Since applyFilters is on the @MainActor, every single await call runs on the main thread. 
+So your "background" image processing is actually blocking the UI for 3+ seconds.
+
+This behavior changed dramatically in Swift 6.2. 
+Before, nonisolated async functions would hop to a background thread. 
+Now, with the upcoming NonisolatedNonsendingByDefault feature (which will be enabled by default for new projects, 
+and is recommended to enable for existing), they stay on the caller’s actor by default. 
+Your old code that worked fine suddenly starts freezing UIs after moving to Swift 6.2.
+
+The async keyword just means "this function can suspend."
+It says nothing about threads, and the function runs wherever its caller is isolated. In fact, it's not even guaranteed await.
+
+
+#####
+How To Fix It:
+The solution is to use the @concurrent attribute to explicitly opt out of isolation inheritance.
+This single attribute tells Swift: "Always run this on a background thread, regardless of where it's called from."
+#####
+
+To fix our photo app example, we want to mark the heavy operations with @concurrent so they are guaranteed to be executed in the background
+
+@concurrent
+func enhanceImage(_ image: UIImage) async -> UIImage
+
+Now with @concurrent in place, your async methods will execute on background threads as expected, keeping your UI responsive while heavy processing happens off the main thread.
+
+
+workaround:
+#####
+Mark heavy operations with @concurrent to run them in another thread (and to not block the main thread)
+#####
+
+
+==========3. The Mistake: Calling cancel() without checking cancellation state （Ignoring Task cancellation checks in your async operations.）
+Swift Concurrency uses cooperative cancellation.
+
+#####
+This means that when you call task.cancel(), you're politely asking the task to stop. 
+You're sending a suggestion, not an order.
+If your task doesn't check for cancellation, it keeps running, draining battery and wasting resources until eventually users get frustrated and delete your app.
+#####
+
+Here’s a classic scenario: photo backup features that keep uploading gigabytes of data even after users navigate away from the upload screen. 
+Developers call task.cancel() thinking the uploads will stop. 
+But the app continues uploading in the background until it’s done, while same time draining the phone battery for operation that is no longer needed.
+
+
+Here’s what happens when you just call task.cancel() and skip cancellation checks:
+Excessive battery drain:
+Your "cancelled" tasks keep running, burning through the battery
+Resources get wasted:
+Network requests, file operations, and calculations continue even though nobody needs the results
+Inconsistent state:
+Half-completed operations, that should’ve stopped, can leave your app in a broken state
+
+
+class ImageUploader {
+    var uploadTask: Task<Void, Error>?
+
+    func startBatchUpload(images: [CIImage]) {
+        uploadTask = Task {
+            for image in images {
+                /// Heavy processing - e.g. 5 seconds per image
+                let processed = await processImage(image)
+
+                /// Network upload - e.g. 3 seconds per image
+                try await uploadToServer(processed)
+
+                /// Update local database
+                await markAsUploaded(image)
+            }
+        }
+    }
+
+    func stopUpload() {
+        uploadTask?.cancel()  /// Developer thinks this stops everything
+        print("Upload cancelled!")
+    }
+
+    func processImage(_ image: CIImage) async -> CIImage {
+        /// Imagine this being 5 seconds of heavy image processing
+        /// Runs even after cancel() is called
+        for _ in 0..<5_000_000 {
+            /// Complex calculations
+        }
+        return image
+    }
+
+    func uploadToServer(_ image: CIImage) async throws {
+        try await Task.sleep(nanoseconds: 3_000_000_000) // simulate 3 seconds
+    }
+
+    func markAsUploaded(_ image: CIImage) async {
+        await Task.sleep(1_000_000_000) // simulate 1 second database update
+    }
+}
+
+A user navigates away from the upload screen so you call stopUpload(). The console prints an "Upload cancelled!" message and everything seems fine.
+In reality, the task continues processing photos, uploading data, and draining battery.
+This is because cancel() just sets a flag and your code needs to check that flag and actually stop. 
+The task won't halt mid-execution, but every operation continues unless you explicitly check for cancellation.
+
+How To Fix It
+The fix requires discipline: check for cancellation before, during, and after expensive operations.
+
+Swift gives you two ways to check it: Task.checkCancellation() which throws CancellationError right away, and Task.isCancelled which returns a boolean.
+but at a high level: use them at natural pause points throughout your operations.
+
+
+Here's how to properly handle cancellation — don’t start the expensive operations if the task is already cancelled:
+And if you have expensive operations happening inside loops, check for cancellation at the start of each iteration:
+func processImage(_ image: CIImage) async -> CIImage {
+    try Task.checkCancellation()
+
+    /// Imagine this being 5 seconds of heavy image processing
+    /// Runs even after cancel() is called
+    for _ in 0..<5_000_000 {
+        try Task.checkCancellation()
+        /// Complex calculations
+    }
+
+    try Task.checkCancellation()
+    return image
+}
+其余类似
+
+
+As you can see, when working with tasks, you’re required to think about cancellation. 
+Calling cancel() isn’t enough but the body of a task must also contain explicit cancellation checks to stop performing work on cancellation.
+
+
+workaround:
+#####
+Check Task.isCancelled or call Task.checkCancellation() before, during and after expensive operations
+#####
+
+
+==========4. The Mistake: Converting pre-Concurrency code by hand instead of using Swift's migration tools (Manually migrating existing code to Swift Concurrency)
+#####
+The reason developers waste weeks manually converting pre-Concurrency code instead of using Swift's migration tools
+#####
+
+You start converting callbacks to async/await, adding @MainActor here and there, updating your completion handlers one by one. 
+Days later, you are still converting your code.
+
+Here's where this approach betrays you though: When you enable an upcoming Swift feature like @concurrent，
+your unchanged code starts behaving differently because you didn’t add the attribute everywhere it’s needed.
+
+Without @concurrent attributes where they belong, every unmarked async function inherits the caller's execution context. 
+Code that ran on background queues for years suddenly executes on the main thread. 
+You haven't touched these files yet (you're still methodically working through your migration) but they're already broken.
+
+The insidious part is how silent this failure is.
+
+There are no complier warnings or build errors and everything compiles perfectly.
+
+Meanwhile, Swift's migration tools could handle most of this automatically.
+
+They add @concurrent where needed, update your async boundaries correctly, and maintain your existing threading behavior.
+What takes weeks by hand happens in minutes with the migrator.
+
+How To Fix It:
+Swift provides powerful migration tools and you should use them.
+but to get started with the migration tools you can use Xcode’s Build Settings.
+
+Let’s say we’re going to migrate the upcoming feature called SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY. 
+This is a Swift 6 feature where we’ll have to explicitly mark existentials using the any keyword.
+
+Inside Xcode’s Build Settings you’ll find this feature named as “Require Existential any”. 
+It’s probably set to No, but you can change it to either Yes or Migrate. The latter is what we’ll use:
+The Migrate value is a temporary setting used only during the migration process. 
+Once configured, you can build your project, and new warnings will appear.
+
+the warnings mark the code that has to be migrated. You can use the Apply button to apply the fix automatically
+
+workaround:
+#####
+Use Swift’s migration tools for safe and efficient migration
+#####
+
+==========5. The Mistake: Manually creating tasks inside onAppear
+SwiftUI developers have been using onAppear since 2019, and when async/await arrived, the pattern seemed obvious:
+struct ImageGallery: View {
+    @State var images: [UIImage] = []
+
+    var body: some View {
+        ScrollView {
+            LazyVGrid(columns: [GridItem(.flexible())]) {
+                ForEach(images, id: \.self) { image in
+                    ImageThumbnail(image: image)
+                }
+            }
+        }
+        .onAppear {
+            Task {
+                images = await fetchImages()
+            }
+        }
+    }
+}
+
+But the problem is that after a while, the backend team starts asking questions about API usage. 
+The app is making way more requests than expected, sometimes 10x what it should be. 
+
+This is because when you create tasks inside onAppear, here’s what ends up happening:
+
+Zombie tasks:
+When a user navigates away from a view and comes back, you suddenly have two tasks running
+Loading states feel sluggish:
+Tasks scheduled in onAppear start after the view renders, adding unnecessary delay to your loading states
+Background processing that won't die:
+Image processing, data transformations, and network calls all continue for views the user left minutes ago
+
+Why This Happens:
+The core issue is lifecycle management: when you create a Task inside onAppear, you take on responsibility for its entire lifecycle.
+
+Here's code that demonstrates the problem:
+struct ImageGallery: View {
+    @State var images: [UIImage] = []
+    @State var processingTask: Task<Void, Never>?
+
+    var body: some View {
+        ScrollView {
+            /// ... Images grid
+        }
+        .onAppear {
+            processingTask = Task {
+                /// Fetch photos – E.g. ~2 seconds
+                let rawImages = await fetchImages()
+
+                /// Process each photo – E.g. ~5 seconds total
+                for image in rawImages {
+                    let processed = await processImage(image)
+                    images.append(processed)
+                }
+            }
+        }
+        .onDisappear {
+            /// This is easy to forget
+            /// processingTask?.cancel()
+        }
+    }
+}
+User opens the gallery, gets impatient, swipes back. Opens it again. Swipes back. Tries once more.
+
+You now have three parallel tasks: Three sets of image processing and three API calls. 
+The console shows multiple tasks racing to update the same @State property, and your CPU is doing triple the work for a view the user might not even be looking at.
+
+Even if you remember the onDisappear cancellation, you're writing boilerplate that SwiftUI already handles. 
+Plus, there's the timing issue with this code: tasks created in onAppear always execute after the view appears, creating that split-second of empty state users notice.
+
+How To Fix It:
+Use SwiftUI’s .task(). It’s a modifier designed specifically for async work and it schedules your task for execution before the view appeared. 
+Depending on how busy your app is, the task will be executed as quickly as possible. 
+In other words, you’re scheduling the task earlier than if you would’ve used onAppear.
+
+Replace onAppear + Task with .task()
+struct ImageGallery: View {
+    @State var images: [UIImage] = []
+
+    var body: some View {
+        ScrollView {
+            LazyVGrid(columns: [GridItem(.flexible())]) {
+                ForEach(images, id: \.self) { image in
+                    ImageThumbnail(image: image)
+                }
+            }
+        }
+        .task {
+            // 自动取消 when view disappear
+            images = await fetchImages()
+        }
+    }
+}
+What I love about this approach is that you don't have to manage any task properties or remember to cancel anything. 
+SwiftUI takes care of the entire lifecycle
+
+Use task(id:) for reactive updates
+When you need to refetch because something changed, the id parameter handles cancellation and restart for you:
+struct ImageGallery: View {
+    @State var images: [UIImage] = []
+    @State var albumID: String
+
+    var body: some View {
+        ScrollView {
+            LazyVGrid(columns: [GridItem(.flexible())]) {
+                ForEach(images, id: \.self) { image in
+                    ImageThumbnail(image: image)
+                }
+            }
+        }
+        .task(id: albumID) {
+            // old task cancels, new one starts when albumID changes
+            images = await fetchImages()
+        }
+    }
+}
+
+Switching between albums works exactly as you'd expect: the previous fetch gets cancelled and the new one starts right away, 
+which means you don't have to worry about race conditions.
+
+Check cancellation in loops:
+If you're doing expensive operations, make sure to respect the cancellation signal
+.task {
+  let images = await fetchImage()
+  for image in images {
+    guard !Task.isCancelled else { break }
+
+    let processedImage = await applyFilters(to: image)
+  }
+}
+When the user navigates away mid-processing, the loop breaks immediately
+
+
+Set priority when it matters:
+The default priority (.userInitiated) works fine for most UI updates, though you can change it when needed:
+.task {
+  // use a default priority of "userInitiated"
+  // which makes user-facing data load as quick as possible
+  metrics = await fetchMetrics()
+}
+.task(priority: .background) {
+  // Analytics can wait
+  await Analytics.trackView("")
+}
+
+
+Build debouncing into search:
+Each keystroke cancels the previous task, which gives you natural debouncing behavior:
+
+.task(id: query) {
+  // Task cancels with each keystroke
+  guard !query.isEmpty else {
+    result = []
+    return
+  }
+
+  // Brief delay for debouncing
+  try? await Task.sleep(for: .,illiseconds(300))
+
+  // Only runs if user stopped typing
+  results = await searchResults(for: query)
+}
+
+When someone types 'swift con' quickly, you only search for the final string, not every character along the way. 
+That's eight fewer API calls right there.
+
+
+workaround:
+#####
+Replace onAppear + Task with .task() modifier
+#####

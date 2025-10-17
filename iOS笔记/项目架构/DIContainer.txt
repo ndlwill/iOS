@@ -1,0 +1,89 @@
+DIContainer 一般指的是 Dependency Injection Container（依赖注入容器）。
+#####
+它是依赖注入（Dependency Injection, 简称 DI）模式中的一个核心概念，用来自动管理对象之间的依赖关系。
+#####
+
+DIContainer 就像一个“对象工厂”或“服务中心”，
+你只需要告诉它：
+#####
+某个类型需要什么依赖；
+某个依赖该怎么创建。
+#####
+之后它就能自动帮你创建对象并把依赖注入进去，
+让你不用在代码里到处写 new 或手动初始化依赖。
+
+假设你有个 UserService 需要一个 NetworkClient：
+protocol NetworkClient {
+    func fetchData() -> String
+}
+
+class DefaultNetworkClient: NetworkClient {
+    func fetchData() -> String { "data from network" }
+}
+
+class UserService {
+    private let client: NetworkClient
+    
+    init(client: NetworkClient) {
+        self.client = client
+    }
+    
+    func loadUser() {
+        print(client.fetchData())
+    }
+}
+
+没有 DIContainer 的情况
+你可能会这样写：
+let client = DefaultNetworkClient()
+let userService = UserService(client: client)
+userService.loadUser()
+这没错，但当项目大了、依赖多了，你就要到处手动创建各种对象
+
+
+有 DIContainer 的情况
+你只要注册依赖关系：
+class DIContainer {
+    private var factories = [String: () -> Any]()
+    
+    func register<T>(_ type: T.Type, factory: @escaping () -> T) {
+        factories[String(describing: type)] = factory
+    }
+    
+    func resolve<T>(_ type: T.Type) -> T {
+        let key = String(describing: type)
+        guard let factory = factories[key], let instance = factory() as? T else {
+            fatalError("No registered factory for \(key)")
+        }
+        return instance
+    }
+}
+
+// 注册
+let container = DIContainer()
+container.register(NetworkClient.self) { DefaultNetworkClient() }
+container.register(UserService.self) { UserService(client: container.resolve(NetworkClient.self)) }
+
+// 使用
+let service = container.resolve(UserService.self)
+service.loadUser()
+
+DIContainer 自动帮你把 NetworkClient 注入到 UserService 中。
+
+它能帮你解决的问题:
+| 问题                | DIContainer 的帮助 |
+| ----------------- | --------------- |
+| 依赖对象太多、构造复杂       | 自动构造和注入         |
+| 测试时想替换实现（如 mock）  | 容易通过注册不同工厂切换    |
+| 想控制对象生命周期（单例/作用域） | 容器可统一管理         |
+| 想解耦模块（不直接依赖具体类）   | 使用接口 + 注册机制     |
+
+
+框架或库:
+https://github.com/Swinject/Swinject
+
+
+DIContainer 是一种实现 依赖注入模式 (DI) 的工具，用于：
+管理依赖的注册与创建；
+自动注入依赖；
+减少耦合，方便测试。

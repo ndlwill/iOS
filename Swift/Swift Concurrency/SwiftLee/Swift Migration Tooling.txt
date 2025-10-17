@@ -1,0 +1,170 @@
+https://www.avanderlee.com/concurrency/swift-migration-tooling-upcoming-swift-features/
+
+Why Swift Migration Tooling Matters
+
+
+Swift offers migration tooling to help you migrate existing code to new upcoming features.
+Swift Evolution proposals on GitHub will mention an upcoming feature flag that you can use to opt in early.
+For most of these features, it’s likely that they’ll become the default in the future. 
+Therefore, it’s essential to know how to adopt them gracefully.
+
+#####
+Migrating manually to upcoming features is one of the 5 biggest mistakes iOS Developers make with async/await.
+#####
+
+
+How to access Swift’s Migration Tooling:
+Swift’s migration tooling works for both Xcode projects and Swift packages. 
+Inside Xcode’s build settings you can search for Upcoming feature and use the dropdown to see if a feature supports migration:
+Swift Migration Tooling helps you to gracefully migrate to upcoming features.
+The Migrate option is a temporary setting. You’ll only enable it while migrating.
+
+
+How does the Migration Tooling work?
+After selecting Migrate, you need to build your project. 
+Xcode’s compiler will perform checks on your code, and it shows a warning for methods that an upcoming feature will impact:
+As you can see, we get the option to apply a fix by using the @concurrent attribute. 
+This makes sense as we’re migrating to an upcoming feature called nonisolated(nonsending) by default.
+
+
+Better understanding migration warnings:
+the Swift team thought about this, and they’ve added a question mark to the warning
+Clicking this questionmark will navigate you to a detailed page for the warning
+
+
+Migration Tooling for Swift Packages & automatically applying changes:
+You don’t have to do everything manually, and you can also apply changes automatically. 
+Xcode’s build setting is just a little bit limited. On top of that, Xcode’s build settings only apply to your Xcode project. 
+You’ll have to use a different approach for Swift packages.
+
+
+Understanding the risks of migrating manually:
+class NotSendable {
+
+    func performAsync() async {
+        print("Task started on thread: \(Thread.currentThread)")
+    }
+}
+This is a nonisolated class that does not conform to Sendable. 
+It has a single async method called performAsync
+
+Imagine calling this method from a @MainActor attributed instance:
+@MainActor
+struct NewThreadingDemonstrator {
+    
+    func demonstrate() async {
+        print("Starting on the main thread: \(Thread.currentThread)")
+        // Prints: Starting on the main thread: <_NSMainThread: 0x6000006b4040>{number = 1, name = main}
+
+        let notSendable = NotSendable()
+        await notSendable.performAsync()
+        
+        /// Returning on the main thread.
+        print("Resuming on the main thread: \(Thread.currentThread)")
+        // Prints: Resuming on the main thread: <_NSMainThread: 0x6000006b4040>{number = 1, name = main}
+    }
+}
+
+let’s focus on the upcoming feature we’ve discussed before: nonisolated(nonsending) by default. 
+This is the current threading behavior of our performAsync method before enabling the upcoming feature:
+class NotSendable {
+
+    func performAsync() async {
+        print("Task started on thread: \(Thread.currentThread)")
+        // Task started on thread: <NSThread: 0x600003694d00>{number = 8, name = (null)}
+    }
+}
+#####
+the task started on a background thread. In other words, it switched the isolation domain away from the @MainActor.
+#####
+
+
+Manually enabling nonisolated(nonsending) by default:
+We’re now going to manually enable the upcoming feature. 
+This means we’re not getting any help from Swift’s migration tooling and we’re not applying any code changes.
+Our earlier defined method suddenly behaves differently:
+class NotSendable {
+
+    func performAsync() async {
+        print("Task started on thread: \(Thread.currentThread)")
+        // Task started on thread: <_NSMainThread: 0x6000006b4040>{number = 1, name = main}
+    }
+}
+
+Suddenly, our method is no longer running on a background thread. 
+Instead, it’s also performed on the main thread, potentially blocking the UI and decreasing the user’s experience.
+
+If we would’ve used Swift’s migration tooling, it would have suggested us to apply @concurrent to retain the old behavior:
+class NotSendable {
+
+    @concurrent func performAsync() async {
+        print("Task started on thread: \(Thread.currentThread)")
+        // Task started on thread: <NSThread: 0x600003694d00>{number = 8, name = (null)}
+    }
+}
+
+
+#####
+https://docs.swift.org/compiler/documentation/diagnostics/nonisolated-nonsending-by-default/
+nonisolated(nonsending) by Default (NonisolatedNonsendingByDefault)
+
+Runs nonisolated async functions on the caller’s actor by default.
+
+Prior to this feature, nonisolated async functions never run on an actor’s executor and instead switch to global generic executor.
+
+Introduced in Swift 6.2, -enable-upcoming-feature NonisolatedNonsendingByDefault changes the execution semantics of nonisolated async functions to always run on the caller’s actor by default. 
+A new @concurrent attribute can be added in order to specify that a function must always switch off of an actor to run.
+
+struct S: Sendable {
+  func performSync() {}
+
+
+  // `nonisolated(nonsending)` is the default
+  func performAsync() async {}
+
+
+  @concurrent
+  func alwaysSwitch() async {}
+}
+
+actor MyActor {
+  let s: Sendable
+
+  func call() async {
+    s.performSync() // runs on actor's executor
+
+    await s.performAsync() // runs on actor's executor
+
+    s.alwaysSwitch() // switches to global generic executor
+  }
+}
+
+A nonisolated(nonsending) modifier can also be used prior to enabling this upcoming feature in order to run on the caller’s actor.
+To achieve the same semantics as above, S in this case would instead be:
+struct S: Sendable {
+  func performSync() {}
+
+  nonisolated(nonsending)
+  func performAsync() async {}
+
+  // `@concurrent` is the default
+  func alwaysSwitch() async {}
+}
+#####
+
+
+Caller（调用者）：发起函数调用的一方。
+Callee（被调用者）：被调用的函数本身。
+func A() {
+    B()
+}
+
+func B() {
+    print("Hello")
+}
+A 是 caller。
+B 是 callee。
+"callee" = "被 call 的 entity"（被调用的对象）。
+
+
+https://docs.swift.org/compiler/documentation/diagnostics

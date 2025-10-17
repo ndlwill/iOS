@@ -1,0 +1,877 @@
+图片解码有两种方式
+1、通过获取绘图上下文，将图片绘制到上下文中，然后从上下文中取出这个图片（优点就是，绘图过程会对图片做优化处理）
+//将要解码的图片
+UIImage *img = [[UIImage alloc] initWithContentsOfFile:@"..."];
+CGImageRef imageRef = img.CGImage;
+CGImageAlphaInfo alphaInfo = CGImageGetAlphaInfo(imageRef) & kCGBitmapAlphaInfoMask;
+        BOOL hasAlpha = NO;
+        if (alphaInfo == kCGImageAlphaPremultipliedLast ||
+            alphaInfo == kCGImageAlphaPremultipliedFirst ||
+            alphaInfo == kCGImageAlphaLast ||
+            alphaInfo == kCGImageAlphaFirst) {
+            hasAlpha = YES;
+        }
+        // BGRA8888 (premultiplied) or BGRX8888
+        // same as UIGraphicsBeginImageContext() and -[UIView drawRect:]
+        CGBitmapInfo bitmapInfo = kCGBitmapByteOrder32Host;
+        bitmapInfo |= hasAlpha ? kCGImageAlphaPremultipliedFirst : kCGImageAlphaNoneSkipFirst;
+        CGContextRef context = CGBitmapContextCreate(NULL, width, height, 8, 0, YYCGColorSpaceGetDeviceRGB(), bitmapInfo);
+        if (!context) return NULL;
+        CGContextDrawImage(context, CGRectMake(0, 0, width, height), imageRef); // 图片解码
+        CGImageRef newImage = CGBitmapContextCreateImage(context);
+        CFRelease(context);
+UIImage *decodedImg = [UIImage imageWithCGImage:newImage]; // 解码后的图片
+2、通过CGDataProviderCopyData( CGDataProviderRef cg_nullable provider)进行解码
+//将要解码的图片
+UIImage *img = [[UIImage alloc] initWithContentsOfFile:@"..."];
+CGImageRef imageRef = img.CGImage;
+CGColorSpaceRef space = CGImageGetColorSpace(imageRef);
+        size_t bitsPerComponent = CGImageGetBitsPerComponent(imageRef);
+        size_t bitsPerPixel = CGImageGetBitsPerPixel(imageRef);
+        size_t bytesPerRow = CGImageGetBytesPerRow(imageRef);
+        CGBitmapInfo bitmapInfo = CGImageGetBitmapInfo(imageRef);
+        if (bytesPerRow == 0 || width == 0 || height == 0) return NULL;
+        
+        CGDataProviderRef dataProvider = CGImageGetDataProvider(imageRef);
+        if (!dataProvider) return NULL;
+        CFDataRef data = CGDataProviderCopyData(dataProvider); // 对图片解码
+        if (!data) return NULL;
+        
+        CGDataProviderRef newProvider = CGDataProviderCreateWithCFData(data);
+        CFRelease(data);
+        if (!newProvider) return NULL;
+        
+        CGImageRef newImage = CGImageCreate(width, height, bitsPerComponent, bitsPerPixel, bytesPerRow, space, bitmapInfo, newProvider, NULL, false, kCGRenderingIntentDefault);
+        CFRelease(newProvider);
+UIImage *decodedImg = [UIImage imageWithCGImage:newImage]; // 解码后的图片
+
+说明：[UIImage imageNamed:@"name"]得到的图片是已经解码的图片，并且将这个解码好的图片缓存了起来。
+
+
+那系统是在什么时候解码的呢？
+其实显示到屏幕上的图层的绘制是由一个独立与app的渲染引擎操作的，这个引擎只接收解码好的图片，然后直接绘制到屏幕上。
+那么图片的解码操作也就是在这个图片将要让渲染引擎绘制的时候进行的，这个操作是在app内部完成的。
+
+如果我们不手动解码，并且图片不是通过[UIImage imageNamed:@"name"]创建的，UIImage是不会对图片进行解码的
+
+==================================================
+
+Surface 在图形系统里是一个比较通用的词，其实可以类比成 “一块显存里用来存放像素数据的区域”。
+在 Metal / OpenGL ES 里，Surface 最常见的形式就是 Texture（纹理） 或 Render Target（渲染目标）。
+在图形 API（Core Animation / Metal / OpenGL / DirectX）里，Surface 通常指 GPU 可读写的一块像素存储区域。
+它可以来自：
+纹理（Texture）：用于采样（读取像素）
+渲染目标（Render Target / Framebuffer Attachment）：用于绘制输出
+显示缓冲区（Swapchain Surface / Layer Backing Store）：最终显示到屏幕的内存区域
+
+CGImage = 一张存在内存里的照片（CPU 知道每个像素的颜色）。
+Surface (Texture) = 显卡显存里的一张画布（GPU 能直接访问）。
+拷贝过程 = 把照片扫描到显卡的画布上，让 GPU 后续能直接用。
+
+
+==================================================
+CGImage 的存储形式并不固定：
+CGImage 其实是一个“像素数据描述符”，它可能：
+    指向 已经解码的 bitmap buffer（比如你自己用 CGBitmapContext 生成的图）。
+    也可能指向 压缩数据（JPEG/PNG 的解码 provider，只有在真正绘制或访问像素时才会解码）。
+CGImage.dataProvider 返回的 CGDataProvider，底层可能是：// CGImage.dataProvider 里取出来的不一定是解码后的像素。
+    一个 CFData（解码过的像素）。
+    一个解码器对象（延迟解码，需要调用绘制才能触发）。
+
+
+dataProvider 能告诉你 有数据来源
+
+==================================================WWDC18 官方说明
+设备上的两种稀缺资源：内存和 CPU。
+
+当你的应用使用更多 CPU 时，会对电池寿命和应用的响应速度产生负面影响
+当你的应用以及系统上的其他应用占用更多内存时，也会导致 CPU 使用增加，这会进一步影响电池寿命和性能。
+还有比一个大量处理照片内容的应用更适合讨论这个问题的例子吗？比如 Photos 应用。
+UIImage 是 UIKit 中用于处理图像数据的高层类。所以，我们这里有一个 UIImage 来表示这张丰富的图像内容。
+
+#####
+在经典的 MVC 风格中，UIImage 可以被看作是模型对象，而 UIImageView，是视图对象
+UIImage 负责加载图像内容，而 UIImageView 负责显示它，也就是渲染它。
+
+除了渲染是一个连续过程而不是一次性事件之外，还有一个隐藏阶段。理解这个阶段对于衡量应用性能非常重要，这个阶段称为“解码”。
+#####
+
+image rendering pipeline:
+load->decode->render
+
+缓冲区就是一块连续的内存区域。但当我们讨论由一系列相同大小、通常内部结构也相同的元素组成的内存时，我们会使用“缓冲区”这个术语。
+一个非常重要的缓冲区类型是“图像缓冲区”。
+图像缓冲区是指用于存储图像的内存表示的缓冲区。缓冲区中的每个元素都描述图像中一个像素的颜色和透明度。因此，这个缓冲区在内存中的大小与它包含的图像大小成正比。
+
+#####
+一个特别重要的缓冲区示例叫做“帧缓冲区”（frame buffer）。
+帧缓冲区保存的是应用的实际渲染输出。
+所以，当你的应用更新视图层级时，UIKit 会将应用的窗口及其所有子视图渲染到帧缓冲区中。
+帧缓冲区提供每个像素的颜色信息，显示硬件会读取这些信息以点亮屏幕上的像素。
+这个过程是以固定间隔进行的。通常为 60 帧每秒，也就是每 1/60 秒一次。在带有 ProMotion 显示屏的 iPad 上，这个间隔可以快到每 1/120 秒一次。
+如果应用中的内容没有变化，显示硬件会从帧缓冲区中读取和之前相同的数据。
+但如果你更改了应用中视图的内容，例如，为我们的 image view 分配一个新的 UIImage。
+UIKit 会将应用窗口重新渲染到帧缓冲区中。
+下一次显示硬件从帧缓冲区读取数据时，就会得到你更新后的内容。
+#####
+
+你可以将图像缓冲区与另一种缓冲区进行对比——数据缓冲区，它只是包含一系列字节的缓冲区。
+在我们的场景中，我们关注的是包含图像文件的数据缓冲区。可能是从网络下载的，也可能是从磁盘加载的。
+包含图像文件的数据缓冲区通常以一些元数据开头，这些元数据描述了缓冲区中存储的图像大小。
+然后是图像数据本身，这些数据通常以 JPEG 压缩或 PNG 等形式编码。
+#####
+这意味着元数据之后的字节并不直接描述图像中像素的颜色信息。
+#####
+
+处理流程（pipeline）:
+已经标出将由该 image view 渲染填充的帧缓冲区区域。
+已经给这个 image view 指定了一个 UIImage。
+这个 UIImage 带有一个数据缓冲区，用来表示图像文件的内容。
+这可能是从网络下载的，也可能是从磁盘读取的。
+但我们需要能够用逐像素的数据来填充帧缓冲区。
+
+#####
+数据缓冲区（Data Buffer）：指的是 JPEG、PNG 等编码后的压缩数据，它里面确实包含一些 文件头 / 元数据，比如宽高、颜色空间、bit depth 等信息。
+图像缓冲区（Image Buffer）：这是 UIImage 在解码时才分配的内存，存放的是 逐像素解码后的位图数据（raw pixels），比如 RGBA8888，每个像素 4 个字节。
+图像缓冲区的大小 确实取决于数据缓冲区头部的图像宽高信息（比如 PNG header 里的 IHDR chunk）。
+但它不是直接等于“文件头的某个值”，而是通过“宽 × 高 × 每像素字节数（stride 可能还要按行对齐）”来计算出来的。
+
+举个例子：
+一张 PNG 文件，header 中写着 width = 1000, height = 500，颜色深度 8bit，RGBA。
+解码后图像缓冲区大小 ≈ 1000 × 500 × 4 = 2,000,000 字节 ≈ 2 MB。
+而 PNG 文件本身（数据缓冲区）可能只有 200 KB，因为它是压缩过的。
+
+图像缓冲区大小不是文件里直接存着的一个数字，而是通过文件头里的 宽高 + 像素格式信息 推导出来的。
+#####
+
+为了做到这一点，UIImage 会分配一个图像缓冲区，其大小等于数据缓冲区中图像的实际尺寸。
+然后执行一个称为“解码”的操作，将 JPEG、PNG 或其他编码格式的图像数据转换为逐像素的图像信息。
+接着，根据 image view 的 content mode
+当 UIKit 请求图像视图进行渲染时，它会从图像缓冲区复制并缩放图像数据，同时将其写入帧缓冲区。
+这个解码阶段可能非常消耗 CPU，尤其是对于大图像而言。
+因此，UIImage 会保留这个图像缓冲区，而不是每次 UIKit 请求图像视图渲染时都重新解码，这样解码工作只会执行一次。
+因此，对于每个被解码的图像，你的应用可能会在内存中保留一个持久且较大的分配空间。
+这个分配的大小与输入图像的尺寸成正比。
+而不一定与图像视图在帧缓冲区中实际渲染的尺寸相同。
+应用地址空间中这块较大的内存分配可能会挤压其他相关内容，使它们无法被有效引用。
+这被称为“内存碎片化”（fragmentation）。
+最终，如果你的应用开始占用大量内存，操作系统会介入，并开始对物理内存的内容进行透明压缩。
+这个操作需要 CPU 参与，因此除了你应用本身的 CPU 使用之外
+你可能会增加你无法控制的全局 CPU 使用率。
+最终，你的应用可能占用如此多的物理内存，以至于操作系统需要开始终止进程。
+它会从低优先级的后台进程开始。
+最终，如果你的应用消耗的内存足够多，你的应用本身也可能被终止。
+而且，这些后台进程中有些正在代表用户执行重要任务。
+因此，它们可能会在被终止后立即重新启动。
+因此，即使你的应用只是在短时间内占用内存，它也可能对 CPU 使用产生长期的连锁影响。
+所以，我们希望减少应用使用的内存量。
+我们可以通过一种叫做“降采样（downsampling）”的技术来提前应对这一问题。
+
+
+这样一个事实：我们要显示图像的图像视图实际上比我们要显示的图像本身要小。
+通常，Core Animation 框架会负责在渲染阶段将图像缩小，
+但通过使用降采样（downsampling）技术，我们可以节省一些内存。
+我们要做的是将这个缩小操作捕获到一个称为“缩略图（thumbnail）”的对象中。
+这样，我们最终会获得更低的总内存使用量，因为解码后的图像缓冲区更小。
+所以，我们先创建一个图像源（image source），然后生成缩略图，再将解码后的图像缓冲区捕获到 UIImage 中。
+然后，将这个 UIImage 分配给我们的图像视图。
+接着，我们就可以丢弃包含原始图像的数据缓冲区。
+这样，我们的应用程序就会拥有一个更小的长期内存占用。
+
+首先，我们将创建一个 CGImageSource 对象。
+CGImageSourceCreate 可以接受一个选项字典。
+这里我们要传递的重要选项是 ShouldCache 标志。
+这告诉 Core Graphics 框架，我们只是创建一个对象来表示存储在该 URL 文件中的信息。
+不要立即解码这个图像，只需创建一个表示该信息的对象。
+我们将需要从这个 URL 中获取信息。
+我们会计算水平方向和垂直方向的尺寸。
+基于我们要渲染的缩放比例和点大小，取像素上较大的那个维度。
+计算出这些信息后，为我们的缩略图创建一个选项字典。
+非常重要的是 CacheImmediately 选项。
+传递这个选项时，我们告诉 Core Graphics，当我请求创建缩略图时，就是你应该为我创建解码后的图像缓冲区的时刻。
+这样，我们就可以精确控制何时承担解码带来的 CPU 开销。
+然后，我们创建缩略图（thumbnail），它是一个 CGImage，并将其返回。
+将其封装为 UIImage，并从我们这里写的辅助函数中返回。
+为了让大家了解这种技术能节省多少内存，这里我们只是显示一张全屏图像。
+这是一张照片，尺寸为 3000 x 2000 像素。
+如果不做任何优化，仅在 storyboard 中放置 UIImageView 并分配图像，这个应用程序仅静置不动就会占用 31.5 MB 内存。
+使用降采样技术，仅生成与实际显示尺寸相同的图像缓冲区，应用程序的内存使用量可以降到 18.4 MB。
+这意味着内存使用量大幅减少。
+
+你可以想象，对于在屏幕小区域显示大量可能很大的图像的应用来说，这有多重要。
+例如，“相机胶卷”。
+你可能会使用 UICollectionView 来实现这样的视图。
+我们使用之前写的辅助函数，将图像降采样到单元格在屏幕上实际显示的尺寸。
+也就是说，与其让这些大内存分配一直存在，不如通过这个方法减少内存占用。
+不幸的是，这并不能解决另一个常见问题，这种问题常出现在可滚动视图中，比如 table view 和 collection view。
+你可能以前见过这个问题：当你在应用中滚动时，界面开始出现卡顿。
+
+这里发生的情况是，当我们在滚动时，CPU 相对处于空闲状态，或者它要做的工作可以在显示硬件需要下一帧缓冲区数据之前完成。
+因此，当帧缓冲区被及时更新、显示硬件能够按时获取新的一帧时，我们看到的是流畅的动画效果。
+但现在，我们即将显示新的一行图片。
+在把这些单元格（cell）返回给 UICollectionView 之前，我们需要请求 Core Graphics 去解码这些图片。
+而这个解码过程可能会占用大量的 CPU 时间。
+以至于我们没能及时重新渲染帧缓冲区。
+#####
+但是显示硬件是按照固定的时间间隔运行的。
+#####
+因此，从用户的角度来看，应用程序似乎“卡顿”了一下。
+现在，当我们完成这些图片的解码后，就可以把这些 cell 返回给 UICollectionView 了。
+动画又像之前一样继续播放。
+只是刚才出现了一个明显的视觉停顿（卡顿）。
+// Now, in addition to the obvious responsiveness consequences of this behavior, there's a more subtle detrimental effect on battery life.
+除了这种行为带来的明显响应性问题外，它还会对电池续航产生更隐蔽的不良影响。
+因为当 CPU 的功耗需求平稳且持续时，iOS 能很好地管理电池的能耗。
+而在这里，我们看到的是“功耗尖峰”（即瞬间的负载高峰）。
+当新的图片行即将在滚动视图中出现时，CPU 使用率会突然飙升。
+随后又迅速恢复到较低的使用水平。
+
+因此，我们可以使用两种技术来平滑 CPU 的使用率。
+第一种方法是 预取（prefetching）。
+如果你想更深入地了解预取机制，可以参考 WWDC 上的演讲《A Tour of CollectionView》。
+但这里的基本思想是：预取让 CollectionView 能提前通知数据源——它现在暂时不需要这个 cell，但很快就会需要。
+所以，如果你有一些准备工作要做，就可以提前开始。
+这样我们就能把 CPU 的使用分散到时间轴上，而不是集中在某个时刻。
+因此，我们降低了 CPU 使用率的峰值。
+另一种可以使用的技术是在后台线程中执行工作。
+这样一来，我们不仅把工作分散到了时间上，还可以把它分散到多个可用的 CPU 核心上。
+这样做的结果是：你的应用程序响应更快，同时设备的电池续航时间更长。
+为了将其付诸实践，我们在数据源中实现了 prefetch 方法。
+这个方法会调用我们之前写的辅助函数，为即将在 CollectionView 的 cell 中显示的图片生成一个下采样版本。
+它通过把任务派发到一个全局的异步队列中来实现这一点。
+但是，这里潜藏着一个潜在的问题。
+我们称这种现象为 “线程爆炸（thread explosion）”。
+所谓线程爆炸，就是当我们要求系统同时执行的任务数量超过可用 CPU 核心数时发生的情况。
+比如，如果我们一次要显示六到八张图片，但运行的设备只有两个 CPU 核心，那么我们不可能同时处理所有这些任务。
+我们无法在不存在的 CPU上进行并行计算。
+当我们异步派发任务到全局队列时，为了避免死锁，GCD（Grand Central Dispatch）会创建新的线程来承载我们请求它执行的工作。
+接着，CPU 将花费大量时间在这些线程之间来回切换，试图在我们交给操作系统的所有任务上都取得一点点进展。
+而线程之间的切换实际上是非常消耗资源的，开销相当大。
+如果让一个或多个 CPU 专心完成图像处理任务，而不是不断在线程间切换，性能会更好。
+因此，我们要借鉴 WWDC 的演讲《Modernizing Grand Central Dispatch Usage》中介绍的一种技术。
+
+我们打算对部分任务进行串行化（serialize）处理。
+也就是说，我们不会再把任务简单地派发到全局异步队列，而是会创建一个串行队列（serial queue）。
+然后，在我们 prefetch 方法的实现中，会将任务异步派发到这个串行队列中执行。
+这样做的确意味着，某张图片的处理可能会比之前开始得更晚。
+但与此同时，CPU 在不同任务之间切换的时间会大幅减少。
+
+现在，这些我们要显示的图片可能来自多个不同的来源。
+它们可能随应用程序一起打包，在这种情况下，会存储在应用的资源文件（image asset）中。
+也可能存储在应用程序包（wrapper）之外的文件中。
+或者这些图片来自网络下载。
+又或者它们位于应用的 Documents 目录中的某个文档文件里。
+它们还可能存储在缓存（cache）中。
+但是，对于随应用程序一起提供的图像资源，我们强烈建议你使用 Image Asset（图像资源目录）。
+这样做有很多好处。
+// Image assets are optimized for name-based and trait-based lookup.
+Image Asset 对基于名称和特征（trait）的查找进行了优化。
+在资源目录中查找图像资源的速度，比在磁盘上根据命名规则搜索文件要快得多。
+资源目录运行时还具备非常智能的缓冲区大小管理机制。
+此外，还有一些与运行时性能无关、但仅限于 Image Asset 使用的特性。
+其中一个例子是 按设备裁剪（per-device thinning） 功能，
+它的作用是让应用程序只下载与目标设备相关的图像资源，
+另一个例子是 矢量图像（vector artwork） 支持。
+矢量图像是在 iOS 11 中引入的新特性。
+你可以在图像资源编辑器中勾选 “Preserve Vector Data（保留矢量数据）” 选项来启用它。
+启用该功能的好处是，当图像在比原始尺寸更大或更小的 UIImageView 中渲染时，不会变模糊。
+因为系统会从矢量图重新栅格化（re-rasterize）出位图，从而保持清晰锐利的边缘。
+系统中有一个使用该特性的例子。
+如果你在“辅助功能（Accessibility）”设置中将动态字体（Dynamic Type）调到很大的字号，
+然后长按底部标签栏（Tab Bar）中的某个项目，系统会弹出一个小的悬浮提示视图（HUD），显示该图标的放大视图。
+所以，如果你希望你的图像在类似这种场景下依然保持良好的显示效果，
+请在 Image Asset Inspector（图像资源检查器） 中勾选 “Preserve Vector Data（保留矢量数据）” 选项。
+这个功能的工作方式与我们之前看到的图像处理管线非常相似。
+不过，这里不是执行“解码（decode）”阶段，而是执行“栅格化（rasterize）”阶段，
+这个阶段负责把矢量数据转换为可以复制到帧缓冲区（frame buffer）的位图数据。
+当然，如果我们要对应用中的所有矢量图都执行这种栅格化操作，CPU 消耗将会非常大。
+因此，系统在这里做了一个优化。
+如果某张图片启用了“Preserve Vector Data”，但你只是以原始大小来渲染它，
+那么 Asset Catalog 编译器 其实已经为这张图提前生成了一份**预栅格化（pre-rasterized）**的版本，并将它存储在资源目录中。
+因此，在渲染时，系统不需要再次执行复杂的矢量转位图运算，
+而是直接解码资源目录中存储的那份位图，并把它渲染到帧缓冲区即可。
+如果你的图像只会在几个固定尺寸下显示，
+比如一个图标可能有“小号”和“大号”两个版本，
+那就不要仅仅依赖“Preserve Vector Data”选项，
+而是直接在资源目录中创建两份图像资源，分别对应那两个你会使用的固定尺寸。
+这样做可以让优化在编译时就完成矢量图栅格化的 CPU 消耗，而不是每次图像被绘制到帧缓冲区时都消耗 CPU。
+到目前为止，我们已经了解了如何使用 UIImage 和 UIImageView。
+
+但这并不是应用程序所做的全部图形工作。
+有时，你的应用需要在运行时绘制内容。
+例如，在 Photos 应用中的某个编辑视图中就可能出现这种情况。
+显示图标的 UIButton，可以直接使用 UIImageView。
+但是 UIButton 不支持这里这种 “Live” 按钮的样式，你可以点击它来启用或禁用 Live Photo。
+所以，我们需要自己来实现一些工作。
+一种实现方法是继承 UIView并实现 draw 方法。
+这个实现会绘制一个黄色的圆角矩形（roundRect），在上面绘制一些文字，再叠加一张图像。
+出于几个原因，我不推荐这种做法。
+
+Custom Drawing Versus UIImageView
+我们来把这个自定义视图子类和 UIImageView 进行比较。
+你可能已经知道，每个 UIView 在 Core Animation 运行时实际上都有一个对应的 CALayer。
+对于 UIImageView 来说，UIImageView 会让 UIImage 创建解码后的图像缓冲区（decoded image buffer）。
+然后，将解码后的图像交给 CALayer，用作图层的内容。
+对于我们重写了 draw 方法的自定义视图，它的工作方式类似于 UIImageView，但又略有不同。
+// The layers responsible for creating an image buffer to hold the contents of our draw method, and then our view, executes draw function and populates the contents of that image buffer.
+负责创建图像缓冲区以存放 draw 方法内容的是 CALayer，然后我们的视图执行 draw 方法，将绘制内容填充到这个图像缓冲区中。
+随后，这个图像缓冲区的内容会根据显示硬件的需要复制到帧缓冲区中。
+为了理解这种方式消耗了多少资源，以及为什么我们可能需要考虑采用其他方式实现这个 UI，
+// The backing store that we're using here, the image buffer that's attached to the CALayer, the size of that is proportional to the view that we're displaying.
+这里使用的后备存储（backing store），即附着在 CALayer 上的图像缓冲区，其大小与我们显示的视图大小成正比。
+iOS 12 中一个新的特性和优化是：后备存储中元素的大小会根据你是否绘制颜色内容动态增长。
+以及这些颜色内容是否处于标准色彩范围内。
+因此，如果你使用扩展 sRGB 颜色绘制宽色域内容，后备存储实际上会比仅使用 0 到 1 范围内颜色时更大。
+在 iOS 以前的版本中，你可以设置 CALayer 的 contentsFormat 属性，向 Core Animation 提示：“我知道这个视图不需要支持宽色域内容”，或者“我知道这个视图需要支持宽色域内容”。
+但是，如果你这样做，就会禁用 iOS 12 引入的这个优化。
+因此，请检查你对 layerWillDraw 的实现。
+确保你不会无意中破坏这一优化，否则在 iOS 12 上运行时你的代码可能无法获得性能提升。
+
+但是，我们可以做得比仅仅提示是否需要支持宽色域的后备存储更好。
+实际上，我们可以减少应用程序所需的总后备存储量。
+方法是将这个较大的视图重构为多个更小的子视图。
+同时减少或消除重写 draw 方法的地方。
+这样可以帮助我们消除内存中存在的重复图像数据。
+同时，也可以利用 UIView 的一些优化属性，而不需要创建后备存储。
+
+正如我之前提到的，重写 draw 方法会要求为对应的 CALayer 创建一个后备存储。
+但是，UIView 的一些属性即使不重写 draw 方法也能正常工作。
+例如，设置 UIView 的背景颜色不需要创建后备存储，除非你使用了图案颜色（pattern color）。
+因此，我建议不要在 UIView 的 backgroundColor 属性上使用图案颜色。
+相反，你可以创建一个 UIImageView，并将图像赋给它。
+然后使用 UIImageView 的方法来正确设置平铺（tiling）参数。
+当我们想裁剪圆角矩形的角时，应使用 CALayer 的 cornerRadius 属性。
+因为 Core Animation 可以渲染裁剪后的圆角，而不需要额外的内存分配。
+如果使用更强大的 maskView 或 maskLayer 属性，就会产生额外的内存分配来存储该遮罩。
+如果你的背景比较复杂，包含 cornerRadius 无法表达的透明区域，也可以考虑使用 UIImageView。
+将这些信息存储在资源目录中，或者在运行时渲染它。
+然后将其作为图像提供给 UIImageView，而不是使用 maskView 或 maskLayer。
+
+最后，以 Live Photo 图标为例，UIImageView 可以在不进行额外内存分配的情况下，给单色图像上色。
+首先，你需要在 图像资源编辑器（Image Asset Editor） 中设置属性，将 render mode（渲染模式） 设置为 “Always Template（始终模板）”。
+或者，你也可以在代码中使用 UIImage 的 withRenderingMode(.alwaysTemplate) 方法，创建一个渲染模式为模板模式的 UIImage。
+接着，将该图片赋给一个 UIImageView，并设置该 image view 的 tintColor 属性为你希望显示的颜色。
+在将图像渲染到帧缓冲区（frame buffer）的过程中，UIImage 会在复制操作时自动应用该纯色。
+这样就不需要单独持有一份带颜色的图像副本，从而节省内存。
+UIKit 提供的另一个优化是：UILabel 在显示单色文本时，比显示彩色文本或表情符号时节省约 75% 的内存。
+如果你想了解这个优化的底层原理，以及如何将其应用到你自定义的 UIView 子类中，可以参考 WWDC 的 “iOS Memory Deep Dive” 讲座。
+那场讲座对一种名为 A8 的后备存储格式有详细的讲解。
+
+有时候，你可能需要在屏幕外渲染一些图像内容，并将其存储在内存中的图像缓冲区中。
+UIKit 提供了一个专门用于此目的的类：UIGraphicsImageRenderer
+以前还有一个旧函数：UIGraphicsBeginImageContext，但请不要再使用它。
+因为只有 UIGraphicsImageRenderer 才能正确渲染**宽色域（wide color）**内容。
+在你的应用中，你可以使用 UIGraphicsImageRenderer 来在屏幕外完成渲染。
+然后，再使用 UIImageView 将渲染结果高效地显示在屏幕上。
+
+与我们在 CALayer 的后备存储（backing store）中引入的优化类似，
+我们同样让 UIGraphicsImageRenderer 能够根据你在其 actions block（绘图闭包）中执行的操作，动态地扩展其图像缓冲区的大小。
+如果你的代码运行在 iOS 12 之前的系统版本上，
+你可以通过 UIGraphicsImageRendererFormat 的 prefersExtendedRange 属性告诉 UIKit：
+你是否计划绘制**宽色域（wide color）**内容。
+不过，这里还有一种中间方案。
+如果你的主要操作是将某个 UIImage 渲染进 UIGraphicsImageRenderer，
+那么该图像可能使用一种需要超出 sRGB 范围的色彩空间，
+但它实际上**并不需要更大的像素存储单元（element size）**来保存这些信息。
+因此，UIImage 提供了一个名为 imageRendererFormat 的属性，
+你可以通过它获得一个预先构建好的 UIGraphicsImageRendererFormat 对象，
+用于以最优的存储格式重新渲染该图像。
+
+如何在你的应用中整合 iOS 提供的高级 CPU 与 GPU 技术。
+因此，如果你的图像需要进行大量的复杂处理（比如实时处理），可以考虑使用 Core Image。
+Core Image 是一个框架，它允许你定义一套图像处理“配方”（filter chain），
+并让系统在 CPU 或 GPU 上高效执行这些操作。
+如果你从一个 CIImage 创建一个 UIImage，并将它交给 UIImageView，
+UIImageView 会负责在 GPU 上执行这套图像处理配方（recipe）。
+这种方式非常高效，并且可以让 CPU 空出资源去处理应用中的其他任务。
+要使用这种方法，你只需像往常一样创建 CIImage，
+然后使用 UIImage 的 init(ciImage:) 初始化方法。
+在 iOS 上，还有其他高级的图形处理与渲染框架可供使用，
+包括 Metal、Vision 和 Accelerate。
+#####
+这些框架中有一个通用的数据类型：CVPixelBuffer。
+它表示一种可以被 CPU 或 GPU 使用或共享 的图像像素缓冲区。
+#####
+在创建这样的像素缓冲区时，请确保使用最合适的初始化方法。
+也就是说，应选择与你当前手中数据格式最接近的初始化方式。
+不要重新进行任何“解码”工作，
+因为现有的 UIImage 或 CGImage 对象已经完成了解码过程。
+当在 CPU 与 GPU 之间传递数据 时要格外小心，
+避免只是把工作负载在两者之间来回切换。
+事实上，你可以让两者并行执行任务，实现更高的性能。
+最后，你可以查看 Accelerate 与 simd 的相关开发者会议，
+了解如何正确格式化你的数据缓冲区以供 Accelerate 框架高效处理。
+
+总结几个关键点：
+在你的 UITableView 和 UICollectionView 中实现 预取（prefetching），
+这样可以提前完成部分任务，避免滚动卡顿（hitching）。
+确保你没有无意中破坏 UIKit 提供的那些用于减少视图后备存储（backing store）大小的优化。
+如果你在应用中打包图片素材，请将它们存储在 Asset Catalog 中。
+最后，如果你需要在不同尺寸下渲染相同的图标，
+不要过度依赖 “Preserve Vector Data（保留矢量数据）” 这个选项。
+
+CoreImage:
+executes on gpu,freeing up cpu
+
+
+==================================================
+确保你没有无意中破坏 UIKit 提供的那些用于减少视图后备存储（backing store）大小的优化。
+
+Make sure that you're not defeating any optimizations that UIKit is providing to reduce the size of the backing stores associated with your views.
+UIKit 和 Core Animation 在内部已经做了很多“自动优化”，帮助我们节省内存与 CPU。
+但有些写法或属性设置会“无意中让这些优化失效（defeat the optimization）”。
+
+每一个 UIView 背后都有一个 CALayer。
+如果你在视图中使用 draw(_:) 去绘制内容，Core Animation 就会为这个 Layer 创建一块后备存储（backing store），
+本质上就是一块内存中的位图，用来保存视图绘制出来的像素。
+这块 backing store 的大小和颜色格式（是否支持广色域）都会直接影响内存占用。
+
+UIKit 在 iOS 12 之后对这块机制进行了优化👇
+它会根据你绘制的内容动态调整 backing store 的内存占用：
+如果你只是普通 sRGB 颜色，使用较小格式；
+如果你绘制了扩展色域（wide color），才会临时扩大存储格式。
+
+#####
+以下是几种会让这些优化失效的情况：
+手动设置 layer.contentsFormat
+在 iOS 11 之前，开发者可以用这个属性告诉 Core Animation 是否需要广色域支持。
+但从 iOS 12 起，系统会自动判断并动态调整。
+如果你还手动指定 contentsFormat，
+就会禁用系统的动态调整机制，反而浪费内存。
+
+不必要地重写 draw(_:)
+如果你的自定义视图只是在背景上画个圆角矩形或边框，
+但你却 override draw(_:) 去绘制，UIKit 就必须为它分配 backing store。
+而如果你改用：
+layer.cornerRadius = 8
+layer.borderWidth = 1
+Core Animation 可以直接在 GPU 上渲染，无需分配 backing store 内存。
+所以这类 override 会“破坏”优化。
+
+使用 maskView 或 maskLayer 代替简单效果
+maskView / maskLayer 会创建额外的缓冲区（offscreen buffer）用于混合。
+如果只是想实现圆角裁剪，用 cornerRadius 更好。
+否则你会多出一块 offscreen backing store。
+
+使用 patternColor
+view.backgroundColor = UIColor(patternImage: ...)
+这种颜色本质上是用图片平铺，
+UIKit 会为背景创建 backing store 来绘制它，
+从而破坏了“无 backing store 的 UIView”优化。
+#####
+
+UIKit 的优化目标：
+尽量避免创建 backing store，让 GPU 直接渲染，节省内存。
+而“defeating optimization”指的就是：
+通过某些 API 或重写行为，强制系统创建 backing store 或扩大其格式，导致内存浪费。
+
+
+==================================================
+vector artwork optimzations:
+// xcode rasterizes artwork for relevant sale factors while compiling
+Xcode 在编译时会针对相关的缩放比例（scale factors）光栅化（rasterize）艺术资源（artwork）。
+Xcode 在编译过程中会根据不同的缩放比例（如 @1x、@2x、@3x）将矢量图或资源生成相应的位图。
+// prerasterized artwork used when image is drawn at natural size
+当图像以其自然大小绘制时，会使用预先光栅化的艺术资源。
+当图片按原始比例显示时，系统会直接使用编译时已经生成好的（预先光栅化的）位图资源。
+natural size：指资源本身的逻辑尺寸（即不再进行额外缩放的大小）。
+prerasterized artwork：指在编译阶段就已经从矢量图（如 PDF）转换成像素图（bitmap）的资源。
+// if artwork has fixed sizes,use mutiple image assets instead of relying on vector rasterization
+如果美术资源（artwork）是固定尺寸的，应使用多个不同分辨率的图像资源，而不是依赖矢量图的光栅化。
+当你的图像资源本身是固定大小（比如不是需要缩放的图标）时，建议为不同屏幕分辨率提供多份位图（如 @1x、@2x、@3x），而不要只用一个矢量图（PDF）让 Xcode 自动光栅化。
+fixed sizes：指图像在应用中不会被缩放，比如一个按钮背景或装饰图标。
+vector rasterization：指使用矢量图（如 PDF）让 Xcode 自动在编译时或运行时生成位图的过程。
+
+==================================================
+输入数据的性质不同，导致“decode”和“rasterize”在图像管线中是两个不同层次的概念。
+
+Decode（解码）
+输入数据类型：通常是 位图格式（例如 PNG、JPEG、HEIF 等）。
+过程：把压缩的像素数据解压，还原出原始像素（bitmap）。
+输出结果：像素矩阵（bitmap buffer）。
+举例：
+从 PNG 文件中解码出每个像素的 RGBA 值。
+这时候我们已经得到具体的像素点信息（比如 512×512 的位图）。
+
+
+Rasterize（栅格化）
+输入数据类型：矢量数据（vector data），例如 PDF 矢量图、SVG、路径（path）、文字轮廓、形状图层等。
+过程：把抽象的几何描述（线条、曲线、填充、变换等）转换成像素化的位图。
+输出结果：像素矩阵（bitmap buffer）。
+举例：
+从一段 Bézier 曲线（矢量路径）生成对应的像素图像，决定哪些像素要被填充、反锯齿、上色。
+
+
+两者的目标（得到 bitmap）一样，但实现方式完全不同。
+一个是解压像素数据，一个是计算并生成像素数据。
+
+
+==================================================backing store
+overriding the draw method will require creating a backing store to go with your CALayer.
+重写 draw 方法需要创建与 CALayer 配合使用的后备存储
+
+什么是 backing store:
+Backing store 就是 CALayer 用来存储它内容的 内存缓冲区，通常是一个像素位图。
+当 layer 的内容需要显示在屏幕上时，系统会把 backing store 的像素内容渲染到屏幕上。
+
+在没有 backing store 的情况下：
+CALayer 可以 直接通过 Core Animation 合成显示内容（比如它只包含子 layer，或使用 contents）。
+这意味着如果 layer 没有 draw(_:)，它可能不需要额外的内存来存储像素，只依赖 GPU 合成。
+
+
+重写 draw(_:) 的作用:
+当你重写 draw(_:)（或者使用 setNeedsDisplay / setNeedsDisplayInRect）时，系统会：
+创建一个 位图缓冲区（backing store）。
+调用你的 draw(_:) 方法，把你绘制的内容渲染到这个缓冲区。
+最后再把这个缓冲区显示到屏幕上。
+
+也就是说，重写 draw(_:) 强制 CALayer 创建一个 backing store，因为它必须有内存来存储你绘制的像素。
+
+
+创建 vs 不创建 backing store 的区别:
+| 特性   | 不重写 draw / 无 backing store       | 重写 draw / 有 backing store    |
+| ---- | -------------------------------- | ---------------------------- |
+| 内存占用 | 很小（不保存像素数据，只保存 layer 属性和子 layer） | 高（每个 layer 都要分配像素缓冲区）        |
+| 绘制性能 | GPU 合成快，几乎零 CPU 绘制               | CPU 参与绘制，需要创建位图和填充像素         |
+| 动画效率 | 高，GPU 可以直接合成                     | 相对低，因为 backing store 可能被频繁重绘 |
+| 灵活性  | 只能显示 layer 的 `contents` 或子 layer | 可以自定义绘制任何内容                  |
+
+
+实际应用建议:
+尽量少重写 draw(_:)，尤其是大 layer 或频繁动画的 layer。
+可以通过拆分子 layer、使用 contents 或 CAShapeLayer、CATextLayer 等方式减少 backing store。
+只有在 必须自定义绘制（复杂矢量绘图、渐变、图形效果）时才使用 draw(_:)。
+
+
+总结:
+重写 draw(_:) 会让 CALayer 必须有一个 backing store 来存储你绘制的像素，这会增加内存占用和 CPU 开销；
+不重写则可以直接通过 GPU 合成，节省内存和提升动画性能。
+
+
+有 backing store（重写 draw(_:) 的情况）:
+系统会给这个 CALayer 分配一块 位图内存（像素缓冲区），大小和 layer 的 bounds 一样。
+这块内存用来存储你在 draw(_:) 里绘制的内容。
+每次 setNeedsDisplay 或 setNeedsDisplayInRect 被调用时，都会在这块内存里重绘像素。
+最后 GPU 会把这块内存的像素合成到屏幕上。
+无 backing store（不重写 draw(_:) 的情况）:
+CALayer 只保存一些 属性信息（比如 frame、背景色、子 layer 等），不保存具体像素数据。
+GPU 可以直接根据 layer 属性和子 layer 合成，不需要额外的内存去存像素。
+
+所以区别本质上就是：是否额外分配一块内存来存储 layer 的像素内容。
+
+
+#####
+不重写 draw(_:) 的 layer:
+这种 layer 没有 backing store，所以没有在 CPU 内存里开辟一块像素位图。
+它的内容 不在 CPU 内存中，而是依赖 GPU 来直接渲染和合成：
+GPU 根据 layer 的属性（frame、backgroundColor、sublayers、contents 等）生成像素。
+也就是说，像素数据直接在 GPU 里处理，CPU 只是提供绘制指令和 layer 树信息。
+#####
+优点：
+内存占用小（没有额外像素缓存）。
+动画性能高，因为 GPU 可以直接合成。
+缺点：
+如果你需要自定义绘制（比如矢量图、复杂渐变），必须用 draw(_:)，这时 CPU 先生成像素，然后上传给 GPU。
+
+没有 draw(_:) 的 layer，像素数据不经过 CPU 缓存，GPU 直接渲染；
+有 draw(_:) 的 layer，会先在 CPU 生成像素，再交给 GPU。
+
+
+==================================================CALayer.contents
+"Assigning a value to this property causes the layer to use your image rather than create a separate backing store.
+If the layer object is tied to a view object, you should avoid setting the contents of this property directly. 
+The interplay between views and layers usually results in the view replacing the contents of this property during a subsequent update."
+
+赋值给 contents 时，layer 会直接使用你提供的图像，而不会额外创建 backing store。
+如果 layer 是 UIView 的 layer，不要直接设置 contents，因为 view 会在后续更新中自动替换它。也就是说，UIView 的 draw(_:) 或系统刷新可能会覆盖你手动设置的 contents。
+
+
+CALayer 的 content 和 backing store:
+content
+CALayer 的 content 属性通常是一个 CGImage 或者 NSImage/UIImage（在 iOS 上就是 UIImage.CGImage）。
+它存储的是「layer 要显示的像素数据」，可以理解为一块纹理（texture）。
+
+Backing store（后备存储）
+Backing store 是 CALayer 内部用来保存绘制结果的一块内存/缓冲区。
+它通常是 GPU 可访问的纹理或 CPU 内存的一块 bitmap，当你调用 draw(_:) 或者 layer 被设置为 needsDisplay 时，这块 backing store 会被填充/更新。
+
+重点：content 是可访问的外部接口，可以直接给 layer 设置图片；
+backing store 是内部实现，通常由 layer 管理，当 layer 需要自己绘制（draw(_:)）时才会用到。
+
+
+如果 layer 使用了一些属性（比如 shouldRasterize = true）
+CALayer 也会生成一块 backing store 来缓存渲染结果，以优化动画性能。
+
+
+
+==================================================
+#####
+UIView 的 draw(_:)，不是 layer 的 draw
+#####
+UIView 的 draw(_:) 方法是给 layer 的 backing store 绘制内容，而不是直接设置 layer 的 contents。
+
+UIView 和 CALayer 的关系:
+每个 UIView 都有一个 layer（CALayer）。
+UIView 的显示内容由 layer 渲染到屏幕上。
+layer 有两种渲染方式：
+contents：直接显示一个 CGImage 或纹理。
+backing store：一个内部的像素缓冲区，layer 可以把绘制内容存储在这里，然后显示。
+
+
+draw(_:) 的作用：
+当你重写 UIView 的 draw(_:)：
+系统会创建一个 backing store（通常是一个 bitmap 上下文）。
+UIView 的 draw(_:) 会拿到这个 CGContext，在上面绘制你的自定义内容。
+绘制完成后，layer 会用 backing store 的内容来显示在屏幕上。
+这时 layer 的 contents 并没有被直接赋值，而是通过 backing store 生成显示内容。
+换句话说：draw(_:) 是“往 backing store 画”，不是“直接赋值 contents”。
+
+
+#####
+// 这里说的 draw(_:) 指的是 UIView 的 draw(_:) 方法，不是 CALayer 的 draw(in:)。
+如果你同时重写 UIView 的 draw(_:) 并设置 layer.contents，UIView 的刷新机制可能会覆盖你手动设置的 contents，因为 UIView 会把 backing store 的内容写入 layer。
+这也是 Apple 文档里说“不要直接给 UIView 的 layer.contents 赋值”的原因。
+#####
+
+
+import UIKit
+
+class CustomView: UIView {
+
+    override func draw(_ rect: CGRect) {
+        super.draw(rect)
+        
+        // 获取上下文
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        
+        // 绘制红色填充
+        context.setFillColor(UIColor.red.cgColor)
+        context.fill(rect)
+    }
+}
+
+// Helper: 生成一个纯色 UIImage
+func imageWithColor(_ color: UIColor, size: CGSize = CGSize(width: 100, height: 100)) -> UIImage {
+    UIGraphicsBeginImageContextWithOptions(size, false, 0)
+    color.setFill()
+    UIRectFill(CGRect(origin: .zero, size: size))
+    let img = UIGraphicsGetImageFromCurrentImageContext()
+    UIGraphicsEndImageContext()
+    return img!
+}
+
+// 使用示例
+class ViewController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        
+        let customView = CustomView(frame: CGRect(x: 50, y: 100, width: 200, height: 200))
+        
+        // 设置 layer.contents 为黄色
+        let yellowImage = imageWithColor(.yellow, size: customView.bounds.size)
+        customView.layer.contents = yellowImage.cgImage
+        
+        view.addSubview(customView)
+    }
+}
+
+
+一开始显示 yellow，没有走 override func draw(_ rect: CGRect)
+touchesBegan 进行 customView.setNeedsDisplay()，变成 red ，走了 draw
+如果把 
+let yellowImage = imageWithColor(.yellow, size: customView.bounds.size)
+customView.layer.contents = yellowImage.cgImage
+注释掉
+一开始显示 red ，走了 draw
+
+
+
+==================================================重要
+一、UIImage(named:) 做了什么？
+let image = UIImage(named: "example")
+这一步 不会立即解码图片像素（也就是不会把压缩的 PNG / JPEG 解压成 RGBA 像素数据）。
+它会：
+从 bundle 里找到图片文件；
+把文件内容（压缩格式的数据）缓存到内存；
+创建一个 UIImage 对象；
+设置其 CGImageRef 或 CIImage 引用；
+并把图片名缓存进 UIKit 的 image cache（系统级缓存） 中。
+所以：UIImage(named:) 是懒加载+缓存机制，不会立刻触发解码。
+
+二、什么时候触发 CPU 解码？
+当你执行：
+imageView.image = image
+
+系统接下来的渲染流程是：
+1. UIImageView 的 CALayer.contents 被设置为该图片的 CGImage；
+2. 当该 layer 下一帧需要被 Core Animation 提交（CATransaction.commit()）时，Core Animation 会检查该 image 是否有已解码的像素缓存；
+3. 如果尚未解码，就会：
+在 CPU 端执行一次图像解码（PNG/JPEG → RGBA bitmap）；
+将解码后的像素数据（通常是 BGRA8888）放入内存；
+之后交由 GPU 进行纹理上传。
+
+这个阶段的“解码”一般由 ImageIO 或 CoreGraphics 完成，发生在 CPU 上。
+这一步往往是 UI 卡顿（如第一次显示大图）的罪魁祸首。
+在 Instruments 的 “Core Animation” / “Time Profiler” 工具中，你能看到这一阶段的 CPU 开销（如 CGImageDecode, prepareForDisplay）。
+
+
+三、什么时候上传到 GPU？
+当 layer 树提交给 Core Animation Server（Render Server）后：
+1. 系统在下一帧中会将解码好的像素数据上传到 GPU，形成纹理（Texture）。
+2. GPU 在渲染阶段会从纹理读取像素，执行合成（Compositing），并最终输出到屏幕。
+
+上传纹理的代价也不小，但一次上传后如果图像没变动，会被 GPU 缓存，之后重复显示不会再上传。
+
+
+| 阶段                       | 动作                    | 发生位置 |
+| ------------------------ | --------------------- | ---- |
+| `UIImage(named:)`        | 加载文件、缓存对象，不解码         | CPU  |
+| `imageView.image = ...`  | 将 CGImage 绑定到 layer   | CPU  |
+| Layer 提交时                | 图像解码（JPEG/PNG → RGBA） | CPU  |
+| Layer 树提交到 Render Server | 像素上传为纹理               | GPU  |
+| 屏幕合成（Compositing）        | 纹理绘制、混合               | GPU  |
+
+
+优化手段（避免 CPU 解码卡顿）
+1. 预解码图片
+2. 使用异步加载框架
+如 SDWebImage、Kingfisher 都会在后台线程解码。
+3. 避免使用超大分辨率图片
+因为 CPU 解码 + GPU 纹理上传都线性依赖像素数量。
+
+
+总结：
+当 UIImage(named:) 的图像设置到 UIImageView 并即将显示时，系统会在 CPU 端执行一次图像解码（将压缩格式解码为像素数据），然后将这些像素数据拷贝上传到 GPU 作为纹理，再由 GPU 进行渲染显示。
+
+
+==================================================重写 draw(_:) 并不一定意味着会触发离屏渲染（offscreen rendering）。
+当你重写 UIView.draw(_:) 时，UIKit 会在需要绘制该视图内容时调用它。
+你在里面用 Core Graphics (CGContext) 绘制路径、图片、文字等。
+这些绘制操作通常都会被渲染到 该 view 对应的 backing store（即 layer 的 contents 位图） 上。
+
+#####
+CALayer 的 contents 属性:
+类型是 Any?（通常是 CGImage）。
+它存储的是 当前 layer 显示的位图内容，可以直接赋值一个 CGImage 来显示，也可以通过 UIView 或 Core Animation 渲染间接生成。
+你手动设置 layer.contents 后，UIKit 不会再自动绘制 UIView.draw(_:) 的内容到这个属性上（除非你在绘制后自己更新它）。
+
+Layer 的 backing store（也叫渲染缓存、离屏缓冲）:
+这是 Core Animation 内部维护的一块 内存位图，用于存储 layer 的绘制结果。
+当系统调用 draw(_:) 绘制内容时，绘制操作会最终渲染到这个 backing store 上，然后 CA 将 backing store 的内容显示在屏幕上。
+注意：backing store 是内部实现细节，它不等于 layer.contents，但最终 layer.contents 会被设置为 backing store 的内容（对开发者来说，通常是不可直接操作的）。
+
+draw(_:) 的绘制 → 渲染到 backing store → 系统显示在屏幕上。
+layer.contents 是外部可访问的接口，通常会反映 backing store 的内容，但不是同一个对象，你直接设置 contents 会覆盖 backing store 显示的内容。
+
+backing store = 厨师做好的菜（内部），
+layer.contents = 上桌的菜（你可以自己端上去或让厨师端）。
+#####
+
+
+这一步在技术上确实是「离屏绘制」——因为 UIKit 内部会创建一个位图上下文（CGBitmapContext），你画的内容最终会拷贝到 layer 的 contents。
+但注意：
+✅ 这属于 CPU 级别的位图渲染（software rendering），
+而不是 GPU 意义上的 离屏渲染（offscreen rendering in GPU pipeline）。
+
+
+GPU 层面的「离屏渲染」是另一回事:
+GPU 的离屏渲染（Offscreen Rendering）特指：
+GPU 在主渲染通道之外，新建一个 framebuffer（FBO），单独渲染图层或特效，再把结果合成回主屏。
+
+常见触发场景：
+设置 layer.masksToBounds = true 且有圆角；
+设置 layer.shadowPath 但未指定；
+使用 UIVisualEffectView（毛玻璃）；
+layer.shouldRasterize = true；
+某些 group opacity 场景；
+Core Animation 的 mask 或 shadow 渲染等。
+这些是 GPU 为了实现视觉效果而创建离屏缓冲的行为，开销较大，会影响性能。
+
+
+class MyView: UIView {
+    override func draw(_ rect: CGRect) {
+        UIColor.red.setFill()
+        UIRectFill(rect)
+    }
+}
+UIKit 大致会：
+创建一个 CGBitmapContext（CPU 内存里的位图缓冲区）；
+调用你的 draw(_:)；
+把绘制结果生成一张图片；
+赋值给 layer.contents；
+GPU 再用这张图做一次普通的 on-screen 渲染（直接贴图）。
+
+所以：
+你确实「离开了屏幕」去画，但那是 CPU 位图上下文的离屏绘制；
+GPU 仍然是「一次 on-screen render」贴图而已；
+不是 Core Animation 意义的 offscreen rendering。
+
+
+重写 draw(_:) 是 CPU 离屏绘制；
+离屏渲染（offscreen rendering）是 GPU 层面的事；
+两者不是一回事。
+
+
+1️⃣ 如果你自己设置了 layer.contents 
+2️⃣ 如果你调用 setNeedsDisplay() 或重写 draw(_:) 
+对于这两种情况，如果就设置一个图片的区别：
+
+1️⃣ 手动设置 layer.contents
+layer.contents = UIImage(named: "icon")?.cgImage
+你直接提供了 最终显示的图像数据（CGImage）。
+Core Animation：
+不需要创建 CPU 端的绘制上下文；
+不触发 draw(_:)；
+直接把这张图片交给 GPU 去显示。
+结果：
+没有额外的 CPU 内存缓冲；
+GPU 只需要一个纹理来存放这张图片；
+性能和内存使用最优。
+#####
+当 UIImage 的底层 CGImage 第一次被 GPU 访问时（上传到纹理），Core Animation 会触发解码；
+解码的结果直接被 GPU 用作纹理；
+只发生一次解码。
+#####
+
+2️⃣ 使用 draw(_:) + setNeedsDisplay()
+class MyView: UIView {
+    override func draw(_ rect: CGRect) {
+        UIImage(named: "icon")?.draw(in: rect)
+    }
+}
+当系统需要重绘时：
+UIKit 会在 CPU 内存中创建一个 CGBitmapContext（位图缓冲区）；
+把图片绘制到这个 context（再一次 decode / blend）；
+把结果生成一张新的 CGImage；
+将这张 CGImage 赋给 layer.contents；
+Core Animation 再由 GPU 把这张图显示出来。
+结果：
+在 CPU 端会临时创建一个 bitmap buffer；
+这块内存的大小 = 视图区域大小 × 4 bytes（RGBA）；
+绘制完成后可能会被释放，但在绘制期间是额外内存占用；
+同时 CPU 需要多一步「拷贝」工作；
+GPU 端同样还要持有最终显示用的纹理（即 layer.contents 的内容）。
+#####
+当 draw(in:) 调用时，Core Graphics 在绘制前会访问 CGImage 像素；
+如果该 CGImage 之前还没被解码，这里会触发第一次也是唯一一次解码；
+如果该 UIImage 已经被解码（例如之前已经在别处用过），就不会重复解码；
+随后系统把像素数据拷贝到 CGBitmapContext 中（这一部分是拷贝，不是解码）。
+#####
+
+| 项目                     | 手动设置 contents | 使用 draw(_:)             |
+| ---------------------- | ------------- | ----------------------- |
+| 是否创建 CPU bitmap buffer | ❌             | ✅                       |
+| CPU 内存占用               | 较低            | 临时增加一块 backing buffer   |
+| GPU 纹理内存               | 一样（都需要一张贴图）   | 一样                      |
+| CPU 解码 & 拷贝            | ❌（系统直接解码图像一次） | ✅（再次绘制到 bitmap context） |
+| 性能                     | 更高            | 稍慢                      |
+| 灵活性                    | 低（只能整张图）      | 高（可绘制文字、图形、合成）          |
+
+第二种方式在绘制过程中确实会多一块 CPU 端的位图缓冲区内存占用
+会多一次像素拷贝到 CGBitmapContext 的步骤，这就是额外的 CPU 成本所在。
+
+假设你的视图是 200 × 200：
+位图缓冲区大小 ≈ 200 × 200 × 4 bytes = 160 KB
+如果屏幕缩放因子是 3（@3x），实际 buffer 可能是 600 × 600 × 4 = 1.44 MB
+这块内存存在于绘制阶段（CPU 内存）

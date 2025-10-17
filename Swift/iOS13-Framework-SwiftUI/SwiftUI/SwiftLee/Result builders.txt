@@ -35,3 +35,332 @@ This is exactly how you can use your custom result builder as an attribute of fu
 
 
 ==================================================Creating a custom result builder
+var constraints: [NSLayoutConstraint] = [
+    // Single constraint
+    swiftLeeLogo.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+]
+
+// Boolean check
+if alignLogoTop {
+    constraints.append(swiftLeeLogo.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor))
+} else {
+    constraints.append(swiftLeeLogo.centerYAnchor.constraint(equalTo: view.centerYAnchor))
+}
+
+// Unwrap an optional
+if let fixedLogoSize = fixedLogoSize {
+    constraints.append(contentsOf: [
+        swiftLeeLogo.widthAnchor.constraint(equalToConstant: fixedLogoSize.width),
+        swiftLeeLogo.heightAnchor.constraint(equalToConstant: fixedLogoSize.height)
+    ])
+}
+
+// Add a collection of constraints
+constraints.append(contentsOf: label.constraintsForAnchoringTo(boundsOf: view)) // Returns an array
+
+// Activate
+NSLayoutConstraint.activate(constraints)
+
+#####
+As you can see, we have quite a few conditional constraints.
+#####
+
+Result builders are a great solution to this and allow us to write the above sample code as follows:
+@AutoLayoutBuilder var constraints: [NSLayoutConstraint] {
+    swiftLeeLogo.centerXAnchor.constraint(equalTo: view.centerXAnchor) // Single constraint
+    
+    if alignLogoTop {
+        swiftLeeLogo.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
+    } else {
+        swiftLeeLogo.centerYAnchor.constraint(equalTo: view.centerYAnchor) // Single constraint
+    }
+    
+    if let fixedLogoSize = fixedLogoSize {
+        swiftLeeLogo.widthAnchor.constraint(equalToConstant: fixedLogoSize.width)
+        swiftLeeLogo.heightAnchor.constraint(equalToConstant: fixedLogoSize.height)
+    }
+    
+    label.constraintsForAnchoringTo(boundsOf: view) // Returns an array
+} 
+
+1. Defining the AutoLayout builder
+@resultBuilder
+struct AutoLayoutBuilder {
+    // .. Handle different cases, like unwrapping and collections
+}
+
+To build up a result out of all building blocks, we need to configure handlers for each case, like handling optionals and collections. 
+But before we do, we start by handling the case of a single constraint.
+
+This is done by the following method:
+@resultBuilder
+struct AutoLayoutBuilder {
+    
+    static func buildBlock(_ components: NSLayoutConstraint...) -> [NSLayoutConstraint] {
+        return components
+    }
+}
+
+The method takes a variadic parameter of components, which means it can either be one or many constraints. 
+We need to return a collection of constraints, which means, in this case, we can return the input components directly.
+
+This now allows us to define a collection of constraints as follows:
+@AutoLayoutBuilder var constraints: [NSLayoutConstraint] {
+    // Single constraint
+    swiftLeeLogo.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+} 
+
+
+2. Handling a collection of build blocks
+Up next is handling a collection of build blocks as a single element.
+In our first code example, we used a convenience method constraintsForAnchoringTo(boundsOf:) returning multiple constraints in a collection.
+If we would use that with our current implementation, the following error would occur:
+Cannot pass array of type ‘[NSLayoutConstraint]’ as variadic arguments of type ‘NSLayoutConstraint’
+
+
+Variadic parameters in Swift do not allow us to pass in an array, even though it might seem logical to do so.
+Instead, we need to define a custom method for handling collections as component input.
+
+we’ll rewrite our building block method to take an array:
+static func buildBlock(_ components: [NSLayoutConstraint]...) -> [NSLayoutConstraint] {
+    components.flatMap { $0 }
+}
+
+This change will break the initial implementation we’ve had since we can no longer pass in a single element. 
+To add support for single elements, we need to add a conversion method, which can be achieved using the expression building methods:
+@resultBuilder
+struct AutoLayoutBuilder {
+
+    static func buildBlock(_ components: [NSLayoutConstraint]...) -> [NSLayoutConstraint] {
+        components.flatMap { $0 }
+    }
+
+    /// Add support for both single and collections of constraints.
+    static func buildExpression(_ expression: NSLayoutConstraint) -> [NSLayoutConstraint] {
+        [expression]
+    }
+
+    static func buildExpression(_ expression: [NSLayoutConstraint]) -> [NSLayoutConstraint] {
+        expression
+    }
+}
+
+These two methods allows us to convert a single layout constraint into a collection of constraints. 
+In other words, we can bring both types together into a common type [NSLayoutConstraint] that is accepted as a variadic array value.
+
+Inside the buildBlock method we use flatMap to map into a single collection of constraints.
+
+Finally, we can update our implementation to make use of our new collection build block handler:
+@AutoLayoutBuilder var constraints: [NSLayoutConstraint] {
+    // Single constraint
+    swiftLeeLogo.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+    
+    label.constraintsForAnchoringTo(boundsOf: view) // Returns an array
+} 
+
+
+3. Handling unwrapping of optionals
+Another case we need to handle is unwrapping optionals. This allows us to conditionally add constraints if a value exists.
+
+We do this by adding the buildOptional(..) method to our function builder:
+@resultBuilder
+struct AutoLayoutBuilder {
+
+    static func buildBlock(_ components: [NSLayoutConstraint]...) -> [NSLayoutConstraint] {
+        components.flatMap { $0 }
+    }
+
+    /// Add support for both single and collections of constraints.
+    static func buildExpression(_ expression: NSLayoutConstraint) -> [NSLayoutConstraint] {
+        [expression]
+    }
+
+    static func buildExpression(_ expression: [NSLayoutConstraint]) -> [NSLayoutConstraint] {
+        expression
+    }
+
+    /// Add support for optionals.
+    static func buildOptional(_ components: [NSLayoutConstraint]?) -> [NSLayoutConstraint] {
+        components ?? []
+    }
+}
+It returns the collection of constraints or an empty collection if the value does not exist.
+
+This now allows us to unwrap an optional within our building blocks definition:
+@AutoLayoutBuilder var constraints: [NSLayoutConstraint] {
+    // Single constraint
+    swiftLeeLogo.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+    
+    label.constraintsForAnchoringTo(boundsOf: view) // Returns an array
+    
+    // Unwrapping an optional
+    if let fixedLogoSize = fixedLogoSize {
+        swiftLeeLogo.widthAnchor.constraint(equalToConstant: fixedLogoSize.width)
+        swiftLeeLogo.heightAnchor.constraint(equalToConstant: fixedLogoSize.height)
+    }
+} 
+
+
+4. Handling conditional statements
+Another common case to handle is conditional statements.
+Based on a boolean value you want to add one constraint or another. 
+This build block handler basically works by being able to handle either the first or the second component in a conditional check:
+@AutoLayoutBuilder var constraints: [NSLayoutConstraint] {
+    // Single constraint
+    swiftLeeLogo.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+    
+    label.constraintsForAnchoringTo(boundsOf: view) // Returns an array
+    
+    // Unwrapping an optional
+    if let fixedLogoSize = fixedLogoSize {
+        swiftLeeLogo.widthAnchor.constraint(equalToConstant: fixedLogoSize.width)
+        swiftLeeLogo.heightAnchor.constraint(equalToConstant: fixedLogoSize.height)
+    }
+    
+    // Conditional check
+    if alignLogoTop {
+        // Handle either the first component:
+        swiftLeeLogo.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
+    } else {
+        // Or the second component:
+        swiftLeeLogo.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+    }
+} 
+
+This reflects back into the build either handlers we need to add to our function builder:
+@resultBuilder
+struct AutoLayoutBuilder {
+
+    static func buildBlock(_ components: [NSLayoutConstraint]...) -> [NSLayoutConstraint] {
+        components.flatMap { $0 }
+    }
+
+    /// Add support for both single and collections of constraints.
+    static func buildExpression(_ expression: NSLayoutConstraint) -> [NSLayoutConstraint] {
+        [expression]
+    }
+
+    static func buildExpression(_ expression: [NSLayoutConstraint]) -> [NSLayoutConstraint] {
+        expression
+    }
+
+    /// Add support for optionals.
+    static func buildOptional(_ components: [NSLayoutConstraint]?) -> [NSLayoutConstraint] {
+        components ?? []
+    }
+
+    /// Add support for if statements.
+    static func buildEither(first components: [NSLayoutConstraint]) -> [NSLayoutConstraint] {
+        components
+    }
+
+    static func buildEither(second components: [NSLayoutConstraint]) -> [NSLayoutConstraint] {
+        components
+    }
+}
+
+In both buildEither handlers we simply forward the received collection of constrained.
+
+
+5. Handling for..in loops
+Although our example already works, there are a few more methods we can add to make our result builder more complete. 
+For example, we can add support for loops:
+/// Add support for loops.
+static func buildArray(_ components: [[NSLayoutConstraint]]) -> [NSLayoutConstraint] {
+    components.flatMap { $0 }
+}
+
+Doing so allows us to use loops inside the result builder:
+NSLayoutConstraint.activate {
+    for _ in (0..<Int.random(in: 0..<10)) {
+        swiftLeeLogo.centerXAnchor.constraint(equalTo: view.centerXAnchor) // Single constraint
+    }
+}
+
+
+6. Supporting availability APIs
+We’ve added support for if statements before, allowing us to write if statements using availability APIs as follows:
+if #available(iOS 13, *) {
+    swiftLeeLogo.centerXAnchor.constraint(equalTo: view.centerXAnchor) // Single constraint
+}
+Since we’re not using any unavailable APis in this example the code compiles just fine. 
+However, if you want to prepare for all availability statements, you can add support as follows:
+/// Add support for #availability checks.
+static func buildLimitedAvailability(_ components: [NSLayoutConstraint]) -> [NSLayoutConstraint] {
+    components
+}
+
+
+==================================================Using result builders as function parameters
+A great way to make use of result builders is by defining them as a parameter of a function. 
+This way, we can really benefit from our custom AutoLayoutBuilder.
+
+we could make this extension on NSLayoutConstraint to make it a little bit easier to activate constraints:
+extension NSLayoutConstraint {
+/// Activate the layouts defined in the result builder parameter `constraints`.
+static func activate(@AutoLayoutBuilder constraints: () -> [NSLayoutConstraint]) {
+    activate(constraints())
+}
+}
+
+Using it looks as follows:
+NSLayoutConstraint.activate {
+    // Single constraint
+    swiftLeeLogo.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+    
+    label.constraintsForAnchoringTo(boundsOf: view) // Returns an array
+    
+    // Unwrapping an optional
+    if let fixedLogoSize = fixedLogoSize {
+        swiftLeeLogo.widthAnchor.constraint(equalToConstant: fixedLogoSize.width)
+        swiftLeeLogo.heightAnchor.constraint(equalToConstant: fixedLogoSize.height)
+    }
+    
+    // Conditional check
+    if alignLogoTop {
+        // Handle either the first component:
+        swiftLeeLogo.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
+    } else {
+        // Or the second component:
+        swiftLeeLogo.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+    }
+} 
+
+
+And now that we have this method in place, we can also create a convenient method on UIView to add a subview directly with constraints:
+protocol SubviewContaining { }
+extension UIView: SubviewContaining { }
+
+extension SubviewContaining where Self == UIView {
+    
+    /// Add a child subview and directly activate the given constraints.
+    func addSubview<View: UIView>(_ view: View, @AutoLayoutBuilder constraints: (Self, View) -> [NSLayoutConstraint]) {
+        addSubview(view)
+        NSLayoutConstraint.activate(constraints(self, view))
+    }
+} 
+
+Which we can use as follows:
+let containerView = UIView()
+containerView.addSubview(label) { containerView, label in
+    
+    if label.numberOfLines == 1 {
+        // Conditional constraints
+    }
+    
+    // Or just use an array:
+    label.constraintsForAnchoringTo(boundsOf: containerView)
+    
+} 
+
+As we use generics, we can make conditional checks based on the input type of the UIView. 
+In this case, we could add different constraints if our label will only have one line of text.
+
+
+#####
+Whenever you see a piece of code that’s built out of several conditional elements and turned into a single common piece of the return type, 
+you could think about writing result builders.
+#####
+
+
+https://github.com/carson-katri/awesome-function-builders
