@@ -1,0 +1,47 @@
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0434-global-actor-isolated-types-usability.md
+
+Usability of global-actor-isolated types
+
+Status: Implemented (Swift 6.0)
+Upcoming Feature Flag: GlobalActorIsolatedTypesUsability
+Always enabled in Swift 6 language mode
+
+#####
+Makes global-actor-isolated types (like @MainActor structs and classes) easier to use by removing unnecessary restrictions. 
+It lets you access Sendable properties more easily, automatically treats certain functions and closures as @Sendable, 
+and safely allows capturing non-Sendable values in isolated closures. 
+It also fixes inheritance issues by letting subclasses add global actor isolation, as long as they don’t become Sendable if it would be unsafe.
+#####
+
+对那些 Sendable 的 stored properties，引入一个新的规则：
+当类型标记为 @MainActor 时，这些 stored properties 可以被视为隐式 nonisolated。
+换句话说：
+读/写（仅限读，写仍隔离）Sendable stored property 可以不用 await，更像“同步值”。
+因为它是 value type，并且全局 actor 本身也是串行的，所以没有 data race。
+
+#####
+SE-0434 只放宽“读取”，因为读是纯的、不会破坏隔离；
+写仍需 actor 隔离，因为 mutation 会改变 actor 内状态，必须序列化处理。
+#####
+
+
+@MainActor
+struct MyStruct {
+    var count: Int  // Int 是 Sendable
+}
+
+// 根据 SE-0434 提案：
+let s = MyStruct(count: 10)
+print(s.count)  // 即使在非 MainActor 上下文，也可以直接访问（因为 count 是 Sendable 且“隐式 nonisolated”）
+
+
+
+对函数和闭包推断 @Sendable
+对于被全局 actor 隔离（global-actor-isolated）的函数或闭包，编译器会 推断它们为 @Sendable。这样开发者写代码时不用手动加 @Sendable
+
+全局 actor‐隔离闭包可以捕获非 Sendable 值
+即便闭包被 actor 隔离（例如 @MainActor），它现在可以捕获非 Sendable 的值。这在之前可能受限，
+但提案认为这是安全的：因为闭包被隔离到一个全局 actor，在同一时间只会由这个 actor 执行，所以不会有数据竞争（data race）。
+
+子类化（Subclassing）时对 Sendable 的控制
+如果你有一个 非 Sendable、非隔离（nonisolated） 的基类（superclass），提案允许你创建一个子类，将它隔离到一个全局 actor（例如 @MainActor）。

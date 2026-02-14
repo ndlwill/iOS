@@ -14,8 +14,8 @@ Swift 在构建新的并发模型时引入了隔离域的概念。
 
 ==================================================Sendable
 值类型在 Swift 中被广泛使用，其复制语义天然适合在不同的隔离域之间传递。
-但由于自定义类型中可能包含不能安全传递的成员，因此我们可以通过添加 Sendable 标注，让编译器帮助验证其安全性。
 #####
+但由于自定义类型中可能包含不能安全传递的成员，因此我们可以通过添加 Sendable 标注，让编译器帮助验证其安全性。
 虽然 Sendable 以协议形式出现，但本质上它是一个编译时契约，声明某个类型可以安全地跨隔离域传递，编译器会验证这个声明的真实性。
 #####
 
@@ -61,7 +61,9 @@ Sendable 通常作为泛型约束使用，在编译时确保只接受可安全�
 
 ==================================================@unchecked Sendable
 在某些场景中，特别是处理遗留代码时，我们可能已经通过其他机制（如锁、队列等）确保了线程安全，但编译器无法理解这些实现。
+#####
 此时，开发者可以通过 @unchecked Sendable 向编译器保证类型的安全性，从而绕过编译器的自动检查：
+#####
 
 final class ThreadSafeCache: @unchecked Sendable {
     private var cache: [String: Sendable] = [:]
@@ -119,7 +121,9 @@ getSendableClosure(perform: {
 
 
 ==================================================sending
+#####
 @Sendable 闭包的限制有时过于严格。考虑以下场景：
+#####
 Task {
     let nonSendable = NonSendableClass()
     getSendableClosure {
@@ -128,7 +132,9 @@ Task {
     // 实际上这里是安全的，因为 nonSendable 不会在其他地方被修改
 }
 
+#####
 Swift 6 引入了 sending 参数修饰符来解决这个问题：
+#####
 
 // 原来的
 func getSendableClosure(perform: @escaping @Sendable  () -> Void) {}
@@ -144,7 +150,8 @@ Task {
 }
 
 #####
-但 sending 并非像 @unchecked Sendable 一样，会绕过 Swift 编译器的检查。如果出现了不安全的使用场景，编译器仍然会提醒我们：
+但 sending 并非像 @unchecked Sendable 一样，会绕过 Swift 编译器的检查。
+如果出现了不安全的使用场景，编译器仍然会提醒我们：
 #####
 actor MyActor {
     var storage: NonSendableClass?
@@ -161,17 +168,23 @@ Task {
     await myActor.store(obj) // ✅ 所有权转移给 actor
     // obj.value += 1 // ❌ 'obj' used after being passed as a 'sending' parameter
 }
-这是因为，sending 的核心概念是“转移所有权”，尽管编译器不再对 Sendable 进行检查，但是会对所有权进行检查。在转移后，我们不能在其他地方再使用已转移的值！
+#####
+这是因为，sending 的核心概念是“转移所有权”，尽管编译器不再对 Sendable 进行检查，但是会对所有权进行检查。
+在转移后，我们不能在其他地方再使用已转移的值！
+#####
 
 sending 更适合的场景是：
 迁移非 Sendable 的遗留代码
+任务结果传递（Swift 6 中，Task 的实现已从 @Sendable 改为 sending）
 
 @Sendable 是类型安全地“声明线程安全”，而 sending 是所有权语义上的“保证单一使用权”
 
 
 ==================================================nonsending
+#####
 nonsending 与前面的关键字在语义上有本质区别。它与 nonisolated 配合使用
 nonisolated(nonsending)，表示异步方法应该继承调用者的隔离域，而不是脱离当前隔离域运行。
+#####
 
 这是 Swift 6.2 对 nonisolated 行为的重要调整。在 Swift 6.2 之前：
 @MainActor
@@ -195,3 +208,19 @@ class RunInMainActor {
 }
 
 开发者还可以通过启用 NonisolatedNonsendingByDefault 标志使该行为成为默认设置。
+
+
+
+==================================================
+
+🔑 关键字	🧭 用途	🎯 典型使用场景	🛡️ 编译器行为	✅ 安全保证方式
+Sendable	类型标记	跨隔离域传递类型	✅ 编译器验证类型是否线程安全	✅ 自动或显式声明
+@unchecked Sendable	跳过类型验证	遗留代码、手动保障线程安全	⚠️ 绕过检查，完全依赖开发者判断	⚠️ 依赖开发者保证
+@Sendable	闭包属性标记	跨隔离域传递闭包	✅ 编译器检查捕获值是否 Sendable	✅ 自动检查
+sending	参数修饰	所有权转移、构建器模式	🚫 不检查 Sendable，但禁止再次使用	🚫 所有权语义（防止误用）
+nonsending	隔离继承修饰符	保持调用者隔离域，适配异步调用	✅ 控制运行时隔离上下文	✅ 行为由调用者上下文决定
+
+
+
+==================================================如何使用 Mutex 替换 @unchecked Sendable？
+https://fatbobman.com/zh/snippet/replace-unchecked-sendable-with-mutex/

@@ -1,0 +1,201 @@
+Claude：Anthropic 做的 大语言模型本体 / 聊天 AI
+Claude Code：Anthropic 推出的 面向开发者的“AI 编程助手 / 编码工具”
+项目	Claude	Claude Code
+本质	大语言模型	编程产品 / 工具
+
+
+Claude + MCP =
+Claude 不再只是“会说话的模型”，而是一个
+👉 能通过标准协议使用外部工具的 Agent。
+
+
+不带 MCP 的 Claude 是什么样？
+你 → Prompt → Claude → 文字输出
+特点：
+只能“想”和“说”
+所有信息都得你喂
+做不了任何真实动作
+永远活在 prompt 里
+
+这就是传统 LLM。// Large Language Model
+
+
+
+带 MCP 的 Claude 发生了什么变化？
+你
+ ↓
+Claude (Agent)
+ ↓
+MCP Client
+ ↓
+MCP Server(s)
+ ↓
+真实世界 / 程序 / 系统
+
+Claude 这时变成了 Agent，而不是单纯模型。
+
+
+
+MCP 在这里到底干了哪几件事？
+1️⃣ 把“上下文”标准化给 Claude
+不是随便一坨文字，而是结构化信息，比如：
+当前工作目录
+项目结构
+可用工具列表
+工具的参数 schema
+使用限制
+
+👉 Claude 先知道世界长什么样。
+
+2️⃣ 把“能做什么”告诉 Claude
+通过 MCP，Claude 会拿到类似这样的信息：
+{
+  "tools": {
+    "mail.send": {
+      "description": "Send an email",
+      "parameters": {
+        "to": "string",
+        "subject": "string",
+        "body": "string"
+      }
+    }
+  }
+}
+这一步非常关键：
+Claude 不是乱猜工具，而是“被明确授权能用什么”。
+
+3️⃣ Claude 自己决定要不要用工具
+这是 Agent 的核心能力。
+
+Claude 会在推理中判断：
+光靠生成文字能不能完成任务？
+如果不能，是否有合适的 MCP 工具？
+是否符合规则 / 安全边界？
+
+只有在 必要且被允许 时才会调用。
+
+4️⃣ MCP 只是“传话人”
+MCP 本身：
+不做决策
+不理解语义
+不主动执行
+
+它只是负责：
+“Claude 说：请调用 X
+→ 我帮你按协议把请求发过去
+→ 把结果再原样带回来”
+
+
+
+举一个纯 Claude + MCP 的例子：
+场景：自动处理邮件摘要
+
+没 MCP
+你只能：
+“我有 20 封邮件，帮我总结一下。”
+然后你得：
+自己复制邮件内容
+粘给 Claude
+
+有 MCP
+你可以说：
+“帮我总结今天未读邮件，并按紧急程度排序。”
+
+背后发生的是：
+Claude 知道：
+    有一个 mail.listUnread
+    有一个 mail.read
+Claude 调用工具
+拿到真实邮件内容
+总结 + 输出
+
+👉 你一句话，Claude 真正“去干活”了。
+
+
+
+
+==================================================配置 MCP = 做三件事：
+写一个 MCP Server（工具提供者）
+写一个 MCP 配置文件（告诉 Claude 有哪些工具）
+用 支持 MCP 的 Claude Agent / Host 启动它
+
+MCP 的最小组成结构
+Claude (Agent)
+   ↓
+MCP Client
+   ↓
+MCP Server (你写的)
+
+你真正要配置的，其实只有 Server + 配置文件。
+
+
+步骤 1：准备一个 MCP Server（工具）
+MCP Server 本质上是一个 长期运行的进程，最常见是：
+Python
+Node.js
+
+一个“最小能跑”的 Python MCP Server（示意）
+# echo_mcp_server.py
+import json
+import sys
+
+def main():
+    for line in sys.stdin:
+        req = json.loads(line)
+        if req["method"] == "tools/list":
+            print(json.dumps({
+                "tools": {
+                    "echo": {
+                        "description": "Echo input text",
+                        "parameters": {
+                            "text": "string"
+                        }
+                    }
+                }
+            }))
+        elif req["method"] == "tools/call":
+            if req["tool"] == "echo":
+                print(json.dumps({
+                    "result": req["arguments"]["text"]
+                }))
+
+if __name__ == "__main__":
+    main()
+
+你现在只需要理解一件事：
+MCP Server = 从 stdin 读 JSON → 往 stdout 写 JSON
+
+步骤 2：写 MCP 配置文件
+这是最关键
+一个标准 MCP 配置长这样（通用版）
+{
+  "mcpServers": {
+    "echo": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["/absolute/path/echo_mcp_server.py"],
+      "env": {}
+    }
+  }
+}
+配置的本质是：Claude 要怎么启动你的工具进程
+
+
+步骤 3：让 Claude Agent 读到这个配置
+1️⃣ Claude Desktop
+~/.claude/mcp.json
+或类似路径（不同版本略有差异）
+
+
+验证 MCP 是否生效（关键）
+不管在哪个平台，判断 MCP 是否成功只有一个标准：
+Claude 是否“知道有这些工具”
+
+常见验证方式：
+输入：
+/context
+或直接问：
+“你现在可以用哪些工具？”
+
+
+配置 MCP: 给 Claude 接“工具电源”

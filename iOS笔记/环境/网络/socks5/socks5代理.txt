@@ -1,0 +1,368 @@
+https://medium.com/@nimit95/socks-5-a-proxy-protocol-b741d3bec66c
+SOCKS 5 — A Proxy Protocol
+
+Socks 它分socks 4和socks 5两种类型，socks 4只支持TCP协议而socks 5支持TCP/UDP协议，还支持各种身份验证机制等协议。其标准端口为1080。
+
+socks5 是一个常用的代理协议, 它既可以用来代理 TCP, 也可以代理 UDP
+许多网络软件都支持 socks5, 主流操作系统也支持使用 socks5 作系统代理
+https://datatracker.ietf.org/doc/html/rfc1928
+
+
+how to make a Simple HTTP/HTTPS proxy in node
+https://medium.com/@nimit95/a-simple-http-https-proxy-in-node-js-4eb0444f38fc
+
+
+SOCKS 5 basically is a Framework for a General Proxy Protocol. // SOCKS 5 本质上是一个通用代理协议框架。
+
+What I mean by a general proxy protocol is that for each application layer protocol like HTTP, HTTPS(controversial), FTP and many more, 
+you would need to set up a different proxy server. 
+For example, for HTTP you would have something like squid, 
+for HTTPS Browsermob proxy and so on so forth. 
+Now a SOCKS 5 proxy provides a general framework for these protocols to transparently and securely traverse the data.
+
+
+#####
+// SOCKS 的另一个用途是作为绕过工具，允许流量绕过互联网过滤，访问原本被屏蔽的内容，例如被政府、工作场所、学校和特定国家/地区的网络服务屏蔽的内容。
+Another use of SOCKS is as a circumvention tool, 
+allowing traffic to bypass Internet filtering to access content otherwise blocked, 
+e.g., by governments, workplaces, schools, and country-specific web service
+
+// 此外，SOCKS 5 还提供身份验证，确保只有授权用户才能访问服务器。
+SOCKS 5 additionally provides authentication so only authorized users may access a server.
+#####
+
+
+
+Real-World Application:
+1. Mostly all torrent clients have an option to configure a SOCKS 5 proxy to bypass the firewall if any.
+2. It is faster than VPN, so in many places where the speed matter it is used over VPN.
+3. The Tor onion proxy software presents a SOCKS interface to its clients. // https://en.wikipedia.org/wiki/Tor_(network)
+
+
+Tor （也称为 “The Onion Router”）:
+Tor 是一个开放源代码的软件 + 网络系统，旨在提供匿名通信服务。
+它所依赖的技术被称作“洋葱路由”（onion routing），因为数据像洋葱一样被包了好几层“加密层”。
+它是做什么的／原理是什么:
+(1)当你使用 Tor 时，流量不会直接从你的设备发往目标网站，而是经过随机选择的多个“中继节点”（entry（入口）→ middle（中间）→ exit（出口））转发。
+(2)在每一跳，中继只能知道自己前面是谁、后面是谁，而不能同时知道“请求最初来自谁”和“最终到达了哪儿”。这种结构增强了匿名性。
+(3)数据在传输过程中被多层加密 —— 类似于将通讯“包裹”在多重信封中，然后逐层打开。
+(4)它除了用于浏览普通网站外，还支持所谓的 “洋葱服务”（onion services／隐藏服务），即服务器也隐匿其位置，仅通过 .onion 地址访问。
+有什么用途:
+对抗监控和追踪：你可能不希望 ISP、政府、广告商、黑客等知道你在上什么网站、从哪儿来的。Tor 提供了一层保护。
+跨越审查与访问受限内容：在一些网络受限制的国家/地区，Tor 可以帮助“翻墙”或访问被屏蔽的网站。
+保护敏感身份的用户：记者、告密者、维权人士、生活在专制政权下的人，可能因为安全/匿名需求而使用。
+提供隐藏服务：服务器端也可以利用 Tor 来隐藏其真实 IP 地址与位置，从而增强抗审查能力。
+
+
+
+Basic Working:
+#####
+A wishes to communicate to B over the internet, but a firewall exists between those two, so A cannot connect to B directly.
+So, A connects to a SOCKS 5 proxy, informing it to connect to B. The proxy sets up a connection to B on A’s behalf sending the confirmation back.
+Now A can send whatever he wishes to send to B. 
+#####
+
+
+The SOCKS5 protocol is defined in RFC 1928.
+https://datatracker.ietf.org/doc/html/rfc1928
+
+Handshake:
+根据 SOCKS 5 HANDSHAKE 图片:
+[NOTE: 5, 1, 0 are actual bytes (0x05, 0x01, 0x00)]
+
+1.
+A(Client) sends the initiation packet(0x05, 0x01, 0x00) to the SOCKS5 proxy. 
+The breakdown of the first packet is :
+(1)The First Byte 0x05 is for the version of the SOCKS, in this case, it is SOCKS 5. 
+This remains common for all the SOCKS 5 packets. 
+(2)The Second Byte 0x01 is for authentication purposes. 
+Precisely, the number of authentication methods supported by the client. 
+Here 0x01 means one method is supported.
+(3)The Third Byte 0x00 is for the authentication methods. 
+There are authentication methods, variable length, 1 byte per method supported. 
+The authentication methods supported are numbered as follows:
+0x00: No authentication
+0x01: GSSAPI
+0x02: Username/password
+0x03–0x7F: methods assigned by IANA
+0x80–0xFE: methods reserved for private use
+
+例子：
+| 字节   | 值                       | 含义 |
+| ---- | ----------------------- | -- |
+| 0x05 | SOCKS 版本 5              |    |
+| 0x01 | 有 1 个认证方法（NMETHODS = 1） |    |
+| 0x00 | 这 1 个认证方法的内容是 “无需认证”    |    |
+
+| 字节   | 含义           |
+| ---- | ------------ |
+| 0x05 | SOCKS5       |
+| 0x02 | 支持 2 种认证方式   |
+| 0x00 | 第一种：无认证      |
+| 0x02 | 第二种：用户名/密码认证 |
+
+
+2.
+SOCKS Proxy sends back to A(0x05, 0x00). :
+
+The Second Byte 0x00 is the chosen authentication method by the proxy. 
+In this case, it was the only method provided by the client hence this. 
+The subsequent authentication is method-dependent. 
+Username and password authentication(method 0x02) is described in RFC 1929. 
+Here no authentication dependent steps need to take place further. 
+If the negotiated method includes encapsulation for purposes of integrity checking and/or confidentiality, 
+further requests MUST be encapsulated in the method-dependent encapsulation.
+https://datatracker.ietf.org/doc/html/rfc1929
+
+
+3.
+A(Client) sends the request packet (0x05, 0x01, 0x00, 0x03, <B_HOST>, <B_PORT>). 
+Once the method-dependent subnegotiation has completed, the client sends the request details to SOCKS proxy:
+(2)
+The Second Byte 0x01 is for the command code. It is one byte
+0x01: establish a TCP/IP stream connection
+0x02: establish a TCP/IP port binding
+0x03: associate a UDP port
+(3)
+The Third Byte 0x00 is a reserved byte. It must be 0x00 and 1 byte.
+(4)
+The Fourth Byte 0x03 is the address type of desired HOST and 1 byte. The options are as below.
+0x01: IPv4 address, followed by 4 bytes IP
+0x03: Domain name, 1 byte for name length, followed by host name
+0x04: IPv6 address, followed by 16 bytes IP
+(6)
+The last Byte is port number in a network byte order, 2 bytes
+https://en.wikipedia.org/wiki/Endianness#Networking
+
+
+4.
+SOCKS proxy sends back the request packet (0x05, 0x00, 0x00, 0x01, <B_HOST>, <B_PORT>). 
+This is for the status of the request by the client to the proxy:
+(2)
+The Second Byte 0x00 is the status field. It is one byte. Meaning the request was granted.
+(3)
+The Third Byte 0x00 is a reserved byte. It must be 0x00 and 1 byte.
+(4)
+The Fourth Byte 0x01 is the address type of desired HOST and 1 byte. 
+In case of CONNECT, this is followed by the binded IP address for the desired HOST, 
+to give the client the detail of the DNS resolution.
+(6)
+The last Byte is port number in a network byte order, 2 bytes
+
+
+After this, the connection takes place all the coming data from client A is transferred to client B and vice versa. 
+This way the SOCKS proxy works as a general framework proxy and handle most PROTOCOL with its security features.
+
+
+There is a great node library which can handle all the details for a socks server. 
+It transforms the incoming SOCKS5 stream into its respective protocol stream.
+https://www.npmjs.com/package/socks5-stream
+
+
+==================================================Socks5 基于 TCP 客户端的过程
+#####RFC 1928: SOCKS 协议第 5 版
+https://luyuhuang.tech/2020/08/27/rfc1928.html
+#####
+
+当一个基于 TCP 的客户端想要与一个必须经由防火墙才能连接 (取决于实现) 的对象建立连接时, 它必须在适当的端口开启一条到 SOCKS 服务器系统的 TCP 连接.
+SOCKS 服务通常使用 TCP 的 1080 端口.如果连接请求成功, 客户端会进入协商阶段以协商认证方法, 然后使用所选的方法进行认证, 接着发送相应的请求.
+SOCKS 服务器会评估请求, 然后建立适当的连接或拒绝它.
+
+当用到 “Variable” 一词时, 表示对应字段的长度是由相应的长度字段 (一到两字节) 或数据类型字段所定义的可变长度.
+
+
+客户端连接服务器, 然后发送一条包含版本号和方法选择的消息:
+VER	NMETHODS	METHODS
+1	1	1 至 255
+VER 字段在这个版本置为 X'05'. NMETHODS 字段包含出现在 METHODS 字段中的方法标识符的字节数.
+服务器从 METHODS 字段中给出的方法中选择一个, 将其放在返回给客户端消息的 METHOD 字段中:
+VER	METHOD
+1	1
+如果 METHOD 字段标识选择的方法为 X'FF', 则客户端列出的方法均不被服务器接受, 此时客户端必须关闭连接.
+目前已定义的方法有:
+X'00' 无需认证
+X'01' GSSAPI
+X'02' 用户名/密码
+X'03' 至 X'7F' 由 IANA 分配
+X'80' 至 X'FE' 保留的私有方法
+X'FF' 没有可接受的方法
+
+然后客户端和服务器会进入认证方法所规定的子协商过程(sub-negotiation).
+依赖于具体方法的子协商过程的描述可以在其它对应的文档中找到.
+
+
+请求:
+一旦依赖于具体方法的子协商过程完成, 客户端就开始发送请求详情.
+如果出于完整性检查或机密性的目的, 协商的方法包括封装, 则这些请求必须按照该方法所定义的方式进行封装.
+
+SOCKS5 在建立连接时，客户端和服务器会先进行一个“方法协商”（method negotiation）阶段。
+也就是客户端告诉服务器自己支持哪些认证或安全机制，然后服务器选择其中一种。
+所谓“封装（encapsulation）”指什么？
+某些认证方法（Method）不仅仅是“验证身份”，#####它还会对后续传输的数据进行加密或签名。#####
+#####这种情况下，我们说“该方法包含了封装（encapsulation）”。#####
+比如：
+某种 SOCKS5 方法可能定义：验证身份后，后续的请求和数据必须通过某种安全通道（比如 TLS 或其他自定义加密层）发送；
+这种“对请求进行额外包裹或加密”的行为，就叫 encapsulation。
+#####
+当你使用的认证方法（Method）本身规定了要对 SOCKS 请求或数据做加密/签名/封装时，你必须照它的规范去做。
+
+换句话说：
+如果你选的认证方法只负责身份验证（例如用户名密码认证），那之后的数据仍是明文的；
+如果你选的认证方法要求“后续通信通过加密封装”，那所有的 SOCKS 请求（CONNECT、BIND、UDP ASSOCIATE）和数据都要在加密层中发送。
+
+假设未来有一个方法号 0x80（自定义），代表 “使用 TLS 加密通道”。
+客户端发出：
+05 01 80
+服务器回复：
+05 80
+
+从这之后：
+客户端和服务器之间要建立 TLS；
+所有后续 SOCKS 请求（例如 CONNECT 命令）必须在这个 TLS 隧道里进行；
+不能再发送明文的 SOCKS 请求包。
+
+这就是“必须按照该方法所定义的封装方式进行封装”。
+
+“封装”指的不是改变 SOCKS5 协议的字段结构，而是把 整个 SOCKS5 请求包 当作一段“负载数据（payload）”，
+再用协商出来的加密算法 整体加密/签名。
+明文 SOCKS 请求：
+[SOCKS header + address + port]
+封装后请求：
+[ENC( [SOCKS header + address + port] )]
+服务器收到后先解密，然后再解析 SOCKS 头
+
+RFC 1928 本身并没有定义加密机制，它只是为“Method 扩展”留下了接口。
+某些扩展（例如 GSS-API、TLS-over-SOCKS）会定义自己的「封装方式」。
+这些扩展要求：
+“所有的后续 SOCKS 请求/数据都必须在该加密通道里传输。”
+也就是说:
+不是每个 SOCKS5 都会加密，
+但如果协商的方法要求封装（例如 TLS、GSS-API），那就要对整个请求包加密。
+#####
+
+
+SOCKS 请求的格式如下
+VER	CMD	RSV	ATYP	DST.ADDR	DST.PORT
+1	1	X'00'	1	Variable	2
+其中:
+VER 协议版本 X'05'
+CMD 命令:
+   CONNECT: X'01'
+   BIND: X'02'
+   UDP ASSOCIATE: X'03'
+RSV 保留
+ATYP 随后的地址类型
+   IPv4 地址: X'01'
+   域名: X'03'
+   IPv6 地址: X'04'
+DST.ADDR 目标地址
+DST.PORT 目标端口, 网络字节序
+SOCKS 服务器通常会根据源地址和目标地址来评估请求, 然后根据请求类型适当地返回一个或多个应答消息.
+
+
+地址:
+对于地址字段 (DST.ADDR, BND.ADDR), 由 ATYP 字段指定其包含的地址类型:
+X'01'
+IPv4 地址, 长度为 4 字节
+X'03'
+完整的域名, 地址字段的第一个字节包含的数字表示接下来域名的长度 (字节数), 不包含结尾的 NUL 字节.
+X'04'
+IPv4 地址, 长度为 16 字节
+
+
+应答:
+客户端与 SOCKS 服务器建立连接并完成身份验证协商后, 客户端就会开始发送 SOCKS 请求信息. 服务器会评估请求, 并返回如下格式的应答消息:
+VER	REP	RSV	ATYP	BND.ADDR	BND.PORT
+1	1	X'00'	1	Variable	2
+
+其中:
+VER 协议版本 X'05'
+REP 应答字段:
+   X'00' 成功
+   X'01' 常规 SOCKS 服务器故障
+   X'02' 规则不允许的链接
+   X'03' 网络无法访问
+   X'04' 主机无法访问
+   X'05' 连接被拒绝
+   X'06' TTL 过期
+   X'07' 不支持的命令
+   X'08' 不支持的地址类型
+   X'09' 至 X'FF' 未分配
+RSV 保留
+ATYP 随后的地址类型
+   IPv4 地址: X'01'
+   域名: X'03'
+   IPv6 地址: X'04'
+BND.ADDR 服务器绑定地址
+BND.PORT 服务器绑定端口, 网络字节序
+
+标记为 “保留” 的字段必须置为 X'00'
+如果协商的方法出于完整性或机密性的目的, 包含封装, 则应答需按照该方法所定义的方式进行封装.
+
+
+CONNECT 请求:
+如果应答的是 CONNECT 请求, 则 BND.PORT 需包含服务器连接目标主机所用的端口号, BND.ADDR 包含相应的 IP 地址. 
+这里的 BND.ADDR 常常不同于客户端访问的 SOCKS 服务器的地址, 因为服务器常常是分布式部署的. 
+服务器通常会使用 DST.ADDR 和 DST.PORT, 以及客户端的源地址和端口, 来评估 CONNECT 请求.
+
+
+安全考虑:
+描述了一个让应用层穿越 IP 网络防火墙的协议. 
+这种穿越的安全性高度依赖于特定实现中提供的特定认证方法和封装, 它们是在 SOCKS 客户端和 SOCKS 服务器在协商过程中选择的.
+
+
+==================================================https://en.wikipedia.org/wiki/Firewall_(computing)
+防火墙的使用变得越来越流行, 它可以有效地将组织内部网络与外部网络 (如因特网) 隔离.
+
+In computing, a firewall is a network security system that monitors and controls incoming and outgoing network traffic based on configurable security rules.
+A firewall typically establishes a barrier between a trusted network and an untrusted network, such as the Internet or between several VLANs. 
+Firewalls can be categorized as network-based or host-based.
+
+防火墙的阻挡逻辑:
+防火墙是根据 流量的方向、源地址、目标地址、端口号、协议类型 等规则来决定是否允许通信的。
+通常它会：
+阻止内部主机直连外部某些地址/端口；
+但允许访问某个受信任的出口，比如公司统一的代理服务器。
+所以：
+🔹 A 无法直接访问 B，是因为防火墙规则禁止了「A → B」的连接。
+🔹 但防火墙允许「A → 代理服务器」的连接。
+
+
+代理服务器通常位于：
+防火墙外侧（可以访问互联网），或者
+防火墙允许的出口白名单中。
+因此它具备：
+✅ 能同时访问内网（A）和外网（B）的权限。
+A (内网)
+   ↓
+[防火墙允许出口：SOCKS 代理]
+   ↓
+Proxy（外网可访问）
+   ↓
+B（目标主机）
+
+
+防火墙 把网络分成两部分：
+左边（内网区）：主机 A
+右边（外网区）：互联网 / B
+防火墙规则：
+🚫 阻止 A 直接访问 B；
+✅ 允许 A 访问特定出口（例如代理服务器的地址）。
+因此：
+A → Proxy ✅ 被允许；
+Proxy → B ✅ 不受限制；
+A → B ❌ 被防火墙阻断。
+#####
+防火墙像一堵墙，A 在左边，B 在右边。
+Proxy 站在右边（墙外），所以它可以帮 A 去和 B 通信。
+A 只能通过防火墙上专门开的小门（代理端口）与 Proxy 对话。
+#####
+
+
+SOCKS5 协议本质上是一个 通用 TCP/UDP 转发协议：
+A 先和 Proxy 建立连接；
+A 告诉 Proxy：「请帮我连接到 B:port」；
+Proxy 自己去和 B 建立 TCP 连接；
+Proxy 告诉 A：「连接成功」，并开始 中继传输数据。
+
+A 并没有直接穿越防火墙去访问 B，而是让防火墙允许的「出口代理」帮它访问。

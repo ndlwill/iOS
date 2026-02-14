@@ -1,0 +1,60 @@
+ConnLocal — “本地连接”
+表示客户端到本地代理（或者本地 NAT）的一条 TCP/UDP 连接
+ConnLocal = “本地代理端口的连接接口”，它面向 用户客户端，负责收请求、处理认证、选择代理模式。
+
+ConnRemote — “远程连接”
+表示本地代理到远端代理服务器/中继节点的连接
+ConnRemote = “远端代理/中继连接”，它面向 远程服务器，负责将本地客户端请求转发到远程，并把响应回传给 ConnLocal。
+
+
+[本地客户端] <--TCP/UDP--> [ConnLocal] <--内部 buffer--> [ConnRemote] <--TCP/UDP--> [远端服务器/目标]
+内部 buffer,内部桥梁,用于本地和远程之间的数据传输
+
+Local 是“面向客户端”的入口”，Remote 是“面向远程服务器的出口”。
+
+
+==================================================
+在实际 VPN/代理设计里 ConnLocal 是有存在意义的，不能直接让 ConnRemote 来“接收本地请求”。原因主要有几个方面：
+1. 职责分离（Separation of Concerns）
+ConnLocal 负责 面向客户端的逻辑：
+处理 SOCKS5/HTTP/NAT 协议解析
+做认证（用户名/密码）
+确定客户端请求的目标地址和端口
+
+ConnRemote 负责 面向远端服务器的逻辑：
+构造远程请求数据（SOCKS5 CONNECT、HTTP CONNECT）
+处理远端响应
+转发数据到 ConnLocal
+
+如果让 ConnRemote 直接接收本地请求：
+就需要让 Remote 同时理解本地客户端协议和远程协议
+代码耦合度大，逻辑复杂，维护困难
+设计上把 Local/Remote 分开，就是清晰地 本地 vs 远端，职责单一，易扩展。
+
+2. 本地握手和协议适配
+客户端可能用不同协议访问：
+SOCKS5、SOCKS4、HTTP Proxy
+NAT TCP/UDP
+
+EvConnLocal 可以：
+根据数据内容猜测协议类型
+做本地握手、认证
+把解析出的目标信息传给 Remote
+
+如果 Remote 直接接收本地请求：
+Remote 还要解析所有本地协议
+逻辑混乱，而且 Remote 可能还要加密/封装到 VPN 协议
+
+3. 缓冲和异步处理
+Local 与 Remote 都有自己的缓冲区（inputBuffer / outputBuffer）
+数据流通常是：
+客户端 → Local.inputBuffer → Local解析/握手 → Remote.outputBuffer → 远端服务器
+远端响应 → Remote.inputBuffer → Remote解析 → Local.outputBuffer → 客户端
+Local 的存在保证了 异步数据处理和协议解耦
+Remote 只关心 远端转发，不需要知道客户端协议的细节
+
+4. 可扩展性
+如果以后要支持更多本地协议（比如 Shadowsocks、V2Ray）：
+    只需要改 ConnLocal
+    Remote 不需要动
+如果 Local 不存在，Remote 既要处理本地协议，又要处理远程协议，代码会变得非常臃肿。

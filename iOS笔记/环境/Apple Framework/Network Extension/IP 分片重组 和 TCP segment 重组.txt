@@ -1,0 +1,597 @@
+| 层级                                 | 动作                              | 谁做              | 场景                                  |
+| ---------------------------------- | ------------------------------- | --------------- | ----------------------------------- |
+| **IP 分片重组**                        | 把多个 IP fragment 拼回完整的 IP packet | **内核（OS 网络栈）**  | MTU 小导致 IP 报文被切碎                    |
+| **TCP segment 重组（TCP reassembly）** | 按序号把多个 TCP segment 拼成应用层连续数据流   | **TCP 协议栈（内核）** | 应用层可能一个 write 对应多个 segment；乱序、丢包、重传 |
+
+
+IP Packet {
+    IP Header
+    TCP Segment {// TCP 包
+        TCP Header
+        TCP Payload
+    }
+}
+TCP Segment（TCP 段） 就是 TCP 协议层 处理的最小单位。
+每个 TCP segment 就是一个 TCP 层的数据包，是可以独立确认、重传、按序重组的单位。
+
+
+#####
+TCP 本质是一个“字节流协议”，每个 segment 都带着一个 Sequence Number（字节偏移量）。
+重组时：
+内核按 seq 号把 segment 的 payload 拼成一个连续的字节数组，遇到重叠的丢掉旧的，缺洞的等待补齐，然后按序交给应用层。
+
+TCP 重组完全依赖 TCP 头部的 Sequence（序列） Number 字段
+#####
+
+
+
+==================================================一个应用层数据 = 可以被拆成多个 TCP segment
+MSS（Maximum Segment Size）是由 MTU 决定的
+MTU（Maximum Transmission Unit） 是链路层（例如以太网）一次能传输的最大数据大小。
+常见 MTU：
+Ethernet：1500 bytes
+这个 1500 字节是 整个 IP 包的最大大小（IP header + TCP header + TCP payload）。
+
+MSS 是从 MTU 推导出来的
+因为 IP 包不能超过 MTU，所以 TCP payload 必须再扣除：
+IP header（通常 20 字节，不含选项）
+TCP header（通常 20 字节，不含选项）
+所以默认 MSS：
+MSS = MTU - 20 (IP header) - 20 (TCP header) 
+MSS = 1500 - 20 - 20 = 1460 bytes // 这个 1460 是最常见的 TCP MSS。
+
+为什么需要 MSS？
+因为如果不限制 MSS，TCP payload 太大 → IP 层就必须分片（IP fragmentation），但：
+1. IP 分片效率低 // ###
+2. 丢一个片就意味着整个包要重传 // ###
+3. 很多路由器会丢分片
+所以 TCP 在三次握手时交换 MSS，使两端都知道当前链路最大安全 payload是多少，确保一个 TCP segment 避免 IP 分片。
+
+
+MTU 是 链路层 的限制：
+不同网络的 MTU 可能不同：
+PPPoE：1492
+VPN：1300–1400（因为有 VPN 封装 Overhead）
+
+
+例如应用层（比如 HTTP）要发送一段 100 KB 的数据：
+但一个 TCP segment 的 payload（有效载荷）可能只有：
+1400 字节（常见 MTU 1500 ➜ IP + TCP header 之后）
+或者更小
+
+
+TCP 按 MSS 分成多个 segment
+那么 OS 会自动做这种拆分：
+[HTTP 数据 100 KB]
+⬇
+拆成大约 70 个 TCP Segment
+⬇
+每个 segment ~ 1400 字节
+所有拆分、编号、重传、按序重组，全部由 TCP 协议自动完成。
+应用层不需要关心
+
+
+MSS ≈ 1460 bytes（常见）
+100KB = 100 * 1024 = 102400 bytes
+TCP 会拆成大约：
+102400 / 1460 ≈ 70 个 TCP segment
+每个 segment：
+TCP header（20字节） +
+应用层数据片段（<= 1460 字节）
+
+每个 TCP segment 进入 IP 层后，还会加上：
+IP header（20字节）
+然后进入链路层，还会有：
+Ethernet header（14字节）
+Ethernet trailer（4字节）
+
+
+==================================================为什么ip分片丢一个片就意味着整个包要重传？
+
+
+
+
+
+
+==================================================在设计正确、网络健康的情况下，TCP 基本可以让 IP 不发生分片。但现实世界里，IP 分片仍然“可能发生”。
+理想状态：TCP 控制好 MSS ⇒ IP 不分片
+这是 TCP + IP 的最佳实践路径。
+
+MTU（链路层最大帧）
+  └─ IP Header（20B）
+      └─ TCP Header（20B）
+          └─ MSS（TCP Payload）
+
+以太网 MTU = 1500 时：
+MSS = 1500 - 20(IP) - 20(TCP) = 1460
+
+只要做到这三点：
+TCP 使用正确的 MSS
+MSS ≤ 路径上最小 MTU - IP/TCP 头
+中途 MTU 不再变小
+
+IP 就完全不需要分片
+
+
+
+==================================================Path MTU Discovery（PMTUD，路径 MTU 发现）
+#####
+在真正发送大数据前，自动找出“从你到对方这条网络路径上，能承受的最大 IP 包大小”，从而避免 IP 分片。
+#####
+
+Path MTU Discovery = 找出整条网络路径上最小的 MTU，让 TCP/IP 一开始就发“刚好合适”的包，从而避免 IP 分片和性能灾难。
+
+PMTUD 依赖的是：
+ICMP Fragmentation Needed
+
+一、为什么需要 PMTUD？
+1. 不同链路的 MTU 不一样
+以太网常见 1500
+VPN、PPPoE、隧道里可能只有 1400、1350…
+2. IP 分片一旦丢一个分片，整个 IP 包都废了
+3. TCP 重传的是 整个 TCP segment
+###
+所以：
+最理想的状态是：根本不发生 IP 分片
+这正是 PMTUD 的目标。
+###
+
+
+在 IPv4 协议头（IP Header） 中，Flags 是一个 3 bit 的字段，专门用于 IP 分片（Fragmentation）控制。
+| 位     | 名称                      | 含义            |
+| ----- | ----------------------- | ------------- |
+| bit 0 | **Reserved**            | 保留位，**必须为 0** |
+| bit 1 | **DF (Don't Fragment)** | 1 = 不允许分片     |
+| bit 2 | **MF (More Fragments)** | 1 = 后面还有分片    |
+
+DF（Don't Fragment）
+DF = 1 // 👉 禁止分片
+如果链路 MTU 不够：
+    路由器 直接丢包
+    返回 ICMP Fragmentation Needed
+👉 Path MTU Discovery（PMTUD）依赖它
+DF = 0
+👉 允许路由器对 IP 包进行分片
+
+MF（More Fragments）
+MF = 1
+    表示：后面还有分片
+    不是最后一个分片
+MF = 0
+表示：这是最后一个分片
+注意：
+    未分片的包：MF = 0
+    最后一个分片：MF = 0
+
+
+二、PMTUD 在干什么？
+PMTUD 的核心思想是：
+“我先假设一条最大 MTU，如果中途有人说不行，我就把包发小一点。”
+
+具体流程（以 IPv4 为例）：
+1️⃣ 发送大包 + 设置 DF 位
+主机发送 IP 包时：
+包大小 ≈ 本地接口 MTU
+设置 DF（Don’t Fragment，不允许分片）位
+意思是对网络说：
+“这个包你们谁也不准给我分片”
+
+2️⃣ 中间路由器发现：包太大了
+如果路径上的某个路由器：
+下一跳 MTU 比当前包小
+又 不能分片（DF=1）
+它会：
+丢弃这个包
+返回一个 ICMP 消息：
+ICMP Destination Unreachable
+Code 4: Fragmentation Needed and DF Set
+并告诉你：
+“你这个包太大了，我这边最大只能是 X 字节”
+
+3️⃣ 发送方调整 MTU（或 MSS）
+收到 ICMP 后，发送方会：
+记录 路径 MTU = X
+后续发送的包都 ≤ X
+对 TCP 来说：
+    实际上是 调小 MSS
+    保证 TCP segment + IP/TCP 头 ≤ Path MTU
+
+4️⃣ 最终结果
+✔ 整条路径上
+没有 IP 分片
+TCP 段刚好适配最小链路 MTU
+性能最好、丢包影响最小
+
+
+三、PMTUD 和 TCP 的关系（重点）
+TCP 控制好段大小，是不是 IP 永远不用分片？
+👉 答案是：
+是的，前提就是：PMTUD 正常工作
+
+Path MTU
+   ↓
+MSS = Path MTU - IP头 - TCP头
+   ↓
+TCP 按 MSS 分段
+   ↓
+IP 不需要分片
+
+
+四、IPv4 vs IPv6 的区别（很关键）
+IPv4
+路由器 可以分片
+PMTUD 是“强烈建议”，但不是强制
+
+IPv6（更激进）
+路由器禁止分片
+只有发送端可以分片
+PMTUD 是必须的，不然通信会直接失败
+
+
+五、PMTUD 失效的问题（真实世界常见）
+ICMP 被防火墙挡掉
+
+如果：
+路由器发了 Fragmentation Needed
+但 ICMP 被中途防火墙丢了
+结果是：
+发送方一直发“大包 + DF”
+中间一直丢
+连接看起来“卡死”
+这叫：
+PMTUD Black Hole
+
+
+六、为了解决黑洞，又有了 PLPMTUD
+LPMTUD（Packetization Layer PMTUD）
+特点：
+不依赖 ICMP
+TCP 自己通过：
+    超时
+    重传
+    探测更小的段,来推断路径 MTU
+
+
+现代系统（Linux、iOS、macOS）：
+默认都支持 PLPMTUD
+
+PLPMTUD 不是你“手动启用”的，而是：
+现代操作系统里的 TCP 协议栈已经默认启用了。
+只要你用的是系统 TCP（BSD socket / NSURLSession / NWConnection），你基本已经在用 PLPMTUD 了。
+
+PLPMTUD（Packetization Layer PMTUD）有几个前提：
+1. 在 TCP 层工作
+2. 不依赖 ICMP
+3. 通过丢包、超时、重传来“试探”可用 MSS // #####
+所以“启用”的含义是：
+TCP 实现本身是否支持 RFC 4821 / RFC 8899 的逻辑
+
+
+Packet Tunnel:
+App TCP
+  ↓
+utun (MTU = ?)
+  ↓
+你的用户态转发 / 加密
+  ↓
+物理网卡
+PLPMTUD 只管 App → utun 这段
+PLPMTUD 的“试探上限”就是 utun MTU
+
+
+在 iOS Packet Tunnel 场景里：
+TUN 接口本身也有 MTU（比如 1400）
+你如果：
+    设置 MTU 过大
+    或中间再套一层加密隧道
+非常容易触发 PMTUD 或黑洞问题
+所以很多 VPN 会：
+主动把 MTU 设小（如 1280 / 1350）
+避免依赖 ICMP
+
+
+在 iOS / macOS 里：
+物理网卡（Wi-Fi / 蜂窝）
+MTU 通常是 1500
+绝大多数 iOS Packet Tunnel App 都会显式设置 MTU
+常见值：
+1280（IPv6 最小 MTU，最保守）
+1350
+1400（最常见）
+
+你甚至可以认为：
+1400 ≈ iOS Packet Tunnel 的“行业惯例值” // 1400 = “在绝大多数网络下，几乎不会触发分片/黑洞的安全 MTU”
+但注意：
+它不是系统默认，也不是协议规定。
+
+
+
+==================================================PLPMTUD工作机制
+#####
+PLPMTUD = TCP 不再等 ICMP 告诉我“包太大”，而是自己用“是否丢包 / 是否超时”来试探：
+到底多大的 TCP segment 能在这条路径上活着到达对端。
+#####
+
+它“站在哪一层”工作？
+应用层
+  ↓
+TCP  ←—— PLPMTUD 在这里
+  ↓
+IP（DF=1）
+  ↓
+链路层
+
+关键点：
+工作在 TCP（Packetization Layer）
+探测的是：
+TCP segment 大小（MSS）
+不是 IP 分片
+
+
+PLPMTUD 的基本前提:
+PLPMTUD 成立必须满足：
+1. DF = 1（不允许 IP 分片）
+2. TCP 能感知“这个包丢了”
+超时
+重传
+ACK 行为异常
+3. 发送端可以动态调整 MSS
+否则就没信号源。
+
+
+完整工作流程:
+阶段 1️⃣：初始 MSS（偏大）
+TCP 连接建立后：
+TCP 会选一个 初始 MSS
+通常基于：
+接口 MTU（如 utun = 1400）
+对端在 SYN 中通告的 MSS // 在 TCP 的 SYN 报文里，对端通告的 MSS（Maximum Segment Size） 是通过 TCP Options 中的 MSS 选项字段 来传递的
+
+
+TCP Options（只在需要时出现）
+MSS 就在这里，并且：
+只在 SYN 报文中出现 // #####
+用于告诉对方：
+「我接收方向单个 TCP segment 能接受的最大 payload 是多少」
+
+MSS Option 的格式（RFC 793 / 879）
++--------+--------+--------+--------+
+| Kind=2 |Length=4|   MSS Value     |
++--------+--------+--------+--------+
+Kind：2（表示 MSS）
+Length：4（固定）
+MSS Value：16-bit，无符号整数（单位：bytes）
+
+MSS = 1460
+表示：
+对端希望你发送给它的 TCP Payload ≤ 1460 字节
+
+抓包时怎么看（Wireshark）
+在 SYN 或 SYN+ACK 包中可以看到：
+Transmission Control Protocol
+    Options: (20 bytes)
+        Maximum segment size: 1460 bytes
+
+方向一定要注意（很重要）
+谁通告的 MSS，限制的是“对方发给它”的数据大小
+客户端 SYN 中的 MSS
+→ 服务器发给客户端 时要遵守
+服务器 SYN+ACK 中的 MSS
+→ 客户端发给服务器 时要遵守
+
+
+
+==================================================TCP Options 的整体规则
+位置：TCP 固定首部后面
+长度：0～40 字节（TCP 首部最大 60 字节）
+格式：
++--------+--------+--------+...
+| Kind   | Length | Value  |
++--------+--------+--------+...
+对齐：必须按 4 字节对齐
+使用 NOP（Kind=1） 填充
+不是所有 Option 都有 Length
+End(0)、NOP(1) 没有 Length 字段
+
+
+最重要、最常见的 TCP Options
+1️⃣ MSS（Maximum Segment Size）
+出现时机：只在 SYN / SYN+ACK
+作用：告诉对方「你发给我时，payload 最大多少」
+2️⃣ Window Scale（窗口扩大）
+出现时机：只在 SYN
+作用：把 TCP Window 从 64KB 扩展到 GB 级
+实际窗口 = Window Size × 2^Scale
+
+Window Scale（窗口扩大）的目的，是突破 TCP 64KB 接收窗口的上限，让 TCP 在“高带宽 × 高时延”的网络上跑得动。
+TCP 原始限制（RFC 793）
+TCP 首部里的 Window Size 字段只有 16 bit：
+最大值 = 65535 bytes ≈ 64 KB
+这意味着：
+发送方 最多只能有 64KB 未确认数据在路上
+
+
+在现代网络会直接“卡死”
+举个真实一点的例子：
+RTT = 100 ms（很普通）
+带宽 = 100 Mbps // Mbps = megabits per second（兆比特每秒），是网络带宽 / 速率的常用单位。
+理论需要的在途数据（BDP）：// BDP（Bandwidth-Delay Product）
+100 Mbps × 0.1 s = 10 Mb ≈ 1.25 MB // 在 0.1 秒（一个 RTT）内，链路“最多能在路上同时存在的数据量”。也就是 BDP（Bandwidth–Delay Product，带宽时延积）。结果不是“速度”，而是“数据量”
+但 TCP 只能放 64KB 在路上：
+吞吐 ≈ 64 KB / 0.1 s ≈ 5 Mbps // 吞吐 ≈ 接收窗口 / RTT。RTT 越大，窗口不够大，速度就越慢。
+👉 链路能力 100 Mbps，却只能跑到 5 Mbps
+
+#####
+RTT 的定义里说“一个包”，只是“用其中任意一个包来测量往返时间”，
+并不意味着 TCP 在一个 RTT 内只能发一个包。
+#####
+
+TCP 不是“发一个 → 等一个”
+TCP 的真实发送模型：
+TCP 用的是 滑动窗口（Sliding Window）
+| 已确认 | 已发送未确认 | 还能继续发送 |
+只要：
+未确认数据量 < 窗口大小
+👉 就可以继续发包
+
+注意：
+ACK 是延迟的
+发送是连续的
+
+1 Mbps = 1,000,000 bit / 秒
+注意这里是 bit（位），不是 Byte（字节）
+
+
+客户端 SYN：
+告诉服务器：
+「你发给我时，要按我的 scale 来算窗口」
+服务器 SYN+ACK：
+告诉客户端：
+「你发给我时，要按我的 scale 来算窗口」
+👉 每个方向各用各的 scale
+
+| 项目               | 控制什么              | 解决什么问题   |
+| ---------------- | ----------------- | -------- |
+| MTU              | 单个 IP 包最大尺寸       | 避免分片     |
+| MSS              | 单个 TCP 段 payload  | 适配 MTU   |
+| **Window Scale** | **同时在途的 TCP 数据量** | **跑满带宽** |
+
+
+3️⃣ SACK Permitted（允许选择确认）
+出现时机：只在 SYN
+作用：告诉对方「我支持 SACK」
+
+4️⃣ SACK（选择确认）
+丢包时才出现
+出现时机：数据传输阶段
+作用：告诉发送方：
+我已经收到了哪些不连续的段
+
+SACK（Selective Acknowledgment，选择确认）
+是 TCP 的一个扩展机制，作用一句话概括就是：
+让接收方告诉发送方：哪些数据已经收到了、哪些还缺着，从而只重传“真正丢失的那一段”。
+
+传统 TCP ACK（不带 SACK）:
+ACK 只能表示一句话：
+“到某个序号之前的数据我都收到了”
+例子（MSS=1000）：
+发送方发了 4 个 segment：
+Seq=0     (0–999)
+Seq=1000  (1000–1999)
+Seq=2000  (2000–2999)   ← 丢了
+Seq=3000  (3000–3999)
+接收方实际收到的是：
+0–1999
+3000–3999
+但它 只能回：
+ACK = 2000
+意思是：
+“我只连续收到了 0–1999，后面的情况我说不清”
+后果:
+发送方会以为：
+2000 之后的全丢了
+可能会 重传 2000、3000 甚至更多
+👉 明明 3000–3999 已经收到了，却被迫重传
+SACK 是怎么解决的？
+有了 SACK
+接收方在 ACK 里 额外带上“我已经收到的离散区间”
+ACK = 2000
+SACK = [3000–4000)
+意思是：
+0–1999：连续收到
+2000–2999：缺失
+3000–3999：已经收到了（别再发了）
+SACK 的核心作用（重点）
+1. 精准重传（Selective Retransmission）
+只重传丢失的 segment
+避免“已经收到的数据被再次发送”
+2. 提高吞吐量（尤其在高丢包 / 高 RTT 网络）
+长肥管道（高带宽 × 高 RTT）场景下效果非常明显
+3. 降低网络拥塞
+少发冗余数据
+拥塞窗口（cwnd）恢复更快
+
+SACK 是怎么启用的？
+TCP 建连时（三次握手）
+在 SYN / SYN-ACK 的 TCP Options 里：
+SACK Permitted
+表示：
+“我支持 SACK”
+只有 双方都支持，后续的数据包里才会真正携带 SACK Block。
+
+❌ SACK ≠ “确认某一个 TCP 包”
+✅ SACK 确认的是“字节序号区间”
+TCP 的本质是：
+字节流
+所有 ACK / SACK 都是基于 Sequence Number（字节序号）
+
+
+不太常见但你应该知道的 Options:
+NOP（No-Operation）
+填充用
+Kind：1
+Length：1
+作用：4 字节对齐
+
+End of Option List
+Kind：0
+Length：1
+作用：表示 Options 结束，后面全部 padding
+
+
+
+==================================================为什么防火墙“偏偏”爱拦 ICMP？
+1. 历史原因：ICMP 曾经是攻击利器
+经典攻击包括：
+Ping Flood（ICMP Echo 洪水）
+Smurf Attack（放大攻击）
+利用 ICMP 报文触发 内核 bug / 崩溃
+2. ICMP “看起来不像业务流量”
+在很多人的认知里：
+TCP / UDP → 业务数据
+ICMP → “诊断用的，不重要”
+所以在防火墙规则里经常看到：
+allow tcp/udp
+deny icmp any any
+3. ICMP 太“泛”，不容易细分
+很多老防火墙 / 配置习惯：
+不方便精细区分：
+    Echo Request
+    Time Exceeded
+    Fragmentation Needed
+于是直接：全拦
+但实际上：
+有些 ICMP 是“噪音”
+有些 ICMP 是“网络控制信令”
+
+
+拦 ICMP 到底会造成什么问题？
+1. PMTUD 直接失效
+2. Traceroute、网络诊断失效
+很多工具依赖 ICMP：
+ping
+traceroute（TTL exceeded）
+路由探测
+
+
+那为什么现在还在拦？（现实原因）
+1. 老设备 / 老规则惯性
+很多企业网络：
+防火墙规则是十几年前的
+“一直没出大问题，就不敢动”
+2. “安全合规”驱动
+某些安全规范：
+明确要求：
+    禁止 ping
+    隐藏网络拓扑
+3. 很多问题被 TCP 自己“兜住了”
+现代系统：
+启用 PLPMTUD
+TCP 超时重传 + 降 MSS
+所以：
+即使 ICMP 被拦
+多数场景“还能用，只是慢/偶发”
+
+
+真正“合理”的做法是什么？
+拦“噪音 ICMP”，放“控制 ICMP”

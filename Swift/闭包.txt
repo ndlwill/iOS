@@ -1,3 +1,66 @@
+
+@escaping 的本质含义：
+这个闭包有可能在函数返回之后才被调用
+所以 它“逃离”了当前函数的生命周期
+
+在 Swift 里，闭包默认是 non-escaping
+func foo(_ block: () -> Void) {
+    block()
+}
+
+这表示：
+block 一定在 foo 函数返回之前被调用
+编译器可以确信：
+「闭包不会被保存，不会活得比 foo 更久」
+
+
+什么情况下“必须”用 @escaping
+1️⃣ 闭包被保存起来（存属性、数组、字典）
+var handlers: [() -> Void] = []
+
+func addHandler(_ handler: @escaping () -> Void) {
+    handlers.append(handler) // ❗️逃逸
+}
+原因：
+addHandler 结束了
+但 handler 还活在 handlers 里
+
+
+2️⃣ 闭包在异步回调中执行
+func load(completion: @escaping () -> Void) {
+    DispatchQueue.global().async {
+        completion() // 函数早就返回了
+    }
+}
+
+3️⃣ 闭包被“转交”给别的 escaping 闭包
+func wrap(_ block: @escaping () -> Void) {
+    asyncCall(block)
+}
+
+
+// 报错 Closure is already escaping in optional type argument，建议remove @escaping
+func removeVpnConfiguration(completionHandler: @escaping (@Sendable ((any Error)?) -> Void)? = nil) {
+        
+    }
+
+而 Optional 本身就是一个 “存储容器”:
+enum Optional<T> {
+    case none
+    case some(T)
+}
+闭包被存进 enum 里了
+生命周期已经脱离当前函数调用点
+
+所以 Swift 编译器直接判定：
+“这个 closure 已经是 escaping 的了”
+
+只要闭包被“装进别的类型”里
+就已经是 escaping
+
+
+==========
+
 闭包和OC中的block非常相似
 OC中的block是匿名的函数
 Swift中的闭包是一个特殊的函数

@@ -1,0 +1,618 @@
+https://github.com/AvdLee/Swift-Concurrency-Agent-Skill/blob/main/swift-concurrency/references/actors.md
+
+#####
+Actors
+Data isolation patterns and thread-safe state management in Swift.
+#####
+
+Swift Actor 是一种 具有数据隔离能力的对象
+Actor：一种 通过串行访问来保证线程安全的对象
+
+What is an Actor?
+Actors protect mutable state by ensuring only one task accesses it at a time. 
+They're reference types with automatic synchronization.
+
+actor Counter {
+    var value = 0
+    
+    func increment() {
+        value += 1
+    }
+}
+Key guarantee: Only one task can access mutable state at a time (serialized access).
+
+
+==================================================Actor Isolation
+Enforced by compiler:
+actor BankAccount {
+    var balance: Int = 0
+    
+    func deposit(_ amount: Int) {
+        balance += amount
+    }
+}
+
+let account = BankAccount()
+account.balance += 1 // ❌ Error: can't mutate from outside
+await account.deposit(1) // ✅ Must use actor's methods
+
+
+
+Reading properties:
+let account = BankAccount()
+await account.deposit(100)
+print(await account.balance) // Must await reads too
+
+Always use await when accessing actor properties/methods—you don't know if another task is inside.
+
+
+==================================================Actors vs Classes
+Similarities:
+Reference types (copies share same instance)
+Can have properties, methods, initializers
+Can conform to protocols
+
+Differences:
+No inheritance (except NSObject for Objective-C interop)
+Automatic isolation (no manual locks needed)
+Implicit Sendable conformance
+
+
+// ❌ Can't inherit from actors
+actor Base {}
+actor Child: Base {} // Error
+
+// ✅ NSObject exception
+actor Example: NSObject {} // OK for Objective-C
+
+
+==================================================Global Actors
+Shared isolation domain across types, functions, and properties.
+
+
+@MainActor:
+Ensures execution on main thread:
+@MainActor
+final class ViewModel {
+    var items: [Item] = []
+}
+
+@MainActor
+func updateUI() {
+    // Always runs on main thread
+}
+
+@MainActor
+var title: String = ""
+
+
+Custom global actors:
+@globalActor
+actor ImageProcessing {
+    static let shared = ImageProcessing()
+    private init() {} // Prevent duplicate instances
+}
+
+@ImageProcessing
+final class ImageCache {
+    var images: [URL: Data] = [:]
+}
+
+@ImageProcessing
+func applyFilter(_ image: UIImage) -> UIImage {
+    // All image processing serialized
+}
+
+Use private init to prevent creating multiple executors.
+
+
+
+==================================================@MainActor Best Practices
+When to use:
+UI-related code that must run on main thread:
+
+@MainActor
+final class ContentViewModel: ObservableObject {
+    @Published var items: [Item] = []
+}
+
+
+
+Replacing DispatchQueue.main:
+// Old way
+DispatchQueue.main.async {
+    // Update UI
+}
+
+// Modern way
+await MainActor.run {
+    // Update UI
+}
+
+// Better: Use attribute
+@MainActor
+func updateUI() {
+    // Automatically on main thread
+}
+
+
+
+MainActor.assumeIsolated:
+Use sparingly - assumes you're on main thread, crashes if not:
+
+func methodB() {
+    assert(Thread.isMainThread) // Validate assumption
+    
+    MainActor.assumeIsolated {
+        someMainActorMethod()
+    }
+}
+Prefer: Explicit @MainActor or await MainActor.run over assumeIsolated.
+
+
+
+==================================================Isolated vs Nonisolated
+Default: Isolated
+Actor methods are isolated by default:
+
+actor BankAccount {
+    var balance: Double
+    
+    // Implicitly isolated
+    func deposit(_ amount: Double) {
+        balance += amount
+    }
+}
+
+
+
+Isolated parameters:
+Reduce suspension points by inheriting caller's isolation:
+struct Charger {
+    static func charge(
+        amount: Double,
+        from account: isolated BankAccount
+    ) async throws -> Double {
+        // No await needed - we're isolated to account
+        try account.withdraw(amount: amount)
+        return account.balance
+    }
+}
+
+
+
+Isolated closures:
+actor Database {
+    func transaction<T>(
+        _ operation: @Sendable (_ db: isolated Database) throws -> T
+    ) throws -> T {
+        beginTransaction()
+        let result = try operation(self)
+        commitTransaction()
+        return result
+    }
+}
+
+// Usage: Multiple operations, one await
+try await database.transaction { db in
+    db.insert(item1)
+    db.insert(item2)
+    db.insert(item3)
+}
+
+
+
+Generic isolated extension:
+extension Actor {
+    func performInIsolation<T: Sendable>(
+        _ block: @Sendable (_ actor: isolated Self) throws -> T
+    ) async rethrows -> T {
+        try block(self)
+    }
+}
+
+// Usage
+try await bankAccount.performInIsolation { account in
+    try account.withdraw(amount: 20)
+    print("Balance: \(account.balance)")
+}
+
+
+
+Nonisolated:
+actor BankAccount {
+    let accountHolder: String
+    
+    nonisolated var details: String {
+        "Account: \(accountHolder)"
+    }
+}
+
+// No await needed
+print(account.details)
+
+
+
+Protocol conformance:
+extension BankAccount: CustomStringConvertible {
+    nonisolated var description: String {
+        "Account: \(accountHolder)"
+    }
+}
+
+
+
+==================================================Isolated Deinit (Swift 6.2+)
+Clean up actor state on deallocation:
+
+actor FileDownloader {
+    var downloadTask: Task<Void, Error>?
+    
+    isolated deinit {
+        downloadTask?.cancel() // Can call isolated methods
+    }
+}
+Requires: iOS 18.4+
+
+
+
+==================================================Global Actor Isolated Conformance (Swift 6.2+)
+Protocol conformance respecting actor isolation:
+
+@MainActor
+final class PersonViewModel {
+    let id: UUID
+    var name: String
+}
+
+extension PersonViewModel: @MainActor Equatable {
+    static func == (lhs: PersonViewModel, rhs: PersonViewModel) -> Bool {
+        lhs.id == rhs.id && lhs.name == rhs.name
+    }
+}
+
+Enable: InferIsolatedConformances upcoming feature. // 推断隔离一致性
+
+
+extension PersonViewModel: @MainActor Equatable { ... }
+这句话的意思是：
+这个类型对 Equatable 的“协议一致性（conformance）”是 MainActor 隔离的
+换句话说：== 只能在 MainActor 上被调用
+
+你的类本身已经是 @MainActor 了，为什么还要写一次？
+这表示：
+所有实例成员访问都必须在 MainActor 上
+包括 id、name
+但注意一个关键点：
+类型是 @MainActor 的 ≠ 它实现的协议 conformance 也是 @MainActor 的
+这是 Swift 6.2 之前和之后差异最大的地方。
+
+
+不加 @MainActor Equatable 会发生什么？
+extension PersonViewModel: Equatable {
+    static func == (lhs: PersonViewModel, rhs: PersonViewModel) -> Bool {
+        lhs.id == rhs.id && lhs.name == rhs.name
+    }
+}
+在 Swift 6.2 + InferIsolatedConformances 下的含义是：
+Equatable 本身是 nonisolated 的协议
+所以：
+== 被认为是 nonisolated 的协议要求
+可以从任意 actor / 任意线程调用
+
+但问题来了
+lhs.name   // ❌ name 是 @MainActor 隔离的
+也就是说：
+你在一个“非 MainActor 的协议要求”里，访问了 MainActor 隔离的状态
+这在 Swift 6 严格并发下是 逻辑不安全的。
+
+
+extension PersonViewModel: @MainActor Equatable
+这是 Swift 6.2 新支持的语法（Global Actor Isolated Conformance）。
+它表示：
+不是说 Equatable 在 MainActor 上
+而是：
+“PersonViewModel 对 Equatable 的实现，是 MainActor 隔离的”
+效果是：
+static func == 自动视为 @MainActor
+
+
+InferIsolatedConformances 是干嘛的？
+这个 upcoming feature 的核心目的只有一句话：
+让“协议一致性”自动继承类型的 actor 隔离语义
+在你开启后：
+如果类型是 @MainActor
+那么：
+它对协议的 conformance 可以被推断为 @MainActor
+但 前提是你显式标注或编译器能安全推断
+Equatable 这种标准库协议，编译器不敢擅自帮你改语义
+所以你需要显式写：
+extension PersonViewModel: @MainActor Equatable
+
+
+
+==================================================Actor Reentrancy
+Critical: State can change between suspension points.
+
+actor BankAccount {
+    var balance: Double
+    
+    func deposit(amount: Double) async {
+        balance += amount
+        
+        // ⚠️ Actor unlocked during await
+        await logActivity("Deposited \(amount)")
+        
+        // ⚠️ Balance may have changed!
+        print("Balance: \(balance)")
+    }
+}
+
+Problem:
+async let _ = account.deposit(50)
+async let _ = account.deposit(50)
+async let _ = account.deposit(50)
+
+// May print same balance three times:
+// Balance: 150
+// Balance: 150
+// Balance: 150
+
+Solution:
+Complete actor work before suspending:
+
+func deposit(amount: Double) async {
+    balance += amount
+    print("Balance: \(balance)") // Before suspension
+    
+    await logActivity("Deposited \(amount)")
+}
+Rule: Don't assume state is unchanged after await.
+
+
+
+==================================================#isolation Macro
+Inherit caller's isolation for generic code:
+
+extension Collection where Element: Sendable {
+    func sequentialMap<Result: Sendable>(
+        isolation: isolated (any Actor)? = #isolation, // “我这个函数，默认运行在 调用者所在的 actor 上”
+        transform: (Element) async -> Result
+    ) async -> [Result] {
+        var results: [Result] = []
+        for element in self {
+            results.append(await transform(element))
+        }
+        return results
+    }
+}
+如果你从 @MainActor 调用
+那 sequentialMap 的整个执行过程 仍然在 MainActor 上
+没有发生 actor hop
+
+// Usage from @MainActor context
+Task { @MainActor in
+    let names = ["Alice", "Bob"]
+    let results = await names.sequentialMap { name in
+        await process(name) // Inherits @MainActor
+    }
+}
+
+Benefits: Avoids unnecessary suspensions, allows non-Sendable data.
+
+
+
+Task Closures and Isolation Inheritance:
+When spawning unstructured Task closures that need to work with non-Sendable types, 
+you must capture the isolation parameter to inherit the caller's isolation context.
+
+Problem: Task closures are @Sendable, which prevents capturing non-Sendable types:
+
+func process(delegate: NonSendableDelegate) {
+  Task {
+    delegate.doWork() // ❌ Error: capturing non-Sendable type
+  }
+}
+
+Solution: Use #isolation parameter and capture it inside the Task:
+func process(
+  delegate: NonSendableDelegate,
+  isolation: isolated (any Actor)? = #isolation
+) {
+  Task {
+    _ = isolation  // Forces capture, Task inherits caller's isolation
+    delegate.doWork()  // ✅ Safe - running on caller's actor
+  }
+}
+
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0420-inheritance-of-actor-isolation.md
+
+Why _ = isolation is required: Per SE-0420, Task closures only inherit isolation when "a non-optional binding of an isolated parameter is captured by the closure."
+The _ = isolation statement forces this capture. The capture list syntax [isolation] should work but currently does not.
+
+When to use this pattern:
+Spawning Tasks that work with non-Sendable delegate objects
+Fire-and-forget async work that needs access to caller's state
+Bridging callback-based APIs to async streams while keeping delegates alive
+
+Note: This pattern keeps the non-Sendable value alive and accessible within the Task. 
+The Task runs on the caller's isolation domain, so no cross-isolation "sending" occurs.
+
+
+==================================================Custom Actor Executors
+Advanced: Control how actor schedules work.
+
+Serial executor:
+final class DispatchQueueExecutor: SerialExecutor {
+    private let queue: DispatchQueue
+    
+    init(queue: DispatchQueue) {
+        self.queue = queue
+    }
+    
+    func enqueue(_ job: consuming ExecutorJob) {
+        let unownedJob = UnownedJob(job)
+        let executor = asUnownedSerialExecutor()
+        
+        queue.async {
+            unownedJob.runSynchronously(on: executor)
+        }
+    }
+}
+
+actor LoggingActor {
+    private let executor: DispatchQueueExecutor
+    
+    nonisolated var unownedExecutor: UnownedSerialExecutor {
+        executor.asUnownedSerialExecutor()
+    }
+    
+    init(queue: DispatchQueue) {
+        executor = DispatchQueueExecutor(queue: queue)
+    }
+}
+
+
+When to use:
+Integration with legacy DispatchQueue-based code
+Specific thread requirements (e.g., C++ interop)
+Custom scheduling logic
+
+Default executor is usually sufficient.
+
+
+==================================================Mutex: Alternative to Actors
+Synchronous locking without async/await overhead (iOS 18+, macOS 15+).
+
+
+import Synchronization
+
+final class Counter {
+    private let count = Mutex<Int>(0)
+    
+    var currentCount: Int {
+        count.withLock { $0 }
+    }
+    
+    func increment() {
+        count.withLock { $0 += 1 }
+    }
+}
+
+
+Sendable access to non-Sendable types:
+final class TouchesCapturer: Sendable {
+    let path = Mutex<NSBezierPath>(NSBezierPath())
+    
+    func storeTouch(_ point: NSPoint) {
+        path.withLock { path in
+            path.move(to: point)
+        }
+    }
+}
+
+
+Error handling:
+func decrement() throws {
+    try count.withLock { count in
+        guard count > 0 else {
+            throw Error.reachedZero
+        }
+        count -= 1
+    }
+}
+
+
+Mutex vs Actor
+Feature	Mutex	Actor
+Synchronous	✅	❌ (requires await)
+Async support	❌	✅
+Thread blocking	✅	❌ (cooperative)
+Fine-grained locking	✅	❌ (whole actor)
+Legacy code integration	✅	❌
+
+
+Use Mutex when:
+Need synchronous access
+Working with legacy non-async APIs
+Fine-grained locking required
+Low contention, short critical sections
+
+Use Actor when:
+Can adopt async/await
+Need logical isolation
+Working in async context
+
+
+==================================================Common Patterns
+1. View model with @MainActor
+@MainActor
+final class ContentViewModel: ObservableObject {
+    @Published var items: [Item] = []
+    
+    func loadItems() async {
+        items = try await api.fetchItems()
+    }
+}
+
+
+2. Background processing with custom actor
+@ImageProcessing
+final class ImageProcessor {
+    func process(_ images: [UIImage]) async -> [UIImage] {
+        images.map { applyFilters($0) }
+    }
+}
+
+
+3. Mixed isolation
+actor DataStore {
+    private var items: [Item] = []
+    
+    func add(_ item: Item) {
+        items.append(item)
+    }
+    
+    nonisolated func itemCount() -> Int {
+        // ❌ Can't access items
+        return 0
+    }
+}
+
+
+4. Transaction pattern
+actor Database {
+    func transaction<T>(
+        _ operation: @Sendable (_ db: isolated Database) throws -> T
+    ) throws -> T {
+        beginTransaction()
+        defer { commitTransaction() }
+        return try operation(self)
+    }
+}
+
+
+==================================================Best Practices
+Prefer actors over manual locks for async code
+Use @MainActor for UI - all view models, UI updates
+Minimize work in actors - keep critical sections short
+Watch for reentrancy - don't assume state unchanged after await
+Use nonisolated sparingly - only for truly immutable data
+Avoid assumeIsolated - prefer explicit isolation
+Custom executors are rare - default is usually best
+Consider Mutex for sync code - when async overhead not needed
+Complete actor work before suspending - prevent reentrancy bugs
+Use isolated parameters - reduce suspension points
+
+
+==================================================Decision Tree
+Need thread-safe mutable state?
+├─ Async context?
+│  ├─ Single instance? → Actor
+│  ├─ Global/shared? → Global Actor (@MainActor, custom)
+│  └─ UI-related? → @MainActor
+│
+└─ Synchronous context?
+   ├─ Can refactor to async? → Actor
+   ├─ Legacy code integration? → Mutex
+   └─ Fine-grained locking? → Mutex

@@ -1,0 +1,222 @@
+LCS 是 Longest Common Subsequence，中文叫：
+最长公共子序列
+
+它是一个经典的动态规划算法问题，也是很多 diff 算法的基础思想。
+
+
+
+什么是“子序列”？
+子序列 ≠ 子串。
+
+子序列：
+👉 保持顺序
+👉 但可以不连续
+
+举例：
+A = "abcdef"
+合法子序列：
+ace
+abf
+bc
+不合法：
+ca   ❌（顺序变了）
+
+
+LCS 是什么？
+给你两个序列：
+A = ABCBDAB
+B = BDCABA
+求：
+两个序列中最长的“公共子序列”
+答案是：
+BCBA
+长度 = 4
+
+
+为什么 Diff 会用到 LCS？
+看一个 UI 更新例子：
+旧数据：
+[A, B, C, D]
+新数据：
+[A, C, E, D]
+它们的 LCS 是：
+[A, C, D]
+说明：
+B 被删除
+E 被插入
+通过找出：
+哪些是“公共稳定元素”
+哪些是“新增或删除”
+就可以推导出：
+insert
+delete
+move
+这就是 DiffableDataSource 背后的核心思想。
+
+
+算法复杂度
+经典 LCS：
+时间复杂度：O(n * m)
+空间复杂度：O(n * m)
+对于列表较大时成本不低，所以很多 UI 框架会用优化版算法。
+Apple 内部不是直接暴力 LCS，而是使用更高效的 diff 算法
+
+
+
+DiffableDataSource 底层怎么做 diff？
+它基于序列 diff 算法思想，核心类似 LCS（最长公共子序列）。
+通过找出新旧数据中的公共稳定元素，推导出 insert/delete/move 操作，然后自动执行 batch updates，避免 indexPath 错误。
+
+
+
+==================================================例子
+A = ABCBDAB   (长度 m = 7)
+B = BDCABA    (长度 n = 6)
+我们要求：
+LCS(A, B)
+
+
+二、核心思路（动态规划）
+定义：
+dp[i][j] =
+A 的前 i 个字符
+B 的前 j 个字符
+的最长公共子序列长度
+
+状态转移公式
+如果：
+A[i-1] == B[j-1]
+说明这个字符可以加入 LCS：
+dp[i][j] = dp[i-1][j-1] + 1
+否则：
+dp[i][j] = max(dp[i-1][j], dp[i][j-1])
+意思是：
+要么丢掉 A 当前字符
+要么丢掉 B 当前字符
+选大的那个
+
+三、构造 DP 表 // Dynamic Programming（动态规划）
+我们构建一个 (m+1) x (n+1) 的表
+行是 A
+列是 B
+
+      B D C A B A
+    0 0 0 0 0 0 0
+A  0
+B  0
+C  0
+B  0
+D  0
+A  0
+B  0
+然后按行填表。
+
+四、关键推导过程（简化展示）
+最终 dp 表（只写结果）：
+      B D C A B A
+    0 0 0 0 0 0 0
+A  0 0 0 0 1 1 1
+B  0 1 1 1 1 2 2
+C  0 1 1 2 2 2 2
+B  0 1 1 2 2 3 3
+D  0 1 2 2 2 3 3
+A  0 1 2 2 3 3 4
+B  0 1 2 2 3 4 4
+右下角：
+dp[7][6] = 4
+所以 LCS 长度是 4。
+
+
+五、怎么“恢复”具体序列？
+长度知道了还不够。
+我们要回溯。
+从右下角开始：
+i = 7, j = 6
+规则：
+如果 A[i-1] == B[j-1] → 这个字符在 LCS 中
+否则往 dp 值大的方向走
+
+
+回溯过程（简化版）
+从 dp[7][6] = 4 开始：
+A[6] = B
+B[5] = A   → 不同
+看上和左：
+dp[6][6] = 4
+dp[7][5] = 4
+任选一个（比如往上）
+继续：
+A[5] = A
+B[5] = A   → 相同
+记录：
+A
+然后：
+i--, j--
+继续走…
+最终得到：
+BCBA
+
+（也可能得到 BDAB，LCS 可能不唯一）
+
+
+六、完整 Swift 实现
+func lcs(_ a: String, _ b: String) -> String {
+    let aChars = Array(a)
+    let bChars = Array(b)
+    
+    let m = aChars.count
+    let n = bChars.count
+    
+    // 初始化表
+    var dp = Array(
+        repeating: Array(repeating: 0, count: n + 1),
+        count: m + 1
+    )
+    
+    // 构建 dp 表
+    for i in 1...m {
+        for j in 1...n {
+            if aChars[i - 1] == bChars[j - 1] {
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            } else {
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+            }
+        }
+    }
+    
+    // 回溯构造结果
+    var i = m
+    var j = n
+    var result: [Character] = []
+    
+    while i > 0 && j > 0 {
+        if aChars[i - 1] == bChars[j - 1] {
+            result.append(aChars[i - 1])
+            i -= 1
+            j -= 1
+        } else if dp[i - 1][j] > dp[i][j - 1] {
+            i -= 1
+        } else {
+            j -= 1
+        }
+    }
+    
+    return String(result.reversed())
+}
+
+
+七、时间复杂度
+时间复杂度: O(m * n)
+空间复杂度: O(m * n)
+可以优化成 O(min(m, n)) 只保留两行，但那样就没法回溯了。
+
+
+八、为什么 iOS diff 不直接用这个？
+因为：
+O(n²)
+列表一大就爆炸。
+UIKit 内部用的是：
+Myers diff algorithm
+复杂度接近：
+O(ND)
+远比 LCS 快。

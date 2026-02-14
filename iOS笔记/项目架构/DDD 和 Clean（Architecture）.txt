@@ -1,0 +1,271 @@
+DDD 和 Clean（Architecture），其实是两套不同侧重点的方法论，经常一起用，但不是一回事。
+
+
+==================================================一、DDD（Domain-Driven Design）是什么？
+DDD = 以业务为中心的建模方法论
+核心目标：
+把“业务规则”变成代码里的第一公民
+
+DDD 关注什么？
+DDD 关心的是：
+业务到底在“做什么”
+业务规则怎么表达
+业务对象之间的关系
+业务语言如何和代码语言保持一致
+
+| 概念                 | 含义             | iOS / VPN 示例             |
+| ------------------ | -------------- | ------------------------ |
+| **Domain**         | 业务本身           | VPN 连接、节点选择、状态流转         |
+| **Entity**         | 有身份、有生命周期      | VPNConnection（有 id / 状态） |
+| **Value Object**   | 无身份，只关心值       | VPNConnectContext        |
+| **Aggregate**      | 一组强一致的对象       | VPNSession + 状态          |
+| **Domain Service** | 纯业务逻辑          | VPNConnectService        |
+| **Repository**     | 获取 / 保存 Domain | VPNRepository            |
+
+业务背景（先定语言）
+业务规则（Domain Language）：
+VPN 需要 选择节点 才能连接
+一个 VPN 连接有 唯一身份
+连接过程需要上下文（节点 / 网络类型）
+连接状态需要保持一致性
+
+1. Value Object（值对象）
+只描述值，不关心身份
+// Value Object
+struct VPNConnectContext {
+    let nodeID: String
+    let networkType: NetworkType
+}
+enum NetworkType {
+    case wifi
+    case cellular
+}
+✔ 没有 id
+✔ 没有生命周期
+✔ 可随便 new、复制、比较
+
+
+2. Entity（实体）
+有 identity + 生命周期
+// Entity
+final class VPNConnection {
+
+    let id: UUID
+    private(set) var status: Status
+
+    init(id: UUID = UUID(), status: Status = .disconnected) {
+        self.id = id
+        self.status = status
+    }
+
+    func connect() {
+        status = .connected
+    }
+
+    func disconnect() {
+        status = .disconnected
+    }
+}
+
+extension VPNConnection {
+    enum Status {
+        case connected
+        case disconnected
+    }
+}
+✔ 有唯一 id
+✔ 状态可变化
+✔ 生命周期可追踪
+
+
+3. Aggregate（聚合）
+强一致性边界
+规则：
+VPNConnection 的状态只能通过 VPNSession 改变
+
+// Aggregate Root
+final class VPNSession {
+
+    let connection: VPNConnection
+    private(set) var context: VPNConnectContext?
+
+    init(connection: VPNConnection) {
+        self.connection = connection
+    }
+
+    func attachContext(_ context: VPNConnectContext) {
+        self.context = context
+    }
+
+    func connect() throws {
+        guard context != nil else {
+            throw VPNError.noNodeSelected
+        }
+        connection.connect()
+    }
+
+    func disconnect() {
+        connection.disconnect()
+    }
+}
+
+enum VPNError: Error {
+    case noNodeSelected
+}
+✔ 外界不能直接改 VPNConnection
+✔ 业务一致性集中在这里
+✔ 这一步就是 DDD 的“核心威力点”
+
+
+4. Domain Service（领域服务）
+// Domain Service
+protocol VPNConnectService {
+    func toggle(session: VPNSession) throws
+}
+
+final class DefaultVPNConnectService: VPNConnectService {
+
+    func toggle(session: VPNSession) throws {
+        switch session.connection.status {
+        case .connected:
+            session.disconnect()
+        case .disconnected:
+            try session.connect()
+        }
+    }
+}
+✔ 不持有状态
+✔ 不依赖 UI / iOS
+✔ 纯业务决策 // Domain Service：只做“决策”，不改事实
+
+VPNTunnelController 负责「怎么做 / 调系统」
+| 类                            | 本质                |
+| ---------------------------- | ----------------- |
+| **DefaultVPNConnectService** | **业务决策者**（Domain） |
+| **VPNTunnelController**      | **系统执行者**（Infra）  |
+
+// Infra
+protocol VPNTunnelController {
+    func start() throws
+    func stop()
+}
+
+final class NEVPNTunnelController: VPNTunnelController {
+
+    func start() throws {
+        try manager.connection.startVPNTunnel()
+    }
+
+    func stop() {
+        manager.connection.stopVPNTunnel()
+    }
+}
+
+#####
+先做业务判断 → 再做系统调用
+#####
+
+职责单一 + 单向依赖
+service.toggle(session)
+→ session.state = .connecting
+→ tunnelController.start()
+
+
+5. Repository（仓储）
+Domain 眼里的“数据来源”
+// Repository
+protocol VPNRepository {
+    func loadSession() -> VPNSession
+    func save(session: VPNSession)
+}
+
+一个最简单的实现（Infra 层）：
+final class InMemoryVPNRepository: VPNRepository {
+
+    private var session: VPNSession =
+        VPNSession(connection: VPNConnection())
+
+    func loadSession() -> VPNSession {
+        session
+    }
+
+    func save(session: VPNSession) {
+        self.session = session
+    }
+}
+✔ Domain 不关心是内存 / Keychain / DB
+✔ 实现细节在 Infra
+
+
+6. 把它们“串起来”（Use Case）
+你现在 iOS / Intent 里真正该调用的东西
+
+final class ToggleVPNUseCase {
+
+    private let repository: VPNRepository
+    private let service: VPNConnectService
+
+    init(
+        repository: VPNRepository,
+        service: VPNConnectService
+    ) {
+        self.repository = repository
+        self.service = service
+    }
+
+    func execute(context: VPNConnectContext?) throws {
+        let session = repository.loadSession()
+
+        if let context {
+            session.attachContext(context)
+        }
+
+        try service.toggle(session: session)
+        repository.save(session: session)
+    }
+}
+✔ Intent / VC 只调用这个
+✔ 所有业务规则都在 Domain
+
+
+==================================================二、Clean Architecture 是什么？
+Clean = 分层 + 依赖方向 的架构原则
+核心目标：
+让业务不依赖 UI / 框架 / 平台
+
+Clean Architecture 解决的问题
+UI 改了 → 业务不动
+iOS / Intent / Extension → 业务复用
+框架替换 → 核心逻辑安全
+
+┌───────────────┐
+│   UI / Intent │  ← SwiftUI / ViewController / AppIntent
+└───────▲───────┘
+        │
+┌───────┴───────┐
+│  Use Cases    │  ← Application Layer
+└───────▲───────┘
+        │
+┌───────┴───────┐
+│   Domain      │  ← DDD 主要落在这里
+└───────▲───────┘
+        │
+┌───────┴───────┐
+│ Infra / Data  │  ← Network / DB / VPN API
+└───────────────┘
+
+
+关键原则：
+依赖只能向内
+Domain 不依赖 UI / iOS / Intent
+UseCase 不依赖 UIKit / SwiftUI
+Infra 实现接口，Domain 定义规则
+
+
+| 维度     | DDD                          | Clean                   |
+| ------ | ---------------------------- | ----------------------- |
+| 关注点    | **业务建模**                     | **架构分层**                |
+| 核心问题   | 业务怎么表达                       | 代码怎么组织                  |
+| 输出     | Entity / VO / Domain Service | Layer / Dependency Rule |
+| 是否可单独用 | ✅                            | ✅                       |
+| 是否互补   | **非常互补**                     | **非常互补**                |

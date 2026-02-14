@@ -1,0 +1,265 @@
+Intent 的 perform() 本身触发一个异步操作，
+等 VPN 状态真的变化（例如 connected）之后，
+再返回 IntentResult
+
+
+用 AsyncSequence / Continuation 等待状态变化
+
+
+1. Continuation
+final class VPNStateStore {
+
+    private var continuations: [CheckedContinuation<VPNStatus, Never>] = []
+
+// app 只要设置 status 就能唤醒 Intent
+    var status: VPNStatus = .disconnected {
+        didSet {
+            continuations.forEach { $0.resume(returning: status) }
+            continuations.removeAll()
+        }
+    }
+
+    func waitForStatus(_ target: VPNStatus) async {
+        if status == target { return }
+
+/*
+withCheckedContinuation
+
+它做的事是：
+暂停当前 async 函数
+给你一个 cont（continuation）// cont 不 resume，这个 await 就会一直卡着（永远不会返回）
+你以后在合适的时机调用 cont.resume(...)
+async 函数就会从这里继续往下执行
+
+
+执行到这里时：
+当前 async 函数 暂停
+当前 Task 挂起
+系统把控制权让出去（线程不会被阻塞）
+此时：
+唯一能让这个 async 函数继续的东西
+👉 就是这个 cont
+
+❌ 不是：
+线程阻塞
+死循环
+CPU 占用
+✅ 而是：
+Task 一直处于 suspended
+await 永远等不到完成信号
+*/
+        await withCheckedContinuation { cont in
+            continuations.append(cont)
+        }
+    }
+}
+
+struct ConnectVPNIntent: AppIntent {
+
+    @Dependency
+    var vpnService: VPNService
+
+    @Dependency
+    var vpnStateStore: VPNStateStore
+
+    func perform() async throws -> some IntentResult {
+
+        // 1. 发起连接
+        await vpnService.connect()
+
+        // 2. 等待状态变为 connected
+        await vpnStateStore.waitForStatus(.connected)
+
+        // 3. 返回结果
+        return .result(value: "VPN Connected")
+    }
+}
+
+必须注意的 3 个系统级限制
+1️⃣ Intent 不能无限等
+系统对 Intent 有隐式时间预期
+2️⃣ VPN 连接是「系统异步操作」
+即使你 await 状态：
+用户可能点了「不允许 VPN」
+3️⃣ 不要在 Intent 里做「长期状态管理」
+Intent 的职责是：
+发起动作 + 等结果
+不是：
+常驻监听
+
+
+status 改变
+↓
+didSet
+↓
+resume continuation
+
+
+
+2. AsyncSequence
+enum VPNStatus: Equatable {
+    case disconnected
+    case connecting
+    case connected
+    case disconnecting
+}
+
+
+actor VPNStateStore {
+
+    private var status: VPNStatus = .disconnected
+    private var continuation: AsyncStream<VPNStatus>.Continuation?
+
+    func statusStream() -> AsyncStream<VPNStatus> {
+        AsyncStream { continuation in
+            self.continuation = continuation
+
+            // 立即把当前状态发出去（很关键）
+            continuation.yield(status)
+        }
+    }
+
+    func updateStatus(_ newStatus: VPNStatus) {
+        guard status != newStatus else { return }
+
+        status = newStatus
+        continuation?.yield(newStatus)
+    }
+
+    func currentStatus() -> VPNStatus {
+        status
+    }
+}
+
+
+func waitForConnected() async {
+    let stream = await vpnStateStore.statusStream()
+
+    for await status in stream {
+        if status == .connected {
+            return
+        }
+    }
+}
+
+func perform() async throws -> some IntentResult {
+
+    await vpnService.connect()
+
+    await waitForConnected()
+
+    return .result(value: "VPN Connected")
+}
+
+
+status 改变
+↓
+yield
+↓
+for await 收到值
+
+
+完整版（支持多个订阅者）
+actor VPNStateStore { // actor 是“意图声明”。这是一个并发隔离的状态管理单元。多个线程 / 多个 Task 同时调用 updateStatus，actor 的价值才真正体现出来。
+
+    private var status: VPNStatus = .disconnected
+    private var continuations: [AsyncStream<VPNStatus>.Continuation] = []
+
+    func statusStream() -> AsyncStream<VPNStatus> {
+        AsyncStream { continuation in
+            continuations.append(continuation)
+
+            // 新订阅者立即拿到当前状态
+            continuation.yield(status)
+
+            continuation.onTermination = { @Sendable _ in
+                Task { await self.removeContinuation(continuation) }
+            }
+        }
+    }
+
+    private func removeContinuation(
+        _ continuation: AsyncStream<VPNStatus>.Continuation
+    ) {
+        continuations.removeAll { $0 === continuation }
+    }
+
+    func updateStatus(_ newStatus: VPNStatus) {
+        guard status != newStatus else { return }
+
+        status = newStatus
+        continuations.forEach { $0.yield(newStatus) }
+    }
+
+    func currentStatus() -> VPNStatus {
+        status
+    }
+}
+
+
+extension VPNStateStore {
+    func wait(for target: VPNStatus) async {
+        for await status in await statusStream() {
+            if status == target {
+                return
+            }
+        }
+    }
+}
+Intent 里直接：
+await vpnStateStore.wait(for: .connected)
+
+
+同一时刻，actor 内部只会有一个 Task 在执行；
+其他并发调用会被挂起并排队，等前一个执行完再进来。
+
+
+Task A ─┐
+Task B ─┼─▶ actor mailbox ─▶ 执行 A ─▶ 执行 B ─▶ 执行 C
+Task C ─┘
+actor 有一个 隐式的 mailbox
+所有对 actor 隔离方法的调用都会进入这个队列
+串行执行
+
+重要但必须说清的一点（高级）
+actor ≠ “整个方法执行期间都锁住”
+actor 是可重入的（reentrant）
+
+actor Example {
+    func foo() async {
+        print("A")
+        await someAsyncCall()
+        print("B")
+    }
+}
+
+执行顺序可能是：
+Task 1: foo() → print A → await
+Task 2: foo() → print A → await
+Task 1: resume → print B
+Task 2: resume → print B
+
+在 await 的时候：
+actor 会让出执行权
+其他 Task 可以进入 actor
+
+但注意：
+同一时刻仍然只有一个 Task 在执行 actor 的代码
+只是执行权在 await 点切换。
+
+
+
+
+
+
+现代多监听者的「标准三件套」
+1️⃣ 状态源：actor
+actor VPNStateStore {
+    private var status: VPNStatus = .disconnected
+}
+2️⃣ 事件流：AsyncStream // AsyncSequence 是 async/await 时代的事件流
+func statusStream() -> AsyncStream<VPNStatus>
+3️⃣ 消费者：for await
+for await status in await vpnStateStore.statusStream() {
+    ...
+}

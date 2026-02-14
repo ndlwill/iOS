@@ -1,0 +1,99 @@
+Functions and Closures (@Sendable):
+Mark functions/closures that cross isolation domains:
+
+actor ContactsStore {
+    func removeAll(_ shouldRemove: @Sendable (Contact) -> Bool) async {
+        contacts.removeAll { shouldRemove($0) }
+    }
+}
+
+
+==================================================Captured values must be Sendable:
+let query = "search"
+
+// ✅ Immutable capture
+store.filter { contact in
+    contact.name.contains(query)
+}
+
+var query = "search"
+
+// ❌ Mutable capture
+store.filter { contact in
+    contact.name.contains(query) // Error
+}
+
+
+==================================================Capture lists for mutable values:
+var query = "search"
+
+// ✅ Capture immutable snapshot
+store.filter { [query] contact in
+    contact.name.contains(query)
+}
+
+
+==================================================@unchecked Sendable:
+Use as last resort. Tells compiler to skip verification—you guarantee thread-safety.
+
+When to use
+Manual locking mechanisms the compiler can't verify:
+
+final class Cache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [String: Data] = [:]
+    
+    func get(_ key: String) -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return items[key]
+    }
+    
+    func set(_ key: String, value: Data) {
+        lock.lock()
+        defer { lock.unlock() }
+        items[key] = value
+    }
+}
+
+
+Risks:
+No compile-time safety
+Easy to introduce data races
+Must manually ensure all access uses lock
+
+final class Cache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [String: Data] = [:]
+    
+    // ⚠️ Forgot lock - data race!
+    var count: Int {
+        items.count
+    }
+}
+
+
+Better: Use actor instead:
+actor Cache {
+    private var items: [String: Data] = [:]
+    
+    var count: Int { items.count }
+    
+    func get(_ key: String) -> Data? {
+        items[key]
+    }
+    
+    func set(_ key: String, value: Data) {
+        items[key] = value
+    }
+}
+
+
+
+Legacy code with locks: Custom Locks + @unchecked Sendable
+Migration strategy
+New code: Use actors
+
+Existing code:
+If isolated and small scope → migrate to actor
+If widely used → use @unchecked Sendable, file migration ticket

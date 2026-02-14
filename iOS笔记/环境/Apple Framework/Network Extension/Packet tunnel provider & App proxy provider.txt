@@ -1,0 +1,170 @@
+Packet tunnel provider 
+Implement a VPN client for a packet-oriented, custom VPN protocol. 
+&
+App proxy provider 
+Implement a VPN client for a flow-oriented, custom VPN protocol.
+
+Flow-oriented = 连接导向，不是 App 导向
+一个 App → 多个 flow
+一个 flow → 一个 TCP 连接 或 一个 UDP 会话
+
+
+
+这俩其实是 Network Extension 里两种完全不同“拦流量”的方式。
+
+Packet Tunnel Provider
+👉 抓“原始 IP 包”，你自己当半个操作系统网络栈
+App Proxy Provider
+👉 抓“已经建好的连接 / 流”，你当一个智能代理
+
+
+
+==================================================Packet Tunnel Provider 是什么？
+packet-oriented（面向数据包）
+
+它做的事:
+系统把 所有 IP 包（IPv4 / IPv6）
+    TCP
+    UDP
+    ICMP
+原封不动交给你
+你负责：
+    封装（encrypt / wrap）
+    发送到 VPN 服务器
+    从服务器解包
+    再写回系统
+
+👉 本质：你实现的是一个“虚拟网卡（TUN）”
+
+技术特点
+使用类：NEPacketTunnelProvider
+API：
+packetFlow.readPackets
+packetFlow.writePackets
+
+适合什么场景？
+✔ 标准 VPN 协议
+✔ 需要 全流量
+✔ 类似：
+WireGuard
+OpenVPN
+企业内网全接管
+
+优缺点
+优点
+控制力最强
+真正“全局 VPN”
+能支持 Always-on VPN
+缺点
+实现难度高
+网络细节多
+Debug 地狱
+
+
+==================================================App Proxy Provider 是什么？
+flow-oriented（面向连接 / 流）
+
+它做的事:
+系统先帮你处理好了：
+    TCP 建连
+    TLS 握手
+然后把 “一个个连接” 交给你：
+    一个 TCP 连接
+    一个 UDP 流
+你只需要决定：
+    转发到哪
+    要不要加密
+    要不要拦截
+
+👉 本质：你是一个透明代理（Proxy）
+这个“透明代理”里的 透明，不是网络设备能不能看见的意思，而是 “对使用它的一方来说几乎无感”。
+透明代理 =
+App 以为自己在“直连服务器”，
+实际上中间悄悄多了一个代理。
+
+加“透明”两个字，是为了强调：
+代理的存在对 App（使用者）是无感知的。
+
+App 没改代码
+App 没配 proxy
+App 没意识到自己被代理了
+👉 这就叫「透明」。
+
+
+透明代理（App Proxy Provider）
+App：
+正常 URLSession
+正常 connect()
+系统在中间：
+把连接“劫走”
+转给 App Proxy Provider
+App 完全不知情
+👉 透明
+
+
+那为什么要强调“透明”这两个字？
+因为 代理有很多种，而 Apple 想强调：
+这不是：
+HTTP Proxy
+SOCKS Proxy
+App 自己配的代理
+而是：
+系统级、无感知、强制生效的代理机制
+
+
+显式代理（不透明）：
+HTTP / SOCKS Proxy
+App 必须：
+    配代理地址
+    知道有 proxy 存在
+代理是“被明确使用的”
+👉 不透明
+
+
+显式代理 =
+“我知道你在帮我转接电话”
+透明代理 =
+“我以为是直拨，其实前台小姐帮我转接了”
+
+
+技术特点
+使用类：NEAppProxyProvider
+核心对象：
+NEAppProxyFlow
+NEAppProxyTCPFlow
+NEAppProxyUDPFlow
+你操作的是：
+readData
+writeData
+
+
+适合什么场景？
+✔ 只想代理部分 App / 部分协议
+✔ 不想处理 IP 层细节
+✔ 类似：
+企业 App 访问内网
+流量审计
+内容过滤
+代理某些域名 / 端口
+
+优缺点
+优点
+实现简单很多
+不需要理解 IP/TCP 底层
+更安全（系统兜底）
+缺点
+不是“真 VPN”
+不能做 Always-on VPN
+无法接管所有流量
+
+
+
+
+| 维度            | Packet Tunnel | App Proxy   |
+| ------------- | ------------- | ----------- |
+| 拦截层级          | IP 层          | 连接 / Flow 层 |
+| 是否全局流量        | ✅ 是           | ❌ 否         |
+| Always-on VPN | ✅ 支持          | ❌ 不支持       |
+| 实现复杂度         | 😵 高          | 🙂 低        |
+| 控制能力          | 最强            | 中等          |
+| 典型用途          | 真 VPN         | 代理 / 企业内网   |

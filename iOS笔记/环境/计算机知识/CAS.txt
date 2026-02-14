@@ -1,0 +1,133 @@
+//gcc: type __sync_val_compare_and_swap (type *ptr, type oldval type newval, ...)
+bool atomic_cas(int32_t *p, int32_t oldVal, int32_t newVal) {
+#ifdef _WIN32
+    uint32_t dest = InterlockedCompareExchange((uint32_t *)p, (uint32_t)newVal, (uint32_t)oldVal);
+    return (int32_t)dest == oldVal;
+#else
+    //The bool version returns true if the comparison is successful and newval was written.
+    //The val version returns the contents of *ptr before the operation.
+    return __sync_bool_compare_and_swap(p, oldVal, newVal);
+#endif
+}
+
+
+这个函数是一个 原子操作函数，叫做 CAS（Compare-And-Swap / Compare-And-Set），在多线程编程里非常常用
+
+参数：
+p：指向需要修改的整型变量。
+oldVal：期望的原值（旧值）。
+newVal：要写入的新值。
+
+返回值：
+true：如果原子比较成功，并且写入了 newVal。
+false：如果比较失败（*p 不是 oldVal），没有修改。
+
+原子比较：
+比较 *p 的当前值是否等于 oldVal。
+
+条件修改：
+如果相等，就把 *p 更新为 newVal。
+如果不等，则不修改。
+
+原子：这个过程不会被线程切换打断，所以即使多个线程同时执行这个函数，也不会出现竞态条件。
+
+
+__sync_bool_compare_and_swap 是 GCC/Clang 内置的原子 CAS 函数。
+
+
+CAS 是很多多线程算法的核心，比如：
+无锁队列 / 栈
+原子计数器
+实现互斥锁（spinlock）
+实现高性能缓存更新
+
+
+int counter = 0;
+
+// 多线程安全增加
+int oldVal, newVal;
+do {
+    oldVal = counter;
+    newVal = oldVal + 1;
+} while (!atomic_cas(&counter, oldVal, newVal));
+这段代码确保即使多个线程同时增加 counter，最终的值也不会丢失。
+
+
+
+例子:
+假设我们有一个普通变量：
+int counter = 0;
+现在多个线程同时执行 counter++，可能发生 竞态条件：
+线程 A 读取 counter = 0
+线程 B 读取 counter = 0
+线程 A 计算 0 + 1 = 1 并写回 counter = 1
+线程 B 计算 0 + 1 = 1 并写回 counter = 1
+结果：counter 只增加了 1，而不是 2。
+这个问题就叫 竞态条件。
+
+
+CAS 的解决方案
+CAS（Compare-And-Swap）可以原子地完成：
+“只有当原值等于我预期的值时，才更新为新值。”
+所以在多线程安全增加里，我们就用 循环 + CAS：
+int oldVal, newVal;
+do {
+    oldVal = counter;      // 读取旧值
+    newVal = oldVal + 1;   // 计算新值
+} while (!atomic_cas(&counter, oldVal, newVal)); // 尝试原子更新
+
+解释循环逻辑：
+读取当前值 oldVal
+计算想要的值 newVal = oldVal + 1
+尝试 CAS：
+如果 counter 还是 oldVal → 更新成功 → 循环结束
+如果 counter 已被其他线程修改 → CAS 失败 → 再重试
+
+
+为什么要循环
+因为在多线程环境下，CAS 可能失败：
+假设有线程 A 和 B 同时增加：
+A 读到 counter = 0
+B 读到 counter = 0
+A 计算 1 并 CAS 成功 → counter = 1
+B 计算 1 并 CAS 失败（因为 counter != oldVal)
+B 再读 counter = 1 → 计算 2 → CAS 成功 → counter = 2
+这样就保证 最终计数正确。
+
+
+
+也可以用锁，但：
+CAS 是原子操作，通常比锁更高效，尤其是简单的计数器或指针更新场景。
+锁更通用，适合保护复杂逻辑，但在高并发场景下可能成为性能瓶颈。
+
+
+int counter = 0;
+std::mutex mtx;
+
+void increase() {
+    std::lock_guard<std::mutex> lock(mtx); // 加锁
+    counter++;                             // 临界区
+}
+优点：
+语义直观，容易理解
+可以保护复杂操作（不仅是单个变量）
+缺点：
+涉及线程上下文切换 → 有开销
+高并发下容易产生 锁竞争 → 线程等待 → 性能下降
+
+
+用原子 CAS 的方式
+优点：
+无锁（lock-free），没有线程阻塞
+CPU 内部原子指令 → 高并发下性能更好
+缺点：
+代码复杂，需要循环重试
+只适合 简单操作（如单个变量更新、指针交换等）
+如果竞争太激烈，CAS 重试可能很多 → 反而性能下降
+
+| 特性      | 锁（mutex） | 原子 CAS            |
+| ------- | -------- | ----------------- |
+| 可理解性    | 高        | 低                 |
+| 性能（低并发） | 可以       | 更快                |
+| 性能（高并发） | 可能被阻塞    | 一般更优，但重试过多也可能降低性能 |
+| 使用场景    | 复杂临界区    | 简单变量或指针更新         |

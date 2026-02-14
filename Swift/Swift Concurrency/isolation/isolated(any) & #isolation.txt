@@ -1,0 +1,86 @@
+https://fatbobman.com/zh/posts/letting-swift-closures-automatically-inherit-isolation/
+
+利用 @isolated(any) 以及 #isolation 宏，实现函数的隔离域继承，从而让编译器自动推断闭包的运行环境。
+
+
+@Test
+func switchID() async {
+    let noteID = UUID()
+    await withDependencies {
+        $0.appSettings = AppSettingsTestHelpers.makeMockSettings()
+    } operation: {
+        @Dependency(\.appSettings) var settings
+        // 报错：Main actor-isolated property 'noteID' can not be referenced from a Sendable closure
+        settings.noteID = noteID 
+        ...
+    }
+}
+
+尽管可以通过手动添加 @MainActor in 解决问题，
+但：在 Target 的 Default Actor 既然已经设置为 MainActor 的前提下，
+编译器为何无法自动推断出 operation 闭包应该运行在 MainActor 上？
+
+在该 Target 中声明的协议、类型和方法都默认归属于 @MainActor，
+那么在测试方法中，withDependencies 接收的 operation 异步闭包，理应被 Swift 编译器推断为在 MainActor 上运行。
+
+然而现实是，编译器并未按此预期进行推断。
+它似乎认为这个闭包可能会跨 Actor 执行，因此阻止了对 MainActor 隔离属性的访问。
+可以用 @MainActor in 进行运行时强制限定，但有没有办法能让编译器在编译时就自动完成推断呢？
+
+
+==================================================让闭包继承隔离域
+为了解决这个问题，我们可以利用 Swift 6 引入的两个新特性。
+
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0431-isolated-any-functions.md?utm_source=Fatbobman%20Blog&utm_medium=web
+首先是 SE-0431 提出的 @isolated(any)。它的主要目的是解决函数作为值传递时，编译器缺乏足够信息来准确判定隔离域的问题。
+
+当使用 @isolated(any) 标注一个函数类型时，该函数类型将携带其调用者所在的隔离域信息。
+虽然我们在代码中通常不会直接读取这个信息，但编译器会利用它来推断运行时的隔离环境。
+
+将 withDependencies 修改如下，之前的编译错误便消失了：
+public func withDependencies<R>(
+    _ updateValuesForOperation: (inout DependencyValues) -> Void,
+    operation: @isolated(any) () async throws -> R // 增加了 @isolated(any)
+) async rethrows -> R {
+    var dependencies = DependencyValues.current.copy()
+    updateValuesForOperation(&dependencies)
+    return try await DependencyValues.$_current.withValue(dependencies) {
+        try await operation()
+    }
+}
+
+通过添加 @isolated(any)，编译器在处理 operation 闭包时，会自动感知并继承调用者的隔离域。
+由于测试 Target 的默认隔离域是 MainActor，因此编译器推断该闭包也运行在 MainActor 上，从而通过了编译时的安全检查，无需再手动书写 @MainActor。
+
+
+不过，@isolated(any) 更多是针对函数类型的修饰。
+如果我们要将其作为一个通用的库函数，可能不希望局限于这一种推断方式。
+https://github.com/swiftlang/swift-evolution/blob/main/proposals/0420-inheritance-of-actor-isolation.md?utm_source=Fatbobman%20Blog&utm_medium=web
+此时，我们可以采用 SE-0420 提出的 隔离继承（Inheritance of actor isolation） 方案：
+public func withDependencies<R>(
+    isolation: isolated (any Actor)? = #isolation, // SE-0420: 隔离继承
+    _ updateValuesForOperation: (inout DependencyValues) -> Void,
+    operation: () async throws -> R
+) async rethrows -> R {
+    var dependencies = DependencyValues.current.copy()
+    updateValuesForOperation(&dependencies)
+    return try await DependencyValues.$_current.withValue(dependencies) {
+        try await operation()
+    }
+}
+
+通过为 withDependencies 增加一个 isolation 参数，并配合 #isolation 宏，我们能够提前明确 operation 的隔离上下文。
+
+
+这里的 isolation 参数提供了三种可能性：
+nil：函数是动态非隔离的，这与未添加该参数时的默认行为一致。
+Global Actor：函数动态隔离至指定的全局 Actor。例如，传入 MainActor.shared 可以代替闭包中的 @MainActor in，将运行时检查提前到编译时。
+调用者的隔离域：如果从某个 Actor 实例中调用 withDependencies，它将继承该 Actor 的隔离域。
+
+
+为了实现“默认继承调用者隔离域”的效果，我们使用了 #isolation 宏作为默认参数：
+/// 获取当前代码所在的 Actor 隔离引用，若代码非隔离则返回 nil。
+@freestanding(expression) public macro isolation<T>() -> T = Builtin.IsolationMacro
+它可以自动捕获当前的隔离信息并传递给 isolation 参数。
+
+经过上述调整，代码不仅能够正常编译运行，而且无需手动追加任何额外的隔离域标注，代码显得更加简洁干净。

@@ -53,4 +53,37 @@ public struct NetworkUtils {
         let toIpValue = Self.ipValue(with: toIp)
         return ipValue >= fromIpValue && ipValue <= toIpValue
     }
+    
+    /**
+     let prefixLength = 24
+     let subnetMaskString = prefixLengthToSubnetMask(prefixLength)
+     print(subnetMaskString) // 输出：255.255.255.0
+     
+     在IP地址表示法中，24是指网络前缀长度，也可以称为子网掩码位数，它表示子网掩码中1的数量。
+     要将24转换为点分十进制，需要将其转换为子网掩码的点分十进制表示。
+     
+     在IPv4中，子网掩码通常是32位的二进制数，其中前缀长度中的位数是1，其余位数为0。
+     对于24位的子网掩码，它的二进制表示将会是前24位为1，后8位为0。
+     */
+    public static func prefixLengthToSubnetMask(_ prefixLength: Int) -> String {
+        var maskValue: UInt32 = 0
+        for i in 0..<prefixLength {
+            maskValue |= 1 << (31 - i)
+        }
+        let maskString = subnetMaskToString(maskValue)
+        return maskString
+    }
+    
+    /**
+     let maskValue: UInt32 = 0xffffff00
+     let maskString = subnetMaskToString(maskValue)
+     print(maskString) // 输出：255.255.255.0
+     */
+    public static func subnetMaskToString(_ mask: UInt32) -> String {
+        var octets = [Int](repeating: 0, count: 4)
+        for i in 0..<4 {
+            octets[i] = Int((mask >> (i * 8)) & 0xff)
+        }
+        return octets.map({ String($0) }).joined(separator: ".")
+    }
 }

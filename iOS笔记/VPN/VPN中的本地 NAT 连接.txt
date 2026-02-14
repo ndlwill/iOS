@@ -1,0 +1,138 @@
+本地 NAT 连接（Local NAT Connection）,其实它是一个虚拟层面的概念，不是操作系统真的创建了一个 socket()
+从真实网络中的 NAT 讲起，然后再对比到 VPN / 代理场景 里它的含义。
+
+真实世界的 NAT 是什么？
+假设你家有个路由器，Wi-Fi 里连接了你的 iPhone 和电脑。
+外网 IP（ISP 分配）：路由器的外网地址是 203.0.113.7
+内网 IP（路由器 DHCP 分配给手机/电脑）：iPhone 的局域网地址是 192.168.1.2
+
+
+当 iPhone 访问网页：
+192.168.1.2:50000 → 142.250.66.206:443
+路由器会在 NAT 表中记下：
+(192.168.1.2:50000) <-> (203.0.113.7:62001)
+然后把数据包发出时改写为：
+203.0.113.7:62001 → 142.250.66.206:443
+这样返回包回来时，路由器再查 NAT 表，知道要转发给 iPhone 的 192.168.1.2:50000。
+
+VPN/代理里的“本地 NAT”其实是模拟上面的过程
+VPN 运行时（例如 NEPacketTunnelProvider）并不直接让应用访问外网，
+系统会把应用的流量都重定向进一个“虚拟网卡”（TUN）。
+于是 VPN 模块看到的，只是一堆 原始 IP 包：
+源IP = 10.0.0.2
+目的IP = 142.250.66.206
+系统不帮你建立 socket，你得自己处理。
+而你又不可能真的去系统再起个 TCP socket 给每个应用对应。
+所以你需要在内存里虚拟地模拟出每条连接的状态。这就是：
+“本地 NAT 连接（ConnLocal）”
+—— 一条虚拟的 TCP/UDP 连接，代表 “客户端应用 → VPN 模块” 这一侧的通信。
+
+
+用一个具体例子看本地 NAT 做的事：
+1️⃣ 系统把流量送入 TUN
+VPN 模块收到原始 IP 包（TCP SYN）。
+2️⃣ 创建一个 “本地 NAT 连接”：
+EvConnLocal conn;
+conn.src = 10.0.0.2:50000;       // Safari 的虚拟源地址
+conn.dst = 142.250.66.206:443;   // 目标服务器
+
+这个 EvConnLocal 只是你程序里的一个对象，
+它在逻辑上表示 Safari 发起的那条 TCP 连接。
+同时它包含了两个 buffer：
+inputBuffer  // Safari 发来的数据
+outputBuffer // 准备回给 Safari 的响应数据
+
+3️⃣ 建立一个远端真实连接
+你的 VPN 模块可能会：
+新建一个真实的 socket，连到远程代理服务器
+或者封装数据发到 VPN 服务器。
+现在你有一对映射：
+EvConnLocal  ←→  EvConnRemote
+你在应用内部维护一个 NAT 映射表：
+key = (srcIP, srcPort, dstIP, dstPort)
+value = {localConn, remoteConn}
+
+4️⃣ 数据流转的过程
+当 Safari 发来 TCP 数据：
+EvConnLocal.inputBuffer ← 从 NEPacketTunnelFlow 读到
+EvConnRemote.send(localConn.inputBuffer)
+当远端服务器回包：
+EvConnRemote.read() → EvConnLocal.outputBuffer
+packetFlow.writePackets(EvConnLocal.outputBuffer)
+
+这一切都发生在用户空间，没有真正的 socket。
+你在逻辑上模拟出了 NAT 的行为：
+一边代表“客户端”
+一边代表“外网”
+中间有一个映射关系。
+
+
+Safari.app (客户端)
+  ↓
+[TUN 虚拟网卡]
+  ↓
+[EvConnLocal]  ←→  [EvConnRemote]
+ (虚拟连接)         (真实连接)
+  ↓                      ↓
+ 本地 NAT               远端服务器
+
+
+
+
+App 流量（Safari/WeChat）
+  ↓
+[TUN Interface / NEPacketTunnelFlow]
+  ↓
+[用户态 NAT 模块 - lwIP TCP/IP 栈]
+  ↓
+[远端 VPN 服务器 / Shadowsocks / WireGuard]
+使用 lwIP，你在用户态就可以完整解析 IP/TCP 包，建立一个虚拟的本地 TCP 连接，用于维护客户端应用和 VPN 隧道之间的映射关系。
+
+
+
+真实世界 NAT（家庭路由器）
+外网 IP（ISP 分配）：203.0.113.10
+内网 IP（路由器 DHCP 分配给手机/电脑）：192.168.1.100、192.168.1.101
+当手机访问外网某个服务器：
+手机 192.168.1.100:50000 -> 8.8.8.8:53
+
+1. 路由器 NAT 工作：
+路由器维护 NAT 表：
+外网端口   内网 IP:端口   协议
+62000      192.168.1.100:50000  UDP
+
+2. 改写 IP/端口：
+出口 IP：203.0.113.10（路由器的 WAN IP）
+出口端口：随机分配 62000
+
+3. 回包时查表，把返回包映射回手机：
+203.0.113.10:62000 -> 192.168.1.100:50000
+
+路由器 NAT 就是把“内部连接”映射到“外部连接”，同时维护一个 连接表/映射表
+这和 iOS 用户态 EvConnLocal 的作用非常类似
+EvConnLocal = 虚拟连接 + 缓冲区 + 映射表
+路由器 NAT = 内网连接 + 映射表 + 端口重写
+
+
+| 特性   | iOS 用户态 NAT                 | 家庭路由器 NAT              |
+| ---- | --------------------------- | ---------------------- |
+| 虚拟连接 | EvConnLocal（src_ip=虚拟网卡 IP） | 内网设备 IP + 源端口          |
+| 外部连接 | EvConnRemote（远端 VPN/代理服务器）  | WAN IP + NAT 端口        |
+| 缓冲区  | inputBuffer / outputBuffer  | 通常路由器不存数据，只做端口映射（小缓冲区） |
+| 协议   | TCP/UDP 都可                  | TCP/UDP 都可             |
+
+
+
+内核态 NAT:
+NAT 负责源 IP / 端口映射，把内部网络流量改写成外网可路由的 IP
+内核 NAT 会维护 NAT 表：
+外网端口 -> 内网 IP:端口
+典型应用：
+家庭路由器做  NAT
+
+
+
+系统 socket
+它只是内核提供的网络 API，允许应用发送/接收数据
+TCP socket 会维护连接状态（SYN/ACK/FIN、窗口、重传）
+UDP socket 不维护连接状态，只能发包收包

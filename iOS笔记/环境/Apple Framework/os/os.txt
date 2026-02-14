@@ -1,0 +1,212 @@
+https://www.avanderlee.com/debugging/oslog-unified-logging/
+
+https://developer.apple.com/documentation/os
+
+
+https://developer.apple.com/documentation/os/logging
+https://developer.apple.com/documentation/os/logger
+Logger
+An object for writing interpolated string messages to the ###unified logging system###(统一日志系统).
+iOS 14.0+
+
+Log messages provide a continuous record of your app’s runtime behavior, 
+and make it easier to identify problems that can’t be caught easily using other techniques. 
+Specifically, you might use log messages:
+When you are unable to attach a debugger to the app, such as when you’re diagnosing problems on a user’s machine.
+When the problem is intermittent, and is difficult to catch in the debugger.
+When you want to get a general sense of your app’s behavior—for example, you want to know when certain tasks start and end.
+
+This system centralizes the storage of log data in memory and on disk, rather than writing that data to a text-based log file.
+#####
+You view log messages using the Console app, log command-line tool, or Xcode debug console.
+You can also access log messages programmatically using the OSLog framework.
+https://developer.apple.com/documentation/OSLog // 注意：这个是OSLog框架，不是旧的 OSLog api（https://developer.apple.com/documentation/os/legacy-logging-symbols）
+#####
+
+let logger = Logger()
+let x = 42
+logger.info("The answer is \(x)")
+When you include an interpolated string or custom object in your message, the system redacts the value of that string or object by default.
+logger.log("Paid with bank account \(accountNumber)")   // Redacted!
+logger.log("Ordered smoothie \(smoothieName, privacy: .public)")  // Visible
+
+
+| 对比项       | `print()`              | `Logger` / `os_log`                  |
+| --------- | ---------------------- | ------------------------------------ |
+| **输出去向**  | Xcode 控制台（标准输出 stdout） | 系统统一日志系统 (Unified Logging System)    |
+| **运行时依附** | 仅在当前进程存在时可见            | 写入系统日志数据库，可跨进程/系统工具查看                |
+| **性能开销**  | 较高（格式化、IO写入控制台）        | 极低（异步、内核缓冲、延迟写入、压缩）                  |
+| **存储方式**  | 纯文本                    | 二进制压缩结构化存储                           |
+| **安全性**   | 敏感数据易泄漏（可被重定向或截获）      | 自动敏感信息保护（默认私有数据不写出）                  |
+| **可查范围**  | 仅当前运行时、当前设备            | 可通过 `log show`、Console.app 查看历史记录    |
+| **过滤/搜索** | 不支持                    | 支持按 subsystem/category/level 搜索      |
+| **日志等级**  | 无                      | trace / debug / info / error / fault |
+| **用途定位**  | 开发调试用                  | 调试 + 线上诊断/分析用                        |
+
+
+
+----------Generating Log Messages from Your Code
+https://developer.apple.com/documentation/os/generating-log-messages-from-your-code
+
+Insert log messages at appropriate points in your code and use them to diagnose issues later. Typically, you use log messages to:
+Write a message at the start and end of functions and important tasks.
+Write a message for any interesting events.
+Write a message when a significant error occurs.
+Write messages for important or unusual actions with a function. For example, log rarely taken code paths.
+Write a message before each step of a multi-step task.
+
+
+
+Create a Log Object to Organize Messages:
+The type of log object you create depends on whether you write your code using Swift or Objective-C.
+In Swift, create a Logger structure and use its methods to generate log messages.
+https://developer.apple.com/documentation/os/logger
+In Objective-C, create an OSLog object and pass it to logging functions.
+https://developer.apple.com/documentation/os/oslog
+
+
+To prevent the system from displaying an overwhelmingly large number of log messages each time you diagnose issues, 
+each log object contains two custom strings to help you filter out unrelated messages. 
+You specify both strings when creating the log object, using values that are relevant to your app:
+The subsystem string identifies a large functional area within your app or apps. 
+For example, if your app spawns additional processes, you might use a different string for each process. 
+Use reverse-DNS notation, such as com.example.myapp, for each subsystem string.
+
+The category string identifies a particular component or module in a given subsystem. 
+For example, you might define separate strings for your app’s user interface, data model, and networking code. Use any convention you want for these strings.
+
+If you don’t need to filter messages, Logger and OSLog provide a default log for storing messages. 
+You might use the default log to record messages that don’t require a specific subsystem and category.
+
+
+Choose the Appropriate Log Level for Each Message:
+Log levels define the severity and importance of a particular message, and you specify a log level value each time you record a message.
+The log level you choose determines how the system handles the message. 
+The system stores all messages in memory initially, and it writes messages with more severe log levels to disk. 
+The following table lists the log levels in increasing order of severity.
+
+| Log Level | Persisted to Disk | Notes |
+|------------|------------------|-------|
+| **Debug**  | No | Captures verbose information during development that is useful only for debugging your code. |
+| **Info**   | Only when collected with the `log` tool | Captures information that is helpful, but not essential, to troubleshoot problems. |
+| **Notice (Default)** | Yes, up to a storage limit | Captures information that is essential for troubleshooting problems. For example, capture information that might result in a failure. |
+| **Error**  | Yes, up to a storage limit | Captures errors seen during the execution of your code. If an activity object exists, the system captures information for the related process chain. |
+| **Fault**  | Yes, up to a storage limit | Captures information about faults and bugs in your code. If an activity object exists, the system captures information for the related process chain. |
+
+Normally, the system stores debug and info messages only in memory, but you can write info messages to disk using the log command-line tool.
+For the other message types, the system compresses the messages and writes them to the on-disk data store.
+When that data store exceeds a predefined size, the system purges old messages to make room for new ones.
+
+
+The severity of the log level impacts the speed at which the system logs the information. 
+Debug logs have very low overhead because the system stores them only in memory. 
+Faults and other severe messages incur more overhead because the system often captures additional information and writes all of that information to disk.
+
+
+Format Custom Values in Message Strings:
+The unified logging system formats Swift interpolated variables based on the default settings, 
+but you can apply custom formatting to your variables to make them more readable. In particular, you can:
+Specify the width of a variable and align the variable’s text inside that space.
+Format integers as decimal, hex, or octal numbers.
+Format floating-point numbers using fixed-point, hex, exponential, or hybrid notation.
+Format Boolean values as true/false or yes/no strings.
+Specify the precision of floating-point numbers.
+Specify the minimum number of digits.
+Specify whether a number includes an explicit plus or minus sign.
+Log binary data contained in a pointer.
+
+To specify a formatting option for an interpolated value, include the appropriate format parameter and value. 
+In the following example, the first log message includes alignment parameters to set the column width and alignment within that column. 
+The second log message formats a floating-point number to include extra digits of precision and a plus sign in front of positive numbers. 
+The third log message formats a Boolean value as a yes/no answer to a question.
+let shapeType: String = getShapeType()
+let selectedColor: String = getSelectedColor()
+let bigNumber = 1.0234e30
+let theAnswer = true
+
+// Apply custom formatting to variables.
+customLog.debug("Shape type: \(shapeType, align: .right(columns: 15)) Color: \(selectedColor, align: .left(columns: 10))")
+customLog.info("The big number is \(bigNumber, format: .exponential(precision: 10, explicitPositiveSign: true, uppercase: false) )")
+customLog.debug("The answer is \(theAnswer, format: .answer)")
+
+In addition to the preceding formatting options, the unified logging system supports custom formatting modifiers. 
+In Swift, specify them using the format parameter. 
+In Objective-C, use a modifier of the form %{value_type}d. 
+Each modifier formats the corresponding data according to the specific type. 
+To format binary data types, use the %.*P specifier and add the total number of bytes and the pointer as arguments to the function. 
+The following table lists the built-in format specifiers.
+
+| **Value type** | **Custom specifier**         | **Example output**                     |
+| -------------- | ---------------------------- | -------------------------------------- |
+| `time_t`       | `%{time_t}d`                 | `2016-01-12 19:41:37`                  |
+| `timeval`      | `%{timeval}.*P`              | `2016-01-12 19:41:37.774236`           |
+| `timespec`     | `%{timespec}.*P`             | `2016-01-12 19:41:37.2382382823`       |
+| `errno`        | `%{errno}d`                  | `Broken pipe`                          |
+| `iec-bytes`    | `%{iec-bytes}d`              | `2.64 MiB`                             |
+| `bitrate`      | `%{bitrate}d`                | `123 kbps`                             |
+| `iec-bitrate`  | `%{iec-bitrate}d`            | `118 Kibps`                            |
+| `uuid_t`       | `%{uuid_t}.*16P%{uuid_t}.*P` | `10742E39-0657-41F8-AB99-878C5EC2DCAA` |
+
+The following example shows how to format custom bit rates and a UUID structure.
+os_log_t customLog = os_log_create("com.your_company.your_subsystem", "your_category_name");
+int baudRate = [self getBaudRate];
+uuid_t* uuid = [self getItemUUID];
+
+os_log(customLog, "The baud rate is %{bitrate}d", baudRate);
+os_log(customLog, "The UUID is %{uuid}.*P", (int)sizeof(uuid_t), uuid);
+
+For information about the options to use when formatting values, see OSLogStringAlignment, 
+OSLogIntegerFormatting, OSLogFloatFormatting, OSLogBoolFormat, OSLogInt32ExtendedFormat, and OSLogPointerFormat.
+https://developer.apple.com/documentation/os/oslogstringalignment
+
+
+Redact Sensitive User Data from a Log Message:
+For example, the following code shows how to make a dynamic string visible again using the public modifier:
+// Make the smoothie name visible, because it’s not sensitive data.
+os_log_t customLog = os_log_create("com.your_company.your_subsystem", "your_category_name");
+os_log(customLog, "Smoothie name: %{public}s ", smoothieName);
+
+When you know a variable contains potentially sensitive user information, mark it as private explicitly, as shown in the following example:
+int userAge = getUserAge();
+os_log_t customLog = os_log_create("com.your_company.your_subsystem", "your_category_name");
+
+// Hide the user’s age in the log entry. 
+os_log(customLog, "User's age: %{private}d ", userAge);
+
+
+For example, when diagnosing issues with a particular user account, you might want to see all log messages associated with that account number. 
+To allow this behavior and still protect user privacy, configure your privacy setting with a OSLogPrivacy.Mask.hash value, as shown in the following example:
+// Hide the user’s account number, but include a hash mask to allow
+// the correlation of this log message with others for the same account.
+os_log_t customLog = os_log_create("com.your_company.your_subsystem", "your_category_name");
+os_log(customLog, "Start transaction for account: %{mask.hash}d ", accountNumber);
+
+
+----------Viewing Log Messages:
+Use various tools to retrieve log information.
+
+The unified log system stores log messages in a binary compressed format, 
+deferring much of the work to turn them into human-readable text messages. 
+Using a binary format allows the log system to store more messages and reduces the overhead of logging data. 
+However, this means you can’t read and parse the log files directly; you need to use tools to convert the log messages into a binary format. 
+Depending on which tool you use, this conversion might be done while your app is running, or later, after the app has already exited.
+
+#####
+Here are some of the tools you can use to read log data:
+The Console app provides a graphical user interface for reading and sorting through log data.
+Use the log tool to retrieve log messages from a command-line.
+When you run your app in Xcode with the debugger attached, Xcode automatically displays logged messages. Similarly, you can use launch Instruments from inside Xcode to record and analyze signposts created by your app.
+Use the OSLog framework to access logged messages programmatically.
+#####
+
+
+==================================================synchronization
+https://developer.apple.com/documentation/os/synchronization
+https://developer.apple.com/documentation/os/osallocatedunfairlock
+OSAllocatedUnfairLock
+A structure that creates an unfair lock.
+iOS 16.0+
+
+Important
+If you’ve existing Swift code that uses os_unfair_lock, 
+change it to use OSAllocatedUnfairLock to ensure correct locking behavior.

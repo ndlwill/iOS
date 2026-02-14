@@ -1,0 +1,592 @@
+https://developer.apple.com/documentation/uikit/textkit
+
+
+TextKit // Text Kit = 布局 & 绘制
+Manage text storage and perform custom layout of text-based content in your app’s views.
+
+
+==================================================Using Text Kit to Draw and Manage Text
+https://developer.apple.com/library/archive/documentation/StringsTextFonts/Conceptual/TextAndWebiPhoneOS/CustomTextProcessing/CustomTextProcessing.html#//apple_ref/doc/uid/TP40009542-CH4-SW1
+
+
+#####
+Underlying UITextView is a powerful layout engine called Text Kit
+If you need to customize the layout process or you need to intervene in that behavior, you can use Text Kit.
+
+Text Kit is a set of classes and protocols in the UIKit framework providing high-quality typographical services that enable apps to store, lay out, 
+and display text with all the characteristics of fine typesetting, such as kerning, ligatures, line breaking, and justification.
+
+Text Kit is built on top of Core Text, so it provides the same speed and power.
+#####
+
+
+// ###
+----------Primary Text Kit Objects:
+Text views are instances of UITextView class, text containers are instances of NSTextContainer class, 
+the layout manager is an instance of NSLayoutManager class, 
+and the text storage is an instance of NSTextStorage class. 
+In Text Kit, an NSTextStorage object stores the text that is displayed by a UITextView object and laid out by an NSLayoutManager object into an area defined by NSTextContainer object.
+
+
+#####
+An NSTextContainer object defines a region where text can be laid out. 
+Typically, a text container defines a rectangular area, but by creating a subclass of NSTextContainer you can create other shapes: 
+circles, pentagons, or irregular shapes, for example. 
+Not only does a text container describe the outline of an area that can be filled with text, 
+it maintains an array of Bezier paths that are exclusion zones within its area where text is not laid out. 
+As it is laid out, text flows around the exclusion paths, providing a means to include graphics and other non-text layout elements.
+
+NSTextStorage defines the fundamental storage mechanism of the Text Kit’s extended text-handling system. 
+NSTextStorage is a subclass of NSMutableAttributedString that stores the characters and attributes manipulated by the text system. 
+It ensures that text and attributes are maintained in a consistent state across editing operations. In addition to storing the text, an NSTextStorage object manages a set of client NSLayoutManager objects, notifying them of any changes to its characters or attributes so that they can relay and redisplay the text as needed.
+
+An NSLayoutManager object orchestrates the operation of the other text handling objects. 
+It intercedes in operations that convert the data in an NSTextStorage object to rendered text in a view’s display area. 
+It maps Unicode character codes to glyphs and oversees the layout of the glyphs within the areas defined by NSTextContainer objects.
+
+Note: NLayoutManager, NSTextStorage, and NSTextContainer can be accessed from subthreads as long as the app guarantees the access from a single thread
+#####
+
+
+// ###
+----------Text Attributes:
+Text Kit handles three kinds of text attributes: character attributes, paragraph attributes, and document attributes. 
+Character attributes include traits such as font, color, and subscript, which can be associated with an individual character or a range of characters. 
+Paragraph attributes are traits such as indentation, tabs, and line spacing. 
+Document attributes include documentwide traits such as paper size, margins, and view zoom percentage.
+
+
+Character Attributes:
+An attributed string stores character attributes as key-value pairs in NSDictionary objects.
+
+Conceptually, each character in an attributed string has an associated dictionary of attributes. 
+Typically, however, an attribute dictionary applies to a longer range of characters, a run of text. 
+
+
+Paragraph Attributes:
+Paragraph attributes include traits such as alignment, tab stops, line-breaking mode, and line spacing (also known as leading).
+
+
+Document Attributes:
+
+
+// ###
+----------Changing Text Storage Programmatically
+There are three stages to editing a text storage object programmatically. 
+The first stage is to send it a beginEditing message to announce a group of changes.
+
+In the second stage, you send it some editing messages, such as replaceCharactersInRange:withString: and setAttributes:range:, to effect the changes in characters or attributes.
+Each time you send such a message, the text storage object invokes edited:range:changeInLength: to track the range of its characters affected since it received the beginEditing message.
+
+In the third stage, when you’re done changing the text storage object, you send it an endEditing message. 
+This causes it to sends out the delegate message textStorage:willProcessEditing:range:changeInLength: and invoke its own processEditing method, fixing attributes within the recorded range of changed characters.
+
+After fixing its attributes, the text storage object sends the delegate method textStorage:didProcessEditing:range:changeInLength:, 
+giving the delegate an opportunity to verify and possibly change the attributes. 
+(Although the delegate can change the text storage object’s character attributes in this method, 
+it cannot change the characters themselves without leaving the text storage in an inconsistent state.) 
+Finally, the text storage object sends the processEditingForTextStorage:edited:range:changeInLength:invalidatedRange: message to each associated layout manager—indicating the range in the text storage object that has changed, 
+along with the nature of those changes.
+The layout managers in turn use this information to recalculate their glyph locations and redisplay if necessary.
+
+
+// ###
+----------Working with Font Objects
+#####
+The UIFont class provides the interface for getting and setting font information.
+A UIFont instance provides access to the font’s characteristics and glyphs.
+Text Kit combines character information with font information to choose the glyphs used during text layout.
+Font objects are immutable, so it is safe to use them from multiple threads in your app.
+#####
+
+You don’t create UIFont objects using the alloc and init methods; 
+instead, you use preferredFontForTextStyle: with a text style constant or fontWithName:size:. 
+You can also use a font descriptor to create a font with fontWithDescriptor:size:. 
+These methods check for an existing font object with the specified characteristics, returning it if there is one. 
+Otherwise, they look up the font data requested and create the appropriate font object.
+
+
+Text Styles:
+Text styles, introduced in iOS 7, are semantic descriptions of the intended uses for fonts and are implemented by a mechanism known as Dynamic Type.
+The actual font used for the purpose described by a text style can vary based on a number of dynamic considerations, including the user’s content size category preference, which is represented by the UIApplication property preferredContentSizeCategory.
+To acquire a font object for a given text style, you pass the corresponding constant to the UIFont method preferredFontForTextStyle:.
+To acquire a font descriptor for a text style, pass the constant to the UIFontDescriptor method preferredFontDescriptorWithTextStyle:.
+
+It’s also important to observe the UIContentSizeCategoryDidChangeNotification so that you can re–lay out the text when the user changes the content size category. When your app receives that notification, it should send the invalidateIntrinsicContentSize message to views positioned by Auto Layout or send setNeedsLayout to user interface elements positioned manually. 
+And it should invalidate preferred fonts or font descriptors and acquire new ones as needed.
+
+
+Using Font Descriptors:
+In particular, you can make a UIFont object from a font descriptor, you can get a descriptor from a UIFont object, and you can change a descriptor and use it to make a new font object.
+
+Font descriptors can be archived, which is an advantage working with text styles.
+
+
+Font trait modification:
+UIFontDescriptor *fontDescriptor =
+    [UIFontDescriptor preferredFontDescriptorWithTextStyle: UIFontTextStyleBody];
+UIFontDescriptor *boldFontDescriptor =
+    [fontDescriptor fontDescriptorWithSymbolicTraits: UIFontDescriptorTraitBold];
+UIFont *boldFont = [UIFont fontWithDescriptor: boldFontDescriptor size: 0.0];
+This code snippet first retrieves a font descriptor for the body text style, 
+then modifies that font descriptor to specify the bold trait, 
+and finally uses the UIFont class method fontWithDescriptor:size: to return an actual font object for the body text style with a bold trait
+Passing a size value of 0.0 with fontWithDescriptor:size: specifies that the size attribute originally returned with the font descriptor is preserved. This behavior is desired, of course, because the font size is determined by the dynamic type mechanism.
+
+
+
+Activating Font Features:
+Another important use for font descriptors is to activate and select among font features.
+#####
+Font features are typographic attributes of a font that control aspects of its appearance when its glyphs are rendered by the text system.
+Font features are available for a font only if the font designer chooses to include them.
+Some font features are available in few fonts, while others are common to many fonts.
+#####
+
+
+Font features are grouped into categories called feature types, within which individual feature selectors choose particular feature settings. 
+If a feature type is exclusive you can choose only one of the available feature selectors at a time, 
+such as whether numbers are to be proportional or fixed-width. 
+If a feature type is nonexclusive, you can enable any number of feature selectors at once.
+For example, for the ligature feature type you can choose any combination of the available classes of ligatures that the font supports.
+
+
+Note: If you select features that are not available in a font, you won’t see a change in the appearance of the font’s glyphs.
+
+
+the code activates two feature types defined by the Helvetica Neue Medium font.
+NSArray *timeFeatureSettings = @[
+  @{
+    UIFontFeatureTypeIdentifierKey: @(kNumberSpacingType),
+    UIFontFeatureSelectorIdentifierKey: @(kProportionalNumbersSelector)
+  },
+  @{
+    UIFontFeatureTypeIdentifierKey: @(kCharacterAlternativesType),
+    UIFontFeatureSelectorIdentifierKey: @(2)
+  }];
+ 
+UIFont *originalFont = [NSFont fontWithName: @"HelveticaNeue-Medium" size: 12.0];
+UIFontDescriptor *originalDescriptor = [originalFont fontDescriptor];
+UIFontDescriptor *timeDescriptor = [originalDescriptor
+    fontDescriptorByAddingAttributes: @{
+        UIFontDescriptorFeatureSettingsAttribute: timeFeatureSettings }];
+UIFont *timeFont = [UIFont fontWithDescriptor: timeDescriptor size: 12.0];
+
+
+#####
+Because font features are defined by the font, 
+#####
+the most reliable way to determine supported features is to query the font directly. 
+You can do this using the CTFontCopyFeatures function in Core Text
+
+Querying Font Features:
+UIFont *font = [UIFont fontWithName: @"HelveticaNeue-Medium" size: 12.0];
+CFArrayRef fontFeatures = CTFontCopyFeatures((__bridge CTFontRef) font);
+NSLog(@"properties = %@", fontFeatures);
+shows an array of font features resulting from the CTFontCopyFeatures function, 
+as it is displayed on the console log.
+
+properties = (
+        {
+        CTFeatureTypeExclusive = 1;
+        CTFeatureTypeIdentifier = 6;
+        CTFeatureTypeName = "Number Spacing";
+        CTFeatureTypeNameID = 266;
+        CTFeatureTypeSelectors =         (
+                        {
+                CTFeatureSelectorDefault = 1;
+                CTFeatureSelectorIdentifier = 0;
+                CTFeatureSelectorName = "No Change";
+                CTFeatureSelectorNameID = 264;
+            },
+                        {
+                CTFeatureSelectorIdentifier = 1;
+                CTFeatureSelectorName = "Proportional Numbers";
+                CTFeatureSelectorNameID = 267;
+            }
+        );
+    },
+        {
+        CTFeatureTypeExclusive = 1;
+        CTFeatureTypeIdentifier = 17;
+        CTFeatureTypeName = "Character Alternatives";
+        CTFeatureTypeNameID = 262;
+        CTFeatureTypeSelectors =         (
+                        {
+                CTFeatureSelectorDefault = 1;
+                CTFeatureSelectorIdentifier = 0;
+                CTFeatureSelectorName = "No Change";
+                CTFeatureSelectorNameID = 264;
+            },
+                        {
+                CTFeatureSelectorIdentifier = 1;
+                CTFeatureSelectorName = "Alternate Punctuation";
+                CTFeatureSelectorNameID = 263;
+            },
+                        {
+                CTFeatureSelectorIdentifier = 2;
+                CTFeatureSelectorName = "Numbers Punctuation";
+                CTFeatureSelectorNameID = 265;
+            }
+        );
+    }
+)
+
+In this case, the result shows that this version of the Helvetica Neue Medium font has two font features: Number Spacing and Character Alternatives.
+When you use font descriptors to activate font features and select among their settings, the most important values in this result are the feature type identifiers and feature selector identifiers. 
+
+the array of font features resulting from the CTFontCopyFeatures function also shows whether a feature type is exclusive or not and which feature selector is the default.
+And, of course, the feature type name and feature selector name values provide human-readable identification for the available font features and their settings
+
+
+
+Querying Font Metrics:
+UIFont defines a number of methods for accessing a font’s metrics information, when that information is available. 
+Properties such as ascender, capHeight, xHeight, and so on, all correspond to standard font metrics information.
+
+Font metrics and related UIFont methods:
+Font metric
+Properties
+
+X-height
+xHeight
+
+Ascent
+ascender
+
+Cap height
+capHeight
+
+Line height
+lineHeight
+
+Descent
+descender
+
+Point size
+pointSize
+
+
+// ###
+----------Laying Out Text
+The layout manager object, instantiated from the NSLayoutManager class, 
+is the central controlling object for text display in Text Kit. 
+The layout manager performs the following actions:
+Controls text storage and text container objects
+Generates glyphs from characters
+Computes glyph locations and stores the information
+Manages ranges of glyphs and characters
+Draws glyphs in text views when requested by the view
+Computes bounding box rectangles for lines of text
+Controls hyphenation
+Manipulates character attributes and glyph properties
+
+
+In the model-view-controller paradigm, the layout manager is the controller.
+NSTextStorage, a subclass of NSMutableAttributedString, provides part of the model, holding a string of text characters with attributes such as typeface, style, color, and size.
+NSTextContainer can also be considered part of the model because it models the geometric layout of the page on which the text is laid out.
+UITextView (or another UIView object) provides the view in which the text is displayed.
+NSLayoutManager serves as the controller for the text system because it translates characters in the text storage object into glyphs, 
+lays them out in lines according to the dimensions of one or more text container objects, 
+and coordinates the text display in one or more text view objects.
+
+
+The Layout Process: // ###
+#####
+The layout manager performs text layout in two separate steps: glyph generation and glyph layout. 
+#####
+The layout manager performs both layout steps lazily, that is, on an as-needed basis. 
+Accordingly, some NSLayoutManager methods cause glyph generation to happen, while others do not, 
+and the same is true with glyph layout. After it generates glyphs and after it calculates their layout locations, 
+the layout manager caches the information to improve performance of subsequent invocations.
+
+The layout manager caches glyphs, attributes, and layout information. 
+It keeps track of ranges of glyphs that have been invalidated by changes to the characters in the text storage. 
+#####
+There are two ways in which a character range can be automatically invalidated: 
+if it needs glyphs generated or if it needs glyphs laid out. 
+#####
+If you prefer, you can manually invalidate either glyph or layout information. 
+When the layout manager receives a message requiring knowledge of glyphs or layout in an invalidated range, 
+it generates the glyphs or recalculates the layout as necessary.
+
+
+
+Generating Line Fragment Rectangles: // ###
+The layout manager lays text within an NSTextContainer object in lines of glyphs.
+The layout of these lines within the text container is determined by its shape and by any exclusion paths it contains.
+Wherever the line fragment rectangle intersects a region defined by an exclusion path, the lines in those parts must be shortened or fragmented; 
+if there’s a gap across the entire region, the lines that would overlap it have to be shifted to compensate.
+
+The layout manager proposes a rectangle for a given line and then asks the text container to adjust the rectangle to fit. 
+The proposed rectangle usually spans the text container’s bounding rectangle, 
+but it can be narrower or wider, and it can also lie partially or completely outside the bounding rectangle. 
+The message that the layout manager sends the text container to adjust the proposed rectangle is lineFragmentRectForProposedRect:atIndex:writingDirection:remainingRect:, 
+which returns the largest rectangle available for the proposed rectangle, based on the direction in which text is laid out. 
+It also returns a rectangle containing any remaining space, 
+such as the space left on the other side of a hole or gap in the text container.
+
+The layout manager makes one final adjustment when it actually fits text into the rectangle. 
+This adjustment is a small amount fixed by the text container, called the line fragment padding, 
+which defines the portion on each end of the line fragment rectangle left blank. 
+Text is inset within the line fragment rectangle by this amount (the rectangle itself is unaffected). 
+Padding allows for small-scale adjustment of the text container’s region at the edges (and around any holes) and keeps text from directly abutting any other graphics displayed near the region. You can change the padding from its default value with the lineFragmentPadding property. Note that line fragment padding isn’t a suitable means for expressing margins. For document margins, you should set the UITextView object’s position and size within its enclosing view. And for text margins, 
+you should set the textContainerInset property of the text view. 
+In addition, you can set indentation values for individual paragraphs using NSMutableParagraphStyle properties such as headIndent.
+
+In addition to returning the line fragment rectangle itself, the layout manager returns a rectangle called the used rectangle. 
+This is the portion of the line fragment rectangle that actually contains glyphs or other marks to be drawn. 
+By convention, both rectangles include the line fragment padding and the interline space 
+(which is calculated from the font’s line height metrics and the paragraph’s line spacing parameters). 
+However, the paragraph spacing (before and after) and any space added around the text, such as that caused by center-spaced text, 
+are included only in the line fragment rectangle, and are not included in the used rectangle.
+
+
+
+Specifying Exclusion Paths: // ###
+The text container maintains an array of UIBezierPath objects representing the exclusion paths inside the receiver's bounding rectangle. When the layout manager sends the text container a lineFragmentRectForProposedRect:atIndex:writingDirection:remainingRect: message proposing a line fragment rectangle intersecting one of the regions defined by the exclusion paths, 
+the text container returns an adjusted line fragment rectangle excluding that region.
+
+
+
+Specifying Multipage and Multicolumn Layouts: // ###
+1. Object creation for a single text flow
+NSTextStorage* textStorage = [[NSTextStorage alloc] initWithString:string];
+NSLayoutManager *layoutManager = [[NSLayoutManager alloc] init];
+[textStorage addLayoutManager:layoutManager];
+self.textContainer = [[NSTextContainer alloc] initWithSize:self.view.bounds.size];
+[layoutManager addTextContainer:self.textContainer];
+UITextView* textView = [[UITextView alloc] initWithFrame:self.view.bounds textContainer:self.textContainer];
+[self.view addSubview:textView];
+
+
+2. Object configuration for paginated text
+By using multiple text containers, each with an associated text view, more complex layout arrangements are possible.
+
+Each text container corresponds to a page of the document. The views displaying the text can be embedded in a custom view object that your app provides as a background for the text views. 
+This custom view, in turn, can be embedded in a UIScrollView object to enable the user to scroll through the document’s pages.
+
+
+3. Object configuration for multicolumn text
+A multicolumn document can be modeled with a similar arrangement of objects
+
+Instead of having one text container correspond to a single page, 
+there are now two text containers—one for each column on the page. 
+Each text container controls a portion of the document. 
+As the text is displayed, glyphs are first laid out in the top-left container. 
+When there is no more room in that view, the layout manager informs its delegate that it has finished filling the container. 
+The delegate can check to see whether there’s more text that needs to be laid out and add another text container if necessary. 
+The layout manager proceeds to lay out text in the next container, notifies the delegate when finished, and so on. 
+Again, a custom view (depicted as a blue rectangle) provides a canvas for these text columns.
+
+
+4. Object configuration for multiple views of the same text
+Not only can you have multiple text containers, you can also have multiple NSLayoutManager objects accessing the same text storage.
+
+
+
+==================================================Lower Level Text-Handling Technologies
+https://developer.apple.com/library/archive/documentation/StringsTextFonts/Conceptual/TextAndWebiPhoneOS/LowerLevelText-HandlingTechnologies/LowerLevelText-HandlingTechnologies.html#//apple_ref/doc/uid/TP40009542-CH15-SW1
+
+
+----------Simple Text Drawing
+You can also use the CATextLayer class of Core Animation to do simple text drawing. 
+An object of this class stores a plain string or attributed string as its content and offers a set of attributes that affect that content, such as font, font size, text color, and truncation behavior. 
+#####
+The advantage of CATextLayer is that (being a subclass of CALayer) its properties are inherently capable of animation. 
+Core Animation is associated with the QuartzCore framework. 
+Because instances of CATextLayer know how to draw themselves in the current graphics context, 
+you don’t need to issue any explicit drawing commands when using those instances.
+#####
+
+
+----------Core Text
+#####
+Core Text is a technology for custom text layout and font management.
+
+This API is integrated with both Core Foundation and Core Graphics.
+#####
+
+Note: If you use Core Text or Core Graphics to draw text, 
+remember that ###you must apply a flip transform to the current text matrix### to have text displayed in its proper orientation—that is, 
+with the drawing origin at the upper-left corner of the string’s bounding box.
+
+
+Core Text has two major parts: a layout engine and font technology, each backed by its own collection of opaque types.
+
+
+- (void)drawRect:(CGRect)rect {// 这个不太对，上面说的是 you must apply a flip transform to the ###current text matrix###
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    
+    /* 加不加这段的区别是：不加，text倒着显示，显示在屏幕100，100（从上往下的距离）。加了后，text显示正常，显示在100，100（从下往上的距离）
+    // 重置文本矩阵
+    CGContextSetTextMatrix(ctx, CGAffineTransformIdentity);
+
+// 这个是 对 CTM 做 flip // CTM（Current Transformation Matrix）：影响 所有绘制。包括 path、image、text。是“画布级别”的变换
+    // flip 坐标系（UIKit → Core Graphics）
+    CGContextTranslateCTM(ctx, 0, rect.size.height);
+    CGContextScaleCTM(ctx, 1.0, -1.0);
+    */
+
+    NSDictionary *attrs = @{
+        NSFontAttributeName: [UIFont systemFontOfSize:24],
+        NSForegroundColorAttributeName: UIColor.blackColor
+    };
+
+    NSAttributedString *str =
+        [[NSAttributedString alloc] initWithString:@"Hello Core Text"
+                                         attributes:attrs];
+
+    CTLineRef line = CTLineCreateWithAttributedString(
+        (__bridge CFAttributedStringRef)str);
+
+    // 设置文本位置
+    CGContextSetTextPosition(ctx, 100, 100);
+
+    // 直接画
+    CTLineDraw(line, ctx);
+
+    CFRelease(line);
+}
+
+
+CGContextSetTextMatrix(ctx, ...)
+只影响文字 glyph 的绘制方向
+Core Text 真正用来决定文字方向的矩阵
+文档里说的 current text matrix = 它
+
+- (void)drawRect:(CGRect)rect {// 这样的话，text显示正常（正着显示），显示在100，100（从上往下的距离），也就是（UIKit 坐标）
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+
+    // ① 翻转 text matrix（关键）
+    CGContextSetTextMatrix(ctx, CGAffineTransformMakeScale(1.0, -1.0));
+
+    // ② 设置文本位置（UIKit 坐标）
+    CGContextSetTextPosition(ctx, 100, 100);
+
+    NSDictionary *attrs = @{
+        NSFontAttributeName: [UIFont systemFontOfSize:24],
+        NSForegroundColorAttributeName: UIColor.blackColor
+    };
+
+    NSAttributedString *str =
+        [[NSAttributedString alloc] initWithString:@"Hello Core Text"
+                                         attributes:attrs];
+
+    CTLineRef line =
+        CTLineCreateWithAttributedString(
+            (__bridge CFAttributedStringRef)str);
+
+    CTLineDraw(line, ctx);
+    CFRelease(line);
+}
+
+// ##### 这两个是CoreText的核心: Core Text Layout Opaque Types & Core Text Font Opaque Types
+Core Text Layout Opaque Types:
+Core Text requires two objects whose opaque types are not native to it: an attributed string (CFAttributedStringRef) and a graphics path (CGPathRef).
+An attributed-string object encapsulates a string backing the displayed text and includes properties (or, “attributes”) that define stylistic aspects of the characters in the string—for example, font and color.
+The graphics path defines the shape of a frame of text, which is equivalent to a paragraph.
+
+#####
+Core Text objects at runtime form a hierarchy that is reflective of the level of the text being processed
+
+At the top of this hierarchy is the framesetter object (CTFramesetterRef).
+With an attributed string and a graphics path as input, a framesetter generates one or more frames of text (CTFrameRef).
+As the text is laid out in a frame, the framesetter applies paragraph styles to it, including such attributes as alignment, tab stops, line spacing, indentation, and line-breaking mode.
+
+To generate frames, the framesetter calls a typesetter object (CTTypesetterRef).
+The typesetter converts the characters in the attributed string to glyphs and fits those glyphs into the lines that fill a text frame.
+(A glyph is a graphic shape used to represent a character.) 
+A line in a frame is represented by a CTLine object (CTLineRef).
+A CTFrame object contains an array of CTLine objects.
+
+A CTLine object, in turn, contains an array of glyph runs, represented by objects of the CTRunRef type.
+A glyph run is a series of consecutive glyphs that have the same attributes and direction. // ###
+Although a typesetter object returns CTLine objects, it composes those lines from arrays of glyph runs.
+
+Using functions of the CTLine opaque type, you can draw a line of text from an attributed string without having to go through the CTFramesetter object. 
+You simply position the origin of the text on the ###text baseline### and request the line object to draw itself.
+#####
+
+希望文本的“左上角”在 (100, 100):
+那么：
+textPosition.x = 100
+textPosition.y = 100 - ascent
+
+override func draw(_ rect: CGRect) {// 不使用 CTFramesetter
+    guard let context = UIGraphicsGetCurrentContext() else { return }
+
+    // 翻转坐标系（UIKit → Core Text）
+    context.textMatrix = .identity
+    context.translateBy(x: 0, y: rect.height)
+    context.scaleBy(x: 1, y: -1)
+
+    let attributes: [NSAttributedString.Key: Any] = [
+        .font: UIFont.systemFont(ofSize: 18),
+        .foregroundColor: UIColor.black
+    ]
+
+    let attributedString = NSAttributedString(
+        string: "Hello Core Text!",
+        attributes: attributes
+    )
+
+    let line = CTLineCreateWithAttributedString(attributedString)
+
+    // 1️⃣ 获取排版信息
+    var ascent: CGFloat = 0
+    var descent: CGFloat = 0
+    var leading: CGFloat = 0
+
+    CTLineGetTypographicBounds(line, &ascent, &descent, &leading)
+
+    // 2️⃣ 你想要的左上角
+    let topLeft = CGPoint(x: 100, y: 100)
+
+    // 3️⃣ 计算 baseline 位置
+    let textPosition = CGPoint(
+        x: topLeft.x,
+        y: topLeft.y - ascent
+    )
+
+    context.textPosition = textPosition
+    CTLineDraw(line, context)
+}
+
+
+Core Text Font Opaque Types:
+#####
+Fonts are essential to text processing in Core Text. 
+The typesetter object uses fonts (along with the source attributed string) to convert glyphs from characters and then position those glyphs relative to one another.
+A graphics context is central to fonts in Core Text. 
+You can use graphics-context functions to set the current font and draw glyphs; 
+or you can create a CTLine object from an attributed string and use its functions to draw into the graphics context. 
+The Core Text font system handles Unicode fonts natively.
+#####
+
+The font system includes objects of three opaque types: CTFont, CTFontDescriptor, and CTFontCollection:
+1. Font objects (CTFontRef) are initialized with a point size and specific characteristics (from a transformation matrix). 
+You can query the font object for its character-to-glyph mapping, its encoding, glyph data, and metrics such as ascent, leading, and so on. 
+Core Text also offers an automatic font-substitution mechanism called font cascading.
+2. Font descriptor objects (CTFontDescriptorRef) are typically used to create font objects. 
+Instead of dealing with a complex transformation matrix, 
+they allow you to specify a dictionary of font attributes that include such properties as PostScript name, 
+font family and style, and traits (for example, bold or italic).
+3. Font collection objects (CTFontCollectionRef) are groups of font descriptors that provide services such as font enumeration and access to global and custom font collections.
+
+It’s possible to convert UIFont objects to CTFont objects by calling CTFontCreateWithName, passing the font name and point size encapsulated by the UIFont object.
+
+
+----------Core Graphics Text Drawing
+Core Graphics (or Quartz) is the system framework that handles two-dimensional imaging at the lowest level. 
+Text drawing is one of its capabilities. Generally, because Core Graphics is so low-level, 
+it is recommended that you use one of the system’s other technologies for drawing text. 
+However, if circumstances require it, you can draw text with Core Graphics.
+
+You select fonts, set text attributes, and draw text using functions of the CGContext opaque type. 
+For example, you can call CGContextSelectFont to set the font used, 
+and then call CGContextSetFillColor to set the text color. 
+You then set the text matrix (CGContextSetTextMatrix) and draw the text using CGContextShowGlyphsAtPoint
+
+Quartz 2D Programming Guide:
+https://developer.apple.com/library/archive/documentation/GraphicsImaging/Conceptual/drawingwithquartz2d/Introduction/Introduction.html#//apple_ref/doc/uid/TP30001066

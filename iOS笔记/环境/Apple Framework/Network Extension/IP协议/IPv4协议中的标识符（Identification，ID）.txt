@@ -1,0 +1,229 @@
+在 **IP 协议（准确说是 IPv4）**里，标识符（Identification，ID） 是 IP 首部中的一个字段，主要作用是：
+用于 IP 分片（Fragmentation）后的“重组识别”
+
+它的含义是：
+同一个“原始 IP 数据包”被分片后，所有分片都使用同一个 Identification 值
+
+
+为什么需要 Identification？
+当一个 IP 包太大，超过链路 MTU 时：
+1. 发送端或中间路由器会把 IP 包拆成多个 IP Fragment
+2. 每个 fragment：
+有相同的 源 IP
+相同的 目的 IP
+相同的 协议号（TCP/UDP/ICMP）
+相同的 Identification
+不同的 Fragment Offset
+
+接收端靠这些信息把分片重新拼成一个完整 IP 包
+
+
+一个 IP 分片重组队列通常由以下确定：
+源 IP
+目标 IP
+上层协议号
+Identification
+在同一个重组队列中：
+Identification 用来区分 不同的原始 IP 包
+Fragment Offset 用来确定 每个分片在原包中的位置
+MF (More Fragments) 标志用来判断 是否还有后续分片
+
+
+假设原始 IP 包大小 4000 字节，MTU 是 1500：
+| 分片 | Identification | Fragment Offset | MF |
+| -- | -------------- | --------------- | -- |
+| #1 | 0x1234         | 0               | 1  |
+| #2 | 0x1234         | 185             | 1  |
+| #3 | 0x1234         | 370             | 0  |
+
+
+Identification 和 TCP Sequence Number 的区别：
+| 字段                  | 层级  | 作用                 |
+| ------------------- | --- | ------------------ |
+| IP Identification   | 网络层 | **IP 分片重组**        |
+| TCP Sequence Number | 传输层 | **TCP 字节流重组、可靠传输** |
+
+IP ID 只解决“一个 IP 包被拆碎了怎么拼”
+TCP Sequence 解决“长期字节流顺序、丢包、重传”
+
+
+IPv6 里为什么“没这个问题”？
+在 IPv6 中：
+中间路由器禁止分片
+只有 发送端能分片
+使用 Fragment Extension Header
+仍然有 Fragment Identification，但位置不同
+同时：
+👉 IPv6 强烈依赖 PMTUD / PLPMTUD
+👉 实际开发中几乎不会遇到 IP 分片
+
+
+
+==================================================每一个 IP Fragment 都包含完整的 IPv4 头部，但有些字段会被修改
+假设原始 IPv4 包是：
+[ IPv4 Header ][ TCP Header ][ TCP Payload ]
+当需要分片时（比如 MTU 不够），会变成：
+Fragment 1: [ IPv4 Header ][ TCP Header + 部分 Payload ]
+Fragment 2: [ IPv4 Header ][ 后续 Payload ]
+Fragment 3: [ IPv4 Header ][ 后续 Payload ]
+
+1. 每个分片都有 IPv4 Header
+不是“共享一个头”，而是复制一份头部，但会修改以下字段：
+
+| 字段              | 是否相同     | 说明               |
+| --------------- | -------- | ---------------- |
+| Version         | 相同       | IPv4             |
+| Source IP       | 相同       |                  |
+| Destination IP  | 相同       |                  |
+| Protocol        | 相同       | TCP / UDP / ICMP |
+| Identification  | 相同       | 用来重组             |
+| TTL             | **可能不同** | 每经过一跳会减          |
+| Header Checksum | 不同       | 因为头改了            |
+| Total Length    | 不同       | 分片大小不同           |
+| Flags (MF)      | 不同       | 最后一片 MF=0        |
+| Fragment Offset | 不同       | 指明偏移             |
+
+
+2. TCP / UDP 头只在第一个分片中
+TCP Header 只出现在第一个分片
+后续分片只有纯 Payload
+
+这也是为什么：
+丢一个 IP Fragment = 整个 TCP Segment 作废
+
+
+3. Fragment Offset 是“以 8 字节为单位”
+Fragment Offset 的单位是 8 bytes
+所以：
+除了最后一个分片
+每个分片的数据长度必须是 8 的倍数
+
+
+#####
+为什么设计成“每片都带 IP 头”？
+因为：
+每个分片可以独立路由
+分片可能走不同路径
+路由器只看 IP 头，不关心上层协议
+#####
+
+
+==================================================可能有 4000B 的 IP 包？
+TCP 的“理想状态”：确实不该出现 4000B 的 IP 包
+TCP 在 发送前会根据 MSS（Maximum Segment Size） 拆分数据
+MSS 通常来自：
+MSS = Path MTU - IP Header - TCP Header
+例如：
+Ethernet MTU = 1500
+IPv4 + TCP（无 option）= 20 + 20
+MSS ≈ 1460
+
+
+场景一：这不是 TCP（UDP / ICMP / 其他） // ###非常常见###
+UDP 没有 MSS / 拆包机制：
+应用写 4000B
+↓
+UDP：原样封装
+↓
+IP：发现超过 MTU → 分片
+所以：
+UDP 非常容易出现 4000B IP 包
+然后被 IP 层拆成多个 fragment
+
+
+场景二：Path MTU Discovery 失效
+ICMP “Fragmentation Needed” 被防火墙挡掉
+TCP 收不到 MTU 反馈
+结果：
+TCP 以为“包能通”，实际上只能靠 IP 分片 / 重传
+
+
+从协议设计上看：UDP 是“最容易出大包的”
+TCP:
+有 MSS
+会主动拆分
+目标是 避免 IP 分片
+UDP:
+没有 MSS
+应用写多大，UDP 就封多大
+是否分片 完全交给 IP 层
+
+常见 UDP 流量来源:
+QUIC / HTTP/3
+DNS（特别是 DNS over UDP + EDNS）
+音视频（WebRTC / RTP）
+游戏
+自定义 UDP 协议
+
+
+==================================================控制 MTU：TUN MTU 设小（比如 1400 / 1380）
+本质上是：
+👉 提前“告诉系统：你最多只能发这么大的 IP 包”
+👉 从源头避免 IP 分片
+TUN MTU 控制的是：
+系统往这个虚拟网卡写入的「IP 包最大尺寸」
+
+App
+↓
+系统 TCP / UDP 协议栈
+↓
+（发现默认路由指向 TUN）
+↓
+根据 TUN MTU 构造 IP 包
+↓
+写入 PacketFlow
+IP 包在进入你 readPackets 之前，已经受 MTU 限制了
+
+TUN MTU 设小不是“性能优化”，
+而是“稳定性兜底设计”。
+它的本质是：
+把不可控的“网络分片问题”，// #####
+变成可控的“本地分段问题”。
+
+“并不能保证每一跳的 MTU 都 ≥ 1400”
+正是 这个“不保证”，才让“网络分片问题”变得不可控。
+什么叫“不可控的网络分片问题”？
+指的是 下面这些你无法控制的事情：
+中间某一跳的 实际可用 MTU 比你想的小
+路由器 / 防火墙 是否允许 IP 分片
+是否丢 ICMP（Fragmentation Needed）
+是否是 隧道 / NAT / 移动网络 / 蜂窝网络
+是否存在 二次、三次封装
+你只能控制：
+你自己构造的包多大
+你本地 TUN 的 MTU
+
+
+如果你设置的 MTU 比某一跳的 MTU 大，会发生什么？
+情况 A：允许分片（IPv4）
+你的包 = 1450
+↓
+某路由器 MTU = 1400
+↓
+路由器分片
+问题是：
+分片丢一个 = 整包废
+NAT / 防火墙 经常直接丢分片
+性能和稳定性都很差
+
+
+所以“不可控”到底指什么？
+“如果我发的包比路径中某一跳的 MTU 大，
+我无法控制它是被分片、被丢弃、还是能正确通知我。”
+这就是 不可控。
+那为什么 1400 常被选为“安全值”？
+而是因为：
+✅ 1400 在绝大多数“最差网络路径”中仍然能活下来
+它是个 经验下限：
+为多层封装预留空间
+为运营商隧道预留空间
+为 ICMP 被挡预留空间
+
+#####
+路径中可能存在 MTU 小于我当前包大小的链路，
+而我无法控制中间节点是分片、丢包还是通知我，
+因此通过设置较小的 TUN MTU，在源头避免触发这些情况。
+
+设小 MTU 不是因为“路由器一定会分片”，
+而是因为“你永远不知道哪一跳会出问题”。
+#####

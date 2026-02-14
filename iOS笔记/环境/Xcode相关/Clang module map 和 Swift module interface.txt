@@ -1,0 +1,71 @@
+这两个文件——Clang module map 和 Swift module interface——都是 Swift/Clang 编译系统中用来描述「模块边界」的机制，但它们属于不同的层级：
+module.modulemap 是 Clang 模块系统 的描述文件，用于 C / Objective-C 的头文件模块化；
+.swiftinterface 是 Swift 模块系统 的接口描述文件，用于 Swift 模块的跨编译边界暴露。
+
+
+Clang Module Map（for C / Objective-C 框架）
+module.modulemap
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/os/module.modulemap
+
+示例：os 框架的简化版 modulemap
+module os [system] {
+    umbrella header "os.h"   // umbrella header 表示模块的“入口”头文件
+
+    // 子模块：日志接口
+    module log {
+        header "log.h"       // 该子模块使用的头文件
+        export *             // 暴露所有符号
+    }
+
+    // 子模块：性能追踪接口
+    module signpost {
+        header "signpost.h"
+        export *
+    }
+
+    // 默认导出哪些子模块
+    export *
+}
+
+| 项目                   | 含义                         |
+| -------------------- | -------------------------- |
+| `module os`          | 定义一个模块名为 `os`              |
+| `[system]`           | 表示系统框架（编译器信任、不会发出警告）       |
+| `umbrella header`    | 顶层入口头文件，会 `#include` 其他头文件 |
+| `module log { ... }` | 定义一个子模块（submodule）         |
+| `header "log.h"`     | 该子模块对应的具体头文件               |
+| `export *`           | 将头文件中的声明导出给使用者             |
+
+这就是为什么 Swift 里可以写：// Swift 编译器读取 modulemap 后生成 Swift 接口桥接
+import os.log
+因为 Swift 编译器在导入 Objective-C 框架时，会读取这个 modulemap。
+
+
+Swift Module Interface（for Swift 框架）
+<ModuleName>.swiftinterface
+/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx/Foundation.swiftinterface
+这个文件是 Swift 在构建 binary framework（.swiftmodule） 时，为 跨模块编译和 ABI 稳定性 生成的「可阅读接口文件」。
+
+示例：简化版 Logging.swiftinterface
+// swift-interface-format-version: 1.0
+// swift-compiler-version: Apple Swift version 5.9
+// swift-module-flags: -module-name Logging
+import Foundation
+
+@available(iOS 14.0, *)
+public struct Logger {
+    public let subsystem: String
+    public let category: String
+
+    public init(subsystem: String, category: String)
+    public func log(_ message: String)
+}
+
+
+| 项目                                               | 含义                     |
+| ------------------------------------------------ | ---------------------- |
+| 头部注释                                             | 编译器版本、接口格式版本、编译参数等     |
+| `import Foundation`                              | 表示模块依赖                 |
+| `public` 声明                                      | 暴露给其他模块的 API           |
+| 无私有实现                                            | 只包含 public / open 接口声明 |
+| `.swiftmodule` 是编译产物，而 `.swiftinterface` 是它的文本形式 |                        |

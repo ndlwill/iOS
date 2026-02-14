@@ -1,0 +1,46 @@
+从 虚拟网卡（TUN/TAP） 拿到的数据是原始 IP 层包（如 TCP/IP、UDP/IP），
+里面依然是 HTTPS（加密的 TLS 流），而不是“HTTP CONNECT”等代理协议。
+从虚拟网卡拿到的数据没有被系统改写成代理协议，
+它仍然是原始的 IP 层数据，HTTPS 依然是加密的 TLS 数据流。
+#####
+系统只是通过路由表把流量重定向到了 TUN 网卡
+#####
+
+区分两种不同的来源
+1. 来自应用主动配置的“代理”
+浏览器 / App --> socks5://127.0.0.1:1080 或 http://127.0.0.1:8080
+应用程序知道自己在走代理。
+
+它主动向本地代理发出 SOCKS5 或 HTTP CONNECT 握手请求。
+ConnLocal 收到的就是“协议化的请求头”：
+    SOCKS5: 0x05 0x01 0x00 ...
+    HTTP CONNECT: CONNECT example.com:443 HTTP/1.1\r\nHost: example.com\r\n\r\n
+ConnLocal 解析出目标地址，再交给 ConnRemote 去连。
+这是显式代理模式（Explicit Proxy）。
+
+2. 来自虚拟网卡（TUN/TAP）的流量
+系统流量 --> 路由表被修改 --> 发到 TUN 设备
+TUN 提供程序 (NEPacketTunnelProvider) 拿到原始 IP 包
+
+数据内容就是操作系统 TCP/IP 栈发出的原始包：
+例如：TCP SYN、TLS ClientHello、HTTP GET，全部保持原样。
+
+包的形式：
+IP Header + TCP Header + Payload。
+例如 HTTPS 请求中 payload 是加密的 TLS 数据。
+
+没有 SOCKS5，也没有 HTTP CONNECT。
+
+这是透明代理 / VPN 模式（Transparent Proxy）。
+
+| 来源                     | 协议类型                  | EvConnLocal 接收到的数据 | 是否需要解析代理协议  |
+| ---------------------- | --------------------- | ------------------ | ----------- |
+| 应用主动连接本地代理（显式代理）       | SOCKS5 / HTTP CONNECT | 已封装代理协议头           | ✅ 需要解析      |
+| 从虚拟网卡（TUN/TAP）读取（透明代理） | 原始 TCP/IP 包           | 纯原始网络流量（TLS、HTTP等） | ❌ 不需要解析代理协议 |
+
+
+
+| 模式                               | 所在层                      | 处理内容             | 举例                              |
+| -------------------------------- | ------------------------ | ---------------- | ------------------------------- |
+| **代理模式 (SOCKS5 / HTTP CONNECT)** | **应用层（L7）**              | 解析协议头、识别目标主机     | Clash、Shadowsocks、浏览器代理         |
+| **TUN/TAP 模式**                   | **网络层 / 数据链路层（L3 / L2）** | 直接收发原始 IP 包或以太网帧 | VPN、tun2socks、WireGuard、OpenVPN |

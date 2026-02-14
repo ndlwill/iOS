@@ -1,0 +1,590 @@
+iOS Packet Tunnel 本质：TUN 虚拟接口
+当你启动一个自定义 VPN（NEPacketTunnelProvider）时，系统会：
+1.在内核中创建一个 虚拟 TUN 接口（utunX）；
+2.把所有被路由到 VPN 的流量（IP 包）送到这个虚拟接口；
+3.你的 app（运行在用户态）通过 packetFlow（一个 NEPacketTunnelFlow 对象）读取这些 IP 数据包；
+4.你的 app 决定：
+把这些数据包转发到远端 VPN 服务器（通常通过 TCP/UDP socket）；
+或者在本地处理、NAT、代理、丢弃。
+
+
+inet 10.253.243.182 --> 10.253.240.1
+在 PacketTunnel 中真正发生的事:
+当 iOS（或 macOS）内核把一个出站数据包交给虚拟接口 utunX 时：
+它只是「逻辑上」认为这个包的“下一跳”是隧道对端（10.253.240.1）；
+实际上，这个包会 被内核送到用户态的 VPN 进程（你的 PacketTunnelProvider）；
+你的代码才决定真正的“物理传输方式”：
+    例如：封装成 UDP 数据发往 vpn.example.com:51820
+    或通过 TLS 发送给远程网关
+    或在本地拦截处理（代理、NAT）
+
+这一对 IP 地址
+macOS（以及 iOS）并不是自己“猜”出来这两个 IP 的，
+#####
+而是 VPN 客户端程序通过系统接口（NetworkExtension 或 BSD Socket API）主动告诉系统的。
+系统内核只是 根据你提供的配置创建 utun 接口 并填入这两个地址。
+#####
+
+在 macOS 或 iOS 上，utunX 不是系统自动创建的，而是由：
+NetworkExtension.framework（如 NEPacketTunnelProvider），或
+BSD TUN/TAP 驱动（/dev/tunX）
+在调用时动态创建的。
+
+NetworkExtension方式例子:
+let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "10.253.240.1")
+settings.ipv4Settings = NEIPv4Settings(
+    addresses: ["10.253.243.182"],
+    subnetMasks: ["255.0.0.0"]
+)
+provider.setTunnelNetworkSettings(settings) { error in
+    ...
+}
+
+BSD Socket / TUN 驱动方式例子:
+如果 VPN 客户端不是用 NetworkExtension，而是自己操作 /dev/tun 设备（例如 OpenVPN）
+它也会显式告诉系统 IP 地址，比如：
+ifconfig utun4 10.253.243.182 10.253.240.1 netmask 255.255.255.255 up
+或在 C 代码中使用 ioctl(SIOCSIFADDR) / SIOCSIFDSTADDR：
+struct ifreq ifr;
+strcpy(ifr.ifr_name, "utun4");
+ioctl(fd, SIOCSIFADDR, &ifr);      // 设置本地地址
+ioctl(fd, SIOCSIFDSTADDR, &ifr);   // 设置对端地址
+这些 ioctl 调用直接把地址写入内核接口表。
+
+
+inet 10.253.243.182 --> 10.253.240.1 是 VPN 程序告诉系统的隧道地址映射，系统只是按照配置展示出来。
+
+
+
+==================================================Packet Tunnel
+#####
+Packet Tunnel 指的是：
+「系统网络栈 → 虚拟网卡 → 你的 VPN App」之间的数据包通道，是 iOS VPN 架构中的核心桥梁。
+#####
+
+当 VPN 建立后，系统做了这样的「重路由」：
+App 产生网络流量
+    ↓
+系统 TCP/IP 网络栈
+    ↓
+（正常情况）物理网卡发送
+    ↓
+（VPN 开启时）改为发送到虚拟网卡接口（Packet Tunnel）
+    ↓
+Packet TunnelProvider 收到数据包（用户态）
+    ↓
+你在代码中决定：
+        - 加密、封装
+        - 通过 TCP/UDP socket 发给 VPN 服务器
+        - 或进行 NAT / 代理 / 加密 / 丢弃 等处理
+
+返回流量:
+VPN 服务器 → 客户端 socket → 解密/解封装 → packetFlow.writePackets() → 系统网络栈 → App
+
+
+所谓的 Packet Tunnel 指的是：
+系统网络栈（kernel networking stack） 与 你的 VPN app 的用户态网络处理逻辑 之间的「虚拟网络接口」通道。
+
+#####
+Packet Tunnel(数据包隧道) 的实质:
+虚拟网卡（在 iOS 上不是一个真正的设备节点，而是系统提供的内核接口）；
+它负责 把 IP 层的 packet 数据 从内核交给用户态；
+用户态通过 readPackets / writePackets 方法与之交互；
+从系统角度看，它是一个「网卡」；
+从 VPN App 角度看，它是一个「数据包通道」。
+#####
+
+
+| 类比对象                     | 对应角色                         |
+| ------------------------ | ---------------------------- |
+| Linux 上的 TUN 设备          | iOS 的 Packet Tunnel          |
+| 用户态程序 (如 OpenVPN client) | `NEPacketTunnelProvider`     |
+| 内核网络栈                    | iOS 系统的 networking subsystem |
+所以在 iOS 上没有真正的 /dev/tun0，但系统帮你创建了一个逻辑等价的接口，通过 NEPacketTunnelFlow 读写数据包即可。
+
+
+==================================================#####Packet TunnelProvider 收到数据包（用户态）处理，几种方式:#####
+#####
+PacketTunnel 没有改动 IP 包
+
+PacketTunnel 只是在用户态收发（读写）包
+#####
+
+
+| 角色                | 说明                                                | 示例 IP                       |
+| ----------------- | ------------------------------------------------- | --------------------------- |
+| 🧩 设备物理网卡         | iPhone 的真实外网地址（ISP 分配）                            | `203.0.113.5`               |
+| 🔐 VPN 服务器        | 你的后端隧道服务器                                         | `1.2.3.4`                   |
+| 💻 设备虚拟网卡 (utun0) | 系统通过 `NEPacketTunnelNetworkSettings` 配置的 VPN 内网地址 | `10.0.0.2`                  |
+| 🏢 VPN 服务器内网接口    | 负责 NAT / 转发外网请求的接口                                | `10.0.0.1`                  |
+| 🌐 目标网站           | 用户访问的真实目标                                         | `142.250.183.78`（例如 Google） |
+
+
+
+1. 转发到 VPN 服务器（最常见模式：隧道转发）// 这种模式###最接近####传统 VPN
+App 收到系统发来的 IP 数据包后，把它原封不动地发给远程 VPN 服务器，由服务器去访问目标主机。
+
+func readPacketsLoop() {
+    packetFlow.readPackets { packets, protocols in
+        for packet in packets {
+            // 将原始 IP 数据包加密/封装
+            let encrypted = encryptAndEncapsulate(packet)
+
+            // 通过 TCP/UDP socket 发给远程 VPN 服务器
+            vpnSocket.send(encrypted)
+        }
+
+        // 持续读取
+        self.readPacketsLoop()
+    }
+}
+
+func handleVPNServerResponse(_ data: Data) {
+    // 从VPN服务器收到的数据包（已解封装）
+    let decrypted = decryptAndDecapsulate(data)
+
+    // 把真实 IP 包写回虚拟网卡 -> 回到系统网络栈 -> 回到App
+    packetFlow.writePackets([decrypted], withProtocols: [AF_INET])
+}
+
+
+特点：
+逻辑简单；
+整个系统流量都经由你的远程服务器；
+VPN 服务器要负责转发外网流量；
+就是最标准的「隧道」行为（如 OpenVPN、WireGuard）。
+
+
+「VPN 隧道转发」场景下，虚拟网卡收到的 IP 数据包的源 IP（src）和目标 IP（dst） 分别是什么:
+在 iOS 的 NEPacketTunnelProvider 或 Linux 的 TUN 接口模型中，#####虚拟网卡收发的 都是“原始 IP 层数据包”。#####
+系统应用发起的 socket（TCP/UDP）最终被内核封装成一个 IP 数据包，然后：
+当 VPN 开启时，这个包不会发往物理网卡，而是被“重定向”到你的虚拟网卡（packetFlow）。
+
+假设用户设备 IP 是：
+    设备虚拟 IP（由 VPN 配置下发）: 10.0.0.2
+    VPN 服务器：1.2.3.4
+    用户访问的网站：142.250.183.78（即 google.com）
+
+----------10.0.0.2:54321 → 142.250.183.78:443 这个包是系统 TCP/IP 协议栈自己构造的——虚拟网卡只是接收原封不动的结果，并没有改写内容。
+#####出站方向的数据流（系统视角）:#####
+当 Safari 等应用发起一个请求：
+connect("142.250.183.78", port: 443)
+系统内核（TCP/IP 栈）会执行以下步骤：
+(1)检查路由表：
+发现「默认路由」指向虚拟接口 utun0（Packet Tunnel）。
+(2)于是内核生成一个完整的 IP 包：
+src = 10.0.0.2
+dst = 142.250.183.78
+srcPort = 54321
+dstPort = 443
+(3)这个包不是发到物理网卡驱动，而是交给了 VPN 扩展提供的 utun 设备（即 packetFlow）。
+packetFlow.readPackets { packets, protocols in
+
+}
+也就是说：
+系统早在内核层就决定了使用虚拟网卡的 IP 地址作为源地址（10.0.0.2），
+PacketTunnel 并没有再去改动它。
+#####我的理解：因为开启 VPN 后，相当于系统协议栈会将数据包通过这个虚拟网卡发出这个数据包（而不是物理网卡，因为通过路由表知道通过虚拟网卡这个网关发出去，即指向虚拟接口，所以内核生成一个完整的 IP 包，其中src是虚拟网卡地址），然后通过 readPackets 能读取拦截到这个数据包，再进行相关处理（通过socket从物理网卡发出去）#####
+所以：
+✅ src = 客户端的虚拟 IP（VPN 内网 IP）
+✅ dst = 真实目标服务器的公网 IP
+
+
+#####当 VPN 服务器返回数据（入站方向）#####
+(1)VPN 服务器收到请求后，访问目标主机：
+VPN 服务器会还原出内层包，提取出：
+src = 10.0.0.2
+dst = 142.250.183.78
+然后做一次 SNAT（源地址转换），以自身公网 IP 发起真正访问：
+1.2.3.4（VPN服务器） → 142.250.183.78（目标网站）
+(2)收到目标网站响应后，VPN 服务器把响应重新封装成隧道包，发回客户端。
+(3)客户端 PacketTunnel 解封装后
+src = 142.250.183.78
+dst = 10.0.0.2
+然后写回虚拟网卡：
+packetFlow.writePackets([decrypted], withProtocols: [AF_INET])
+所以：
+✅ src = 真实服务器的公网 IP
+✅ dst = 客户端的虚拟 IP（VPN 内网 IP）
+
+传输到 VPN 服务器的那一步是二次封装：
+外层：src=设备公网IP, dst=VPN服务器IP
+内层：src=虚拟VPN IP, dst=真实目标IP
+
+
+在 iOS 的 PacketTunnelProvider 模式下，配置的核心是：
+✅ 由你的 App 告诉系统 —— 哪些目标 IP/网段的流量应该“进隧道”（交给虚拟网卡），
+✅ 哪些应该绕过隧道
+这部分配置都是通过 NEPacketTunnelNetworkSettings 完成的。
+配置完成后，系统会：
+1. 创建一个虚拟接口（utun0）；
+2. 在系统路由表中增加条目
+# 全局代理情况（includedRoutes = default）
+default via 10.0.0.2 dev utun0
+# 分流模式
+10.0.0.0/8 dev utun0
+172.16.0.0/12 dev utun0
+192.168.0.0/16 dev en0  (excluded)
+3. 系统 TCP/IP 栈根据路由表判断：
+如果目标 IP 匹配隧道路由 → 发到虚拟网卡（PacketTunnel）；
+否则 → 发到物理网卡（正常上网）。
+
+
+
+虚拟网卡（utun）的角色:
+utun 是一个 虚拟网络接口驱动，它在系统协议栈中表现得就像一张网卡：
+它有自己的 IP（10.0.0.2）；
+它在路由表中出现；
+它可以收发 IP 层的数据包。
+区别在于：
+#####
+真实网卡驱动把数据包交给硬件；
+虚拟网卡驱动把数据包交给用户态程序（PacketTunnelProvider）。
+#####
+packetFlow.readPackets { packets, protocols in
+    for packet in packets {
+        // 这里的 packet 就是内核原封不动生成的 IP 数据包 
+    }
+}
+你拿到的 packet 内容正是系统生成的原始 IP 包
+可以直接解析出：
+src = 10.0.0.2
+dst = 142.250.183.78
+
+
+
+虚拟网卡 IP（10.0.0.2）是怎么来的？
+这是你在 NEPacketTunnelNetworkSettings 里配置的：
+let ipv4 = NEIPv4Settings(
+    addresses: ["10.0.0.2"],
+    subnetMasks: ["255.255.255.255"]
+)
+settings.ipv4Settings = ipv4
+配置完成后，系统在内核层就会：
+分配该 IP 给 utun0
+在路由表中添加：
+default via 10.0.0.2 dev utun0
+所以系统的 TCP 层在构造包时自然会使用 10.0.0.2 作为源地址。
+
+| 部分             | 含义                                                                   |
+| -------------- | -------------------------------------------------------------------- |
+| `default`      | 目标网络：代表**所有目的地址（0.0.0.0/0）**，即“任何非特定的目的IP”都匹配这条规则。                   |
+| `via 10.0.0.2` | 下一跳（next hop）：表示数据包应该通过 `10.0.0.2` 这个网关转发出去。                         |
+| `dev utun0`    | 出口设备（interface）：指定这条路由通过哪个网络接口发送，比如 `utun0` 是一个**虚拟隧道接口**（通常用于 VPN）。 |
+也就是说：
+系统中所有出站的网络请求，默认都会发往 10.0.0.2；
+这些包会从虚拟接口 utun0 出去（VPN隧道）；
+相当于“把系统的默认网络出口切换到 VPN 隧道”。
+#####
+于是所有的出站流量（例如访问百度、Google 等）都会被送进 utun0 隧道，由 VPN 处理。
+
+utun0 是你的 VPN 隧道接口；
+#####
+
+
+PacketTunnel 只是在用户态收发包：
+收到系统给的包（原始 IP 包）
+自己进行加密 / 封装
+用 UDP/TCP Socket 发到远端服务器
+收到服务器返回的包后解封装
+再写回 packetFlow.writePackets（仍是原始 IP 包）
+所以：
+| 阶段                 | src            | dst            | 是否修改       |
+| ------------------ | -------------- | -------------- | ---------- |
+| 系统内核生成             | 10.0.0.2       | 142.250.183.78 | ❌ 否        |
+| PacketTunnel 读取    | 10.0.0.2       | 142.250.183.78 | ❌ 否        |
+| PacketTunnel 封装后外层 | 203.0.113.5    | 1.2.3.4        | ✅ 外层新加的隧道包 |
+| 解封装写回              | 142.250.183.78 | 10.0.0.2       | ❌ 否        |
+
+
+总结：
+| 问题                                           | 答案                             |
+| -------------------------------------------- | ------------------------------ |
+| `10.0.0.2:54321 → 142.250.183.78:443` 是谁生成的？ | 系统 TCP/IP 栈                    |
+| 虚拟网卡是否修改过包的 IP？                              | ❌ 没有，直接原封不动交给 PacketTunnel     |
+| 为什么源 IP 是 10.0.0.2？                          | 因为这是 VPN 配置的虚拟网卡 IP，系统路由决定使用它  |
+| PacketTunnel 做了什么？                           | 收包→加密封装→发给 VPN 服务器；反方向解封装→写回系统 |
+
+
+
+#####
+系统 TCP/IP 栈 → 虚拟网卡 (utun0) → PacketTunnel → 物理网卡
+
+当 PacketTunnel 收到这个包后，它不会修改里面的内容，而是把它「整体当作数据 payload」，再加上新的隧道头（IP + UDP 或 TCP）。
+
+封装后的结构（以 UDP 为例）：
+如果使用 UDP 隧道（最常见，如 WireGuard、OpenVPN-UDP）：
+外层 IP:
+    src = 203.0.113.5   （设备物理 IP）
+    dst = 1.2.3.4       （VPN 服务器 IP）
+
+外层 UDP:
+    srcPort = 51820
+    dstPort = 51820
+
+Payload = 内层原始 IP 包
+    ├── Inner IP Header
+    │     src = 10.0.0.2
+    │     dst = 142.250.183.78
+    │
+    └── Inner TCP Payload
+          srcPort = 54321
+          dstPort = 443
+          data = TLS SYN ...
+
+[Outer IP Header (203.0.113.5 → 1.2.3.4)]
+  [Outer UDP Header]
+    [Inner IP Header (10.0.0.2 → 142.250.183.78)]
+      [Inner TCP Header + Payload]
+
+这与普通代理的区别:
+| 类型                     | 数据传输层级            | 说明                     |
+| ---------------------- | ----------------- | ---------------------- |
+| **VPN（Packet Tunnel）** | 传输整个 IP 包         | 封装的是「原始 IP 层数据」，系统流量级别 |
+| **HTTP / SOCKS 代理**    | 传输 TCP 流或 HTTP 请求 | 代理的是「应用层流」，不是 IP 包     |
+
+VPN 是真正的「隧道」（tunnel），因为它包了一整个网络层（甚至链路层）。
+
+封装实现方式（代码逻辑层）
+虽然你在 Swift 的 PacketTunnelProvider 里看不到显式的「加 IP 头」操作，
+逻辑上相当于：
+// 内层：系统发来的原始 IP 包
+let innerPacket = packet  // src=10.0.0.2, dst=142.250.183.78
+
+// 外层：你构造的隧道封装（例如UDP）
+var outerPacket = TunnelPacket(
+    outerSrc: "203.0.113.5",
+    outerDst: "1.2.3.4",
+    innerPayload: encrypt(innerPacket)
+)
+
+// 用 Socket 发送出去
+vpnSocket.send(outerPacket.data)
+
+在现实实现中，加外层 IP 头这步由操作系统的 socket 层完成：
+当你用 UDP/TCP socket 发数据时，系统会自动补上外层 IP 头。
+#####
+
+
+2. 进行 NAT / 代理 转发（透明代理模式）
+在这种模式下，App 自身扮演“代理服务器”或“网关”
+
+
+
+
+==================================================透明代理（Transparent Proxy）
+指的是:
+客户端（App 或系统中的 App）在不知情、不修改任何代理设置的情况下，仍然被代理转发。
+也就是说：
+客户端 没有配置 HTTP 代理、没有配置 SOCKS 代理
+客户端 以为自己直接连目标服务器
+但实际上数据包 被系统或中间设备截获、改写并转发到代理服务器
+客户端对代理过程 完全无感 → 所以称为 透明（Transparent）。
+
+
+透明代理名称的来源（专业定义）
+透明代理的定义来自 RFC 3040 和 Netfilter、iptables 等术语：
+名称来源（通行标准解释）:
+Transparent：请求对客户端来说是透明的，它不知道代理的存在。
+Intercepting Proxy（拦截代理）：拦截客户端发出的流量。
+Forced Proxy（强制代理）：客户端没配置也“被强制走代理”。
+这些词都描述同一种行为：
+客户端像直连一样发请求，但流量被代理截获和转发。
+
+
+正常代理（非透明）
+客户端知道自己在用代理：
+curl --proxy http://127.0.0.1:8888 https://apple.com
+App 配置了代理服务器地址。
+
+透明代理
+客户端没有设置任何代理：
+curl https://apple.com   ← 客户端以为直连
+但系统或 VPN 把包截获：
+本地 App → 系统网络栈 → (TUN) → 代理/网关 → 真正服务器
+客户端不知道中间经过了代理
+因此叫 透明。
+
+#####
+透明代理之所以叫透明，是因为对客户端“透明”——
+客户端无需配置代理，且不知道流量被代理拦截和转发。
+#####
+
+在 iOS 的 Packet Tunnel（TUN）模式中：
+捕获包
+自己 NAT/转发/加密
+不需要客户端 App 配置代理
+因此属于 透明代理模型的一种实现形式。
+
+
+==================================================在 常规 VPN 服务端实现中，SNAT（源地址转换）既可以由系统自动完成，也可以由 程序代码手动实现，取决于 VPN 服务端是怎么设计的。
+1. 系统自动完成的情况
+如果 VPN 服务器使用的是 TUN 接口 + 系统内核路由/NAT 功能，
+那么 SNAT 是由内核自动完成的。
+
+流程举例（Linux 上）：
+(1)应用层 VPN 程序（如 OpenVPN、WireGuard）解封装后，把内层 IP 包写入 tun0 接口。
+(2)内核网络栈接管包的转发：
+src = 10.0.0.2
+dst = 142.250.183.78
+(3)内核根据 iptables 或 nftables 的 NAT 规则，对包执行 SNAT / MASQUERADE。
+(4)数据包以服务器公网 IP（如 1.2.3.4）从物理网卡 eth0 发出。
+
+NAT 规则示例
+# 启用 IP 转发
+sysctl -w net.ipv4.ip_forward=1
+
+# 添加 SNAT 或 MASQUERADE 规则
+iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+
+这样，VPN 程序无需写任何 SNAT 代码，
+内核会自动把源地址从 10.0.0.2 改成 1.2.3.4。
+
+
+2. 代码手动处理的情况:
+有些 VPN（特别是用户态实现、跨平台或自定义协议）并不依赖内核 NAT，而是 在程序中自己做 SNAT。
+比如：
+自己实现了 socket 转发逻辑；
+不使用系统路由/NAT；
+在 macOS / iOS / Windows 上使用 Packet Tunnel Provider 这种用户态 VPN。
+C++ 模拟一个「用户态 SNAT」过程:
+#include <iostream>
+#include <thread>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+// 模拟 VPN 服务端接收到的内层 IP 包
+struct IPPacket {
+    std::string src_ip;  // 客户端虚拟 IP，比如 10.0.0.2
+    std::string dst_ip;  // 目标网站，比如 142.250.183.78
+    int dst_port;
+    std::string payload; // 例如 HTTP 请求
+};
+
+// 模拟转发逻辑（相当于 SNAT）
+void handlePacket(const IPPacket& pkt) {
+    std::cout << "Received inner packet: "
+              << pkt.src_ip << " -> " << pkt.dst_ip << ":" << pkt.dst_port << std::endl;
+
+    // === 手动执行 SNAT：使用真实 socket 转发 ===
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        perror("socket");
+        return;
+    }
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(pkt.dst_port);
+    inet_pton(AF_INET, pkt.dst_ip.c_str(), &addr.sin_addr);
+
+    if (connect(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
+        perror("connect");
+        close(sock);
+        return;
+    }
+
+    // 发送 payload（例如 HTTP 请求）
+    send(sock, pkt.payload.data(), pkt.payload.size(), 0);
+
+    // 接收目标网站响应
+    char buf[4096];
+    ssize_t n = recv(sock, buf, sizeof(buf), 0);
+
+    if (n > 0) {
+        std::string response(buf, n);
+        std::cout << "Response from " << pkt.dst_ip << " (" << n << " bytes)" << std::endl;
+
+        // === 手动执行回包封装 ===
+        IPPacket reply;
+        reply.src_ip = pkt.dst_ip; // 响应来源地址
+        reply.dst_ip = pkt.src_ip; // 发回客户端虚拟 IP
+        reply.payload = response;
+
+        // 重新封装进隧道发给客户端（伪代码）
+        // sendEncapsulatedToClient(reply);
+        std::cout << "Send back to client: " << reply.src_ip << " -> " << reply.dst_ip << std::endl;
+    }
+
+    close(sock);
+}
+
+int main() {
+    // 模拟一个客户端请求
+    IPPacket pkt {
+        "10.0.0.2",
+        "142.250.183.78", // google.com
+        80,
+        "GET / HTTP/1.0\r\nHost: google.com\r\n\r\n"
+    };
+
+    handlePacket(pkt);
+    return 0;
+}
+| 步骤             | 动作                                 | 对应网络行为                          |
+| -------------- | ---------------------------------- | ------------------------------- |
+| 1️⃣ 解封装        | 从 VPN 隧道提取内层 IP 包                  | src=10.0.0.2 dst=142.250.183.78 |
+| 2️⃣ SNAT（代码执行） | 用服务器真实 socket 向目标地址连接              | 内核会自动使用服务器公网 IP（如 1.2.3.4）      |
+| 3️⃣ 发出请求       | send()                             | 相当于客户端 10.0.0.2 发起访问            |
+| 4️⃣ 收到响应       | recv()                             | 服务器收到目标响应                       |
+| 5️⃣ 封装回包       | 构造 src=142.250.183.78 dst=10.0.0.2 | 再通过 VPN 隧道发给客户端                 |
+这里的 SNAT 不在系统 NAT 表中出现，
+因为它是通过 创建新的 socket（由服务器内核分配公网 IP） 手动完成的。
+
+
+NAT（Network Address Translation）本质就是：
+修改 IP 包中的源地址或目标地址，使得数据包可以跨越不同的网络（通常是私网 → 公网）
+
+VPN 服务器的行为和家里路由器做的一样，只不过对象不同。
+
+VPN 服务器和家用路由器的 NAT 几乎一样:
+家用路由器：
+192.168.31.2 → Internet  
+NAT 成 203.xxx.xxx.xxx
+VPN 服务器： // VPN 服务器=充当路由器，替客户端做 NAT
+10.0.0.2（虚拟 IP） → Internet  
+NAT 成 1.2.3.4（VPN 服务器公网 IP）
+
+两者原理完全相同，都是：
+私网 → 公网
+源地址替换（SNAT/MASQUERADE）
+建立连接跟踪（conntrack）
+
+
+
+==================================================端口映射 & NAT 表：
+NAT / SNAT / DNAT = 技术大类
+端口映射（Port Forwarding） = NAT 的一种具体使用场景
+你可以把它们理解为 “父概念” 与 “子概念” 的关系。
+
+| 类型                    | 说明               |
+| --------------------- | ---------------- |
+| **SNAT / MASQUERADE** | 修改源地址（私网 → 公网）   |
+| **DNAT**              | 修改目标地址（公网 → 内网）  |
+| **NAPT / PAT**        | IP + 端口同时映射（最常用） |
+
+什么是 “端口映射（Port Forwarding）”？
+端口映射 = 使用 DNAT + SNAT 的组合 让外部可以访问内网服务。
+公网IP:8080 → 映射到 → 192.168.1.100:80
+入站时：
+DNAT:  外网访问 1.2.3.4:8080 → 改成 → 192.168.1.100:80
+回包时：
+SNAT:  内网 192.168.1.100 回包 → 源地址改成 1.2.3.4:8080 才能正确返回外部客户端
+所以端口映射其实就是：
+用 DNAT + SNAT 让一个特定端口转发到内部机器。
+
+它只是 NAT 的一种应用方式。
+
+
+NAT 表（例如 Linux 的 iptables -t nat 表）只是系统用来存储 NAT 规则的地方。
+它里面可能包含：
+SNAT 规则
+DNAT 规则
+MASQUERADE 规则
+端口映射规则（本质上是 DNAT/SNAT）
+连接跟踪（conntrack）条目
+
+
+端口映射 是 NAT 的一种用途；
+NAT 表 是存放 NAT 规则的地方。

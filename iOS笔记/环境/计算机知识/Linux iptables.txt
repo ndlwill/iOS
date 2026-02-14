@@ -1,0 +1,57 @@
+iptables 是 Linux 系统自带的一个 用户空间工具，用于管理 内核的 Netfilter 防火墙模块。
+换句话说：
+Netfilter：Linux 内核里真正处理数据包的模块。
+iptables：用户用来配置和管理 Netfilter 的工具。
+
+它的核心功能就是：
+过滤数据包（Firewall）
+NAT（网络地址转换）
+端口转发
+连接跟踪（conntrack）
+
+Netfilter = 内核里的“交通警察”，负责检查和转发每个网络包
+iptables = 你给警察下的规则，让它决定哪些包可以走、哪些包要改地址、哪些包要丢掉
+
+iptables 的配置是基于 表（table） 和 链（chain） 的：
+| 表 (Table)  | 功能               | 常用链 (Chain)                                     |
+| ---------- | ---------------- | ----------------------------------------------- |
+| **filter** | 过滤数据包            | INPUT, OUTPUT, FORWARD                          |
+| **nat**    | 网络地址转换           | PREROUTING, POSTROUTING, OUTPUT                 |
+| **mangle** | 修改数据包（如 QoS、TTL） | PREROUTING, POSTROUTING, INPUT, OUTPUT, FORWARD |
+| **raw**    | 跳过连接跟踪           | PREROUTING, OUTPUT                              |
+
+链（Chain）解释
+INPUT → 入站数据包进入本机
+OUTPUT → 出站数据包从本机发出
+FORWARD → 转发数据包（经过本机，但不是给本机的）
+PREROUTING / POSTROUTING → NAT 相关，在路由前后处理包
+
+
+端口转发就是作用在 NAT 表（nat table）上的，而且主要用的是 PREROUTING 链
+NAT（Network Address Translation） 负责修改数据包的源或目标地址，让流量能够正确路由。
+端口转发（Port Forwarding） 实际上是 DNAT（Destination NAT） 的一种应用：
+修改目标地址（目标 IP 和端口） → 把流量转发到容器内部 IP 和端口
+所以可以说：
+端口转发 = NAT 的一类（DNAT），作用在 nat 表上。
+
+概念	功能	实现方式
+端口转发（Port Mapping）	外部访问宿主机某端口 → 转发到容器内部端口	iptables DNAT + NAT
+
+为什么需要端口转发？
+默认 bridge 模式下，容器 IP（如 172.17.0.2）在宿主机的私有网络，外网无法直接访问。
+端口转发 = 宿主机“代理”容器端口，让外部可以访问容器服务。
+
+
+#####
+两种 NAT 的情况
+在 Linux/iptables 中，NAT 主要分两类：
+DNAT（Destination NAT） → 端口转发
+改目标地址和端口
+典型场景：外部访问宿主机端口 → 转发到容器端口
+使用链：nat 表 → PREROUTING
+
+SNAT / MASQUERADE（Source NAT） → 出站 NAT
+改源地址（可能改端口）
+典型场景：容器访问外网 → 私有 IP 改成宿主机公网 IP
+使用链：nat 表 → POSTROUTING
+#####

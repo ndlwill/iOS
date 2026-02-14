@@ -1,0 +1,302 @@
+https://medium.com/@nimit95/a-simple-http-https-proxy-in-node-js-4eb0444f38fc
+
+https://hpbn.co/
+
+A proxy is a simple server between you and your intended host on the internet. 
+There are mainly two types of proxy, Forward proxy and Reverse proxy. // 正向代理和反向代理。
+
+Forward Proxy:
+通常情况下，“代理”一词指的是正向代理。
+It simply sits between a client and a server and acts as a relaying agent.
+They are usually placed by the clients or the internal network from the client side.
+#####
+There can be various use cases for using a forward proxy like keeping track of requests, responses, deny access to some domains, modifying the headers, changing the location etc.
+#####
+
+
+在客户端发起连接时，数据包的目标 IP 确实是本地代理服务器的 IP（例如 127.0.0.1:8080）。
+在代理转发请求时，代理程序会自己建立新的 TCP 连接，目标地址改为真实目标服务器（例如 www.example.com:443）。
+所以：
+✅ 本地代理收到的数据包的 IP 层目标地址是「代理服务器自己」。
+✅ 代理要解析 HTTP 请求头里的 Host 字段（或 CONNECT 中的目标地址），再去主动建立到目标服务器的连接。
+
+1. 客户端到代理（第一跳）
+当浏览器访问 https://www.example.com/ 时：
+TCP 层：
+源 IP：客户端 (127.0.0.1)
+目标 IP：代理 (127.0.0.1)
+应用层数据（举例）：
+CONNECT www.example.com:443 HTTP/1.1
+Host: www.example.com:443
+2. 代理解析请求，建立真实连接（第二跳）
+代理读到上面的 CONNECT 请求后，解析出目标：
+www.example.com:443
+然后代理执行：
+connect("www.example.com", 443)
+此时新的 TCP 连接：
+源 IP：代理服务器的出口 IP // 也就是——代理所在主机的公网 IP。
+目标 IP：远程服务器 (www.example.com 的 IP)
+
+代理在两条连接之间中转字节流：
+client ⇄ (local proxy) ⇄ (remote server)
+
+
+
+
+
+
+Reverse Proxy:
+These type of proxies are employed by the servers, mostly for security and load balancing purposes. // 服务器通常会使用这类代理，主要目的是为了安全和负载均衡
+Clients hit these reverse proxy servers instead of the actual servers, then these proxy serves the request to the actual server.
+For a web server, there are several benefits associated with such architecture.
+It can keep malicious users out, load balance between the servers and can reduce the load on its origin servers by caching static content. // 它可以阻止恶意用户访问，在服务器之间进行负载均衡，并且可以通过缓存静态内容来减轻源服务器的负载。
+
+
+
+==================================================make an HTTP/HTTPS forward proxy in Node
+We will be using the net module in the Node.
+https://nodejs.org/api/net.html
+
+We create a simple net server first which listens on Port 8124 , this server will act as a proxy server for the clients to connect.
+const net = require('net');
+const server = net.createServer();
+server.on('connection', (clientToProxySocket) => {
+  console.log('Client Connected To Proxy');
+});
+server.on('error', (err) => {
+  console.log('SERVER ERROR');
+  console.log(err);
+});
+server.on('close', () => {
+  console.log('Client Disconnected');
+});
+server.listen(8124, () => {
+  console.log('Server runnig at http://localhost:' + 8124);
+});
+When a client is connected to our server, we get a socket in our callback which is the socket between the Client and the server.
+
+
+Parsing HTTP/HTTPS:
+Now both HTTP and HTTPS are different Protocols so we will be handling the cases separately. 
+After the connection, we will only need the first packet data to get the host details. 
+So we use once on the data callback to get the first data.
+
+In the case of HTTP, the request contains a Host parameter and port for HTTP is 80. 
+You can read more about it on https://hpbn.co/brief-history-of-http/#http11-internet-standard
+
+
+
+In the case of HTTPS, we can’t read the packet due to the SSL encryption, so it impossible to read host from the packets. 
+But before the actual request, there is a CONNECT request which contains the host and port will be 443. 
+To read more check out RFC https://tools.ietf.org/html/rfc7231#section-4.3.6
+
+
+
+Server Connection:
+#####
+After getting the hostname, we connect to the server using net.createConnection() .
+It takes two parameters, the host and port to connect and the second is the connected callback.
+#####
+After the connection, we simply pipe the clientToProxySocket to proxyToServerSocket.
+Sockets are derived from the streams so they can be piped. 
+To read more about streams and piping refer this. 
+https://www.freecodecamp.org/news/node-js-streams-everything-you-need-to-know-c9141306be93
+TL;DR piping is
+readableSrc.pipe(writableDest)
+
+
+The final code looks like in the after the connection to our proxy —
+
+const net = require('net');
+
+const server = net.createServer();
+
+server.on('connection', (clientToProxySocket) => {
+  console.log('Client Connected To Proxy');
+  // We need only the data once, the starting packet
+  clientToProxySocket.once('data', (data) => {
+    // If you want to see the packet uncomment below
+    // console.log(data.toString());
+
+    let isTLSConnection = data.toString().indexOf('CONNECT') !== -1;
+
+    // By Default port is 80
+    let serverPort = 80;
+    let serverAddress;
+    if (isTLSConnection) {
+      // Port changed if connection is TLS
+      serverPort = data.toString()
+                          .split('CONNECT ')[1].split(' ')[0].split(':')[1];;
+      serverAddress = data.toString()
+                          .split('CONNECT ')[1].split(' ')[0].split(':')[0];
+    } else {
+      serverAddress = data.toString().split('Host: ')[1].split('\r\n')[0];
+    }
+
+    console.log(serverAddress);
+
+    let proxyToServerSocket = net.createConnection({
+      host: serverAddress,
+      port: serverPort
+    }, () => {
+      console.log('PROXY TO SERVER SET UP');
+      if (isTLSConnection) {
+        clientToProxySocket.write('HTTP/1.1 200 OK\r\n\n');
+      } else {
+        proxyToServerSocket.write(data);
+      }
+
+/*
+Browser → clientToProxySocket → (pipe) → proxyToServerSocket → example.com
+example.com → proxyToServerSocket → (pipe) → clientToProxySocket → Browser
+*/
+      clientToProxySocket.pipe(proxyToServerSocket);
+      proxyToServerSocket.pipe(clientToProxySocket);
+
+      proxyToServerSocket.on('error', (err) => {
+        console.log('PROXY TO SERVER ERROR');
+        console.log(err);
+      });
+      
+    });
+    clientToProxySocket.on('error', err => {
+      console.log('CLIENT TO PROXY ERROR');
+      console.log(err);
+    });
+  });
+});
+
+server.on('error', (err) => {
+  console.log('SERVER ERROR');
+  console.log(err);
+  throw err;
+});
+
+server.on('close', () => {
+  console.log('Client Disconnected');
+});
+
+server.listen(8124, () => {
+  console.log('Server runnig at http://localhost:' + 8124);
+});
+
+
+
+Testing Proxy:
+The proxy is started as a normal node server - node server.js
+
+Now you can set up your system or browser proxy to 127.0.0.1 (localhost) and port 8124 .
+On Firefox you can set proxy in the Network setting, in case of Chrome you will need to set up a system-wide Proxy.
+After the proxy set up if you try opening some site on your browser you would be able to see the host and other logging that you would have enabled in the logs. 
+
+
+
+
+console.log("data = ", data.toString());
+HTTP:
+data =  GET http://baidu.com/ HTTP/1.1
+Host: baidu.com
+Proxy-Connection: keep-alive
+Upgrade-Insecure-Requests: 1
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7
+Accept-Encoding: gzip, deflate
+Accept-Language: zh-CN,zh;q=0.9
+Cookie: BIDUPSID=C468F770C78DD229FC52F4FE33249A41; PSTM=1761013526; BAIDUID=C468F770C78DD2297BE570DB774C4CEE:FG=1; H_PS_PSSID=60274_63142_64970_65245_65620_65636_65713_65759_65773_65806_65839_65891_65919_65361_65947_65949_65956_65970_65989_65992_65393_66003_66077_66102; H_WISE_SIDS=60274_63142_64970_65245_65620_65636_65713_65759_65773_65806_65839_65891_65919_65361_65947_65949_65956_65970_65989_65992_65393_66003_66077_66102
+// 空行
+// 空行
+// 上面data包括两个空行
+
+
+HTTPS:
+data =  CONNECT www.baidu.com:443 HTTP/1.1
+Host: www.baidu.com:443
+Proxy-Connection: keep-alive
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36
+// 空行
+// 空行
+// 上面data包括两个空行
+
+
+| 类型        | 客户端到代理内容                                                 | 代理转发逻辑                                |
+| --------- | -------------------------------------------------------- | ------------------------------------- |
+| **HTTP**  | 明文请求，包含完整 URL，如：`GET http://www.example.com/index.html`  | 代理直接解析 URL，再用自己的 TCP 请求目标服务器，返回响应     |
+| **HTTPS** | 使用 `CONNECT` 方法，如：`CONNECT www.example.com:443 HTTP/1.1` | 代理先建立到目标服务器的 TCP 连接，再在两边之间中转加密数据（TLS） |
+
+
+
+==================================================透明代理 / NAT 场景
+「透明代理」（即客户端并不知道自己在走代理）
+
+| 场景                   | 客户端看到的目标 IP | 代理接收时的目标 IP   | 是否需要修改            |
+| -------------------- | ----------- | ------------- | ----------------- |
+| **普通 HTTP/HTTPS 代理** | 代理 IP       | 代理 IP         | ✅ 代理自己发起到真实服务器的连接 |
+| **透明代理（NAT重定向）**     | 真实服务器 IP    | 被NAT改成本地代理 IP | ✅ 要查回原始目标再连真实服务器  |
+
+
+HTTP 代理（应用层代理）:
+客户端（浏览器、App）主动知道代理地址
+
+透明代理（Transparent Proxy）/ NAT 代理: // 常用于 VPN
+工作层级：网络层（L3/L4）
+典型端口：没有固定端口，取决于被劫持的流量
+工作方式：
+客户端不知道有代理的存在；
+网关或路由器截获所有 TCP/UDP 流量；
+利用 NAT（Network Address Translation） 技术，将目标 IP/端口重定向到代理进程；
+代理再根据目标地址字段（可能从 TCP/IP 包中解析）去访问真正的目标服务器。
+例如：
+浏览器访问 example.com:80 → 实际流量被 NAT 到 127.0.0.1:8080
+特点：
+客户端无需配置；
+可以透明拦截所有 TCP/UDP 流量；
+
+
+| 特性          | HTTP 代理      | 透明代理 / NAT        |
+| ----------- | ------------ | ----------------- |
+| 工作层         | 应用层 (L7)     | 网络层 / 传输层 (L3/L4) |
+| 客户端是否需配置    | ✅ 需要         | ❌ 不需要             |
+| 支持协议        | HTTP / HTTPS | 任意 TCP/UDP        |
+| 典型用途        | 浏览器代理、内容过滤   | VPN、网关、防火墙、流量转发   |
+| 是否修改 IP 层头部 | ❌ 不修改        | ✅ 会修改（NAT）        |
+| 对客户端透明性     | ❌ 否          | ✅ 是               |
+
+
+HTTP 代理：就像你请一个朋友帮你上网查资料（你告诉他网址，他去帮你查）。
+透明代理 / NAT：就像你的流量在路上被中间的路由器自动“拦截重定向”，你根本不知道后面是谁帮你转发的。
+
+
+
+==================================================
+iOS 上的 VPN（特别是使用 NEPacketTunnelProvider 的）不是透明代理，而是：
+系统级流量重定向（system-wide packet redirection）
+也就是说：
+VPN provider 拦截所有（或部分）IP 层的数据包；
+交给你的 PacketTunnelProvider；
+你可以决定如何处理这些包：
+转发给远程 VPN 服务器（例如 OpenVPN、WireGuard）
+或者在本地解包、过滤、再发出。
+
+App → (系统网络栈) → Packet Tunnel Provider → (VPN Server) → Internet
+所以 iOS VPN 是在系统层面截取 IP 层数据包，而透明代理通常是在路由层（或局域网）通过 NAT 改写实现的。
+
+
+| 项目       | iOS VPN                                       | 透明代理                    |
+| -------- | --------------------------------------------- | ----------------------- |
+| 拦截位置     | 操作系统网络栈                                       | 路由器或防火墙                 |
+| 实现方式     | `NetworkExtension` 框架（NEPacketTunnelProvider） | NAT / iptables REDIRECT |
+| 是否需客户端配置 | 需要安装并激活 VPN 配置                                | 不需要客户端配置                |
+| 客户端是否感知  | 客户端“知道”走了 VPN（系统状态栏显示）                        | 客户端“以为”直连目标服务器          |
+| 数据层级     | IP 层（L3）                                      | IP/TCP 层之间（L3-L4）       |
+| 常见用途     | 加密隧道、企业内网访问、安全代理                              | 内容过滤、企业网关透明缓存           |
+
+
+
+
+
+iOS VPN 也确实是“把数据转发到 VPN 服务器”，但这和“透明代理”仍然有本质区别。
+iOS VPN 的本质：系统级“隧道转发”
+1. 系统级接管路由表
+一旦用户连接 VPN，系统网络栈会把指定的流量（可能是全流量，也可能是部分路由）改为发往「虚拟网卡」接口（Packet Tunnel）。
+2. 应用层处理网络包
+你的 VPN Extension（PacketTunnelProvider）会从这个虚拟接口读取到完整的 IP 数据包（不论 TCP/UDP）。

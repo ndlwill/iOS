@@ -3,6 +3,143 @@ https://developer.apple.com/library/archive/documentation/GraphicsImaging/Concep
 A bitmap graphics context allows you to paint RGB colors, CMYK colors, or grayscale into a bitmap. 
 A bitmap is a rectangular array (or raster) of pixels, each pixel representing a point in an image. Bitmap images are also called sampled images.
 
+#####
+A bitmap image (or sampled image) is an array of pixels (or samples). 
+Each pixel represents a single point in the image.
+#####
+
+
+==================================================Bitmap Images and Image Masks(位图图像和图像蒙版)
+Bitmap Image Information:
+#####
+The image data you supply to the function CGImageCreate must be interleaved on a per pixel, 
+not a per scan line, basis. 
+Quartz does not support planar data.
+
+Interleaved on a per pixel = 按像素交错存储
+也叫 像素交错 (pixel-interleaved) 或 打包格式 (packed format)。
+意思是：
+每个像素的所有通道（R、G、B、A）必须放在一起连续存储：
+[R G B A][R G B A][R G B A]...
+这是 Quartz / CGImage 要求的格式。
+
+Not per scan line = 不是逐行存储单独的通道
+有些图像格式按行存储但通道仍然是分开的，例如：
+RRRRRRR...
+GGGGGGG...
+BBBBBBB...
+AAAAAAA...
+这种叫 planar（平面格式）。
+
+✓ Quartz 支持（interleaved）
+Pixel 0: R0 G0 B0 A0
+Pixel 1: R1 G1 B1 A1
+Pixel 2: R2 G2 B2 A2
+...
+✗ Quartz 不支持（planar）
+RRRRR...
+GGGGG...
+BBBBB...
+AAAAA...
+CGImage Create 一定要给 每个像素四个通道连续排列的数据。
+#####
+
+When you create and work with Quartz images (which use the CGImageRef data type)
+
+Note: For the best performance when working with raw image data, use the vImage framework. 
+You can import image data to vImage from a CGImageRef reference with the vImageBuffer_InitWithCGImage function.
+
+
+Quartz uses the following information when it creates a bitmap image (CGImageRef):
+A bitmap data source, which can be a Quartz data provider or a Quartz image source. Data Management in Quartz 2D describes both and discusses the functions that provide a source of bitmap data.
+An optional decode array (Decode Array).
+An interpolation setting, which is a Boolean value that specifies whether Quartz should apply an interpolation algorithm when resizing the image.
+A rendering intent that specifies how to map colors that are located within the destination color space of a graphics context. This information is not needed for image masks. See Setting Rendering Intent for more information.
+The image dimensions.
+The pixel format, which includes bits per component, bits per pixel, and bytes per row (Pixel Format).
+For images, color spaces and bitmap layout (Color Spaces and Bitmap Layout) information to describe the location of alpha and whether the bitmap uses floating-point values. Image masks don’t require this information.
+
+
+Pixel Format:
+The pixel format consists of the following information:
+Bits per component, which is the number of bits in each individual color component in a pixel. For an image mask, this value is the number of significant masking bits in a source pixel. For example, if the source image is an 8-bit mask, specify 8 bits per component.
+Bits per pixel, which is the total number of bits in a source pixel. This value must be at least the number of bits per component times the number of components per pixel.
+Bytes per row. The number of bytes per horizontal row in the image.
+
+
+Color Spaces and Bitmap Layout:
+To ensure that Quartz correctly interprets the bits of each pixel, you must specify:
+Whether a bitmap contains an alpha channel. Quartz supports RGB, CMYK, and gray color spaces. It also supports alpha, or transparency, although alpha information is not available in all bitmap image formats. When it is available, the alpha component can be located in either the most significant bits of a pixel or the least significant bits.
+For bitmaps that have an alpha component, whether the color components are already multiplied by the alpha value. Premultiplied alpha describes a source color whose components are already multiplied by an alpha value. Premultiplying speeds up the rendering of an image by eliminating an extra multiplication operation per color component. For example, in an RGB color space, rendering an image with premultiplied alpha eliminates three multiplication operations (red times alpha, green times alpha, and blue times alpha) for each pixel in the image.
+The data format of the samples—integer or floating-point values.
+
+When you create an image using the function CGImageCreate, you supply a bitmapInfo parameter, of type CGImageBitmapInfo, to specify bitmap layout information.
+
+
+Masking Images（遮罩图像）
+
+
+
+==================================================
+#####
+Quartz 2D uses the painter’s model for its imaging. 
+In the painter’s model, each successive drawing operation applies a layer of “paint” to an output “canvas,” often called a page. The paint on the page can be modified by overlaying more paint through additional drawing operations. 
+An object drawn on the page cannot be modified except by overlaying more paint. 
+This model allows you to construct extremely sophisticated images from a small number of powerful primitives.
+#####
+
+
+==================================================坐标系
+Because different devices have different underlying imaging capabilities, 
+the locations and sizes of graphics must be defined in a device-independent manner.
+
+Quartz accomplishes device independence with a separate coordinate system—user space—mapping it to the coordinate system of the output device—device space—using the current transformation matrix, or CTM.
+
+The current transformation matrix is a particular type of matrix called an affine transform, which maps points from one coordinate space to another by applying translation, rotation, and scaling operations (calculations that move, rotate, and resize a coordinate system).
+
+The origin of the user coordinate space is the point (0,0). 
+The origin is located at the lower-left corner of the page
+
+In the default coordinate system for Quartz, 
+the x-axis increases as it moves from the left toward the right of the page. 
+The y-axis increases in value as it moves from the bottom toward the top of the page.
+
+Some technologies set up their graphics contexts using a different default coordinate system than the one used by Quartz. 
+Relative to Quartz, such a coordinate system is a modified coordinate system and must be compensated for when performing some Quartz drawing operations. 
+The most common modified coordinate system places the origin in the upper-left corner of the context and changes the y-axis to point towards the bottom of the page. 
+A few places where you might see this specific coordinate system used are the following:
+In Mac OS X, a subclass of NSView that overrides its isFlipped method to return YES.
+In iOS, a drawing context returned by an UIView.
+In iOS, a drawing context created by calling the UIGraphicsBeginImageContextWithOptions function.
+
+The reason UIKit returns Quartz drawing contexts with modified coordinate systems is that UIKit uses a different default coordinate convention; it applies the transform to Quartz contexts it creates so that they match its conventions.
+
+If your application wants to use the same drawing routines to draw to both a UIView object and a PDF graphics context (which is created by Quartz and uses the default coordinate system), you need to apply a transform so that the PDF graphics context receives the same modified coordinate system. 
+To do this, apply a transform that translates the origin to the upper-left corner of the PDF context and scales the y-coordinate by -1.
+
+#####
+For example, if you want an image or PDF to draw correctly into a graphics context, 
+your application may need to temporarily adjust the CTM of the graphics context.
+
+In iOS, if you use a UIImage object to wrap a CGImage object you create, you do not need to modify the CTM. 
+The UIImage object automatically compensates for the modified coordinate system applied by UIKit.
+#####
+
+On iOS 3.2 and later, when UIKit creates a drawing context for your application, it also makes additional changes to the context to match the default UIKIt conventions.
+In particular, patterns and shadows, which are not affected by the CTM, are adjusted separately so that their conventions match UIKit’s coordinate system.
+
+#####
+#####
+The UIView object modifies the CTM of the Quartz graphics context to match the UIKit conventions by translating the origin to the upper left corner of the view and inverting the y-axis by multiplying it by -1.
+#####
+#####
+
+#####
+iOS Note: A PDF graphics context in iOS uses the default coordinate system provided by Quartz, 
+without applying a transform to match the UIKit coordinate system. If your application plans on sharing drawing code between your PDF graphics context and the graphics context provided by UIView object, 
+your application should modify the CTM of the PDF graphics context to modify the coordinate system. 
+#####
+
 
 ==================================================
 Graphics States:

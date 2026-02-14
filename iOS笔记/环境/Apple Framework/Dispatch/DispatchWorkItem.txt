@@ -1,0 +1,192 @@
+DispatchWorkItem 在需要控制和管理任务时更好,如果只是简单丢一个异步任务，用原来的 block 反而更轻量、直观。
+
+DispatchWorkItem ≈ “可管理的 block”
+block：一次性匿名任务
+work item：有「身份」的任务对象
+
+DispatchWorkItem 是一个对象：
+可能被 retain
+可能产生引用环（注意 self）
+
+DispatchWorkItem 比 block 好在哪里？
+1️⃣ 可以 取消（cancel）
+let item = DispatchWorkItem {
+    if item.isCancelled { return }
+    doWork()
+}
+
+queue.async(execute: item)
+item.cancel()
+
+cancel 不会强制终止正在执行的代码
+只是设置一个状态位
+需要你在任务内部主动检查
+
+2️⃣ 可以 知道任务是否执行完
+item.notify(queue: .main) {
+    print("任务完成")
+}
+
+3️⃣ 可以复用 / 保存引用
+self.currentWorkItem = item
+这使得你可以：
+中途取消旧任务
+替换新任务（防抖 / 节流）
+避免重复执行
+
+4️⃣ 适合做「可控并发模型」
+class TaskController {
+    private var item: DispatchWorkItem?
+
+    func start() {
+        item?.cancel()
+        let newItem = DispatchWorkItem { ... }
+        item = newItem
+        queue.async(execute: newItem)
+    }
+}
+
+
+在 Swift Concurrency 出来之后：
+| 场景           | 推荐                  |
+| ------------ | ------------------- |
+| 简单异步         | `Task {}`           |
+| 可取消          | `Task`（原生支持 cancel） |
+| 旧系统 / GCD    | `DispatchWorkItem`  |
+| iOS 13+ 复杂并发 | `async/await`       |
+如果你是：
+iOS 15+
+新代码
+👉 优先 Task，其次 DispatchWorkItem，最后裸 block
+
+
+==================================================
+1. 防抖（Debounce）——“停下来再做”
+
+搜索框输入联想
+用户连续输入：s → sw → swi → swif → swift
+只在用户停顿 300ms 后发起一次请求
+
+用 DispatchWorkItem 实现防抖
+class SearchDebouncer {
+
+    private let queue = DispatchQueue.main
+    private var workItem: DispatchWorkItem?
+
+    func input(text: String) {
+        // 1. 取消上一次还没执行的任务
+        workItem?.cancel()
+
+        // 2. 创建新任务
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.performSearch(text)
+        }
+
+        workItem = item
+
+        // 3. 延迟执行
+        queue.asyncAfter(deadline: .now() + 0.3, execute: item)
+    }
+
+    private func performSearch(_ text: String) {
+        print("🔍 search:", text)
+    }
+}
+
+每次输入都会 cancel 上一个任务
+只有“最后一个 WorkItem”能活到执行
+👉 这就是“替换新任务”
+
+2. 节流（Throttle）——“一段时间只做一次”
+滚动时上报埋点 / 刷新 UI:
+滚动很频繁
+500ms 内最多执行一次
+
+用 DispatchWorkItem 实现节流（leading edge）
+
+class Throttler {
+
+    private let queue = DispatchQueue.main
+    private let interval: TimeInterval = 0.5
+    private var workItem: DispatchWorkItem?
+    private var lastFireTime: Date = .distantPast
+
+    func call(_ block: @escaping () -> Void) {
+        let now = Date()
+        guard now.timeIntervalSince(lastFireTime) > interval else {
+            return
+        }
+
+        lastFireTime = now
+
+        let item = DispatchWorkItem(block: block)
+        workItem = item
+        queue.async(execute: item)
+    }
+}
+
+throttler.call {
+    print("🔥 fire")
+}
+
+
+更贴近“替换任务”的节流（trailing edge）
+class TrailingThrottler {
+
+    private let queue = DispatchQueue.main
+    private var workItem: DispatchWorkItem?
+
+    func call(_ block: @escaping () -> Void) {
+        workItem?.cancel()
+
+        let item = DispatchWorkItem(block: block)
+        workItem = item
+
+        queue.asyncAfter(deadline: .now() + 0.5, execute: item)
+    }
+}
+这本质上：
+也是不断 取消旧任务
+用新任务替换旧任务
+和防抖非常接近（区别在语义）
+
+
+为什么说 DispatchWorkItem 非常适合“替换任务”
+核心能力只有一句话：
+任务是一个“对象”，而不是一次性的代码块
+你可以：
+保存它
+取消它
+用新的覆盖旧的
+
+
+如果放到 Swift Concurrency 里
+同一个防抖，用 Task 会更自然：
+var task: Task<Void, Never>?
+
+func input(text: String) {
+    task?.cancel()
+    task = Task {
+        try? await Task.sleep(nanoseconds: 300_000_000) // 这是例子，不是最优的写法
+        performSearch(text)
+    }
+}
+
+
+
+var task: Task<Void, Never>?
+
+func input(text: String) {
+    task?.cancel()
+
+    task = Task {
+        do {
+            try await Task.sleep(nanoseconds: 300_000_000)
+            try Task.checkCancellation()
+            performSearch(text)
+        } catch {
+            // cancelled, do nothing
+        }
+    }
+}

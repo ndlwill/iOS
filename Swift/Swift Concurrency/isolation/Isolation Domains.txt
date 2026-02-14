@@ -1,0 +1,293 @@
+==================================================Sendable
+Type safety patterns for sharing data across concurrency boundaries.
+
+Sendable indicates a type is safe to share across isolation domains (actors, tasks, threads). 
+The compiler verifies thread-safety at compile time.
+
+Empty protocol, but triggers compiler verification of thread-safety.
+
+
+==================================================Isolation Domains
+Three types of isolation in Swift Concurrency:
+
+1. Nonisolated (default)
+No concurrency restrictions, but can't modify isolated state:
+
+func computeValue(a: Int, b: Int) -> Int {
+    return a + b
+}
+
+
+2. Actor-isolated
+Dedicated isolation domain with serialized access:
+
+actor Library {
+    var books: [String] = []
+    
+    func addBook(_ title: String) {
+        books.append(title)
+    }
+}
+
+// External access requires await
+await library.addBook("Swift Concurrency")
+
+
+3. Global actor-isolated
+Shared isolation domain across types:
+
+@MainActor
+func updateUI() {
+    // Runs on main thread
+}
+
+
+==================================================Value Types (Structs, Enums)
+Implicit conformance
+Non-public structs/enums with Sendable members:
+
+// Implicitly Sendable
+struct Person {
+    var name: String
+}
+
+
+Explicit conformance required
+Public types need explicit declaration:
+
+public struct Person: Sendable {
+    var name: String
+}
+Why: Compiler can't verify internal details of public types across modules.
+
+
+
+Frozen types
+Public frozen types can be implicitly Sendable:
+
+@frozen
+public struct Point: Sendable {
+    public var x: Double
+    public var y: Double
+}
+
+@frozen = 我向外部模块承诺：这个 public struct / enum 的“存储布局”以后不会再变
+@frozen 冻结的是：
+✅ 存储布局（layout）
+
+但这些是允许的:
+改方法实现
+新增 computed property
+新增 extension 方法
+改内部逻辑
+所以 @frozen ≠ “完全不可变”
+
+
+
+Copy-on-write makes mutability safe:
+public struct Person: Sendable {
+    var name: String // Mutable but safe due to COW
+}
+Each mutation creates a copy, preventing concurrent access to same instance.
+
+
+
+==================================================Reference Types (Classes)
+Requirements for Sendable classes
+Must be:
+final (no inheritance)
+Immutable stored properties only
+All properties Sendable
+No superclass or NSObject only
+
+
+
+Why non-final classes can't be Sendable
+Child classes could introduce unsafe mutability:
+
+// Can't be Sendable
+class Purchaser {
+    func purchase() { }
+}
+
+// Could introduce data races
+class GamePurchaser: Purchaser {
+    var credits: Int = 0 // Mutable!
+}
+
+
+
+Actor isolation makes classes Sendable:
+@MainActor
+class ViewModel {
+    var data: [Item] = [] // Safe due to actor isolation
+}
+// Implicitly Sendable
+
+
+
+Composition over inheritance:
+final class Purchaser: Sendable {
+    func purchase() { }
+}
+
+final class GamePurchaser {
+    let purchaser: Purchaser = Purchaser()
+    // Handle credits separately
+}
+
+
+==================================================Region-Based Isolation:
+Compiler allows non-Sendable types in same scope:
+
+class Article {
+    var title: String
+    init(title: String) { self.title = title }
+}
+
+func check() {
+    let article = Article(title: "Swift")
+    
+    Task {
+        print(article.title) // ✅ OK - same region
+    }
+}
+
+Why: No mutation after transfer, so no data race risk.
+
+
+Breaks when accessed after transfer:
+func check() {
+    let article = Article(title: "Swift")
+    
+    Task {
+        print(article.title)
+    }
+    
+    print(article.title) // ❌ Error - accessed after transfer
+}
+
+
+==================================================The sending Keyword:
+Enforces ownership transfer for non-Sendable types:
+
+Parameter values:
+actor Logger {
+    func log(article: Article) {
+        print(article.title)
+    }
+}
+
+func printTitle(article: sending Article) async {
+    let logger = Logger()
+    await logger.log(article: article)
+}
+
+// Usage
+let article = Article(title: "Swift")
+await printTitle(article: article)
+// article no longer accessible here
+
+
+
+Return values:
+@SomeActor
+func createArticle(title: String) -> sending Article {
+    return Article(title: title)
+}
+Transfers ownership to caller's region.
+
+
+
+==================================================Global Variables
+Must be concurrency-safe since accessible from any context.
+
+Problem
+class ImageCache {
+    static var shared = ImageCache() // ⚠️ Not concurrency-safe
+}
+
+
+Solution 1: Actor isolation
+@MainActor
+class ImageCache {
+    static var shared = ImageCache()
+}
+
+
+Solution 2: Immutable + Sendable
+final class ImageCache: Sendable {
+    static let shared = ImageCache()
+}
+
+
+Solution 3: nonisolated(unsafe)
+Last resort - you guarantee safety:
+
+struct APIProvider: Sendable {
+    nonisolated(unsafe) static private(set) var shared: APIProvider!
+    
+    static func configure(apiURL: URL) {
+        shared = APIProvider(apiURL: apiURL)
+    }
+}
+Use private(set) to limit mutation points.
+
+
+
+==================================================Decision Tree
+Need to share type across isolation domains?
+├─ Value type (struct/enum)?
+│  ├─ Public? → Add explicit Sendable
+│  └─ Internal? → Implicit Sendable (if members Sendable)
+│
+├─ Reference type (class)?
+│  ├─ Can be final + immutable? → Sendable
+│  ├─ Needs mutation?
+│  │  ├─ Can use actor? → Use actor (automatic Sendable)
+│  │  ├─ Main thread only? → @MainActor
+│  │  └─ Has custom lock? → @unchecked Sendable (temporary)
+│  └─ Can be struct instead? → Refactor to struct
+│
+└─ Function/closure? → @Sendable attribute
+
+
+==================================================Common Patterns
+Restructure to avoid non-Sendable dependencies
+// Instead of storing non-Sendable type
+public struct Person: Sendable {
+    var hometown: String // Just the name
+    
+    init(hometown: Location) {
+        self.hometown = hometown.name
+    }
+}
+
+
+Prefer actors for mutable state
+// Instead of @unchecked Sendable with locks
+actor Cache {
+    private var items: [String: Data] = [:]
+    
+    func get(_ key: String) -> Data? {
+        items[key]
+    }
+}
+
+
+@MainActor
+class ViewModel: ObservableObject {
+    @Published var items: [Item] = []
+}
+
+
+==================================================Best Practices
+Prefer value types - structs/enums are easier to make Sendable
+Use actors for mutable state - automatic thread-safety
+Avoid @unchecked Sendable - use only for proven thread-safe code
+Mark public types explicitly - don't rely on implicit conformance
+Ensure all members Sendable - one non-Sendable breaks the chain
+Use @MainActor for UI types - simple isolation for view models
+Capture immutably - use capture lists for mutable variables
+Test with Thread Sanitizer - catches runtime data races
+File migration tickets - track @unchecked Sendable usage

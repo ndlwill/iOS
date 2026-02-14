@@ -1,0 +1,172 @@
+https://developer.apple.com/documentation/xcode/improving-the-speed-of-incremental-builds
+
+“Incremental builds（增量构建）”是软件构建系统中一个非常重要的概念，意思是：
+在代码发生变化后，只重新编译 / 构建那些受到影响的部分，而不是整个项目都重新构建。
+简单来说就是：
+只构建必要的部分，节省时间。
+
+
+==========Declare inputs and outputs for custom scripts and build rules
+Xcode runs your script when any of the following conditions are true:
+Your script doesn’t have any input files.
+Your script doesn’t have any output files.
+Your script’s input files changed.
+Your script’s output files are missing.
+
+
+==========Create module maps for custom frameworks and libraries
+Module maps improve source compilation times by shortening the time it takes to import header files.
+A module map provides the compiler with a list of headers that the framework contains.
+When a framework includes a module map, the compiler doesn’t preprocess header files separately for each source file.
+#####
+Instead, it builds a cache of the framework’s symbol information and reuses that cache during subsequent compilations, which saves significant time.
+#####
+
+The system frameworks already include module maps, but you must provide module maps for any custom frameworks in your project.
+To add a module map, enable the DEFINES_MODULE build setting for your framework or library.
+Xcode enables this build setting automatically for new frameworks, but you might need to set it for older projects.
+When enabled, the compiler produces a module map with the contents of your target’s public header files.
+
+Important
+To obtain the benefit from module maps, always include the framework name in any import statements.
+If you don’t include the framework name, the compiler can’t determine whether a module map is present.
+https://developer.apple.com/documentation/xcode/improving-build-efficiency-with-good-coding-practices#Include-framework-names-in-import-statements
+
+
+Before you create a module map, make sure your framework meets the following requirements:
+1. 
+Your framework’s header files must not rely on any external contextual information. 
+Xcode compiles your module map separately from the rest of your project’s source files. 
+Don’t rely on source-specific information to change the meaning or values of symbols in your headers.
+2.
+The module must be self contained. 
+Because Xcode compiles module maps separately, your framework’s header files must include everything they need to compile correctly.
+“自包含”的意思非常简单：// 自包含 = 这个头文件就算拎出去单独放在一个新项目里，也能独立编译通过，不缺任何东西。
+头文件本身必须包含它需要的所有信息，不依赖外部东西。
+只凭它自己就能被正确编译。
+你可以理解为：
+一个头文件 = 一个独立的完整小盒子，不能指望盒子外的东西来补充信息。
+
+
+To get the maximum reuse benefit from module maps, compile your app’s source files with identical build options. 
+Xcode builds your framework’s module map using the same options as the source file that imports that framework. 
+If your app’s source files use different options, Xcode must recompile the module map for each new set of options. 
+Using identical options allows Xcode to reuse the cache in each subsequent source file.
+
+
+每个文件可以有独立的 Compile Flags:
+Target → Build Phases → Compile Sources → [某个文件] → Compiler Flags
+
+仅当一个源文件“需要编译某个 module”时，编译选项才会影响该 module 的构建。
+也就是说：
+FileA.m import MyFramework
+FileB.m 也 import MyFramework
+这两个文件的编译选项不一样
+→ Xcode 必须为 MyFramework 构建两次 module（cache 无法复用）
+但如果：
+FileA.m import MyFramework
+FileB.m 没有 import MyFramework
+→ FileB.m 的编译选项对 MyFramework 的 module 构建没有影响
+→ 不会发生重复构建
+
+
+只有一个文件导入 Framework（不会重复构建）
+// FileA.m
+#import <MyFramework/MyFramework.h>
+// FileB.m
+// 没有 import MyFramework
+即使 FileA.m 和 FileB.m 的 flags 不一样：
+只有 FileA.m 需要 MyFramework module
+FileB.m 完全不涉及该 module
+所以 module 不会被重复构建
+
+
+#####
+一个 module 会按照“第一次 import 它的文件”的编译选项构建。
+但如果后续有文件用不同的选项再次 import，它就必须重建。
+#####
+
+
+==========Make sure your target’s dependencies are accurate
+For example, if your app doesn’t have an explicit dependency to a separate code module, like an app extension, 
+Xcode might build the app with an older version of the module that doesn’t work properly.
+
+When you know a dependency exists between two targets in your Xcode project, create an explicit dependency between them.
+Xcode creates some dependencies automatically based on how you configure your project.
+For example, when you embed a new framework inside an existing app, Xcode automatically adds the framework to the app’s list of dependencies.
+At other times, you specify the dependencies yourself using the Dependencies build phase editor
+
+If a target depends on code in a different Xcode project, create a reference to that project by dragging it into the navigator pane of your current project. 
+The presence of the other project in the navigator pane gives Xcode the information it needs to track dependencies on items in the other project. 
+Without this reference, Xcode doesn’t know to build your target when the remote project changes.
+
+
+==========Refactor your targets to improve parallelism
+Inter-target dependencies require Xcode to build those targets in a specific order. 
+When a target has many dependencies, or when it depends on large, monolithic modules, Xcode must serialize more tasks. 
+To improve build performance, simplify your target’s dependency list, and break up monolithic targets so that Xcode can do more work in parallel.
+
+Consider the illustration, which shows an XML engine that depends on a monolithic utilities framework. 
+Although the XML engine relies on only a small portion of the framework, Xcode must rebuild the engine when any part of the framework changes. 
+Breaking up the framework into smaller modules and creating more fine-grained dependencies might eliminate some unnecessary rebuilds. 
+In the refactored version, changes to the utilities framework no longer trigger an automatic rebuild of the XML engine.
+将 monolithic utilities framework 中某个 XML engine 依赖的小模块拆分出来。从而使 XML engine 依赖拆分出来的小模块，而不是 monolithic utilities framework。
+
+When one target depends on many child targets, Xcode cannot start to build the target until it finishes all of the children. 
+Consider a single Tests target that executes automated tests on an app, app extension, and private framework. 
+Splitting up the tests by target allows Xcode to run each suite independently as soon as the corresponding target is ready, which increases parallelization.
+
+
+==========Include framework names in import statements:
+https://developer.apple.com/documentation/xcode/improving-build-efficiency-with-good-coding-practices#Include-framework-names-in-import-statements
+
+When you import headers into your source files, always include the name of the parent framework or library in your import statement. 
+In C-based code, importing headers usually copies the contents of the header file into your source. 
+When you include the framework name, the compiler has the option to use module maps to import the headers, which significantly reduces importation time. 
+With module maps, the compiler loads and processes the framework’s header files once, and caches the resulting symbol information on disk. 
+When you import the same framework from another source file, the compiler reuses the cached data, eliminating the need to again read and preprocess the header files.
+
+
+Include framework names for both system frameworks and any custom frameworks you create in your projects. 
+The following example shows import statements for both a system and custom framework, both of which have module maps. 
+The last import statement continues to load and process the header file contents directly, rather than using an available module map.
+
+// Imports the framework’s module map
+#import <UIKit/UIKit.h>
+#import <PetKit/PetKit.h>     // Custom framework
+
+// Performs a textual inclusion of the header file.
+#import "MyHeader.h"
+
+
+
+Xcode 编译 module map 时
+它只会单独读取你的 header 文件本身
+// From MyFramework.h
+typedef struct {
+    int userId;
+    const char *name;
+} MFUser;
+
+// From Foo.h
+int FooAdd(int a, int b);
+
+// From Bar.h
+void BarLog(const char *msg);
+Clang 把所有 public headers 展开成一个统一的 模块接口（Module Interface）。
+就是类似这样：一个合并后的、所有符号的固定视图。
+
+最终在 Swift 使用时看到的接口（暴露给用户）
+当 Swift 导入时：
+import MyFramework
+Swift 实际看到的是 Clang module 中定义的稳定接口，例如：
+public struct MFUser {
+    public var userId: Int32
+    public var name: UnsafePointer<CChar>!
+}
+
+public func FooAdd(_ a: Int32, _ b: Int32) -> Int32
+
+public func BarLog(_ msg: UnsafePointer<CChar>!)
+
+这就是 最终用户能看见的 module public API。

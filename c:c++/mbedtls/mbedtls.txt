@@ -1,3 +1,854 @@
 github的下载：https://github.com/ARMmbed/mbedtls
 官网下载：https://tls.mbed.org
 
+密码学中的 key 一般表示密钥
+
+==================================================真实随机（true random）& 伪随机（pseudo random）
+伪随机数 = 看起来随机、但底层是确定性的。
+只要“种子相同”，就会生成完全一样的随机序列
+
+1. 真实随机（true random）
+来自熵源，比如：
+硬件噪声
+量子随机
+/dev/random
+CPU RDRAND
+
+特点：
+真正不可预测
+相同条件下不会重复产生同样的序列
+
+
+2. 伪随机（pseudo random）
+来自算法，例如 DRBG、PRNG：
+给 DRBG 同样的种子
+→ 永远生成相同随机序列
+
+
+那为什么需要伪随机？
+因为：
+真实随机源太慢
+真实随机不够多
+要能重复（用于某些协议）
+内部状态需要可控、可重现
+
+所以系统只用少量真实随机作为种子（entropy），
+然后用 DRBG 扩展成大量伪随机数。
+类似：
+少量真实随机 → 变成一个随机数工厂
+
+但正常情况下：
+entropy 由系统提供
+是不可预测的
+每次生成都不同
+所以最终随机数看起来也是随机的。
+
+
+“伪随机”不是说会重复，而是说算法是可复现的。
+种子不同 → 随机序列完全不同
+种子相同 → 随机序列完全一样（理论上可重现）
+
+
+==================================================mbedtls_entropy_func
+#####
+mbedtls_entropy_func(熵回调) 是 mbedTLS 的熵收集函数，用于生成 DRBG 所需的种子。
+#####
+
+它做的事情：
+调用注册的熵源（硬件 RNG、系统随机、时间噪声等）
+收集足够随机的数据填充缓冲区
+返回给 DRBG 作为种子材料
+
+每次调用是否不同？
+是的，因为每次调用都会重新从系统或硬件收集熵
+
+
+==================================================DRBG
+DRBG 的全称是：Deterministic Random Bit Generator（确定性随机比特生成器）
+
+它的作用是：
+在拥有一个足够安全、不可预测的种子（entropy + nonce + personalization string）之后，
+通过确定性的算法（例如 CTR-DRBG、HMAC-DRBG、HASH-DRBG）生成大量看似随机但可复现的随机比特流。
+
+真正“不可预测”的只有 entropy（熵）
+nonce 和 personalization string 不是不可预测随机源，它们只是附加输入，用来加强安全性、避免重复、区分实例。
+
+#####
+真正的随机种子 = entropy
+nonce 和 personalization string = 附加输入（可选、非随机） // 增强安全性（可视为一个 salt）
+DRBG 会把它们混合后生成最终内部状态（Key + V）
+
+nonce（一次性值，不要求随机）
+用于确保：
+即使 entropy 相同，不同实例也不会生成同样的随机流。
+要求：
+不一定随机
+但必须确保不重复（比如时间戳、计数器）
+
+personalization string（个性化字符串）
+用于：
+区分不同应用实例（例如 VPN、TLS、SSH 用不同个性化字符串）
+它的目的：
+即使 entropy 来源一样，不同应用也不会产出相同随机数流。
+要求：
+不需要是真随机
+只要能区分应用即可
+#####
+
+mbedtls_ctr_drbg 是“一个 DRBG 实现”，使用的算法是 AES-CTR-DRBG 
+
+entropy（真实随机）：提供不可预测的种子
+DRBG（伪随机）：基于这个种子算出大量随机数
+
+
+DRBG（框架/规范）
+ └── CTR-DRBG（AES CTR-based 随机数生成算法）
+      └── mbedtls_ctr_drbg（mbedTLS 的具体实现）
+
+
+CTR-DRBG（Counter-mode Deterministic Random Bit Generator）
+
+密码学中常用的安全随机数组件，比如用于：
+生成密钥
+生成随机 IV、nonce
+TLS 握手随机数
+加密协议中的随机参数
+
+
+| 步骤                      | 是否生成随机 | 说明                              |
+| ----------------------- | ------ | ------------------------------- |
+| `calloc`                | ❌ 否    | 只是分配内存                          |
+| `mbedtls_entropy_init`  | ❌ 否    | 初始化结构体，注册熵源                     |
+| `mbedtls_entropy_func`  | ✅ 是    | 从熵源收集真正随机数据                     |
+| `mbedtls_ctr_drbg_seed` | ✅ 是    | 使用 entropy_func 得到的随机数据初始化 DRBG |
+
+
+// 例子
+entropy = calloc(1, sizeof(mbedtls_entropy_context));
+mbedtls_entropy_init((mbedtls_entropy_context *)entropy);
+
+ctr_drbg = calloc(1, sizeof(mbedtls_ctr_drbg_context));
+mbedtls_ctr_drbg_init((mbedtls_ctr_drbg_context *)ctr_drbg);
+// 为 CTR-DRBG 注入熵并加上 personalization string
+mbedtls_ctr_drbg_seed((mbedtls_ctr_drbg_context *)ctr_drbg, mbedtls_entropy_func, entropy, (const uint8_t*)"RANDOM_GEN", 10);
+
+初始化后你就可以使用这个对象安全地生成随机数:
+mbedtls_ctr_drbg_random(ctr_drbg, output_buf, size);
+
+
+为什么必须要 entropy？
+因为：
+如果 CTR-DRBG 的 seed 不随机（比如固定值），
+⇒ 所有输出可预测 ⇒ 加密全被破解
+加密生成密钥、IV、nonce 全部依赖随机性
+⇒ 没有真实随机，整个系统不安全
+
+entropy（熵源） ≠ 种子（seed）
+它们不是同一个东西，但 熵源用于“生成”种子。
+
+entropy（熵源） // 一堆原始材料（随机性素材）
+seed（种子） // 经过加工后的“高纯度随机料(seed material)”，用来启动随机数引擎
+它们的关系（重点）:
+entropy → (mbedtls_entropy_func) → seed → 初始化 DRBG
+
+
+entropy = 熵上下文（随机源集合，不是种子）
+mbedtls_entropy_func = 用熵生成 seed 的函数
+mbedtls_ctr_drbg_seed = 拿到 seed，初始化 DRBG
+
+
+==================================================AES 有 padding（填充）概念
+AES 本身是“分组加密算法”，工作模式不同是否需要填充也不同。
+
+什么时候 AES 需要 padding？
+AES 的 分组大小固定是 16 字节（128 bit）。
+如果你使用的模式要求输入一定要是整块的 16 字节，就必须 padding。
+需要 padding 的模式（分组模式）
+AES-CBC
+AES-ECB
+AES-CFB（只有 CFB-128）
+AES-OFB（视实现）
+AES-CBC-CS（特殊格式）
+例如你要加密 30 字节数据：
+30 不是 16 的倍数 → 需要 padding
+
+如果你使用 AES-ECB 加密 30 字节 数据，最终加密后的数据长度是：
+结果：32 字节 // 最终加密数据长度 = 填充后的长度
+ECB 是分组模式，必须按 16 字节对齐
+AES 的分组大小固定是 16 字节。
+ECB 模式要求输入数据必须是 16 字节的整数倍。
+明文：30 字节
+padding 后：32 字节
+ECB 加密后：32 字节
+
+哪些模式不需要 padding？
+以下工作模式是 流模式（stream-like），可以加密任意长度数据，不需要补全到 16 字节：
+AES-CTR
+AES-GCM（推荐）
+AES-CCM
+AES-XTS
+AES-CFB（8/128/1 等部分模式）
+这些模式会把 AES 转换成“流加密”，数据来多少就加密多少，不需要填充。
+
+
+==================================================AES-CTR 模式加解密
+#define MD5_DIGEST_LENGTH 16
+#define CipherKeySize 16
+
+// key: 密钥
+void aes_ctr(const std::string &key, uint8_t *data, size_t len) {
+    uint8_t md5[MD5_DIGEST_LENGTH];
+    mbedtls_md5((const uint8_t *)key.c_str(), key.size(), md5);
+
+    mbedtls_aes_context aesCtx;
+    mbedtls_aes_init(&aesCtx);
+    // AES-128 中的 “128” 就是指密钥长度为 128 bit（16 字节）
+    /*
+    AES 是对称加密算法，密钥长度不同影响安全性，但加密后的数据长度 通常和明文长度相同（如果是 ECB/CBC 模式），
+    会加填充以满足块大小（块大小固定 128 位 / 16 字节）。
+
+    为什么要区分密钥长度？
+    因为密钥越长，暴力破解难度越高：
+    AES-128：2^128 种可能
+    AES-192：2^192
+    AES-256：2^256（安全性最高）
+    但密钥越长，加解密速度越慢。
+
+    所以很多场景使用 AES-128（足够安全 + 性能最好）
+    */
+    mbedtls_aes_setkey_enc(&aesCtx, md5, MD5_DIGEST_LENGTH * 8); // 设置加密密钥（encryption key）
+
+    AesCtrContext aesCtrCtx;
+    aesCtrCtx.init(&aesCtx, nullptr);
+    aesCtrCtx.ctr(data, len ,data);
+    mbedtls_aes_free(&aesCtx);
+}
+
+#include <mbedtls/aes.h>
+
+class AesCtrContext {
+private:
+    size_t offset = 0;
+    uint8_t nonce[CipherKeySize], block[CipherKeySize];
+    mbedtls_aes_context *context = nullptr;
+public:
+    void init(mbedtls_aes_context *ctx, uint8_t *initNonce /*[CipherKeySize]*/) {
+		offset = 0;
+        context = ctx;
+        if(initNonce == nullptr) {// nonce 是固定的全 0，没有随机化，每次相同 key 加密的结果相同（安全性较低）。
+            memset(this->nonce, 0, CipherKeySize);
+        }
+        else {
+            memcpy(this->nonce, initNonce, CipherKeySize);
+        }
+
+    }
+
+    void ctr(const uint8_t *input, size_t len, uint8_t *output) {
+        mbedtls_aes_crypt_ctr(context, len, &offset, nonce, block, input, output);
+    }
+};
+
+| 名称          | 密钥长度（Key Size）     | 分组大小（Block Size） |
+| ----------- | ------------------ | ---------------- |
+| **AES-128** | **128 bit（16 字节）** | 128 bit（16 字节）   |
+| AES-192     | 192 bit（24 字节）     | 128 bit（16 字节）   |
+| AES-256     | 256 bit（32 字节）     | 128 bit（16 字节）   |
+AES 的分组大小始终固定为 128 bit，不会变。
+“AES-128/192/256” 指的是 密钥长度不同。
+
+#####
+无论 AES 是什么模式（CBC/CTR/GCM/CFB/OFB/ECB …），它的分组块大小永远固定为 128 bit（16 字节）。
+AES 是一种 分组加密算法（block cipher），并且 AES 标准规定分组大小固定为 128 bit。
+这点与模式无关，也与密钥长度无关。
+
+分组加密（Block Cipher）指的就是把明文按固定大小的“块”切成一组组，然后每一组单独用加密算法处理。
+
+是不是要填充（padding）取决于加密模式:
+CBC / ECB / CFB / OFB / GCM
+→ 最后一块不足 16 字节时必须补齐到 16 字节（padding）
+（GCM 内部是 CTR，不需要 padding，但实际数据 often 需要对齐处理）
+CTR / OFB / CFB
+→ 不需要 padding
+因为这些模式本质上是“流加密模式”，
+虽然 AES 每次仍然处理 16 字节的“计数器块”，
+但 plaintext 可以任意长度。
+
+填充（padding）就是对明文在最后一个分组不足固定块大小时补齐，使它正好达到块大小。
+#####
+
+| 模式              | 是否需要 padding | 原因                       |
+| --------------- | ------------ | ------------------------ |
+| CBC / ECB       | ✅ 需要         | 每块独立加密，必须填满 16B          |
+| CTR / OFB / CFB | ❌ 不需要        | 可以按任意长度 XOR 生成密文，块对齐不是必需 |
+
+
+CTR 全称是 “Counter Mode”，中文通常叫 计数器模式。
+GCM 全称是 “Galois/Counter Mode”，中文通常叫 伽罗瓦/计数器模式。
+
+CTR 模式是流加密：
+生成 keystream（密钥流） → 与 input 按字节 XOR → 得到 output。
+
+mbedtls_aes_crypt_ctr(context, len, &offset, nonce, block, input, output);
+1. context —— AES 上下文
+CTR 模式完全依赖 AES-ECB 来生成 keystream // 对 block 进行 AES-ECB 加密 ⇒ 得到 keystream
+AES(key, counter_block)
+
+counter_block 就是 16 字节的“计数器”，是 CTR 模式加密时被 AES-ECB 加密的输入 block。// #####counter_block是CTR 模式每次加密的“输入块”#####
+它由：
+nonce（随机数/初始向量） + counter（计数器）
+组合而成，总长度 必须是 16 字节（AES block size）。
+
+counter_block 的具体结构:
+CTR 模式中最常见（也最推荐）的 counter_block 结构：
+[  8 bytes Nonce  ] [  8 bytes Counter  ]
+counter_block(0) = nonce || 0000000000000000
+counter_block(1) = nonce || 0000000000000001
+counter_block(2) = nonce || 0000000000000002
+...
+其中：
+nonce 固定不变
+counter 每次加密后自增
+每一个 counter_block 都用来生成一个 keystream block：
+keystream[i] = AES-ECB-Encrypt(key, counter_block(i))
+然后 XOR 明文。
+
+CTR 模式不是直接加密明文，而是：
+反复加密 counter_block
+得到一串伪随机 keystream
+keystream 和明文 XOR → 密文
+所以：
+CTR 的关键不在明文，而在这个不断变化的 counter_block
+
+#####
+counter_block 是什么？
+✔ CTR 模式每次加密的“输入块”
+✔ 由 nonce + counter 组成
+✔ 长度固定为 16 字节
+✔ 每加密一个 block，它就自增一次
+✔ AES-CTR 的安全性依赖 counter_block 不能重复
+#####
+
+#####
+AES-CTR 模式本质上就是：不停用 AES-ECB 加密“计数器 block”，得到 keystream，然后 keystream XOR 明文/密文。
+CTR 并不是一个新的 AES 算法，而是用 AES-ECB 当作“伪随机数生成器 (PRNG)” 来造 keystream。
+#####
+
+在 AES-CTR 模式中：// CTR = 流加密
+密文 = 明文 XOR keystream
+明文 = 密文 XOR keystream
+
+keystream 和明文是 逐位 XOR（bitwise XOR） 的
+也就是 一位一位地异或（bit XOR）。
+
+明文字节:   0x57   = 0b01010111
+keystream: 0xA3   = 0b10100011
+--------------------------------
+cipher结果: 0xF4   = 0b11110100   (按 bit XOR)
+
+
+#####
+CTR（Counter）模式不直接对明文做 AES 加密，而是：
+keystream_block = AES(key, counter_block)
+ciphertext = plaintext XOR keystream_block
+
+解密也是 XOR，因为：
+plaintext = ciphertext XOR keystream_block
+
+这种结构就类似于 流加密 stream cipher。
+
+CTR 模式内部的加密步骤就是：
+keystream = AES-ECB-Encrypt(key, counter_block)
+
+注意：
+✔ 只使用 AES-ECB 的加密操作
+✘ 不使用 AES-ECB 的解密操作（CTR 模式不需要）
+
+为什么要用 AES-ECB？
+因为 ECB（电子密码本）模式是：
+output = AES_encrypt(key, block)
+它没有 chaining 依赖，不需要前后块关系，所以可以单独生成一个伪随机输出，非常适合用来生成 keystream。
+也就是说：
+CTR 在内部只是反复调用 AES-ECB-Encrypt（单块加密）
+每次输入只变一个数：counter
+
+每次使用完一个 keystream block，就自增 counter（通常加 1，128-bit 自增）。
+
+你可以把 CTR 理解成：
+用 AES-ECB 做随机数发生器，随后把随机数和明文 XOR
+#####
+
+
+2. len —— 输入数据长度
+处理的字节数
+
+
+3. offset —— CTR 块内偏移（关键） // offset 表示 当前 keystream block 已经用了多少字节
+CTR 会按 16 字节（AES block size）生成密钥流:
+keystream_block_0 = AES(key, ctr_block_0) -> 16 字节
+keystream_block_1 = AES(key, ctr_block_1) -> 16 字节
+...
+但有可能：
+你一次没用完这 16 字节，你下次要续着用。
+
+这就是 offset 的用途：
+记录当前 keystream_block 里用了多少字节。
+
+mbedTLS 会自动更新 offset。
+
+
+4. nonce —— CTR 的计数器初值（counter block）
+ctr block = nonce + counter
+通常是 16 字节。
+
+nonce | counter
+每生成一个 block，就会自动将 counter +1。
+
+
+5. block —— 临时存储加密后的 counter block（即 keystream）
+内部使用，保存当前 keystream 的 16 字节内容
+AES(key, current_counter_block) → block[]
+如果数据一次没用完 16 字节，会从 block[offset] 继续取。
+
+
+6. input / output —— 输入与输出
+output[i] = input[i] XOR keystream[i]
+加密和解密用同一函数，因为：
+ciphertext XOR keystream = plaintext
+plaintext XOR keystream = ciphertext
+
+
+mbedtls_aes_crypt_ctr 做了 4 件事：
+1. 使用 nonce 和 offset 生成 keystream
+2. 和 input 做 XOR 得到 output
+3. 自动增加 counter
+4. 自动维护 offset
+
+counter_block = nonce || counter
+nonce：固定部分，一般在加密会话中唯一。
+counter：每个 block 自增的部分，保证每个 block 输入不同。
+AES(key, counter_block) → 生成 keystream block
+keystream XOR plaintext → ciphertext
+
+
+==================================================GCM（Galois/Counter Mode）核心特点
+加密方式
+底层采用 AES-CTR（计数器模式）生成密钥流
+明文与密钥流 XOR → 密文
+
+认证（Authentication）
+使用 GHASH（Galois Hash）算法对密文和附加数据生成 认证标签（Tag）
+可以检测数据在传输中是否被篡改
+
+特点
+加密 + 完整性验证（Authenticated Encryption）
+高性能，可并行加密
+常用于 TLS/HTTPS、IPsec、存储加密等
+
+
+==================================================ECB (Electronic Code Book)
+每 16 字节作为一个独立块直接加密：
+plaintext ----16B----> AES block encrypt
+
+
+==================================================CBC (Cipher Block Chaining)
+每个 16 字节块会与前一个密文块 XOR，然后加密：
+(C_i = AES( P_i XOR C_(i-1) ))
+每一块仍然是 16 字节。
+
+
+==================================================mt19937 & mbedtls_ctr_drbg_random
+本质上都是 伪随机数生成器（PRNG）
+
+安全性：
+| 特性    | mt19937                         | CTR_DRBG                         |
+| ----- | ------------------------------- | -------------------------------- |
+| 密码学安全 | ❌ 不安全，可以通过部分输出预测后续值             | ✅ 密码学安全，理论上无法预测下一位随机数（假设 AES 安全） |
+| 可预测性  | 很容易，如果知道内部状态（624个32位整数）就能预测所有输出 | 随机性依赖熵源和密钥，不容易预测                 |
+| 用途    | 模拟、游戏、抽样、非安全随机数                 | 密码学密钥生成、TLS/SSL 会话随机数、加密安全用途     |
+
+性能：
+mt19937：生成速度快，内存占用少，适合大量随机数生成。
+mbedtls_ctr_drbg_random：比 mt19937 慢，因为涉及 AES 加密操作，但安全性高。
+
+使用场景：
+| 场景               | 建议使用                                 |
+| ---------------- | ------------------------------------ |
+| 游戏、模拟、抽样         | mt19937                              |
+| 密码学、TLS/SSL、密钥生成 | CTR_DRBG (`mbedtls_ctr_drbg_random`) |
+| 普通随机任务又想保证一定随机性  | mt19937 或其他非密码学PRNG                  |
+| 对安全性有要求          | CTR_DRBG                             |
+
+
+==================================================mbedTLS 官方文档和示例代码也推荐分开加密上下文（Enc）和解密上下文（Dec）
+实践中通常分开 cipherContextEnc 和 cipherContextDec，保证 状态独立、线程安全、逻辑清晰
+
+cipherContextEnc = malloc(sizeof(mbedtls_aes_context));
+mbedtls_aes_init((mbedtls_aes_context *)cipherContextEnc);
+
+cipherContextDec = malloc(sizeof(mbedtls_aes_context));
+mbedtls_aes_init((mbedtls_aes_context *)cipherContextDec);
+
+#####
+mbedtls_aes_setkey_enc((mbedtls_aes_context *)cipherContextEnc, &cipherKey[0], 128);
+mbedtls_aes_setkey_dec((mbedtls_aes_context *)cipherContextDec, &cipherKey[0], 128);
+#####
+
+官方推荐分开 mbedtls_aes_context，即便同一密钥
+
+
+AES 模式
+ECB 模式（每个块独立）：
+加密和解密不会修改上下文内部状态
+可以共用一个上下文
+
+CBC/CTR/CFB/OFB/GCM 等模式：
+会维护内部状态（IV、计数器、缓冲）
+同一个上下文在连续加密和解密时可能出错
+这种情况下最好还是分开上下文
+
+
+==================================================SHA-1、SHA-256 里 后面的数字指的是输出摘要（digest）的位数。
+SHA（Secure Hash Algorithm，安全哈希算法）
+
+SHA-1
+→ 输出 160 位（bits） 的哈希值
+→ 所以全称其实是：Secure Hash Algorithm – 160-bit
+
+SHA-256
+→ 输出 256 位（bits） 的哈希值
+→ 属于 SHA-2 家族的一员，全称类似于：Secure Hash Algorithm – 256-bit
+
+数字含义：哈希输出长度（位数）
+特点：
+输入长度不固定，可以任意长。
+输出固定长度，保证摘要唯一性（抗碰撞和抗篡改）。
+
+
+位数越大：
+抗碰撞能力强（两个不同输入产生相同输出的概率更低）
+暴力破解难度更高（空间更大）
+安全性也越高
+
+那为什么输出是 40、64 个字符？
+因为哈希通常以 十六进制（hex） 展示：
+SHA-1：160 bit = 20 bytes → 20 × 2 = 40 个 Hex 字符
+SHA-256：256 bit = 32 bytes → 32 × 2 = 64 个 Hex 字符
+SHA1:   5baa61e4c9b93f3f0682250b6cf8331b7ee68fd8   (40 chars)
+SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 (64 chars)
+
+1111（二进制） = F（十六进制）
+
+
+==================================================OAEP 是 RSA 的一种填充方案
+RSA-2048
+数字含义：模数 N 的长度（单位：位）
+特点：
+公钥加密时，密文长度固定 = RSA 模数长度（所以 RSA-2048 加密后的密文一定是 256 字节），和明文长度无关。
+明文不能大于 密钥长度 - 填充长度，比如 OAEP 会占用一些字节。
+
+
+RSA 加 padding 的目的就是为了安全，使加密不可预测，不可被数学逆推，并对抗各种攻击。
+
+1. 防止数学结构导致的攻击（最核心）
+RSA 是纯数学运算：
+cipher = m^e mod n
+如果没有 padding，攻击者可以对你的密文做数学运算，推出原文。
+
+比如：
+同一个明文每次加密结果都一样:
+攻击者可以建一个字典：
+"yes" → X
+"no" → Y
+"login" → Z
+然后观察密文就能知道你发的什么。
+
+可被进行各种攻击:
+小明文攻击
+乘法性质攻击（因为 RSA 本质是乘法群）
+选择密文攻击（CCA）
+Bleichenbacher 攻击（针对 PKCS#1 v1.5）
+
+所以 padding 是用来打破 RSA 原本的数学结构，让密文不可预测。
+
+2. 避免明文太大或太小
+例如 RSA-2048 最大只能处理 256 字节 明文。
+padding 需要占掉一部分空间
+不加 padding 的明文必须严格小于 modulus，又要避免 00、01 等特殊开头产生安全漏洞，因此 padding 也是边界保护。
+
+3. 随机化加密（让每次加密结果不同）
+RSA 是 deterministic（确定性的），同输入同输出。
+
+Padding（尤其 OAEP）会：
+加随机数
+经过 Hash + Masking
+使每次加密结果不同
+
+因此即使发送同一个密码、同一个 token，每次加密结果也完全不同。
+
+
+
+RSA 的加密本质上就是对一个“大整数”做一次模幂运算，而这个“大整数”的大小被 模数 n 的 bit 长度 完全决定。
+RSA-2048 的模数 n 是 2048 bit = 256 字节
+RSA 加密操作是：
+cipher = (message_as_integer)^e mod n
+这里的 message_as_integer 必须小于 n，否则数学上没意义（结果会直接被 mod 掉，等于明文被“截断”）。
+
+所以 RSA 明文最大长度 = modulus（模数）的大小 = 2048 bit = 256 bytes
+但是注意：这 256 字节里必须包含 padding
+例如 RSA-OAEP 需要加：
+随机种子
+哈希
+mask
+固定头部结构
+
+实际用户可以放的“真正明文”更小
+| Padding            | 实际可用明文空间                       |
+| ------------------ | ------------------------------ |
+| PKCS#1 v1.5        | 256 - 11 = **245 bytes**       |
+| RSA-OAEP (SHA-1)   | 256 - 2×20 - 2 = **214 bytes** |
+| RSA-OAEP (SHA-256) | 256 - 2×32 - 2 = **190 bytes** |
+
+为什么不能直接加密超过 256 字节？
+因为 RSA 加密不是流式算法，它不能像 AES 那样分块处理。
+RSA 的数学定义要求：
+👉 明文必须先被视为一个大整数 m
+👉 必须满足 0 ≤ m < n
+而 n 的比特数就是 RSA 密钥长度。
+如果明文超过 256 字节，就无法转换成一个小于 n 的整数。
+
+
+那怎么加密大数据？
+现实中 不会用 RSA 加密长文本、文件、图片。
+真正的做法是混合加密：
+随机生成一个 AES 密钥（16 或 32 字节）
+RSA 加密这个 AES 密钥（几十字节）
+AES 加密所有大数据（任意长度）
+这叫 Hybrid Encryption（混合加密），TLS/HTTPS 也是这样做的。
+
+#####
+RSA 的密钥长度 = 模数 n 的比特数 = 能加密的最大整数大小。
+RSA-2048 的 n = 2048 bit = 256 bytes
+所以明文最大只能 256 字节，且要扣掉 padding。
+
+RSA 加密输出长度固定：
+RSA-2048 的模数 n 是 2048 bit = 256 字节
+不管你加密的明文是 16B、32B 甚至 1B，密文都是 256 字节
+
+对比 AES 加密：
+AES 是对称加密，密文长度 ≈ 明文长度 + padding/tag
+RSA 是不对称加密，密文长度 固定 = key size（RSA 的密钥长度，也就是 模数 n 的位数）
+#####
+
+RSA 常见的密钥长度：
+| 名称           | 实际 bit 长度 | 是否安全    | 备注              |
+| ------------ | --------- | ------- | --------------- |
+| **RSA-512**  | 512 bit   | ❌ 已被破解  | 几天就能因式分解        |
+| **RSA-768**  | 768 bit   | ❌ 不安全   | 被成功攻破过          |
+| **RSA-1024** | 1024 bit  | ⚠️ 过时   | 勉强安全，但不建议       |
+| **RSA-2048** | 2048 bit  | ✔️ 主流安全 | 目前工业标准          |
+| **RSA-3072** | 3072 bit  | ✔️ 更安全  | 类似 128-bit 对称安全 |
+| **RSA-4096** | 4096 bit  | ✔️ 非常安全 | 但速度更慢           |
+| **RSA-8192** | 8192 bit  | ✔️ 超级安全 | 但非常慢，不常用        |
+
+为什么常听到的是“RSA-2048”？
+因为 RSA-2048 是：
+安全性高
+速度可接受
+工业界默认
+TLS / HTTPS / JWT / Apple / Google 都用它
+
+
+更长的 RSA（3072/4096/8192）有什么问题？
+越长：
+加密/解密速度越慢
+公私钥文件非常大
+服务器开销明显增大
+
+
+#####
+RSA-2048 的模数 N = 256 字节（bytes），但不是 256 字符（characters）
+当你把 N 转换成字符串（Base64 / Hex / PEM）时，长度会更长。
+
+不同编码下的长度差异（非常关键）
+假设 N 是 256 字节：
+① 原始二进制（raw bytes）
+256 bytes
+
+② HEX（每字节 → 2 个十六进制字符）
+256 bytes → 512 hex characters
+
+③ Base64（每 3 字节 → 4 字符）
+256 bytes = 256 = (256/3)*4 ≈ 342 Base64 字符
+实际为 344 字符左右（含补位）。
+
+④ PEM（带头尾 + 换行）
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9...
+（约 450~500 行字符）
+-----END PUBLIC KEY-----
+
+
+为什么你看到的公钥都比 256 “字符”长？
+因为公钥不是用二进制保存，而是：
+DER 编码
+ASN.1 结构
+再 base64
+再添加 PEM header/footer
+
+
+| 编码方式       | RSA-2048 的 N 的长度 |
+| ---------- | ---------------- |
+| Raw bytes  | **256 字节**       |
+| Hex 字符串    | **512 字符**       |
+| Base64 字符串 | **约 344 字符**     |
+| PEM 公钥     | **400-500 行字符**  |
+
+公钥数据部分（public key），也就是 RSA 公钥的 modulus 和 exponent（n 和 e）经过编码后的结果。
+#####
+
+
+fv::CipherRng cipherRng;
+// 1. 初始化 RSA 上下文。
+mbedtls_rsa_context rsa = {0};
+mbedtls_rsa_init(&rsa);
+// 设置 RSA 填充模式为 PKCS#1 v2.1 OAEP，OAEP 使用 SHA1 作为哈希函数
+mbedtls_rsa_set_padding(&rsa, MBEDTLS_RSA_PKCS_V21, MBEDTLS_MD_SHA1);
+
+// 2. 将字符串形式的公钥参数转换成 MPI
+mbedtls_mpi rsaE, rsaN;
+mbedtls_mpi_init(&rsaE);
+mbedtls_mpi_init(&rsaN);
+if(strncmp(E, "0x", 2) == 0) {
+    mbedtls_mpi_read_string(&rsaE, 16, E + 2);
+} else {
+    mbedtls_mpi_read_string(&rsaE, 10, E);
+}
+if(strncmp(pubN, "0x", 2) == 0) {
+    mbedtls_mpi_read_string(&rsaN, 16, pubN + 2);
+} else {
+    mbedtls_mpi_read_string(&rsaN, 10, pubN);
+}
+// 3. 导入并完成公钥设置。
+if (mbedtls_rsa_import(&rsa, &rsaN, NULL, NULL, NULL, &rsaE) != 0) {
+    abort("mbedtls_rsa_import failed");
+}
+// 补全 RSA 结构体
+if (mbedtls_rsa_complete(&rsa) != 0) {
+    abort("mbedtls_rsa_complete failed");
+}
+// 4. 使用 OAEP 填充加密输入数据
+/*
+&rsa：RSA 公钥。
+fv::CipherRng::Bytes：随机数生成函数。
+&cipherRng：随机数生成函数的上下文
+(const uint8_t *)"", 0：可选标签（label），这里为空字符串。
+data.size()：输入数据长度。
+&data[0]：输入数据。
+output：输出缓冲区。
+*/
+int ret = mbedtls_rsa_rsaes_oaep_encrypt(&rsa, fv::CipherRng::Bytes, &cipherRng,  (const uint8_t *)"", 0, data.size(), &data[0], output);
+
+mbedtls_rsa_free(&rsa);
+
+
+==================================================RSA OAEP（Optimal Asymmetric Encryption Padding）里哈希函数有几个关键作用
+#####
+哈希函数它不是直接对数据加密，而是用来生成填充和保证安全性
+
+哈希函数在 OAEP 中的作用是生成掩码和绑定标签，用于保证加密数据的安全性、随机性和抗攻击性，而不是直接“加密”明文”。
+#####
+
+
+OAEP 的核心流程：
+RSA OAEP 加密的输入不是直接明文，而是经过 填充（padding） 生成一个固定长度的块，然后这个块才被 RSA 算法加密。
+明文 M
+   ↓
+填充（OAEP）
+   ├─ 生成随机种子 r（长度 = 哈希函数输出长度）
+   ├─ 使用哈希函数和 M + 填充生成 maskedData 和 maskedSeed
+   └─ 拼接生成加密块 EM
+   ↓
+RSA 公钥加密 EM
+   ↓
+密文 C
+
+OAEP 使用哈希函数的主要地方有两个：
+(a) 生成 lHash 用作固定标签哈希
+OAEP 可以带一个可选标签 L（这里为空字符串 ""）。
+哈希函数会先计算 lHash = Hash(L)。
+lHash 的长度等于哈希输出长度（SHA-1 是 20 字节）。
+这个哈希会参与后续的数据掩码运算，确保加密与标签绑定。
+(b) Mask Generation Function (MGF1)
+OAEP 生成一个随机种子 r。
+MGF1 函数用哈希函数把 r 扩展成和明文块相同长度的掩码
+mask = MGF1(r)
+maskedData = data XOR mask
+maskedSeed = r XOR MGF1(maskedData)
+哈希函数保证掩码是不可预测且均匀分布的。
+
+
+为什么必须用哈希函数？
+增加不可预测性：每次加密使用不同的随机种子 r，即使明文相同，密文也不同。
+提供固定长度输出：哈希函数输出长度固定，使填充算法能可靠生成正确长度的块。
+
+
+==================================================混合加密
+为什么要混合加密？
+RSA（非对称加密）
+安全，但速度慢
+能加密的数据有限（RSA-2048 最大 ~245B）
+不适合大数据或长文本
+
+AES（对称加密）
+超快，适合大数据
+密钥长度短（16/32B）
+需要共享密钥
+
+所以两者结合：用 RSA 保护 AES key，用 AES 保护大数据
+
+
+Hybrid Encryption 流程
+1. 生成随机 AES key
+比如 16B（AES-128）或 32B（AES-256）
+2. RSA 加密 AES key
+使用接收方的公钥
+输出长度 = RSA key size（RSA-2048 → 256B）
+3. AES 加密大数据
+明文可以任意长度
+输出密文 ≈ 明文长度 + padding / tag
+4. 发送
+数据包包含：
+    RSA 加密的 AES key（固定长度，如 256B）
+    AES 加密的大数据（任意长度）
+5. 接收方
+用 RSA 私钥解密 AES key
+用解密后的 AES key 解密大数据
+
+
+为什么叫混合加密？
+RSA：保证密钥安全传输（非对称）
+AES：高效加密大数据（对称）
+混合使用 = Hybrid Encryption
+
+
+HTTPS/SSL/TLS 并不是把 RSA 加密的 AES key 和大数据“直接物理分开”发送”，而是通过 TLS 协议的握手和记录层处理的。
+TLS（HTTPS）的混合加密流程
+假设客户端和服务器使用 RSA + AES（经典 TLS 1.2 RSA key exchange）：
+步骤：
+1. 客户端 → 服务器：发送 ClientHello
+2. 服务器 → 客户端：ServerHello + 证书（含公钥）
+3. 客户端生成 PreMasterSecret（随机 AES key）
+用服务器公钥 RSA 加密
+4. 客户端 → 服务器：发送 RSA 加密的 PreMasterSecret
+这里的 RSA 密文是固定长度（如 256B）
+5. 双方通过 PreMasterSecret 生成 MasterSecret → 派生出对称 session key（AES key）
+6. 后续所有数据传输：用派生出的 AES key 加密
+
+AES 加密的数据和 RSA 密钥不是“拼在一起”的：
+RSA 加密的 AES key 只在握手阶段发送一次
+AES key 用于加密后续的数据
+后续数据在 TLS 记录层里按 Record 分块 + AES 加密 发送
+换句话说：
+RSA 加密的密钥：握手消息里单独发送
+大数据：加密后分成 Record，一个个发送

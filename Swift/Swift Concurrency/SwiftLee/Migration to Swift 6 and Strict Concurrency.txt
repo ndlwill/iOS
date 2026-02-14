@@ -1,0 +1,281 @@
+https://github.com/AvdLee/Swift-Concurrency-Agent-Skill/blob/main/swift-concurrency/references/migration.md
+
+
+Why Migrate to Swift 6?
+Swift 6 doesn't fundamentally change how Swift Concurrency works—it enforces existing rules more strictly:
+
+Compile-time safety: Catches data races and threading issues at compile time instead of runtime
+Warnings become errors: Many Swift 5 warnings become hard errors in Swift 6 language mode
+Future-proofing: New concurrency features will build on this stricter foundation
+Better maintainability: Code becomes safer and easier to reason about
+
+#####
+Important: You can adopt strict concurrency checking gradually while still compiling under Swift 5. 
+You don't need to flip the Swift 6 switch immediately.
+#####
+
+
+
+==================================================Project Settings That Change Concurrency Behavior
+Before interpreting diagnostics or choosing a fix, confirm the target/module settings. 
+These settings can materially change how code executes and what the compiler enforces.
+
+
+Setting / feature	Where to check	Why it matters
+Swift language mode (Swift 5.x vs Swift 6)	    Xcode build settings (SWIFT_VERSION) / SwiftPM // swift-tools-version:	    Swift 6 turns many warnings into errors and enables stricter defaults.
+Strict concurrency checking	    Xcode: Strict Concurrency Checking (SWIFT_STRICT_CONCURRENCY) / SwiftPM: strict concurrency flags	    Controls how aggressively Sendable + isolation rules are enforced.
+Default actor isolation	    Xcode: Default Actor Isolation (SWIFT_DEFAULT_ACTOR_ISOLATION) / SwiftPM: .defaultIsolation(MainActor.self)	    Changes the default isolation of declarations; can reduce migration noise but changes behavior and requirements.
+NonisolatedNonsendingByDefault	    Xcode upcoming feature / SwiftPM .enableUpcomingFeature("NonisolatedNonsendingByDefault")	    Changes how nonisolated async functions execute (can inherit the caller’s actor unless explicitly marked @concurrent).
+Approachable Concurrency	    Xcode build setting / SwiftPM enables the underlying upcoming features	    Bundles multiple upcoming features; recommended to migrate feature-by-feature first.
+
+
+==================================================Six Migration Habits for Success
+1. Don't Panic—It's All About Iterations
+// Day 1: Enable strict concurrency, fix a few warnings
+// Build Settings → Strict Concurrency Checking = Complete
+
+// Day 2: Fix more warnings
+
+// Day 3: Revert to minimal checking if needed
+// Build Settings → Strict Concurrency Checking = Minimal
+
+
+2. Sendable by Default for New Code
+When writing new types, make them Sendable from the start:
+
+// ✅ Good: New code prepared for Swift 6
+struct UserProfile: Sendable {
+    let id: UUID
+    let name: String
+}
+
+
+3. Use Swift 6 for New Projects and Packages
+For new projects, packages, or files:
+
+Enable Swift 6 language mode from the start
+Use Swift Concurrency features (async/await, actors)
+Reduce technical debt before it accumulates
+
+You can enable Swift 6 for individual files in a Swift 5 project to prevent scope creep.
+
+
+4. Resist the Urge to Refactor
+Focus solely on concurrency changes. Don't combine migration with:
+
+Architecture refactors
+API modernization
+Code style improvements
+
+
+5. Focus on Minimal Changes
+Migrate one class or module at a time
+
+
+6. Don't Just @MainActor All the Things
+Don't blindly add @MainActor to fix warnings. Consider:
+
+Should this actually run on the main actor?
+Would a custom actor be more appropriate?
+Is nonisolated the right choice?
+
+
+Exception: For app projects (not frameworks), consider enabling Default Actor Isolation to @MainActor, since most app code needs main thread access.
+
+
+
+==================================================Step-by-Step Migration Process
+1. Find an Isolated Piece of Code
+Start with:
+
+Standalone packages with minimal dependencies
+Individual Swift files within a package
+Code that's not heavily used throughout the project
+
+Why: Fewer dependencies = less risk of falling into the concurrency rabbit hole.
+
+
+2. Update Related Dependencies
+Before enabling strict concurrency:
+
+// Update third-party packages to latest versions
+// Example: Vapor, Alamofire, etc.
+
+Apply these updates in a separate PR before proceeding with concurrency changes.
+
+
+3. Add Async Alternatives
+Provide async/await wrappers for existing closure-based APIs:
+
+// Original closure-based API
+@available(*, deprecated, renamed: "fetchImage(urlRequest:)", 
+           message: "Consider using the async/await alternative.")
+func fetchImage(urlRequest: URLRequest, 
+                completion: @escaping @Sendable (Result<UIImage, Error>) -> Void) {
+    // ... existing implementation
+}
+
+// New async wrapper
+func fetchImage(urlRequest: URLRequest) async throws -> UIImage {
+    return try await withCheckedThrowingContinuation { continuation in
+        fetchImage(urlRequest: urlRequest) { result in
+            continuation.resume(with: result)
+        }
+    }
+}
+
+Benefits:
+Colleagues can start using async/await immediately
+You can migrate callers before rewriting implementation
+Tests can be updated to async/await first
+Tip: Use Xcode's Refactor → Add Async Wrapper to generate these automatically.
+
+
+4. Change Default Actor Isolation (Swift 6.2+)
+For app projects, set default isolation to @MainActor:
+
+Xcode Build Settings:
+Swift Concurrency → Default Actor Isolation = MainActor
+
+Swift Package Manager:
+.target(
+    name: "MyTarget",
+    swiftSettings: [
+        .defaultIsolation(MainActor.self)
+    ]
+)
+This drastically reduces warnings in app code where most types need main thread access.
+
+
+5. Enable Strict Concurrency Checking
+Xcode Build Settings: Search for "Strict Concurrency Checking"
+
+Three levels available:
+Minimal: Only checks code that explicitly adopts concurrency (@Sendable, @MainActor)
+Targeted: Checks all code that adopts concurrency, including Sendable conformances
+Complete: Checks entire codebase (matches Swift 6 behavior)
+
+Swift Package Manager:
+.target(
+    name: "MyTarget",
+    swiftSettings: [
+        .enableExperimentalFeature("StrictConcurrency=targeted")
+    ]
+)
+
+Strategy: Start with Minimal → Targeted → Complete, fixing errors at each level.
+
+
+6. Add Sendable Conformances
+Even if the compiler doesn't complain, add Sendable to types that will cross isolation domains:
+// ✅ Prepare for future use
+struct Configuration: Sendable {
+    let apiKey: String
+    let timeout: TimeInterval
+}
+This prevents warnings when the type is used in concurrent contexts later.
+
+
+7. Enable Approachable Concurrency (Swift 6.2+)
+Xcode Build Settings: Search for "Approachable Concurrency"
+
+Enables multiple upcoming features at once:
+DisableOutwardActorInference
+GlobalActorIsolatedTypesUsability
+InferIsolatedConformances
+InferSendableFromCaptures
+NonisolatedNonsendingByDefault
+
+#####
+Warning: Don't just flip this switch for existing projects. Use migration tooling (see below) to migrate to each feature individually first.
+#####
+
+
+8. Enable Upcoming Features
+Xcode Build Settings: Search for "Upcoming Feature"
+
+Enable features individually:
+
+Swift Package Manager:
+
+.target(
+    name: "MyTarget",
+    swiftSettings: [
+        .enableUpcomingFeature("ExistentialAny"),
+        .enableUpcomingFeature("InferIsolatedConformances")
+    ]
+)
+Find feature keys in Swift Evolution proposals (e.g., SE-335 for ExistentialAny).
+
+
+9. Change to Swift 6 Language Mode
+Xcode Build Settings:
+Swift Language Version = Swift 6
+Swift Package Manager:
+// swift-tools-version: 6.0
+
+If you've completed all previous steps, you should have minimal new errors.
+
+
+
+==================================================Migration Tooling for Upcoming Features
+Swift 6.2+ includes semi-automatic migration for upcoming features.
+
+
+Xcode Migration
+Go to Build Settings → Find the upcoming feature (e.g., "Require Existential any")
+Set to Migrate (temporary setting)
+Build the project
+Warnings appear with Apply buttons
+Click Apply for each warning
+
+
+Example warning:
+// ⚠️ Use of protocol 'Error' as a type must be written 'any Error'
+func fetchData() throws -> Data  // Before
+func fetchData() throws -> any Data  // After applying fix
+
+
+Package Migration
+Use the swift package migrate command:
+
+# Migrate all targets
+swift package migrate --to-feature ExistentialAny
+
+# Migrate specific target
+swift package migrate --target MyTarget --to-feature ExistentialAny
+
+Output:
+> Applied 24 fix-its in 11 files (0.016s)
+> Updating manifest
+The tool automatically:
+Applies all fix-its
+Updates Package.swift to enable the feature
+
+
+Available migrations (as of Swift 6.2):
+ExistentialAny (SE-335) // https://github.com/swiftlang/swift-evolution/blob/main/proposals/0335-existential-any.md
+InferIsolatedConformances (SE-470) // Implemented (Swift 6.2)
+More features will add migration support over time
+
+
+==================================================Anti-Patterns to Avoid
+❌ Don't Use Task.sleep for Debouncing
+// ❌ Bad: Manual debouncing without backpressure
+func search(_ query: String) {
+    Task {
+        try? await Task.sleep(for: .milliseconds(500))
+        await performSearch(query)
+    }
+}
+Problem: Every keystroke spawns a new task. If user types fast, multiple tasks execute simultaneously after 500ms, causing out-of-order results and wasted API calls.
+
+Solution: Use debounce() from AsyncAlgorithms for automatic backpressure and cancellation.
+
+这段代码虽然“延迟了 500ms”，但没有控制上游请求的产生速度，也没有取消之前的任务 —— 所以任务会不断堆积。
+什么是 Backpressure（背压）？
+Backpressure 是并发 / 响应式编程里的一个核心概念：
+当下游处理不过来时，能够“反向施压”给上游，让上游减速、暂停或丢弃旧任务。
+换句话说：
+上游：用户输入（疯狂敲键盘）
+下游：performSearch(query)（网络请求）

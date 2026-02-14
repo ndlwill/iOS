@@ -10,6 +10,101 @@ Infrastructure: 基础设施
     Network
 
 
+Repository = 数据服务（数据来源）
+UseCase = 业务服务（业务规则）
+ViewModel = UI 服务（状态机）
+它们都是“服务”，但职责不同。
+
+ViewModel 按“页面”划分
+UseCase 按“业务流程”划分
+Repository 按“数据来源”划分
+
+
+ViewModel 只负责“页面状态”
+@MainActor
+final class PurchaseViewModel: ObservableObject {
+
+    @Published var isLoading = false
+    @Published var purchaseState: PurchaseState = .idle
+    @Published var subscriptionStatus: SubscriptionStatus = .unknown
+
+    private let useCase: PurchaseUseCase
+
+    init(useCase: PurchaseUseCase) {
+        self.useCase = useCase
+    }
+
+    func purchase(productId: String) async {
+        await execute {
+            try await useCase.purchase(productId: productId)
+        }
+    }
+
+    func restore() async {
+        await execute {
+            try await useCase.restore()
+        }
+    }
+
+    private func execute(_ block: () async throws -> PurchaseResult) async {
+        isLoading = true
+        do {
+            let result = try await block()
+            purchaseState = result.toState()
+        } catch {
+            purchaseState = .failed
+        }
+        isLoading = false
+    }
+}
+
+execute 是一个 通用的异步状态包装器（state wrapper）。
+它的作用是：
+把“loading + error + 状态更新”这套重复逻辑抽出来统一处理。
+
+它本质是：
+UI 状态管理器
+
+执行流程：
+开始 → isLoading = true
+执行 UseCase
+成功 → 更新状态
+失败 → 统一处理 error
+结束 → isLoading = false
+
+execute 的职责是：
+把 ViewModel 变成“状态机”
+输入：
+用户点击按钮
+输出：
+idle → loading → success/failed
+
+ViewModel 不再关心：
+
+业务细节
+StoreKit 细节
+只关心：
+状态流转
+
+这是哪种设计思想？
+它其实是：
+1️⃣ 模板方法模式（Template Method）
+execute 是固定流程：
+loading
+   ↓
+业务执行
+   ↓
+状态更新
+   ↓
+结束
+业务逻辑通过 closure 注入。
+
+2️⃣ Command 包装器
+它像一个：
+UICommandExecutor
+专门执行 UI 相关异步命令。
+
+
 ==================================================The Clean Architecture:
 https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html
 

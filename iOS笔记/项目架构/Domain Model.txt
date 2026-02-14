@@ -1,0 +1,455 @@
+domain model（领域模型）指的是：
+对“业务领域本身”的抽象建模，用代码或图形准确表达业务概念、规则和它们之间的关系。
+
+
+现实业务里有这些概念：
+用户（User）
+订单（Order）
+商品（Product）
+支付状态（Paid / Unpaid）
+订单只能在“未支付”时取消
+把这些业务事实抽象成代码，就是 domain model。
+
+struct Order {
+    let id: OrderID
+    let user: User
+    let items: [OrderItem]
+    private(set) var status: OrderStatus
+
+    mutating func cancel() throws {
+        guard status == .unpaid else {
+            throw OrderError.cannotCancelPaidOrder
+        }
+        status = .cancelled
+    }
+}
+
+这里的重点是：
+❌ 不是数据库字段
+❌ 不是 UI 展示
+✅ 是业务规则本身
+
+
+Domain Model 包含什么？
+通常包括：
+1️⃣ 领域对象（Entities / Value Objects）
+Entity：有身份的对象
+如 User, Order
+Value Object：只关心值，不关心身份
+如 Money, OrderID, Email
+
+
+如果上报依赖 VPN 状态 / 上下文？
+Domain 定义数据结构：
+struct VPNConnectContext {
+    let nodeID: String
+    let networkType: NetworkType
+}
+这是 Domain Model 里的「Value Object（值对象）」// 不是 Entity
+更精确地说：
+Domain Context / UseCase Input Model
+protocol VPNAnalyticsReporter {
+    func reportConnect(context: VPNConnectContext) async throws
+}
+UseCase 决定什么时候构造、传什么。
+
+
+有没有“身份（identity）”，生命周期里会不会被“追踪和修改”？
+有 → Entity
+没有 → Value Object
+
+| Entity 必备特征      | VPNConnectContext |
+| ---------------- | ----------------- |
+| 有唯一 identity（id） | ❌                 |
+| 生命周期可追踪          | ❌                 |
+| 会被修改状态           | ❌（全是 `let`）       |
+| 被长期保存            | ❌                 |
+| 表示“一个东西”         | ❌                 |
+| 表示“一次条件/上下文”     | ✅                 |
+
+Value Object 的标准特征:
+用完即丢
+相等性只看值
+不需要 id
+不关心“是不是同一个”
+
+#####
+Entity 需要唯一 identity，
+是为了在时间维度上识别“同一个对象”，
+即使它的属性全部发生变化。
+#####
+
+假设 Entity 没有 identity
+struct Order {
+    var status: OrderStatus
+}
+现在有两个 Order：
+Order(status: .paid)
+Order(status: .paid)
+它们是同一个订单吗？
+你无法回答。
+
+
+Value Object 为什么不需要 identity？
+因为它们 不关心时间。
+Money(amount: 100, currency: "USD")
+今天 100 USD
+明天 100 USD
+完全等价，不存在“同一个/不同一个”的问题
+
+
+2️⃣ 业务规则（Business Rules）
+状态流转规则
+校验逻辑
+约束条件
+
+order.canPay
+order.canCancel
+order.totalPrice
+
+3️⃣ 领域行为（Behavior）
+Domain Model 不是只有数据，而是“数据 + 行为”
+❌ 错误理解：
+struct Order {
+    var status: Int
+}
+
+✅ 正确理解：
+struct Order {
+    mutating func pay()
+    mutating func cancel()
+}
+
+
+Domain Model 不是什么？
+| 不是        | 原因             |
+| --------- | -------------- |
+| DTO / VO  | DTO 只是搬运数据     |
+| 数据库 Model | DB Model 为存储服务 | 
+| ViewModel | 为 UI 服务        |
+| 网络返回结构    | 为 API 服务       |
+
+（1）数据库 Model = 持久化模型（Persistence Model）
+就是和数据库表结构一一对应的那种 Model，字段基本等同于数据库字段。
+它的职责就是“如何存 / 怎么映射数据库”
+不是“业务上是什么东西”
+数据库表
+CREATE TABLE user (
+  id INTEGER PRIMARY KEY,
+  name TEXT,
+  age INTEGER,
+  created_at INTEGER
+);
+对应的数据库 Model
+struct UserDBModel {
+    let id: Int
+    let name: String
+    let age: Int
+    let createdAt: Int
+}
+
+（2）DTO 是“数据在边界上传输时的形态”
+长相取决于“数据从哪来 / 要到哪去”
+不是为了存，也不是为了业务
+所以：
+同一个 UserDBModel，可以对应多个 DTO。
+1️⃣ 最常见：网络返回 DTO（API → App）
+假设后端返回 JSON：
+{
+  "id": 123,
+  "username": "Tom",
+  "age": 18,
+  "created_at": 1690000000
+}
+DTO 会长这样
+struct UserResponseDTO: Decodable {
+    let id: Int
+    let username: String
+    let age: Int
+    let createdAt: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case username
+        case age
+        case createdAt = "created_at"
+    }
+}
+2️⃣ DB ↔ Domain 转换用的 DTO
+有些团队会在 Repository 层使用 DTO 做中转（可选做法）。
+struct UserPersistenceDTO {
+    let id: Int
+    let name: String
+    let age: Int
+    let createdAt: Int
+}
+会发现：
+它和 UserDBModel 长得一模一样
+这是正常的，但要注意：
+“长得一样 ≠ 职责一样”
+DBModel：服务于 ORM / 存储
+DTO：服务于数据传输
+
+（3）Domain Model（业务）
+struct User {
+    let id: UserID
+    let name: String
+    let age: Age
+    let createdDate: Date
+
+    var isAdult: Bool {
+        age.value >= 18
+    }
+}
+
+（4）ViewModel（给 View 用的）
+struct UserViewModel {
+    let displayName: String
+    let ageText: String
+    let createdDateText: String
+    let isAdult: Bool
+}
+
+从 Domain → ViewModel
+extension UserViewModel {
+    init(user: User, dateFormatter: DateFormatter) {
+        self.displayName = user.name
+        self.ageText = "\(user.age) 岁"
+        self.createdDateText = dateFormatter.string(from: user.createdDate)
+        self.isAdult = user.age >= 18
+    }
+}
+View 拿到以后可以直接用，不做任何判断
+
+
+API JSON
+   ↓
+UserResponseDTO        // 网络边界
+   ↓
+User                   // Domain Model
+   ↓
+UserDBModel             // 持久化
+   ↓
+数据库
+
+
+
+
+和 MVC / MVVM 的关系
+以 iOS 开发为例：
+View / ViewModel
+        ↓
+    Domain Model   ← 你真正的“业务核心”
+        ↓
+Repository / Service
+        ↓
+   API / Database
+
+Domain Model 应该完全不关心：
+UIKit / SwiftUI
+网络库
+数据库存储
+JSON 格式
+
+
+在 DDD（领域驱动设计）里的位置
+Domain Model 是 DDD 的核心
+包括：
+Entity
+Value Object
+Aggregate
+Domain Service
+
+
+==================================================例子
+场景：VPN 开关业务
+业务规则:
+VPN 只有两种状态：connected / disconnected
+当前是 connected → 执行 disconnect
+当前是 disconnected → 执行 connect
+UI / AppIntent / 系统扩展 不能直接改状态
+状态变化只能通过业务规则触发
+
+一、Domain 层（不依赖 UIKit / Network / System）
+1️⃣ 领域状态（Value Object / Enum）
+// Domain/VPN/VPNStatus.swift
+enum VPNStatus {
+    case connected
+    case disconnected
+}
+2️⃣ 领域实体（Entity）
+// Domain/VPN/VPNConnection.swift
+struct VPNConnection {
+    private(set) var status: VPNStatus
+
+    init(status: VPNStatus) {
+        self.status = status
+    }
+
+    mutating func toggle() {
+        switch status {
+        case .connected:
+            status = .disconnected
+        case .disconnected:
+            status = .connected
+        }
+    }
+
+    var canConnect: Bool {
+        status == .disconnected
+    }
+
+    var canDisconnect: Bool {
+        status == .connected
+    }
+}
+关键点：
+status 是私有写
+只能通过 toggle() 改
+规则集中在 Domain
+3️⃣ 领域接口（Repository Protocol）
+Domain 只定义“我需要什么能力”，不管怎么实现
+// Domain/VPN/VPNRepository.swift
+protocol VPNRepository { // #####Domain 层只定义「协议」#####
+    func currentStatus() async throws -> VPNStatus
+    func connect() async throws
+    func disconnect() async throws
+}
+
+4️⃣ 用例（Use Case / Interactor）
+用例 = 一个完整的业务动作
+
+// Domain/VPN/ToggleVPNUseCase.swift
+struct ToggleVPNUseCase {
+    let repository: VPNRepository
+
+    func execute() async throws -> VPNStatus {
+        let current = try await repository.currentStatus()
+        var connection = VPNConnection(status: current)
+
+        if connection.canConnect {
+            try await repository.connect()
+        } else {
+            try await repository.disconnect()
+        }
+
+        connection.toggle()
+        return connection.status
+    }
+}
+
+二、Infrastructure 层（iOS / System 实现）
+5️⃣ Repository 的 iOS 实现 // ###这个可以切换不同的实现，这边使用了NetworkExtension，即NEVPNRepository###
+
+// Infrastructure/VPN/NEVPNRepository.swift
+import NetworkExtension
+
+final class NEVPNRepository: VPNRepository {
+
+    func currentStatus() async throws -> VPNStatus {
+        // NEVPNManager / 状态映射
+        return .disconnected
+    }
+
+    func connect() async throws {
+        // startVPNTunnel()
+    }
+
+    func disconnect() async throws {
+        // stopVPNTunnel()
+    }
+}
+NetworkExtension 只出现在这里
+
+三、Presentation 层（MVVM / SwiftUI）
+6️⃣ ViewModel
+
+// Presentation/VPN/VPNViewModel.swift
+@MainActor
+final class VPNViewModel: ObservableObject {
+
+    @Published private(set) var status: VPNStatus = .disconnected
+
+    private let toggleVPN: ToggleVPNUseCase
+
+    init(toggleVPN: ToggleVPNUseCase) {
+        self.toggleVPN = toggleVPN
+    }
+
+    func toggle() async {
+        do {
+            status = try await toggleVPN.execute()
+        } catch {
+            print("toggle vpn error:", error)
+        }
+    }
+}
+ViewModel 不写任何业务规则
+
+7️⃣ SwiftUI View
+struct VPNView: View {
+    @StateObject var vm: VPNViewModel
+
+    var body: some View {
+        Button(vm.status == .connected ? "Disconnect" : "Connect") {
+            Task {
+                await vm.toggle()
+            }
+        }
+    }
+}
+
+
+四、依赖注入（App 启动时组装）
+let repo = NEVPNRepository()
+let useCase = ToggleVPNUseCase(repository: repo)
+let vm = VPNViewModel(toggleVPN: useCase)
+
+
+
+Repository 是“领域模型获取和保存数据的唯一入口”，
+它把 Domain 和 具体实现（API / DB / System / VPN）隔离开。
+
+#####
+Domain 只知道：我要数据 // 例如上面的VPNConnection，需要VPNStatus数据
+Repository 决定：数据从哪来、怎么来
+#####
+
+
+为什么不直接在 Domain / ViewModel 用 NEVPNManager？
+❌ 直接用的后果
+NEVPNManager.shared.startVPNTunnel()
+你会遇到：
+AppIntent 能不能用？
+Extension 能不能用？
+测试怎么写？
+状态同步怎么做？
+将来换实现怎么办？
+
+所有地方都绑死 iOS 系统 API
+
+
+Repository 负责的:
+✅ 数据来源选择
+✅ 系统 / 网络 / DB 适配
+✅ 状态转换（System → Domain）
+✅ 屏蔽技术细节
+
+View / ViewModel / AppIntent
+            ↓
+        UseCase
+            ↓
+       Repository  ← 关键边界
+            ↓
+   System / API / DB
+
+
+单元测试里 Repository 的价值
+final class MockVPNRepository: VPNRepository {
+    var status: VPNStatus = .disconnected
+
+    func currentStatus() async throws -> VPNStatus { status }
+    func connect() async throws { status = .connected }
+    func disconnect() async throws { status = .disconnected }
+}
+不用真 VPN，也能测试所有业务

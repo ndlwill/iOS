@@ -1,0 +1,48 @@
+| 情况                                                             | 对象堆内存 | 指针存储位置 | 内存管理            |
+| -------------------------------------------------------------- | ----- | ------ | --------------- |
+| `let obj = MyClass()`                                          | 堆     | 栈      | ARC 自动          |
+| `UnsafeMutablePointer<MyClass>.allocate()` + `initialize(to:)` | 堆     | 堆      | ARC 管理对象，手动管理指针 |
+
+
+let ptr = UnsafeMutablePointer<MyClass>.allocate(capacity: 1)
+ptr.initialize(to: MyClass())
+需要手动
+ptr.deinitialize(count: 1)
+ptr.deallocate()
+
+因为 allocate(capacity:) 分配了一块 指针类型的堆内存，用来存储指针。// ptr指向了在堆内存创建的指针（UnsafeMutablePointer<MyClass>.allocate(capacity: 1)， 指针.allocate）
+initialize(to:) 创建了对象 MyClass() → 堆上分配。 // 等价于 let obj = MyClass() 的 MyClass()
+结果：
+对象在堆上
+指针内存在堆上
+需要手动 deinitialize 和 deallocate 指针内存
+ARC 自动管理对象本身
+#####
+所以 allocate 这种方式对比 let obj = MyClass() 就是要手动释放内存
+#####
+
+
+而
+let obj = MyClass()
+实际上发生了两件事：
+1. 堆上分配对象内存
+Swift 的 class 实例总是堆分配的。
+MyClass() 会触发底层的 alloc（类似 Objective-C 的 objc_allocClassInstance），在堆上分配足够的内存来存储对象的属性和元信息。
+2. 栈上存储引用指针
+let obj 是一个指针（引用），存储在栈上，指向堆上的对象。
+
+
+
+let obj = MyClass()
+调用 MyClass() → Swift/ARC 会在堆上分配内存存储对象实例。
+对象本身的内存由 ARC 自动管理。
+
+let ptr = UnsafeMutablePointer<MyClass>.allocate(capacity: 1)
+ptr.initialize(to: MyClass())
+指针本身指向的内存块：
+由 allocate(capacity:) 分配
+只是一个原始内存块，本质是存储 MyClass 指针的空间
+不会被 ARC 管理 → 你必须手动 deinitialize + deallocate
+初始化的对象 MyClass()：
+还是在堆上
+由 ARC 管理 → 当引用计数为 0 自动释放

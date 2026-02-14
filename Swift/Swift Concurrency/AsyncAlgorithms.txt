@@ -1,0 +1,75 @@
+https://github.com/AvdLee/Swift-Concurrency-Agent-Skill/blob/main/swift-concurrency/references/async-algorithms.md
+
+Top 5 most common operators:
+import AsyncAlgorithms
+
+// 1. Debounce rapid inputs
+for await query in searchQueryStream.debounce(for: .milliseconds(500)) {
+    await performSearch(query)
+}
+
+// 2. Throttle repeated actions
+for await _ in buttonClicks.throttle(for: .seconds(1)) {
+    await performAction()
+}
+
+// 3. Merge multiple independent streams
+for await message in chat1Messages.merge(chat2Messages) {
+    display(message)
+}
+merge：把多条流“并到一条”，不做配对、不等人
+
+行为规则:
+任何一个 stream 有新值 → 立刻产出
+不等待另一条流
+不组合、不配对、不复用
+顺序 = 真实到达顺序
+所有输入流都结束后，merge 才结束
+
+假设：
+chat1Messages:  A ----- B -------- C
+chat2Messages:    1 ---- 2 ---- 3
+merge 的结果是：
+A → 1 → B → 2 → 3 → C   （按真实到达顺序）
+
+
+// 4. Combine dependent values
+for await (username, email) in usernameStream.combineLatest(emailStream) {
+    validateForm(username: username, email: email)
+}
+combineLatest：只要任一边有新值，就组合“最新的两个”
+时间线例子
+假设：
+usernameStream:  A ---- B -------- C
+emailStream:     ---- 1 ---- 2 ----
+触发结果是：
+(A, 1)
+(B, 1)
+(B, 2)
+(C, 2)
+
+行为规则:
+两边都至少来过一次值之后，才开始产出
+任意一边更新，就用「各自的最新值」组合一次
+不要求一一对应、数量相等
+
+// 5. Zip paired operations
+for await (image, metadata) in imageStream.zip(metadataStream) {
+    await cache(image: image, metadata: metadata)
+}
+
+zip：严格一对一，谁慢等谁
+行为规则:
+等待 两边各来一个
+按顺序 第 n 个配第 n 个
+其中一边结束，整体就结束
+不会“复用旧值”
+
+时间线例子
+同样的输入：
+imageStream:     A ---- B -------- C
+metadataStream: ---- 1 ---- 2 ----
+产出是：
+(A, 1)
+(B, 2)
+C 没有对应的 metadata，直接被丢弃

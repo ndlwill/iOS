@@ -12,6 +12,128 @@ https://github.com/swiftlang/swift-evolution/blob/main/proposals/0314-async-stre
 Async streams allow you to replace existing code that is based on closures or Combine publishers.
 #####
 
+AsyncSequence 是 Swift 5.5 引入的 异步序列协议
+可以使用 for await 循环迭代异步元素。
+每个元素可能来自异步事件（网络、定时器、通知等）。
+类似于 Sequence，但支持 await 异步等待。
+struct Counter: AsyncSequence {
+    typealias Element = Int
+    let max: Int
+    
+    struct AsyncIterator: AsyncIteratorProtocol {
+        let max: Int
+        var current = 0
+        
+        mutating func next() async -> Int? {
+            guard current < max else { return nil }
+            current += 1
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+            return current
+        }
+    }
+    
+    func makeAsyncIterator() -> AsyncIterator {
+        AsyncIterator(max: max)
+    }
+}
+
+// 使用
+for await number in Counter(max: 3) {
+    print(number)
+}
+// 输出：1 2 3，每次间隔0.5秒
+结论：AsyncSequence 是抽象概念，它定义了异步获取元素的协议。
+
+
+AsyncStream：异步序列的具体实现
+struct AsyncStream<Element>: AsyncSequence
+AsyncStream 是 Swift 标准库提供的一个 异步序列实现，可以通过外部推送值的方式生成元素，常用于事件流。
+提供 AsyncStream.Continuation 对象：
+yield(_:) → 推送一个元素
+finish() → 完成序列
+terminate() → 异常终止
+支持 自动清理（RAII），当 Continuation 被释放时，流会自动结束。
+let stream = AsyncStream<String> { continuation in
+    DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
+        continuation.yield("Hello")
+    }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+        continuation.yield("World")
+        continuation.finish()
+    }
+}
+
+Task {
+    for await message in stream {
+        print(message)
+    }
+}
+// 输出：Hello （1秒后）
+//      World （2秒后）
+
+
+AsyncSequence：
+封装异步生成的元素，如计时器、网络流、异步文件读取。
+
+AsyncStream：
+把传统回调/代理转换成异步序列：
+    NotificationCenter 事件
+    UI 控件事件（按钮点击）
+    WebSocket 消息
+异步队列、生产者-消费者模型
+类似 Rust / Go 的 channel
+
+
+AsyncStream迭代逻辑：
+AsyncStream 内部维护一个 事件队列，以及一个 Continuation 对象（AsyncStream.Continuation）。
+当你调用 yield(_:) 时，会把元素加入队列。
+AsyncStream.Iterator 的 next() 方法会从队列中异步取出元素。
+当队列为空时，next() 会 挂起，等待新的元素或 finish。
+
+注意：虽然内部有 Continuation 对象，但它只是生产者接口，不是实现 AsyncSequence 的对象。真正实现 AsyncSequence 的是 AsyncStream 本身和它的 Iterator。
+
+stream 直接就是 AsyncSequence 类型，可以被 for await 使用。
+Continuation 只是辅助生成元素
+
+AsyncStream = 可迭代的异步序列
+Continuation = “生产端”接口
+Iterator = “消费端”迭代器
+
+
+#####
+Continuation 是 AsyncStream 的“生产端接口”，用来 向 AsyncStream 推送元素或结束流。
+AsyncStream 本身是异步序列（消费者可以用 for await 遍历）。
+Continuation 让你在任意时刻把新元素放进序列，或者通知序列结束。
+它是一种 生产者-消费者模型的桥梁
+#####
+
+
+回调转异步流:
+let stream = AsyncStream<Int> { continuation in
+    timer.schedule { value in
+        continuation.yield(value)
+    }
+}
+
+WebSocket / 网络事件:
+let stream = AsyncStream<Message> { continuation in
+    websocket.onReceive = { msg in
+        continuation.yield(msg)
+    }
+}
+
+RAII 自动清理:
+let stream = AsyncStream<Int> { continuation in
+    // 当 continuation 被释放时，AsyncStream 自动 finish
+}
+
+
+[Producer] --yield--> [AsyncStream.Continuation] --push--> [AsyncStream Queue] --next()--> [Consumer]
+Producer：你的业务逻辑、回调、计时器等
+Continuation：发送数据、结束流、通知终止
+AsyncStream Queue：内部缓冲队列
+Consumer：for await 循环或 Task
+
 
 ==================================================What is an AsyncThrowingStream?
 #####

@@ -1,0 +1,196 @@
+https://www.avanderlee.com/swiftui/swiftui-architecture-structure-views-for-reusability-and-clarity/
+
+
+The Problem: A Growing View Body
+struct Article {
+    let title: String
+    let url: URL
+}
+
+struct ArticleListView: View {
+    let articles: [Article]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Header
+            Text("Articles")
+                .font(.largeTitle)
+                .bold()
+
+            ForEach(articles, id: \.url) { article in
+                HStack {
+                    // Article Row
+                    VStack(alignment: .leading) {
+                        Text(article.title)
+                            .font(.headline)
+                        Text(article.url.absoluteString)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundStyle(.gray)
+                }
+                // Card Styling
+                .padding()
+                .background(Color(.secondarySystemBackground))
+                .cornerRadius(8)
+            }
+        }
+        .padding()
+    }
+}
+
+
+
+Extensions and Computed Properties:
+Many developers try to reduce the body size by moving parts of it into extensions. 
+The extensions live in the same file and often add to the length of the file itself. 
+In my opinion, readability does not improve, and we end up with even more lines of code to scan.
+
+Here’s an example of our ArticleListView, but with subviews migrated into an extension:
+extension ArticleListView {
+    var header: some View {
+        Text("Articles")
+            .font(.largeTitle)
+            .bold()
+    }
+
+    func articleRow(for article: Article) -> some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(article.title)
+                    .font(.headline)
+                Text(article.url.absoluteString)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .foregroundStyle(.gray)
+        }
+        .padding()
+        .background(Color(.secondarySystemBackground))
+        .cornerRadius(8)
+    }
+}
+
+
+var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+        header
+        ForEach(articles, id: \.url, content: articleRow)
+    }
+    .padding()
+}
+#####
+This works, but it only moves code around — it doesn’t necessarily make your view more maintainable or reusable.
+#####
+
+
+We need a better approach towards an improved SwiftUI Architecture.
+
+The Better Approach: Extract and Reuse Intelligently
+Instead of treating extensions and computed properties as dumping grounds, use them strategically.
+
+
+1. Extract Dedicated SwiftUI Views
+If a part of your view has its own concern, give it its own View:
+struct ArticleRow: View {
+    let article: Article
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(article.title)
+                    .font(.headline)
+                Text(article.url.absoluteString)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .foregroundStyle(.gray)
+        }
+        .padding()
+        .background(Color(.secondarySystemBackground))
+        .cornerRadius(8)
+    }
+}
+And use it in your list:
+ForEach(articles, id: \.url) { article in
+    ArticleRow(article: article)
+}
+
+Now your main view reads like a high-level overview — not an implementation detail. 
+Each view ends up having a single responsibility. 
+As soon as we add more states to ArticleRow, we can do this in a single place. 
+It also allows us to more easily define SwiftUI previews for each state. 
+We can #Preview SwiftUI Views using Macros or use @Previewable to easily make dynamic SwiftUI Previews.
+
+
+2. Create Reusable View Modifiers
+When you notice repeated styling, extract it as a modifier:
+struct CardStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding()
+            .background(Color(.secondarySystemBackground))
+            .cornerRadius(8)
+    }
+}
+
+extension View {
+    func cardStyle() -> some View {
+        modifier(CardStyle())
+    }
+}
+
+Then use it anywhere:
+
+ArticleRow(article: article)
+    .cardStyle()
+
+Modifiers make your design language consistent across views — and they’re incredibly easy to test and reuse.
+
+
+The result allows you to update the styling of your app in a single place with reusable code. 
+Btw, you don’t have to use a view modifier for this. You can also simply use a View extension:
+extension View {
+    func cardStyle() -> some View {
+        self.padding()
+            .background(Color(.secondarySystemBackground))
+            .cornerRadius(8)
+    }
+}
+
+3. Build Generic View Extensions
+For instance, showing a title section is common:
+extension View {
+    func sectionHeader(_ title: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.title3)
+                .bold()
+            self
+        }
+    }
+}
+
+You can now write:
+
+VStack {
+    ForEach(articles, id: \.url) { article in
+        ArticleRow(article: article)
+    }
+}
+.sectionHeader("Articles")
+
+This kind of extension keeps your code readable while promoting a shared UI language.
+
+
+
+The Rule of Thumb for a Good SwiftUI Architecture:
+“Does this piece of UI have a clear purpose and potential to be reused?”
+If yes → make it a new View or ViewModifier.
+If not → keep it local or use a computed property.
