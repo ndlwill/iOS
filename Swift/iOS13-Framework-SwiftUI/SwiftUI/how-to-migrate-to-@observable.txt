@@ -1,0 +1,1042 @@
+https://swiftandmemes.com/how-to-migrate-to-observable-without-breaking-your-app/?utm_source=fatbobman%20weekly%20issue%20124&utm_medium=web
+
+
+==================================================ObservableObject
+Things got even worse when you wanted to make the view testable. 
+The easiest way to do that was wrapping your view model with a protocol so you could swap in a mock for testing (or previews). 
+With ObservableObject, you’d hit a wall immediately: 
+protocol ProfileViewModelProtocol: ObservableObject { 
+    var username: String { get set } var isLoading: Bool { get } func save() 
+} 
+
+// ❌ Doesn't compile 
+struct ProfileView: View { 
+    @ObservedObject var viewModel: any ProfileViewModelProtocol 
+    // Error: Type 'any ProfileViewModelProtocol' cannot conform to 'ObservableObject' 
+} 
+
+ObservableObject has an associated type (ObjectWillChangePublisher), which means you can’t use it as an existential.
+The only solution? Make your view generic: 
+// ✅ Compiles, but now you have a generic view 
+struct ProfileView: View { @ObservedObject var viewModel: ViewModel var body: some View { /* ... */ } }
+
+
+Your ViewFactory now needs to handle the generic. Your coordinator becomes a mess of type constraints.
+Parent views that embed ProfileView either become generic themselves or resort to AnyView type erasure:
+
+// Option A: Factory returns AnyView (lose type safety) func makeProfileView() -> AnyView { 
+    AnyView(ProfileView(viewModel: RealProfileViewModel())) 
+} 
+
+// Option B: Factory becomes generic (complexity spreads) func makeProfileView(viewModel: VM) -> ProfileView { 
+    ProfileView(viewModel: viewModel) 
+}
+
+
+这个问题本质上是：
+为什么 ObservableObject 不能写成 any ObservableObject？
+核心原因就一句话：
+因为 ObservableObject 有 associatedtype，它不是“存在类型安全”的协议。
+
+
+1️⃣ 关键点：ObservableObject 有关联类型
+ObservableObject 的定义大概是这样的（简化版）：
+public protocol ObservableObject: AnyObject {
+    associatedtype ObjectWillChangePublisher: Publisher
+        where ObjectWillChangePublisher.Failure == Never
+
+    var objectWillChange: Self.ObjectWillChangePublisher { get }
+}
+
+注意这句：
+associatedtype ObjectWillChangePublisher
+这就意味着：
+每一个具体的 ObservableObject，它的 objectWillChange 类型都可能不同。
+
+class A: ObservableObject {
+    let objectWillChange = ObservableObjectPublisher()
+}
+
+class B: ObservableObject {
+    let objectWillChange = MyCustomPublisher()
+}
+
+
+2️⃣ 那为什么 any ProfileViewModelProtocol 不行？
+问题来了：
+existential (any) 必须“类型完整”
+当你写：
+any ProfileViewModelProtocol
+编译器必须知道：
+它的 objectWillChange 是什么具体类型？
+这个 publisher 是什么？
+
+但是！
+因为 ObservableObject 有 associatedtype，
+协议本身不完整。
+
+你只说了：
+“这是某种 ObservableObject”
+
+但没有告诉编译器：
+它的 ObjectWillChangePublisher 是什么。
+编译器没法生成正确的 witness table。
+所以报错：
+Type 'any ProfileViewModelProtocol' cannot conform to 'ObservableObject'
+
+
+3️⃣ 为什么换成泛型就可以？
+struct ProfileView<ViewModel: ProfileViewModelProtocol>: View {
+    @ObservedObject var viewModel: ViewModel
+}
+这里没有用 any。
+这里是：
+ViewModel 是某个具体类型
+
+泛型在编译期会被“特化”：
+如果你传：
+ProfileView(viewModel: RealProfileViewModel())
+编译器会生成：
+ProfileView<RealProfileViewModel>
+
+这时候：
+ObjectWillChangePublisher 是确定的
+类型完整
+没有 existential 问题
+
+所以能编译。
+
+
+
+类比一下:
+protocol Box {
+    associatedtype Item
+    var item: Item { get }
+}
+
+你不能写：
+let box: any Box
+
+因为：
+这个 box 里面到底装的是什么类型？
+编译器不知道。
+
+必须写：
+struct MyView<T: Box>
+同一个道理。
+
+
+为什么 @Observable 就没这个问题？
+@Observable
+protocol ProfileViewModelProtocol {
+    var username: String { get set }
+}
+是可以用 any 的。
+因为它不依赖 associatedtype。
+
+
+#####
+最底层总结
+带 associatedtype 或 Self 要求的协议，不能作为 existential（any）使用。
+#####
+
+
+==================================================@Observable
+#####
+Apple’s Observation framework, introduced in iOS 17, solves both problems: the property wrapper zoo and the generics nightmare.
+
+
+First of all, the observation model changed.
+ObservableObject used Combine under the hood: any @Published property change fired objectWillChange, 
+and every subscriber got notified regardless of which property they cared about.
+The @Observable uses compile-time macro magic to track property access per-view.
+If your view only reads username, it won’t redraw when isLoading changes.
+Essentially, @Observable uses Swift macros to automatically generate property access tracking code at compile time.
+
+https://www.pointfree.co/collections/swiftui/observation
+
+More importantly for us however, Observable is a marker protocol with no associated types. 
+Which means existentials just work:
+
+import Observation protocol ProfileViewModelProtocol: Observable 
+{ var username: String { get set } var isLoading: Bool { get } func save() } 
+
+// ✅ No generics needed struct ProfileView: View 
+{ var viewModel: any ProfileViewModelProtocol var body: some View { /* ... */ } }
+#####
+
+No generic views. No type erasure. No cascading refactors. 
+Your view takes a protocol, your factory returns a concrete type, and everyone’s happy.
+
+
+This alone makes @Observable worth the migration.
+
+The Find & Replace Migration (And Why It Almost Works):
+The mapping seems obvious: 
+ObservableObject → @Observable 
+@Published → just delete it 
+@StateObject → @State 
+@ObservedObject → …remove it?
+
+但会有问题：
+// Old: ObservableObject
+final class ProfileViewModel: ObservableObject {
+    @Published var username: String = ""
+    @Published var bio: String = ""
+}
+
+struct ProfileView: View {
+    @ObservedObject var viewModel: ProfileViewModel
+
+    var body: some View {
+        VStack {
+            Text(viewModel.username)
+            Text(viewModel.bio)
+        }
+    }
+}
+
+// Migrated: @Observable
+@Observable
+final class ProfileViewModel {
+    var username: String = ""
+    var bio: String = ""
+}
+
+struct ProfileView: View {
+    let viewModel: ProfileViewModel  // Just removed @ObservedObject, right?
+
+    var body: some View {
+        VStack {
+            Text(viewModel.username)
+            Text(viewModel.bio)
+        }
+    }
+}
+And if the parent view creates the ProfileViewModel inline, it might even appear to work:
+// This works (by accident)
+struct ParentView: View {
+    var body: some View {
+        ProfileView(viewModel: ProfileViewModel())
+    }
+}
+But the moment your view model comes from somewhere else – 
+a coordinator, a parent view’s state, a factory – observation silently breaks:
+
+// ❌ FAILURE CASE 1: Factory creates fresh view model each time
+class Coordinator {
+    func makeProfileView() -> ProfileView {
+        // Fresh instance every call -- no persistence!
+        ProfileView(viewModel: ProfileViewModel())
+    }
+}
+// Each time SwiftUI rebuilds the view hierarchy, 
+// the coordinator hands out a brand new view model.
+// User's changes? Gone.
+
+// ❌ FAILURE CASE 2: Child creates view model without @State
+struct ProfileView: View {
+    let viewModel = ProfileViewModel()  // Recreated on EVERY parent redraw!
+    
+    var body: some View {
+        Text(viewModel.username)  // Always shows default value
+    }
+}
+
+// ✅ WORKS: Parent owns with @State, child receives
+struct ParentView: View {
+    @State private var viewModel = ProfileViewModel()  // Preserved // 这里 @State 会保证 viewModel 只创建一次，之后 render 多少次都不会重新 new。
+    
+    var body: some View {
+        ProfileView(viewModel: viewModel)  // This actually works!
+    }
+}
+
+struct ProfileView: View {
+    var viewModel: ProfileViewModel  // Plain property is fine here
+    
+    var body: some View {
+        Text(viewModel.username)  // Will update when username changes
+    }
+}
+
+
+
+There’s another trap waiting for you: nested observable objects.
+@Observable
+class UserSettings {
+    var theme: String = "light"
+    var fontSize: Int = 14
+}
+
+@Observable
+class UserSession {
+    var currentUser: String = ""
+    var settings: UserSettings = UserSettings()
+}
+
+struct SettingsView: View {
+    var session: UserSession
+
+    var body: some View {
+        Text("Current theme: \(session.settings.theme)")
+    }
+}
+
+Now you tap a button somewhere that does session.settings.theme = "dark". 
+Does the view update? 
+
+Yes – but only because both UserSession and UserSettings are marked @Observable. 
+The observation framework correctly follows the property access chain through nested observable objects. 
+But mix Observable with a plain class, and you’re back to silent failures.
+
+You can’t just slap the macro on a class and assume everything downstream will magically become observed.
+
+
+==================================================The @StateObject Lifecycle Trap
+So far, we’ve covered views that receive view models from elsewhere. 
+But what about views that create their own models? Unfortunately, 
+an even more insidious bug awaits if you migrate such views to use @Observable view models. 
+This one doesn’t just cause missed updates. It tanks performance, triggers duplicate network calls, and can lock your UI in an infinite redraw loop. 
+Let’s take a look at child view that owns its view model:
+
+// Old: ObservableObject
+struct TransactionListView: View {
+    @StateObject var viewModel = TransactionListViewModel()
+
+    var body: some View {
+        List(viewModel.transactions) { transaction in
+            TransactionRow(transaction: transaction)
+        }
+        .onAppear { viewModel.loadTransactions() }
+    }
+}
+
+As you surely know, @StateObject tells SwiftUI to create the view model once and preserve it across parent view redraws.
+Without it, every time the parent view is regenerated, TransactionListView would get a fresh TransactionListViewModel instance and call loadTransactions() again.
+
+
+Now watch what happens with a naive migration:
+// ❌ Broken migration
+struct TransactionListView: View {
+    let viewModel = TransactionListViewModel()  // Recreated on every parent redraw!
+
+    var body: some View {
+        List(viewModel.transactions) { transaction in
+            TransactionRow(transaction: transaction)
+        }
+        .onAppear { viewModel.loadTransactions() }
+    }
+}
+
+No compiler warning. No runtime error. Just a view model that gets destroyed and recreated on every render.
+Each time, a fresh call to loadTransactions() hits your API.
+If the view model does heavy computation with the fetched data, your UI stutters. 
+If it holds the state the user was editing, it vanishes mid-keystroke.
+Moreover, if the child view’s state changes after its view model fetches data (which is the whole point), 
+the parent view might need to redraw – creating a fresh instance of the child view’s view model and perpetuating an endless loop.
+
+this was the exact source of all the views stuck in redraw loops. Parent redraws child → child creates new view model → new view model triggers state change → parent redraws again → repeat forever.
+
+We can use @State, which is a direct equivalent of @StateObject in Observable environment:
+struct TransactionListView: View {
+    @State var viewModel = TransactionListViewModel()
+
+    var body: some View {
+        List(viewModel.transactions) { transaction in
+            TransactionRow(transaction: transaction)
+        }
+        .onAppear { viewModel.loadTransactions() }
+    }
+}
+It’s the simplest solution, but also the most limiting.
+If you go this route, you’ll effectively give up on view testability and tightly couple a particular view with a particular view model.
+I wouldn’t recommend this option for anything beyond the simplest, read-only views. // #####，所以推荐下面的
+
+#####
+Alternatively, we can ask parent view model to provide a child view model for the child view:
+
+@Observable
+class DashboardViewModel {
+    var transactionListVM = TransactionListViewModel()
+    var accountSummaryVM = AccountSummaryViewModel()
+}
+
+struct DashboardView: View {
+    @State var viewModel = DashboardViewModel()
+
+    var body: some View {
+        VStack {
+            TransactionListView(viewModel: viewModel.transactionListVM)
+            AccountSummaryView(viewModel: viewModel.accountSummaryVM)
+        }
+    }
+}
+
+This is a much better option.
+Since the view model is now injectable, the child view becomes testable.
+// 如果使用协议抽象视图模型，就可以打破视图与其实现之间的耦合，从而使视图可重用。
+If you abstract the view model with a protocol, you can break the coupling between the view and its implementation, making the view reusable. // #####
+The only challenge is deciding which component would be responsible for creating these child view models.
+In the example above, it’s the parent view model, but injecting a factory or using a Dependency Injection tool is also an interesting alternative.
+
+The key thing to remember: @StateObject isn’t just a property wrapper – it’s a complete lifecycle manager. 
+When you remove it, you need to consciously decide who owns the view model’s lifecycle now.
+#####
+
+
+==================================================Common Migration Patterns
+1.
+the simplest case is letting the view own its view model. To do that, replace @StateObject with @State:
+// Before
+@StateObject private var viewModel = ProfileViewModel()
+
+// After
+@State private var viewModel = ProfileViewModel()
+
+@State handles view model lifecycle the same way @StateObject did – create once, preserve across redraws. 
+But what if I wanted to inject the view model? Just pass it through the initializer:
+
+struct ProfileView: View {
+    @State private var viewModel: any ProfileViewModelProtocol
+
+    init(viewModel: any ProfileViewModelProtocol) {
+        self._viewModel = State(wrappedValue: viewModel) // (1)
+    }
+
+    var body: some View {
+        // ...
+    }
+}
+
+// Usage
+let vm = ProfileViewModel(apiClient: apiClient, userId: userId) // Implementation
+ProfileView(viewModel: vm)
+
+#####
+The underscore syntax (1) accesses the wrapper itself rather than the wrapped value. 
+It’s the same pattern you’d use with _viewModel = StateObject(wrappedValue:).
+#####
+
+
+2.
+let’s discuss a situation when we need to bind a view model property to a particular UI component. 
+With @Observable, you don’t need any property wrapper for read-only access – a plain let or var property works fine. 
+But what if you need to pass a binding to a child view, like a TextField? That’s where @Bindable comes in:
+
+
+// Before
+@ObservedObject var viewModel: SettingsViewModel
+
+var body: some View {
+    TextField("Name", text: $viewModel.displayName)
+}
+
+// After
+@Bindable var viewModel: SettingsViewModel
+
+var body: some View {
+    TextField("Name", text: $viewModel.displayName)
+}
+
+Important: @Bindable is not a direct replacement for @ObservedObject. 
+It serves a narrower purpose – enabling the $ syntax for creating bindings.
+
+If you only need to read from the view model, use a plain property instead:
+struct ProfileView: View {
+    let viewModel: ProfileViewModel  // Plain property for read-only access
+    
+    var body: some View {
+        Text(viewModel.username)  // Tracking works - no wrapper needed
+    }
+}
+
+#####
+Use @Bindable only when you specifically need bindings. 
+And remember: it doesn’t manage lifecycle. Make sure the view model is preserved somewhere upstream (via @State or a parent).
+#####
+
+
+3.
+You might also consider migrating nested ObservableObjects.
+With @Observable, however, just mark both levels and it should work:
+@Observable
+class UserSession {
+    var settings: UserSettings = UserSettings()
+}
+
+@Observable
+class UserSettings {
+    var theme: String = "light"
+}
+
+
+==================================================@Observable + computed properties
+In general, @Observable handles computed properties correctly. 
+When a view accesses such a property, the getter executes and tries to read the underlying stored properties. 
+As long as these are tracked, the computed property based on them will be tracked as well.
+
+@Observable
+class PersonViewModel {
+    var firstName: String = ""
+    var lastName: String = ""
+
+    var fullName: String {
+        firstName + " " + lastName
+    }
+}
+
+a view that only reads fullName : 
+var body: some View { Text(viewModel.fullName) // will be updated when firstName changes }
+
+This works because when fullName‘s getter runs, it accesses firstName and lastName. 
+The Observation framework tracks those accesses, so when either property changes, the view updates.
+
+But what if a computed property is e.g. derived from non-Observable dependencies?
+@Observable
+class SettingsViewModel {
+    var username: String = "John"
+    
+    var greeting: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        let timeOfDay = hour < 12 ? "morning" : "evening"
+        return "Good \(timeOfDay), \(username)"
+    }
+}
+// Changes to `username` → view updates ✅
+// Time passing (morning → evening) → view does NOT update ❌
+
+To put it simply: the Observation framework isn’t notified when the hour changes, so the view won’t update.
+
+The fix? Make the external dependency a stored property that you can update:
+@Observable
+class SettingsViewModel {
+    var username: String = "John"
+    var currentDate: Date = Date()  // Stored property - is tracked!
+    
+    var greeting: String {
+        let hour = Calendar.current.component(.hour, from: currentDate)
+        let timeOfDay = hour < 12 ? "morning" : "evening"
+        return "Good \(timeOfDay), \(username)"
+    }
+    
+    func refreshTime() {
+        currentDate = Date()
+    }
+}
+
+Now greeting reads from currentDate (tracked) instead of Date() (not tracked). 
+Call refreshTime() whenever you need the greeting to update – 
+on appear, via a timer, or when the app returns to foreground.
+
+
+On the flip side, sometimes you don’t want a property to trigger view updates. Maybe it’s a reference to a service, 
+or something that changes frequently but has no UI impact. That’s where @ObservationIgnored comes in:
+@Observable
+class SearchViewModel {
+    var value: String = "" // Will trigger view update if observed
+    // ...
+
+    @ObservationIgnored
+    private let analyticsTracker: AnalyticsTracker 
+
+    @ObservationIgnored
+    private var requestCount: Int = 0
+
+    func search() {
+        requestCount += 1  // No view update triggered
+        analyticsTracker.track("search", query: query)
+        // ...
+    }
+}
+
+Properties marked with @ObservationIgnored are invisible to the Observation framework. 
+Views won’t update when they change, and accessing them won’t register for observation tracking.
+
+Common use cases: 
+Dependencies injected into the view model 
+Internal bookkeeping counters, flags, timestamps 
+Cache and memoization stores 
+High-frequency state that would cause performance issues if observed
+
+
+Sometimes, you’ll need to work with collections of @Observable objects. These might not behave as you’d expect.
+@Observable
+class User {
+    var name: String
+}
+
+struct UserListView: View {
+    @State var users: [User] = []
+}
+Modifying a property inside a User works as expected.
+When we change users[0].name, the observing view will update.
+
+But adding or removing users from the array? That’s a mutation of the array itself, not the User objects. 
+If you’re storing the array in @State, it works. But if the array is a plain property? It won’t.
+
+@State 是 受 SwiftUI 管理的状态容器。
+当它检测到值发生变化时，会触发 View 重新计算 body。
+
+#####
+SwiftUI 只会刷新“被 View 依赖读取”的 Observable 对象。
+#####
+
+
+
+
+@Observable 会生成类似这样的代码（概念上）：
+var users: [User] {
+    get {
+        access(keyPath: \.users)
+        return _users
+    }
+    set {
+        withMutation(keyPath: \.users) {
+            _users = newValue
+        }
+    }
+}
+The cleanest solution is to keep collections inside an @Observable container:
+@Observable
+class UserListViewModel {
+    var users: [User] = [] // Observation 宏会给 users 生成 tracking 逻辑
+
+    func addUser(_ user: User) {
+        users.append(user)  // This mutation is tracked
+    }
+}
+这样写后
+struct UserListView: View {
+    @State var viewModel = UserListViewModel() // @State还是必须要，否则SwiftUI 还是不会刷新。这边是View 自己持有的情况
+
+    var body: some View {
+        List(viewModel.users) { user in
+            Text(user.name)
+        }
+    }
+}
+
+这里：(viewModel的两个标注作用不一样)
+viewModel 是 @State // 跟踪viewModel
+viewModel 是 @Observable // 跟踪viewModel.property
+body 读取了 viewModel.users
+
+也就是说：
+数组本身不需要 @State 了
+❗ 但 ViewModel 这个对象仍然需要被 SwiftUI 持有并观察（通常用 @State）。
+
+
+@State 可以不写吗？
+答案分情况说：
+情况一：View 自己“创建并拥有” viewModel。
+struct UserListView: View {
+    var viewModel = UserListViewModel()   // ❌ 不写 @State
+
+    var body: some View {
+        List(viewModel.users) { user in
+            Text(user.name)
+        }
+    }
+}
+这是不可以的
+因为：
+View 是 struct
+每次刷新都会重新创建 UserListView
+viewModel 会被重新初始化
+也就是说：
+刷新 → 新建 View → 新建 UserListViewModel()
+你的数据会被重置。
+
+所以当 View 自己创建它时
+必须写：
+@State var viewModel = UserListViewModel()
+为什么？
+因为 @State 会：
+把对象存到 SwiftUI 的持久存储里
+保证 View 重建时不重新创建
+
+
+情况二：viewModel 是“外部传进来的”
+struct UserListView: View {
+    let viewModel: UserListViewModel
+
+    var body: some View {
+        List(viewModel.users) { user in
+            Text(user.name)
+        }
+    }
+}
+
+然后在父视图：
+UserListView(viewModel: someViewModel)
+
+这种情况 可以不写 @State
+因为：
+生命周期不由当前 View 管
+View 只是“使用”它
+SwiftUI 仍然会建立依赖关系
+
+
+| 场景        | 要不要 @State |
+| --------- | ---------- |
+| View 内部创建 | ✅ 必须       |
+| 父 View 传入 | ❌ 不需要      |
+
+
+==================================================Does Observable offer better performance?
+With ObservableObject, any @Published property change fired objectWillChange, and every view observing that object re-evaluated its body.
+Even if your view only cared about one @Published property, it would redraw when any other such property changed.
+SwiftUI’s rendering engine is smart enough to detect when the regenerated view tree is identical to the one already displayed, but the view body computation still needs to happen.
+
+With @Observable, SwiftUI tracks exactly which properties each view accesses. 
+So, when a view relies only on one of the view model properties, it would not get redrawn unless that property is updated. 
+No wasted body evaluations.
+
+###
+most performance issues in apps result from problems unrelated to over-observation. 
+View body recalculation is usually fast and straightforward. 
+If it’s not, your view is likely too complicated: complex layouts, branching UI, etc.
+###
+
+So, where can granular observation noticeably improve performance? Let’s take a look:
+1.
+High-frequency updates: 
+Imagine a cryptocurrency ticker updating 10 times per second. Now, imagine a list of such assets. 
+With 50 assets and 10 updates per second, that’s the difference between up to 500 body evaluations per second and 10.
+
+2.
+Complex dashboards: 
+Take a banking app as an example. 
+Recent transactions, credit score widget, investment portfolio chart, etc. 
+Dozens of separate UI components, each requiring specific data. 
+Some of them update every second, some even faster, some slower. 
+With Observable, each component redraws precisely when the data it needs is updated.
+
+3.
+Forms with many fields: 
+A settings screen with 15 toggles, 5 text fields, and a few pickers? 
+Sure, let’s do this! And then the user types in one field and the entire form redraws… 
+@Observable makes each control independent.
+
+
+You can easily check how often your views redraw with this simple visual debugger. 
+It’s a ViewModifier that draws a random-colored border every time the view redraws:
+extension View {
+    func debugRedraw() -> some View {
+        border(Color(
+            red: .random(in: 0...1),
+            green: .random(in: 0...1),
+            blue: .random(in: 0...1)
+        ), width: 2)
+    }
+}
+
+// Usage
+var body: some View {
+    VStack {
+        ProfileCard(user: viewModel.user)
+            .debugRedraw()
+
+        TransactionList(items: viewModel.transactions)
+            .debugRedraw()
+
+        // ...
+    }
+}
+
+You tap something that should only affect ProfileCard, but the TransactionList border flashes as well? 
+Congratulations! You’ve just found unnecessary redraws that @Observable could eliminate.
+
+
+==================================================When Should You Migrate?
+Migrate now if: 
+Your minimum deployment target is iOS 17+. 
+No backward compatibility concerns, no reason to wait. 
+
+You’re starting a new feature, especially if your app is modular.
+Greenfield code is the perfect place to use @Observable without touching existing, working code. 
+
+You have solid test coverage. 
+That was my saving grace during my last migration. 
+We’d added snapshot and UI test coverage for most of the app’s critical views and flows, so we immediately knew where the migration failed. 
+
+You have to type-erase your SwiftUI views to avoid generics infection.
+
+
+However, you might want to wait if:
+iOS 16 support is required for business reasons. 
+A word of advice: check your analytics. If iOS 16 users are down to single digits, it might be time to have the conversation about bumping that deployment target.
+
+You have a large codebase with no tests. 
+Without automated verification, you’ll be playing whack-a-mole with all the issues we’ve discussed. Maybe it’s worth investing some time in implementing a battery of snapshot tests first?
+
+Your app is written primarily in UIKit. 
+Jumping from @ObservedObject to @Observable won’t be a big leap. Jumping from UIKit to SwiftUI? Not so much.
+
+If it ain’t broke, don’t fix it. 
+If your current ObservableObject setup works fine and you’re not hitting the pain points @Observable solves, there’s no rush to refactor your entire UI layer.
+
+
+You don’t have to migrate everything at once. 
+A pragmatic middle ground: use @Observable for new features and modules, 
+keep existing code on ObservableObject until you have a reason to touch it.
+
+
+==================================================Summary
+@Observable replaces ObservableObject with a fundamentally different approach. 
+Instead of broadcasting something changed to all subscribers, 
+it tracks exactly which properties each view accesses and updates only when those properties change.
+
+The result? Better performance, cleaner syntax, and protocols that finally work with existentials.
+
+
+However, the migration isn’t a simple find-and-replace. 
+You need to be mindful of who owns a view model.
+#####
+If the view creates and owns it, use @State to preserve it across redraws. 
+If the view receives it from a parent, use @Bindable when you need bindings or a plain property for read-only access.
+#####
+
+==================================================witness table
+Witness(证人) table = 协议的“实现说明书”
+
+它告诉编译器：
+👉 “这个类型是如何满足这个协议的”。
+
+
+protocol Animal {
+    func speak()
+}
+
+struct Dog: Animal {
+    func speak() { print("woof") }
+}
+
+let a: Animal = Dog()
+a.speak()
+
+编译器必须在运行时知道：
+“现在这个 Animal 实际上是 Dog，它的 speak() 在哪里？”
+这时候就需要一个表。
+
+Witness Table 长什么样？
+Dog : Animal
+┌─────────────────────┐
+│ speak -> Dog.speak  │
+└─────────────────────┘
+这张表就叫：
+Witness Table（见证表）
+意思是：
+Dog “见证”自己实现了 Animal
+
+
+Existential 调用过程
+当你写：
+let a: Animal = Dog()
+a.speak()
+
+内存里大概是这样：
+┌───────────────────────┐
+│ existential container │
+├───────────────────────┤
+│ value: Dog            │
+│ witness table ptr     │
+└───────────────────────┘
+
+调用过程：
+通过 witness table 找到 speak 的函数指针
+调用 Dog.speak
+这叫：
+动态派发（dynamic dispatch）
+
+
+
+那泛型呢？
+func makeSpeak<T: Animal>(_ a: T) {
+    a.speak()
+}
+这里不是 existential。
+这是泛型。
+
+编译器在编译期就知道：
+如果 T 是 Dog
+那就直接调用 Dog.speak
+
+甚至可以 inline。
+这叫：
+静态派发（static dispatch）
+
+
+
+现在关键来了：associatedtype
+protocol Box {
+    associatedtype Item
+    func get() -> Item
+}
+
+如果有：
+struct IntBox: Box {
+    func get() -> Int { 1 }
+}
+
+Witness table 就不只是函数指针了。
+
+还必须包含：
+Item = Int
+get  -> IntBox.get
+
+也就是说：
+witness table 里还必须存类型信息。
+
+
+
+为什么 Self 也会导致问题？
+protocol Clonable {
+    func clone() -> Self
+}
+如果写：
+let x: any Clonable
+问题来了：
+clone() 返回什么类型？
+Self 是谁？
+existential 里 Self 不确定。
+所以不能用。
+
+
+#####
+一个协议不能作为 existential（any 使用）如果它：
+有 associatedtype
+有 Self 要求
+因为：
+witness table 无法构造完整类型信息
+#####
+
+
+==================================================UIKit + ObservableObject + Combine
+class ViewModel: ObservableObject {
+    @Published var count = 0
+}
+
+viewModel.$count
+    .sink { [weak self] newValue in
+        self?.label.text = "\(newValue)"
+    }
+    .store(in: &cancellables)
+
+$count 是 @Published 生成的 Publisher 投影值（projected value）
+是 property wrapper 的 projectedValue 机制。
+
+
+对 ViewModel，编译器会大概生成类似代码（简化版）：
+private var _count = Published<Int>(initialValue: 0)
+
+var count: Int {
+    get { _count.wrappedValue }
+    set { _count.wrappedValue = newValue }
+}
+
+var $count: Published<Int>.Publisher {
+    _count.projectedValue
+}
+
+
+
+子 View 写 @ObservedObject = 订阅变化并自动刷新 UI
+不写 @ObservedObject = 只是普通参数，不会自动刷新
+
+写 @ObservedObject 时：
+SwiftUI 会：
+订阅 objectWillChange
+记录这个 View 依赖这个对象
+对象变 → 重新计算 body
+
+| 属性                | 是否持有对象 | 是否订阅变化 |
+| ----------------- | ------ | ------ |
+| `@StateObject`    | ✅ 持有   | ✅ 订阅   |
+| `@ObservedObject` | ❌ 不持有  | ✅ 订阅   |
+| 普通属性              | ❌ 不持有  | ❌ 不订阅  |
+
+
+==================================================
+这是 ObservableObject + @Published 的设计特点 ——
+它是 object 级别通知，不是 property 级别通知。
+
+class VM: ObservableObject {
+    @Published var name: String = ""
+    @Published var age: Int = 0
+}
+只要 name 或 age 任意一个改变：
+
+objectWillChange.send()
+所有观察这个 VM 的 View 都会重新计算 body。
+
+
+方案一：拆分 ViewModel（最经典）
+把不同关注点拆成不同 ObservableObject。
+class NameViewModel: ObservableObject {
+    @Published var name: String = ""
+}
+
+class AgeViewModel: ObservableObject {
+    @Published var age: Int = 0
+}
+
+
+然后在不同 View 中分别使用：
+
+@StateObject var nameVM = NameViewModel()
+@StateObject var ageVM = AgeViewModel()
+这是 SwiftUI 早期推荐做法。
+
+
+方案二：拆分子 View（SwiftUI 推荐做法）
+即使 ViewModel 是一个，也可以通过拆 View 降低刷新影响。
+
+struct ParentView: View {
+    @StateObject var vm = VM()
+
+    var body: some View {
+        VStack {
+            NameView(name: vm.name)
+            AgeView(age: vm.age)
+        }
+    }
+}
+
+struct NameView: View {
+    let name: String
+    var body: some View {
+        Text(name)
+    }
+}
+因为 SwiftUI 是 value diff 的，只要 name 没变，NameView 不会真的更新 UI。
+这是 最实用、成本最低 的方法。
+
+拆分版本：
+ParentView 会因为任何 @Published 变化重新计算 body
+但 NameView(name:) 是 value 传递
+如果 name 没变，SwiftUI diff 认为子 view 没变
+所以不会触发 NameView 的 UI 更新
+
+
+不拆分 View 是什么样？
+就是全部写在一个 View 里：
+
+struct ParentView: View {
+    @StateObject var vm = VM()
+
+    var body: some View {
+        VStack {
+            Text(vm.name)
+            Text("\(vm.age)")
+        }
+    }
+}
+
+age 改变
+objectWillChange.send()
+ParentView 重新计算 body
+两个 Text 都会重新构建
+即使：
+vm.name 没变
